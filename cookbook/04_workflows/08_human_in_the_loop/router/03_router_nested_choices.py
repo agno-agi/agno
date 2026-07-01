@@ -27,7 +27,7 @@ from agno.db.sqlite import SqliteDb
 from agno.workflow.router import Router
 from agno.workflow.step import Step
 from agno.workflow.steps import Steps
-from agno.workflow.types import StepInput, StepOutput
+from agno.workflow.types import HumanReview, StepInput, StepOutput
 from agno.workflow.workflow import Workflow
 
 
@@ -156,9 +156,11 @@ workflow = Workflow(
                 standard_package,  # Steps container (2 steps)
                 premium_package,  # Steps container (4 steps)
             ],
-            requires_user_input=True,
-            user_input_message="Select a processing package:",
             allow_multiple_selections=False,  # Pick ONE package
+            human_review=HumanReview(
+                requires_user_input=True,
+                user_input_message="Select a processing package:",
+            ),
         ),
         Step(name="finalize", executor=finalize),
     ],
@@ -192,8 +194,10 @@ workflow_with_nested_lists = Workflow(
                     Step(name="archive_results", executor=archive_results),
                 ],
             ],
-            requires_user_input=True,
-            user_input_message="Select a processing option:",
+            human_review=HumanReview(
+                requires_user_input=True,
+                user_input_message="Select a processing option:",
+            ),
         ),
         Step(name="finalize", executor=finalize),
     ],

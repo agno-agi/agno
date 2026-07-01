@@ -20,7 +20,7 @@ from agno.workflow.loop import Loop
 from agno.workflow.router import Router
 from agno.workflow.step import Step
 from agno.workflow.steps import Steps
-from agno.workflow.types import StepInput, StepOutput
+from agno.workflow.types import HumanReview, StepInput, StepOutput
 from agno.workflow.workflow import Workflow
 
 # =============================================================================
@@ -247,9 +247,11 @@ class TestConditionHITLTopLevel:
                 Step(name="gather", executor=gather_data),
                 Condition(
                     name="decision",
-                    requires_confirmation=True,
-                    confirmation_message="Run detailed analysis?",
-                    on_reject=OnReject.else_branch,
+                    human_review=HumanReview(
+                        requires_confirmation=True,
+                        confirmation_message="Run detailed analysis?",
+                        on_reject=OnReject.else_branch,
+                    ),
                     steps=[Step(name="detailed", executor=detailed_analysis)],
                     else_steps=[Step(name="quick", executor=quick_summary)],
                 ),
@@ -279,9 +281,11 @@ class TestConditionHITLTopLevel:
             steps=[
                 Condition(
                     name="decision",
-                    requires_confirmation=True,
-                    confirmation_message="Run detailed analysis?",
-                    on_reject=OnReject.else_branch,
+                    human_review=HumanReview(
+                        requires_confirmation=True,
+                        confirmation_message="Run detailed analysis?",
+                        on_reject=OnReject.else_branch,
+                    ),
                     steps=[Step(name="detailed", executor=detailed_analysis)],
                     else_steps=[Step(name="quick", executor=quick_summary)],
                 ),
@@ -306,8 +310,7 @@ class TestConditionHITLTopLevel:
             steps=[
                 Condition(
                     name="optional_step",
-                    requires_confirmation=True,
-                    on_reject=OnReject.skip,
+                    human_review=HumanReview(requires_confirmation=True, on_reject=OnReject.skip),
                     steps=[Step(name="detailed", executor=detailed_analysis)],
                 ),
                 Step(name="report", executor=final_report),
@@ -331,8 +334,7 @@ class TestConditionHITLTopLevel:
             steps=[
                 Condition(
                     name="critical_step",
-                    requires_confirmation=True,
-                    on_reject=OnReject.cancel,
+                    human_review=HumanReview(requires_confirmation=True, on_reject=OnReject.cancel),
                     steps=[Step(name="detailed", executor=detailed_analysis)],
                 ),
                 Step(name="report", executor=final_report),
@@ -369,17 +371,21 @@ class TestSequentialDecisionTree:
                 Step(name="gather", executor=gather_data),
                 Condition(
                     name="first_decision",
-                    requires_confirmation=True,
-                    confirmation_message="Go left or right?",
-                    on_reject=OnReject.else_branch,
+                    human_review=HumanReview(
+                        requires_confirmation=True,
+                        confirmation_message="Go left or right?",
+                        on_reject=OnReject.else_branch,
+                    ),
                     steps=[Step(name="left", executor=left_branch)],
                     else_steps=[Step(name="right", executor=right_branch)],
                 ),
                 Condition(
                     name="second_decision",
-                    requires_confirmation=True,
-                    confirmation_message="Deep dive or surface review?",
-                    on_reject=OnReject.else_branch,
+                    human_review=HumanReview(
+                        requires_confirmation=True,
+                        confirmation_message="Deep dive or surface review?",
+                        on_reject=OnReject.else_branch,
+                    ),
                     steps=[Step(name="deep", executor=deep_dive)],
                     else_steps=[Step(name="surface", executor=surface_review)],
                 ),
@@ -417,15 +423,13 @@ class TestSequentialDecisionTree:
             steps=[
                 Condition(
                     name="first",
-                    requires_confirmation=True,
-                    on_reject=OnReject.else_branch,
+                    human_review=HumanReview(requires_confirmation=True, on_reject=OnReject.else_branch),
                     steps=[Step(name="left", executor=left_branch)],
                     else_steps=[Step(name="right", executor=right_branch)],
                 ),
                 Condition(
                     name="second",
-                    requires_confirmation=True,
-                    on_reject=OnReject.else_branch,
+                    human_review=HumanReview(requires_confirmation=True, on_reject=OnReject.else_branch),
                     steps=[Step(name="deep", executor=deep_dive)],
                     else_steps=[Step(name="surface", executor=surface_review)],
                 ),
@@ -453,15 +457,13 @@ class TestSequentialDecisionTree:
             steps=[
                 Condition(
                     name="first",
-                    requires_confirmation=True,
-                    on_reject=OnReject.else_branch,
+                    human_review=HumanReview(requires_confirmation=True, on_reject=OnReject.else_branch),
                     steps=[Step(name="option_a", executor=left_branch)],
                     else_steps=[Step(name="option_b", executor=right_branch)],
                 ),
                 Condition(
                     name="second",
-                    requires_confirmation=True,
-                    on_reject=OnReject.else_branch,
+                    human_review=HumanReview(requires_confirmation=True, on_reject=OnReject.else_branch),
                     steps=[Step(name="option_c", executor=deep_dive)],
                     else_steps=[Step(name="option_d", executor=surface_review)],
                 ),
@@ -489,15 +491,13 @@ class TestSequentialDecisionTree:
             steps=[
                 Condition(
                     name="first",
-                    requires_confirmation=True,
-                    on_reject=OnReject.else_branch,
+                    human_review=HumanReview(requires_confirmation=True, on_reject=OnReject.else_branch),
                     steps=[Step(name="left", executor=left_branch)],
                     else_steps=[Step(name="right", executor=right_branch)],
                 ),
                 Condition(
                     name="second",
-                    requires_confirmation=True,
-                    on_reject=OnReject.cancel,
+                    human_review=HumanReview(requires_confirmation=True, on_reject=OnReject.cancel),
                     steps=[Step(name="proceed", executor=deep_dive)],
                 ),
                 Step(name="report", executor=final_report),
@@ -523,14 +523,18 @@ class TestSequentialDecisionTree:
                 Step(
                     name="confirm_step",
                     executor=gather_data,
-                    requires_confirmation=True,
-                    confirmation_message="Start processing?",
+                    human_review=HumanReview(
+                        requires_confirmation=True,
+                        confirmation_message="Start processing?",
+                    ),
                 ),
                 Condition(
                     name="branch_decision",
-                    requires_confirmation=True,
-                    confirmation_message="Deep or shallow?",
-                    on_reject=OnReject.else_branch,
+                    human_review=HumanReview(
+                        requires_confirmation=True,
+                        confirmation_message="Deep or shallow?",
+                        on_reject=OnReject.else_branch,
+                    ),
                     steps=[Step(name="deep", executor=deep_dive)],
                     else_steps=[Step(name="shallow", executor=surface_review)],
                 ),
@@ -564,9 +568,11 @@ class TestSequentialDecisionTree:
             steps=[
                 Condition(
                     name="analysis_type",
-                    requires_confirmation=True,
-                    confirmation_message="Run detailed analysis?",
-                    on_reject=OnReject.else_branch,
+                    human_review=HumanReview(
+                        requires_confirmation=True,
+                        confirmation_message="Run detailed analysis?",
+                        on_reject=OnReject.else_branch,
+                    ),
                     steps=[Step(name="detailed", executor=detailed_analysis)],
                     else_steps=[Step(name="quick", executor=quick_summary)],
                 ),
@@ -574,9 +580,11 @@ class TestSequentialDecisionTree:
                     name="refinement",
                     steps=[Step(name="refine", executor=refine)],
                     max_iterations=2,
-                    requires_confirmation=True,
-                    confirmation_message="Start refinement loop?",
-                    on_reject=OnReject.skip,
+                    human_review=HumanReview(
+                        requires_confirmation=True,
+                        confirmation_message="Start refinement loop?",
+                        on_reject=OnReject.skip,
+                    ),
                 ),
                 Step(name="report", executor=final_report),
             ],
@@ -610,17 +618,21 @@ class TestSequentialDecisionTree:
             steps=[
                 Condition(
                     name="first",
-                    requires_confirmation=True,
-                    confirmation_message="Branch A?",
-                    on_reject=OnReject.else_branch,
+                    human_review=HumanReview(
+                        requires_confirmation=True,
+                        confirmation_message="Branch A?",
+                        on_reject=OnReject.else_branch,
+                    ),
                     steps=[Step(name="branch_a", executor=left_branch)],
                     else_steps=[Step(name="branch_b", executor=right_branch)],
                 ),
                 Condition(
                     name="second",
-                    requires_confirmation=True,
-                    confirmation_message="Deep or shallow?",
-                    on_reject=OnReject.else_branch,
+                    human_review=HumanReview(
+                        requires_confirmation=True,
+                        confirmation_message="Deep or shallow?",
+                        on_reject=OnReject.else_branch,
+                    ),
                     steps=[Step(name="deep", executor=deep_dive)],
                     else_steps=[Step(name="shallow", executor=surface_review)],
                 ),
@@ -659,17 +671,21 @@ class TestSequentialHITLStreaming:
             steps=[
                 Condition(
                     name="first",
-                    requires_confirmation=True,
-                    confirmation_message="Branch A?",
-                    on_reject=OnReject.else_branch,
+                    human_review=HumanReview(
+                        requires_confirmation=True,
+                        confirmation_message="Branch A?",
+                        on_reject=OnReject.else_branch,
+                    ),
                     steps=[Step(name="branch_a", executor=left_branch)],
                     else_steps=[Step(name="branch_b", executor=right_branch)],
                 ),
                 Condition(
                     name="second",
-                    requires_confirmation=True,
-                    confirmation_message="Deep or shallow?",
-                    on_reject=OnReject.else_branch,
+                    human_review=HumanReview(
+                        requires_confirmation=True,
+                        confirmation_message="Deep or shallow?",
+                        on_reject=OnReject.else_branch,
+                    ),
                     steps=[Step(name="deep", executor=deep_dive)],
                     else_steps=[Step(name="shallow", executor=surface_review)],
                 ),
@@ -708,15 +724,13 @@ class TestSequentialHITLStreaming:
             steps=[
                 Condition(
                     name="first",
-                    requires_confirmation=True,
-                    on_reject=OnReject.else_branch,
+                    human_review=HumanReview(requires_confirmation=True, on_reject=OnReject.else_branch),
                     steps=[Step(name="left", executor=left_branch)],
                     else_steps=[Step(name="right", executor=right_branch)],
                 ),
                 Condition(
                     name="second",
-                    requires_confirmation=True,
-                    on_reject=OnReject.else_branch,
+                    human_review=HumanReview(requires_confirmation=True, on_reject=OnReject.else_branch),
                     steps=[Step(name="deep", executor=deep_dive)],
                     else_steps=[Step(name="shallow", executor=surface_review)],
                 ),
@@ -766,17 +780,18 @@ class TestOtherComponentHITL:
             steps=[
                 Condition(
                     name="decision",
-                    requires_confirmation=True,
-                    on_reject=OnReject.else_branch,
+                    human_review=HumanReview(requires_confirmation=True, on_reject=OnReject.else_branch),
                     steps=[Step(name="detailed", executor=detailed_analysis)],
                     else_steps=[Step(name="quick", executor=quick_summary)],
                 ),
                 Steps(
                     name="pipeline",
                     steps=[Step(name="refine", executor=refine)],
-                    requires_confirmation=True,
-                    confirmation_message="Run the processing pipeline?",
-                    on_reject=OnReject.skip,
+                    human_review=HumanReview(
+                        requires_confirmation=True,
+                        confirmation_message="Run the processing pipeline?",
+                        on_reject=OnReject.skip,
+                    ),
                 ),
                 Step(name="report", executor=final_report),
             ],
@@ -809,8 +824,7 @@ class TestOtherComponentHITL:
             steps=[
                 Condition(
                     name="first_decision",
-                    requires_confirmation=True,
-                    on_reject=OnReject.else_branch,
+                    human_review=HumanReview(requires_confirmation=True, on_reject=OnReject.else_branch),
                     steps=[Step(name="left", executor=left_branch)],
                     else_steps=[Step(name="right", executor=right_branch)],
                 ),
@@ -820,9 +834,11 @@ class TestOtherComponentHITL:
                         Step(name="route_a", executor=deep_dive),
                         Step(name="route_b", executor=surface_review),
                     ],
-                    requires_confirmation=True,
-                    confirmation_message="Execute auto-selected routes?",
-                    on_reject=OnReject.skip,
+                    human_review=HumanReview(
+                        requires_confirmation=True,
+                        confirmation_message="Execute auto-selected routes?",
+                        on_reject=OnReject.skip,
+                    ),
                 ),
                 Step(name="report", executor=final_report),
             ],
@@ -855,9 +871,11 @@ class TestOtherComponentHITL:
             steps=[
                 Condition(
                     name="first",
-                    requires_confirmation=True,
-                    confirmation_message="Analyze?",
-                    on_reject=OnReject.else_branch,
+                    human_review=HumanReview(
+                        requires_confirmation=True,
+                        confirmation_message="Analyze?",
+                        on_reject=OnReject.else_branch,
+                    ),
                     steps=[Step(name="detailed", executor=detailed_analysis)],
                     else_steps=[Step(name="quick", executor=quick_summary)],
                 ),
@@ -865,15 +883,19 @@ class TestOtherComponentHITL:
                     name="refinement",
                     steps=[Step(name="refine", executor=refine)],
                     max_iterations=2,
-                    requires_confirmation=True,
-                    confirmation_message="Start refinement?",
-                    on_reject=OnReject.skip,
+                    human_review=HumanReview(
+                        requires_confirmation=True,
+                        confirmation_message="Start refinement?",
+                        on_reject=OnReject.skip,
+                    ),
                 ),
                 Condition(
                     name="third",
-                    requires_confirmation=True,
-                    confirmation_message="Deep dive?",
-                    on_reject=OnReject.else_branch,
+                    human_review=HumanReview(
+                        requires_confirmation=True,
+                        confirmation_message="Deep dive?",
+                        on_reject=OnReject.else_branch,
+                    ),
                     steps=[Step(name="deep", executor=deep_dive)],
                     else_steps=[Step(name="surface", executor=surface_review)],
                 ),

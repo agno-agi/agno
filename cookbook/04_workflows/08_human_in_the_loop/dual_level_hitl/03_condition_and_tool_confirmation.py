@@ -23,7 +23,7 @@ from agno.run.workflow import (
 from agno.tools import tool
 from agno.workflow.condition import Condition
 from agno.workflow.step import Step
-from agno.workflow.types import OnReject, StepInput
+from agno.workflow.types import HumanReview, OnReject, StepInput
 from agno.workflow.workflow import Workflow
 from rich.console import Console
 from rich.prompt import Prompt
@@ -88,9 +88,11 @@ workflow = Workflow(
             # Else-branch: deploy to staging
             else_steps=[Step(name="deploy_staging", agent=staging_agent)],
             # Condition-level HITL: user decides if they want the if-branch
-            requires_confirmation=True,
-            confirmation_message="Production deployment is ready. Deploy to production?",
-            on_reject=OnReject.else_branch,  # On reject -> else branch (staging)
+            human_review=HumanReview(
+                requires_confirmation=True,
+                confirmation_message="Production deployment is ready. Deploy to production?",
+                on_reject=OnReject.else_branch,  # On reject -> else branch (staging)
+            ),
         ),
     ],
     telemetry=False,

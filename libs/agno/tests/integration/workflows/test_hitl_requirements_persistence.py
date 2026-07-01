@@ -20,7 +20,7 @@ from agno.run.base import RunStatus
 from agno.run.workflow import WorkflowRunOutput
 from agno.workflow import OnError, OnReject, Router
 from agno.workflow.step import Step
-from agno.workflow.types import StepInput, StepOutput
+from agno.workflow.types import HumanReview, StepInput, StepOutput
 from agno.workflow.workflow import Workflow
 
 # =============================================================================
@@ -77,8 +77,10 @@ class TestSingleHITLPersistence:
                 Step(
                     name="step_b",
                     executor=step_b,
-                    requires_confirmation=True,
-                    confirmation_message="Confirm step B?",
+                    human_review=HumanReview(
+                        requires_confirmation=True,
+                        confirmation_message="Confirm step B?",
+                    ),
                 ),
                 Step(name="step_c", executor=step_c),
             ],
@@ -106,11 +108,13 @@ class TestSingleHITLPersistence:
                 Step(
                     name="step_b",
                     executor=step_b,
-                    requires_user_input=True,
-                    user_input_message="Enter params:",
-                    user_input_schema=[
-                        {"name": "key", "field_type": "text", "description": "A key", "required": True},
-                    ],
+                    human_review=HumanReview(
+                        requires_user_input=True,
+                        user_input_message="Enter params:",
+                        user_input_schema=[
+                            {"name": "key", "field_type": "text", "description": "A key", "required": True},
+                        ],
+                    ),
                 ),
                 Step(name="step_c", executor=step_c),
             ],
@@ -141,8 +145,10 @@ class TestSingleHITLPersistence:
                         Step(name="route_x", executor=route_x),
                         Step(name="route_y", executor=route_y),
                     ],
-                    requires_user_input=True,
-                    user_input_message="Pick a route:",
+                    human_review=HumanReview(
+                        requires_user_input=True,
+                        user_input_message="Pick a route:",
+                    ),
                 ),
             ],
         )
@@ -177,14 +183,18 @@ class TestMultipleHITLAccumulation:
                 Step(
                     name="step_1",
                     executor=step_a,
-                    requires_confirmation=True,
-                    confirmation_message="Confirm step 1?",
+                    human_review=HumanReview(
+                        requires_confirmation=True,
+                        confirmation_message="Confirm step 1?",
+                    ),
                 ),
                 Step(
                     name="step_2",
                     executor=step_b,
-                    requires_confirmation=True,
-                    confirmation_message="Confirm step 2?",
+                    human_review=HumanReview(
+                        requires_confirmation=True,
+                        confirmation_message="Confirm step 2?",
+                    ),
                 ),
                 Step(name="step_3", executor=step_c),
             ],
@@ -220,16 +230,18 @@ class TestMultipleHITLAccumulation:
                 Step(
                     name="confirm_step",
                     executor=step_a,
-                    requires_confirmation=True,
+                    human_review=HumanReview(requires_confirmation=True),
                 ),
                 Step(
                     name="input_step",
                     executor=step_b,
-                    requires_user_input=True,
-                    user_input_message="Enter data:",
-                    user_input_schema=[
-                        {"name": "val", "field_type": "text", "description": "Value", "required": True},
-                    ],
+                    human_review=HumanReview(
+                        requires_user_input=True,
+                        user_input_message="Enter data:",
+                        user_input_schema=[
+                            {"name": "val", "field_type": "text", "description": "Value", "required": True},
+                        ],
+                    ),
                 ),
                 Step(name="final", executor=step_c),
             ],
@@ -264,9 +276,9 @@ class TestMultipleHITLAccumulation:
             name="three-pauses",
             db=shared_db,
             steps=[
-                Step(name="s1", executor=step_a, requires_confirmation=True),
-                Step(name="s2", executor=step_a, requires_confirmation=True),
-                Step(name="s3", executor=step_a, requires_confirmation=True),
+                Step(name="s1", executor=step_a, human_review=HumanReview(requires_confirmation=True)),
+                Step(name="s2", executor=step_a, human_review=HumanReview(requires_confirmation=True)),
+                Step(name="s3", executor=step_a, human_review=HumanReview(requires_confirmation=True)),
                 Step(name="s4", executor=step_c),
             ],
         )
@@ -296,8 +308,8 @@ class TestSerializationRoundTrip:
             name="serial-roundtrip",
             db=shared_db,
             steps=[
-                Step(name="s1", executor=step_a, requires_confirmation=True),
-                Step(name="s2", executor=step_a, requires_confirmation=True),
+                Step(name="s1", executor=step_a, human_review=HumanReview(requires_confirmation=True)),
+                Step(name="s2", executor=step_a, human_review=HumanReview(requires_confirmation=True)),
                 Step(name="final", executor=step_c),
             ],
         )
@@ -328,7 +340,7 @@ class TestSerializationRoundTrip:
             name="session-persist",
             db=shared_db,
             steps=[
-                Step(name="s1", executor=step_a, requires_confirmation=True),
+                Step(name="s1", executor=step_a, human_review=HumanReview(requires_confirmation=True)),
                 Step(name="final", executor=step_c),
             ],
         )
@@ -363,8 +375,12 @@ class TestRejectionWithHistory:
             name="confirm-reject-skip",
             db=shared_db,
             steps=[
-                Step(name="s1", executor=step_a, requires_confirmation=True),
-                Step(name="s2", executor=step_a, requires_confirmation=True, on_reject=OnReject.skip),
+                Step(name="s1", executor=step_a, human_review=HumanReview(requires_confirmation=True)),
+                Step(
+                    name="s2",
+                    executor=step_a,
+                    human_review=HumanReview(requires_confirmation=True, on_reject=OnReject.skip),
+                ),
                 Step(name="final", executor=step_c),
             ],
         )
@@ -399,8 +415,8 @@ class TestStreamingPersistence:
             name="stream-persist",
             db=shared_db,
             steps=[
-                Step(name="s1", executor=step_a, requires_confirmation=True),
-                Step(name="s2", executor=step_a, requires_confirmation=True),
+                Step(name="s1", executor=step_a, human_review=HumanReview(requires_confirmation=True)),
+                Step(name="s2", executor=step_a, human_review=HumanReview(requires_confirmation=True)),
                 Step(name="final", executor=step_c),
             ],
         )
@@ -452,7 +468,7 @@ class TestErrorPauseWithHistory:
             name="confirm-error-retry",
             db=shared_db,
             steps=[
-                Step(name="s1", executor=step_a, requires_confirmation=True),
+                Step(name="s1", executor=step_a, human_review=HumanReview(requires_confirmation=True)),
                 Step(name="risky", executor=fail_once, on_error=OnError.pause, max_retries=0),
                 Step(name="final", executor=step_c),
             ],

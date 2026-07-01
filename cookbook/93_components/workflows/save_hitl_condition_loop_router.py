@@ -20,7 +20,7 @@ from agno.workflow.condition import Condition
 from agno.workflow.loop import Loop
 from agno.workflow.router import Router
 from agno.workflow.step import Step
-from agno.workflow.types import StepInput, StepOutput
+from agno.workflow.types import HumanReview, StepInput, StepOutput
 from agno.workflow.workflow import Workflow, get_workflow_by_id
 
 # ---------------------------------------------------------------------------
@@ -90,9 +90,11 @@ condition_workflow = Workflow(
             evaluator=True,
             steps=[Step(name="DetailedAnalysis", agent=analysis_agent)],
             else_steps=[Step(name="QuickSummary", agent=summary_agent)],
-            requires_confirmation=True,
-            confirmation_message="Perform detailed analysis? (No = quick summary)",
-            on_reject=OnReject.else_branch,
+            human_review=HumanReview(
+                requires_confirmation=True,
+                confirmation_message="Perform detailed analysis? (No = quick summary)",
+                on_reject=OnReject.else_branch,
+            ),
         ),
         Step(name="FinalReport", agent=writer_agent),
     ],
@@ -112,9 +114,11 @@ loop_workflow = Workflow(
             description="Iterative refinement (user confirms to start)",
             steps=[Step(name="Refine", executor=refine_analysis)],
             max_iterations=3,
-            requires_confirmation=True,
-            confirmation_message="Start iterative refinement? This runs up to 3 iterations.",
-            on_reject=OnReject.skip,
+            human_review=HumanReview(
+                requires_confirmation=True,
+                confirmation_message="Start iterative refinement? This runs up to 3 iterations.",
+                on_reject=OnReject.skip,
+            ),
         ),
         Step(name="WriteReport", agent=writer_agent),
     ],
@@ -136,9 +140,11 @@ router_workflow = Workflow(
                 Step(name="Analysis", agent=analysis_agent),
                 Step(name="Summary", agent=summary_agent),
             ],
-            requires_user_input=True,
-            user_input_message="Select which processing steps to run:",
             allow_multiple_selections=True,
+            human_review=HumanReview(
+                requires_user_input=True,
+                user_input_message="Select which processing steps to run:",
+            ),
         ),
         Step(name="WriteReport", agent=writer_agent),
     ],
@@ -177,12 +183,13 @@ def save_and_verify(name: str, wf: Workflow, wf_id: str):
     # Verify HITL config
     if loaded.steps:
         for step in loaded.steps:
+            hr = getattr(step, "human_review", None)
             hitl_fields = []
-            if hasattr(step, "requires_confirmation") and step.requires_confirmation:
-                hitl_fields.append(f"confirmation='{step.confirmation_message}'")
-                hitl_fields.append(f"on_reject={step.on_reject}")
-            if hasattr(step, "requires_user_input") and step.requires_user_input:
-                hitl_fields.append(f"user_input='{step.user_input_message}'")
+            if hr and hr.requires_confirmation:
+                hitl_fields.append(f"confirmation='{hr.confirmation_message}'")
+                hitl_fields.append(f"on_reject={hr.on_reject}")
+            if hr and hr.requires_user_input:
+                hitl_fields.append(f"user_input='{hr.user_input_message}'")
             if hitl_fields:
                 print(f"  HITL on '{step.name}': {', '.join(hitl_fields)}")
 

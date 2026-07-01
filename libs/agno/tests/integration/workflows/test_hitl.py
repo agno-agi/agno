@@ -16,7 +16,7 @@ import pytest
 from agno.run.base import RunStatus
 from agno.workflow import Router
 from agno.workflow.step import Step
-from agno.workflow.types import StepInput, StepOutput
+from agno.workflow.types import HumanReview, StepInput, StepOutput
 from agno.workflow.workflow import Workflow
 
 # =============================================================================
@@ -80,8 +80,10 @@ class TestStepConfirmation:
                 Step(
                     name="process",
                     executor=process_data,
-                    requires_confirmation=True,
-                    confirmation_message="Proceed with processing?",
+                    human_review=HumanReview(
+                        requires_confirmation=True,
+                        confirmation_message="Proceed with processing?",
+                    ),
                 ),
                 Step(name="save", executor=save_data),
             ],
@@ -106,7 +108,7 @@ class TestStepConfirmation:
                 Step(
                     name="process",
                     executor=process_data,
-                    requires_confirmation=True,
+                    human_review=HumanReview(requires_confirmation=True),
                 ),
                 Step(name="save", executor=save_data),
             ],
@@ -135,8 +137,10 @@ class TestStepConfirmation:
                 Step(
                     name="process",
                     executor=process_data,
-                    requires_confirmation=True,
-                    on_reject="cancel",
+                    human_review=HumanReview(
+                        requires_confirmation=True,
+                        on_reject="cancel",
+                    ),
                 ),
                 Step(name="save", executor=save_data),
             ],
@@ -164,8 +168,10 @@ class TestStepConfirmation:
                 Step(
                     name="process",
                     executor=process_data,
-                    requires_confirmation=True,
-                    on_reject="skip",
+                    human_review=HumanReview(
+                        requires_confirmation=True,
+                        on_reject="skip",
+                    ),
                 ),
                 Step(name="save", executor=save_data),
             ],
@@ -197,7 +203,7 @@ class TestStepConfirmation:
                 Step(
                     name="process",
                     executor=process_data,
-                    requires_confirmation=True,
+                    human_review=HumanReview(requires_confirmation=True),
                 ),
                 Step(name="save", executor=save_data),
             ],
@@ -227,7 +233,7 @@ class TestStepConfirmation:
                 Step(
                     name="process",
                     executor=process_data,
-                    requires_confirmation=True,
+                    human_review=HumanReview(requires_confirmation=True),
                 ),
                 Step(name="save", executor=save_data),
             ],
@@ -260,7 +266,7 @@ class TestStepConfirmation:
                 Step(
                     name="process",
                     executor=process_data,
-                    requires_confirmation=True,
+                    human_review=HumanReview(requires_confirmation=True),
                 ),
                 Step(name="save", executor=save_data),
             ],
@@ -311,12 +317,19 @@ class TestStepUserInput:
                 Step(
                     name="process",
                     executor=process_data,
-                    requires_user_input=True,
-                    user_input_message="Please provide your preference",
-                    # Step uses List[Dict] for user_input_schema, not List[UserInputField]
-                    user_input_schema=[
-                        {"name": "preference", "field_type": "str", "description": "Your preference", "required": True},
-                    ],
+                    human_review=HumanReview(
+                        requires_user_input=True,
+                        user_input_message="Please provide your preference",
+                        # Step uses List[Dict] for user_input_schema, not List[UserInputField]
+                        user_input_schema=[
+                            {
+                                "name": "preference",
+                                "field_type": "str",
+                                "description": "Your preference",
+                                "required": True,
+                            },
+                        ],
+                    ),
                 ),
                 Step(name="save", executor=save_data),
             ],
@@ -340,8 +353,10 @@ class TestStepUserInput:
                 Step(
                     name="process",
                     executor=process_data,
-                    requires_user_input=True,
-                    user_input_message="Please provide your preference",
+                    human_review=HumanReview(
+                        requires_user_input=True,
+                        user_input_message="Please provide your preference",
+                    ),
                 ),
                 Step(name="save", executor=save_data),
             ],
@@ -374,7 +389,7 @@ class TestStepUserInput:
                 Step(
                     name="process",
                     executor=process_data,
-                    requires_user_input=True,
+                    human_review=HumanReview(requires_user_input=True),
                 ),
                 Step(name="save", executor=save_data),
             ],
@@ -404,7 +419,7 @@ class TestStepUserInput:
                 Step(
                     name="process",
                     executor=process_data,
-                    requires_user_input=True,
+                    human_review=HumanReview(requires_user_input=True),
                 ),
                 Step(name="save", executor=save_data),
             ],
@@ -468,8 +483,10 @@ class TestRouterUserSelection:
                 Step(name="fetch", executor=fetch_data),
                 Router(
                     name="route_selector",
-                    requires_user_input=True,
-                    user_input_message="Select a route",
+                    human_review=HumanReview(
+                        requires_user_input=True,
+                        user_input_message="Select a route",
+                    ),
                     choices=[
                         Step(name="route_a", executor=route_a),
                         Step(name="route_b", executor=route_b),
@@ -495,7 +512,7 @@ class TestRouterUserSelection:
                 Step(name="fetch", executor=fetch_data),
                 Router(
                     name="route_selector",
-                    requires_user_input=True,
+                    human_review=HumanReview(requires_user_input=True),
                     choices=[
                         Step(name="route_a", executor=route_a),
                         Step(name="route_b", executor=route_b),
@@ -529,7 +546,7 @@ class TestRouterUserSelection:
                 Step(name="fetch", executor=fetch_data),
                 Router(
                     name="route_selector",
-                    requires_user_input=True,
+                    human_review=HumanReview(requires_user_input=True),
                     allow_multiple_selections=True,
                     choices=[
                         Step(name="route_a", executor=route_a),
@@ -564,7 +581,7 @@ class TestRouterUserSelection:
                 Step(name="fetch", executor=fetch_data),
                 Router(
                     name="route_selector",
-                    requires_user_input=True,
+                    human_review=HumanReview(requires_user_input=True),
                     choices=[
                         Step(name="route_a", executor=route_a),
                         Step(name="route_b", executor=route_b),
@@ -597,7 +614,7 @@ class TestRouterUserSelection:
                 Step(name="fetch", executor=fetch_data),
                 Router(
                     name="route_selector",
-                    requires_user_input=True,
+                    human_review=HumanReview(requires_user_input=True),
                     choices=[
                         Step(name="route_a", executor=route_a),
                         Step(name="route_b", executor=route_b),
@@ -852,14 +869,18 @@ class TestMultipleHITLPauses:
                 Step(
                     name="process1",
                     executor=process_data,
-                    requires_confirmation=True,
-                    confirmation_message="Confirm step 1?",
+                    human_review=HumanReview(
+                        requires_confirmation=True,
+                        confirmation_message="Confirm step 1?",
+                    ),
                 ),
                 Step(
                     name="process2",
                     executor=process_data,
-                    requires_confirmation=True,
-                    confirmation_message="Confirm step 2?",
+                    human_review=HumanReview(
+                        requires_confirmation=True,
+                        confirmation_message="Confirm step 2?",
+                    ),
                 ),
                 Step(name="save", executor=save_data),
             ],
@@ -895,12 +916,12 @@ class TestMultipleHITLPauses:
                 Step(
                     name="confirm_step",
                     executor=process_data,
-                    requires_confirmation=True,
+                    human_review=HumanReview(requires_confirmation=True),
                 ),
                 Step(
                     name="input_step",
                     executor=process_data,
-                    requires_user_input=True,
+                    human_review=HumanReview(requires_user_input=True),
                 ),
                 Step(name="save", executor=save_data),
             ],
@@ -944,13 +965,15 @@ class TestStepImmutability:
     """
 
     def test_step_confirmation_not_mutated_after_continue(self, shared_db):
-        """Verify step.requires_confirmation is not mutated after continue_run."""
+        """Verify step.human_review.requires_confirmation is not mutated after continue_run."""
         # Create workflow with confirmation step
         confirm_step = Step(
             name="confirm_step",
             executor=process_data,
-            requires_confirmation=True,
-            confirmation_message="Please confirm",
+            human_review=HumanReview(
+                requires_confirmation=True,
+                confirmation_message="Please confirm",
+            ),
         )
         workflow = Workflow(
             name="test_confirmation_immutable",
@@ -963,7 +986,7 @@ class TestStepImmutability:
         )
 
         # Verify initial state
-        assert confirm_step.requires_confirmation is True
+        assert confirm_step.human_review.requires_confirmation is True
 
         # First run - pauses at confirmation
         run1 = workflow.run(input="first run")
@@ -975,18 +998,20 @@ class TestStepImmutability:
         assert result1.status == RunStatus.completed
 
         # CRITICAL: Step configuration should NOT be mutated
-        assert confirm_step.requires_confirmation is True, (
-            "Step.requires_confirmation was mutated after continue_run! This breaks workflow reusability."
+        assert confirm_step.human_review.requires_confirmation is True, (
+            "Step.human_review.requires_confirmation was mutated after continue_run! This breaks workflow reusability."
         )
 
     def test_step_user_input_not_mutated_after_continue(self, shared_db):
-        """Verify step.requires_user_input is not mutated after continue_run."""
+        """Verify step.human_review.requires_user_input is not mutated after continue_run."""
         # Create workflow with user input step
         input_step = Step(
             name="input_step",
             executor=process_data,
-            requires_user_input=True,
-            user_input_message="Enter preference",
+            human_review=HumanReview(
+                requires_user_input=True,
+                user_input_message="Enter preference",
+            ),
         )
         workflow = Workflow(
             name="test_user_input_immutable",
@@ -999,7 +1024,7 @@ class TestStepImmutability:
         )
 
         # Verify initial state
-        assert input_step.requires_user_input is True
+        assert input_step.human_review.requires_user_input is True
 
         # First run - pauses at user input
         run1 = workflow.run(input="first run")
@@ -1011,8 +1036,8 @@ class TestStepImmutability:
         assert result1.status == RunStatus.completed
 
         # CRITICAL: Step configuration should NOT be mutated
-        assert input_step.requires_user_input is True, (
-            "Step.requires_user_input was mutated after continue_run! This breaks workflow reusability."
+        assert input_step.human_review.requires_user_input is True, (
+            "Step.human_review.requires_user_input was mutated after continue_run! This breaks workflow reusability."
         )
 
     def test_workflow_reusable_after_hitl_confirmation(self, shared_db):
@@ -1024,8 +1049,10 @@ class TestStepImmutability:
         confirm_step = Step(
             name="confirm_step",
             executor=process_data,
-            requires_confirmation=True,
-            confirmation_message="Please confirm",
+            human_review=HumanReview(
+                requires_confirmation=True,
+                confirmation_message="Please confirm",
+            ),
         )
         workflow = Workflow(
             name="test_reusable_confirmation",
@@ -1066,8 +1093,10 @@ class TestStepImmutability:
         input_step = Step(
             name="input_step",
             executor=process_data,
-            requires_user_input=True,
-            user_input_message="Enter preference",
+            human_review=HumanReview(
+                requires_user_input=True,
+                user_input_message="Enter preference",
+            ),
         )
         workflow = Workflow(
             name="test_reusable_user_input",
@@ -1110,8 +1139,10 @@ class TestStepImmutability:
                 Step(name="option_a", executor=process_data),
                 Step(name="option_b", executor=save_data),
             ],
-            requires_user_input=True,
-            user_input_message="Select option",
+            human_review=HumanReview(
+                requires_user_input=True,
+                user_input_message="Select option",
+            ),
         )
         workflow = Workflow(
             name="test_router_immutable",
@@ -1124,7 +1155,7 @@ class TestStepImmutability:
         )
 
         # Verify initial state
-        assert router.requires_user_input is True
+        assert router.human_review.requires_user_input is True
 
         # First run - pauses at router
         run1 = workflow.run(input="first run")
@@ -1136,8 +1167,8 @@ class TestStepImmutability:
         assert result1.status == RunStatus.completed
 
         # CRITICAL: Router configuration should NOT be mutated
-        assert router.requires_user_input is True, (
-            "Router.requires_user_input was mutated after continue_run! This breaks workflow reusability."
+        assert router.human_review.requires_user_input is True, (
+            "Router.human_review.requires_user_input was mutated after continue_run! This breaks workflow reusability."
         )
 
     def test_workflow_reusable_after_router_selection(self, shared_db):
@@ -1148,8 +1179,10 @@ class TestStepImmutability:
                 Step(name="option_a", executor=process_data),
                 Step(name="option_b", executor=save_data),
             ],
-            requires_user_input=True,
-            user_input_message="Select option",
+            human_review=HumanReview(
+                requires_user_input=True,
+                user_input_message="Select option",
+            ),
         )
         workflow = Workflow(
             name="test_reusable_router",
@@ -1189,8 +1222,10 @@ class TestStepImmutability:
         confirm_step = Step(
             name="confirm_step",
             executor=process_data,
-            requires_confirmation=True,
-            confirmation_message="Please confirm",
+            human_review=HumanReview(
+                requires_confirmation=True,
+                confirmation_message="Please confirm",
+            ),
         )
         workflow = Workflow(
             name="test_reusable_async",
@@ -1211,7 +1246,7 @@ class TestStepImmutability:
         assert result1.status == RunStatus.completed
 
         # Step should NOT be mutated
-        assert confirm_step.requires_confirmation is True
+        assert confirm_step.human_review.requires_confirmation is True
 
         # === Second run ===
         run2 = await workflow.arun(input="second run")
@@ -1226,7 +1261,7 @@ class TestStepImmutability:
         confirm_step = Step(
             name="confirm_step",
             executor=process_data,
-            requires_confirmation=True,
+            human_review=HumanReview(requires_confirmation=True),
         )
         workflow = Workflow(
             name="test_many_runs",
@@ -1238,11 +1273,11 @@ class TestStepImmutability:
         for i in range(5):
             run = workflow.run(input=f"run {i}")
             assert run.is_paused is True, f"Run {i} should pause"
-            assert confirm_step.requires_confirmation is True, f"Step mutated on run {i}"
+            assert confirm_step.human_review.requires_confirmation is True, f"Step mutated on run {i}"
 
             run.step_requirements[0].confirm()
             result = workflow.continue_run(run)
             assert result.status == RunStatus.completed, f"Run {i} should complete"
 
             # Verify step still has correct configuration
-            assert confirm_step.requires_confirmation is True, f"Step was mutated after run {i}"
+            assert confirm_step.human_review.requires_confirmation is True, f"Step was mutated after run {i}"

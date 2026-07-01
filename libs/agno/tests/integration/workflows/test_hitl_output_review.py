@@ -39,7 +39,7 @@ from agno.run.base import RunStatus
 from agno.run.workflow import StepOutputReviewEvent
 from agno.workflow import Loop, OnReject, Router
 from agno.workflow.step import Step
-from agno.workflow.types import StepInput, StepOutput
+from agno.workflow.types import HumanReview, StepInput, StepOutput
 from agno.workflow.workflow import Workflow
 
 # =============================================================================
@@ -95,9 +95,11 @@ class TestStepOutputReviewSync:
                 Step(
                     name="draft",
                     executor=draft_proposal,
-                    requires_output_review=True,
-                    output_review_message="Review the draft?",
-                    on_reject=OnReject.retry,
+                    human_review=HumanReview(
+                        requires_output_review=True,
+                        output_review_message="Review the draft?",
+                        on_reject=OnReject.retry,
+                    ),
                 ),
                 Step(name="finalize", executor=finalize),
             ],
@@ -118,7 +120,11 @@ class TestStepOutputReviewSync:
             name="Step Review Approve",
             db=shared_db,
             steps=[
-                Step(name="draft", executor=draft_proposal, requires_output_review=True, on_reject=OnReject.retry),
+                Step(
+                    name="draft",
+                    executor=draft_proposal,
+                    human_review=HumanReview(requires_output_review=True, on_reject=OnReject.retry),
+                ),
                 Step(name="finalize", executor=finalize),
             ],
         )
@@ -136,7 +142,11 @@ class TestStepOutputReviewSync:
             name="Step Review Retry",
             db=shared_db,
             steps=[
-                Step(name="draft", executor=draft_proposal, requires_output_review=True, on_reject=OnReject.retry),
+                Step(
+                    name="draft",
+                    executor=draft_proposal,
+                    human_review=HumanReview(requires_output_review=True, on_reject=OnReject.retry),
+                ),
                 Step(name="finalize", executor=finalize),
             ],
         )
@@ -161,7 +171,11 @@ class TestStepOutputReviewSync:
             name="Step Review Feedback",
             db=shared_db,
             steps=[
-                Step(name="draft", executor=draft_proposal, requires_output_review=True, on_reject=OnReject.retry),
+                Step(
+                    name="draft",
+                    executor=draft_proposal,
+                    human_review=HumanReview(requires_output_review=True, on_reject=OnReject.retry),
+                ),
                 Step(name="finalize", executor=finalize),
             ],
         )
@@ -185,7 +199,11 @@ class TestStepOutputReviewSync:
             name="Step Review Cancel",
             db=shared_db,
             steps=[
-                Step(name="draft", executor=draft_proposal, requires_output_review=True, on_reject=OnReject.retry),
+                Step(
+                    name="draft",
+                    executor=draft_proposal,
+                    human_review=HumanReview(requires_output_review=True, on_reject=OnReject.retry),
+                ),
             ],
         )
 
@@ -202,7 +220,11 @@ class TestStepOutputReviewSync:
             name="Step Review Edit",
             db=shared_db,
             steps=[
-                Step(name="draft", executor=draft_proposal, requires_output_review=True, on_reject=OnReject.retry),
+                Step(
+                    name="draft",
+                    executor=draft_proposal,
+                    human_review=HumanReview(requires_output_review=True, on_reject=OnReject.retry),
+                ),
                 Step(name="finalize", executor=finalize),
             ],
         )
@@ -226,7 +248,9 @@ class TestStepOutputReviewSync:
             db=shared_db,
             steps=[
                 Step(
-                    name="check", executor=maybe_failing, requires_output_review=needs_review, on_reject=OnReject.retry
+                    name="check",
+                    executor=maybe_failing,
+                    human_review=HumanReview(requires_output_review=needs_review, on_reject=OnReject.retry),
                 ),
                 Step(name="finalize", executor=finalize),
             ],
@@ -248,7 +272,11 @@ class TestStepOutputReviewSync:
             name="Conditional Skip",
             db=shared_db,
             steps=[
-                Step(name="check", executor=good_result, requires_output_review=needs_review, on_reject=OnReject.retry),
+                Step(
+                    name="check",
+                    executor=good_result,
+                    human_review=HumanReview(requires_output_review=needs_review, on_reject=OnReject.retry),
+                ),
                 Step(name="finalize", executor=finalize),
             ],
         )
@@ -265,9 +293,11 @@ class TestStepOutputReviewSync:
                 Step(
                     name="draft",
                     executor=draft_proposal,
-                    requires_output_review=True,
-                    on_reject=OnReject.retry,
-                    hitl_max_retries=1,
+                    human_review=HumanReview(
+                        requires_output_review=True,
+                        on_reject=OnReject.retry,
+                        max_retries=1,
+                    ),
                 ),
             ],
         )
@@ -299,7 +329,11 @@ class TestStepOutputReviewAsync:
             name="Async Step Approve",
             db=async_shared_db,
             steps=[
-                Step(name="draft", executor=draft_proposal, requires_output_review=True, on_reject=OnReject.retry),
+                Step(
+                    name="draft",
+                    executor=draft_proposal,
+                    human_review=HumanReview(requires_output_review=True, on_reject=OnReject.retry),
+                ),
                 Step(name="finalize", executor=finalize),
             ],
         )
@@ -317,7 +351,11 @@ class TestStepOutputReviewAsync:
             name="Async Step Retry",
             db=async_shared_db,
             steps=[
-                Step(name="draft", executor=draft_proposal, requires_output_review=True, on_reject=OnReject.retry),
+                Step(
+                    name="draft",
+                    executor=draft_proposal,
+                    human_review=HumanReview(requires_output_review=True, on_reject=OnReject.retry),
+                ),
                 Step(name="finalize", executor=finalize),
             ],
         )
@@ -345,7 +383,11 @@ class TestStepOutputReviewStreaming:
             name="Stream Step Review",
             db=shared_db,
             steps=[
-                Step(name="draft", executor=draft_proposal, requires_output_review=True, on_reject=OnReject.retry),
+                Step(
+                    name="draft",
+                    executor=draft_proposal,
+                    human_review=HumanReview(requires_output_review=True, on_reject=OnReject.retry),
+                ),
             ],
         )
 
@@ -360,7 +402,11 @@ class TestStepOutputReviewStreaming:
             name="Stream Step Approve",
             db=shared_db,
             steps=[
-                Step(name="draft", executor=draft_proposal, requires_output_review=True, on_reject=OnReject.retry),
+                Step(
+                    name="draft",
+                    executor=draft_proposal,
+                    human_review=HumanReview(requires_output_review=True, on_reject=OnReject.retry),
+                ),
                 Step(name="finalize", executor=finalize),
             ],
         )
@@ -383,7 +429,11 @@ class TestStepOutputReviewStreaming:
             name="Async Stream Step Review",
             db=async_shared_db,
             steps=[
-                Step(name="draft", executor=draft_proposal, requires_output_review=True, on_reject=OnReject.retry),
+                Step(
+                    name="draft",
+                    executor=draft_proposal,
+                    human_review=HumanReview(requires_output_review=True, on_reject=OnReject.retry),
+                ),
             ],
         )
 
@@ -415,9 +465,11 @@ class TestRouterOutputReviewSync:
                         Step(name="quick", executor=quick_analysis),
                         Step(name="deep", executor=deep_analysis),
                     ],
-                    requires_output_review=True,
-                    output_review_message="Approve?",
-                    on_reject=OnReject.retry,
+                    human_review=HumanReview(
+                        requires_output_review=True,
+                        output_review_message="Approve?",
+                        on_reject=OnReject.retry,
+                    ),
                 ),
                 Step(name="report", executor=generate_report),
             ],
@@ -439,8 +491,7 @@ class TestRouterOutputReviewSync:
                     name="analysis",
                     selector=lambda si: [Step(name="quick", executor=quick_analysis)],
                     choices=[Step(name="quick", executor=quick_analysis), Step(name="deep", executor=deep_analysis)],
-                    requires_output_review=True,
-                    on_reject=OnReject.retry,
+                    human_review=HumanReview(requires_output_review=True, on_reject=OnReject.retry),
                 ),
                 Step(name="report", executor=generate_report),
             ],
@@ -462,8 +513,7 @@ class TestRouterOutputReviewSync:
                     name="analysis",
                     selector=lambda si: [Step(name="quick", executor=quick_analysis)],
                     choices=[Step(name="quick", executor=quick_analysis), Step(name="deep", executor=deep_analysis)],
-                    requires_output_review=True,
-                    on_reject=OnReject.retry,
+                    human_review=HumanReview(requires_output_review=True, on_reject=OnReject.retry),
                 ),
                 Step(name="report", executor=generate_report),
             ],
@@ -486,8 +536,7 @@ class TestRouterOutputReviewSync:
                     name="analysis",
                     selector=lambda si: [Step(name="quick", executor=quick_analysis)],
                     choices=[Step(name="quick", executor=quick_analysis), Step(name="deep", executor=deep_analysis)],
-                    requires_output_review=True,
-                    on_reject=OnReject.retry,
+                    human_review=HumanReview(requires_output_review=True, on_reject=OnReject.retry),
                 ),
                 Step(name="report", executor=generate_report),
             ],
@@ -517,8 +566,7 @@ class TestRouterOutputReviewSync:
                     name="analysis",
                     selector=lambda si: [Step(name="quick", executor=quick_analysis)],
                     choices=[Step(name="quick", executor=quick_analysis)],
-                    requires_output_review=True,
-                    on_reject=OnReject.retry,
+                    human_review=HumanReview(requires_output_review=True, on_reject=OnReject.retry),
                 ),
             ],
         )
@@ -544,9 +592,11 @@ class TestRouterOutputReviewSync:
                         Step(name="deep", executor=deep_analysis),
                         Step(name="custom", executor=custom_analysis),
                     ],
-                    requires_output_review=True,
-                    on_reject=OnReject.retry,
-                    hitl_max_retries=5,
+                    human_review=HumanReview(
+                        requires_output_review=True,
+                        on_reject=OnReject.retry,
+                        max_retries=5,
+                    ),
                 ),
                 Step(name="report", executor=generate_report),
             ],
@@ -577,8 +627,7 @@ class TestRouterOutputReviewSync:
                     name="analysis",
                     selector=lambda si: [Step(name="deep", executor=deep_analysis)],
                     choices=[Step(name="quick", executor=quick_analysis), Step(name="deep", executor=deep_analysis)],
-                    requires_output_review=True,
-                    on_reject=OnReject.retry,
+                    human_review=HumanReview(requires_output_review=True, on_reject=OnReject.retry),
                 ),
                 Step(name="report", executor=generate_report),
             ],
@@ -610,8 +659,7 @@ class TestRouterOutputReviewAsync:
                     name="analysis",
                     selector=lambda si: [Step(name="quick", executor=quick_analysis)],
                     choices=[Step(name="quick", executor=quick_analysis), Step(name="deep", executor=deep_analysis)],
-                    requires_output_review=True,
-                    on_reject=OnReject.retry,
+                    human_review=HumanReview(requires_output_review=True, on_reject=OnReject.retry),
                 ),
                 Step(name="report", executor=generate_report),
             ],
@@ -634,8 +682,7 @@ class TestRouterOutputReviewAsync:
                     name="analysis",
                     selector=lambda si: [Step(name="quick", executor=quick_analysis)],
                     choices=[Step(name="quick", executor=quick_analysis), Step(name="deep", executor=deep_analysis)],
-                    requires_output_review=True,
-                    on_reject=OnReject.retry,
+                    human_review=HumanReview(requires_output_review=True, on_reject=OnReject.retry),
                 ),
                 Step(name="report", executor=generate_report),
             ],
@@ -664,8 +711,7 @@ class TestRouterOutputReviewAsync:
                     name="analysis",
                     selector=lambda si: [Step(name="quick", executor=quick_analysis)],
                     choices=[Step(name="quick", executor=quick_analysis)],
-                    requires_output_review=True,
-                    on_reject=OnReject.retry,
+                    human_review=HumanReview(requires_output_review=True, on_reject=OnReject.retry),
                 ),
             ],
         )
@@ -696,8 +742,7 @@ class TestRouterOutputReviewStreaming:
                     name="analysis",
                     selector=lambda si: [Step(name="quick", executor=quick_analysis)],
                     choices=[Step(name="quick", executor=quick_analysis)],
-                    requires_output_review=True,
-                    on_reject=OnReject.retry,
+                    human_review=HumanReview(requires_output_review=True, on_reject=OnReject.retry),
                 ),
             ],
         )
@@ -716,8 +761,7 @@ class TestRouterOutputReviewStreaming:
                     name="analysis",
                     selector=lambda si: [Step(name="quick", executor=quick_analysis)],
                     choices=[Step(name="quick", executor=quick_analysis), Step(name="deep", executor=deep_analysis)],
-                    requires_output_review=True,
-                    on_reject=OnReject.retry,
+                    human_review=HumanReview(requires_output_review=True, on_reject=OnReject.retry),
                 ),
                 Step(name="report", executor=generate_report),
             ],
@@ -757,8 +801,7 @@ class TestRouterOutputReviewStreaming:
                     name="analysis",
                     selector=lambda si: [Step(name="quick", executor=quick_analysis)],
                     choices=[Step(name="quick", executor=quick_analysis)],
-                    requires_output_review=True,
-                    on_reject=OnReject.retry,
+                    human_review=HumanReview(requires_output_review=True, on_reject=OnReject.retry),
                 ),
             ],
         )
@@ -814,9 +857,11 @@ class TestLoopIterationReviewSync:
                     name="refine",
                     steps=[Step(name="analyze", executor=refine_analysis)],
                     max_iterations=5,
-                    requires_iteration_review=True,
-                    iteration_review_message="Continue refining?",
-                    on_reject=OnReject.retry,
+                    human_review=HumanReview(
+                        requires_iteration_review=True,
+                        iteration_review_message="Continue refining?",
+                        on_reject=OnReject.retry,
+                    ),
                 ),
                 Step(name="summarize", executor=summarize),
             ],
@@ -844,8 +889,10 @@ class TestLoopIterationReviewSync:
                     name="refine",
                     steps=[Step(name="analyze", executor=refine_analysis)],
                     max_iterations=5,
-                    requires_iteration_review=True,
-                    on_reject=OnReject.retry,
+                    human_review=HumanReview(
+                        requires_iteration_review=True,
+                        on_reject=OnReject.retry,
+                    ),
                 ),
                 Step(name="summarize", executor=summarize),
             ],
@@ -873,8 +920,10 @@ class TestLoopIterationReviewSync:
                     name="refine",
                     steps=[Step(name="analyze", executor=refine_analysis)],
                     max_iterations=5,
-                    requires_iteration_review=True,
-                    on_reject=OnReject.retry,
+                    human_review=HumanReview(
+                        requires_iteration_review=True,
+                        on_reject=OnReject.retry,
+                    ),
                 ),
                 Step(name="summarize", executor=summarize),
             ],
@@ -908,8 +957,10 @@ class TestLoopIterationReviewSync:
                     name="refine",
                     steps=[Step(name="analyze", executor=refine_analysis)],
                     max_iterations=5,
-                    requires_iteration_review=True,
-                    on_reject=OnReject.retry,
+                    human_review=HumanReview(
+                        requires_iteration_review=True,
+                        on_reject=OnReject.retry,
+                    ),
                 ),
                 Step(name="summarize", executor=summarize),
             ],
@@ -950,8 +1001,10 @@ class TestLoopIterationReviewAsync:
                     name="refine",
                     steps=[Step(name="analyze", executor=refine_analysis)],
                     max_iterations=5,
-                    requires_iteration_review=True,
-                    on_reject=OnReject.retry,
+                    human_review=HumanReview(
+                        requires_iteration_review=True,
+                        on_reject=OnReject.retry,
+                    ),
                 ),
                 Step(name="summarize", executor=summarize),
             ],
@@ -978,8 +1031,10 @@ class TestLoopIterationReviewAsync:
                     name="refine",
                     steps=[Step(name="analyze", executor=refine_analysis)],
                     max_iterations=5,
-                    requires_iteration_review=True,
-                    on_reject=OnReject.retry,
+                    human_review=HumanReview(
+                        requires_iteration_review=True,
+                        on_reject=OnReject.retry,
+                    ),
                 ),
                 Step(name="summarize", executor=summarize),
             ],

@@ -29,7 +29,7 @@ from agno.run.workflow import (
 )
 from agno.workflow import OnError
 from agno.workflow.step import Step
-from agno.workflow.types import StepInput, StepOutput
+from agno.workflow.types import HumanReview, StepInput, StepOutput
 from agno.workflow.workflow import Workflow
 
 
@@ -71,7 +71,9 @@ workflow = Workflow(
         Step(
             name="fetch_data",
             executor=unreliable_api_call,
-            on_error=OnError.pause,  # Pause on error and let user decide
+            human_review=HumanReview(
+                on_error=OnError.pause,  # Pause on error and let user decide
+            ),
         ),
         Step(
             name="process_data",

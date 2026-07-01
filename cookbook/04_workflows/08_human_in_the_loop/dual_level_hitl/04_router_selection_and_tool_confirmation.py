@@ -20,6 +20,7 @@ from agno.run.workflow import (
     WorkflowCompletedEvent,
 )
 from agno.tools import tool
+from agno.workflow import HumanReview
 from agno.workflow.router import Router
 from agno.workflow.step import Step
 from agno.workflow.workflow import Workflow
@@ -103,8 +104,10 @@ workflow = Workflow(
                 Step(name="slack", agent=slack_agent),
             ],
             # Router-level HITL: user picks which notification channel
-            requires_user_input=True,
-            user_input_message="Which notification channel should we use?",
+            human_review=HumanReview(
+                requires_user_input=True,
+                user_input_message="Which notification channel should we use?",
+            ),
         ),
     ],
     telemetry=False,

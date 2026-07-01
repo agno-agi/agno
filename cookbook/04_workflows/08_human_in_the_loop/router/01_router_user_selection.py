@@ -20,7 +20,7 @@ Flow:
 from agno.db.sqlite import SqliteDb
 from agno.workflow.router import Router
 from agno.workflow.step import Step
-from agno.workflow.types import StepInput, StepOutput
+from agno.workflow.types import HumanReview, StepInput, StepOutput
 from agno.workflow.workflow import Workflow
 
 
@@ -120,9 +120,11 @@ analysis_router = Router(
             executor=custom_analysis,
         ),
     ],
-    requires_user_input=True,
-    user_input_message="Select the type of analysis to perform:",
     allow_multiple_selections=False,  # Only one analysis type at a time
+    human_review=HumanReview(
+        requires_user_input=True,
+        user_input_message="Select the type of analysis to perform:",
+    ),
 )
 
 # Define the report step

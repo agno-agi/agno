@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, AsyncIterator, Awaitable, Callable, Dict, Iterator, List, Optional, Union
 from uuid import uuid4
 
@@ -40,8 +40,7 @@ class Steps:
     """A pipeline of steps that execute in order.
 
     HITL Mode:
-        When `requires_confirmation=True`, the workflow pauses before executing
-        the steps pipeline and asks the user to confirm:
+        Pauses before executing the steps pipeline and asks the user to confirm:
         - User confirms -> execute all steps in the pipeline
         - User rejects -> skip the entire pipeline
     """
@@ -53,44 +52,24 @@ class Steps:
     name: Optional[str] = None
     description: Optional[str] = None
 
-    # Human-in-the-loop (HITL) configuration
-    # If True, the steps pipeline will pause before execution and require user confirmation
-    requires_confirmation: bool = False
-    confirmation_message: Optional[str] = None
-    on_reject: Union[OnReject, str] = OnReject.skip
+    human_review: HumanReview = field(default_factory=HumanReview)
 
     def __init__(
         self,
         name: Optional[str] = None,
         description: Optional[str] = None,
         steps: Optional[List[Any]] = None,
-        requires_confirmation: bool = False,
-        confirmation_message: Optional[str] = None,
-        on_reject: Union[OnReject, str] = OnReject.skip,
         human_review: Optional[HumanReview] = None,
     ):
         self.name = name
         self.description = description
         self.steps = steps if steps else []
 
-        # Build HumanReview config
-        if human_review is not None:
-            self.human_review = human_review
-        else:
-            self.human_review = HumanReview(
-                requires_confirmation=requires_confirmation,
-                confirmation_message=confirmation_message,
-                on_reject=on_reject,
-            )
+        self.human_review = human_review or HumanReview()
 
         from agno.workflow.types import validate_human_review_for_steps
 
         validate_human_review_for_steps(self.human_review)
-
-        # Backward compat attributes
-        self.requires_confirmation = self.human_review.requires_confirmation
-        self.confirmation_message = self.human_review.confirmation_message
-        self.on_reject = self.human_review.on_reject
 
     def to_dict(self) -> Dict[str, Any]:
         result: Dict[str, Any] = {
@@ -117,14 +96,16 @@ class Steps:
         Returns:
             StepRequirement configured for this steps pipeline's HITL needs.
         """
+        on_reject = self.human_review.on_reject
         return StepRequirement(
             step_id=str(uuid4()),
             step_name=self.name or f"steps_{step_index + 1}",
             step_index=step_index,
             step_type="Steps",
-            requires_confirmation=self.requires_confirmation,
-            confirmation_message=self.confirmation_message or f"Execute steps pipeline '{self.name or 'steps'}'?",
-            on_reject=self.on_reject.value if isinstance(self.on_reject, OnReject) else str(self.on_reject),
+            requires_confirmation=self.human_review.requires_confirmation,
+            confirmation_message=self.human_review.confirmation_message
+            or f"Execute steps pipeline '{self.name or 'steps'}'?",
+            on_reject=on_reject.value if isinstance(on_reject, OnReject) else str(on_reject),
             requires_user_input=False,
             step_input=step_input,
         )
@@ -160,11 +141,10 @@ class Steps:
         if data.get("human_review"):
             human_review = HumanReview.from_dict(data["human_review"])
         else:
-            human_review = HumanReview(
-                requires_confirmation=data.get("requires_confirmation", False),
-                confirmation_message=data.get("confirmation_message"),
-                on_reject=data.get("on_reject", "skip"),
-            )
+            from agno.workflow.utils.hitl import drop_legacy_hitl_keys
+
+            drop_legacy_hitl_keys(data, StepType.STEPS)
+            human_review = HumanReview()
 
         return cls(
             name=data.get("name"),

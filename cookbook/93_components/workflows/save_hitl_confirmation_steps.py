@@ -12,7 +12,7 @@ from agno.agent import Agent
 from agno.db.postgres import PostgresDb
 from agno.models.openai import OpenAIChat
 from agno.registry import Registry
-from agno.workflow import OnReject
+from agno.workflow import HumanReview, OnReject
 from agno.workflow.step import Step
 from agno.workflow.workflow import Workflow, get_workflow_by_id
 
@@ -71,9 +71,11 @@ workflow = Workflow(
             name="ProcessData",
             description="Process and validate research (requires confirmation)",
             agent=processor_agent,
-            requires_confirmation=True,
-            confirmation_message="Research complete. Ready to process data. Proceed?",
-            on_reject=OnReject.skip,
+            human_review=HumanReview(
+                requires_confirmation=True,
+                confirmation_message="Research complete. Ready to process data. Proceed?",
+                on_reject=OnReject.skip,
+            ),
         ),
         Step(
             name="WriteReport",
@@ -112,11 +114,12 @@ if __name__ == "__main__":
     # Verify HITL config survived the round-trip
     if loaded_workflow.steps:
         for step in loaded_workflow.steps:
-            if hasattr(step, "requires_confirmation") and step.requires_confirmation:
+            hr = getattr(step, "human_review", None)
+            if hr and hr.requires_confirmation:
                 print(f"\n  Step '{step.name}' has HITL config:")
-                print(f"    requires_confirmation: {step.requires_confirmation}")
-                print(f"    confirmation_message: {step.confirmation_message}")
-                print(f"    on_reject: {step.on_reject}")
+                print(f"    requires_confirmation: {hr.requires_confirmation}")
+                print(f"    confirmation_message: {hr.confirmation_message}")
+                print(f"    on_reject: {hr.on_reject}")
 
     # Run the loaded workflow
     print("\nRunning loaded workflow...")

@@ -23,7 +23,7 @@ from agno.run.workflow import (
 )
 from agno.tools import tool
 from agno.workflow.step import Step
-from agno.workflow.types import OnReject, StepInput, StepOutput
+from agno.workflow.types import HumanReview, OnReject, StepInput, StepOutput
 from agno.workflow.workflow import Workflow
 from rich.console import Console
 from rich.prompt import Prompt
@@ -69,10 +69,12 @@ workflow = Workflow(
             name="analyze_data",
             agent=analyst_agent,
             # Post-execution review: user reviews agent output after it completes
-            requires_output_review=True,
-            output_review_message="Review the analysis before saving the report.",
-            on_reject=OnReject.retry,
-            hitl_max_retries=2,
+            human_review=HumanReview(
+                requires_output_review=True,
+                output_review_message="Review the analysis before saving the report.",
+                on_reject=OnReject.retry,
+                max_retries=2,
+            ),
         ),
         Step(name="save_report", executor=save_report),
     ],
