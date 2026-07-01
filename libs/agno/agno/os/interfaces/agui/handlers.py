@@ -333,13 +333,23 @@ def on_run_completed(chunk: BaseRunOutputEvent, state: StreamState) -> List[Base
         events.append(TextMessageEndEvent(type=EventType.TEXT_MESSAGE_END, message_id=state.text_message_id))
         state.close_text_message()
 
-    # Emit external execution tools for paused runs (Agent or Team)
+    # Emit paused tools so the frontend can render them. agno's tool decorator sets one HITL
+    # mode per tool, so these partitions never overlap. Confirmation/user_input are Agent-only
+    # (Team's RunPausedEvent exposes only external-execution tools); a Team paused run still
+    # emits its external-execution tools.
     from agno.run.agent import RunPausedEvent as AgentRunPausedEvent
     from agno.run.team import RunPausedEvent as TeamRunPausedEvent
 
     if isinstance(chunk, (AgentRunPausedEvent, TeamRunPausedEvent)):
-        external_tools = chunk.tools_awaiting_external_execution
-        if external_tools:
+        if isinstance(chunk, AgentRunPausedEvent):
+            paused_tools = (
+                chunk.tools_awaiting_external_execution
+                + chunk.tools_requiring_confirmation
+                + chunk.tools_requiring_user_input
+            )
+        else:
+            paused_tools = chunk.tools_awaiting_external_execution
+        if paused_tools:
             assistant_message_id = str(uuid.uuid4())
             events.append(
                 TextMessageStartEvent(
@@ -361,7 +371,7 @@ def on_run_completed(chunk: BaseRunOutputEvent, state: StreamState) -> List[Base
 
             events.append(TextMessageEndEvent(type=EventType.TEXT_MESSAGE_END, message_id=assistant_message_id))
 
-            for tool in external_tools:
+            for tool in paused_tools:
                 if tool.tool_call_id is None or tool.tool_name is None:
                     continue
 
