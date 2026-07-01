@@ -7,7 +7,7 @@ The agent can create files and read their contents using the local file system.
 """
 
 from agno.agent import Agent
-from agno.models.openai import OpenAIChat
+from agno.models.openai import OpenAIResponses
 from agno.tools.local_file_system import LocalFileSystemTools
 
 # ---------------------------------------------------------------------------
@@ -16,15 +16,19 @@ from agno.tools.local_file_system import LocalFileSystemTools
 
 # Example 1: Read and write files (default)
 agent = Agent(
-    model=OpenAIChat(id="gpt-4o"),
-    tools=[LocalFileSystemTools(target_directory="output")],
+    model=OpenAIResponses(id="gpt-5.5"),
+    tools=[LocalFileSystemTools(target_directory="tmp/local_file_system")],
     markdown=True,
 )
 
 # Example 2: Write-only mode (disable read_file)
 write_only_agent = Agent(
-    model=OpenAIChat(id="gpt-4o"),
-    tools=[LocalFileSystemTools(target_directory="output", enable_read_file=False)],
+    model=OpenAIResponses(id="gpt-5.5"),
+    tools=[
+        LocalFileSystemTools(
+            target_directory="tmp/local_file_system", enable_read_file=False
+        )
+    ],
     markdown=True,
 )
 
@@ -40,6 +44,6 @@ if __name__ == "__main__":
 
     # Write-only agent: generate code and save it to disk
     # write_only_agent.print_response(
-    #     "Write a Python function that calculates fibonacci numbers and save it to output/fib.py",
+    #     "Write a Python function that calculates fibonacci numbers and save it to tmp/local_file_system/fib.py",
     #     stream=True,
     # )

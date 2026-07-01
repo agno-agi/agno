@@ -1,5 +1,5 @@
 from pathlib import Path
-from typing import Optional
+from typing import Any, List, Optional
 from uuid import uuid4
 
 from agno.tools import Toolkit
@@ -31,7 +31,7 @@ class LocalFileSystemTools(Toolkit):
         target_path = Path(self.target_directory)
         target_path.mkdir(parents=True, exist_ok=True)
 
-        tools = []
+        tools: List[Any] = []
         if all or enable_write_file:
             tools.append(self.write_file)
         if all or enable_read_file:
@@ -88,8 +88,23 @@ class LocalFileSystemTools(Toolkit):
     def read_file(self, filename: str, directory: Optional[str] = None) -> str:
         """
         Read content from a local file.
+        Args:
+            filename (str): Name of the file to read
+            directory (Optional[str]): Directory to read file from. Uses target_directory if not provided
+        Returns:
+            str: The text content of the file
         """
-        file_path = Path(directory or self.target_directory) / filename
-        if not file_path.exists():
-            return f"File not found: {file_path}"
-        return file_path.read_text()
+        try:
+            file_path = Path(directory or self.target_directory) / filename
+
+            log_debug(f"Reading file from local system: {filename}")
+
+            if not file_path.exists():
+                return f"File not found: {file_path}"
+
+            return file_path.read_text()
+
+        except Exception as e:
+            error_msg = f"Failed to read file: {str(e)}"
+            log_error(error_msg)
+            return f"Error: {error_msg}"
