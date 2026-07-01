@@ -46,7 +46,12 @@ OS_ID = "audit-demo-os"
 
 def token(sub: str) -> dict:
     t = jwt.encode(
-        {"sub": sub, "aud": OS_ID, "scopes": [], "exp": datetime.now(UTC) + timedelta(hours=1)},
+        {
+            "sub": sub,
+            "aud": OS_ID,
+            "scopes": [],
+            "exp": datetime.now(UTC) + timedelta(hours=1),
+        },
         SECRET,
         algorithm="HS256",
     )
@@ -60,7 +65,9 @@ def main() -> None:
 
     # --- role changes (each is recorded on the change trail, with the actor) ---
     store.set_role_scopes("viewer", ["agents:*:read"], actor="alice")
-    store.set_role_scopes("viewer", ["agents:*:read", "agents:research-agent:run"], actor="alice")  # widened
+    store.set_role_scopes(
+        "viewer", ["agents:*:read", "agents:research-agent:run"], actor="alice"
+    )  # widened
     store.assign("bob", "viewer", actor="alice")
 
     # --- a couple of real requests (each is recorded on the decision trail) ---
@@ -79,20 +86,30 @@ def main() -> None:
         ),
     )
     client = TestClient(agent_os.get_app())
-    client.get("/agents/research-agent", headers=token("bob"))  # allowed (viewer can read)
-    client.post("/agents/research-agent/runs", headers=token("nobody"), data={"message": "hi"})  # denied
+    client.get(
+        "/agents/research-agent", headers=token("bob")
+    )  # allowed (viewer can read)
+    client.post(
+        "/agents/research-agent/runs", headers=token("nobody"), data={"message": "hi"}
+    )  # denied
 
     # --- read both trails back ---
     print("\n=== CHANGE TRAIL (authz_audit) — who changed what ===")
     for e in store.audit_log(limit=20):
-        print(f"  {e['actor'] or 'system':>6}  {e['action']:<16} {e['target']:<10} {e.get('before')} -> {e.get('after')}")
+        print(
+            f"  {e['actor'] or 'system':>6}  {e['action']:<16} {e['target']:<10} {e.get('before')} -> {e.get('after')}"
+        )
 
     print("\n=== DECISION TRAIL (authz_decisions) — every allow/deny ===")
     for d in audit.read_decisions(limit=20):
         m = d.get("metadata", {})
-        print(f"  {d['actor'] or '-':>6}  {d['action']:<14} {d['target']:<28} required={m.get('required')}")
+        print(
+            f"  {d['actor'] or '-':>6}  {d['action']:<14} {d['target']:<28} required={m.get('required')}"
+        )
 
-    print("\nBoth tables are INSERT-only. token references are jti/short-hash, never the raw token.")
+    print(
+        "\nBoth tables are INSERT-only. token references are jti/short-hash, never the raw token."
+    )
 
 
 if __name__ == "__main__":

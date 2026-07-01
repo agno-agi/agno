@@ -49,7 +49,9 @@ os.makedirs("tmp", exist_ok=True)
 # Define roles in agno scope terms. support is read-only; operator can delete.
 roles = ManagedRoleStore(db_url="sqlite:///tmp/managed_roles_sessions.db")
 roles.set_role_scopes("support", ["sessions:read"])
-roles.set_role_scopes("operator", ["sessions:read", "sessions:write", "sessions:delete"])
+roles.set_role_scopes(
+    "operator", ["sessions:read", "sessions:write", "sessions:delete"]
+)
 roles.set_role_scopes("admin", ["agent_os:admin"])
 roles.assign("bob", "support")
 roles.assign("val", "operator")
@@ -62,8 +64,22 @@ db = SqliteDb(db_file="tmp/agentos_sessions.db")
 # API key. Real apps don't do this; sessions are created by running an agent
 # (e.g. agent.print_response("hi", session_id="...")). We seed to stay self-contained.
 _now = int(time.time())
-db.upsert_session(AgentSession(session_id="sess-123", agent_id="research-agent", user_id="customer-a", created_at=_now))
-db.upsert_session(AgentSession(session_id="sess-456", agent_id="research-agent", user_id="customer-b", created_at=_now))
+db.upsert_session(
+    AgentSession(
+        session_id="sess-123",
+        agent_id="research-agent",
+        user_id="customer-a",
+        created_at=_now,
+    )
+)
+db.upsert_session(
+    AgentSession(
+        session_id="sess-456",
+        agent_id="research-agent",
+        user_id="customer-b",
+        created_at=_now,
+    )
+)
 
 research_agent = Agent(
     id="research-agent",
@@ -118,8 +134,14 @@ if __name__ == "__main__":
 
     def token(sub: str) -> str:
         return jwt.encode(
-            {"sub": sub, "aud": OS_ID, "scopes": [], "exp": datetime.now(UTC) + timedelta(hours=24)},
-            JWT_SECRET, algorithm="HS256",
+            {
+                "sub": sub,
+                "aud": OS_ID,
+                "scopes": [],
+                "exp": datetime.now(UTC) + timedelta(hours=24),
+            },
+            JWT_SECRET,
+            algorithm="HS256",
         )
 
     def auth(sub: str) -> dict:
@@ -140,12 +162,30 @@ if __name__ == "__main__":
     print("  bob = support (look only) | val = operator (look, edit, delete)")
     print(f"  saved sessions right now: {count('val')}\n")
 
-    show("bob (support)  tries to LOOK at sessions", client.get("/sessions?type=agent", headers=auth("bob")), "support can look")
-    show("bob (support)  tries to RENAME a session", client.patch("/sessions/sess-123", headers=auth("bob"), json={"name": "x"}), "editing isn't allowed -> bounced")
-    show("bob (support)  tries to DELETE a session", client.delete("/sessions/sess-123", headers=auth("bob")), "deleting isn't allowed -> bounced")
-    show("val (operator) tries to DELETE a session", client.delete("/sessions/sess-123", headers=auth("val")), "operators can delete -> done for real")
+    show(
+        "bob (support)  tries to LOOK at sessions",
+        client.get("/sessions?type=agent", headers=auth("bob")),
+        "support can look",
+    )
+    show(
+        "bob (support)  tries to RENAME a session",
+        client.patch("/sessions/sess-123", headers=auth("bob"), json={"name": "x"}),
+        "editing isn't allowed -> bounced",
+    )
+    show(
+        "bob (support)  tries to DELETE a session",
+        client.delete("/sessions/sess-123", headers=auth("bob")),
+        "deleting isn't allowed -> bounced",
+    )
+    show(
+        "val (operator) tries to DELETE a session",
+        client.delete("/sessions/sess-123", headers=auth("val")),
+        "operators can delete -> done for real",
+    )
 
-    print(f"\n  saved sessions now: {count('val')}  (was 2 - the operator's delete really happened)")
+    print(
+        f"\n  saved sessions now: {count('val')}  (was 2 - the operator's delete really happened)"
+    )
     print("=" * 78)
     print("the point: the support person was stopped before any data was touched.")
     print("only the operator's delete went through, and you can see the count drop.")

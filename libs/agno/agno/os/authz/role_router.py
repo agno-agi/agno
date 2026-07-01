@@ -203,6 +203,10 @@ class UpdateUserRequest(BaseModel):
     )
 
 
+class DeleteUsersRequest(BaseModel):
+    user_ids: List[str] = Field(..., description="List of user IDs to delete", min_length=1)
+
+
 def _paginated(data: list, page: int, limit: int, total: int, search_time_ms: float = 0) -> PaginatedResponse:
     """Wrap one already-paged slice in the SDK's PaginatedResponse ({data, meta})."""
     return PaginatedResponse(
@@ -495,5 +499,19 @@ def get_roles_router(
         def delete_user(user_id: str, actor: str = Depends(require_admin)) -> dict:
             deleted = user_store.remove(user_id, actor=actor)
             return {"id": user_id, "deleted": deleted}
+
+        @router.delete(
+            "/users",
+            status_code=204,
+            summary="Delete Multiple Users",
+            description=(
+                "Delete multiple users from the directory by their IDs in a single operation. "
+                "Unknown IDs are skipped. This removes directory rows only; it does not touch role "
+                "assignments and is not a revocation primitive — with JIT provisioning on, a deleted "
+                "user re-appears as active on their next valid token. Use the disabled kill-switch to revoke."
+            ),
+        )
+        def delete_users(body: DeleteUsersRequest, actor: str = Depends(require_admin)) -> None:
+            user_store.remove_many(body.user_ids, actor=actor)
 
     return router

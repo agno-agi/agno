@@ -226,6 +226,34 @@ class ManagedUserStore:
         self._emit("user.removed", id, [self._summary(existing)], None, actor)
         return True
 
+    def remove_many(self, ids: List[str], actor: Optional[str] = None) -> List[str]:
+        """Delete multiple users from the directory in one operation. Returns the
+        ids that actually existed and were removed (unknown ids are skipped, not
+        an error). Like :meth:`remove`, this does NOT touch role assignments and
+        is NOT a revocation primitive (see that method's note); for durable
+        revocation use :meth:`set_disabled`."""
+        if not ids:
+            return []
+
+        # Resolve existing rows first: we only emit/return for ids that were
+        # really present, and we need their before-images for the audit trail.
+        existing = {id: row for id in dict.fromkeys(ids) if (row := self.get(id)) is not None}
+        if not existing:
+            return []
+
+        if self._mem is not None:
+            for id in existing:
+                self._mem.pop(id, None)
+        else:
+            import sqlalchemy as sa
+
+            with self._engine.begin() as conn:  # type: ignore[union-attr]
+                conn.execute(sa.delete(self._table).where(self._table.c.id.in_(list(existing))))  # type: ignore[union-attr]
+
+        for id, row in existing.items():
+            self._emit("user.removed", id, [self._summary(row)], None, actor)
+        return list(existing)
+
     def provision_from_claims(
         self,
         subject: str,
