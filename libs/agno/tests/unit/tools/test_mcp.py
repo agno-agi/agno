@@ -1,6 +1,7 @@
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from mcp import StdioServerParameters
 from mcp.types import CallToolResult, TextContent
 
 from agno.tools.function import Function, FunctionCall, ToolResult
@@ -90,6 +91,67 @@ def test_multimcp_urls_default_to_streamable_http():
     tools = MultiMCPTools(urls=["http://localhost:8080/mcp", "http://localhost:8081/mcp"])
     assert len(tools.server_params_list) == 2
     assert all(isinstance(params, StreamableHTTPClientParams) for params in tools.server_params_list)
+
+
+def test_default_name_derived_from_url_is_distinct_and_stable():
+    """Two servers get distinct default names; the same server always gets the same name."""
+    docs = MCPTools(url="https://docs.example.com/mcp")
+    search = MCPTools(url="https://search.example.com/mcp")
+    assert docs.name != search.name
+    assert docs.name != "MCPTools"
+    assert docs.name == MCPTools(url="https://docs.example.com/mcp").name
+
+
+def test_default_name_drops_url_query_and_fragment():
+    """Credentials passed as query params must never leak into the toolkit name."""
+    tools = MCPTools(url="https://server.example.com/mcp?api_key=supersecret123#fragment")
+    assert "supersecret123" not in tools.name
+    assert "fragment" not in tools.name
+    assert tools.name == MCPTools(url="https://server.example.com/mcp").name
+
+
+def test_default_name_drops_url_userinfo():
+    """Credentials passed as URL userinfo must never leak into the toolkit name."""
+    tools = MCPTools(url="https://alice:hunter2pass@server.example.com/mcp")
+    assert "hunter2pass" not in tools.name
+    assert "alice" not in tools.name
+    assert tools.name == MCPTools(url="https://server.example.com/mcp").name
+
+
+def test_default_name_derived_from_command():
+    server_a = MCPTools(command="npx -y @acme/server-a")
+    server_b = MCPTools(command="npx -y @acme/server-b")
+    assert server_a.name != server_b.name
+    assert server_a.name != "MCPTools"
+
+
+def test_default_name_derived_from_server_params():
+    http_tools = MCPTools(
+        server_params=StreamableHTTPClientParams(url="https://a.example.com/mcp"), transport="streamable-http"
+    )
+    stdio_tools = MCPTools(
+        server_params=StdioServerParameters(command="npx", args=["-y", "@acme/server-b"]), transport="stdio"
+    )
+    assert http_tools.name != "MCPTools"
+    assert stdio_tools.name != "MCPTools"
+    assert http_tools.name != stdio_tools.name
+
+
+def test_session_only_init_falls_back_to_default_name():
+    tools = MCPTools(session=AsyncMock())
+    assert tools.name == "MCPTools"
+
+
+def test_explicit_name_overrides_derived_default():
+    tools = MCPTools(url="https://docs.example.com/mcp", name="agno_docs")
+    assert tools.name == "agno_docs"
+
+
+def test_multimcp_accepts_explicit_name():
+    default_named = MultiMCPTools(urls=["http://localhost:8080/mcp"])
+    named = MultiMCPTools(urls=["http://localhost:8080/mcp"], name="my_servers")
+    assert default_named.name == "MultiMCPTools"
+    assert named.name == "my_servers"
 
 
 @pytest.mark.asyncio
