@@ -66,6 +66,11 @@ Read the full guide [here](https://docs.agno.com/coding-agents).
 - [X](https://x.com/AgnoAgi): follow for releases and demos
 - [Newsletter](https://www.agno.com/the-agno-loop-newsletter): monthly updates on what's shipping
 
+**Skills:** Install Agno skills for major coding agents with:
+```bash
+npx add-skill agno-agi/agno
+```
+
 ## Contributing
 
 See the [contributing guide](https://github.com/agno-agi/agno/blob/main/CONTRIBUTING.md).
