@@ -99,6 +99,13 @@ class RunRequirement:
 
         return self.tool_execution.external_execution_required or False
 
+    @property
+    def external_execution_silent(self) -> bool:
+        """Return True if this is a silent external execution (no verbose messages)."""
+        return bool(
+            self.needs_external_execution and self.tool_execution and self.tool_execution.external_execution_silent
+        )
+
     def confirm(self):
         if not self.needs_confirmation:
             raise ValueError("This requirement does not require confirmation")

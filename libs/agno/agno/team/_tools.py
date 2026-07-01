@@ -160,6 +160,10 @@ def _determine_tools_for_model(
     resolved_knowledge = get_resolved_knowledge(team, run_context)
     resolved_members = get_resolved_members(team, run_context)
 
+    # Append client_tools (e.g., AG-UI frontend tools) if present
+    if run_context.client_tools:
+        resolved_tools = list(resolved_tools or []) + list(run_context.client_tools)
+
     _connect_connectable_tools(
         team,
     )

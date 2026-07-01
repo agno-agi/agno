@@ -26,6 +26,7 @@ from ag_ui.core import (
 )
 
 from agno.os.interfaces.agui.state import StreamState
+from agno.os.interfaces.agui.utils import to_json_str
 from agno.reasoning.step import ReasoningStep
 from agno.run.agent import RunContentEvent, RunEvent
 from agno.run.base import BaseRunOutputEvent
@@ -190,13 +191,15 @@ def on_tool_call_completed(chunk: BaseRunOutputEvent, state: StreamState) -> Lis
     state.end_tool_call(tool.tool_call_id)
 
     if tool.result is not None:
+        content = to_json_str(tool.result)
         events.append(
             ToolCallResultEvent(
                 type=EventType.TOOL_CALL_RESULT,
                 tool_call_id=tool.tool_call_id,
-                content=str(tool.result),
+                content=content,
                 role="tool",
-                message_id=str(uuid.uuid4()),
+                # Use tool_call_id as message_id so frontend can link result to the tool call
+                message_id=tool.tool_call_id,
             )
         )
 
@@ -330,10 +333,11 @@ def on_run_completed(chunk: BaseRunOutputEvent, state: StreamState) -> List[Base
         events.append(TextMessageEndEvent(type=EventType.TEXT_MESSAGE_END, message_id=state.text_message_id))
         state.close_text_message()
 
-    # Emit external execution tools for paused runs
-    from agno.run.agent import RunPausedEvent
+    # Emit external execution tools for paused runs (Agent or Team)
+    from agno.run.agent import RunPausedEvent as AgentRunPausedEvent
+    from agno.run.team import RunPausedEvent as TeamRunPausedEvent
 
-    if isinstance(chunk, RunPausedEvent):
+    if isinstance(chunk, (AgentRunPausedEvent, TeamRunPausedEvent)):
         external_tools = chunk.tools_awaiting_external_execution
         if external_tools:
             assistant_message_id = str(uuid.uuid4())

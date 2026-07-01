@@ -126,6 +126,10 @@ def get_tools(
     resolved_tools = get_resolved_tools(agent, run_context)
     resolved_knowledge = get_resolved_knowledge(agent, run_context)
 
+    # Append client_tools (e.g., AG-UI frontend tools) if present
+    if run_context.client_tools:
+        resolved_tools = list(resolved_tools or []) + list(run_context.client_tools)
+
     # Connect tools that require connection management
     _init.connect_connectable_tools(agent)
 
@@ -229,6 +233,10 @@ async def aget_tools(
 
     resolved_tools = get_resolved_tools(agent, run_context)
     resolved_knowledge = get_resolved_knowledge(agent, run_context)
+
+    # Append client_tools (e.g., AG-UI frontend tools) if present
+    if run_context.client_tools:
+        resolved_tools = list(resolved_tools or []) + list(run_context.client_tools)
 
     # Connect tools that require connection management
     _init.connect_connectable_tools(agent)
