@@ -702,11 +702,11 @@ def get_last_run_output_util(
         session = entity.get_session(session_id=session_id)
         if session is not None and session.runs is not None and len(session.runs) > 0:
             for run_output in reversed(session.runs):
-                if isinstance(entity, Agent):
-                    if getattr(run_output, "agent_id", None) == entity.id:
-                        return run_output  # type: ignore
-                elif isinstance(entity, Team):
+                if isinstance(entity, Team):
                     if getattr(run_output, "team_id", None) == entity.id:
+                        return run_output  # type: ignore
+                elif isinstance(entity, Agent):
+                    if getattr(run_output, "agent_id", None) == entity.id:
                         return run_output  # type: ignore
         else:
             log_warning(f"No run responses found in Session {session_id}")
@@ -717,11 +717,11 @@ def get_last_run_output_util(
         and len(entity.cached_session.runs) > 0
     ):
         for run_output in reversed(entity.cached_session.runs):
-            if isinstance(entity, Agent):
-                if getattr(run_output, "agent_id", None) == entity.id:
-                    return run_output  # type: ignore
-            elif isinstance(entity, Team):
+            if isinstance(entity, Team):
                 if getattr(run_output, "team_id", None) == entity.id:
+                    return run_output  # type: ignore
+            elif isinstance(entity, Agent):
+                if getattr(run_output, "agent_id", None) == entity.id:
                     return run_output  # type: ignore
     return None
 
@@ -747,11 +747,11 @@ async def aget_last_run_output_util(
         session = await entity.aget_session(session_id=session_id)
         if session is not None and session.runs is not None and len(session.runs) > 0:
             for run_output in reversed(session.runs):
-                if isinstance(entity, Agent):
-                    if getattr(run_output, "agent_id", None) == entity.id:
-                        return run_output  # type: ignore
-                elif isinstance(entity, Team):
+                if isinstance(entity, Team):
                     if getattr(run_output, "team_id", None) == entity.id:
+                        return run_output  # type: ignore
+                elif isinstance(entity, Agent):
+                    if getattr(run_output, "agent_id", None) == entity.id:
                         return run_output  # type: ignore
         else:
             log_warning(f"No run responses found in Session {session_id}")
@@ -762,11 +762,11 @@ async def aget_last_run_output_util(
         and len(entity.cached_session.runs) > 0
     ):
         for run_output in reversed(entity.cached_session.runs):
-            if isinstance(entity, Agent):
-                if getattr(run_output, "agent_id", None) == entity.id:
-                    return run_output  # type: ignore
-            elif isinstance(entity, Team):
+            if isinstance(entity, Team):
                 if getattr(run_output, "team_id", None) == entity.id:
+                    return run_output  # type: ignore
+            elif isinstance(entity, Agent):
+                if getattr(run_output, "agent_id", None) == entity.id:
                     return run_output  # type: ignore
     return None
 
