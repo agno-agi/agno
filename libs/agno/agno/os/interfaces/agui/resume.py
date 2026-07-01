@@ -1,7 +1,9 @@
-from typing import Union
+from typing import List, Union
+
+from ag_ui.core.types import ToolMessage as AGUIToolMessage
 
 from agno.agent import Agent
-from agno.os.interfaces.agui.input import merge_tool_results_into_requirements
+from agno.os.interfaces.agui.input import ensure_requirements_resolved, merge_tool_results_into_requirements
 from agno.run.base import RunContext
 from agno.team.team import Team
 
@@ -9,7 +11,7 @@ from agno.team.team import Team
 async def resume_paused_run(
     entity: Union[Agent, Team],
     session_id: str,
-    tool_messages: list,
+    tool_messages: List[AGUIToolMessage],
     run_context: RunContext,
     run_kwargs: dict,
 ):
@@ -41,8 +43,9 @@ async def resume_paused_run(
     if not paused_run.requirements:
         raise ValueError(f"Run {paused_run.run_id} has no requirements to resume")
 
-    # Merge tool results into stored requirements
+    # Merge tool results; refuse a partial multi-tool answer (an unanswered tool would be silently rejected at dispatch).
     requirements = merge_tool_results_into_requirements(paused_run.requirements, tool_messages)
+    ensure_requirements_resolved(requirements)
 
     # Resume the run using the original paused run's ID
     paused_run_id = paused_run.run_id or run_context.run_id
