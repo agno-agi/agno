@@ -132,7 +132,9 @@ _CANCEL_BYPASS_EVENT_TYPES = (
 
 
 def resolve_run_dependencies(agent: Agent, run_context: RunContext) -> None:
-    from inspect import iscoroutine, iscoroutinefunction, signature
+    from inspect import iscoroutine, iscoroutinefunction
+
+    from agno.utils.callables import build_injected_kwargs, invoke_callable_with_kwargs
 
     # Dependencies should already be resolved in run() method
     log_debug("Resolving dependencies")
@@ -146,17 +148,12 @@ def resolve_run_dependencies(agent: Agent, run_context: RunContext) -> None:
             continue
         elif callable(value):
             try:
-                sig = signature(value)
-
-                # Build kwargs for the function
-                kwargs: Dict[str, Any] = {}
-                if "agent" in sig.parameters:
-                    kwargs["agent"] = agent
-                if "run_context" in sig.parameters:
-                    kwargs["run_context"] = run_context
-
-                # Run the function
-                result = value(**kwargs)
+                available: Dict[str, Any] = {
+                    "agent": agent,
+                    "run_context": run_context,
+                }
+                kwargs = build_injected_kwargs(value, available)
+                result = invoke_callable_with_kwargs(value, kwargs)
 
                 # Carry the result in the run context
                 if result is not None:
@@ -169,7 +166,7 @@ def resolve_run_dependencies(agent: Agent, run_context: RunContext) -> None:
 
 
 async def aresolve_run_dependencies(agent: Agent, run_context: RunContext) -> None:
-    from inspect import iscoroutine, signature
+    from agno.utils.callables import ainvoke_callable_with_kwargs, build_injected_kwargs
 
     log_debug("Resolving context (async)")
     if not isinstance(run_context.dependencies, dict):
@@ -181,19 +178,12 @@ async def aresolve_run_dependencies(agent: Agent, run_context: RunContext) -> No
             run_context.dependencies[key] = value
             continue
         try:
-            sig = signature(value)
-
-            # Build kwargs for the function
-            kwargs: Dict[str, Any] = {}
-            if "agent" in sig.parameters:
-                kwargs["agent"] = agent
-            if "run_context" in sig.parameters:
-                kwargs["run_context"] = run_context
-
-            # Run the function
-            result = value(**kwargs)
-            if iscoroutine(result):
-                result = await result  # type: ignore
+            available: Dict[str, Any] = {
+                "agent": agent,
+                "run_context": run_context,
+            }
+            kwargs = build_injected_kwargs(value, available)
+            result = await ainvoke_callable_with_kwargs(value, kwargs)
 
             run_context.dependencies[key] = result
         except Exception as e:

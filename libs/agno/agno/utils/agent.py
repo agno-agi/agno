@@ -1028,30 +1028,19 @@ def execute_instructions(
     """Execute the instructions function."""
     import inspect
 
-    signature = inspect.signature(instructions)
-    instruction_args: Dict[str, Any] = {}
+    from agno.utils.callables import build_injected_kwargs, invoke_callable_with_kwargs
 
-    # Check for agent parameter
-    if "agent" in signature.parameters:
-        instruction_args["agent"] = agent
-
-    if "team" in signature.parameters:
-        instruction_args["team"] = team
-
-    # Check for session_state parameter
-    if "session_state" in signature.parameters:
-        instruction_args["session_state"] = session_state if session_state is not None else {}
-
-    # Check for run_context parameter
-    if "run_context" in signature.parameters:
-        instruction_args["run_context"] = run_context or None
-
-    # Run the instructions function, await if it's awaitable, otherwise run directly (in thread)
     if inspect.iscoroutinefunction(instructions):
         raise Exception("Instructions function is async, use `agent.arun()` instead")
 
-    # Run the instructions function
-    return instructions(**instruction_args)
+    available: Dict[str, Any] = {
+        "agent": agent,
+        "team": team,
+        "session_state": session_state if session_state is not None else {},
+        "run_context": run_context or None,
+    }
+    instruction_args = build_injected_kwargs(instructions, available)
+    return invoke_callable_with_kwargs(instructions, instruction_args)
 
 
 def execute_system_message(
@@ -1064,18 +1053,17 @@ def execute_system_message(
     """Execute the system message function."""
     import inspect
 
-    signature = inspect.signature(system_message)
-    system_message_args: Dict[str, Any] = {}
+    from agno.utils.callables import build_injected_kwargs, invoke_callable_with_kwargs
 
-    # Check for agent parameter
-    if "agent" in signature.parameters:
-        system_message_args["agent"] = agent
-    if "team" in signature.parameters:
-        system_message_args["team"] = team
     if inspect.iscoroutinefunction(system_message):
         raise ValueError("System message function is async, use `agent.arun()` instead")
 
-    return system_message(**system_message_args)
+    available: Dict[str, Any] = {
+        "agent": agent,
+        "team": team,
+    }
+    system_message_args = build_injected_kwargs(system_message, available)
+    return invoke_callable_with_kwargs(system_message, system_message_args)
 
 
 async def aexecute_instructions(
@@ -1086,29 +1074,16 @@ async def aexecute_instructions(
     run_context: Optional[RunContext] = None,
 ) -> Union[str, List[str]]:
     """Execute the instructions function."""
-    import inspect
+    from agno.utils.callables import ainvoke_callable_with_kwargs, build_injected_kwargs
 
-    signature = inspect.signature(instructions)
-    instruction_args: Dict[str, Any] = {}
-
-    # Check for agent parameter
-    if "agent" in signature.parameters:
-        instruction_args["agent"] = agent
-    if "team" in signature.parameters:
-        instruction_args["team"] = team
-
-    # Check for session_state parameter
-    if "session_state" in signature.parameters:
-        instruction_args["session_state"] = session_state if session_state is not None else {}
-
-    # Check for run_context parameter
-    if "run_context" in signature.parameters:
-        instruction_args["run_context"] = run_context or None
-
-    if inspect.iscoroutinefunction(instructions):
-        return await instructions(**instruction_args)
-    else:
-        return instructions(**instruction_args)
+    available: Dict[str, Any] = {
+        "agent": agent,
+        "team": team,
+        "session_state": session_state if session_state is not None else {},
+        "run_context": run_context or None,
+    }
+    instruction_args = build_injected_kwargs(instructions, available)
+    return await ainvoke_callable_with_kwargs(instructions, instruction_args)
 
 
 async def aexecute_system_message(
@@ -1118,21 +1093,14 @@ async def aexecute_system_message(
     session_state: Optional[Dict[str, Any]] = None,
     run_context: Optional[RunContext] = None,
 ) -> str:
-    import inspect
+    from agno.utils.callables import ainvoke_callable_with_kwargs, build_injected_kwargs
 
-    signature = inspect.signature(system_message)
-    system_message_args: Dict[str, Any] = {}
-
-    # Check for agent parameter
-    if "agent" in signature.parameters:
-        system_message_args["agent"] = agent
-    if "team" in signature.parameters:
-        system_message_args["team"] = team
-
-    if inspect.iscoroutinefunction(system_message):
-        return await system_message(**system_message_args)
-    else:
-        return system_message(**system_message_args)
+    available: Dict[str, Any] = {
+        "agent": agent,
+        "team": team,
+    }
+    system_message_args = build_injected_kwargs(system_message, available)
+    return await ainvoke_callable_with_kwargs(system_message, system_message_args)
 
 
 def validate_input(
