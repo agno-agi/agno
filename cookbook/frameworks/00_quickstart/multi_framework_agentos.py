@@ -65,7 +65,7 @@ agno_agent = Agent(
 # Serve both through one AgentOS
 # ---------------------------------------------------------------------------
 agent_os = AgentOS(
-    agents=[agno_agent, claude_agent],
+    agents=[agno_agent, claude_agent], # type: ignore
     tracing=True,
     db=SqliteDb(db_file="tmp/agentos.db"),
 )
