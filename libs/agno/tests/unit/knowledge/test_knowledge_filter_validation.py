@@ -177,6 +177,7 @@ def test_validate_filters_mixed_valid_invalid_list(knowledge):
 
 
 def test_validate_filters_without_contents_db_keeps_dict_filters(knowledge):
+    knowledge.contents_db = None
     filters = {"region": "us"}
 
     valid, invalid = knowledge.validate_filters(filters)
@@ -185,8 +186,29 @@ def test_validate_filters_without_contents_db_keeps_dict_filters(knowledge):
     assert invalid == []
 
 
+def test_validate_filters_without_contents_db_keeps_list_filters(knowledge):
+    knowledge.contents_db = None
+    filters = [EQ("region", "us"), GT("year", 2024)]
+
+    valid, invalid = knowledge.validate_filters(filters)
+
+    assert valid == filters
+    assert invalid == []
+
+
 async def test_avalidate_filters_without_contents_db_keeps_dict_filters(knowledge):
+    knowledge.contents_db = None
     filters = {"region": "us"}
+
+    valid, invalid = await knowledge.avalidate_filters(filters)
+
+    assert valid == filters
+    assert invalid == []
+
+
+async def test_avalidate_filters_without_contents_db_keeps_list_filters(knowledge):
+    knowledge.contents_db = None
+    filters = [EQ("region", "us"), GT("year", 2024)]
 
     valid, invalid = await knowledge.avalidate_filters(filters)
 
