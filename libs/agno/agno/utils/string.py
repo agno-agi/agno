@@ -83,15 +83,45 @@ def _extract_json_objects(text: str) -> list[str]:
     return objs
 
 
+def _extract_json_code_block(content: str) -> Optional[str]:
+    """Extract a full json fenced code block, supporting nested fenced blocks."""
+    # Only treat standalone fenced lines as markdown fences:
+    #   ```json
+    #   ```
+    # This avoids false positives for inline values like: "value": "```json ... ```"
+    fence_pattern = re.compile(r"(?m)^[ \t]*```([A-Za-z0-9_-]+)?[ \t]*$")
+    fence_stack: list[str] = []
+    json_block_start: Optional[int] = None
+
+    for fence_match in fence_pattern.finditer(content):
+        fence_lang = (fence_match.group(1) or "").lower()
+        is_opening_fence = bool(fence_lang)
+
+        if not fence_stack:
+            if is_opening_fence:
+                fence_stack.append(fence_lang)
+                if fence_lang.startswith("json"):
+                    json_block_start = fence_match.end()
+        else:
+            if is_opening_fence:
+                fence_stack.append(fence_lang)
+            else:
+                fence_stack.pop()
+                if not fence_stack and json_block_start is not None:
+                    return content[json_block_start : fence_match.start()].strip()
+
+    return None
+
+
 def _clean_json_content(content: str) -> str:
     """Clean and prepare JSON content for parsing."""
     # Handle code blocks
     if "```json" in content:
-        content = content.split("```json")[-1].strip()
-        parts = content.split("```")
-        if len(parts) > 1:
-            parts.pop(-1)
-        content = "".join(parts)
+        extracted_json_content = _extract_json_code_block(content)
+        if extracted_json_content is not None:
+            content = extracted_json_content
+        else:
+            content = content.split("```json")[-1].strip()
     elif "```" in content:
         content = content.split("```")[1].strip()
 
