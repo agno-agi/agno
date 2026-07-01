@@ -274,7 +274,7 @@ class ReliabilityEval:
 
             log_eval_run(
                 db=self.db,
-                run_id=self.eval_id,  # type: ignore
+                run_id=run_id,
                 run_data=asdict(self.result),
                 eval_type=EvalType.RELIABILITY,
                 name=self.name if self.name is not None else None,
@@ -290,7 +290,7 @@ class ReliabilityEval:
 
             create_eval_run_telemetry(
                 eval_run=EvalRunCreate(
-                    run_id=self.eval_id,
+                    run_id=run_id,
                     eval_type=EvalType.RELIABILITY,
                     data=self._get_telemetry_data(),
                 ),
@@ -357,7 +357,7 @@ class ReliabilityEval:
 
             await async_log_eval(
                 db=self.db,
-                run_id=self.eval_id,  # type: ignore
+                run_id=run_id,
                 run_data=asdict(self.result),
                 eval_type=EvalType.RELIABILITY,
                 name=self.name if self.name is not None else None,
@@ -373,7 +373,7 @@ class ReliabilityEval:
 
             await async_create_eval_run_telemetry(
                 eval_run=EvalRunCreate(
-                    run_id=self.eval_id,
+                    run_id=run_id,
                     eval_type=EvalType.RELIABILITY,
                     data=self._get_telemetry_data(),
                 ),
