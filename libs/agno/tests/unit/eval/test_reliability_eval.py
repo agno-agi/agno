@@ -276,3 +276,53 @@ def test_combined_subset_and_argument_check():
     assert "multiply" in result.passed_tool_calls
     assert "exponentiate" in result.additional_tool_calls
     assert "multiply" in result.passed_argument_checks
+
+
+# ---------------------------------------------------------------------------
+# run_id is per-execution, not the stable eval_id
+# ---------------------------------------------------------------------------
+
+
+def test_run_logs_distinct_run_id_per_execution():
+    """Running the same eval instance twice should store two distinct run_ids."""
+    from agno.db.in_memory import InMemoryDb
+
+    db = InMemoryDb()
+    evaluation = ReliabilityEval(
+        agent_response=_make_response(_make_tool_call("multiply")),
+        expected_tool_calls=["multiply"],
+        db=db,
+        telemetry=False,
+    )
+
+    evaluation.run(print_results=False)
+    evaluation.run(print_results=False)
+
+    runs = db.get_eval_runs()
+    assert len(runs) == 2
+    assert runs[0].run_id != runs[1].run_id
+    # The per-execution run_id must not reuse the stable eval definition id.
+    assert runs[0].run_id != evaluation.eval_id
+    assert runs[1].run_id != evaluation.eval_id
+
+
+async def test_arun_logs_distinct_run_id_per_execution():
+    """Async path should also store a distinct run_id per execution."""
+    from agno.db.in_memory import InMemoryDb
+
+    db = InMemoryDb()
+    evaluation = ReliabilityEval(
+        agent_response=_make_response(_make_tool_call("multiply")),
+        expected_tool_calls=["multiply"],
+        db=db,
+        telemetry=False,
+    )
+
+    await evaluation.arun(print_results=False)
+    await evaluation.arun(print_results=False)
+
+    runs = db.get_eval_runs()
+    assert len(runs) == 2
+    assert runs[0].run_id != runs[1].run_id
+    assert runs[0].run_id != evaluation.eval_id
+    assert runs[1].run_id != evaluation.eval_id

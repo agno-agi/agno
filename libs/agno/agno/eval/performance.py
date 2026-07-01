@@ -597,7 +597,7 @@ class PerformanceEval:
 
             log_eval_run(
                 db=self.db,
-                run_id=self.eval_id,  # type: ignore
+                run_id=run_id,
                 run_data=self._parse_eval_run_data(),
                 eval_type=EvalType.PERFORMANCE,
                 name=self.name if self.name is not None else None,
@@ -613,9 +613,7 @@ class PerformanceEval:
             from agno.api.evals import EvalRunCreate, create_eval_run_telemetry
 
             create_eval_run_telemetry(
-                eval_run=EvalRunCreate(
-                    run_id=self.eval_id, eval_type=EvalType.PERFORMANCE, data=self._get_telemetry_data()
-                ),
+                eval_run=EvalRunCreate(run_id=run_id, eval_type=EvalType.PERFORMANCE, data=self._get_telemetry_data()),
             )
 
         log_debug(f"*********** Evaluation End: {run_id} ***********")
@@ -743,7 +741,7 @@ class PerformanceEval:
 
             await async_log_eval(
                 db=self.db,
-                run_id=self.eval_id,  # type: ignore
+                run_id=run_id,
                 run_data=self._parse_eval_run_data(),
                 eval_type=EvalType.PERFORMANCE,
                 name=self.name if self.name is not None else None,
@@ -759,9 +757,7 @@ class PerformanceEval:
             from agno.api.evals import EvalRunCreate, async_create_eval_run_telemetry
 
             await async_create_eval_run_telemetry(
-                eval_run=EvalRunCreate(
-                    run_id=self.eval_id, eval_type=EvalType.PERFORMANCE, data=self._get_telemetry_data()
-                ),
+                eval_run=EvalRunCreate(run_id=run_id, eval_type=EvalType.PERFORMANCE, data=self._get_telemetry_data()),
             )
 
         log_debug(f"*********** Evaluation End: {run_id} ***********")
