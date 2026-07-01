@@ -87,6 +87,39 @@ ROLE_MAP = {
 }
 
 
+# Output-only fields Anthropic emits on server-tool result blocks but rejects when those
+# blocks are replayed back as *input*. Persisting them into provider_data["server_tool_blocks"]
+# and echoing them on the next turn triggers a 400, e.g.:
+#   messages.N.content.M.code_execution_tool_result.citations: Extra inputs are not permitted
+# The citation data is captured separately into ModelResponse.citations, so dropping it from the
+# history-reconstruction copy loses nothing.
+_INPUT_DISALLOWED_BLOCK_FIELDS: Dict[str, Tuple[str, ...]] = {
+    "code_execution_tool_result": ("citations",),
+    "bash_code_execution_tool_result": ("citations",),
+}
+
+
+def _strip_input_disallowed_block_fields(block: Dict[str, Any]) -> Dict[str, Any]:
+    """Drop output-only fields Anthropic's input schema rejects from a server-tool block dict.
+
+    Mutates and returns ``block``. Applied both when a block is captured into history and when
+    it is replayed, so already-persisted blocks are also sanitized on the next turn.
+    """
+    for field_name in _INPUT_DISALLOWED_BLOCK_FIELDS.get(block.get("type", ""), ()):
+        block.pop(field_name, None)
+    return block
+
+
+def dump_server_tool_block(block: Any) -> Dict[str, Any]:
+    """Serialize a server-tool block for conversation history reconstruction.
+
+    Uses ``model_dump()`` then strips output-only fields (e.g. ``citations`` on
+    ``code_execution_tool_result``) that Anthropic emits but rejects on input, which would
+    otherwise cause a 400 when the block is replayed on a subsequent turn.
+    """
+    return _strip_input_disallowed_block_fields(block.model_dump())
+
+
 def _anthropic_block_identity(block: Any) -> Optional[Tuple[str, str]]:
     """Return a stable identity key for an Anthropic content block, or None if untrackable.
 
@@ -552,7 +585,9 @@ def format_messages(
                     identity = _anthropic_block_identity(block_dict)
                     if identity is not None and identity in list_block_identities:
                         continue
-                    content.append(block_dict)
+                    # Sanitize blocks persisted before dump_server_tool_block existed, so that
+                    # already-stored history (carrying output-only fields) still replays cleanly.
+                    content.append(_strip_input_disallowed_block_fields(block_dict))
 
             if structured_from_list:
                 content.extend(structured_from_list)
