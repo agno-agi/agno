@@ -52,6 +52,8 @@ def build_learning_id(
         return f"session_context_{session_id}" if session_id else None
     if learning_type == "entity_memory":
         if entity_id and entity_type:
+            if namespace == "user":
+                return f"entity_user_{user_id}_{entity_type}_{entity_id}" if user_id else None
             return f"entity_{namespace or DEFAULT_LEARNING_NAMESPACE}_{entity_type}_{entity_id}"
         return None
     return None
