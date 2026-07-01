@@ -778,7 +778,7 @@ class Knowledge(RemoteKnowledge):
 
     def get_valid_filters(self) -> Set[str]:
         if self.contents_db is None:
-            log_info("Advanced filtering is not supported without a contents db. All filter keys considered valid.")
+            log_info("No contents db configured; returning an empty filter validation key set.")
             return set()
         contents, _ = self.get_content()
         valid_filters: Set[str] = set()
@@ -790,7 +790,7 @@ class Knowledge(RemoteKnowledge):
 
     async def aget_valid_filters(self) -> Set[str]:
         if self.contents_db is None:
-            log_info("Advanced filtering is not supported without a contents db. All filter keys considered valid.")
+            log_info("No contents db configured; returning an empty filter validation key set.")
             return set()
         contents, _ = await self.aget_content()
         valid_filters: Set[str] = set()
@@ -803,6 +803,10 @@ class Knowledge(RemoteKnowledge):
     def validate_filters(
         self, filters: Union[Dict[str, Any], List[FilterExpr]]
     ) -> Tuple[Union[Dict[str, Any], List[FilterExpr]], List[str]]:
+        if self.contents_db is None:
+            log_info("No contents db configured; skipping filter key validation and preserving filters.")
+            return filters, []
+
         valid_filters_from_db = self.get_valid_filters()
 
         valid_filters, invalid_keys = self._validate_filters(filters, valid_filters_from_db)
@@ -813,6 +817,10 @@ class Knowledge(RemoteKnowledge):
         self, filters: Union[Dict[str, Any], List[FilterExpr]]
     ) -> Tuple[Union[Dict[str, Any], List[FilterExpr]], List[str]]:
         """Return a tuple containing a dict with all valid filters and a list of invalid filter keys"""
+        if self.contents_db is None:
+            log_info("No contents db configured; skipping filter key validation and preserving filters.")
+            return filters, []
+
         valid_filters_from_db = await self.aget_valid_filters()
 
         valid_filters, invalid_keys = self._validate_filters(filters, valid_filters_from_db)

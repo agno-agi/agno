@@ -1,5 +1,5 @@
 from pathlib import Path
-from typing import Optional
+from typing import Any, List, Optional
 from uuid import uuid4
 
 from agno.tools import Toolkit
@@ -20,14 +20,17 @@ class LocalFileSystemTools(Toolkit):
         target_directory: Optional[str] = None,
         default_extension: str = "txt",
         enable_write_file: bool = True,
+        enable_read_file: bool = True,
         all: bool = False,
         **kwargs,
     ):
         """
-        Initialize the WriteToLocal toolkit.
+        Initialize the LocalFileSystem toolkit.
         Args:
             target_directory (Optional[str]): Default directory to write files to. Creates if doesn't exist.
             default_extension (str): Default file extension to use if none specified.
+            enable_write_file (bool): Enable the write_file tool.
+            enable_read_file (bool): Enable the read_file tool.
         """
 
         self.target_directory = target_directory or str(Path.cwd())
@@ -36,11 +39,13 @@ class LocalFileSystemTools(Toolkit):
         target_path = Path(self.target_directory)
         target_path.mkdir(parents=True, exist_ok=True)
 
-        tools = []
+        tools: List[Any] = []
         if all or enable_write_file:
             tools.append(self.write_file)
+        if all or enable_read_file:
+            tools.append(self.read_file)
 
-        super().__init__(name="write_to_local", tools=tools, **kwargs)
+        super().__init__(name="local_file_system", tools=tools, **kwargs)
 
     def write_file(
         self,
@@ -103,8 +108,23 @@ class LocalFileSystemTools(Toolkit):
     def read_file(self, filename: str, directory: Optional[str] = None) -> str:
         """
         Read content from a local file.
+        Args:
+            filename (str): Name of the file to read
+            directory (Optional[str]): Directory to read file from. Uses target_directory if not provided
+        Returns:
+            str: The text content of the file
         """
-        file_path = Path(directory or self.target_directory) / filename
-        if not file_path.exists():
-            return f"File not found: {file_path}"
-        return file_path.read_text()
+        try:
+            file_path = Path(directory or self.target_directory) / filename
+
+            log_debug(f"Reading file from local system: {filename}")
+
+            if not file_path.exists():
+                return f"File not found: {file_path}"
+
+            return file_path.read_text()
+
+        except Exception as e:
+            error_msg = f"Failed to read file: {str(e)}"
+            log_error(error_msg)
+            return f"Error: {error_msg}"

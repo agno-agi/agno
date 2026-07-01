@@ -67,6 +67,7 @@ from agno.os.utils import (
     collect_mcp_tools_from_team,
     collect_mcp_tools_from_workflow,
     find_conflicting_routes,
+    flatten_routes,
     load_yaml_config,
     resolve_origins,
     setup_tracing_for_os,
@@ -225,6 +226,7 @@ class AgentOS:
         description: Optional[str] = None,
         version: Optional[str] = None,
         db: Optional[Union[BaseDb, AsyncBaseDb]] = None,
+        checkpoint: Optional[Literal["runs", "tool-batch", "tools"]] = None,
         agents: Optional[List[Union[Agent, RemoteAgent, AgentProtocol, AgentFactory]]] = None,
         teams: Optional[List[Union[Team, RemoteTeam, TeamFactory]]] = None,
         workflows: Optional[List[Union[Workflow, RemoteWorkflow, WorkflowFactory]]] = None,
@@ -259,6 +261,10 @@ class AgentOS:
             description: Description of the AgentOS instance
             version: Version of the AgentOS instance
             db: Default database for the AgentOS instance. Agents, teams and workflows with no db will use this one.
+            checkpoint: Default checkpoint level for agents in this AgentOS. Agents without their own
+                checkpoint setting inherit this one. One of "runs", "tool-batch", "tools" (see
+                specs/agno/features/checkpointing/). None means no OS-level default; each agent falls
+                back to "runs" at first-run time.
             agents: List of agents to include in the OS
             teams: List of teams to include in the OS
             workflows: List of workflows to include in the OS
@@ -323,6 +329,7 @@ class AgentOS:
         self.version = version
         self.description = description
         self.db = db
+        self.checkpoint = checkpoint
 
         self.telemetry = telemetry
         self.tracing = tracing
@@ -482,8 +489,10 @@ class AgentOS:
             route
             for route in app.router.routes
             if hasattr(route, "path")
-            and route.path in ["/docs", "/redoc", "/openapi.json", "/docs/oauth2-redirect"]
-            or route.path.startswith("/mcp")  # type: ignore
+            and (
+                route.path in ["/docs", "/redoc", "/openapi.json", "/docs/oauth2-redirect"]
+                or route.path.startswith("/mcp")
+            )
         ]
 
         # Add the built-in routes
@@ -595,6 +604,9 @@ class AgentOS:
             # Set the default db to agents without their own
             if self.db is not None and agent.db is None:
                 agent.db = self.db
+            # Set the default checkpoint level on agents without their own
+            if self.checkpoint is not None and agent.checkpoint is None:
+                agent.checkpoint = self.checkpoint
             # Track all MCP tools to later handle their connection
             if agent.tools and isinstance(agent.tools, list):
                 for tool in agent.tools:
@@ -1165,7 +1177,7 @@ class AgentOS:
         """
         app = self.get_app()
 
-        return app.routes
+        return flatten_routes(app.routes)
 
     def _add_router(self, fastapi_app: FastAPI, router: APIRouter) -> None:
         """Add a router to the FastAPI app, avoiding route conflicts.
@@ -1464,7 +1476,7 @@ class AgentOS:
 
             # Get the name (with fallback)
             knowledge_name = getattr(knowledge, "name", None) or f"knowledge_{db_id}"
-            table_name = getattr(contents_db, "knowledge_table_name", "unknown")
+            table_name = getattr(contents_db, "knowledge_table_name", None) or "unknown"
 
             # Create unique key based on name + db + table
             key = (knowledge_name, db_id, table_name)
@@ -1495,7 +1507,7 @@ class AgentOS:
         for db_id, dbs in self.dbs.items():
             if db_id not in dbs_with_specific_config:
                 # Collect unique table names from all databases with the same id
-                unique_tables = list(set(db.session_table_name for db in dbs))
+                unique_tables = list({db.session_table_name for db in dbs if db.session_table_name is not None})
                 session_config.dbs.append(
                     DatabaseConfig(
                         db_id=db_id,
@@ -1517,7 +1529,7 @@ class AgentOS:
         for db_id, dbs in self.dbs.items():
             if db_id not in dbs_with_specific_config:
                 # Collect unique table names from all databases with the same id
-                unique_tables = list(set(db.memory_table_name for db in dbs))
+                unique_tables = list({db.memory_table_name for db in dbs if db.memory_table_name is not None})
                 memory_config.dbs.append(
                     DatabaseConfig(
                         db_id=db_id,
@@ -1539,7 +1551,7 @@ class AgentOS:
         for db_id, dbs in self.dbs.items():
             if db_id not in dbs_with_specific_config:
                 # Collect unique table names from all databases with the same id
-                unique_tables = list(set(db.learnings_table_name for db in dbs))
+                unique_tables = list({db.learnings_table_name for db in dbs if db.learnings_table_name is not None})
                 learning_config.dbs.append(
                     DatabaseConfig(
                         db_id=db_id,
@@ -1573,7 +1585,7 @@ class AgentOS:
             if not db_id:
                 continue
 
-            table_name = getattr(contents_db, "knowledge_table_name", "unknown")
+            table_name = getattr(contents_db, "knowledge_table_name", None) or "unknown"
             knowledge_name = getattr(knowledge, "name", None) or f"knowledge_{db_id}"
             knowledge_id = _generate_knowledge_id(knowledge_name, db_id, table_name)
 
@@ -1622,7 +1634,7 @@ class AgentOS:
         for db_id, dbs in self.dbs.items():
             if db_id not in dbs_with_specific_config:
                 # Collect unique table names from all databases with the same id
-                unique_tables = list(set(db.metrics_table_name for db in dbs))
+                unique_tables = list({db.metrics_table_name for db in dbs if db.metrics_table_name is not None})
                 metrics_config.dbs.append(
                     DatabaseConfig(
                         db_id=db_id,
@@ -1644,7 +1656,7 @@ class AgentOS:
         for db_id, dbs in self.dbs.items():
             if db_id not in dbs_with_specific_config:
                 # Collect unique table names from all databases with the same id
-                unique_tables = list(set(db.eval_table_name for db in dbs))
+                unique_tables = list({db.eval_table_name for db in dbs if db.eval_table_name is not None})
                 evals_config.dbs.append(
                     DatabaseConfig(
                         db_id=db_id,
