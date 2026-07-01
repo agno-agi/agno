@@ -385,7 +385,7 @@ class AsyncMongoDb(AsyncBaseDb):
         reset_cache = self._should_reset_collection_cache()
 
         if table_type == "sessions":
-            if reset_cache or not hasattr(self, "session_collection"):
+            if reset_cache or getattr(self, "session_collection", None) is None:
                 if self.session_table_name is None:
                     raise ValueError("Session collection was not provided on initialization")
                 self.session_collection = await self._get_or_create_collection(
@@ -396,7 +396,7 @@ class AsyncMongoDb(AsyncBaseDb):
             return self.session_collection
 
         if table_type == "memories":
-            if reset_cache or not hasattr(self, "memory_collection"):
+            if reset_cache or getattr(self, "memory_collection", None) is None:
                 if self.memory_table_name is None:
                     raise ValueError("Memory collection was not provided on initialization")
                 self.memory_collection = await self._get_or_create_collection(
@@ -407,7 +407,7 @@ class AsyncMongoDb(AsyncBaseDb):
             return self.memory_collection
 
         if table_type == "metrics":
-            if reset_cache or not hasattr(self, "metrics_collection"):
+            if reset_cache or getattr(self, "metrics_collection", None) is None:
                 if self.metrics_table_name is None:
                     raise ValueError("Metrics collection was not provided on initialization")
                 self.metrics_collection = await self._get_or_create_collection(
@@ -418,7 +418,7 @@ class AsyncMongoDb(AsyncBaseDb):
             return self.metrics_collection
 
         if table_type == "evals":
-            if reset_cache or not hasattr(self, "eval_collection"):
+            if reset_cache or getattr(self, "eval_collection", None) is None:
                 if self.eval_table_name is None:
                     raise ValueError("Eval collection was not provided on initialization")
                 self.eval_collection = await self._get_or_create_collection(
@@ -429,7 +429,7 @@ class AsyncMongoDb(AsyncBaseDb):
             return self.eval_collection
 
         if table_type == "knowledge":
-            if reset_cache or not hasattr(self, "knowledge_collection"):
+            if reset_cache or getattr(self, "knowledge_collection", None) is None:
                 if self.knowledge_table_name is None:
                     raise ValueError("Knowledge collection was not provided on initialization")
                 self.knowledge_collection = await self._get_or_create_collection(
@@ -440,7 +440,7 @@ class AsyncMongoDb(AsyncBaseDb):
             return self.knowledge_collection
 
         if table_type == "culture":
-            if reset_cache or not hasattr(self, "culture_collection"):
+            if reset_cache or getattr(self, "culture_collection", None) is None:
                 if self.culture_table_name is None:
                     raise ValueError("Culture collection was not provided on initialization")
                 self.culture_collection = await self._get_or_create_collection(
@@ -451,7 +451,7 @@ class AsyncMongoDb(AsyncBaseDb):
             return self.culture_collection
 
         if table_type == "traces":
-            if reset_cache or not hasattr(self, "traces_collection"):
+            if reset_cache or getattr(self, "traces_collection", None) is None:
                 if self.trace_table_name is None:
                     raise ValueError("Traces collection was not provided on initialization")
                 self.traces_collection = await self._get_or_create_collection(
@@ -462,7 +462,7 @@ class AsyncMongoDb(AsyncBaseDb):
             return self.traces_collection
 
         if table_type == "spans":
-            if reset_cache or not hasattr(self, "spans_collection"):
+            if reset_cache or getattr(self, "spans_collection", None) is None:
                 if self.span_table_name is None:
                     raise ValueError("Spans collection was not provided on initialization")
                 self.spans_collection = await self._get_or_create_collection(
@@ -473,7 +473,7 @@ class AsyncMongoDb(AsyncBaseDb):
             return self.spans_collection
 
         if table_type == "learnings":
-            if reset_cache or not hasattr(self, "learnings_collection"):
+            if reset_cache or getattr(self, "learnings_collection", None) is None:
                 if self.learnings_table_name is None:
                     raise ValueError("Learnings collection was not provided on initialization")
                 self.learnings_collection = await self._get_or_create_collection(
@@ -484,7 +484,7 @@ class AsyncMongoDb(AsyncBaseDb):
             return self.learnings_collection
 
         if table_type == "schedules":
-            if reset_cache or not hasattr(self, "schedules_collection"):
+            if reset_cache or getattr(self, "schedules_collection", None) is None:
                 if self.schedules_table_name is None:
                     raise ValueError("Schedules collection was not provided on initialization")
                 self.schedules_collection = await self._get_or_create_collection(
@@ -495,7 +495,7 @@ class AsyncMongoDb(AsyncBaseDb):
             return self.schedules_collection
 
         if table_type == "schedule_runs":
-            if reset_cache or not hasattr(self, "schedule_runs_collection"):
+            if reset_cache or getattr(self, "schedule_runs_collection", None) is None:
                 if self.schedule_runs_table_name is None:
                     raise ValueError("Schedule runs collection was not provided on initialization")
                 self.schedule_runs_collection = await self._get_or_create_collection(
@@ -3221,6 +3221,39 @@ class AsyncMongoDb(AsyncBaseDb):
             log_debug(f"Error deleting learning: {e}")
             return False
 
+    async def update_learning(
+        self, id: str, content: Dict[str, Any], metadata: Optional[Dict[str, Any]] = None
+    ) -> bool:
+        try:
+            collection = await self._get_collection(table_type="learnings", create_collection_if_not_found=False)
+            if collection is None:
+                return False
+            # No upsert: only an existing row is updated, never inserted.
+            result = await collection.update_one(
+                {"learning_id": id},
+                {"$set": {"content": content, "metadata": metadata, "updated_at": int(time.time())}},
+            )
+            return result.matched_count > 0
+        except Exception as e:
+            log_error(f"Error updating learning: {e}")
+            raise e
+
+    async def delete_user_learnings(self, user_id: str, learning_type: Optional[str] = None) -> int:
+        try:
+            collection = await self._get_collection(table_type="learnings", create_collection_if_not_found=False)
+            if collection is None:
+                return 0
+
+            query: Dict[str, Any] = {"user_id": user_id}
+            if learning_type is not None:
+                query["learning_type"] = learning_type
+            result = await collection.delete_many(query)
+            return int(result.deleted_count or 0)
+
+        except Exception as e:
+            log_error(f"Error deleting user learnings: {e}")
+            raise e
+
     async def get_learnings(
         self,
         learning_type: Optional[str] = None,
@@ -3290,3 +3323,147 @@ class AsyncMongoDb(AsyncBaseDb):
         except Exception as e:
             log_debug(f"Error getting learnings: {e}")
             return []
+
+    async def get_learning_by_id(self, id: str) -> Optional[Dict[str, Any]]:
+        try:
+            collection = await self._get_collection(table_type="learnings", create_collection_if_not_found=False)
+            if collection is None:
+                return None
+            result = await collection.find_one({"learning_id": id})
+            if result is None:
+                return None
+            result.pop("_id", None)
+            return result
+        except Exception as e:
+            log_error(f"Error getting learning by id: {e}")
+            raise e
+
+    async def list_learnings(
+        self,
+        learning_type: Optional[str] = None,
+        user_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+        namespace: Optional[str] = None,
+        entity_id: Optional[str] = None,
+        entity_type: Optional[str] = None,
+        include_global: bool = False,
+        limit: int = 100,
+        page: int = 1,
+        sort_by: Optional[str] = None,
+        sort_order: Optional[str] = None,
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        try:
+            collection = await self._get_collection(table_type="learnings", create_collection_if_not_found=False)
+            if collection is None:
+                return [], 0
+
+            query: Dict[str, Any] = {}
+            if learning_type is not None:
+                query["learning_type"] = learning_type
+            if user_id is not None:
+                if include_global:
+                    query["$or"] = [{"user_id": user_id}, {"user_id": None}]
+                else:
+                    query["user_id"] = user_id
+            if agent_id is not None:
+                query["agent_id"] = agent_id
+            if team_id is not None:
+                query["team_id"] = team_id
+            if session_id is not None:
+                query["session_id"] = session_id
+            if namespace is not None:
+                query["namespace"] = namespace
+            if entity_id is not None:
+                query["entity_id"] = entity_id
+            if entity_type is not None:
+                query["entity_type"] = entity_type
+
+            total_count = await collection.count_documents(query)
+
+            sort_direction = 1 if sort_order == "asc" else -1
+            cursor = (
+                collection.find(query)
+                .sort(sort_by or "updated_at", sort_direction)
+                .skip((page - 1) * limit)
+                .limit(limit)
+            )
+            results = await cursor.to_list(length=limit)
+
+            learnings = []
+            for row in results:
+                row.pop("_id", None)
+                learnings.append(row)
+
+            return learnings, int(total_count)
+
+        except Exception as e:
+            log_error(f"Error listing learnings: {e}")
+            raise e
+
+    async def get_learnings_user_stats(
+        self,
+        learning_type: Optional[str] = None,
+        limit: Optional[int] = None,
+        page: Optional[int] = None,
+        user_id: Optional[str] = None,
+        sort_by: Optional[str] = None,
+        sort_order: Optional[str] = None,
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        try:
+            collection = await self._get_collection(table_type="learnings", create_collection_if_not_found=False)
+            if collection is None:
+                return [], 0
+
+            # Exclude ownerless records: both explicit null and a missing user_id field
+            # (otherwise they group under _id: null and break LearningUserStats validation).
+            match_stage: Dict[str, Any] = {"user_id": {"$ne": None, "$exists": True}}
+            if learning_type is not None:
+                match_stage["learning_type"] = learning_type
+            if user_id is not None:
+                match_stage["user_id"] = user_id
+
+            # The grouped user_id is the "_id" field after $group.
+            sort_field = (
+                "_id"
+                if (sort_by or "last_learning_updated_at") == "user_id"
+                else (sort_by or "last_learning_updated_at")
+            )
+            sort_direction = 1 if sort_order == "asc" else -1
+
+            pipeline: List[Dict[str, Any]] = [
+                {"$match": match_stage},
+                {
+                    "$group": {
+                        "_id": "$user_id",
+                        "last_learning_updated_at": {"$max": "$updated_at"},
+                    }
+                },
+                {"$sort": {sort_field: sort_direction}},
+            ]
+
+            count_pipeline = pipeline + [{"$count": "total"}]
+            count_result = await self._aggregate_to_list(collection, count_pipeline, length=1)
+            total_count = count_result[0]["total"] if count_result else 0
+
+            if limit is not None:
+                if page is not None:
+                    pipeline.append({"$skip": (page - 1) * limit})
+                pipeline.append({"$limit": limit})
+
+            results = await self._aggregate_to_list(collection, pipeline, length=None)
+
+            formatted_results = [
+                {
+                    "user_id": result["_id"],
+                    "last_learning_updated_at": result["last_learning_updated_at"],
+                }
+                for result in results
+            ]
+
+            return formatted_results, int(total_count)
+
+        except Exception as e:
+            log_error(f"Error getting learning user stats: {e}")
+            raise e

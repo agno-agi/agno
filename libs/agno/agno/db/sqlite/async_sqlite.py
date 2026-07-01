@@ -67,6 +67,7 @@ class AsyncSqliteDb(AsyncBaseDb):
         schedules_table: Optional[str] = None,
         schedule_runs_table: Optional[str] = None,
         approvals_table: Optional[str] = None,
+        auth_tokens_table: Optional[str] = None,
         id: Optional[str] = None,
     ):
         """
@@ -118,6 +119,7 @@ class AsyncSqliteDb(AsyncBaseDb):
             schedules_table=schedules_table,
             schedule_runs_table=schedule_runs_table,
             approvals_table=approvals_table,
+            auth_tokens_table=auth_tokens_table,
         )
 
         _engine: Optional[AsyncEngine] = db_engine
@@ -401,6 +403,14 @@ class AsyncSqliteDb(AsyncBaseDb):
                 create_table_if_not_found=create_table_if_not_found,
             )
             return self.approvals_table
+
+        elif table_type == "auth_tokens":
+            self.auth_tokens_table = await self._get_or_create_table(
+                table_name=self.auth_tokens_table_name,
+                table_type="auth_tokens",
+                create_table_if_not_found=create_table_if_not_found,
+            )
+            return self.auth_tokens_table
 
         else:
             raise ValueError(f"Unknown table type: '{table_type}'")
@@ -3120,7 +3130,6 @@ class AsyncSqliteDb(AsyncBaseDb):
         user_id: Optional[str] = None,
         agent_id: Optional[str] = None,
         team_id: Optional[str] = None,
-        workflow_id: Optional[str] = None,
         session_id: Optional[str] = None,
         namespace: Optional[str] = None,
         entity_id: Optional[str] = None,
@@ -3136,7 +3145,6 @@ class AsyncSqliteDb(AsyncBaseDb):
             user_id: Associated user ID.
             agent_id: Associated agent ID.
             team_id: Associated team ID.
-            workflow_id: Associated workflow ID.
             session_id: Associated session ID.
             namespace: Namespace for scoping ('user', 'global', or custom).
             entity_id: Associated entity ID (for entity-specific learnings).
@@ -3158,7 +3166,6 @@ class AsyncSqliteDb(AsyncBaseDb):
                     user_id=user_id,
                     agent_id=agent_id,
                     team_id=team_id,
-                    workflow_id=workflow_id,
                     session_id=session_id,
                     entity_id=entity_id,
                     entity_type=entity_type,
@@ -3204,6 +3211,44 @@ class AsyncSqliteDb(AsyncBaseDb):
         except Exception as e:
             log_debug(f"Error deleting learning: {e}")
             return False
+
+    async def update_learning(
+        self, id: str, content: Dict[str, Any], metadata: Optional[Dict[str, Any]] = None
+    ) -> bool:
+        try:
+            table = await self._get_table(table_type="learnings")
+            if table is None:
+                return False
+
+            async with self.async_session_factory() as sess, sess.begin():
+                stmt = (
+                    table.update()
+                    .where(table.c.learning_id == id)
+                    .values(content=content, metadata=metadata, updated_at=int(time.time()))
+                )
+                result = await sess.execute(stmt)
+                return getattr(result, "rowcount", 0) > 0
+
+        except Exception as e:
+            log_error(f"Error updating learning: {e}")
+            raise e
+
+    async def delete_user_learnings(self, user_id: str, learning_type: Optional[str] = None) -> int:
+        try:
+            table = await self._get_table(table_type="learnings")
+            if table is None:
+                return 0
+
+            async with self.async_session_factory() as sess, sess.begin():
+                stmt = table.delete().where(table.c.user_id == user_id)
+                if learning_type is not None:
+                    stmt = stmt.where(table.c.learning_type == learning_type)
+                result = await sess.execute(stmt)
+                return getattr(result, "rowcount", 0) or 0
+
+        except Exception as e:
+            log_error(f"Error deleting user learnings: {e}")
+            raise e
 
     async def get_learnings(
         self,
@@ -3274,6 +3319,134 @@ class AsyncSqliteDb(AsyncBaseDb):
         except Exception as e:
             log_debug(f"Error getting learnings: {e}")
             return []
+
+    async def get_learning_by_id(self, id: str) -> Optional[Dict[str, Any]]:
+        try:
+            table = await self._get_table(table_type="learnings")
+            if table is None:
+                return None
+            async with self.async_session_factory() as sess:
+                result = await sess.execute(select(table).where(table.c.learning_id == id))
+                row = result.fetchone()
+                return dict(row._mapping) if row else None
+        except Exception as e:
+            log_error(f"Error getting learning by id: {e}")
+            raise e
+
+    async def list_learnings(
+        self,
+        learning_type: Optional[str] = None,
+        user_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+        namespace: Optional[str] = None,
+        entity_id: Optional[str] = None,
+        entity_type: Optional[str] = None,
+        include_global: bool = False,
+        limit: int = 100,
+        page: int = 1,
+        sort_by: Optional[str] = None,
+        sort_order: Optional[str] = None,
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        try:
+            table = await self._get_table(table_type="learnings")
+            if table is None:
+                return [], 0
+
+            async with self.async_session_factory() as sess:
+                stmt = select(table)
+                if learning_type is not None:
+                    stmt = stmt.where(table.c.learning_type == learning_type)
+                if user_id is not None:
+                    if include_global:
+                        stmt = stmt.where((table.c.user_id == user_id) | (table.c.user_id.is_(None)))
+                    else:
+                        stmt = stmt.where(table.c.user_id == user_id)
+                if agent_id is not None:
+                    stmt = stmt.where(table.c.agent_id == agent_id)
+                if team_id is not None:
+                    stmt = stmt.where(table.c.team_id == team_id)
+                if session_id is not None:
+                    stmt = stmt.where(table.c.session_id == session_id)
+                if namespace is not None:
+                    stmt = stmt.where(table.c.namespace == namespace)
+                if entity_id is not None:
+                    stmt = stmt.where(table.c.entity_id == entity_id)
+                if entity_type is not None:
+                    stmt = stmt.where(table.c.entity_type == entity_type)
+
+                count_stmt = select(func.count()).select_from(stmt.subquery())
+                count_result = await sess.execute(count_stmt)
+                total_count = count_result.scalar() or 0
+
+                stmt = apply_sorting(stmt, table, sort_by or "updated_at", sort_order or "desc")
+                stmt = stmt.limit(limit).offset((page - 1) * limit)
+                result = await sess.execute(stmt)
+                results = result.fetchall()
+                return [dict(row._mapping) for row in results], int(total_count)
+
+        except Exception as e:
+            log_error(f"Error listing learnings: {e}")
+            raise e
+
+    async def get_learnings_user_stats(
+        self,
+        learning_type: Optional[str] = None,
+        limit: Optional[int] = None,
+        page: Optional[int] = None,
+        user_id: Optional[str] = None,
+        sort_by: Optional[str] = None,
+        sort_order: Optional[str] = None,
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        try:
+            table = await self._get_table(table_type="learnings")
+            if table is None:
+                return [], 0
+
+            async with self.async_session_factory() as sess:
+                last_updated_col = func.max(table.c.updated_at)
+                stmt = select(
+                    table.c.user_id,
+                    last_updated_col.label("last_learning_updated_at"),
+                )
+                if learning_type is not None:
+                    stmt = stmt.where(table.c.learning_type == learning_type)
+                if user_id is not None:
+                    stmt = stmt.where(table.c.user_id == user_id)
+                else:
+                    stmt = stmt.where(table.c.user_id.is_not(None))
+                stmt = stmt.group_by(table.c.user_id)
+
+                sort_columns = {
+                    "user_id": table.c.user_id,
+                    "last_learning_updated_at": last_updated_col,
+                }
+                sort_col = sort_columns.get(sort_by or "last_learning_updated_at", last_updated_col)
+                stmt = stmt.order_by(sort_col.asc() if sort_order == "asc" else sort_col.desc())
+
+                count_stmt = select(func.count()).select_from(stmt.subquery())
+                count_result = await sess.execute(count_stmt)
+                total_count = count_result.scalar() or 0
+
+                if limit is not None:
+                    stmt = stmt.limit(limit)
+                    if page is not None:
+                        stmt = stmt.offset((page - 1) * limit)
+
+                result = await sess.execute(stmt)
+                results = result.fetchall()
+                return [
+                    {
+                        "user_id": row.user_id,
+                        "last_learning_updated_at": row.last_learning_updated_at,
+                    }
+                    for row in results
+                ], int(total_count)
+
+        except Exception as e:
+            log_error(f"Error getting learning user stats: {e}")
+            raise e
 
     # --- Components (Not yet supported for async) ---
     def get_component(
@@ -3796,3 +3969,76 @@ class AsyncSqliteDb(AsyncBaseDb):
         except Exception as e:
             log_debug(f"Error updating approval run_status: {e}")
             return 0
+
+    # --- Auth Tokens ---
+
+    async def get_auth_token(self, provider: str, user_id: Optional[str], service: str) -> Optional[Dict[str, Any]]:
+        try:
+            table = await self._get_table(table_type="auth_tokens")
+            if table is None:
+                return None
+            # Use empty string for NULL user_id to satisfy unique constraint on (provider, user_id, service)
+            effective_user_id = user_id if user_id is not None else ""
+            async with self.async_session_factory() as sess:
+                result = await sess.execute(
+                    select(table).where(
+                        table.c.provider == provider,
+                        table.c.user_id == effective_user_id,
+                        table.c.service == service,
+                    )
+                )
+                row = result.fetchone()
+                if not row:
+                    return None
+                return dict(row._mapping)
+        except Exception as e:
+            log_debug(f"Error getting auth token: {e}")
+            return None
+
+    async def upsert_auth_token(self, token: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        try:
+            table = await self._get_table(table_type="auth_tokens", create_table_if_not_found=True)
+            if table is None:
+                raise RuntimeError("Failed to get or create auth_tokens table")
+            data = {**token}
+            data["id"] = str(uuid4())
+            data["user_id"] = data.get("user_id") or ""
+            now = int(time.time())
+            data.setdefault("created_at", now)
+            data["updated_at"] = now
+            async with self.async_session_factory() as sess:
+                async with sess.begin():
+                    stmt = sqlite.insert(table).values(**data)
+                    stmt = stmt.on_conflict_do_update(
+                        index_elements=["provider", "user_id", "service"],
+                        set_={
+                            "token_data": stmt.excluded.token_data,
+                            "granted_scopes": stmt.excluded.granted_scopes,
+                            "updated_at": stmt.excluded.updated_at,
+                        },
+                    )
+                    await sess.execute(stmt)
+            return data
+        except Exception as e:
+            log_debug(f"Error upserting auth token: {e}")
+            return None
+
+    async def delete_auth_token(self, provider: str, user_id: Optional[str], service: str) -> bool:
+        try:
+            table = await self._get_table(table_type="auth_tokens")
+            if table is None:
+                return False
+            effective_user_id = user_id if user_id is not None else ""
+            async with self.async_session_factory() as sess:
+                async with sess.begin():
+                    result = await sess.execute(
+                        table.delete().where(
+                            table.c.provider == provider,
+                            table.c.user_id == effective_user_id,
+                            table.c.service == service,
+                        )
+                    )
+                    return result.rowcount > 0  # type: ignore[attr-defined]
+        except Exception as e:
+            log_debug(f"Error deleting auth token: {e}")
+            return False

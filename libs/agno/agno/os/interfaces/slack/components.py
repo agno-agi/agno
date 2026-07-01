@@ -15,6 +15,7 @@ class Card:
     title: Optional[PlainTextObject | MarkdownTextObject] = None
     subtitle: Optional[PlainTextObject | MarkdownTextObject] = None
     body: Optional[PlainTextObject | MarkdownTextObject] = None
+    subtext: Optional[PlainTextObject | MarkdownTextObject] = None
     block_id: Optional[str] = None
 
     @property
@@ -34,6 +35,8 @@ class Card:
             result["subtitle"] = self.subtitle.to_dict()
         if self.body:
             result["body"] = self.body.to_dict()
+        if self.subtext:
+            result["subtext"] = self.subtext.to_dict()
         if self.block_id:
             result["block_id"] = self.block_id
         return result
