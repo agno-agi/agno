@@ -131,8 +131,40 @@ def test_create_table(postgres_db, mock_session):
         "team_data",
         "workflow_data",
         "metadata",
-        "runs",
         "summary",
+        "created_at",
+        "updated_at",
+    ]
+    for col in expected_columns:
+        assert col in column_names
+
+    # Runs are stored in the runs table, not in the sessions table
+    assert "runs" not in column_names
+
+
+def test_create_runs_table(postgres_db, mock_session):
+    """Test runs table creation"""
+    postgres_db.Session = Mock(return_value=mock_session)
+
+    with patch.object(Table, "create"):
+        with patch("agno.db.postgres.postgres.create_schema"):
+            with patch("agno.db.postgres.postgres.is_table_available", return_value=False):
+                table = postgres_db._create_table("test_runs", "runs")
+
+    assert table.name == "test_runs"
+    column_names = [col.name for col in table.columns]
+    expected_columns = [
+        "run_id",
+        "session_id",
+        "run_type",
+        "agent_id",
+        "team_id",
+        "workflow_id",
+        "user_id",
+        "parent_run_id",
+        "status",
+        "run_index",
+        "run_data",
         "created_at",
         "updated_at",
     ]

@@ -61,6 +61,22 @@ SESSION_COLLECTION_SCHEMA = [
     },
 ]
 
+RUNS_COLLECTION_SCHEMA = [
+    {"key": "run_id"},
+    {"key": "session_id"},
+    {"key": "run_type"},
+    {"key": "agent_id"},
+    {"key": "team_id"},
+    {"key": "workflow_id"},
+    {"key": "user_id"},
+    {"key": "parent_run_id"},
+    {"key": "status"},
+    {"key": "created_at"},
+    {"key": "updated_at"},
+    # Compound index: ordered fetch of runs per session
+    {"key": [("session_id", "ASCENDING"), ("run_index", "ASCENDING")], "collection_group": False},
+]
+
 USER_MEMORY_COLLECTION_SCHEMA = [
     {"key": "memory_id", "unique": True},
     {"key": "user_id"},
@@ -165,6 +181,7 @@ def get_collection_indexes(collection_type: str) -> List[Dict[str, Any]]:
     """Get the index definitions for a specific collection type."""
     index_definitions = {
         "sessions": SESSION_COLLECTION_SCHEMA,
+        "runs": RUNS_COLLECTION_SCHEMA,
         "memories": USER_MEMORY_COLLECTION_SCHEMA,
         "metrics": METRICS_COLLECTION_SCHEMA,
         "evals": EVAL_COLLECTION_SCHEMA,

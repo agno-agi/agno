@@ -199,6 +199,10 @@ class TestBackgroundLifecycle:
                 for run in session.runs:
                     persisted_statuses.append(run.status)
 
+        async def fake_asave_run(agent, run=None, session_id=None, user_id=None, run_index=None):
+            if run is not None:
+                persisted_statuses.append(run.status)
+
         async def fake_arun(agent, run_response, run_context, **kwargs):
             run_response.status = RunStatus.completed
             return run_response
@@ -206,6 +210,7 @@ class TestBackgroundLifecycle:
         monkeypatch.setattr(_storage, "aread_or_create_session", fake_aread_or_create_session)
         monkeypatch.setattr(_storage, "update_metadata", lambda agent, session=None: None)
         monkeypatch.setattr("agno.agent._session.asave_session", fake_asave_session)
+        monkeypatch.setattr("agno.agent._session.asave_run", fake_asave_run)
         monkeypatch.setattr(_run, "_arun", fake_arun)
 
         run_response = RunOutput(run_id="bg-run-2", session_id="test-session")
@@ -224,7 +229,7 @@ class TestBackgroundLifecycle:
         # Wait for background task
         await asyncio.sleep(0.1)
 
-        # Background task should have saved RUNNING and then the final state
+        # Background task should have saved RUNNING (via asave_run after the transition)
         assert RunStatus.running in persisted_statuses
 
     @pytest.mark.asyncio
@@ -242,12 +247,17 @@ class TestBackgroundLifecycle:
                 for run in session.runs:
                     final_statuses.append(run.status)
 
+        async def fake_asave_run(agent, run=None, session_id=None, user_id=None, run_index=None):
+            if run is not None:
+                final_statuses.append(run.status)
+
         async def fake_arun_that_fails(agent, run_response, run_context, **kwargs):
             raise RuntimeError("model call failed")
 
         monkeypatch.setattr(_storage, "aread_or_create_session", fake_aread_or_create_session)
         monkeypatch.setattr(_storage, "update_metadata", lambda agent, session=None: None)
         monkeypatch.setattr("agno.agent._session.asave_session", fake_asave_session)
+        monkeypatch.setattr("agno.agent._session.asave_run", fake_asave_run)
         monkeypatch.setattr(_run, "_arun", fake_arun_that_fails)
 
         run_response = RunOutput(run_id="bg-run-err", session_id="test-session")
@@ -265,5 +275,5 @@ class TestBackgroundLifecycle:
         # Wait for background task to complete (and fail)
         await asyncio.sleep(0.2)
 
-        # Should have persisted ERROR status
+        # Should have persisted ERROR status (via asave_run on error transition)
         assert RunStatus.error in final_statuses

@@ -1,6 +1,7 @@
 """Logic shared across different database implementations"""
 
 import json
+import time
 from datetime import date, datetime
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, Union
 from uuid import UUID
@@ -20,6 +21,7 @@ if TYPE_CHECKING:
 DB_TABLE_NAME_KEYS: frozenset = frozenset(
     {
         "session_table",
+        "runs_table",
         "culture_table",
         "memory_table",
         "metrics_table",
@@ -122,6 +124,177 @@ def deserialize_sessions(session_type: Optional["SessionType"], records: List[Di
         List of Session subclass instances.
     """
     return [deserialize_session(session_type, record) for record in records]
+
+
+def get_run_type(run: Any) -> str:
+    """Return the run type ("agent", "team" or "workflow") for the given run object or dict."""
+    from agno.run.agent import RunOutput
+    from agno.run.team import TeamRunOutput
+    from agno.run.workflow import WorkflowRunOutput
+
+    if isinstance(run, RunOutput):
+        return "agent"
+    if isinstance(run, TeamRunOutput):
+        return "team"
+    if isinstance(run, WorkflowRunOutput):
+        return "workflow"
+    if isinstance(run, dict):
+        if run.get("agent_id"):
+            return "agent"
+        if run.get("team_id"):
+            return "team"
+        return "workflow"
+    raise ValueError(f"Cannot determine run type for: {type(run)}")
+
+
+def deserialize_run(run_type: Optional[str], run_data: Dict[str, Any]) -> Any:
+    """Deserialize a run dict into the correct run output class based on its type."""
+    from agno.run.agent import RunOutput
+    from agno.run.team import TeamRunOutput
+    from agno.run.workflow import WorkflowRunOutput
+
+    if run_type is None:
+        run_type = get_run_type(run_data)
+    if run_type == "agent":
+        return RunOutput.from_dict(run_data)
+    if run_type == "team":
+        return TeamRunOutput.from_dict(run_data)
+    if run_type == "workflow":
+        return WorkflowRunOutput.from_dict(run_data)
+    raise ValueError(f"Invalid run type: {run_type}")
+
+
+def build_run_rows_for_session(session: "Session") -> List[Dict[str, Any]]:
+    """Build runs-table rows for every run in the given session.
+
+    Args:
+        session: The session whose runs should be persisted.
+
+    Returns:
+        List of row dicts matching the runs table schema (run_data is the raw run dict).
+    """
+    current_time = int(time.time())
+    rows: List[Dict[str, Any]] = []
+    for run_index, run in enumerate(session.runs or []):
+        run_id = run.get("run_id") if isinstance(run, dict) else getattr(run, "run_id", None)
+        if run_id is None:
+            continue
+
+        run_data = run if isinstance(run, dict) else run.to_dict()
+        rows.append(
+            {
+                "run_id": run_id,
+                "session_id": session.session_id,
+                "run_type": get_run_type(run),
+                "agent_id": run_data.get("agent_id"),
+                "team_id": run_data.get("team_id"),
+                "workflow_id": run_data.get("workflow_id"),
+                "user_id": session.user_id,
+                "parent_run_id": run_data.get("parent_run_id"),
+                "status": run_data.get("status"),
+                "run_index": run_index,
+                "run_data": run_data,
+                "created_at": run_data.get("created_at") or current_time,
+                "updated_at": current_time,
+            }
+        )
+
+    return rows
+
+
+def build_single_run_row(
+    run: Any,
+    session_id: str,
+    user_id: Optional[str] = None,
+    run_index: Optional[int] = None,
+) -> Dict[str, Any]:
+    """Build a single run-table row for the given run.
+
+    This is used by upsert_run() for O(1) single-run persistence, avoiding
+    the need to iterate over all session runs.
+
+    Args:
+        run: The run object (RunOutput, TeamRunOutput, WorkflowRunOutput) or dict.
+        session_id: The session ID this run belongs to.
+        user_id: Optional user ID to associate with the run.
+        run_index: Optional run index. If not provided, will be read from run_data
+            or left as None (for updates to existing runs where index is preserved).
+
+    Returns:
+        Row dict matching the runs table schema.
+    """
+    current_time = int(time.time())
+    run_id = run.get("run_id") if isinstance(run, dict) else getattr(run, "run_id", None)
+    if run_id is None:
+        raise ValueError("Run must have a run_id")
+
+    run_data = run if isinstance(run, dict) else run.to_dict()
+
+    # For run_index: use explicit param > run_data value > None
+    effective_run_index = run_index
+    if effective_run_index is None:
+        effective_run_index = run_data.get("run_index")
+
+    return {
+        "run_id": run_id,
+        "session_id": session_id,
+        "run_type": get_run_type(run),
+        "agent_id": run_data.get("agent_id"),
+        "team_id": run_data.get("team_id"),
+        "workflow_id": run_data.get("workflow_id"),
+        "user_id": user_id,
+        "parent_run_id": run_data.get("parent_run_id"),
+        "status": run_data.get("status"),
+        "run_index": effective_run_index,
+        "run_data": run_data,
+        "created_at": run_data.get("created_at") or current_time,
+        "updated_at": current_time,
+    }
+
+
+def merge_runs_table_with_legacy_blob(
+    table_runs: List[Dict[str, Any]],
+    legacy_runs: Optional[List[Any]],
+) -> List[Dict[str, Any]]:
+    """Merge runs fetched from the runs table with the legacy ``runs`` JSON blob.
+
+    Used by adapter reads when a session may have its run history split across
+    the new ``agno_runs`` table and the legacy ``agno_sessions.runs`` column
+    (e.g. when the v3.0.0 migration has not yet been applied to that session).
+
+    The runs table is the source of truth: any run_id present in ``table_runs``
+    wins over its blob counterpart. Runs that only exist in the legacy blob are
+    appended after the table runs so no history is silently lost.
+
+    Args:
+        table_runs: Rows fetched from the runs table (already in insertion order).
+        legacy_runs: The raw value of the legacy ``runs`` column (may be a list,
+            a JSON-encoded string, or ``None``).
+
+    Returns:
+        Merged list of run dicts. Empty if both inputs are empty.
+    """
+    if isinstance(legacy_runs, str):
+        try:
+            legacy_runs = json.loads(legacy_runs)
+        except (json.JSONDecodeError, TypeError):
+            log_warning("Could not parse legacy runs blob during merge; ignoring it")
+            legacy_runs = None
+
+    if not legacy_runs:
+        return list(table_runs)
+
+    seen_run_ids = {run.get("run_id") for run in table_runs if isinstance(run, dict)}
+    merged = list(table_runs)
+    for run in legacy_runs:
+        if not isinstance(run, dict):
+            continue
+        run_id = run.get("run_id")
+        if run_id is None or run_id in seen_run_ids:
+            continue
+        merged.append(run)
+        seen_run_ids.add(run_id)
+    return merged
 
 
 async def resolve_session_type(

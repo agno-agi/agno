@@ -209,11 +209,11 @@ def apply_sorting(
 # -- Session utils --
 
 
-def prepare_session_data(session: "Session") -> Dict[str, Any]:
+def prepare_session_data(session: "Session", include_runs: bool = True) -> Dict[str, Any]:
     """Prepare session data for storage by serializing JSON fields and setting session type."""
     from agno.session import AgentSession, TeamSession, WorkflowSession
 
-    serialized_session = session.to_dict()
+    serialized_session = session.to_dict(include_runs=include_runs)
 
     # Handle JSON fields
     json_fields = ["session_data", "memory", "tools", "functions", "additional_data"]

@@ -22,6 +22,7 @@ TableType = Literal[
     "knowledge",
     "memories",
     "metrics",
+    "runs",
     "sessions",
     "spans",
     "teams",
@@ -75,8 +76,8 @@ def desurrealize_dates(record: dict) -> dict:
     return copy
 
 
-def serialize_session(session: Session, table_names: dict[TableType, str]) -> dict:
-    _dict = session.to_dict()
+def serialize_session(session: Session, table_names: dict[TableType, str], include_runs: bool = True) -> dict:
+    _dict = session.to_dict(include_runs=include_runs)
 
     if session.session_id is not None:
         _dict["id"] = RecordID(table_names["sessions"], session.session_id)
@@ -311,5 +312,35 @@ def get_schema(table_type: TableType, table_name: str) -> str:
             DEFINE INDEX idx_parent_span_id ON {table_name} FIELDS parent_span_id;
             DEFINE INDEX idx_start_time ON {table_name} FIELDS start_time;
             """)
+    elif table_type == "runs":
+        return dedent(f"""
+            {define_table}
+            DEFINE FIELD OVERWRITE created_at ON {table_name} TYPE datetime DEFAULT time::now();
+            DEFINE FIELD OVERWRITE updated_at ON {table_name} TYPE datetime VALUE time::now();
+            DEFINE INDEX idx_run_id ON {table_name} FIELDS run_id UNIQUE;
+            DEFINE INDEX idx_session_id ON {table_name} FIELDS session_id;
+            DEFINE INDEX idx_user_id ON {table_name} FIELDS user_id;
+            DEFINE INDEX idx_agent_id ON {table_name} FIELDS agent_id;
+            DEFINE INDEX idx_team_id ON {table_name} FIELDS team_id;
+            DEFINE INDEX idx_workflow_id ON {table_name} FIELDS workflow_id;
+            DEFINE INDEX idx_status ON {table_name} FIELDS status;
+            """)
     else:
         return define_table
+
+
+def serialize_run_row(row: dict, runs_table_name: str) -> dict:
+    """Convert a build_run_rows_for_session row to a SurrealDB-friendly dict."""
+    out = dict(row)
+    if "run_id" in out and out["run_id"]:
+        out["id"] = RecordID(runs_table_name, out["run_id"])
+    out = surrealize_dates(out)
+    return out
+
+
+def desurrealize_run_row(row: dict) -> dict:
+    """Convert a SurrealDB run row back into the plain dict shape."""
+    copy = dict(row)
+    copy = deserialize_record_id(copy, "run_id", "id")
+    copy = desurrealize_dates(copy)
+    return copy
