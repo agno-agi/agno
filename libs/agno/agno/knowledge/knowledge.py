@@ -1311,25 +1311,6 @@ class Knowledge(RemoteKnowledge):
             document.meta_data["linked_to"] = self.name or ""
         return documents
 
-    def _chunk_documents_sync(self, reader: Reader, documents: List[Document]) -> List[Document]:
-        """
-        Chunk documents synchronously.
-
-        Args:
-            reader: Reader with chunking strategy
-            documents: Documents to chunk
-
-        Returns:
-            List of chunked documents
-        """
-        if not reader or reader.chunk:
-            return documents
-
-        chunked_documents = []
-        for doc in documents:
-            chunked_documents.extend(reader.chunk_document(doc))
-        return chunked_documents
-
     async def _aload_from_path(
         self,
         content: Content,
@@ -1605,11 +1586,7 @@ class Knowledge(RemoteKnowledge):
             await self._aupdate_content(content)
             return
 
-        # 6. Chunk documents if needed
-        if reader and not reader.chunk:
-            read_documents = await reader.chunk_documents_async(read_documents)
-
-        # 7. Group documents by source URL for multi-page readers (like WebsiteReader)
+        # 6. Group documents by source URL for multi-page readers (like WebsiteReader)
         docs_by_source: Dict[str, List[Document]] = {}
         for doc in read_documents:
             source_url = doc.meta_data.get("url", content.url) if doc.meta_data else content.url
@@ -1618,7 +1595,7 @@ class Knowledge(RemoteKnowledge):
                 docs_by_source[source_url] = []
             docs_by_source[source_url].append(doc)
 
-        # 8. Process each source separately if multiple sources exist
+        # 7. Process each source separately if multiple sources exist
         if len(docs_by_source) > 1:
             for source_url, source_docs in docs_by_source.items():
                 # Compute per-document hash based on actual source URL
@@ -1650,7 +1627,7 @@ class Knowledge(RemoteKnowledge):
             await self._aupdate_content(content)
             return
 
-        # 9. Single source - use existing logic with original content hash
+        # 8. Single source - use existing logic with original content hash
         if not content.id:
             content.id = generate_id(content.content_hash or "")
         self._prepare_documents_for_insert(read_documents, content.id, calculate_sizes=True)
@@ -1764,11 +1741,7 @@ class Knowledge(RemoteKnowledge):
             self._update_content(content)
             return
 
-        # 6. Chunk documents if needed (sync version)
-        if reader:
-            read_documents = self._chunk_documents_sync(reader, read_documents)
-
-        # 7. Group documents by source URL for multi-page readers (like WebsiteReader)
+        # 6. Group documents by source URL for multi-page readers (like WebsiteReader)
         docs_by_source: Dict[str, List[Document]] = {}
         for doc in read_documents:
             source_url = doc.meta_data.get("url", content.url) if doc.meta_data else content.url
@@ -1777,7 +1750,7 @@ class Knowledge(RemoteKnowledge):
                 docs_by_source[source_url] = []
             docs_by_source[source_url].append(doc)
 
-        # 8. Process each source separately if multiple sources exist
+        # 7. Process each source separately if multiple sources exist
         if len(docs_by_source) > 1:
             for source_url, source_docs in docs_by_source.items():
                 # Compute per-document hash based on actual source URL
@@ -1809,7 +1782,7 @@ class Knowledge(RemoteKnowledge):
             self._update_content(content)
             return
 
-        # 9. Single source - use existing logic with original content hash
+        # 8. Single source - use existing logic with original content hash
         if not content.id:
             content.id = generate_id(content.content_hash or "")
         self._prepare_documents_for_insert(read_documents, content.id, calculate_sizes=True)
