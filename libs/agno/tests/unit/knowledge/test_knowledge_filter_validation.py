@@ -176,6 +176,46 @@ def test_validate_filters_mixed_valid_invalid_list(knowledge):
     assert "invalid2" in invalid
 
 
+def test_validate_filters_without_contents_db_keeps_dict_filters(knowledge):
+    knowledge.contents_db = None
+    filters = {"region": "us"}
+
+    valid, invalid = knowledge.validate_filters(filters)
+
+    assert valid == filters
+    assert invalid == []
+
+
+def test_validate_filters_without_contents_db_keeps_list_filters(knowledge):
+    knowledge.contents_db = None
+    filters = [EQ("region", "us"), GT("year", 2024)]
+
+    valid, invalid = knowledge.validate_filters(filters)
+
+    assert valid == filters
+    assert invalid == []
+
+
+async def test_avalidate_filters_without_contents_db_keeps_dict_filters(knowledge):
+    knowledge.contents_db = None
+    filters = {"region": "us"}
+
+    valid, invalid = await knowledge.avalidate_filters(filters)
+
+    assert valid == filters
+    assert invalid == []
+
+
+async def test_avalidate_filters_without_contents_db_keeps_list_filters(knowledge):
+    knowledge.contents_db = None
+    filters = [EQ("region", "us"), GT("year", 2024)]
+
+    valid, invalid = await knowledge.avalidate_filters(filters)
+
+    assert valid == filters
+    assert invalid == []
+
+
 def test_filter_merge_raises_on_type_mismatch():
     from agno.utils.knowledge import get_agentic_or_user_search_filters
 
