@@ -276,14 +276,15 @@ class TestGetUserDetails:
             result = hackernews_tools.get_user_details("testuser")
 
         user_details = json.loads(result)
+        assert user_details["id"] == "testuser"
         assert user_details["karma"] == 5000
         assert user_details["about"] == "A test user"
         assert user_details["total_items_submitted"] == 5
 
-    def test_get_user_details_user_id_field(self, hackernews_tools):
-        """Test that user_id is extracted correctly."""
+    def test_get_user_details_id_field(self, hackernews_tools):
+        """The HN user object exposes the username under the 'id' key."""
         mock_user = {
-            "user_id": "testuser123",
+            "id": "testuser123",
             "karma": 1000,
             "about": None,
             "submitted": [],

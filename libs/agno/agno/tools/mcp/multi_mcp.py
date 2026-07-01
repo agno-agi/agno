@@ -193,7 +193,8 @@ class MultiMCPTools(Toolkit):
             for session in self._sessions:
                 await session.send_ping()
             return True
-        except (RuntimeError, BaseException):
+        except Exception:
+            # Let CancelledError / KeyboardInterrupt propagate so the task can be cancelled cleanly
             return False
 
     def _call_header_provider(
