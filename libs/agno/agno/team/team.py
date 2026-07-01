@@ -268,6 +268,10 @@ class Team:
     tool_choice: Optional[Union[str, Dict[str, Any]]] = None
     # Maximum number of tool calls allowed.
     tool_call_limit: Optional[int] = None
+    # When True, escape string tool results and wrap them in <tool_output> markers.
+    add_tool_result_boundaries: bool = False
+    # Optional max length (chars) for a string tool result; longer results are truncated.
+    tool_result_max_length: Optional[int] = None
     # A list of hooks to be called before and after the tool call
     tool_hooks: Optional[List[Callable]] = None
 
@@ -505,6 +509,8 @@ class Team:
         skills: Optional[Skills] = None,
         tools: Optional[Union[List[Union[Toolkit, Callable, Function, Dict]], Callable[..., List]]] = None,
         tool_call_limit: Optional[int] = None,
+        add_tool_result_boundaries: bool = False,
+        tool_result_max_length: Optional[int] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         tool_hooks: Optional[List[Callable]] = None,
         pre_hooks: Optional[List[Union[Callable[..., Any], BaseGuardrail, BaseEval]]] = None,
@@ -628,6 +634,8 @@ class Team:
             skills=skills,
             tools=tools,
             tool_call_limit=tool_call_limit,
+            add_tool_result_boundaries=add_tool_result_boundaries,
+            tool_result_max_length=tool_result_max_length,
             tool_choice=tool_choice,
             tool_hooks=tool_hooks,
             pre_hooks=pre_hooks,
