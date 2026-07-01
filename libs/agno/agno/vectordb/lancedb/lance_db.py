@@ -85,7 +85,7 @@ class LanceDb(VectorDb):
         self.embedder: Embedder = embedder
         self.dimensions: Optional[int] = self.embedder.dimensions
 
-        if self.dimensions is None:
+        if self.dimensions is None and self.embedder.id.startswith("text-embedding-3"):
             raise ValueError("Embedder.dimensions must be set.")
 
         # Search type
