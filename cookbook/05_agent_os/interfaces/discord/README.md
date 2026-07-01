@@ -1,89 +1,40 @@
-# Discord Client for Agno
+# Discord Cookbook
 
-This module provides a Discord client implementation for Agno, allowing you to create AI-powered Discord bots using Agno's agent framework.
+Two ways to connect Agno agents, teams, and workflows to Discord via AgentOS,
+built on the two transports Discord offers:
 
-## Prerequisites
+- **[`interactions/`](interactions/)** — `DiscordInteractions`. Slash commands
+  (`/ask`) over Discord's HTTP Interactions API. Discord POSTs signed webhooks
+  to your app. Stateless and horizontally scalable; commands can be installed
+  to a **user account** and triggered anywhere; supports **ephemeral**
+  (only-you-can-see) replies. Best for one-shot interactions.
+- **[`gateway_adapter/`](gateway_adapter/)** — `DiscordGateway`. Fluid chat
+  (@mention the bot or DM it, no commands) via a Gateway WebSocket listener
+  that runs inside the AgentOS process and relays events to the app's own
+  HTTP endpoint. Needs no public URL or tunnel. Best for conversational bots.
 
-Before you can use the Discord client, you'll need:
+## Why two interfaces?
 
-1. Python 3.8 or higher
-2. A Discord bot token
-3. Required Python packages:
-   - discord.py
-   - agno
+Discord only delivers plain chat messages over a persistent Gateway WebSocket
+(with the privileged Message Content Intent). An HTTP Interactions endpoint
+only ever receives slash commands and component interactions — Discord never
+POSTs normal messages to it. So "fluid chat" and "stateless webhook endpoint"
+are different transports, and each gets its own interface.
 
-## Installation
+| | `interactions/` | `gateway_adapter/` |
+|---|---|---|
+| Conversation style | Slash commands (`/ask`) | Fluid chat (@mention or DM) |
+| Transport | Discord POSTs signed webhooks to you | Bot opens a WebSocket, relays events to your app |
+| Public HTTPS URL / tunnel | **Required** | Not needed |
+| Credentials | Public Key + App ID + Bot Token | Bot Token only |
+| Privileged intent | No | **Message Content Intent** required |
+| Extra dependency | None | `discord.py` |
+| User-installable (use anywhere) | **Yes** | No (bot must be in the server) |
+| Ephemeral (private) replies | **Yes** | No (regular messages) |
+| Horizontal scaling | Stateless, any replica count | Single listener (or external relay) |
 
-1. Install the required packages:
-```bash
-uv pip install discord.py agno
-```
+Both interfaces can be mounted in the same AgentOS app and share the same
+session keying (`discord-{user_id}-{scope_id}-{epoch}`), so a `/ask` and a
+mention in the same channel continue the same conversation.
 
-2. Create a Discord bot:
-   - Go to the [Discord Developer Portal](https://discord.com/developers/applications)
-   - Click "New Application" and give it a name
-   - Go to the "Bot" section and click "Add Bot"
-   - Under the bot settings, enable the following Privileged Gateway Intents:
-     - Presence Intent
-     - Server Members Intent
-     - Message Content Intent
-   - Copy your bot token (you'll need this later)
-
-3. Set up your environment:
-   - Create a `.envrc` file in your project root
-   - Add your Discord bot token:
-   ```
-   DISCORD_TOKEN=your_bot_token_here
-   ```
-
-4. Invite Your Bot to Your Discord Server:
-   - In your application's settings under **"OAuth2"** > **"URL Generator"**, select the `bot` scope
-   - Under **"Bot Permissions"**, select the permissions your bot needs (e.g., sending messages)
-   - Copy the generated URL, navigate to it in your browser, and select the server where you want to add the bot
-
-## Usage
-
-Here's a basic example of how to use the DiscordClient:
-
-```python
-from agno.agent import Agent
-from agno.integrations.discord import DiscordClient
-from agno.models.anthropic import Claude
-
-# Create your agent
-agent = Agent(
-    model=Claude(id="claude-3-7-sonnet-latest"),
-    instructions=["Your agent instructions here"],
-    # Add other agent configurations as needed
-)
-# Initialize the Discord client
-discord_agent = DiscordClient(media_agent)
-if __name__ == "__main__":
-    discord_agent.serve()
-```
-
-## Features
-
-- Seamless integration with Agno's agent framework
-- Support for all Discord bot features through discord.py
-- Easy to extend and customize
-
-## Configuration
-
-The DiscordClient accepts the following parameters:
-
-- `agent`: An Agno Agent instance that will handle the bot's responses
-- Additional discord.py client parameters can be passed as keyword arguments
-
-## Security Notes
-
-- Never commit your Discord bot token to version control
-- Always use environment variables or secure configuration management for sensitive data
-- Make sure to set appropriate permissions for your bot in the Discord Developer Portal
-
-## Support
-
-If you encounter any issues or have questions, please:
-1. Check the [Agno documentation](https://docs.agno.com)
-2. Open an issue on the Agno GitHub repository
-3. Join the Agno Discord server for community support
+Each folder has its own README with full setup, examples, and troubleshooting.
