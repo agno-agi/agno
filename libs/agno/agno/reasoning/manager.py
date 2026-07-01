@@ -124,6 +124,7 @@ class ReasoningManager:
         """Detect the type of reasoning model."""
         from agno.reasoning.anthropic import is_anthropic_reasoning_model
         from agno.reasoning.azure_ai_foundry import is_ai_foundry_reasoning_model
+        from agno.reasoning.dashscope import is_dashscope_reasoning_model
         from agno.reasoning.deepseek import is_deepseek_reasoning_model
         from agno.reasoning.gemini import is_gemini_reasoning_model
         from agno.reasoning.groq import is_groq_reasoning_model
@@ -147,6 +148,8 @@ class ReasoningManager:
             return "gemini"
         if is_vertexai_reasoning_model(model):
             return "vertexai"
+        if is_dashscope_reasoning_model(model):
+            return "dashscope"
         return None
 
     def _get_reasoning_agent(self, model: Model) -> "Agent":
@@ -253,7 +256,11 @@ class ReasoningManager:
 
                 log_debug("Starting VertexAI Reasoning", center=True, symbol="=")
                 reasoning_message = get_vertexai_reasoning(reasoning_agent, messages, run_metrics=run_metrics)
+            elif model_type == "dashscope":
+                from agno.reasoning.dashscope import get_dashscope_reasoning
 
+                log_debug("Starting Dashscope Reasoning", center=True, symbol="=")
+                reasoning_message = get_dashscope_reasoning(reasoning_agent, messages, run_metrics=run_metrics)
         except Exception as e:
             log_error(f"Reasoning error: {str(e)}")
             return ReasoningResult(success=False, error=str(e))
@@ -329,6 +336,11 @@ class ReasoningManager:
 
                 log_debug("Starting VertexAI Reasoning", center=True, symbol="=")
                 reasoning_message = await aget_vertexai_reasoning(reasoning_agent, messages, run_metrics=run_metrics)
+            elif model_type == "dashscope":
+                from agno.reasoning.dashscope import aget_dashscope_reasoning
+
+                log_debug("Starting Dashscope Reasoning", center=True, symbol="=")
+                reasoning_message = await aget_dashscope_reasoning(reasoning_agent, messages, run_metrics=run_metrics)
 
         except Exception as e:
             log_error(f"Reasoning error: {str(e)}")
@@ -544,6 +556,29 @@ class ReasoningManager:
             log_debug("Starting Ollama Reasoning (streaming)", center=True, symbol="=")
             final_message = None
             for reasoning_delta, message in get_ollama_reasoning_stream(reasoning_agent, messages):
+                if reasoning_delta is not None:
+                    yield (reasoning_delta, None)
+                if message is not None:
+                    final_message = message
+
+            if final_message:
+                yield (
+                    None,
+                    ReasoningResult(
+                        message=final_message,
+                        steps=[ReasoningStep(result=final_message.content)],
+                        reasoning_messages=[final_message],
+                        success=True,
+                    ),
+                )
+            else:
+                yield (None, ReasoningResult(success=False, error="No reasoning content"))
+        elif model_type == "dashscope":
+            from agno.reasoning.dashscope import get_dashscope_reasoning_stream
+
+            log_debug("Starting dashscope Reasoning (streaming)", center=True, symbol="=")
+            final_message = None
+            for reasoning_delta, message in get_dashscope_reasoning_stream(reasoning_agent, messages):
                 if reasoning_delta is not None:
                     yield (reasoning_delta, None)
                 if message is not None:
@@ -778,6 +813,29 @@ class ReasoningManager:
             else:
                 yield (None, ReasoningResult(success=False, error="No reasoning content"))
 
+        elif model_type == "dashscope":
+            from agno.reasoning.dashscope import aget_dashscope_reasoning_stream
+
+            log_debug("Starting dashscope Reasoning (streaming)", center=True, symbol="=")
+            final_message = None
+            async for reasoning_delta, message in aget_dashscope_reasoning_stream(reasoning_agent, messages):
+                if reasoning_delta is not None:
+                    yield (reasoning_delta, None)
+                if message is not None:
+                    final_message = message
+
+            if final_message:
+                yield (
+                    None,
+                    ReasoningResult(
+                        message=final_message,
+                        steps=[ReasoningStep(result=final_message.content)],
+                        reasoning_messages=[final_message],
+                        success=True,
+                    ),
+                )
+            else:
+                yield (None, ReasoningResult(success=False, error="No reasoning content"))
         else:
             # Fall back to non-streaming for other models
             result = await self.aget_native_reasoning(model, messages)
