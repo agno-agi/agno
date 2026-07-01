@@ -840,10 +840,16 @@ class Workflow:
         if self.db is None:
             return
         # -*- Delete session
-        await self.db.delete_session(session_id=session_id, user_id=user_id)  # type: ignore
+        if self._has_async_db():
+            await self.db.delete_session(session_id=session_id, user_id=user_id)  # type: ignore
+        else:
+            self.db.delete_session(session_id=session_id, user_id=user_id)
 
     def delete_session(self, session_id: str, user_id: Optional[str] = None):
         """Delete the current session and save to storage"""
+        if self._has_async_db():
+            raise ValueError("Cannot use sync delete_session() with an async database. Use adelete_session() instead.")
+
         if self.db is None:
             return
         # -*- Delete session
@@ -1269,6 +1275,11 @@ class Workflow:
         ):
             return self._workflow_session
 
+        if self._has_async_db():
+            raise ValueError(
+                "Cannot use sync read_or_create_session() with an async database. Use aread_or_create_session() instead."
+            )
+
         # Try to load from database
         workflow_session = None
         if self.db is not None:
@@ -1391,6 +1402,9 @@ class Workflow:
 
         session_id_to_load = session_id or self.session_id
 
+        if self._has_async_db():
+            raise ValueError("Cannot use sync get_session() with an async database. Use aget_session() instead.")
+
         # Try to load from database
         if self.db is not None and session_id_to_load is not None:
             workflow_session = cast(WorkflowSession, self._read_session(session_id=session_id_to_load, user_id=user_id))
@@ -1433,6 +1447,9 @@ class Workflow:
         Returns:
             Optional[WorkflowSession]: The saved WorkflowSession or None if not saved.
         """
+        if self._has_async_db():
+            raise ValueError("Cannot use sync save_session() with an async database. Use asave_session() instead.")
+
         if self.db is not None and session.session_data is not None:
             if session.session_data.get("session_state") is not None:
                 session.session_data["session_state"].pop("current_session_id", None)
@@ -1544,6 +1561,9 @@ class Workflow:
 
     def _read_session(self, session_id: str, user_id: Optional[str] = None) -> Optional[WorkflowSession]:
         """Get a Session from the database."""
+        if self._has_async_db():
+            raise ValueError("Cannot use sync _read_session() with an async database. Use _aread_session() instead.")
+
         try:
             if not self.db:
                 raise ValueError("Db not initialized")
@@ -1566,6 +1586,11 @@ class Workflow:
 
     def _upsert_session(self, session: WorkflowSession) -> Optional[WorkflowSession]:
         """Upsert a Session into the database."""
+        if self._has_async_db():
+            raise ValueError(
+                "Cannot use sync _upsert_session() with an async database. Use _aupsert_session() instead."
+            )
+
         try:
             if not self.db:
                 raise ValueError("Db not initialized")
@@ -4722,7 +4747,10 @@ class Workflow:
         _session_id = session_id if session_id is not None else self.session_id
 
         if self.db is not None and _session_id is not None:
-            session = await self.db.aget_session(session_id=_session_id, session_type=SessionType.WORKFLOW)  # type: ignore
+            if self._has_async_db():
+                session = await self.db.get_session(session_id=_session_id, session_type=SessionType.WORKFLOW)  # type: ignore
+            else:
+                session = self.db.get_session(session_id=_session_id, session_type=SessionType.WORKFLOW)
             if session and isinstance(session, WorkflowSession) and session.runs:
                 # Find the run by ID
                 for run in session.runs:
@@ -4733,6 +4761,9 @@ class Workflow:
 
     def get_run(self, run_id: str, session_id: Optional[str] = None) -> Optional[WorkflowRunOutput]:
         """Get the status and details of a background workflow run - SIMPLIFIED"""
+        if self._has_async_db():
+            raise ValueError("Cannot use sync get_run() with an async database. Use aget_run() instead.")
+
         # Use provided session_id or fall back to self.session_id
         _session_id = session_id if session_id is not None else self.session_id
 
