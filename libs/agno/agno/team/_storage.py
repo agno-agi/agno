@@ -25,7 +25,7 @@ from agno.db.utils import resolve_db_from_config
 from agno.metrics import RunMetrics, SessionMetrics
 from agno.models.base import Model
 from agno.models.message import Message
-from agno.models.utils import get_model
+from agno.models.utils import resolve_model
 from agno.registry.registry import Registry
 from agno.run.agent import RunOutput
 from agno.run.team import (
@@ -749,11 +749,7 @@ def from_dict(
 
     # --- Handle Model reconstruction ---
     if "model" in config:
-        model_data = config["model"]
-        if isinstance(model_data, dict) and "id" in model_data:
-            config["model"] = get_model(f"{model_data['provider']}:{model_data['id']}")
-        elif isinstance(model_data, str):
-            config["model"] = get_model(model_data)
+        config["model"] = resolve_model(config["model"], registry)
 
     # --- Handle Members reconstruction ---
     members: Optional[List[Union[Agent, "Team"]]] = None

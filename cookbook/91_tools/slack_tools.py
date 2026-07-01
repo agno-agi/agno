@@ -1,4 +1,13 @@
-"""Run: pip install openai slack-sdk"""
+"""
+Slack Tools
+===========
+
+Environment variables:
+    SLACK_TOKEN         Bot token (xoxb-) for standard Slack APIs
+    SLACK_USER_TOKEN    User token (xoxp-) required for search_messages
+
+Run: pip install openai slack-sdk
+"""
 
 from agno.agent import Agent
 from agno.tools.slack import SlackTools
