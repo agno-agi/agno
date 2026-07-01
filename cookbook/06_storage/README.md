@@ -52,3 +52,12 @@ agent = Agent(
 - [`01_persistent_session_storage.py`](01_persistent_session_storage.py) - Database persistence
 - [`02_session_summary.py`](02_session_summary.py) - Session summarization
 - [`03_chat_history.py`](03_chat_history.py) - Chat history management
+- [`04_session_summary_limits.py`](04_session_summary_limits.py) - Session summary limits (last_n_runs / conversation_limit)
+
+## Media Storage
+
+Offload media content (images, audio, video, files) to external storage and keep only lightweight references in the database.
+
+- [`05_media_storage_local.py`](05_media_storage_local.py) - Offload media to the local filesystem (LocalMediaStorage)
+- [`06_media_storage_s3.py`](06_media_storage_s3.py) - Offload media to S3-compatible object storage (S3MediaStorage)
+- [`07_media_storage_multiturn.py`](07_media_storage_multiturn.py) - Multi-turn media reuse with store_media=False

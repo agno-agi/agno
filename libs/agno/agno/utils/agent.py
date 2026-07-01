@@ -466,52 +466,136 @@ def validate_media_object_id(
     return image_list, video_list, audio_list, file_list
 
 
-def scrub_media_from_run_output(run_response: Union[RunOutput, TeamRunOutput]) -> None:
+def _media_carries_data(media: Any) -> bool:
+    """True if a media object still carries retrievable data.
+
+    Used by the keep_references scrub path. We keep media that has an offload
+    reference (the normal case — content is already nulled), inline content
+    (offload failed or was skipped, so keep it inline rather than lose it — this
+    is the "never lose data on storage failure" guarantee), or a provider-managed
+    external handle (e.g. a GeminiFile). Only empty/url-only placeholders are dropped.
     """
-    Completely remove all media from RunOutput when store_media=False.
-    This includes media in input, output artifacts, and all messages.
+    return (
+        getattr(media, "media_reference", None) is not None
+        or getattr(media, "content", None) is not None
+        or getattr(media, "external", None) is not None
+    )
+
+
+def scrub_media_from_run_output(run_response: Union[RunOutput, TeamRunOutput], keep_references: bool = False) -> None:
+    """
+    Remove media from RunOutput when store_media=False.
+
+    If keep_references=True (media_storage configured), preserve media that still
+    carries data: offloaded media is kept as a lightweight MediaReference (the
+    content bytes were already moved to storage), and media that was not offloaded
+    (storage failure or mismatch) is kept inline so it is never silently lost.
     """
     # 1. Scrub RunInput media
     if run_response.input is not None:
-        run_response.input.images = []
-        run_response.input.videos = []
-        run_response.input.audios = []
-        run_response.input.files = []
+        if keep_references:
+            run_response.input.images = [img for img in (run_response.input.images or []) if _media_carries_data(img)]
+            run_response.input.videos = [v for v in (run_response.input.videos or []) if _media_carries_data(v)]
+            run_response.input.audios = [a for a in (run_response.input.audios or []) if _media_carries_data(a)]
+            run_response.input.files = [f for f in (run_response.input.files or []) if _media_carries_data(f)]
+        else:
+            run_response.input.images = []
+            run_response.input.videos = []
+            run_response.input.audios = []
+            run_response.input.files = []
 
-    # 3. Scrub media from all messages
+    # 2. Scrub media from all messages
     if run_response.messages:
         for message in run_response.messages:
-            scrub_media_from_message(message)
+            scrub_media_from_message(message, keep_references=keep_references)
 
-    # 4. Scrub media from additional_input messages if any
+    # 3. Scrub media from additional_input messages if any
     if run_response.additional_input:
         for message in run_response.additional_input:
-            scrub_media_from_message(message)
+            scrub_media_from_message(message, keep_references=keep_references)
 
-    # 5. Scrub media from reasoning_messages if any
+    # 4. Scrub media from reasoning_messages if any
     if run_response.reasoning_messages:
         for message in run_response.reasoning_messages:
-            scrub_media_from_message(message)
+            scrub_media_from_message(message, keep_references=keep_references)
 
-    # 6. Null top-level output media fields
-    run_response.images = None
-    run_response.videos = None
-    run_response.audio = None
-    run_response.files = None
+    # 5. Null top-level output media fields
+    if keep_references:
+        run_response.images = [img for img in (run_response.images or []) if _media_carries_data(img)] or None
+        run_response.videos = [v for v in (run_response.videos or []) if _media_carries_data(v)] or None
+        run_response.audio = [a for a in (run_response.audio or []) if _media_carries_data(a)] or None
+        run_response.files = [f for f in (run_response.files or []) if _media_carries_data(f)] or None
+    else:
+        run_response.images = None
+        run_response.videos = None
+        run_response.audio = None
+        run_response.files = None
 
 
-def scrub_media_from_message(message: Message) -> None:
-    """Remove all media from a Message object."""
-    # Input media
-    message.images = None
-    message.videos = None
-    message.audio = None
-    message.files = None
+def scrub_media_from_message(message: Message, keep_references: bool = False) -> None:
+    """Remove media from a Message. If keep_references=True, preserve media that still
+    carries data (reference, inline content, or external handle)."""
+    if keep_references:
+        message.images = [img for img in (message.images or []) if _media_carries_data(img)] or None
+        message.videos = [v for v in (message.videos or []) if _media_carries_data(v)] or None
+        message.audio = [a for a in (message.audio or []) if _media_carries_data(a)] or None
+        message.files = [f for f in (message.files or []) if _media_carries_data(f)] or None
+        # Output media: keep if it still carries data
+        if message.audio_output and not _media_carries_data(message.audio_output):
+            message.audio_output = None
+        if message.image_output and not _media_carries_data(message.image_output):
+            message.image_output = None
+        if message.video_output and not _media_carries_data(message.video_output):
+            message.video_output = None
+    else:
+        # Input media
+        message.images = None
+        message.videos = None
+        message.audio = None
+        message.files = None
+        # Output media
+        message.audio_output = None
+        message.image_output = None
+        message.video_output = None
 
-    # Output media
-    message.audio_output = None
-    message.image_output = None
-    message.video_output = None
+
+def scrub_workflow_media(run_response: Any, keep_references: bool = False) -> None:
+    """Remove media from a WorkflowRunOutput when store_media=False.
+
+    Mirrors scrub_media_from_run_output for the workflow run shape: top-level media,
+    step outputs, step executor runs (agent/team/nested-workflow), and the workflow
+    agent run. With keep_references=True, media that still carries data is preserved.
+    """
+    from agno.run.workflow import WorkflowRunOutput
+
+    def _filter(media_list: Optional[Sequence[Any]]) -> Optional[List[Any]]:
+        if not keep_references:
+            return None
+        return [m for m in (media_list or []) if _media_carries_data(m)] or None
+
+    run_response.images = _filter(run_response.images)
+    run_response.videos = _filter(run_response.videos)
+    run_response.audio = _filter(run_response.audio)
+    run_response.files = _filter(run_response.files)
+    response_audio = run_response.response_audio
+    if response_audio is not None and not (keep_references and _media_carries_data(response_audio)):
+        run_response.response_audio = None
+
+    for step_result in run_response.step_results or []:
+        for step_output in step_result if isinstance(step_result, list) else [step_result]:
+            step_output.images = _filter(step_output.images)
+            step_output.videos = _filter(step_output.videos)
+            step_output.audio = _filter(step_output.audio)
+            step_output.files = _filter(step_output.files)
+
+    for executor_run in run_response.step_executor_runs or []:
+        if isinstance(executor_run, WorkflowRunOutput):
+            scrub_workflow_media(executor_run, keep_references=keep_references)
+        else:
+            scrub_media_from_run_output(executor_run, keep_references=keep_references)
+
+    if run_response.workflow_agent_run is not None:
+        scrub_media_from_run_output(run_response.workflow_agent_run, keep_references=keep_references)
 
 
 def scrub_tool_results_from_run_output(run_response: Union[RunOutput, TeamRunOutput]) -> None:

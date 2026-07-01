@@ -659,25 +659,25 @@ def classify_upload_file(file: UploadFile) -> Optional[str]:
     return None
 
 
-def process_image(file: UploadFile) -> Image:
+def process_image(file: UploadFile, metadata: Optional[Dict[str, Any]] = None) -> Image:
     content = file.file.read()
     if not content:
         raise HTTPException(status_code=400, detail="Empty file")
-    return Image(content=content, format=extract_format(file), mime_type=file.content_type)
+    return Image(content=content, format=extract_format(file), mime_type=file.content_type, metadata=metadata)
 
 
-def process_audio(file: UploadFile) -> Audio:
+def process_audio(file: UploadFile, metadata: Optional[Dict[str, Any]] = None) -> Audio:
     content = file.file.read()
     if not content:
         raise HTTPException(status_code=400, detail="Empty file")
-    return Audio(content=content, format=extract_format(file), mime_type=file.content_type)
+    return Audio(content=content, format=extract_format(file), mime_type=file.content_type, metadata=metadata)
 
 
-def process_video(file: UploadFile) -> Video:
+def process_video(file: UploadFile, metadata: Optional[Dict[str, Any]] = None) -> Video:
     content = file.file.read()
     if not content:
         raise HTTPException(status_code=400, detail="Empty file")
-    return Video(content=content, format=extract_format(file), mime_type=file.content_type)
+    return Video(content=content, format=extract_format(file), mime_type=file.content_type, metadata=metadata)
 
 
 # Map document file extensions to their canonical MIME type, used to recover a valid
@@ -721,7 +721,7 @@ def _resolve_document_mime_type(file: UploadFile) -> Optional[str]:
     return file.content_type
 
 
-def process_document(file: UploadFile) -> Optional[FileMedia]:
+def process_document(file: UploadFile, metadata: Optional[Dict[str, Any]] = None) -> Optional[FileMedia]:
     content = file.file.read()
     if not content:
         raise HTTPException(status_code=400, detail="Empty file")
@@ -733,6 +733,7 @@ def process_document(file: UploadFile) -> Optional[FileMedia]:
         filename=file.filename,
         format=extract_format(file),
         mime_type=_resolve_document_mime_type(file),
+        metadata=metadata,
     )
 
 

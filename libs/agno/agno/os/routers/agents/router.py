@@ -1,6 +1,6 @@
 import asyncio
 import json
-from typing import TYPE_CHECKING, Any, AsyncGenerator, List, Literal, Optional, Union, cast
+from typing import TYPE_CHECKING, Any, AsyncGenerator, Dict, List, Literal, Optional, Union, cast
 from uuid import uuid4
 
 from fastapi import (
@@ -608,6 +608,19 @@ def get_agent_router(
     ):
         kwargs = await get_request_kwargs(request, create_agent_run)
 
+        # Parse per-file metadata (JSON array matching files[] by position)
+        files_metadata_raw = kwargs.pop("files_metadata", None)
+        files_metadata_list: List[Optional[Dict[str, Any]]] = []
+        if files_metadata_raw and isinstance(files_metadata_raw, str):
+            try:
+                parsed = json.loads(files_metadata_raw)
+                if isinstance(parsed, list):
+                    # Coerce non-object entries to None so the matching file is still
+                    # processed (just without metadata) instead of being dropped.
+                    files_metadata_list = [m if isinstance(m, dict) else None for m in parsed]
+            except json.JSONDecodeError:
+                log_warning(f"Invalid files_metadata JSON: {files_metadata_raw}")
+
         # Scoped non-admin callers always get their JWT sub as user_id.
         # Admins and unscoped callers fall through to middleware/form values.
         scoped_user_id = get_scoped_user_id(request)
@@ -659,18 +672,19 @@ def get_agent_router(
         input_files: List[FileMedia] = []
 
         if files:
-            for file in files:
+            for idx, file in enumerate(files):
+                file_meta = files_metadata_list[idx] if idx < len(files_metadata_list) else None
                 file_category = classify_upload_file(file)
                 if file_category == "image":
                     try:
-                        base64_image = process_image(file)
+                        base64_image = process_image(file, metadata=file_meta)
                         base64_images.append(base64_image)
                     except Exception as e:
                         log_error(f"Error processing image {file.filename}: {str(e)}")
                         continue
                 elif file_category == "audio":
                     try:
-                        audio = process_audio(file)
+                        audio = process_audio(file, metadata=file_meta)
                         base64_audios.append(audio)
                     except Exception as e:
                         log_error(
@@ -679,7 +693,7 @@ def get_agent_router(
                         continue
                 elif file_category == "video":
                     try:
-                        base64_video = process_video(file)
+                        base64_video = process_video(file, metadata=file_meta)
                         base64_videos.append(base64_video)
                     except Exception as e:
                         log_error(f"Error processing video {file.filename}: {str(e)}")
@@ -687,7 +701,7 @@ def get_agent_router(
                 elif file_category == "document":
                     # Process document files
                     try:
-                        input_file = process_document(file)
+                        input_file = process_document(file, metadata=file_meta)
                         if input_file is not None:
                             input_files.append(input_file)
                     except Exception as e:

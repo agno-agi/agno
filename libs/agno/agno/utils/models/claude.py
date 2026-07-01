@@ -9,6 +9,7 @@ from agno.utils.log import log_error, log_info, log_warning
 if TYPE_CHECKING:
     from agno.models.anthropic.claude import SystemPromptBlock
 
+
 # Models that support assistant message prefill. This is a closed set —
 # prefill was deprecated starting with Claude 4.6 and all future models
 # are expected to reject it.
