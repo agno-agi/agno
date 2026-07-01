@@ -803,6 +803,10 @@ class Knowledge(RemoteKnowledge):
     def validate_filters(
         self, filters: Union[Dict[str, Any], List[FilterExpr]]
     ) -> Tuple[Union[Dict[str, Any], List[FilterExpr]], List[str]]:
+        if self.contents_db is None:
+            log_info("Advanced filtering is not supported without a contents db. Filter keys will not be validated.")
+            return filters, []
+
         valid_filters_from_db = self.get_valid_filters()
 
         valid_filters, invalid_keys = self._validate_filters(filters, valid_filters_from_db)
@@ -813,6 +817,10 @@ class Knowledge(RemoteKnowledge):
         self, filters: Union[Dict[str, Any], List[FilterExpr]]
     ) -> Tuple[Union[Dict[str, Any], List[FilterExpr]], List[str]]:
         """Return a tuple containing a dict with all valid filters and a list of invalid filter keys"""
+        if self.contents_db is None:
+            log_info("Advanced filtering is not supported without a contents db. Filter keys will not be validated.")
+            return filters, []
+
         valid_filters_from_db = await self.aget_valid_filters()
 
         valid_filters, invalid_keys = self._validate_filters(filters, valid_filters_from_db)
