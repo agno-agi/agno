@@ -10,9 +10,9 @@ infrastructure. Data never leaves your environment.
 
 Prerequisites:
     # Start Dakera locally
-    docker run -d -p 3000:3000 \\
+    docker run -d -p 3300:3300 \\
         -e DAKERA_API_KEY=demo \\
-        dakera/dakera:latest
+        ghcr.io/dakera-ai/dakera:latest
 
     uv pip install agno dakera
 
@@ -45,14 +45,14 @@ class DakeraMemoryStore:
     """Persistent memory store backed by a self-hosted Dakera server.
 
     Self-host via Docker:
-        docker run -p 3000:3000 -e DAKERA_API_KEY=demo dakera/dakera:latest
+        docker run -p 3300:3300 -e DAKERA_API_KEY=demo ghcr.io/dakera-ai/dakera:latest
 
     REST API:
         POST /v1/memories          — store a memory
         POST /v1/memories/search   — semantic recall (decay-weighted)
     """
 
-    base_url: str = field(default_factory=lambda: os.getenv("DAKERA_URL", "http://localhost:3000"))
+    base_url: str = field(default_factory=lambda: os.getenv("DAKERA_URL", "http://localhost:3300"))
     api_key: str = field(default_factory=lambda: os.getenv("DAKERA_API_KEY", ""))
     namespace: str = "agno-agent"
 
