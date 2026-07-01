@@ -1,3 +1,6 @@
+from concurrent.futures import ThreadPoolExecutor
+import threading
+import time
 from unittest.mock import Mock, patch
 
 import pytest
@@ -289,6 +292,46 @@ def test_get_table_evals(postgres_db):
 
     assert table == mock_table
     assert hasattr(postgres_db, "eval_table")
+
+
+def test_get_table_materialization_is_serialized_when_called_concurrently(postgres_db):
+    """Concurrent table access should not mutate shared metadata at the same time."""
+    mock_table = Mock(spec=Table)
+    active_calls = 0
+    max_active_calls = 0
+    call_lock = threading.Lock()
+    start_event = threading.Event()
+
+    def slow_get_or_create_table(*args, **kwargs):
+        nonlocal active_calls, max_active_calls
+        with call_lock:
+            active_calls += 1
+            max_active_calls = max(max_active_calls, active_calls)
+
+        time.sleep(0.05)
+
+        with call_lock:
+            active_calls -= 1
+        return mock_table
+
+    def get_table():
+        start_event.wait()
+        return postgres_db._get_table("evals", create_table_if_not_found=True)
+
+    with patch.object(postgres_db, "_get_or_create_table", side_effect=slow_get_or_create_table) as mock_get_or_create:
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            futures = [executor.submit(get_table) for _ in range(2)]
+            start_event.set()
+            tables = [future.result() for future in futures]
+
+    assert tables == [mock_table, mock_table]
+    assert mock_get_or_create.call_count == 2
+    mock_get_or_create.assert_called_with(
+        table_name=postgres_db.eval_table_name,
+        table_type="evals",
+        create_table_if_not_found=True,
+    )
+    assert max_active_calls == 1
 
 
 def test_get_table_knowledge(postgres_db):
