@@ -18,6 +18,7 @@ from agno.utils.log import log_debug, log_error, log_warning
 from agno.utils.models.claude import (
     MCPServerConfiguration,
     _validate_cache_ttl_order,
+    _validate_request_cache_order,
     build_system_blocks,
     format_messages,
     format_tools_for_model,
@@ -693,6 +694,12 @@ class Claude(Model):
         output_format = self._build_output_format(response_format)
         if output_format:
             request_kwargs["output_format"] = output_format
+
+        # Validate cache TTL ordering across tools and system blocks
+        _validate_request_cache_order(
+            tools=request_kwargs.get("tools"),
+            system=request_kwargs.get("system"),
+        )
 
         if request_kwargs:
             log_debug(f"Calling {self.provider} with request parameters: {request_kwargs}", log_level=2)
