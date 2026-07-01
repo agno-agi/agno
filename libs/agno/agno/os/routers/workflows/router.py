@@ -608,7 +608,10 @@ async def workflow_response_streamer(
         # backwards compatibility with older clients.
         if isinstance(workflow, RemoteWorkflow):
             return
-        _session = workflow.get_session(session_id=session_id)
+        if hasattr(workflow, "aget_session"):
+            _session = await workflow.aget_session(session_id=session_id)  # type: ignore[union-attr]
+        else:
+            _session = workflow.get_session(session_id=session_id)
         if _session and _session.runs:
             _last_run = _session.runs[-1]
             if getattr(_last_run, "is_paused", False):
@@ -751,7 +754,10 @@ async def workflow_continue_response_streamer(
         # If the workflow re-paused, yield WorkflowPausedEvent as the new clean
         # snapshot event. Also yield the legacy "WorkflowRunOutput" event for
         # backwards compatibility with older clients.
-        _session = workflow.get_session(session_id=session_id)
+        if hasattr(workflow, "aget_session"):
+            _session = await workflow.aget_session(session_id=session_id)  # type: ignore[union-attr]
+        else:
+            _session = workflow.get_session(session_id=session_id)
         if _session and _session.runs:
             _last_run = _session.runs[-1]
             if getattr(_last_run, "is_paused", False):
