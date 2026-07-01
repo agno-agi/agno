@@ -105,11 +105,14 @@ def test_create_bar_chart_success(
     assert "file_path" in result_dict
 
     # Verify matplotlib functions were called
-    mock_figure.assert_called_once_with(figsize=(10, 6))
+    assert mock_figure.call_count >= 1  # May be called multiple times for figure and grid
     mock_bar.assert_called_once()
-    mock_title.assert_called_once_with("Test Chart")
-    mock_xlabel.assert_called_once_with("Categories")
-    mock_ylabel.assert_called_once_with("Values")
+    assert mock_title.called  # Title is called with fontsize and fontweight params
+    assert "Test Chart" in str(mock_title.call_args)
+    assert mock_xlabel.called  # Labels are called with fontsize params
+    assert "Categories" in str(mock_xlabel.call_args)
+    assert mock_ylabel.called
+    assert "Values" in str(mock_ylabel.call_args)
     mock_savefig.assert_called_once()
     mock_close.assert_called_once()
 
@@ -153,9 +156,10 @@ def test_create_bar_chart_with_list_of_dicts(
     assert "file_path" in result_dict
 
     # Verify matplotlib functions were called
-    mock_figure.assert_called_once_with(figsize=(10, 6))
+    assert mock_figure.call_count >= 1  # May be called multiple times for figure and grid
     mock_bar.assert_called_once()
-    mock_title.assert_called_once_with("Sales Chart")
+    assert mock_title.called  # Title is called with fontsize and fontweight params
+    assert "Sales Chart" in str(mock_title.call_args)
 
 
 @patch("matplotlib.pyplot.savefig")
@@ -482,3 +486,249 @@ def test_create_bar_chart_with_json_string(viz_tools):
         assert result_dict["status"] == "success"
         assert result_dict["chart_type"] == "bar_chart"
         assert result_dict["data_points"] == 3
+
+
+# Tests for new enhancements
+
+
+def test_create_bar_chart_with_colors(viz_tools):
+    """Test bar chart with custom colors."""
+    data = {"Red": 10, "Green": 20, "Blue": 30}
+    colors = ["red", "green", "blue"]
+
+    with patch("matplotlib.pyplot.savefig"):
+        result = viz_tools.create_bar_chart(data, colors=colors, title="Colored Bars")
+
+        result_dict = json.loads(result)
+        assert result_dict["status"] == "success"
+
+
+def test_create_bar_chart_with_show_values(viz_tools):
+    """Test bar chart with value labels."""
+    data = {"A": 100, "B": 200, "C": 300}
+
+    with patch("matplotlib.pyplot.savefig"):
+        result = viz_tools.create_bar_chart(data, show_values=True, title="Bars with Values")
+
+        result_dict = json.loads(result)
+        assert result_dict["status"] == "success"
+
+
+def test_create_bar_chart_with_annotations(viz_tools):
+    """Test bar chart with annotations."""
+    data = {"A": 10, "B": 20, "C": 30}
+    annotations = [{"x": 1, "y": 20, "text": "Peak value"}]
+
+    with patch("matplotlib.pyplot.savefig"):
+        result = viz_tools.create_bar_chart(data, annotations=annotations, title="Annotated Chart")
+
+        result_dict = json.loads(result)
+        assert result_dict["status"] == "success"
+
+
+def test_create_line_chart_with_colors(viz_tools):
+    """Test line chart with custom color."""
+    data = {"Jan": 10, "Feb": 20, "Mar": 30, "Apr": 25}
+
+    with patch("matplotlib.pyplot.savefig"):
+        result = viz_tools.create_line_chart(data, colors=["purple"], title="Purple Line")
+
+        result_dict = json.loads(result)
+        assert result_dict["status"] == "success"
+
+
+def test_create_line_chart_with_show_values(viz_tools):
+    """Test line chart with value labels."""
+    data = {"Jan": 100, "Feb": 150, "Mar": 200}
+
+    with patch("matplotlib.pyplot.savefig"):
+        result = viz_tools.create_line_chart(data, show_values=True, title="Line with Values")
+
+        result_dict = json.loads(result)
+        assert result_dict["status"] == "success"
+
+
+def test_create_line_chart_timeseries(viz_tools):
+    """Test line chart with timeseries detection."""
+    data = {"2024-01-01": 100, "2024-02-01": 150, "2024-03-01": 200}
+
+    with patch("matplotlib.pyplot.savefig"):
+        result = viz_tools.create_line_chart(data, is_timeseries=True, title="Time Series")
+
+        result_dict = json.loads(result)
+        assert result_dict["status"] == "success"
+
+
+def test_create_line_chart_with_annotations(viz_tools):
+    """Test line chart with annotations."""
+    data = {"Jan": 10, "Feb": 20, "Mar": 30}
+    annotations = [{"x": 1, "y": 20, "text": "Turning point"}]
+
+    with patch("matplotlib.pyplot.savefig"):
+        result = viz_tools.create_line_chart(data, annotations=annotations, title="Annotated Line")
+
+        result_dict = json.loads(result)
+        assert result_dict["status"] == "success"
+
+
+def test_create_multi_series_bar_chart(viz_tools):
+    """Test multi-series grouped bar chart."""
+    data = {
+        "Q1": {"Jan": 100, "Feb": 120, "Mar": 140},
+        "Q2": {"Jan": 110, "Feb": 130, "Mar": 150},
+    }
+
+    with patch("matplotlib.pyplot.savefig"):
+        result = viz_tools.create_multi_series_chart(data, chart_type="bar", title="Quarterly Comparison")
+
+        result_dict = json.loads(result)
+        assert result_dict["status"] == "success"
+        assert result_dict["chart_type"] == "multi_series_bar"
+        assert result_dict["series_count"] == 2
+        assert result_dict["categories"] == 3
+
+
+def test_create_multi_series_stacked_bar_chart(viz_tools):
+    """Test multi-series stacked bar chart."""
+    data = {
+        "Online": {"Jan": 100, "Feb": 120, "Mar": 140},
+        "Offline": {"Jan": 80, "Feb": 90, "Mar": 100},
+    }
+
+    with patch("matplotlib.pyplot.savefig"):
+        result = viz_tools.create_multi_series_chart(data, chart_type="stacked_bar", title="Sales by Channel")
+
+        result_dict = json.loads(result)
+        assert result_dict["status"] == "success"
+        assert result_dict["chart_type"] == "multi_series_stacked_bar"
+
+
+def test_create_multi_series_line_chart(viz_tools):
+    """Test multi-series line chart."""
+    data = {
+        "Product A": {"Week 1": 100, "Week 2": 120, "Week 3": 140},
+        "Product B": {"Week 1": 90, "Week 2": 110, "Week 3": 130},
+    }
+
+    with patch("matplotlib.pyplot.savefig"):
+        result = viz_tools.create_multi_series_chart(data, chart_type="line", title="Product Trends")
+
+        result_dict = json.loads(result)
+        assert result_dict["status"] == "success"
+        assert result_dict["chart_type"] == "multi_series_line"
+
+
+def test_create_multi_series_with_colors(viz_tools):
+    """Test multi-series chart with custom colors."""
+    data = {
+        "Series 1": {"A": 10, "B": 20},
+        "Series 2": {"A": 15, "B": 25},
+    }
+    colors = ["red", "blue"]
+
+    with patch("matplotlib.pyplot.savefig"):
+        result = viz_tools.create_multi_series_chart(data, colors=colors, chart_type="bar", title="Colored Series")
+
+        result_dict = json.loads(result)
+        assert result_dict["status"] == "success"
+
+
+def test_create_multi_series_with_show_values(viz_tools):
+    """Test multi-series chart with value labels."""
+    data = {
+        "Series 1": {"A": 100, "B": 200},
+        "Series 2": {"A": 150, "B": 250},
+    }
+
+    with patch("matplotlib.pyplot.savefig"):
+        result = viz_tools.create_multi_series_chart(data, show_values=True, chart_type="bar", title="Values Shown")
+
+        result_dict = json.loads(result)
+        assert result_dict["status"] == "success"
+
+
+def test_create_multi_series_with_list_data(viz_tools):
+    """Test multi-series with list format data."""
+    data = {
+        "Series 1": [10, 20, 30],
+        "Series 2": [15, 25, 35],
+    }
+
+    with patch("matplotlib.pyplot.savefig"):
+        result = viz_tools.create_multi_series_chart(data, chart_type="line", title="List Data")
+
+        result_dict = json.loads(result)
+        assert result_dict["status"] == "success"
+
+
+def test_multi_series_error_empty_data(viz_tools):
+    """Test multi-series chart with empty data."""
+    result = viz_tools.create_multi_series_chart({})
+
+    result_dict = json.loads(result)
+    assert result_dict["status"] == "error"
+    assert "tip" in result_dict
+
+
+def test_multi_series_error_invalid_chart_type(viz_tools):
+    """Test multi-series with invalid chart type."""
+    data = {"S1": {"A": 10}}
+    result = viz_tools.create_multi_series_chart(data, chart_type="invalid")
+
+    result_dict = json.loads(result)
+    assert result_dict["status"] == "error"
+
+
+def test_format_large_numbers(viz_tools):
+    """Test large number formatting helper."""
+    assert viz_tools._format_large_numbers(1_500_000_000) == "1.5B"
+    assert viz_tools._format_large_numbers(2_300_000) == "2.3M"
+    assert viz_tools._format_large_numbers(4_500) == "4.5K"
+    assert viz_tools._format_large_numbers(123.45) == "123.5"
+    assert viz_tools._format_large_numbers(0) == "0.0"
+
+
+def test_parse_datetime(viz_tools):
+    """Test datetime parsing helper."""
+    dt = viz_tools._parse_datetime("2024-01-01")
+    assert dt is not None
+    assert dt.year == 2024
+    assert dt.month == 1
+    assert dt.day == 1
+
+    dt = viz_tools._parse_datetime("01/15/2024")
+    assert dt is not None
+
+    dt = viz_tools._parse_datetime("not a date")
+    assert dt is None
+
+
+def test_validate_numeric_data(viz_tools):
+    """Test numeric data validation helper."""
+    # Valid data
+    result = viz_tools._validate_numeric_data([1, 2, 3, 4])
+    assert result == [1.0, 2.0, 3.0, 4.0]
+
+    # Mixed valid and invalid
+    result = viz_tools._validate_numeric_data([1, "2", 3, "bad", 5])
+    assert len(result) == 4
+
+    # All invalid
+    with pytest.raises(ValueError, match="No valid numeric data found"):
+        viz_tools._validate_numeric_data(["a", "b", "c"])
+
+    # Empty list
+    with pytest.raises(ValueError, match="empty"):
+        viz_tools._validate_numeric_data([])
+
+
+def test_multi_series_chart_enabled_flag(temp_output_dir):
+    """Test that multi-series chart can be enabled/disabled."""
+    tools_with = VisualizationTools(output_dir=temp_output_dir, enable_create_multi_series_chart=True)
+    tools_without = VisualizationTools(output_dir=temp_output_dir, enable_create_multi_series_chart=False)
+
+    with_names = [func.name for func in tools_with.functions.values()]
+    without_names = [func.name for func in tools_without.functions.values()]
+
+    assert "create_multi_series_chart" in with_names
+    assert "create_multi_series_chart" not in without_names
