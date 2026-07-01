@@ -27,7 +27,7 @@ async def _download_file(bot: "AsyncTeleBot", file_id: str) -> Optional[bytes]:
             return None
         return await bot.download_file(file_info.file_path)
     except Exception as e:
-        log_error(f"Error downloading file: {e}")
+        log_error(f"Error downloading file: {str(e)}")
         return None
 
 
@@ -181,6 +181,6 @@ async def send_response_media(
             any_media_sent = True
             reply_to_message_id = None
         except Exception as e:
-            log_error(f"Failed to send media to chat {chat_id}: {e}")
+            log_error(f"Failed to send media to chat {chat_id}: {str(e)}")
 
     return any_media_sent

@@ -108,9 +108,12 @@ def test_team_continue_run_via_run_id_includes_history(shared_db):
         f"continue_run should produce a response. Got: {result.content}"
     )
     content_lower = (result.content or "").lower()
-    assert "note" in content_lower or "saved" in content_lower or "reminder" in content_lower or "groceries" in content_lower, (
-        f"continue_run response should reference the saved note. Got: {result.content}"
-    )
+    assert (
+        "note" in content_lower
+        or "saved" in content_lower
+        or "reminder" in content_lower
+        or "groceries" in content_lower
+    ), f"continue_run response should reference the saved note. Got: {result.content}"
 
 
 def test_team_continue_run_via_run_id_new_team_includes_history(shared_db):

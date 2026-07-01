@@ -63,7 +63,7 @@ class JSONReader(Reader):
                     name=json_name,
                     id=str(uuid4()),
                     meta_data={"page": page_number},
-                    content=json.dumps(content),
+                    content=json.dumps(content, ensure_ascii=False),
                 )
                 for page_number, content in enumerate(json_contents, start=1)
             ]
@@ -76,7 +76,7 @@ class JSONReader(Reader):
         except (FileNotFoundError, ValueError, json.JSONDecodeError):
             raise
         except Exception as e:
-            log_error(f"Error reading: {path}: {e}")
+            log_error(f"Error reading: {path}: {str(e)}")
             raise
 
     async def async_read(self, path: Union[Path, IO[Any]], name: Optional[str] = None) -> List[Document]:

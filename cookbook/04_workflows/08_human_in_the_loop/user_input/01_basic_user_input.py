@@ -14,7 +14,7 @@ Two ways to define user_input_schema:
 
 from agno.agent import Agent
 from agno.db.postgres import PostgresDb
-from agno.models.openai import OpenAIChat
+from agno.models.openai import OpenAIResponses
 from agno.workflow.decorators import pause
 from agno.workflow.step import Step
 from agno.workflow.types import StepInput, StepOutput, UserInputField
@@ -86,7 +86,7 @@ def process_with_params(step_input: StepInput) -> StepOutput:
 # Step 3: Generate report (no HITL)
 writer_agent = Agent(
     name="Report Writer",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIResponses(id="gpt-5.4"),
     instructions=[
         "You are a report writer.",
         "Given processing results, write a brief summary report.",

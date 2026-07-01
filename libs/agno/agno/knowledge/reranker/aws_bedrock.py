@@ -5,7 +5,7 @@ from pydantic import ConfigDict, Field
 
 from agno.knowledge.document import Document
 from agno.knowledge.reranker.base import Reranker
-from agno.utils.log import logger
+from agno.utils.log import log_error, logger
 
 try:
     from boto3 import client as AwsClient
@@ -258,10 +258,12 @@ class AwsBedrockReranker(Reranker):
         except ClientError as e:
             error_code = e.response.get("Error", {}).get("Code", "Unknown")
             error_message = e.response.get("Error", {}).get("Message", str(e))
-            logger.error(f"AWS Bedrock Rerank API error ({error_code}): {error_message}. Returning original documents.")
+            log_error(
+                f"AWS Bedrock Rerank API error ({error_code}): {error_message}. Returning original documents.: {str(e)}"
+            )
             return documents
-        except Exception as e:
-            logger.error(f"Error reranking documents: {e}. Returning original documents.")
+        except Exception:
+            logger.exception("Error reranking documents. Returning original documents.")
             return documents
 
 

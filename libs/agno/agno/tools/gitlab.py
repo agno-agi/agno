@@ -4,7 +4,7 @@ from typing import Any, Dict, List, Optional, cast
 from urllib.parse import quote_plus
 
 from agno.tools import Toolkit
-from agno.utils.log import log_debug, logger
+from agno.utils.log import log_debug, log_error, logger
 
 try:
     import gitlab
@@ -223,7 +223,7 @@ class GitlabTools(Toolkit):
             data = [self._serialize_project(project) for project in projects]
             return json.dumps({"data": data, "meta": self._build_meta(page, per_page, len(data))}, indent=2)
         except (GitlabAuthenticationError, GitlabError) as e:
-            logger.error(f"GitLab API error while listing projects: {e}")
+            logger.exception("GitLab API error while listing projects")
             return self._json_error(str(e))
         except Exception as e:
             logger.exception("Unexpected error while listing projects")
@@ -262,10 +262,10 @@ class GitlabTools(Toolkit):
             return json.dumps({"data": data, "meta": self._build_meta(page, per_page, len(data))}, indent=2)
         except httpx.HTTPStatusError as e:
             message = self._http_error_message(e.response)
-            logger.error(f"GitLab API error while listing projects: {message}")
+            log_error(f"GitLab API error while listing projects: {message}: {str(e)}")
             return self._json_error(message)
         except httpx.RequestError as e:
-            logger.error(f"GitLab request error while listing projects: {e}")
+            logger.exception("GitLab request error while listing projects")
             return self._json_error(str(e))
         except Exception as e:
             logger.exception("Unexpected error while listing projects")
@@ -286,7 +286,7 @@ class GitlabTools(Toolkit):
             project = self._get_project(project_id_or_path)
             return json.dumps(self._serialize_project(project), indent=2)
         except (GitlabAuthenticationError, GitlabError) as e:
-            logger.error(f"GitLab API error while getting project {project_id_or_path}: {e}")
+            logger.exception(f"GitLab API error while getting project {project_id_or_path}")
             return self._json_error(str(e))
         except Exception as e:
             logger.exception(f"Unexpected error while getting project {project_id_or_path}")
@@ -309,10 +309,10 @@ class GitlabTools(Toolkit):
             return json.dumps(self._serialize_project(project), indent=2)
         except httpx.HTTPStatusError as e:
             message = self._http_error_message(e.response)
-            logger.error(f"GitLab API error while getting project {project_id_or_path}: {message}")
+            log_error(f"GitLab API error while getting project {project_id_or_path}: {message}: {str(e)}")
             return self._json_error(message)
         except httpx.RequestError as e:
-            logger.error(f"GitLab request error while getting project {project_id_or_path}: {e}")
+            logger.exception(f"GitLab request error while getting project {project_id_or_path}")
             return self._json_error(str(e))
         except Exception as e:
             logger.exception(f"Unexpected error while getting project {project_id_or_path}")
@@ -359,7 +359,7 @@ class GitlabTools(Toolkit):
             data = [self._serialize_merge_request(mr) for mr in merge_requests]
             return json.dumps({"data": data, "meta": self._build_meta(page, per_page, len(data))}, indent=2)
         except (GitlabAuthenticationError, GitlabError) as e:
-            logger.error(f"GitLab API error while listing merge requests for project {project_id_or_path}: {e}")
+            logger.exception(f"GitLab API error while listing merge requests for project {project_id_or_path}")
             return self._json_error(str(e))
         except Exception as e:
             logger.exception(f"Unexpected error while listing merge requests for project {project_id_or_path}")
@@ -407,10 +407,12 @@ class GitlabTools(Toolkit):
             return json.dumps({"data": data, "meta": self._build_meta(page, per_page, len(data))}, indent=2)
         except httpx.HTTPStatusError as e:
             message = self._http_error_message(e.response)
-            logger.error(f"GitLab API error while listing merge requests for project {project_id_or_path}: {message}")
+            log_error(
+                f"GitLab API error while listing merge requests for project {project_id_or_path}: {message}: {str(e)}"
+            )
             return self._json_error(message)
         except httpx.RequestError as e:
-            logger.error(f"GitLab request error while listing merge requests for project {project_id_or_path}: {e}")
+            logger.exception(f"GitLab request error while listing merge requests for project {project_id_or_path}")
             return self._json_error(str(e))
         except Exception as e:
             logger.exception(f"Unexpected error while listing merge requests for project {project_id_or_path}")
@@ -433,7 +435,7 @@ class GitlabTools(Toolkit):
             merge_request = project.mergerequests.get(merge_request_iid)
             return json.dumps(self._serialize_merge_request(merge_request), indent=2)
         except (GitlabAuthenticationError, GitlabError) as e:
-            logger.error(f"GitLab API error while getting merge request {merge_request_iid}: {e}")
+            logger.exception(f"GitLab API error while getting merge request {merge_request_iid}")
             return self._json_error(str(e))
         except Exception as e:
             logger.exception(f"Unexpected error while getting merge request {merge_request_iid}")
@@ -457,10 +459,10 @@ class GitlabTools(Toolkit):
             return json.dumps(self._serialize_merge_request(merge_request), indent=2)
         except httpx.HTTPStatusError as e:
             message = self._http_error_message(e.response)
-            logger.error(f"GitLab API error while getting merge request {merge_request_iid}: {message}")
+            log_error(f"GitLab API error while getting merge request {merge_request_iid}: {message}: {str(e)}")
             return self._json_error(message)
         except httpx.RequestError as e:
-            logger.error(f"GitLab request error while getting merge request {merge_request_iid}: {e}")
+            logger.exception(f"GitLab request error while getting merge request {merge_request_iid}")
             return self._json_error(str(e))
         except Exception as e:
             logger.exception(f"Unexpected error while getting merge request {merge_request_iid}")
@@ -511,7 +513,7 @@ class GitlabTools(Toolkit):
             data = [self._serialize_issue(issue) for issue in issues]
             return json.dumps({"data": data, "meta": self._build_meta(page, per_page, len(data))}, indent=2)
         except (GitlabAuthenticationError, GitlabError) as e:
-            logger.error(f"GitLab API error while listing issues for project {project_id_or_path}: {e}")
+            logger.exception(f"GitLab API error while listing issues for project {project_id_or_path}")
             return self._json_error(str(e))
         except Exception as e:
             logger.exception(f"Unexpected error while listing issues for project {project_id_or_path}")
@@ -563,10 +565,10 @@ class GitlabTools(Toolkit):
             return json.dumps({"data": data, "meta": self._build_meta(page, per_page, len(data))}, indent=2)
         except httpx.HTTPStatusError as e:
             message = self._http_error_message(e.response)
-            logger.error(f"GitLab API error while listing issues for project {project_id_or_path}: {message}")
+            log_error(f"GitLab API error while listing issues for project {project_id_or_path}: {message}: {str(e)}")
             return self._json_error(message)
         except httpx.RequestError as e:
-            logger.error(f"GitLab request error while listing issues for project {project_id_or_path}: {e}")
+            logger.exception(f"GitLab request error while listing issues for project {project_id_or_path}")
             return self._json_error(str(e))
         except Exception as e:
             logger.exception(f"Unexpected error while listing issues for project {project_id_or_path}")

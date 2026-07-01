@@ -28,12 +28,12 @@ from copy import deepcopy
 from dataclasses import dataclass, field
 from os import getenv
 from textwrap import dedent
-from typing import TYPE_CHECKING, Any, Callable, List, Optional, Union
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Union, cast
 
 from agno.learn.config import LearningMode, UserMemoryConfig
 from agno.learn.schemas import Memories
 from agno.learn.stores.protocol import LearningStore
-from agno.learn.utils import from_dict_safe, to_dict_safe
+from agno.learn.utils import build_learning_id, from_dict_safe, to_dict_safe
 from agno.utils.log import (
     log_debug,
     log_warning,
@@ -932,7 +932,7 @@ class UserMemoryStore(LearningStore):
 
     def _build_memories_id(self, user_id: str) -> str:
         """Build a unique memories ID."""
-        return f"memories_{user_id}"
+        return cast(str, build_learning_id("user_memory", user_id=user_id))
 
     def _memories_to_list(self, memories: Optional[Any]) -> List[dict]:
         """Convert memories to list of memory dicts for prompt."""
@@ -972,7 +972,7 @@ class UserMemoryStore(LearningStore):
                 functions.append(func)
                 log_debug(f"Added function {func.name}")
             except Exception as e:
-                log_warning(f"Could not add function {tool}: {e}")
+                log_warning(f"Could not add function {tool}: {str(e)}")
 
         return functions
 
@@ -1161,24 +1161,19 @@ class UserMemoryStore(LearningStore):
                     if memories_data is None:
                         memories_data = self.schema(user_id=user_id)
 
-                    if hasattr(memories_data, "memories"):
-                        memory_id = str(uuid.uuid4())[:8]
-                        memory_entry = {
-                            "id": memory_id,
-                            "content": memory,
-                            "source": input_string[:200] if input_string else None,
-                        }
+                    if hasattr(memories_data, "add_memory"):
+                        extra: Dict[str, Any] = {"source": input_string[:200] if input_string else None}
                         if agent_id:
-                            memory_entry["added_by_agent"] = agent_id
+                            extra["added_by_agent"] = agent_id
                         if team_id:
-                            memory_entry["added_by_team"] = team_id
-                        memories_data.memories.append(memory_entry)
+                            extra["added_by_team"] = team_id
+                        memories_data.add_memory(memory, **extra)
 
                     self.save(user_id=user_id, memories=memories_data, agent_id=agent_id, team_id=team_id)
                     log_debug(f"Memory added: {memory[:50]}...")
                     return f"Memory saved: {memory}"
                 except Exception as e:
-                    log_warning(f"Error adding memory: {e}")
+                    log_warning(f"Error adding memory: {str(e)}")
                     return f"Error: {e}"
 
             functions.append(add_memory)
@@ -1204,23 +1199,21 @@ class UserMemoryStore(LearningStore):
                     if memories_data is None:
                         return "No memories found"
 
-                    if hasattr(memories_data, "memories"):
-                        for mem in memories_data.memories:
-                            if isinstance(mem, dict) and mem.get("id") == memory_id:
-                                mem["content"] = memory
-                                mem["source"] = input_string[:200] if input_string else None
-                                if agent_id:
-                                    mem["updated_by_agent"] = agent_id
-                                if team_id:
-                                    mem["updated_by_team"] = team_id
-                                self.save(user_id=user_id, memories=memories_data, agent_id=agent_id, team_id=team_id)
-                                log_debug(f"Memory updated: {memory_id}")
-                                return f"Memory updated: {memory}"
+                    if hasattr(memories_data, "update_memory"):
+                        extra: Dict[str, Any] = {"source": input_string[:200] if input_string else None}
+                        if agent_id:
+                            extra["updated_by_agent"] = agent_id
+                        if team_id:
+                            extra["updated_by_team"] = team_id
+                        if memories_data.update_memory(memory_id, memory, **extra):
+                            self.save(user_id=user_id, memories=memories_data, agent_id=agent_id, team_id=team_id)
+                            log_debug(f"Memory updated: {memory_id}")
+                            return f"Memory updated: {memory}"
                         return f"Memory {memory_id} not found"
 
                     return "No memories field"
                 except Exception as e:
-                    log_warning(f"Error updating memory: {e}")
+                    log_warning(f"Error updating memory: {str(e)}")
                     return f"Error: {e}"
 
             functions.append(update_memory)
@@ -1261,7 +1254,7 @@ class UserMemoryStore(LearningStore):
 
                     return "No memories field"
                 except Exception as e:
-                    log_warning(f"Error deleting memory: {e}")
+                    log_warning(f"Error deleting memory: {str(e)}")
                     return f"Error: {e}"
 
             functions.append(delete_memory)
@@ -1279,7 +1272,7 @@ class UserMemoryStore(LearningStore):
                     log_debug("All memories cleared")
                     return "All memories cleared"
                 except Exception as e:
-                    log_warning(f"Error clearing memories: {e}")
+                    log_warning(f"Error clearing memories: {str(e)}")
                     return f"Error: {e}"
 
             functions.append(clear_all_memories)
@@ -1318,24 +1311,19 @@ class UserMemoryStore(LearningStore):
                     if memories_data is None:
                         memories_data = self.schema(user_id=user_id)
 
-                    if hasattr(memories_data, "memories"):
-                        memory_id = str(uuid.uuid4())[:8]
-                        memory_entry = {
-                            "id": memory_id,
-                            "content": memory,
-                            "source": input_string[:200] if input_string else None,
-                        }
+                    if hasattr(memories_data, "add_memory"):
+                        extra: Dict[str, Any] = {"source": input_string[:200] if input_string else None}
                         if agent_id:
-                            memory_entry["added_by_agent"] = agent_id
+                            extra["added_by_agent"] = agent_id
                         if team_id:
-                            memory_entry["added_by_team"] = team_id
-                        memories_data.memories.append(memory_entry)
+                            extra["added_by_team"] = team_id
+                        memories_data.add_memory(memory, **extra)
 
                     await self.asave(user_id=user_id, memories=memories_data, agent_id=agent_id, team_id=team_id)
                     log_debug(f"Memory added: {memory[:50]}...")
                     return f"Memory saved: {memory}"
                 except Exception as e:
-                    log_warning(f"Error adding memory: {e}")
+                    log_warning(f"Error adding memory: {str(e)}")
                     return f"Error: {e}"
 
             functions.append(add_memory)
@@ -1361,25 +1349,23 @@ class UserMemoryStore(LearningStore):
                     if memories_data is None:
                         return "No memories found"
 
-                    if hasattr(memories_data, "memories"):
-                        for mem in memories_data.memories:
-                            if isinstance(mem, dict) and mem.get("id") == memory_id:
-                                mem["content"] = memory
-                                mem["source"] = input_string[:200] if input_string else None
-                                if agent_id:
-                                    mem["updated_by_agent"] = agent_id
-                                if team_id:
-                                    mem["updated_by_team"] = team_id
-                                await self.asave(
-                                    user_id=user_id, memories=memories_data, agent_id=agent_id, team_id=team_id
-                                )
-                                log_debug(f"Memory updated: {memory_id}")
-                                return f"Memory updated: {memory}"
+                    if hasattr(memories_data, "update_memory"):
+                        extra: Dict[str, Any] = {"source": input_string[:200] if input_string else None}
+                        if agent_id:
+                            extra["updated_by_agent"] = agent_id
+                        if team_id:
+                            extra["updated_by_team"] = team_id
+                        if memories_data.update_memory(memory_id, memory, **extra):
+                            await self.asave(
+                                user_id=user_id, memories=memories_data, agent_id=agent_id, team_id=team_id
+                            )
+                            log_debug(f"Memory updated: {memory_id}")
+                            return f"Memory updated: {memory}"
                         return f"Memory {memory_id} not found"
 
                     return "No memories field"
                 except Exception as e:
-                    log_warning(f"Error updating memory: {e}")
+                    log_warning(f"Error updating memory: {str(e)}")
                     return f"Error: {e}"
 
             functions.append(update_memory)
@@ -1422,7 +1408,7 @@ class UserMemoryStore(LearningStore):
 
                     return "No memories field"
                 except Exception as e:
-                    log_warning(f"Error deleting memory: {e}")
+                    log_warning(f"Error deleting memory: {str(e)}")
                     return f"Error: {e}"
 
             functions.append(delete_memory)
@@ -1440,7 +1426,7 @@ class UserMemoryStore(LearningStore):
                     log_debug("All memories cleared")
                     return "All memories cleared"
                 except Exception as e:
-                    log_warning(f"Error clearing memories: {e}")
+                    log_warning(f"Error clearing memories: {str(e)}")
                     return f"Error: {e}"
 
             functions.append(clear_all_memories)

@@ -483,7 +483,7 @@ class A2AClient:
                             pass  # Could store task_id/context_id if needed
 
                     except json.JSONDecodeError as e:
-                        log_warning(f"Failed to decode JSON from stream line: {line[:100]}. Error: {e}")
+                        log_warning(f"Failed to decode JSON from stream line: {line[:100]}: {str(e)}")
                         continue
 
         except (ConnectError, ConnectTimeout) as e:

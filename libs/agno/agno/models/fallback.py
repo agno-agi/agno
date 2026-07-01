@@ -143,7 +143,7 @@ def call_model_with_fallback(
         fallbacks = get_fallback_models(fallback_config, primary_error)
         if not fallbacks:
             raise
-        log_warning(f"Primary model '{model.id}' failed: {primary_error}. Trying fallback models...")
+        log_warning(f"Primary model '{model.id}' failed. Trying fallback models...: {primary_error}")
         return _try_fallback_models(
             fallbacks, primary_error, "response", _clean_kwargs_for_fallback(kwargs), model.id, fallback_config
         )
@@ -161,7 +161,7 @@ async def acall_model_with_fallback(
         fallbacks = get_fallback_models(fallback_config, primary_error)
         if not fallbacks:
             raise
-        log_warning(f"Primary model '{model.id}' failed: {primary_error}. Trying fallback models...")
+        log_warning(f"Primary model '{model.id}' failed. Trying fallback models...: {primary_error}")
         return await _atry_fallback_models(
             fallbacks, primary_error, "aresponse", _clean_kwargs_for_fallback(kwargs), model.id, fallback_config
         )
@@ -184,7 +184,7 @@ def call_model_stream_with_fallback(
         fallbacks = get_fallback_models(fallback_config, primary_error)
         if not fallbacks:
             raise
-        log_warning(f"Primary model '{model.id}' failed: {primary_error}. Trying fallback models...")
+        log_warning(f"Primary model '{model.id}' failed. Trying fallback models...: {primary_error}")
         yield ModelResponse(event=ModelResponseEvent.fallback_model_activated.value)
         yield from _try_fallback_models_stream(
             fallbacks, primary_error, _clean_kwargs_for_fallback(kwargs), model.id, fallback_config
@@ -204,7 +204,7 @@ async def acall_model_stream_with_fallback(
         fallbacks = get_fallback_models(fallback_config, primary_error)
         if not fallbacks:
             raise
-        log_warning(f"Primary model '{model.id}' failed: {primary_error}. Trying fallback models...")
+        log_warning(f"Primary model '{model.id}' failed. Trying fallback models...: {primary_error}")
         yield ModelResponse(event=ModelResponseEvent.fallback_model_activated.value)
         async for event in _atry_fallback_models_stream(
             fallbacks, primary_error, _clean_kwargs_for_fallback(kwargs), model.id, fallback_config
@@ -247,7 +247,7 @@ def _try_fallback_models(
             _notify_fallback(fallback_config, primary_model_id, fallback.id, primary_error)
             return result
         except ModelProviderError as e:
-            log_warning(f"Fallback model '{fallback.id}' also failed: {e}")
+            log_warning(f"Fallback model '{fallback.id}' also failed: {str(e)}")
             continue
     raise primary_error
 
@@ -268,7 +268,7 @@ async def _atry_fallback_models(
             _notify_fallback(fallback_config, primary_model_id, fallback.id, primary_error)
             return result
         except ModelProviderError as e:
-            log_warning(f"Fallback model '{fallback.id}' also failed: {e}")
+            log_warning(f"Fallback model '{fallback.id}' also failed: {str(e)}")
             continue
     raise primary_error
 
@@ -288,7 +288,7 @@ def _try_fallback_models_stream(
             _notify_fallback(fallback_config, primary_model_id, fallback.id, primary_error)
             return
         except ModelProviderError as e:
-            log_warning(f"Fallback model '{fallback.id}' also failed: {e}")
+            log_warning(f"Fallback model '{fallback.id}' also failed: {str(e)}")
             continue
     raise primary_error
 
@@ -309,6 +309,6 @@ async def _atry_fallback_models_stream(
             _notify_fallback(fallback_config, primary_model_id, fallback.id, primary_error)
             return
         except ModelProviderError as e:
-            log_warning(f"Fallback model '{fallback.id}' also failed: {e}")
+            log_warning(f"Fallback model '{fallback.id}' also failed: {str(e)}")
             continue
     raise primary_error

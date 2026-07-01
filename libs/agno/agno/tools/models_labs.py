@@ -8,7 +8,7 @@ from agno.media import Audio, Image, Video
 from agno.models.response import FileType
 from agno.tools import Toolkit
 from agno.tools.function import ToolResult
-from agno.utils.log import log_debug, log_info, logger
+from agno.utils.log import log_debug, log_error, log_info, log_warning, logger
 
 try:
     import requests
@@ -61,7 +61,7 @@ class ModelsLabTools(Toolkit):
         self.api_key = api_key or getenv("MODELS_LAB_API_KEY")
 
         if not self.api_key:
-            logger.error("MODELS_LAB_API_KEY not set. Please set the MODELS_LAB_API_KEY environment variable.")
+            log_error("MODELS_LAB_API_KEY not set. Please set the MODELS_LAB_API_KEY environment variable.")
 
         tools: List[Any] = []
         tools.append(self.generate_media)
@@ -157,7 +157,7 @@ class ModelsLabTools(Toolkit):
                 time.sleep(1)
 
             except RequestException as e:
-                logger.warning(f"Error during fetch attempt {seconds_waited}: {e}")
+                log_warning(f"Error during fetch attempt {seconds_waited}: {str(e)}")
 
         return False
 
@@ -178,12 +178,12 @@ class ModelsLabTools(Toolkit):
 
             status = result.get("status")
             if status == "error":
-                logger.error(f"Error in response: {result.get('message')}")
+                log_error(f"Error in response: {result.get('message')}")
                 return ToolResult(content=f"Error: {result.get('message')}")
 
             if "error" in result:
                 error_msg = f"Failed to generate {self.file_type.value}: {result['error']}"
-                logger.error(error_msg)
+                log_error(error_msg)
                 return ToolResult(content=f"Error: {result['error']}")
 
             eta = result.get("eta")
@@ -228,9 +228,9 @@ class ModelsLabTools(Toolkit):
 
         except RequestException as e:
             error_msg = f"Network error while generating {self.file_type.value}: {e}"
-            logger.error(error_msg)
+            log_error(error_msg)
             return ToolResult(content=f"Error: {error_msg}")
         except Exception as e:
             error_msg = f"Unexpected error while generating {self.file_type.value}: {e}"
-            logger.error(error_msg)
+            log_error(error_msg)
             return ToolResult(content=f"Error: {error_msg}")

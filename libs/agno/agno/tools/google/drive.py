@@ -19,6 +19,19 @@ Required Setup:
 4. Optionally set GOOGLE_DELEGATED_USER to impersonate a user via domain-wide delegation
 
 Install dependencies: `pip install google-api-python-client google-auth-httplib2 google-auth-oauthlib`
+
+**Shared Drive Support:**
+
+By default, searches only personal Drive (corpora="user"). To access Shared Drives:
+
+    GoogleDriveTools(
+        corpora="allDrives",           # Search all drives
+        supports_all_drives=True,      # Enable Shared Drive API features
+        include_items_from_all_drives=True,  # Include Shared Drive items in results
+    )
+
+Corpora options: "user" (default), "domain", "drive" (requires drive_id), "allDrives".
+See: https://developers.google.com/drive/api/guides/enable-shareddrives
 """
 
 import asyncio
@@ -30,16 +43,14 @@ from os import getenv
 from pathlib import Path
 from typing import Any, List, Optional, Tuple, Union, cast
 
-from agno.tools import Toolkit
 from agno.tools.google.auth import google_authenticate
-from agno.utils.log import log_error
+from agno.tools.google.base import GoogleToolkit
+from agno.utils.log import log_debug, log_error, log_warning
 
 try:
-    from google.auth.transport.requests import Request
     from google.oauth2.credentials import Credentials
     from google.oauth2.service_account import Credentials as ServiceAccountCredentials
-    from google_auth_oauthlib.flow import InstalledAppFlow
-    from googleapiclient.discovery import Resource, build
+    from googleapiclient.discovery import Resource
     from googleapiclient.errors import HttpError
     from googleapiclient.http import MediaFileUpload, MediaIoBaseDownload
 except ImportError:
@@ -81,13 +92,129 @@ DRIVE_QUERY_INSTRUCTIONS = textwrap.dedent(f"""\
     - `sharedWithMe` — files shared with the user
     - `starred` — starred files
     - Combine with `and` / `or`: `name contains 'report' and mimeType = 'application/pdf'`
-    - Trashed files are filtered automatically. Do not add trashed clauses.""")
+    - Trashed files are filtered automatically. Do not add trashed clauses.
+
+    ## Handling Incomplete Results
+    If search returns `incompleteSearch: true`, some shared drives could not be searched.
+    This is a server-side limitation of the `allDrives` corpus, not a problem with your query.
+    - Inform the user that results may be incomplete due to shared drive limitations
+    - Do NOT retry the same query — the limitation is server-side
+    - For complete results, the user must reconfigure with `corpora="user"` or `corpora="drive"`""")
 
 
 authenticate = google_authenticate("drive")
 
+BINARY_MIME_PREFIXES = (
+    # Microsoft Office
+    "application/vnd.openxmlformats-officedocument",  # .docx, .xlsx, .pptx
+    "application/vnd.ms-",  # .doc, .xls, .ppt (legacy Office)
+    "application/msword",  # .doc (alternative)
+    # OpenDocument (LibreOffice/OpenOffice)
+    "application/vnd.oasis.opendocument",  # .odt, .ods, .odp
+    "application/vnd.sun.xml",  # older OpenOffice
+    # Apple iWork
+    "application/vnd.apple.",  # .pages, .numbers, .key
+    # Documents
+    "application/pdf",
+    "application/x-pdf",
+    "application/rtf",
+    "application/x-rtf",
+    "application/epub",
+    "application/x-mobipocket-ebook",  # .mobi
+    "application/vnd.amazon.ebook",  # .azw
+    # Archives
+    "application/zip",
+    "application/x-zip",
+    "application/gzip",
+    "application/x-gzip",
+    "application/x-tar",
+    "application/tar",
+    "application/x-rar",
+    "application/vnd.rar",  # modern RAR
+    "application/x-7z",
+    "application/x-bzip",
+    "application/x-xz",
+    "application/x-lzma",
+    "application/zstd",
+    "application/x-zstd",
+    "application/java-archive",  # .jar
+    "application/vnd.android.package-archive",  # .apk
+    "application/x-iso9660-image",  # .iso
+    "application/x-apple-diskimage",  # .dmg
+    # Generic binary
+    "application/octet-stream",
+    # Media (excluding SVG which is text)
+    "image/",
+    "video/",
+    "audio/",
+    "font/",
+)
 
-class GoogleDriveTools(Toolkit):
+# Text formats that start with binary prefixes but should be readable
+TEXT_EXCEPTIONS = {
+    "image/svg+xml",  # SVG is XML text
+}
+
+
+def _is_binary_mime(mime_type: str) -> bool:
+    """Return True if the MIME type indicates a binary format that cannot be decoded as text."""
+    if mime_type in TEXT_EXCEPTIONS:
+        return False
+    return any(mime_type.startswith(prefix) for prefix in BINARY_MIME_PREFIXES)
+
+
+# Office formats with optional text extraction support
+DOCX_MIME_TYPE = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+XLSX_MIME_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+PPTX_MIME_TYPE = "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+OFFICE_MIME_TYPES = {DOCX_MIME_TYPE, XLSX_MIME_TYPE, PPTX_MIME_TYPE}
+
+
+def _extract_docx_text(content_bytes: bytes) -> str:
+    import docx
+
+    buffer = io.BytesIO(content_bytes)
+    document = docx.Document(buffer)
+    paragraphs = [p.text for p in document.paragraphs]
+    return "\n".join(paragraphs)
+
+
+def _extract_xlsx_text(content_bytes: bytes) -> str:
+    import openpyxl
+
+    buffer = io.BytesIO(content_bytes)
+    workbook = openpyxl.load_workbook(buffer, read_only=True, data_only=True)
+    lines = []
+    for sheet in workbook.worksheets:
+        lines.append(f"=== Sheet: {sheet.title} ===")
+        for row in sheet.iter_rows(values_only=True):
+            cells = [str(c) if c is not None else "" for c in row]
+            if any(cells):
+                lines.append("\t".join(cells))
+    return "\n".join(lines)
+
+
+def _extract_pptx_text(content_bytes: bytes) -> str:
+    from pptx import Presentation  # type: ignore[import-not-found]
+
+    buffer = io.BytesIO(content_bytes)
+    prs = Presentation(buffer)
+    lines = []
+    for i, slide in enumerate(prs.slides, 1):
+        lines.append(f"=== Slide {i} ===")
+        for shape in slide.shapes:
+            if shape.has_text_frame:
+                for paragraph in shape.text_frame.paragraphs:
+                    text = "".join(run.text for run in paragraph.runs)
+                    if text.strip():
+                        lines.append(text)
+    return "\n".join(lines)
+
+
+class GoogleDriveTools(GoogleToolkit):
+    api_name = "drive"
+    api_version = "v3"
+    google_service_name = "drive"
     DEFAULT_SCOPES = {
         "read": "https://www.googleapis.com/auth/drive.readonly",
         "write": "https://www.googleapis.com/auth/drive.file",
@@ -122,7 +249,7 @@ class GoogleDriveTools(Toolkit):
     }
 
     # Partial response fields — only fetch what each tool needs
-    SEARCH_FIELDS = "nextPageToken, files(id, name, mimeType, modifiedTime, size, parents, description, webViewLink, webContentLink, owners(displayName, emailAddress))"
+    SEARCH_FIELDS = "nextPageToken, incompleteSearch, files(id, name, mimeType, modifiedTime, size, parents, description, webViewLink, webContentLink, owners(displayName, emailAddress))"
     READ_METADATA_FIELDS = "id,name,mimeType,modifiedTime,size,webViewLink"
 
     service: Optional[Resource]
@@ -130,12 +257,15 @@ class GoogleDriveTools(Toolkit):
     def __init__(
         self,
         # Authentication
-        auth_port: Optional[int] = 5050,
+        oauth_port: Optional[int] = None,
         login_hint: Optional[str] = None,
         creds: Optional[Union[Credentials, ServiceAccountCredentials]] = None,
         scopes: Optional[List[str]] = None,
-        creds_path: Optional[str] = None,  # OAuth client credentials JSON file path
-        token_path: Optional[str] = None,  # OAuth token file path
+        credentials_path: Optional[str] = None,
+        token_path: Optional[str] = None,
+        # Deprecated aliases (use credentials_path, oauth_port instead)
+        creds_path: Optional[str] = None,
+        auth_port: Optional[int] = None,
         # Service account auth — alternative to OAuth for server/bot deployments
         service_account_path: Optional[str] = None,
         delegated_user: Optional[str] = None,
@@ -154,11 +284,29 @@ class GoogleDriveTools(Toolkit):
         include_trashed: bool = False,
         # Maximum file size (bytes) read_file will load into memory for non-Workspace files
         max_read_size: int = 10 * 1024 * 1024,
+        # Shared Drive support — passthrough to Google Drive API
+        # See: https://developers.google.com/drive/api/guides/enable-shareddrives
+        corpora: str = "user",  # "user" | "domain" | "drive" | "allDrives"
+        supports_all_drives: bool = False,
+        include_items_from_all_drives: bool = False,
+        drive_id: Optional[str] = None,  # Required when corpora="drive"
         # Injected into agent system prompt with Drive query syntax
         instructions: Optional[str] = None,
         add_instructions: bool = True,
         **kwargs,
     ):
+        # Handle deprecated aliases
+        if creds_path is not None:
+            log_warning("creds_path is deprecated, use credentials_path instead")
+            if credentials_path is None:
+                credentials_path = creds_path
+        if auth_port is not None:
+            log_warning("auth_port is deprecated, use oauth_port instead")
+            if oauth_port is None:
+                oauth_port = auth_port
+        if oauth_port is None:
+            oauth_port = 5050
+
         if instructions is None:
             self.instructions = DRIVE_QUERY_INSTRUCTIONS
         else:
@@ -167,19 +315,11 @@ class GoogleDriveTools(Toolkit):
         self.include_trashed = include_trashed
         self.max_read_size = max_read_size
         self.download_dir = Path(download_dir).resolve()
-
-        # Pre-built credentials skip the OAuth/service account flow entirely
-        self.creds = creds
-        self.service = None
-        self.credentials_path = creds_path
-        self.token_path = token_path
-        self.service_account_path = service_account_path
-        self.delegated_user = delegated_user
-        # Pre-selects this email in the OAuth consent screen
-        self.login_hint = login_hint
+        self.corpora = corpora
+        self.supports_all_drives = supports_all_drives
+        self.include_items_from_all_drives = include_items_from_all_drives
+        self.drive_id = drive_id
         self.quota_project_id = quota_project_id or getenv("GOOGLE_CLOUD_QUOTA_PROJECT_ID")
-
-        self.auth_port = auth_port
 
         read_tools_enabled = any([list_files, search_files, read_file, download_file])
 
@@ -232,77 +372,28 @@ class GoogleDriveTools(Toolkit):
             async_tools=async_tools,
             instructions=self.instructions,
             add_instructions=add_instructions,
+            scopes=self.scopes,
+            creds=creds,
+            token_path=token_path,
+            credentials_path=credentials_path,
+            service_account_path=service_account_path,
+            delegated_user=delegated_user,
+            oauth_port=oauth_port,
+            login_hint=login_hint,
             **kwargs,
         )
 
-    def _auth(self) -> None:
-        """Authenticate with Google Drive API using service account or OAuth."""
-        if self.creds and self.creds.valid:
-            return
-
-        # Service account takes priority
-        service_account_path = self.service_account_path or getenv("GOOGLE_SERVICE_ACCOUNT_FILE")
-        if service_account_path:
-            service_account_creds = ServiceAccountCredentials.from_service_account_file(
-                service_account_path,
-                scopes=self.scopes,
-            )
-            delegated_user = self.delegated_user or getenv("GOOGLE_DELEGATED_USER")
-            if delegated_user:
-                service_account_creds = service_account_creds.with_subject(delegated_user)
-            self.creds = service_account_creds
-            self.creds.refresh(Request())
-            return
-
-        # OAuth flow
-        token_file = Path(self.token_path or "token.json")
-        creds_file = Path(self.credentials_path or "credentials.json")
-
-        if token_file.exists():
-            try:
-                self.creds = Credentials.from_authorized_user_file(str(token_file), self.scopes)
-            except ValueError:
-                self.creds = None
-
-        if self.creds and self.creds.expired and getattr(self.creds, "refresh_token", None):
-            try:
-                self.creds.refresh(Request())
-            except Exception:
-                self.creds = None
-
-        if not self.creds or not self.creds.valid:
-            client_config = {
-                "installed": {
-                    "client_id": getenv("GOOGLE_CLIENT_ID"),
-                    "client_secret": getenv("GOOGLE_CLIENT_SECRET"),
-                    "project_id": getenv("GOOGLE_PROJECT_ID"),
-                    "auth_uri": "https://accounts.google.com/o/oauth2/auth",
-                    "token_uri": "https://oauth2.googleapis.com/token",
-                    "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
-                    "redirect_uris": [getenv("GOOGLE_REDIRECT_URI", "http://localhost")],
-                }
-            }
-            if creds_file.exists():
-                flow = InstalledAppFlow.from_client_secrets_file(str(creds_file), self.scopes)
-            else:
-                flow = InstalledAppFlow.from_client_config(client_config, self.scopes)
-            run_kwargs: dict = {"port": self.auth_port, "prompt": "consent"}
-            if self.login_hint:
-                run_kwargs["login_hint"] = self.login_hint
-            self.creds = flow.run_local_server(**run_kwargs)
-
-        if self.creds and self.creds.valid:
-            token_file.write_text(self.creds.to_json())
-
-    def _build_service(self):
-        creds_to_use = self.creds
+    def _build_service(self, creds: Any) -> Any:
+        # Apply quota project for billing isolation if configured
+        creds_to_use = creds
         if self.quota_project_id and hasattr(creds_to_use, "with_quota_project"):
             creds_to_use = cast(Any, creds_to_use).with_quota_project(self.quota_project_id)
-        return build("drive", "v3", credentials=creds_to_use)
+
+        return self._build_google_service("drive", "v3", creds_to_use)
 
     def _get_file_metadata(self, file_id: str, fields: str) -> dict:
         service = cast(Resource, self.service)
-        return service.files().get(fileId=file_id, fields=fields).execute()
+        return service.files().get(fileId=file_id, fields=fields, supportsAllDrives=self.supports_all_drives).execute()
 
     def _download_bytes(self, request: Any) -> bytes:
         """Download a Drive API media request into memory via MediaIoBaseDownload."""
@@ -314,7 +405,12 @@ class GoogleDriveTools(Toolkit):
         return buffer.getvalue()
 
     # No @authenticate — delegates to search_files which handles auth
-    def list_files(self, query: Optional[str] = None, page_size: int = 10, page_token: Optional[str] = None) -> str:
+    def list_files(
+        self,
+        query: Optional[str] = None,
+        page_size: int = 10,
+        page_token: Optional[str] = None,
+    ) -> str:
         """
         List recent files and folders from Google Drive.
 
@@ -329,7 +425,10 @@ class GoogleDriveTools(Toolkit):
         return self.search_files(query=query, max_results=page_size, page_token=page_token)
 
     async def alist_files(
-        self, query: Optional[str] = None, page_size: int = 10, page_token: Optional[str] = None
+        self,
+        query: Optional[str] = None,
+        page_size: int = 10,
+        page_token: Optional[str] = None,
     ) -> str:
         """
         List recent files and folders from Google Drive (async).
@@ -345,7 +444,12 @@ class GoogleDriveTools(Toolkit):
         return await asyncio.to_thread(self.list_files, query=query, page_size=page_size, page_token=page_token)
 
     @authenticate
-    def search_files(self, query: Optional[str] = None, max_results: int = 10, page_token: Optional[str] = None) -> str:
+    def search_files(
+        self,
+        query: Optional[str] = None,
+        max_results: int = 10,
+        page_token: Optional[str] = None,
+    ) -> str:
         """
         Search Google Drive using a query expression.
         Searches in file name, type, folder, owner, and modification date.
@@ -374,27 +478,42 @@ class GoogleDriveTools(Toolkit):
                 "pageSize": max_results,
                 "orderBy": "modifiedTime desc",
                 "fields": self.SEARCH_FIELDS,
+                "corpora": self.corpora,
+                "supportsAllDrives": self.supports_all_drives,
+                "includeItemsFromAllDrives": self.include_items_from_all_drives,
             }
+            if self.drive_id:
+                list_kwargs["driveId"] = self.drive_id
             if page_token:
                 list_kwargs["pageToken"] = page_token
             results = service.files().list(**list_kwargs).execute()
             files = results.get("files", [])
+            incomplete = results.get("incompleteSearch", False)
+            if incomplete:
+                log_debug(
+                    f"Google Drive returned incomplete search results "
+                    f"(corpora={self.corpora!r}); some drives could not be searched."
+                )
             return json.dumps(
                 {
                     "query": effective_query,
                     "files": files,
                     "count": len(files),
                     "nextPageToken": results.get("nextPageToken"),
+                    "incompleteSearch": incomplete,
                 }
             )
         except HttpError as e:
             return json.dumps({"error": f"Google Drive API error: {e}"})
         except Exception as e:
-            log_error(f"Could not search Google Drive files: {e}")
+            log_error(f"Could not search Google Drive files: {str(e)}")
             return json.dumps({"error": f"Unexpected error: {type(e).__name__}: {e}"})
 
     async def asearch_files(
-        self, query: Optional[str] = None, max_results: int = 10, page_token: Optional[str] = None
+        self,
+        query: Optional[str] = None,
+        max_results: int = 10,
+        page_token: Optional[str] = None,
     ) -> str:
         """
         Search Google Drive using a query expression (async).
@@ -410,7 +529,7 @@ class GoogleDriveTools(Toolkit):
         return await asyncio.to_thread(self.search_files, query=query, max_results=max_results, page_token=page_token)
 
     @authenticate
-    def read_file(self, file_id: str) -> str:
+    def read_file(self, file_id: str = "") -> str:
         """
         Read a Drive file and return its text content.
 
@@ -433,6 +552,62 @@ class GoogleDriveTools(Toolkit):
                 return json.dumps(
                     {"error": f"Cannot read {mime_type} as text. Use download_file instead.", "file": metadata}
                 )
+            elif mime_type in OFFICE_MIME_TYPES:
+                file_size = int(metadata.get("size", 0))
+                if file_size > self.max_read_size:
+                    return json.dumps(
+                        {
+                            "error": (
+                                f"File is {file_size} bytes, exceeds max_read_size "
+                                f"({self.max_read_size}). Use download_file instead."
+                            ),
+                            "file": metadata,
+                        }
+                    )
+                request = service.files().get_media(fileId=file_id, supportsAllDrives=self.supports_all_drives)
+                content_bytes = self._download_bytes(request)
+                fmt, pkg = {
+                    DOCX_MIME_TYPE: ("docx", "python-docx"),
+                    XLSX_MIME_TYPE: ("xlsx", "openpyxl"),
+                    PPTX_MIME_TYPE: ("pptx", "python-pptx"),
+                }[mime_type]
+                try:
+                    if mime_type == DOCX_MIME_TYPE:
+                        content = _extract_docx_text(content_bytes)
+                    elif mime_type == XLSX_MIME_TYPE:
+                        content = _extract_xlsx_text(content_bytes)
+                    else:
+                        content = _extract_pptx_text(content_bytes)
+                    return json.dumps(
+                        {
+                            "file": metadata,
+                            "content": content,
+                            "contentLength": len(content),
+                            "extractedFrom": fmt,
+                        }
+                    )
+                except ImportError:
+                    return json.dumps(
+                        {
+                            "error": f"Cannot read .{fmt} file: {pkg} not installed. Install with: pip install {pkg}",
+                            "file": metadata,
+                        }
+                    )
+            elif _is_binary_mime(mime_type):
+                file_ext = metadata.get("name", "").rsplit(".", 1)[-1].lower()
+                hint = ""
+                if file_ext in ("docx", "doc"):
+                    hint = " To read as text, open in Google Drive and convert to Google Docs format."
+                elif file_ext in ("xlsx", "xls"):
+                    hint = " To read as text, open in Google Drive and convert to Google Sheets format."
+                elif file_ext in ("pptx", "ppt"):
+                    hint = " To read as text, open in Google Drive and convert to Google Slides format."
+                return json.dumps(
+                    {
+                        "error": f"Cannot read binary file ({mime_type}) as text.{hint}",
+                        "file": metadata,
+                    }
+                )
             else:
                 export_mime = None
 
@@ -450,7 +625,7 @@ class GoogleDriveTools(Toolkit):
                             "file": metadata,
                         }
                     )
-                request = service.files().get_media(fileId=file_id)
+                request = service.files().get_media(fileId=file_id, supportsAllDrives=self.supports_all_drives)
                 content_bytes = self._download_bytes(request)
 
             content = content_bytes.decode("utf-8", errors="replace")
@@ -465,10 +640,10 @@ class GoogleDriveTools(Toolkit):
         except HttpError as e:
             return json.dumps({"error": f"Google Drive API error: {e}"})
         except Exception as e:
-            log_error(f"Could not read Google Drive file {file_id}: {e}")
+            log_error(f"Could not read Google Drive file {file_id}: {str(e)}")
             return json.dumps({"error": f"Unexpected error: {type(e).__name__}: {e}"})
 
-    async def aread_file(self, file_id: str) -> str:
+    async def aread_file(self, file_id: str = "") -> str:
         """
         Read a Drive file and return its text content (async).
 
@@ -478,10 +653,10 @@ class GoogleDriveTools(Toolkit):
         Returns:
             str: JSON string containing file metadata and text content or error message
         """
-        return await asyncio.to_thread(self.read_file, file_id)
+        return await asyncio.to_thread(self.read_file, file_id=file_id)
 
     @authenticate
-    def upload_file(self, file_path: Union[str, Path]) -> str:
+    def upload_file(self, file_path: Union[str, Path] = "") -> str:
         """
         Upload a local file to Google Drive.
 
@@ -514,10 +689,10 @@ class GoogleDriveTools(Toolkit):
         except HttpError as e:
             return json.dumps({"error": f"Google Drive API error: {e}"})
         except Exception as e:
-            log_error(f"Could not upload file '{path}': {e}")
+            log_error(f"Could not upload file '{path}': {str(e)}")
             return json.dumps({"error": f"Unexpected error: {type(e).__name__}: {e}"})
 
-    async def aupload_file(self, file_path: Union[str, Path]) -> str:
+    async def aupload_file(self, file_path: Union[str, Path] = "") -> str:
         """
         Upload a local file to Google Drive (async).
 
@@ -527,10 +702,10 @@ class GoogleDriveTools(Toolkit):
         Returns:
             str: JSON string with uploaded file metadata (id, name, webViewLink)
         """
-        return await asyncio.to_thread(self.upload_file, file_path)
+        return await asyncio.to_thread(self.upload_file, file_path=file_path)
 
     @authenticate
-    def download_file(self, file_id: str, export_format: Optional[str] = None) -> str:
+    def download_file(self, file_id: str = "", export_format: Optional[str] = None) -> str:
         """
         Download a Drive file and save it locally.
 
@@ -579,7 +754,7 @@ class GoogleDriveTools(Toolkit):
                 )
 
             # Regular file — direct download
-            request = service.files().get_media(fileId=file_id)
+            request = service.files().get_media(fileId=file_id, supportsAllDrives=self.supports_all_drives)
             with path.open("wb") as file_handle:
                 downloader = MediaIoBaseDownload(file_handle, request)
                 done = False
@@ -589,10 +764,10 @@ class GoogleDriveTools(Toolkit):
         except HttpError as e:
             return json.dumps({"error": f"Google Drive API error: {e}"})
         except Exception as e:
-            log_error(f"Could not download file '{file_id}': {e}")
+            log_error(f"Could not download file '{file_id}': {str(e)}")
             return json.dumps({"error": f"Unexpected error: {type(e).__name__}: {e}"})
 
-    async def adownload_file(self, file_id: str, export_format: Optional[str] = None) -> str:
+    async def adownload_file(self, file_id: str = "", export_format: Optional[str] = None) -> str:
         """
         Download a Drive file and save it locally (async).
 
@@ -603,4 +778,4 @@ class GoogleDriveTools(Toolkit):
         Returns:
             str: JSON string containing saved file path and status or error message
         """
-        return await asyncio.to_thread(self.download_file, file_id, export_format=export_format)
+        return await asyncio.to_thread(self.download_file, file_id=file_id, export_format=export_format)

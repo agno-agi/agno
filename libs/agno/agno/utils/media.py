@@ -104,10 +104,10 @@ def download_image(url: str, output_path: str) -> bool:
         return True
 
     except httpx.HTTPError as e:
-        log_warning(f"Error downloading the image: {e}")
+        log_warning(f"Error downloading the image: {str(e)}")
         return False
     except IOError as e:
-        log_warning(f"Error saving the image to '{output_path}': {e}")
+        log_warning(f"Error saving the image to '{output_path}': {str(e)}")
         return False
 
 
@@ -279,7 +279,7 @@ def reconstruct_image_from_dict(img_data):
                 return Image(**img_data)
         return img_data
     except Exception as e:
-        log_warning(f"Failed to reconstruct image from dict: {e}")
+        log_warning(f"Failed to reconstruct image from dict: {str(e)}")
         return None
 
 
@@ -304,7 +304,7 @@ def reconstruct_video_from_dict(vid_data):
                 return Video(**vid_data)
         return vid_data
     except Exception as e:
-        log_warning(f"Failed to reconstruct video from dict: {e}")
+        log_warning(f"Failed to reconstruct video from dict: {str(e)}")
         return None
 
 
@@ -332,7 +332,7 @@ def reconstruct_audio_from_dict(aud_data):
                 return Audio(**aud_data)
         return aud_data
     except Exception as e:
-        log_warning(f"Failed to reconstruct audio from dict: {e}")
+        log_warning(f"Failed to reconstruct audio from dict: {str(e)}")
         return None
 
 
@@ -369,7 +369,7 @@ def reconstruct_file_from_dict(file_data):
                 return File(**file_data)
         return file_data
     except Exception as e:
-        log_warning(f"Failed to reconstruct file from dict: {e}")
+        log_warning(f"Failed to reconstruct file from dict: {str(e)}")
         return None
 
 

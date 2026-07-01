@@ -3,7 +3,7 @@ Accuracy Eval Metrics
 =====================
 
 Demonstrates that eval model metrics can be accumulated into the original
-agent's run_output using the run_response parameter on evaluate_answer.
+agent's run_output using the run_metrics parameter on evaluate_answer.
 
 The evaluator agent's token usage appears under "eval_model" in
 run_output.metrics.details alongside the agent's own "model" entries.
@@ -39,7 +39,7 @@ if __name__ == "__main__":
     run_output = agent.run("What is the capital of Japan?")
     agent_output = str(run_output.content)
 
-    # Run the evaluator, passing run_output so eval metrics accumulate into it
+    # Run the evaluator, passing run_output.metrics so eval metrics accumulate into it
     evaluator_agent = evaluation.get_evaluator_agent()
     eval_input = evaluation.get_eval_input()
     eval_expected = evaluation.get_eval_expected_output()
@@ -56,7 +56,7 @@ if __name__ == "__main__":
         evaluation_input=evaluation_input,
         evaluator_expected_output=eval_expected,
         agent_output=agent_output,
-        run_response=run_output,
+        run_metrics=run_output.metrics,
     )
 
     if result:

@@ -38,7 +38,7 @@ from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Union, ca
 from agno.learn.config import LearningMode, UserProfileConfig
 from agno.learn.schemas import UserProfile
 from agno.learn.stores.protocol import LearningStore
-from agno.learn.utils import from_dict_safe, to_dict_safe
+from agno.learn.utils import build_learning_id, from_dict_safe, to_dict_safe
 from agno.utils.log import (
     log_debug,
     log_warning,
@@ -471,7 +471,7 @@ class UserProfileStore(LearningStore):
                 return "No fields provided to update"
 
             except Exception as e:
-                log_warning(f"Error updating profile: {e}")
+                log_warning(f"Error updating profile: {str(e)}")
                 return f"Error: {e}"
 
         # Set the signature, docstring, and annotations
@@ -548,7 +548,7 @@ class UserProfileStore(LearningStore):
                 return "No fields provided to update"
 
             except Exception as e:
-                log_warning(f"Error updating profile: {e}")
+                log_warning(f"Error updating profile: {str(e)}")
                 return f"Error: {e}"
 
         # Set the signature, docstring, and annotations
@@ -1018,7 +1018,7 @@ class UserProfileStore(LearningStore):
 
     def _build_profile_id(self, user_id: str) -> str:
         """Build a unique profile ID."""
-        return f"user_profile_{user_id}"
+        return cast(str, build_learning_id("user_profile", user_id=user_id))
 
     def _build_functions_for_model(self, tools: List[Callable]) -> List["Function"]:
         """Convert callables to Functions for model."""
@@ -1039,7 +1039,7 @@ class UserProfileStore(LearningStore):
                 functions.append(func)
                 log_debug(f"Added function {func.name}")
             except Exception as e:
-                log_warning(f"Could not add function {tool}: {e}")
+                log_warning(f"Could not add function {tool}: {str(e)}")
 
         return functions
 

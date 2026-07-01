@@ -8,8 +8,10 @@ import pytest
 from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIChat
 from agno.run.agent import Message, RunOutput
+from agno.run.team import TeamRunOutput
 from agno.session.agent import AgentSession
 from agno.session.summary import SessionSummary, SessionSummaryManager, SessionSummaryResponse
+from agno.session.team import TeamSession
 
 
 @pytest.fixture
@@ -520,3 +522,299 @@ def test_summaries_updated_flag_none_response(session_summary_manager, mock_agen
         assert result is None
         assert session_summary_manager.summaries_updated is False
         assert mock_agent_session.summary is None
+
+
+# ---------------------------------------------------------------------------
+# Tests for last_n_runs and conversation_limit parameters
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def multi_run_agent_session():
+    """Create an agent session with multiple runs for testing last_n_runs and conversation_limit."""
+    from agno.run.base import RunStatus
+
+    runs = []
+    for i in range(5):
+        messages = [
+            Message(role="user", content=f"User message from run {i + 1}"),
+            Message(role="assistant", content=f"Assistant response from run {i + 1}"),
+        ]
+        runs.append(RunOutput(run_id=f"run_{i + 1}", messages=messages, status=RunStatus.completed))
+
+    session = AgentSession(
+        session_id="test_multi_run_session",
+        agent_id="test_agent",
+        user_id="test_user",
+        runs=runs,
+    )
+    return session
+
+
+def test_last_n_runs_default_none(model):
+    """Test that last_n_runs defaults to None (all runs)."""
+    manager = SessionSummaryManager(model=model)
+    assert manager.last_n_runs is None
+
+
+def test_conversation_limit_default_none(model):
+    """Test that conversation_limit defaults to None (no limit)."""
+    manager = SessionSummaryManager(model=model)
+    assert manager.conversation_limit is None
+
+
+def test_prepare_summary_messages_with_last_n_runs(model, multi_run_agent_session):
+    """Test that last_n_runs limits which runs are included in summary messages."""
+    manager = SessionSummaryManager(model=model, last_n_runs=2)
+
+    messages = manager._prepare_summary_messages(multi_run_agent_session)
+
+    assert messages is not None
+    system_message = messages[0]
+    # Should only contain messages from the last 2 runs (run 4 and run 5)
+    assert "run 4" in system_message.content
+    assert "run 5" in system_message.content
+    # Should NOT contain messages from earlier runs
+    assert "run 1" not in system_message.content
+    assert "run 2" not in system_message.content
+    assert "run 3" not in system_message.content
+
+
+def test_prepare_summary_messages_with_conversation_limit(model, multi_run_agent_session):
+    """Test that conversation_limit caps the number of messages in the summary."""
+    manager = SessionSummaryManager(model=model, conversation_limit=4)
+
+    messages = manager._prepare_summary_messages(multi_run_agent_session)
+
+    assert messages is not None
+    system_message = messages[0]
+    # With limit=4, should only have the last 4 messages (from runs 4 and 5)
+    assert "run 5" in system_message.content
+    assert "run 4" in system_message.content
+    # Earlier runs should be excluded
+    assert "run 1" not in system_message.content
+    assert "run 2" not in system_message.content
+
+
+def test_prepare_summary_messages_all_runs(model, multi_run_agent_session):
+    """Test that without last_n_runs or conversation_limit, all runs are included."""
+    manager = SessionSummaryManager(model=model)
+
+    messages = manager._prepare_summary_messages(multi_run_agent_session)
+
+    assert messages is not None
+    system_message = messages[0]
+    # All 5 runs should be present
+    for i in range(1, 6):
+        assert f"run {i}" in system_message.content
+
+
+def test_create_session_summary_with_last_n_runs(model, multi_run_agent_session):
+    """Test that create_session_summary respects last_n_runs."""
+    manager = SessionSummaryManager(model=model, last_n_runs=1)
+
+    mock_response = Mock()
+    mock_response.parsed = SessionSummaryResponse(summary="Summary of last run", topics=["test"])
+
+    manager.model.supports_native_structured_outputs = True
+
+    with patch.object(manager.model, "response", return_value=mock_response) as mock_model_response:
+        result = manager.create_session_summary(multi_run_agent_session)
+
+        assert isinstance(result, SessionSummary)
+        # Verify the model was called - the filtering happened in get_messages
+        mock_model_response.assert_called_once()
+        # Check that the system message only contains the last run
+        call_args = mock_model_response.call_args
+        system_msg = call_args.kwargs["messages"][0].content
+        assert "run 5" in system_msg
+        assert "run 1" not in system_msg
+
+
+def test_prepare_summary_messages_with_both_last_n_runs_and_conversation_limit(model, multi_run_agent_session):
+    """Test that last_n_runs and conversation_limit compose correctly when both are set."""
+    # last_n_runs=3 limits to runs 3, 4, 5 (6 messages)
+    # conversation_limit=2 then takes only the last 2 of those messages
+    manager = SessionSummaryManager(model=model, last_n_runs=3, conversation_limit=2)
+
+    messages = manager._prepare_summary_messages(multi_run_agent_session)
+
+    assert messages is not None
+    system_message = messages[0]
+    # Should contain only the last 2 messages from the last 3 runs
+    # The last 2 messages are from run 5
+    assert "run 5" in system_message.content
+    # Earlier runs should be excluded by the combination of both filters
+    assert "run 1" not in system_message.content
+    assert "run 2" not in system_message.content
+
+
+def test_get_messages_composes_last_n_runs_and_limit(multi_run_agent_session):
+    """Test that get_messages applies last_n_runs before limit at the session level."""
+    # last_n_runs=2 limits to runs 4 and 5 (4 messages)
+    # limit=3 then takes the last 3 of those 4 messages
+    messages = multi_run_agent_session.get_messages(last_n_runs=2, limit=3)
+
+    # Should have 3 messages from runs 4 and 5
+    assert len(messages) == 3
+    contents = [m.content for m in messages]
+    # All messages should be from runs 4 and 5
+    for content in contents:
+        assert "run 1" not in content
+        assert "run 2" not in content
+        assert "run 3" not in content
+
+
+@pytest.mark.asyncio
+async def test_acreate_session_summary_with_last_n_runs(model, multi_run_agent_session):
+    """Test that acreate_session_summary respects last_n_runs."""
+    manager = SessionSummaryManager(model=model, last_n_runs=1)
+
+    mock_response = Mock()
+    mock_response.parsed = SessionSummaryResponse(summary="Summary of last run", topics=["test"])
+
+    manager.model.supports_native_structured_outputs = True
+
+    with patch.object(manager.model, "aresponse", return_value=mock_response) as mock_model_response:
+        result = await manager.acreate_session_summary(multi_run_agent_session)
+
+        assert isinstance(result, SessionSummary)
+        mock_model_response.assert_called_once()
+        call_args = mock_model_response.call_args
+        system_msg = call_args.kwargs["messages"][0].content
+        assert "run 5" in system_msg
+        assert "run 1" not in system_msg
+
+
+# ---------------------------------------------------------------------------
+# Tests for TeamSession get_messages with last_n_runs and limit
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def multi_run_team_session():
+    """Create a team session with multiple runs for testing last_n_runs and conversation_limit."""
+    from agno.run.base import RunStatus
+
+    runs = []
+    for i in range(5):
+        messages = [
+            Message(role="user", content=f"User message from run {i + 1}"),
+            Message(role="assistant", content=f"Assistant response from run {i + 1}"),
+        ]
+        runs.append(
+            TeamRunOutput(
+                team_id="test_team",
+                run_id=f"run_{i + 1}",
+                messages=messages,
+                status=RunStatus.completed,
+            )
+        )
+
+    session = TeamSession(
+        session_id="test_multi_run_team_session",
+        team_id="test_team",
+        runs=runs,
+    )
+    return session
+
+
+def test_team_get_messages_with_last_n_runs(multi_run_team_session):
+    """Test that TeamSession.get_messages respects last_n_runs."""
+    messages = multi_run_team_session.get_messages(last_n_runs=2)
+
+    contents = [m.content for m in messages]
+    # Should only have messages from runs 4 and 5
+    assert any("run 4" in c for c in contents)
+    assert any("run 5" in c for c in contents)
+    assert not any("run 1" in c for c in contents)
+    assert not any("run 2" in c for c in contents)
+    assert not any("run 3" in c for c in contents)
+
+
+def test_team_get_messages_with_limit(multi_run_team_session):
+    """Test that TeamSession.get_messages respects limit."""
+    messages = multi_run_team_session.get_messages(limit=4)
+
+    assert len(messages) == 4
+    contents = [m.content for m in messages]
+    # Should have the last 4 messages (from runs 4 and 5)
+    assert any("run 5" in c for c in contents)
+    assert any("run 4" in c for c in contents)
+    assert not any("run 1" in c for c in contents)
+
+
+def test_team_get_messages_composes_last_n_runs_and_limit(multi_run_team_session):
+    """Test that TeamSession.get_messages applies last_n_runs before limit."""
+    # last_n_runs=2 limits to runs 4 and 5 (4 messages)
+    # limit=3 then takes the last 3 of those 4 messages
+    messages = multi_run_team_session.get_messages(last_n_runs=2, limit=3)
+
+    assert len(messages) == 3
+    contents = [m.content for m in messages]
+    for content in contents:
+        assert "run 1" not in content
+        assert "run 2" not in content
+        assert "run 3" not in content
+
+
+def test_team_get_messages_all_runs(multi_run_team_session):
+    """Test that TeamSession.get_messages returns all runs when no limits set."""
+    messages = multi_run_team_session.get_messages()
+
+    contents = [m.content for m in messages]
+    for i in range(1, 6):
+        assert any(f"run {i}" in c for c in contents)
+
+
+# ---------------------------------------------------------------------------
+# Boundary value tests for last_n_runs and limit
+# ---------------------------------------------------------------------------
+
+
+def test_agent_get_messages_last_n_runs_zero(multi_run_agent_session):
+    """Test that last_n_runs=0 returns an empty list."""
+    messages = multi_run_agent_session.get_messages(last_n_runs=0)
+    assert messages == []
+
+
+def test_agent_get_messages_limit_zero(multi_run_agent_session):
+    """Test that limit=0 returns an empty list."""
+    messages = multi_run_agent_session.get_messages(limit=0)
+    assert messages == []
+
+
+def test_team_get_messages_last_n_runs_zero(multi_run_team_session):
+    """Test that last_n_runs=0 returns an empty list for team sessions."""
+    messages = multi_run_team_session.get_messages(last_n_runs=0)
+    assert messages == []
+
+
+def test_team_get_messages_limit_zero(multi_run_team_session):
+    """Test that limit=0 returns an empty list for team sessions."""
+    messages = multi_run_team_session.get_messages(limit=0)
+    assert messages == []
+
+
+def test_session_summary_manager_rejects_negative_last_n_runs(model):
+    """Test that SessionSummaryManager raises ValueError for negative last_n_runs."""
+    with pytest.raises(ValueError, match="last_n_runs must be a positive integer"):
+        SessionSummaryManager(model=model, last_n_runs=-1)
+
+
+def test_session_summary_manager_rejects_zero_last_n_runs(model):
+    """Test that SessionSummaryManager raises ValueError for zero last_n_runs."""
+    with pytest.raises(ValueError, match="last_n_runs must be a positive integer"):
+        SessionSummaryManager(model=model, last_n_runs=0)
+
+
+def test_session_summary_manager_rejects_negative_conversation_limit(model):
+    """Test that SessionSummaryManager raises ValueError for negative conversation_limit."""
+    with pytest.raises(ValueError, match="conversation_limit must be a positive integer"):
+        SessionSummaryManager(model=model, conversation_limit=-1)
+
+
+def test_session_summary_manager_rejects_zero_conversation_limit(model):
+    """Test that SessionSummaryManager raises ValueError for zero conversation_limit."""
+    with pytest.raises(ValueError, match="conversation_limit must be a positive integer"):
+        SessionSummaryManager(model=model, conversation_limit=0)

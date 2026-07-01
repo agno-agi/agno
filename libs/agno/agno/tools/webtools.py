@@ -39,7 +39,7 @@ class WebTools(Toolkit):
                 final_url = response.url
                 logger.info(f"expand_url: {url} expanded to {final_url} on attempt {attempt}")
                 return str(final_url)
-            except Exception as e:
-                logger.error(f"Error expanding URL {url} on attempt {attempt}: {e}")
+            except Exception:
+                logger.exception(f"Error expanding URL {url} on attempt {attempt}")
 
         return url

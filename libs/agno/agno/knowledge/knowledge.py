@@ -1,6 +1,7 @@
 import asyncio
 import hashlib
 import io
+import json
 import time
 from dataclasses import dataclass
 from enum import Enum
@@ -22,6 +23,7 @@ from agno.knowledge.remote_content.remote_content import (
     RemoteContent,
 )
 from agno.knowledge.remote_knowledge import RemoteKnowledge
+from agno.knowledge.types import ContentType
 from agno.knowledge.utils import merge_user_metadata, set_agno_metadata, strip_agno_metadata
 from agno.utils.http import async_fetch_with_retry
 from agno.utils.log import log_debug, log_error, log_info, log_warning
@@ -542,7 +544,7 @@ class Knowledge(RemoteKnowledge):
             log_debug(f"Getting {_max_results} relevant documents for query: {query}")
             return self.vector_db.search(query=query, limit=_max_results, filters=search_filters)
         except Exception as e:
-            log_error(f"Error searching for documents: {e}")
+            log_error(f"Error searching for documents: {str(e)}")
             return []
 
     async def asearch(
@@ -586,7 +588,7 @@ class Knowledge(RemoteKnowledge):
                 log_info("Vector db does not support async search")
                 return self.vector_db.search(query=query, limit=_max_results, filters=search_filters)
         except Exception as e:
-            log_error(f"Error searching for documents: {e}")
+            log_error(f"Error searching for documents: {str(e)}")
             return []
 
     # ==========================================
@@ -776,7 +778,7 @@ class Knowledge(RemoteKnowledge):
 
     def get_valid_filters(self) -> Set[str]:
         if self.contents_db is None:
-            log_info("Advanced filtering is not supported without a contents db. All filter keys considered valid.")
+            log_info("No contents db configured; returning an empty filter validation key set.")
             return set()
         contents, _ = self.get_content()
         valid_filters: Set[str] = set()
@@ -788,7 +790,7 @@ class Knowledge(RemoteKnowledge):
 
     async def aget_valid_filters(self) -> Set[str]:
         if self.contents_db is None:
-            log_info("Advanced filtering is not supported without a contents db. All filter keys considered valid.")
+            log_info("No contents db configured; returning an empty filter validation key set.")
             return set()
         contents, _ = await self.aget_content()
         valid_filters: Set[str] = set()
@@ -801,6 +803,10 @@ class Knowledge(RemoteKnowledge):
     def validate_filters(
         self, filters: Union[Dict[str, Any], List[FilterExpr]]
     ) -> Tuple[Union[Dict[str, Any], List[FilterExpr]], List[str]]:
+        if self.contents_db is None:
+            log_info("No contents db configured; skipping filter key validation and preserving filters.")
+            return filters, []
+
         valid_filters_from_db = self.get_valid_filters()
 
         valid_filters, invalid_keys = self._validate_filters(filters, valid_filters_from_db)
@@ -811,6 +817,10 @@ class Knowledge(RemoteKnowledge):
         self, filters: Union[Dict[str, Any], List[FilterExpr]]
     ) -> Tuple[Union[Dict[str, Any], List[FilterExpr]], List[str]]:
         """Return a tuple containing a dict with all valid filters and a list of invalid filter keys"""
+        if self.contents_db is None:
+            log_info("No contents db configured; skipping filter key validation and preserving filters.")
+            return filters, []
+
         valid_filters_from_db = await self.aget_valid_filters()
 
         valid_filters, invalid_keys = self._validate_filters(filters, valid_filters_from_db)
@@ -948,7 +958,7 @@ class Knowledge(RemoteKnowledge):
                     return None
 
             except Exception as e:
-                log_warning(f"Cannot create {reader_type} reader {e}")
+                log_warning(f"Cannot create {reader_type} reader: {str(e)}")
                 return None
 
         return self.readers.get(reader_type)
@@ -1383,7 +1393,7 @@ class Knowledge(RemoteKnowledge):
                     try:
                         content.size = path.stat().st_size
                     except (OSError, IOError) as e:
-                        log_warning(f"Could not get file size for {path}: {e}")
+                        log_warning(f"Could not get file size for {path}: {str(e)}")
                         content.size = 0
 
                 if not content.id:
@@ -1468,7 +1478,7 @@ class Knowledge(RemoteKnowledge):
                     try:
                         content.size = path.stat().st_size
                     except (OSError, IOError) as e:
-                        log_warning(f"Could not get file size for {path}: {e}")
+                        log_warning(f"Could not get file size for {path}: {str(e)}")
                         content.size = 0
 
                 if not content.id:
@@ -1558,13 +1568,20 @@ class Knowledge(RemoteKnowledge):
             content.status = ContentStatus.FAILED
             content.status_message = f"Invalid URL: {content.url} - {str(e)}"
             await self._aupdate_content(content)
-            log_warning(f"Invalid URL: {content.url} - {str(e)}")
+            log_warning(f"Invalid URL: {content.url}: {str(e)}")
         # 3. Fetch and load content if file has an extension
         url_path = Path(parsed_url.path)
         file_extension = url_path.suffix.lower()
 
         bytes_content = None
-        if file_extension:
+        # Skip pre-download when a custom URL-based reader is provided —
+        # it handles the URL directly (e.g. LLMsTxtReader fetches linked pages)
+        skip_download = (
+            content.reader is not None
+            and hasattr(content.reader, "get_supported_content_types")
+            and ContentType.URL in content.reader.get_supported_content_types()
+        )
+        if file_extension and not skip_download:
             async with AsyncClient() as client:
                 response = await async_fetch_with_retry(content.url, client=client)
             bytes_content = BytesIO(response.content)
@@ -1590,7 +1607,7 @@ class Knowledge(RemoteKnowledge):
                     read_documents = await self._aread(reader, source, name=name, password=password)
 
         except Exception as e:
-            log_error(f"Error reading URL: {content.url} - {str(e)}")
+            log_error(f"Error reading URL: {content.url}: {str(e)}")
             content.status = ContentStatus.FAILED
             content.status_message = f"Error reading URL: {content.url} - {str(e)}"
             await self._aupdate_content(content)
@@ -1628,13 +1645,13 @@ class Knowledge(RemoteKnowledge):
                     try:
                         await self.vector_db.async_upsert(doc_hash, source_docs, content.metadata)
                     except Exception as e:
-                        log_error(f"Error upserting document from {source_url}: {e}")
+                        log_error(f"Error upserting document from {source_url}: {str(e)}")
                         continue
                 else:
                     try:
                         await self.vector_db.async_insert(doc_hash, documents=source_docs, filters=content.metadata)
                     except Exception as e:
-                        log_error(f"Error inserting document from {source_url}: {e}")
+                        log_error(f"Error inserting document from {source_url}: {str(e)}")
                         continue
 
             content.status = ContentStatus.COMPLETED
@@ -1709,14 +1726,21 @@ class Knowledge(RemoteKnowledge):
             content.status = ContentStatus.FAILED
             content.status_message = f"Invalid URL: {content.url} - {str(e)}"
             self._update_content(content)
-            log_warning(f"Invalid URL: {content.url} - {str(e)}")
+            log_warning(f"Invalid URL: {content.url}: {str(e)}")
 
         # 3. Fetch and load content if file has an extension
         url_path = Path(parsed_url.path)
         file_extension = url_path.suffix.lower()
 
         bytes_content = None
-        if file_extension:
+        # Skip pre-download when a custom URL-based reader is provided —
+        # it handles the URL directly (e.g. LLMsTxtReader fetches linked pages)
+        skip_download = (
+            content.reader is not None
+            and hasattr(content.reader, "get_supported_content_types")
+            and ContentType.URL in content.reader.get_supported_content_types()
+        )
+        if file_extension and not skip_download:
             response = fetch_with_retry(content.url)
             bytes_content = BytesIO(response.content)
 
@@ -1742,7 +1766,7 @@ class Knowledge(RemoteKnowledge):
                     read_documents = self._read(reader, source, name=name, password=password)
 
         except Exception as e:
-            log_error(f"Error reading URL: {content.url} - {str(e)}")
+            log_error(f"Error reading URL: {content.url}: {str(e)}")
             content.status = ContentStatus.FAILED
             content.status_message = f"Error reading URL: {content.url} - {str(e)}"
             self._update_content(content)
@@ -1780,13 +1804,13 @@ class Knowledge(RemoteKnowledge):
                     try:
                         self.vector_db.upsert(doc_hash, source_docs, content.metadata)
                     except Exception as e:
-                        log_error(f"Error upserting document from {source_url}: {e}")
+                        log_error(f"Error upserting document from {source_url}: {str(e)}")
                         continue
                 else:
                     try:
                         self.vector_db.insert(doc_hash, documents=source_docs, filters=content.metadata)
                     except Exception as e:
-                        log_error(f"Error inserting document from {source_url}: {e}")
+                        log_error(f"Error inserting document from {source_url}: {str(e)}")
                         continue
 
             content.status = ContentStatus.COMPLETED
@@ -2137,13 +2161,67 @@ class Knowledge(RemoteKnowledge):
     # PRIVATE - CONVERSION & DATA METHODS
     # ==========================================
 
+    @staticmethod
+    def _build_remote_content_identity(remote_content: Optional["RemoteContent"]) -> Optional[str]:
+        """Return a stable identity string for a remote content reference.
+
+        The reference's source scope (bucket, repo, site, container) plus its
+        in-scope path must be included in the content hash so that the same
+        filename pulled from two different sources does not collide.
+        """
+        if remote_content is None:
+            return None
+
+        from agno.knowledge.remote_content.remote_content import (
+            AzureBlobContent,
+            GCSContent,
+            GitHubContent,
+            S3Content,
+            SharePointContent,
+        )
+
+        if isinstance(remote_content, GitHubContent):
+            scope = remote_content.repo or ""
+            in_scope = remote_content.file_path or remote_content.folder_path or ""
+            branch = remote_content.branch or ""
+            return f"github:{scope}@{branch}:{in_scope}"
+
+        elif isinstance(remote_content, S3Content):
+            scope = remote_content.bucket_name or (
+                remote_content.bucket.name if remote_content.bucket is not None else ""
+            )
+            in_scope = (
+                remote_content.key
+                or remote_content.prefix
+                or (remote_content.object.name if remote_content.object is not None else "")
+            )
+            return f"s3:{scope}:{in_scope}"
+
+        elif isinstance(remote_content, GCSContent):
+            scope = remote_content.bucket_name or (
+                remote_content.bucket.name if remote_content.bucket is not None else ""
+            )
+            in_scope = remote_content.blob_name or remote_content.prefix or ""
+            return f"gcs:{scope}:{in_scope}"
+
+        elif isinstance(remote_content, SharePointContent):
+            scope = f"{remote_content.site_path or ''}/{remote_content.drive_id or ''}"
+            in_scope = remote_content.file_path or remote_content.folder_path or ""
+            return f"sharepoint:{remote_content.config_id}:{scope}:{in_scope}"
+
+        elif isinstance(remote_content, AzureBlobContent):
+            in_scope = remote_content.blob_name or remote_content.prefix or ""
+            return f"azureblob:{remote_content.config_id}:{in_scope}"
+
+        return None
+
     def _build_content_hash(self, content: Content) -> str:
         """
         Build the content hash from the content.
 
-        For URLs and paths, includes the name and description in the hash if provided
-        to ensure unique content with the same URL/path but different names/descriptions
-        get different hashes.
+        For URLs and paths, includes the name, description and metadata in the hash if
+        provided to ensure unique content with the same URL/path but different
+        names/descriptions/metadata get different hashes.
 
         Hash format:
         - URL with name and description: hash("{name}:{description}:{url}")
@@ -2151,12 +2229,22 @@ class Knowledge(RemoteKnowledge):
         - URL with description only: hash("{description}:{url}")
         - URL without name/description: hash("{url}") (backward compatible)
         - Same logic applies to paths
+        - When metadata is provided, a deterministic representation of it is appended
+          so the same content inserted with different metadata produces distinct hashes
+          (this allows `upsert=False` inserts of the same document with different
+          metadata to coexist instead of collapsing onto each other).
         """
         hash_parts = []
         if content.name:
             hash_parts.append(content.name)
         if content.description:
             hash_parts.append(content.description)
+        if content.metadata:
+            hash_parts.append(json.dumps(content.metadata, sort_keys=True, default=str))
+
+        remote_identity = self._build_remote_content_identity(content.remote_content)
+        if remote_identity:
+            hash_parts.append(remote_identity)
 
         if content.path:
             hash_parts.append(str(content.path))
@@ -2220,6 +2308,8 @@ class Knowledge(RemoteKnowledge):
             hash_parts.append(content.name)
         if content.description:
             hash_parts.append(content.description)
+        if content.metadata:
+            hash_parts.append(json.dumps(content.metadata, sort_keys=True, default=str))
 
         # Use document's own URL if available (set by WebsiteReader)
         doc_url = document.meta_data.get("url") if document.meta_data else None
@@ -2272,7 +2362,7 @@ class Knowledge(RemoteKnowledge):
             try:
                 return str(value)
             except Exception as e:
-                log_warning(f"Failed to convert {field_name} to string: {e}, using default")
+                log_warning(f"Failed to convert {field_name} to string, using default: {str(e)}")
                 return default
 
         # Already a string, return as-is
@@ -2375,7 +2465,7 @@ class Knowledge(RemoteKnowledge):
             try:
                 await self.vector_db.async_upsert(content.content_hash, read_documents, content.metadata)  # type: ignore[arg-type]
             except Exception as e:
-                log_error(f"Error upserting document: {e}")
+                log_error(f"Error upserting document: {str(e)}")
                 content.status = ContentStatus.FAILED
                 content.status_message = "Could not upsert embedding"
                 await self._aupdate_content(content)
@@ -2388,7 +2478,7 @@ class Knowledge(RemoteKnowledge):
                     filters=content.metadata,  # type: ignore[arg-type]
                 )
             except Exception as e:
-                log_error(f"Error inserting document: {e}")
+                log_error(f"Error inserting document: {str(e)}")
                 content.status = ContentStatus.FAILED
                 content.status_message = "Could not insert embedding"
                 await self._aupdate_content(content)
@@ -2414,7 +2504,7 @@ class Knowledge(RemoteKnowledge):
             try:
                 self.vector_db.upsert(content.content_hash, read_documents, content.metadata)  # type: ignore[arg-type]
             except Exception as e:
-                log_error(f"Error upserting document: {e}")
+                log_error(f"Error upserting document: {str(e)}")
                 content.status = ContentStatus.FAILED
                 content.status_message = "Could not upsert embedding"
                 self._update_content(content)
@@ -2427,7 +2517,7 @@ class Knowledge(RemoteKnowledge):
                     filters=content.metadata,  # type: ignore[arg-type]
                 )
             except Exception as e:
-                log_error(f"Error inserting document: {e}")
+                log_error(f"Error inserting document: {str(e)}")
                 content.status = ContentStatus.FAILED
                 content.status_message = "Could not insert embedding"
                 self._update_content(content)
@@ -2589,7 +2679,7 @@ class Knowledge(RemoteKnowledge):
                 return
 
             except Exception as e:
-                log_error(f"Error uploading file to LightRAG: {e}")
+                log_error(f"Error uploading file to LightRAG: {str(e)}")
                 content.status = ContentStatus.FAILED
                 content.status_message = f"Could not upload to LightRAG: {str(e)}"
                 await self._aupdate_content(content)
@@ -2634,7 +2724,7 @@ class Knowledge(RemoteKnowledge):
                 return
 
             except Exception as e:
-                log_error(f"Error uploading file to LightRAG: {e}")
+                log_error(f"Error uploading file to LightRAG: {str(e)}")
                 content.status = ContentStatus.FAILED
                 content.status_message = f"Could not upload to LightRAG: {str(e)}"
                 await self._aupdate_content(content)
@@ -2749,7 +2839,7 @@ class Knowledge(RemoteKnowledge):
                 return
 
             except Exception as e:
-                log_error(f"Error uploading file to LightRAG: {e}")
+                log_error(f"Error uploading file to LightRAG: {str(e)}")
                 content.status = ContentStatus.FAILED
                 content.status_message = f"Could not upload to LightRAG: {str(e)}"
                 self._update_content(content)
@@ -2797,7 +2887,7 @@ class Knowledge(RemoteKnowledge):
                 return
 
             except Exception as e:
-                log_error(f"Error uploading file to LightRAG: {e}")
+                log_error(f"Error uploading file to LightRAG: {str(e)}")
                 content.status = ContentStatus.FAILED
                 content.status_message = f"Could not upload to LightRAG: {str(e)}"
                 self._update_content(content)
@@ -3058,7 +3148,7 @@ Make sure to pass the filters as [Dict[str: Any]] to the tool. FOLLOW THIS STRUC
                 docs = self.search(query=query, filters=knowledge_filters)
             except Exception as e:
                 retrieval_timer.stop()
-                log_warning(f"Knowledge search failed: {e}")
+                log_warning(f"Knowledge search failed: {str(e)}")
                 return f"Error searching knowledge base: {type(e).__name__}"
 
             if run_response is not None and docs:
@@ -3095,7 +3185,7 @@ Make sure to pass the filters as [Dict[str: Any]] to the tool. FOLLOW THIS STRUC
                 docs = await self.asearch(query=query, filters=knowledge_filters)
             except Exception as e:
                 retrieval_timer.stop()
-                log_warning(f"Knowledge search failed: {e}")
+                log_warning(f"Knowledge search failed: {str(e)}")
                 return f"Error searching knowledge base: {type(e).__name__}"
 
             if run_response is not None and docs:
@@ -3182,7 +3272,7 @@ Make sure to pass the filters as [Dict[str: Any]] to the tool. FOLLOW THIS STRUC
                 docs = self.search(query=query, filters=search_filters)
             except Exception as e:
                 retrieval_timer.stop()
-                log_warning(f"Knowledge search failed: {e}")
+                log_warning(f"Knowledge search failed: {str(e)}")
                 return f"Error searching knowledge base: {type(e).__name__}"
 
             if run_response is not None and docs:
@@ -3241,7 +3331,7 @@ Make sure to pass the filters as [Dict[str: Any]] to the tool. FOLLOW THIS STRUC
                 docs = await self.asearch(query=query, filters=search_filters)
             except Exception as e:
                 retrieval_timer.stop()
-                log_warning(f"Knowledge search failed: {e}")
+                log_warning(f"Knowledge search failed: {str(e)}")
                 return f"Error searching knowledge base: {type(e).__name__}"
 
             if run_response is not None and docs:
