@@ -248,13 +248,39 @@ class CodingTools(Toolkit):
     # Shell operators that enable command chaining or substitution
     _DANGEROUS_PATTERNS: List[str] = ["&&", "||", ";", "|", "$(", "`", ">", ">>", "<"]
 
+    # Interpreters that can execute arbitrary inline code/scripts supplied as an argument.
+    # When restricted, an allowlisted interpreter (e.g. python) combined with an inline-code
+    # flag (e.g. -c) becomes an arbitrary-code executor: the code runs outside the view of the
+    # command allowlist and the path-containment check (it can import os, open() any file, spawn
+    # subprocesses, reach the network, etc.). Blocking these flags keeps the approval decision
+    # aligned with what actually executes.
+    _INLINE_CODE_INTERPRETERS: dict = {
+        "python": {"-c"},
+        "python3": {"-c"},
+        "python2": {"-c"},
+        "pip": {"-c"},
+        "pip3": {"-c"},
+        "perl": {"-e", "-E"},
+        "ruby": {"-e"},
+        "node": {"-e", "--eval", "-p", "--print"},
+        "nodejs": {"-e", "--eval", "-p", "--print"},
+        "bash": {"-c"},
+        "sh": {"-c"},
+        "zsh": {"-c"},
+        "dash": {"-c"},
+        "ksh": {"-c"},
+        "php": {"-r"},
+    }
+
     def _check_command(self, command: str) -> Optional[str]:
         """Check if a shell command is safe to execute.
 
         When restrict_to_base_dir is True, this method:
         1. Blocks shell metacharacters that enable chaining/substitution.
         2. Validates the command name against the allowed_commands list (if set).
-        3. Checks that path-like tokens don't escape the base directory.
+        3. Blocks inline-code execution flags on known interpreters (e.g. ``python -c``),
+           which would otherwise smuggle arbitrary code past the allowlist and path checks.
+        4. Checks that path-like tokens don't escape the base directory.
 
         Returns an error message if a violation is found, None if safe.
         """
@@ -277,6 +303,22 @@ class CodingTools(Toolkit):
             cmd_base = Path(cmd).name  # Handle /usr/bin/python -> python
             if cmd_base not in self.allowed_commands:
                 return f"Error: Command '{cmd_base}' is not in the allowed commands list."
+
+        # Block inline-code execution flags (e.g. `python -c`, `bash -c`, `node -e`). Such a
+        # flag turns an allowlisted interpreter into an arbitrary-code executor whose effects the
+        # allowlist and path-containment checks below cannot inspect.
+        if tokens:
+            interpreter = Path(tokens[0]).name
+            inline_flags = self._INLINE_CODE_INTERPRETERS.get(interpreter)
+            if inline_flags is not None:
+                for token in tokens[1:]:
+                    # Match exact flags (`-c`) and glued long forms (`--eval=...`).
+                    flag = token.split("=", 1)[0]
+                    if token in inline_flags or flag in inline_flags:
+                        return (
+                            f"Error: Inline code execution ('{flag}') with '{interpreter}' is not "
+                            "allowed in restricted mode."
+                        )
 
         for i, token in enumerate(tokens):
             # Skip the command itself (already validated by allowlist above)
