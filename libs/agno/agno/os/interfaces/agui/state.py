@@ -34,6 +34,18 @@ class StreamState:
     reasoning_message_id: Optional[str] = None
     reasoning_step_count: int = 0
 
+    # Sticky "did any assistant text reach the wire this run" flag. Set on the
+    # first non-empty streamed content and NEVER reset, so workflow completion can
+    # tell a streamed final (suppress the recap) from one that never streamed
+    # (e.g. stream_executor_events=False -> emit). Sticky, not per-message: an
+    # empty content chunk reopening a message after a tool must not clear it.
+    streamed_any_text: bool = False
+
+    # Workflow cancellation marker. Set when a WorkflowCancelledEvent is seen so
+    # the trailing WorkflowCompletedEvent (content = cancel reason, not an answer)
+    # is suppressed instead of rendered as the assistant's reply.
+    cancelled: bool = False
+
     # State delta tracking
     _last_snapshot: Optional[Dict[str, Any]] = field(default=None, repr=False)
 
