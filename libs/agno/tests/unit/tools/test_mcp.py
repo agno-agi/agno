@@ -1,3 +1,4 @@
+import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -1053,7 +1054,31 @@ async def test_mcp_tool_result_preserves_structured_content():
     entrypoint = get_entrypoint_for_tool(mock_tool, session)
     result = await entrypoint()
 
+    assert result.content == "hello"
     assert result.metadata["structured_content"] == {"id": "u1", "name": "Ada"}
+
+
+@pytest.mark.asyncio
+async def test_mcp_tool_result_uses_structured_content_when_content_is_empty():
+    mock_tool = MagicMock()
+    mock_tool.name = "get_data"
+    structured_content = {"id": "u1", "name": "Ada", "role": "EMPLOYEE"}
+
+    session = AsyncMock()
+    session.send_ping = AsyncMock()
+    session.call_tool = AsyncMock(
+        return_value=CallToolResult(
+            content=[],
+            isError=False,
+            structuredContent=structured_content,
+        )
+    )
+
+    entrypoint = get_entrypoint_for_tool(mock_tool, session)
+    result = await entrypoint()
+
+    assert json.loads(result.content) == structured_content
+    assert result.metadata["structured_content"] == structured_content
 
 
 @pytest.mark.asyncio
