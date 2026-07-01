@@ -36,6 +36,60 @@ except ImportError as e:
     )
 
 
+# Mapping of programming language (and common aliases) to (file extension, mime_type).
+# The mime_type MUST be a member of `File.valid_mime_types()`, otherwise File construction
+# fails and the artifact is silently dropped. For languages without a dedicated valid MIME
+# type we use "text/plain" — the file extension (carried by file_type/filename) is what
+# identifies the language, and text/plain is a correct, harmless type for any source code.
+CODE_LANGUAGE_MAP: Dict[str, Tuple[str, str]] = {
+    "python": ("py", "text/x-python"),
+    "py": ("py", "text/x-python"),
+    "javascript": ("js", "text/javascript"),
+    "js": ("js", "text/javascript"),
+    "node": ("js", "text/javascript"),
+    "typescript": ("ts", "text/plain"),
+    "ts": ("ts", "text/plain"),
+    "jsx": ("jsx", "text/plain"),
+    "tsx": ("tsx", "text/plain"),
+    "go": ("go", "text/plain"),
+    "golang": ("go", "text/plain"),
+    "rust": ("rs", "text/plain"),
+    "rs": ("rs", "text/plain"),
+    "java": ("java", "text/plain"),
+    "kotlin": ("kt", "text/plain"),
+    "kt": ("kt", "text/plain"),
+    "scala": ("scala", "text/plain"),
+    "c": ("c", "text/plain"),
+    "cpp": ("cpp", "text/plain"),
+    "c++": ("cpp", "text/plain"),
+    "csharp": ("cs", "text/plain"),
+    "c#": ("cs", "text/plain"),
+    "cs": ("cs", "text/plain"),
+    "objectivec": ("m", "text/plain"),
+    "ruby": ("rb", "text/plain"),
+    "rb": ("rb", "text/plain"),
+    "php": ("php", "text/plain"),
+    "perl": ("pl", "text/plain"),
+    "shell": ("sh", "text/plain"),
+    "sh": ("sh", "text/plain"),
+    "bash": ("sh", "text/plain"),
+    "zsh": ("sh", "text/plain"),
+    "powershell": ("ps1", "text/plain"),
+    "sql": ("sql", "text/plain"),
+    "r": ("r", "text/plain"),
+    "swift": ("swift", "text/plain"),
+    "dart": ("dart", "text/plain"),
+    "lua": ("lua", "text/plain"),
+    "haskell": ("hs", "text/plain"),
+    "elixir": ("ex", "text/plain"),
+    "clojure": ("clj", "text/plain"),
+    "yaml": ("yaml", "text/plain"),
+    "yml": ("yaml", "text/plain"),
+    "toml": ("toml", "text/plain"),
+    "dockerfile": ("dockerfile", "text/plain"),
+}
+
+
 class FileGenerationTools(Toolkit):
     def __init__(
         self,
@@ -45,6 +99,7 @@ class FileGenerationTools(Toolkit):
         enable_docx_generation: bool = True,
         enable_txt_generation: bool = True,
         enable_html_generation: bool = True,
+        enable_code_generation: bool = True,
         output_directory: Optional[str] = None,
         save_files: bool = False,
         all: bool = False,
@@ -56,6 +111,7 @@ class FileGenerationTools(Toolkit):
         self.enable_docx_generation = enable_docx_generation and DOCX_AVAILABLE
         self.enable_txt_generation = enable_txt_generation
         self.enable_html_generation = enable_html_generation
+        self.enable_code_generation = enable_code_generation
         # output_directory implies save_files=True for backward compatibility
         self.save_files = save_files or (output_directory is not None)
 
@@ -89,6 +145,8 @@ class FileGenerationTools(Toolkit):
             tools.append(self.generate_text_file)
         if all or enable_html_generation:
             tools.append(self.generate_html_file)
+        if all or enable_code_generation:
+            tools.append(self.generate_code_file)
 
         super().__init__(name="file_generation", tools=tools, **kwargs)
 
@@ -119,10 +177,11 @@ class FileGenerationTools(Toolkit):
         display_name: str,
     ) -> ToolResult:
         """Build a File artifact and optionally save to disk."""
-        # Resolve filename: default if empty, ensure correct extension
+        # Resolve filename: default if empty, ensure correct extension.
+        # The extension check is case-insensitive so "Main.PY" is not turned into "Main.PY.py".
         if not filename:
             filename = f"generated_file_{str(uuid4())[:8]}.{file_type}"
-        elif not filename.endswith(f".{file_type}"):
+        elif not filename.lower().endswith(f".{file_type.lower()}"):
             filename += f".{file_type}"
         file_name = sanitize_filename(filename)
 
@@ -420,3 +479,65 @@ class FileGenerationTools(Toolkit):
         except Exception as e:
             logger.exception("Failed to generate DOCX file")
             return ToolResult(content=f"Error generating DOCX file: {e}")
+
+    def generate_code_file(
+        self,
+        code: str,
+        language: Optional[str] = None,
+        filename: Optional[str] = None,
+    ) -> ToolResult:
+        """Generate a source code file for any programming language.
+
+        Args:
+            code: The source code to write to the file.
+            language: Programming language (e.g. "python", "typescript", "go"). Determines the
+                file extension. If not provided, the extension is taken from `filename` when
+                present; otherwise the file is written as plain text.
+            filename: Optional filename for the generated file. If it has no extension, the
+                language's extension is appended. If not provided, a UUID-based name is used.
+
+        Returns:
+            ToolResult: Result containing the generated code file as a FileArtifact.
+        """
+        try:
+            log_debug(f"Generating code file (language: {language}) with content length: {len(code)}")
+
+            file_type: Optional[str] = None
+            mime_type: Optional[str] = None
+
+            # Resolve from the language argument first (this is what gives us the
+            # dedicated MIME types, e.g. text/x-python).
+            if language:
+                normalized = language.strip().lower()
+                if normalized in CODE_LANGUAGE_MAP:
+                    file_type, mime_type = CODE_LANGUAGE_MAP[normalized]
+
+            # An explicit extension on the filename takes precedence over the language's
+            # default extension. This both honours an explicit choice and avoids doubled
+            # extensions like "foo.txt.py" when the filename and language disagree.
+            # Use only the basename so path-like filenames ("../../etc/passwd") don't
+            # leak separators into the extension.
+            if filename:
+                basename = filename.replace("\\", "/").rsplit("/", 1)[-1]
+                if "." in basename:
+                    ext = basename.rsplit(".", 1)[-1].strip().lower()
+                    if ext and ext != file_type:
+                        file_type = ext
+                        mime_type = "text/plain"
+
+            # Final fallback: plain text file
+            if file_type is None:
+                file_type = "txt"
+                mime_type = "text/plain"
+
+            return self._create_file_artifact(
+                code,
+                filename,
+                file_type=file_type,
+                mime_type=mime_type or "text/plain",
+                display_name=f"{language or file_type} code",
+            )
+
+        except Exception as e:
+            logger.exception("Failed to generate code file")
+            return ToolResult(content=f"Error generating code file: {e}")
