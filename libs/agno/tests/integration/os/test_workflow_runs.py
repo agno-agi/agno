@@ -3,15 +3,19 @@
 import json
 from unittest.mock import AsyncMock, patch
 
+import jwt
 import httpx
 import pytest
+import tempfile
 from fastapi.testclient import TestClient
 from httpx import ASGITransport
 from pydantic import BaseModel
+from datetime import UTC, datetime, timedelta
 
 from agno.db.base import ComponentType
 from agno.db.sqlite import SqliteDb
 from agno.os import AgentOS
+from agno.os.config import AuthorizationConfig
 from agno.workflow.factory import WorkflowFactory
 from agno.workflow.step import Step
 from agno.workflow.types import StepInput, StepOutput
@@ -188,6 +192,118 @@ def test_factory_workflow_get_run_and_list_runs(factory_workflow_client):
     assert list_response.status_code == 200
     runs = list_response.json()
     assert any(run["run_id"] == run_id for run in runs)
+
+
+@pytest.fixture
+def websocket_factory_client(temp_storage_db_file):
+    """Create a WebSocket TestClient with an authorized workflow factory."""
+
+    secret = "x" * 40
+    os_id = "ws-factory-os"
+
+    db = SqliteDb(db_file=temp_storage_db_file)
+
+    def websocket_workflow_step(_: StepInput) -> StepOutput:
+        return StepOutput(content="ok")
+
+    def build_workflow(ctx):
+        assert ctx.trusted.claims
+        assert ctx.trusted.claims["sub"] == "alice"
+        assert "workflows:run" in ctx.trusted.scopes
+
+        return Workflow(
+            id="ws-factory",
+            name="ws-factory",
+            steps=[Step(name="s", executor=websocket_workflow_step)],
+            db=db,
+        )
+
+    app = AgentOS(
+        id=os_id,
+        workflows=[
+            WorkflowFactory(
+                id="ws-factory",
+                db=db,
+                factory=build_workflow,
+            )
+        ],
+        authorization=True,
+        authorization_config=AuthorizationConfig(
+            verification_keys=[secret],
+            algorithm="HS256",
+        ),
+        telemetry=False,
+    ).get_app()
+
+    with TestClient(app) as client:
+        yield {
+            "client": client,
+            "secret": secret,
+            "os_id": os_id,
+        }
+
+
+def test_websocket_workflow_factory_receives_trusted_jwt_context(
+    websocket_factory_client,
+):
+    """Test that workflow factories receive trusted JWT context over WebSocket."""
+
+    client = websocket_factory_client["client"]
+    secret = websocket_factory_client["secret"]
+    os_id = websocket_factory_client["os_id"]
+
+    token = jwt.encode(
+        {
+            "sub": "alice",
+            "aud": os_id,
+            "scopes": ["workflows:run"],
+            "exp": datetime.now(UTC) + timedelta(minutes=5),
+            "iat": datetime.now(UTC),
+        },
+        secret,
+        algorithm="HS256",
+    )
+
+    with client.websocket_connect("/workflows/ws") as ws:
+        connection_event = json.loads(ws.receive_text())
+        assert connection_event["event"] == "connected"
+
+        ws.send_text(
+            json.dumps(
+                {
+                    "action": "authenticate",
+                    "token": token,
+                }
+            )
+        )
+
+        authenticated = False
+
+        for _ in range(5):
+            frame = json.loads(ws.receive_text())
+            if (
+                frame.get("event") == "authenticated"
+                and frame.get("user_id") == "alice"
+            ):
+                authenticated = True
+                break
+
+        assert authenticated, "Did not receive authenticated event with user_id"
+
+        ws.send_text(
+            json.dumps(
+                {
+                    "action": "start-workflow",
+                    "workflow_id": "ws-factory",
+                    "message": "go",
+                }
+            )
+        )
+
+        response = ws.receive_text()
+
+        assert "event: WorkflowStarted" in response
+        assert '"workflow_id": "ws-factory"' in response 
 
 
 # =============================================================================
