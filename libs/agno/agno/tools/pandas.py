@@ -9,6 +9,26 @@ except ImportError:
     raise ImportError("`pandas` not installed. Please install using `pip install pandas`.")
 
 
+# Only these top-level pandas constructors may be invoked from model-controlled input.
+# read_pickle / read_hdf are intentionally excluded: they deserialize untrusted data
+# (pickle) and can lead to remote code execution.
+_ALLOWED_CREATE_FUNCS = {
+    "DataFrame",
+    "read_csv",
+    "read_json",
+    "read_excel",
+    "read_parquet",
+    "read_table",
+    "read_html",
+    "read_feather",
+    "read_orc",
+    "read_xml",
+}
+
+# DataFrame methods that execute code or (de)serialize to arbitrary locations.
+_BLOCKED_DF_OPERATIONS = {"query", "eval", "to_pickle", "to_hdf"}
+
+
 class PandasTools(Toolkit):
     def __init__(
         self,
@@ -50,8 +70,17 @@ class PandasTools(Toolkit):
             if dataframe_name in self.dataframes:
                 return f"Dataframe already exists: {dataframe_name}"
 
+            # Only allow a fixed set of safe constructors. This blocks reaching
+            # pd.read_pickle (untrusted deserialization -> RCE) and any other
+            # non-constructor callable via model-controlled input.
+            if create_using_function not in _ALLOWED_CREATE_FUNCS:
+                return f"Error creating dataframe: unsupported function '{create_using_function}'"
+            create_fn = getattr(pd, create_using_function, None)
+            if not callable(create_fn):
+                return f"Error creating dataframe: unsupported function '{create_using_function}'"
+
             # Create the dataframe
-            dataframe = getattr(pd, create_using_function)(**function_parameters)
+            dataframe = create_fn(**function_parameters)
             if dataframe is None:
                 return f"Error creating dataframe: {dataframe_name}"
             if not isinstance(dataframe, pd.DataFrame):
@@ -85,9 +114,18 @@ class PandasTools(Toolkit):
 
             # Get the dataframe
             dataframe = self.dataframes.get(dataframe_name)
+            if dataframe is None:
+                return f"Error running operation: dataframe not found: {dataframe_name}"
+
+            # Reject private/dunder attributes and code-executing / arbitrary-write methods.
+            if operation.startswith("_") or operation in _BLOCKED_DF_OPERATIONS:
+                return f"Error running operation: unsupported operation '{operation}'"
+            operation_fn = getattr(dataframe, operation, None)
+            if not callable(operation_fn):
+                return f"Error running operation: unsupported operation '{operation}'"
 
             # Run the operation
-            result = getattr(dataframe, operation)(**operation_parameters)
+            result = operation_fn(**operation_parameters)
 
             log_debug(f"Ran operation: {operation}")
             try:
