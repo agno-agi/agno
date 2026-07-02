@@ -89,12 +89,14 @@ async def test_wikipedia_reader_async_respects_chunk_false():
 
 def test_s3_reader_propagates_chunk_flag_to_inner_reader():
     """S3Reader must forward chunk/chunk_size/chunking_strategy to its inner reader."""
-    s3_module = pytest.importorskip("agno.knowledge.reader.s3_reader", exc_type=ImportError)
+    pytest.importorskip("agno.knowledge.reader.s3_reader", exc_type=ImportError)
+
+    from agno.knowledge.reader.s3_reader import S3Reader
     from agno.knowledge.chunking.fixed import FixedSizeChunking
     from agno.knowledge.reader.text_reader import TextReader
 
     strategy = FixedSizeChunking(chunk_size=123)
-    reader = s3_module.S3Reader(chunk=False, chunk_size=123, chunking_strategy=strategy)
+    reader = S3Reader(chunk=False, chunk_size=123, chunking_strategy=strategy)
 
     # The inner reader must inherit the S3Reader's chunking configuration; without
     # this it would default to chunk=True and ignore S3Reader(chunk=False).
