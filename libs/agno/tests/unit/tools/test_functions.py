@@ -1180,3 +1180,46 @@ def test_tool_hook_receives_messages_via_run_context():
     # Verify it's a copy (not the same reference), so hook mutations don't affect the run
     assert captured_messages is not run_context.messages
     assert captured_messages == run_context.messages
+
+
+@pytest.mark.asyncio
+async def test_function_call_sync_entrypoint_with_async_tool_hooks_does_not_block():
+    """Test that a sync entrypoint with async tool hooks does not block the event loop."""
+    import asyncio
+    import time
+
+    def sync_func(param1: str) -> str:
+        time.sleep(0.1)  # Simulate a slow sync function
+        return f"processed-{param1}"
+
+    async def tool_hook(function_name: str, function_call: Callable, arguments: Dict[str, Any]):
+        return await function_call(**arguments)
+
+    func = Function(name="sync_func", entrypoint=sync_func, tool_hooks=[tool_hook])
+    func.process_entrypoint()
+
+    call = FunctionCall(function=func, arguments={"param1": "value1"})
+
+    # Start a background task that yields context often
+    counter = {"ticks": 0}
+
+    async def bg_ticker():
+        while True:
+            counter["ticks"] += 1
+            await asyncio.sleep(0.01)
+
+    ticker_task = asyncio.create_task(bg_ticker())
+
+    # Execute the sync tool asynchronously
+    result = await call.aexecute()
+
+    ticker_task.cancel()
+
+    assert result.status == "success"
+    assert result.result == "processed-value1"
+
+    # If the sync function blocked the event loop, ticks would be 0 or 1.
+    # Because it slept for 0.1s and background task slept for 0.01s,
+    # we expect roughly 10 ticks if it did not block.
+    # We assert > 2 to account for timing variations but prove it didn't fully block.
+    assert counter["ticks"] > 2
