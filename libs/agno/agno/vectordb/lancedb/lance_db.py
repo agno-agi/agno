@@ -69,7 +69,7 @@ class LanceDb(VectorDb):
         if id is None:
             from agno.utils.string import generate_id
 
-            table_identifier = table_name or "default_table"
+            table_identifier = table_name or "default_table" if table is None else table.name
             seed = f"{uri}#{table_identifier}"
             id = generate_id(seed)
 
@@ -82,6 +82,12 @@ class LanceDb(VectorDb):
 
             embedder = OpenAIEmbedder()
             log_info("Embedder not provided, using OpenAIEmbedder as default.")
+        # table_name initialize
+        if table is None:
+            table_name = table_name or "default_table"
+        else:
+            table_name = table.name
+
         self.embedder: Embedder = embedder
         self.dimensions: Optional[int] = self.embedder.dimensions
 
@@ -110,7 +116,8 @@ class LanceDb(VectorDb):
 
         if table_name and not is_cloud and table_name in self._get_table_names(self.connection):
             try:
-                self.table = self.connection.open_table(name=table_name)
+                if self.table is None:
+                    self.table = self.connection.open_table(name=table_name)
                 self.table_name = self.table.name
                 self._vector_col = self.table.schema.names[0]
                 self._id = self.table.schema.names[1]  # type: ignore
@@ -155,6 +162,8 @@ class LanceDb(VectorDb):
                 self._id = "id"
                 self._vector_col = "vector"
                 self.table = self._init_table()
+        else:
+            self.table_name = self.table.name
 
         self.reranker: Optional[Reranker] = reranker
         self.nprobes: Optional[int] = nprobes
