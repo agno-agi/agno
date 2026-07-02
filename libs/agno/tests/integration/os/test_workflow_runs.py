@@ -1,9 +1,11 @@
 """Integration tests for running Workflows in AgentOS."""
 
 import json
+from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, patch
 
 import httpx
+import jwt
 import pytest
 from fastapi.testclient import TestClient
 from httpx import ASGITransport
@@ -12,6 +14,7 @@ from pydantic import BaseModel
 from agno.db.base import ComponentType
 from agno.db.sqlite import SqliteDb
 from agno.os import AgentOS
+from agno.os.config import AuthorizationConfig
 from agno.workflow.factory import WorkflowFactory
 from agno.workflow.step import Step
 from agno.workflow.types import StepInput, StepOutput
@@ -188,6 +191,180 @@ def test_factory_workflow_get_run_and_list_runs(factory_workflow_client):
     assert list_response.status_code == 200
     runs = list_response.json()
     assert any(run["run_id"] == run_id for run in runs)
+
+
+@pytest.fixture
+def websocket_factory_client(temp_storage_db_file):
+    """Create a WebSocket TestClient with an authorized workflow factory.
+
+    The fixture records what the factory sees in ``factory_calls`` so tests can
+    assert on the trusted JWT context *after* the run without swallowing
+    assertions inside the factory callback (which would surface as opaque
+    "Factory error: ..." frames).
+    """
+
+    secret = "x" * 40
+    os_id = "ws-factory-os"
+
+    db = SqliteDb(db_file=temp_storage_db_file)
+    factory_calls: list[dict] = []
+
+    def websocket_workflow_step(_: StepInput) -> StepOutput:
+        return StepOutput(content="ok")
+
+    def build_workflow(ctx):
+        factory_calls.append(
+            {
+                "claims": dict(ctx.trusted.claims) if ctx.trusted.claims else {},
+                "scopes": set(ctx.trusted.scopes) if ctx.trusted.scopes else set(),
+            }
+        )
+        return Workflow(
+            id="ws-factory",
+            name="ws-factory",
+            steps=[Step(name="s", executor=websocket_workflow_step)],
+            db=db,
+        )
+
+    app = AgentOS(
+        id=os_id,
+        workflows=[
+            WorkflowFactory(
+                id="ws-factory",
+                db=db,
+                factory=build_workflow,
+            )
+        ],
+        authorization=True,
+        authorization_config=AuthorizationConfig(
+            verification_keys=[secret],
+            algorithm="HS256",
+        ),
+        telemetry=False,
+    ).get_app()
+
+    with TestClient(app) as client:
+        yield {
+            "client": client,
+            "secret": secret,
+            "os_id": os_id,
+            "factory_calls": factory_calls,
+        }
+
+
+def _issue_token(secret: str, os_id: str, sub: str, scopes: list[str]) -> str:
+    return jwt.encode(
+        {
+            "sub": sub,
+            "aud": os_id,
+            "scopes": scopes,
+            "exp": datetime.now(UTC) + timedelta(minutes=5),
+            "iat": datetime.now(UTC),
+        },
+        secret,
+        algorithm="HS256",
+    )
+
+
+def _authenticate_ws(ws, token: str, expected_user_id: str) -> None:
+    connection_event = json.loads(ws.receive_text())
+    assert connection_event["event"] == "connected"
+
+    ws.send_text(json.dumps({"action": "authenticate", "token": token}))
+
+    for _ in range(5):
+        frame = json.loads(ws.receive_text())
+        if frame.get("event") == "authenticated" and frame.get("user_id") == expected_user_id:
+            return
+    raise AssertionError(f"Did not receive authenticated event for user_id={expected_user_id}")
+
+
+def _drain_until(ws, predicate, max_frames: int = 20) -> str:
+    """Read text frames until ``predicate(frame_text)`` is truthy or the limit is hit."""
+    for _ in range(max_frames):
+        frame = ws.receive_text()
+        if predicate(frame):
+            return frame
+    raise AssertionError(f"No frame matched predicate within {max_frames} frames")
+
+
+def test_websocket_workflow_factory_receives_trusted_jwt_context(
+    websocket_factory_client,
+):
+    """Regression for #8684: WS start-workflow must forward JWT context to factory.
+
+    Assertions live in the test body (not the factory callback) so a regression
+    shows up as a clear diff on captured claims/scopes rather than an opaque
+    ``Factory error: ...`` frame.
+    """
+
+    client = websocket_factory_client["client"]
+    secret = websocket_factory_client["secret"]
+    os_id = websocket_factory_client["os_id"]
+    factory_calls = websocket_factory_client["factory_calls"]
+
+    token = _issue_token(secret, os_id, sub="alice", scopes=["workflows:run"])
+
+    with client.websocket_connect("/workflows/ws") as ws:
+        _authenticate_ws(ws, token, expected_user_id="alice")
+
+        ws.send_text(
+            json.dumps(
+                {
+                    "action": "start-workflow",
+                    "workflow_id": "ws-factory",
+                    "message": "go",
+                }
+            )
+        )
+
+        started = _drain_until(ws, lambda f: "WorkflowStarted" in f)
+        assert '"workflow_id": "ws-factory"' in started
+
+    assert len(factory_calls) == 1, "Factory should be built exactly once"
+    call = factory_calls[0]
+    assert call["claims"].get("sub") == "alice", (
+        f"Factory did not see trusted JWT sub. Saw claims={call['claims']}. "
+        "This means websocket_user_context was not forwarded to "
+        "handle_workflow_via_websocket — see agno/os/router.py."
+    )
+    assert "workflows:run" in call["scopes"], f"Factory did not see trusted JWT scopes. Saw scopes={call['scopes']}."
+
+
+def test_websocket_workflow_factory_rejects_missing_scope(
+    websocket_factory_client,
+):
+    """A token without ``workflows:run`` must be blocked at the dispatcher RBAC gate.
+
+    The factory must not even be invoked in this case — the reject happens
+    before ``handle_workflow_via_websocket`` is called.
+    """
+
+    client = websocket_factory_client["client"]
+    secret = websocket_factory_client["secret"]
+    os_id = websocket_factory_client["os_id"]
+    factory_calls = websocket_factory_client["factory_calls"]
+
+    token = _issue_token(secret, os_id, sub="alice", scopes=[])
+
+    with client.websocket_connect("/workflows/ws") as ws:
+        _authenticate_ws(ws, token, expected_user_id="alice")
+
+        ws.send_text(
+            json.dumps(
+                {
+                    "action": "start-workflow",
+                    "workflow_id": "ws-factory",
+                    "message": "go",
+                }
+            )
+        )
+
+        error_frame = json.loads(_drain_until(ws, lambda f: '"event": "error"' in f))
+        assert error_frame["event"] == "error"
+        assert "permission" in error_frame["error"].lower()
+
+    assert factory_calls == [], "Factory must not be invoked when RBAC rejects the call"
 
 
 # =============================================================================
