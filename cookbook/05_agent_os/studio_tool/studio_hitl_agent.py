@@ -1,4 +1,4 @@
-"""StudioTool + human-in-the-loop -- ask before building, confirm before creating.
+"""StudioTools + human-in-the-loop -- ask before building, confirm before creating.
 
 The studio agent composes new agents from registry primitives, but it never
 guesses. Three HITL mechanisms work together:
@@ -33,7 +33,7 @@ from agno.tools.calculator import CalculatorTools
 from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.function import UserInputField
 from agno.tools.hackernews import HackerNewsTools
-from agno.tools.studio import StudioTool
+from agno.tools.studio import StudioTools
 from agno.tools.user_control_flow import UserControlFlowTools
 from agno.tools.user_feedback import UserFeedbackTools
 
@@ -56,7 +56,7 @@ studio_agent = Agent(
     name="Studio HITL",
     model=OpenAIResponses(id="gpt-5.5"),
     tools=[
-        StudioTool(
+        StudioTools(
             registry=registry,
             db=db,
             default_model_id="gpt-5.5",

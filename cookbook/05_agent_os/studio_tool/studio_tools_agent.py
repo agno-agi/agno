@@ -1,6 +1,6 @@
-"""Agent with StudioTool -- let the agent compose new agents, teams, and workflows.
+"""Agent with StudioTools -- let the agent compose new agents, teams, and workflows.
 
-The StudioTool uses the AgentOS Registry (tools, models, dbs) and the core
+The StudioTools uses the AgentOS Registry (tools, models, dbs) and the core
 component APIs (Agent, Team, Workflow, Step) to dynamically build new
 components described by the user in natural language.
 
@@ -29,7 +29,7 @@ from agno.registry import Registry
 from agno.tools.calculator import CalculatorTools
 from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.hackernews import HackerNewsTools
-from agno.tools.studio import StudioTool
+from agno.tools.studio import StudioTools
 
 DB_DIR = Path(__file__).parent / "tmp"
 DB_DIR.mkdir(exist_ok=True)
@@ -68,7 +68,7 @@ studio_agent = Agent(
     name="Studio Agent",
     model=OpenAIResponses(id="gpt-5.5"),
     tools=[
-        StudioTool(
+        StudioTools(
             registry=registry,
             db=db,
             agents_list=[greeter, reporter],

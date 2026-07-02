@@ -1,15 +1,15 @@
-"""StudioTool -- give agents the ability to compose agents, teams, and workflows.
+"""StudioTools -- give agents the ability to compose agents, teams, and workflows.
 
 Uses the AgentOS Registry (tools, models, dbs, functions) and the core
 component APIs (Agent, Team, Workflow, Step) to dynamically create, edit,
 version, and execute components described in natural language.
 
 Typical use:
-    from agno.tools.studio import StudioTool
+    from agno.tools.studio import StudioTools
 
     studio_agent = Agent(
         model=Claude(id="claude-sonnet-4-5"),
-        tools=[StudioTool(registry=registry, db=db)],
+        tools=[StudioTools(registry=registry, db=db)],
     )
 
     studio_agent.print_response(
@@ -66,7 +66,7 @@ Component = Union["Agent", "Team", "Workflow"]
 TeamMember = Union["Agent", "Team"]
 
 
-class StudioTool(Toolkit):
+class StudioTools(Toolkit):
     """Toolkit that lets an agent compose agents, teams, and workflows.
 
     Args:
@@ -283,17 +283,37 @@ class StudioTool(Toolkit):
         return self.registry.get_db(db_id)
 
     def _find_tool(self, name: str) -> Optional[Any]:
-        """Match by Toolkit.name, Function.name, callable __name__, or toolkit function key."""
+        """Match by Toolkit.name, Function.name, callable __name__, or toolkit function key.
+
+        Top-level name matches take precedence over functions found inside a
+        toolkit. When a name matches more than one distinct registry entry
+        (e.g. two toolkits sharing a name), a ValueError is raised instead of
+        silently returning the first match -- resolving to whichever entry was
+        registered first would wire the agent to the wrong tool.
+        """
+        matches: List[Any] = []
+        function_matches: List[Any] = []
         for tool in self.registry.tools:
-            if isinstance(tool, Toolkit) and tool.name == name:
-                return tool
-            if isinstance(tool, Function) and tool.name == name:
-                return tool
-            if callable(tool) and getattr(tool, "__name__", None) == name:
-                return tool
-            if isinstance(tool, Toolkit) and name in tool.functions:
-                return tool.functions[name]
-        return None
+            if isinstance(tool, Toolkit):
+                if tool.name == name:
+                    matches.append(tool)
+                elif name in tool.functions:
+                    function_matches.append(tool.functions[name])
+            elif isinstance(tool, Function):
+                if tool.name == name:
+                    matches.append(tool)
+            elif callable(tool) and getattr(tool, "__name__", None) == name:
+                matches.append(tool)
+
+        candidates = matches or function_matches
+        if not candidates:
+            return None
+        if len(candidates) > 1:
+            raise ValueError(
+                f"Tool name '{name}' is ambiguous: it matches {len(candidates)} registry entries. "
+                "Give each tool a distinct name (e.g. MCPTools(name=...)) so it can be selected unambiguously."
+            )
+        return candidates[0]
 
     def _resolve_tools(self, names: Optional[List[str]]) -> List[Any]:
         if not names:
@@ -308,6 +328,17 @@ class StudioTool(Toolkit):
                 resolved.append(found)
         if missing:
             raise ValueError(f"Tools not found in registry: {missing}")
+        # Persisting a component serializes each toolkit's functions; a toolkit
+        # with none (e.g. an MCP toolkit that never connected) would be silently
+        # dropped from the config, permanently. Refuse instead.
+        empty_toolkits = [t.name for t in resolved if isinstance(t, Toolkit) and not t.functions]
+        if empty_toolkits:
+            raise ValueError(
+                f"Toolkits have no functions and cannot be persisted: {empty_toolkits}. "
+                "An MCP toolkit has no functions until it is connected. Connect it before "
+                "creating or editing components with it (AgentOS connects MCP tools found in "
+                "the registry and on agents/teams/workflows at startup)."
+            )
         return resolved
 
     def _normalize_tool_names(self, names: List[str]) -> List[str]:
@@ -432,7 +463,7 @@ class StudioTool(Toolkit):
             agent.db = self.db
             return agent
         except Exception:
-            logger.warning("StudioTool: Agent.from_dict failed for %s", agent_id, exc_info=True)
+            logger.warning("StudioTools: Agent.from_dict failed for %s", agent_id, exc_info=True)
             return None
 
     def _load_team_from_db(self, team_id: str, version: Optional[int] = None) -> Optional["Team"]:
@@ -449,7 +480,7 @@ class StudioTool(Toolkit):
             team.db = self.db
             return team
         except Exception:
-            logger.warning("StudioTool: Team.from_dict failed for %s", team_id, exc_info=True)
+            logger.warning("StudioTools: Team.from_dict failed for %s", team_id, exc_info=True)
             return None
 
     def _load_workflow_from_db(self, workflow_id: str, version: Optional[int] = None) -> Optional["Workflow"]:
@@ -466,7 +497,7 @@ class StudioTool(Toolkit):
             wf.db = self.db
             return wf
         except Exception:
-            logger.warning("StudioTool: Workflow.from_dict failed for %s", workflow_id, exc_info=True)
+            logger.warning("StudioTools: Workflow.from_dict failed for %s", workflow_id, exc_info=True)
             return None
 
     def _load_config_from_db(
@@ -816,7 +847,7 @@ class StudioTool(Toolkit):
             tools = self._resolve_tools(tool_names)
             db = self._find_db(db_id)
             if db is None:
-                message = f"Db not found: {db_id}" if db_id is not None else "StudioTool has no db configured."
+                message = f"Db not found: {db_id}" if db_id is not None else "StudioTools has no db configured."
                 return json.dumps({"error": message})
 
             agent_id = self._unique_component_id(name, db)
@@ -831,7 +862,7 @@ class StudioTool(Toolkit):
             )
 
             version = _persist_only(agent, db)
-            log_debug(f"StudioTool created agent id={agent_id} version={version}")
+            log_debug(f"StudioTools created agent id={agent_id} version={version}")
             return json.dumps(
                 {
                     "status": "created",
@@ -883,7 +914,7 @@ class StudioTool(Toolkit):
 
             db = self._find_db(db_id)
             if db is None:
-                message = f"Db not found: {db_id}" if db_id is not None else "StudioTool has no db configured."
+                message = f"Db not found: {db_id}" if db_id is not None else "StudioTools has no db configured."
                 return json.dumps({"error": message})
             team_id = self._unique_component_id(name, db)
             team = Team(
@@ -897,7 +928,7 @@ class StudioTool(Toolkit):
             )
 
             version = _persist_only(team, db)
-            log_debug(f"StudioTool created team id={team_id} members={member_ids} version={version}")
+            log_debug(f"StudioTools created team id={team_id} members={member_ids} version={version}")
             return json.dumps(
                 {
                     "status": "created",
@@ -940,7 +971,7 @@ class StudioTool(Toolkit):
 
             db = self._find_db(db_id)
             if db is None:
-                message = f"Db not found: {db_id}" if db_id is not None else "StudioTool has no db configured."
+                message = f"Db not found: {db_id}" if db_id is not None else "StudioTools has no db configured."
                 return json.dumps({"error": message})
             workflow_id = self._unique_component_id(name, db)
             workflow = Workflow(
@@ -952,7 +983,7 @@ class StudioTool(Toolkit):
             )
 
             version = _persist_only(workflow, db)
-            log_debug(f"StudioTool created workflow id={workflow_id} steps={len(steps)} version={version}")
+            log_debug(f"StudioTools created workflow id={workflow_id} steps={len(steps)} version={version}")
             return json.dumps(
                 {
                     "status": "created",
@@ -994,7 +1025,7 @@ class StudioTool(Toolkit):
             description (Optional[str]): New description. Omit to keep.
         """
         if self.db is None:
-            return json.dumps({"error": "StudioTool has no db configured; cannot edit components."})
+            return json.dumps({"error": "StudioTools has no db configured; cannot edit components."})
         if self._is_code_defined(agent_id, self._iter_agents()):
             return json.dumps(
                 {"error": f"Cannot edit code-defined agent: {agent_id}. Only Studio-created components are editable."}
@@ -1021,7 +1052,7 @@ class StudioTool(Toolkit):
                 agent.tools = self._resolve_tools(tool_names) or None
 
             result = self._save_edit(agent)
-            log_debug(f"StudioTool edited agent id={agent_id} result={result}")
+            log_debug(f"StudioTools edited agent id={agent_id} result={result}")
             return json.dumps({"status": "edited", "id": agent_id, **result})
         except Exception as e:
             logger.exception("Failed to edit agent")
@@ -1050,7 +1081,7 @@ class StudioTool(Toolkit):
             description (Optional[str]): New description. Omit to keep.
         """
         if self.db is None:
-            return json.dumps({"error": "StudioTool has no db configured; cannot edit components."})
+            return json.dumps({"error": "StudioTools has no db configured; cannot edit components."})
         if self._is_code_defined(team_id, self._iter_teams()):
             return json.dumps(
                 {"error": f"Cannot edit code-defined team: {team_id}. Only Studio-created components are editable."}
@@ -1082,7 +1113,7 @@ class StudioTool(Toolkit):
                 team.members = members
 
             result = self._save_edit(team)
-            log_debug(f"StudioTool edited team id={team_id} result={result}")
+            log_debug(f"StudioTools edited team id={team_id} result={result}")
             return json.dumps({"status": "edited", "id": team_id, **result})
         except Exception as e:
             logger.exception("Failed to edit team")
@@ -1108,7 +1139,7 @@ class StudioTool(Toolkit):
                 Same shape as create_workflow.step_specs.
         """
         if self.db is None:
-            return json.dumps({"error": "StudioTool has no db configured; cannot edit components."})
+            return json.dumps({"error": "StudioTools has no db configured; cannot edit components."})
         if self._is_code_defined(workflow_id, self._iter_workflows()):
             return json.dumps(
                 {
@@ -1133,7 +1164,7 @@ class StudioTool(Toolkit):
                 wf.steps = steps
 
             result = self._save_edit(wf)
-            log_debug(f"StudioTool edited workflow id={workflow_id} result={result}")
+            log_debug(f"StudioTools edited workflow id={workflow_id} result={result}")
             return json.dumps({"status": "edited", "id": workflow_id, **result})
         except Exception as e:
             logger.exception("Failed to edit workflow")
@@ -1150,7 +1181,7 @@ class StudioTool(Toolkit):
             component_id (str): The component id.
         """
         if self.db is None:
-            return json.dumps({"error": "StudioTool has no db configured."})
+            return json.dumps({"error": "StudioTools has no db configured."})
         try:
             component = self.db.get_component(component_id) or {}
             current_version = component.get("current_version")
@@ -1178,7 +1209,7 @@ class StudioTool(Toolkit):
             version (Optional[int]): Version number, or omit for the current version.
         """
         if self.db is None:
-            return json.dumps({"error": "StudioTool has no db configured."})
+            return json.dumps({"error": "StudioTools has no db configured."})
         try:
             config = self.db.get_config(component_id=component_id, version=version)
             if config is None:
@@ -1198,7 +1229,7 @@ class StudioTool(Toolkit):
                 returns status "already_published".
         """
         if self.db is None:
-            return json.dumps({"error": "StudioTool has no db configured."})
+            return json.dumps({"error": "StudioTools has no db configured."})
         try:
             configs = self.db.list_configs(component_id, include_config=False)
             target = version
@@ -1238,7 +1269,7 @@ class StudioTool(Toolkit):
             version (int): A published version to set as current.
         """
         if self.db is None:
-            return json.dumps({"error": "StudioTool has no db configured."})
+            return json.dumps({"error": "StudioTools has no db configured."})
         try:
             ok = self.db.set_current_version(component_id, version=version)
             if not ok:
@@ -1256,7 +1287,7 @@ class StudioTool(Toolkit):
             version (int): The draft version to delete.
         """
         if self.db is None:
-            return json.dumps({"error": "StudioTool has no db configured."})
+            return json.dumps({"error": "StudioTools has no db configured."})
         try:
             deleted = self.db.delete_config(component_id, version=version)
             if not deleted:
@@ -1277,7 +1308,7 @@ class StudioTool(Toolkit):
             agent_id (str): The id of the agent to delete.
         """
         if self.db is None:
-            return json.dumps({"error": "StudioTool has no db configured; cannot delete components."})
+            return json.dumps({"error": "StudioTools has no db configured; cannot delete components."})
         try:
             from agno.db.base import ComponentType
 
@@ -1299,7 +1330,7 @@ class StudioTool(Toolkit):
             team_id (str): The id of the team to delete.
         """
         if self.db is None:
-            return json.dumps({"error": "StudioTool has no db configured; cannot delete components."})
+            return json.dumps({"error": "StudioTools has no db configured; cannot delete components."})
         try:
             from agno.db.base import ComponentType
 
@@ -1321,7 +1352,7 @@ class StudioTool(Toolkit):
             workflow_id (str): The id of the workflow to delete.
         """
         if self.db is None:
-            return json.dumps({"error": "StudioTool has no db configured; cannot delete components."})
+            return json.dumps({"error": "StudioTools has no db configured; cannot delete components."})
         try:
             from agno.db.base import ComponentType
 
@@ -1887,3 +1918,8 @@ def _component_to_dict(component: Component) -> Dict[str, Any]:
     if isinstance(component, Workflow):
         return component.to_dict()
     raise TypeError(f"Unsupported component type: {type(component).__name__}")
+
+
+# Backward-compatible alias. The toolkit was originally released as ``StudioTool``
+# (singular); ``StudioTools`` is the canonical name. Both refer to the same class.
+StudioTool = StudioTools
