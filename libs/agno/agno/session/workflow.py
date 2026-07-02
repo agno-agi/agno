@@ -346,9 +346,11 @@ class WorkflowSession:
 
             return False
 
+        session_runs = runs
+
         # Filter for top-level runs (main team runs or agent runs when sharing session)
         if skip_member_messages:
-            session_runs = [run for run in runs if run.team_id == team_id]
+            session_runs = [run for run in session_runs if run.team_id == team_id]
 
         # Filter runs by status
         if skip_statuses:
