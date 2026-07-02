@@ -259,6 +259,23 @@ class TestExecutorPollRun:
         assert result["status"] == "success"
         assert call_count == 3
 
+    @pytest.mark.asyncio
+    @patch("agno.scheduler.executor.asyncio.sleep", new_callable=AsyncMock)
+    async def test_poll_request_exception_waits_before_retry(self, mock_sleep):
+        executor = ScheduleExecutor(base_url="http://localhost:8000", internal_service_token="tok", poll_interval=5)
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json = MagicMock(return_value={"status": "COMPLETED"})
+
+        mock_client = AsyncMock()
+        mock_client.request = AsyncMock(side_effect=[RuntimeError("temporary outage"), mock_resp])
+
+        result = await executor._poll_run(mock_client, {}, "agents", "a1", "run-1", "sess-1", 60)
+
+        assert result["status"] == "success"
+        assert mock_client.request.await_count == 2
+        mock_sleep.assert_awaited_once_with(5)
+
 
 class TestExecutorExecute:
     """Test the full execute() flow with mocked DB and endpoint."""

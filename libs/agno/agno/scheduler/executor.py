@@ -416,7 +416,8 @@ class ScheduleExecutor:
                     params={"session_id": session_id},
                 )
             except Exception as exc:
-                log_warning(f"Poll request failed for run {run_id}: {exc}: {exc}")
+                log_warning(f"Poll request failed for run {run_id}: {exc}")
+                await asyncio.sleep(self.poll_interval)
                 continue
 
             if resp.status_code == 404:
