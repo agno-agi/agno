@@ -17,8 +17,8 @@ from agno.registry import Registry
 from agno.tools.calculator import CalculatorTools
 from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.function import Function
+from agno.tools.studio import StudioTool, StudioTools
 from agno.tools.toolkit import Toolkit
-from agno.tools.studio import StudioTools
 
 # ----------------------------------------------------------------------
 # Fixtures
@@ -61,13 +61,9 @@ def _loads(s: str) -> Dict[str, Any]:
 
 class TestStudioToolAlias:
     def test_singular_alias_resolves_to_canonical_class(self):
-        from agno.tools.studio import StudioTool
-
         assert StudioTool is StudioTools
 
     def test_alias_constructs_a_working_toolkit(self, registry, db):
-        from agno.tools.studio import StudioTool
-
         tool = StudioTool(registry=registry, db=db)
         assert isinstance(tool, StudioTools)
         assert "create_agent" in tool.functions
