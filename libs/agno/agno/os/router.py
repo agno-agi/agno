@@ -435,7 +435,7 @@ def get_websocket_router(
                             message.setdefault("user_id", jwt_user_id)
                         else:
                             message["user_id"] = jwt_user_id
-                    await handle_workflow_via_websocket(websocket, message, os)
+                    await handle_workflow_via_websocket(websocket, message, os, ws_user_context=websocket_user_context)
 
                 elif action == "reconnect":
                     # Force user_id from JWT for non-admins so reconnecting

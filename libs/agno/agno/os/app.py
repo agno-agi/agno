@@ -64,6 +64,7 @@ from agno.os.settings import AgnoAPISettings
 from agno.os.utils import (
     _generate_knowledge_id,
     collect_components_from_os,
+    collect_mcp_tools_from_registry,
     collect_mcp_tools_from_team,
     collect_mcp_tools_from_workflow,
     find_conflicting_routes,
@@ -381,6 +382,11 @@ class AgentOS:
         # Collect models, tools, dbs and vector dbs from the agent/team/workflow tree
         self._populate_registry_components()
 
+        # Track MCP tools declared on the registry so they connect in the same
+        # lifespan as agent/team/workflow MCP tools (e.g. for components created
+        # from registry tools via StudioTool)
+        collect_mcp_tools_from_registry(self.registry, self.mcp_tools)
+
         # Check for duplicate IDs
         self._raise_if_duplicate_ids()
 
@@ -438,6 +444,9 @@ class AgentOS:
 
         # Collect models, tools, dbs and vector dbs from the agent/team/workflow tree
         self._populate_registry_components()
+
+        # Track MCP tools declared on the registry
+        collect_mcp_tools_from_registry(self.registry, self.mcp_tools)
 
         if self.enable_mcp_server:
             from agno.os.mcp import get_mcp_server
@@ -882,6 +891,10 @@ class AgentOS:
         setup_tracing_for_os(db=db)
 
     def get_app(self) -> FastAPI:
+        # Pick up MCP tools added to the registry after construction, before the
+        # lifespan that connects them is assembled below
+        collect_mcp_tools_from_registry(self.registry, self.mcp_tools)
+
         if self.base_app:
             fastapi_app = self.base_app
 
