@@ -47,7 +47,7 @@ class ClickUpTools(Toolkit):
         """Make a request to the ClickUp API."""
         url = f"{self.base_url}/{endpoint}"
         try:
-            response = requests.request(method=method, url=url, headers=self.headers, params=params, json=data)
+            response = requests.request(method=method, url=url, headers=self.headers, params=params, json=data, timeout=30)
             response.raise_for_status()
             return response.json()
         except requests.exceptions.RequestException as e:

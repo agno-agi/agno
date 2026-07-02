@@ -93,8 +93,69 @@ def test_make_request_success(brightdata_tools, mock_requests):
 
     assert result == "Success response"
     mock_requests.post.assert_called_once_with(
-        brightdata_tools.endpoint, headers=brightdata_tools.headers, data=json.dumps(payload)
+        brightdata_tools.endpoint, headers=brightdata_tools.headers, data=json.dumps(payload), timeout=brightdata_tools.timeout
     )
+
+
+def test_make_request_forwards_timeout(mock_requests):
+    """Test that _make_request forwards self.timeout to requests.post."""
+    tools = BrightDataTools(api_key="test_key", timeout=42)
+    mock_response = Mock()
+    mock_response.status_code = 200
+    mock_response.text = "ok"
+    mock_requests.post.return_value = mock_response
+
+    tools._make_request({"url": "https://example.com"})
+
+    _, kwargs = mock_requests.post.call_args
+    assert kwargs["timeout"] == 42
+
+
+def test_get_screenshot_forwards_timeout(mock_requests):
+    """Test that get_screenshot forwards self.timeout to requests.post."""
+    tools = BrightDataTools(api_key="test_key", timeout=15)
+    agent = Mock()
+    mock_response = Mock()
+    mock_response.status_code = 200
+    mock_response.content = b"fake_png"
+    mock_requests.post.return_value = mock_response
+
+    tools.get_screenshot(agent, "https://example.com")
+
+    _, kwargs = mock_requests.post.call_args
+    assert kwargs["timeout"] == 15
+
+
+def test_web_data_feed_trigger_forwards_timeout(mock_requests):
+    """Test that web_data_feed trigger request forwards self.timeout."""
+    tools = BrightDataTools(api_key="test_key", timeout=30)
+    mock_trigger = Mock()
+    mock_trigger.json.return_value = {"snapshot_id": "snap123"}
+    mock_snapshot = Mock()
+    mock_snapshot.json.return_value = {"data": "result"}
+    mock_requests.post.return_value = mock_trigger
+    mock_requests.get.return_value = mock_snapshot
+
+    tools.web_data_feed("amazon_product", "https://amazon.com/dp/B001")
+
+    _, kwargs = mock_requests.post.call_args
+    assert kwargs["timeout"] == 30
+
+
+def test_web_data_feed_polling_uses_fixed_timeout(mock_requests):
+    """Test that web_data_feed polling GET uses a fixed per-poll timeout of 30 s."""
+    tools = BrightDataTools(api_key="test_key", timeout=600)
+    mock_trigger = Mock()
+    mock_trigger.json.return_value = {"snapshot_id": "snap123"}
+    mock_snapshot = Mock()
+    mock_snapshot.json.return_value = {"data": "result"}
+    mock_requests.post.return_value = mock_trigger
+    mock_requests.get.return_value = mock_snapshot
+
+    tools.web_data_feed("amazon_product", "https://amazon.com/dp/B001")
+
+    _, kwargs = mock_requests.get.call_args
+    assert kwargs["timeout"] == 30
 
 
 def test_make_request_failure(brightdata_tools, mock_requests):
