@@ -490,6 +490,10 @@ class Qdrant(VectorDb):
             await self.async_client.upsert(collection_name=self.collection, wait=False, points=points)
         log_debug(f"Upserted {len(points)} documents asynchronously")
 
+    def upsert_available(self) -> bool:
+        """Check if upsert is available in Qdrant."""
+        return True
+
     def upsert(self, content_hash: str, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
         """
         Upsert documents into the database.
@@ -506,8 +510,31 @@ class Qdrant(VectorDb):
     async def async_upsert(
         self, content_hash: str, documents: List[Document], filters: Optional[Dict[str, Any]] = None
     ) -> None:
-        """Upsert documents asynchronously."""
+        """Upsert documents asynchronously.
+
+        Mirrors the sync ``upsert`` behaviour: if any points with the same
+        ``content_hash`` already exist, delete them first so the collection
+        ends up with exactly the new set of points instead of accumulating
+        duplicates from successive ingests.
+        """
         log_debug("Redirecting the async request to async_insert")
+        if self.async_client:
+            # Let delete errors propagate: inserting after a failed dedup would stack new points on top of old ones.
+            filter_condition = models.Filter(
+                must=[models.FieldCondition(key="content_hash", match=models.MatchValue(value=content_hash))]
+            )
+            count_result = await self.async_client.count(
+                collection_name=self.collection, count_filter=filter_condition, exact=True
+            )
+            if count_result.count > 0:
+                log_info(
+                    f"Deleting {count_result.count} existing points with content_hash: {content_hash} before upsert"
+                )
+                await self.async_client.delete(
+                    collection_name=self.collection,
+                    points_selector=filter_condition,
+                    wait=True,
+                )
         await self.async_insert(content_hash=content_hash, documents=documents, filters=filters)
 
     def search(
