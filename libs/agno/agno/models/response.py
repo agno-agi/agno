@@ -5,6 +5,7 @@ from typing import Any, Dict, List, Optional
 
 from agno.media import Audio, File, Image, Video
 from agno.metrics import ToolCallMetrics
+from agno.models.finish_reason import FinishReason
 from agno.models.message import Citations
 from agno.models.metrics import MessageMetrics
 from agno.tools.function import UserFeedbackQuestion, UserInputField
@@ -143,6 +144,10 @@ class ModelResponse:
 
     response_usage: Optional[MessageMetrics] = None
 
+    # Normalized reason the model stopped generating (raw provider value is kept in
+    # provider_data["native_finish_reason"]).
+    finish_reason: Optional[FinishReason] = None
+
     created_at: int = int(time())
 
     extra: Optional[Dict[str, Any]] = None
@@ -196,6 +201,12 @@ class ModelResponse:
             except ImportError:
                 _dict["response_usage"] = response_usage
 
+        # Serialize finish_reason as its plain string value
+        if self.finish_reason is not None:
+            _dict["finish_reason"] = (
+                self.finish_reason.value if isinstance(self.finish_reason, FinishReason) else self.finish_reason
+            )
+
         return _dict
 
     @classmethod
@@ -227,6 +238,13 @@ class ModelResponse:
             from agno.models.metrics import MessageMetrics as _MessageMetrics
 
             data["response_usage"] = _MessageMetrics.from_dict(data["response_usage"])
+
+        # Normalize finish_reason back into the enum (rehydrated as a plain str after JSON)
+        if data.get("finish_reason") is not None and not isinstance(data["finish_reason"], FinishReason):
+            try:
+                data["finish_reason"] = FinishReason(data["finish_reason"])
+            except ValueError:
+                data["finish_reason"] = FinishReason.UNKNOWN
 
         return cls(**data)
 

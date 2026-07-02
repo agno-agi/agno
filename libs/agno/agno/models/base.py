@@ -1161,6 +1161,11 @@ class Model(ABC):
             model_response.provider_data = provider_response.provider_data
         if provider_response.response_usage is not None:
             model_response.response_usage = provider_response.response_usage
+        # Copy the normalized finish reason. Guarded so a later None (the aggregate
+        # model_response is reused across a multi-step tool loop) cannot wipe the
+        # terminal reason; last non-null writer wins.
+        if provider_response.finish_reason is not None:
+            model_response.finish_reason = provider_response.finish_reason
         # Providers (e.g. GeminiInteractions on the agent path) can produce
         # already-executed ToolExecution records server-side; carry them
         # through so run_response.tools / AgentOS UI sees the audit.
@@ -1231,6 +1236,11 @@ class Model(ABC):
             model_response.provider_data = provider_response.provider_data
         if provider_response.response_usage is not None:
             model_response.response_usage = provider_response.response_usage
+        # Copy the normalized finish reason. Guarded so a later None (the aggregate
+        # model_response is reused across a multi-step tool loop) cannot wipe the
+        # terminal reason; last non-null writer wins.
+        if provider_response.finish_reason is not None:
+            model_response.finish_reason = provider_response.finish_reason
         # Providers (e.g. GeminiInteractions on the agent path) can produce
         # already-executed ToolExecution records server-side; carry them
         # through so run_response.tools / AgentOS UI sees the audit.

@@ -27,6 +27,7 @@ from agno.exceptions import RunCancelledException
 from agno.media import Audio
 from agno.models.base import Model
 from agno.models.fallback import acall_model_stream_with_fallback, call_model_stream_with_fallback
+from agno.models.finish_reason import warn_if_truncated
 from agno.models.message import Message
 from agno.models.response import ModelResponse, ModelResponseEvent
 from agno.reasoning.step import NextAction, ReasoningStep, ReasoningSteps
@@ -998,6 +999,9 @@ def update_run_response(
         run_response.citations = model_response.citations
     if model_response.provider_data is not None:
         run_response.model_provider_data = model_response.provider_data
+    if model_response.finish_reason is not None:
+        run_response.finish_reason = model_response.finish_reason
+        warn_if_truncated(run_response, run_response.finish_reason)
 
     # Update the run_response tools with the model response tool_executions.
     # Dedupe by tool_call_id: with checkpoint="tool-batch" the per-batch callback
@@ -1445,6 +1449,13 @@ def handle_model_response_chunk(
             # Handle provider data (one chunk)
             if model_response_event.provider_data is not None:
                 run_response.model_provider_data = model_response_event.provider_data
+
+            # Handle finish reason (one chunk). Copied onto run_response only; the completion
+            # event is built from run_response.finish_reason, so this must NOT join the
+            # content-event guard below (that would emit a spurious content event).
+            if model_response_event.finish_reason is not None:
+                run_response.finish_reason = model_response_event.finish_reason
+                warn_if_truncated(run_response, run_response.finish_reason)
 
             # Handle citations (one chunk)
             if model_response_event.citations is not None:
