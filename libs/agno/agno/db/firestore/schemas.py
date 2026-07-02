@@ -83,8 +83,11 @@ EVAL_COLLECTION_SCHEMA = [
     {"key": "team_id"},
     {"key": "workflow_id"},
     {"key": "model_id"},
+    {"key": "user_id"},
     {"key": "created_at"},
     {"key": "updated_at"},
+    # Composite index for user-scoped listing sorted by creation time
+    {"key": [("user_id", "ASCENDING"), ("created_at", "DESCENDING")], "collection_group": False},
 ]
 
 KNOWLEDGE_COLLECTION_SCHEMA = [

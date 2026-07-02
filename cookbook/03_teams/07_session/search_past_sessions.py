@@ -1,6 +1,6 @@
 """
-Search Session History (Team)
-=============================
+Search Past Sessions (Team)
+===========================
 
 Demonstrates the two-step list-then-read pattern for accessing previous
 team sessions with user-scoped history access.

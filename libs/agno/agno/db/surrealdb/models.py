@@ -238,6 +238,7 @@ def desurrealize_eval_run_record(eval_run_record_raw: dict) -> dict:
     copy = deserialize_record_id(copy, "agent_id", "agent")
     copy = deserialize_record_id(copy, "team_id", "team")
     copy = deserialize_record_id(copy, "workflow_id", "workflow")
+    copy = desurrealize_dates(copy)
 
     return copy
 
@@ -277,6 +278,12 @@ def get_schema(table_type: TableType, table_name: str) -> str:
             DEFINE FIELD OVERWRITE updated_at ON {table_name} TYPE datetime VALUE time::now();
             """)
     elif table_type == "culture":
+        return dedent(f"""
+            {define_table}
+            DEFINE FIELD OVERWRITE created_at ON {table_name} TYPE datetime DEFAULT time::now();
+            DEFINE FIELD OVERWRITE updated_at ON {table_name} TYPE datetime VALUE time::now();
+            """)
+    elif table_type == "evals":
         return dedent(f"""
             {define_table}
             DEFINE FIELD OVERWRITE created_at ON {table_name} TYPE datetime DEFAULT time::now();

@@ -208,6 +208,7 @@ async def agent_resumable_response_streamer(
 async def agent_continue_response_streamer(
     agent: Union[Agent, RemoteAgent, AgentProtocol],
     run_id: str,
+    requirements: Optional[List] = None,
     updated_tools: Optional[List] = None,
     input: Optional[str] = None,
     continue_from: Union[int, Literal["end", "last_user"]] = "end",
@@ -233,6 +234,7 @@ async def agent_continue_response_streamer(
 
         continue_response = agent.acontinue_run(  # type: ignore[union-attr]
             run_id=run_id,
+            requirements=requirements,
             updated_tools=updated_tools,
             input=input,
             continue_from=continue_from,
@@ -275,6 +277,7 @@ async def agent_continue_response_streamer(
 async def agent_resumable_continue_response_streamer(
     agent: Union[Agent, RemoteAgent],
     run_id: str,
+    requirements: Optional[List] = None,
     updated_tools: Optional[List] = None,
     input: Optional[str] = None,
     continue_from: Union[int, Literal["end", "last_user"]] = "end",
@@ -310,6 +313,7 @@ async def agent_resumable_continue_response_streamer(
     try:
         async for sse_data in agent.acontinue_run(
             run_id=run_id,
+            requirements=requirements,
             updated_tools=updated_tools,
             input=input,
             continue_from=continue_from,
@@ -1052,13 +1056,48 @@ def get_agent_router(
                 component_id=agent_id,
             )
 
-        # Convert tools dict to ToolExecution objects if provided
+        # Fetch existing run once for validation and potential approval resolution
+        existing_run = None
+        if session_id and not isinstance(agent, RemoteAgent):
+            if hasattr(agent, "aget_run_output"):
+                existing_run = await agent.aget_run_output(
+                    run_id=run_id,
+                    session_id=session_id,
+                    user_id=scoped_user_id or user_id,
+                )
+
+        # Only allow /continue when the run is in a paused state. If running, continued, or errored, return 409.
+        if existing_run is not None:
+            is_paused = getattr(existing_run, "is_paused", False)
+            if not is_paused:
+                status = getattr(existing_run, "status", None)
+                _status_to_detail = {
+                    RunStatus.running: "run is already running",
+                    RunStatus.completed: "run is already continued",
+                    RunStatus.error: "run is already errored",
+                    RunStatus.cancelled: "run is already cancelled",
+                    RunStatus.pending: "run is already pending",
+                }
+                detail = _status_to_detail.get(
+                    status,  # type: ignore[arg-type]
+                    f"run is not paused (status={getattr(status, 'value', status)})",
+                )
+                raise HTTPException(
+                    status_code=409,
+                    detail=detail,
+                )
+
+        # Convert tools dict to RunRequirement and ToolExecution objects if provided
+        requirements = None
         updated_tools = None
         if tools_data:
             try:
                 from agno.models.response import ToolExecution
+                from agno.run.requirement import RunRequirement
 
-                updated_tools = [ToolExecution.from_dict(tool) for tool in tools_data]
+                tool_executions = [ToolExecution.from_dict(tool) for tool in tools_data]
+                requirements = [RunRequirement(tool_execution=te) for te in tool_executions]
+                updated_tools = tool_executions
             except Exception as e:
                 raise HTTPException(status_code=400, detail=f"Invalid structure or content for tools: {str(e)}")
 
@@ -1088,6 +1127,7 @@ def get_agent_router(
                 agent_resumable_continue_response_streamer(
                     agent,  # type: ignore[arg-type]
                     run_id=run_id,
+                    requirements=requirements,
                     updated_tools=updated_tools,
                     input=input,
                     continue_from=continue_from_value,
@@ -1108,6 +1148,7 @@ def get_agent_router(
                 agent_continue_response_streamer(
                     agent,
                     run_id=run_id,  # run_id from path
+                    requirements=requirements,
                     updated_tools=updated_tools,
                     input=input,
                     continue_from=continue_from_value,
@@ -1134,6 +1175,7 @@ def get_agent_router(
                     RunOutput,
                     await agent.acontinue_run(  # type: ignore
                         run_id=run_id,  # run_id from path
+                        requirements=requirements,
                         updated_tools=updated_tools,
                         input=input,
                         continue_from=continue_from_value,

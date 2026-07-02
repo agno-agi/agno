@@ -1,6 +1,6 @@
 """
-Search Session History
-======================
+Search Past Sessions
+====================
 
 Demonstrates the two-step list-then-read pattern for accessing previous sessions.
 

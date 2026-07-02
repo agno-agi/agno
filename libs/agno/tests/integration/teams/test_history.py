@@ -195,7 +195,7 @@ def test_share_member_interactions(shared_db):
     assert "<member_interaction_context>" in acknowledge_agent_input_str
 
 
-def test_search_session_history(shared_db):
+def test_search_past_sessions(shared_db):
     """Test that the team can search through previous sessions when search_past_sessions=True."""
 
     team = Team(
