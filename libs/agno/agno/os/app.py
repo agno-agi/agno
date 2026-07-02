@@ -1096,8 +1096,13 @@ class AgentOS:
         verification_keys = None
         algorithm = "RS256"
         audience = None
+        issuer = None
+        leeway = 10
+        require_expiration = True
         admin_scope: Optional[str] = None
         user_isolation = False
+        authorization_provider = None
+        authz_audit = None
 
         if self.authorization_config:
             algorithm = self.authorization_config.algorithm or "RS256"
@@ -1105,8 +1110,32 @@ class AgentOS:
             jwks_file = self.authorization_config.jwks_file
             verify_audience = self.authorization_config.verify_audience or False
             audience = self.authorization_config.audience
+            issuer = self.authorization_config.issuer
+            if self.authorization_config.leeway is not None:
+                leeway = self.authorization_config.leeway
+            if self.authorization_config.require_expiration is not None:
+                require_expiration = self.authorization_config.require_expiration
             admin_scope = self.authorization_config.admin_scope
             user_isolation = self.authorization_config.user_isolation
+            authorization_provider = self.authorization_config.authorization_provider
+            authz_audit = self.authorization_config.audit
+            role_store = self.authorization_config.role_store
+            if role_store is not None:
+                # Managed-roles shortcut: use the store's provider, and default it to
+                # the OS database when it has none. The config validator already
+                # rejects passing both role_store and authorization_provider.
+                if self.db is not None:
+                    role_store.attach_db(self.db)
+                # Managed roles must be persisted: fail loudly now rather than ship a
+                # store that silently can't stay consistent across workers/replicas.
+                if not role_store.is_bound:
+                    raise ValueError(
+                        "AuthorizationConfig(role_store=...) needs a SQL database. The store "
+                        "has none and AgentOS has no SQL db to adopt (db= is missing or not "
+                        "SQL-capable). Pass db=/db_url= to the ManagedRoleStore, or give AgentOS "
+                        "a SQL database (e.g. SqliteDb/PostgresDb) so the store can adopt it."
+                    )
+                authorization_provider = role_store.provider
 
         log_info(f"Adding JWT middleware for authorization (algorithm: {algorithm})")
 
@@ -1115,6 +1144,9 @@ class AgentOS:
             verification_keys=verification_keys,
             jwks_file=jwks_file,
             algorithm=algorithm,
+            leeway=leeway,
+            issuer=issuer,
+            require_expiration=require_expiration,
         )
         fastapi_app.state.jwt_validator = jwt_validator
         # Expose audience config + admin scope on app.state so WebSocket auth
@@ -1126,6 +1158,16 @@ class AgentOS:
         # JWT/RBAC still apply but the per-user DB wrapper and ownership gates
         # added by the user-scoped-DB work stay dormant.
         fastapi_app.state.user_isolation_enabled = user_isolation
+
+        # Resolve the authorization provider. Defaults to the built-in
+        # scope-based RBAC; a custom AuthorizationProvider can be supplied via
+        # AuthorizationConfig to swap the decision engine (ReBAC/ABAC/external)
+        # without touching the request pipeline.
+        from agno.os.authz.scope_provider import ScopeAuthorizationProvider
+
+        fastapi_app.state.authorization_provider = authorization_provider or ScopeAuthorizationProvider()
+        # Optional decision-audit sink (records allow/deny at the route gate).
+        fastapi_app.state.authz_audit = authz_audit
 
         # Collect interface route prefixes to exclude from JWT auth.
         # Interfaces use their own authentication mechanisms
@@ -1157,10 +1199,14 @@ class AgentOS:
             "algorithm": algorithm,
             "authorization": self.authorization,
             "verify_audience": verify_audience,
+            "leeway": leeway,
+            "require_expiration": require_expiration,
             "excluded_route_paths": excluded_route_paths,
         }
         if audience:
             middleware_kwargs["audience"] = audience
+        if issuer:
+            middleware_kwargs["issuer"] = issuer
         if admin_scope:
             middleware_kwargs["admin_scope"] = admin_scope
         # Default to False on the middleware; only forward when actually enabled

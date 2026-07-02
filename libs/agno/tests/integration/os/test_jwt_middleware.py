@@ -2148,3 +2148,137 @@ def test_audience_verification_missing_custom_audience_claim(jwt_test_agent):
 
     assert response.status_code == 401
     assert 'missing the "custom_aud" claim' in response.json()["detail"]
+
+
+def test_verify_audience_without_expected_audience_fails_closed():
+    """verify_audience=True with no configured audience and no AgentOS id on
+    app.state must REJECT (fail closed), not silently skip the audience check.
+
+    Without this, the middleware would resolve expected_audience to None and the
+    validator would accept a token minted for any audience."""
+    from fastapi import FastAPI
+
+    app = FastAPI()
+
+    @app.get("/whoami")
+    def whoami():
+        return {"ok": True}
+
+    # Manual setup: no AgentOS, so request.app.state has no agent_os_id, and we
+    # deliberately don't pass an audience.
+    app.add_middleware(
+        JWTMiddleware,
+        verification_keys=[JWT_SECRET],
+        algorithm="HS256",
+        verify_audience=True,  # enabled...
+        # ...but no audience= and no AgentOS id to fall back on
+        authorization=False,
+    )
+
+    client = TestClient(app)
+
+    token = jwt.encode(
+        {"sub": "u", "aud": "some-other-audience", "exp": datetime.now(UTC) + timedelta(hours=1)},
+        JWT_SECRET,
+        algorithm="HS256",
+    )
+    response = client.get("/whoami", headers={"Authorization": f"Bearer {token}"})
+    assert response.status_code == 401, response.text
+    assert "audience" in response.json()["detail"].lower()
+
+
+def test_verify_audience_with_configured_audience_still_enforces():
+    """Sanity: when an audience IS configured, verification still works both ways."""
+    from fastapi import FastAPI
+
+    app = FastAPI()
+
+    @app.get("/whoami")
+    def whoami():
+        return {"ok": True}
+
+    app.add_middleware(
+        JWTMiddleware,
+        verification_keys=[JWT_SECRET],
+        algorithm="HS256",
+        verify_audience=True,
+        audience="expected-os",
+        authorization=False,
+    )
+    client = TestClient(app)
+
+    good = jwt.encode(
+        {"sub": "u", "aud": "expected-os", "exp": datetime.now(UTC) + timedelta(hours=1)},
+        JWT_SECRET,
+        algorithm="HS256",
+    )
+    bad = jwt.encode(
+        {"sub": "u", "aud": "wrong-os", "exp": datetime.now(UTC) + timedelta(hours=1)},
+        JWT_SECRET,
+        algorithm="HS256",
+    )
+    assert client.get("/whoami", headers={"Authorization": f"Bearer {good}"}).status_code == 200
+    assert client.get("/whoami", headers={"Authorization": f"Bearer {bad}"}).status_code == 401
+
+
+# ---------------------------------------------------------------------------
+# Crypto hardening: JWTValidator guards (alg-confusion, require-exp, issuer, leeway)
+# ---------------------------------------------------------------------------
+
+from agno.os.middleware.jwt import JWTValidator  # noqa: E402
+
+_PUBLIC_PEM = "-----BEGIN PUBLIC KEY-----\nMFkwEwYHfake\n-----END PUBLIC KEY-----"
+
+
+def test_public_key_with_hmac_algorithm_is_refused():
+    """RS256<->HS256 confusion: a public key used as an HMAC secret lets an
+    attacker forge tokens. The validator must refuse this at construction."""
+    with pytest.raises(ValueError, match="public key"):
+        JWTValidator(verification_keys=[_PUBLIC_PEM], algorithm="HS256")
+    # the same key with an asymmetric algorithm is fine (no raise at init)
+    JWTValidator(verification_keys=[_PUBLIC_PEM], algorithm="RS256")
+
+
+def test_expiration_is_required_by_default():
+    """A validated token with no exp must be rejected (best-in-class: no
+    never-expiring tokens); opt out only via require_expiration=False."""
+    v = JWTValidator(verification_keys=[JWT_SECRET], algorithm="HS256")
+    no_exp = jwt.encode({"sub": "u"}, JWT_SECRET, algorithm="HS256")
+    with pytest.raises(jwt.InvalidTokenError):
+        v.validate_token(no_exp)
+
+    with_exp = jwt.encode(
+        {"sub": "u", "exp": datetime.now(UTC) + timedelta(hours=1)}, JWT_SECRET, algorithm="HS256"
+    )
+    assert v.validate_token(with_exp)["sub"] == "u"
+
+    lax = JWTValidator(verification_keys=[JWT_SECRET], algorithm="HS256", require_expiration=False)
+    assert lax.validate_token(no_exp)["sub"] == "u"
+
+
+def test_issuer_is_pinned_when_configured():
+    """When issuer is set, only tokens from that issuer validate."""
+    v = JWTValidator(verification_keys=[JWT_SECRET], algorithm="HS256", issuer="https://idp.example")
+    base = {"sub": "u", "exp": datetime.now(UTC) + timedelta(hours=1)}
+
+    good = jwt.encode({**base, "iss": "https://idp.example"}, JWT_SECRET, algorithm="HS256")
+    assert v.validate_token(good)["sub"] == "u"
+
+    wrong = jwt.encode({**base, "iss": "https://evil.example"}, JWT_SECRET, algorithm="HS256")
+    with pytest.raises(jwt.InvalidIssuerError):
+        v.validate_token(wrong)
+
+    missing = jwt.encode(base, JWT_SECRET, algorithm="HS256")
+    with pytest.raises(jwt.InvalidIssuerError):
+        v.validate_token(missing)
+
+    # no issuer configured -> not checked
+    v_open = JWTValidator(verification_keys=[JWT_SECRET], algorithm="HS256")
+    assert v_open.validate_token(wrong)["sub"] == "u"
+
+
+def test_leeway_is_clamped():
+    """A huge leeway would silently accept long-expired tokens; it is clamped."""
+    assert JWTValidator(verification_keys=[JWT_SECRET], algorithm="HS256", leeway=99999).leeway == 300
+    assert JWTValidator(verification_keys=[JWT_SECRET], algorithm="HS256", leeway=-5).leeway == 0
+    assert JWTValidator(verification_keys=[JWT_SECRET], algorithm="HS256", leeway=30).leeway == 30

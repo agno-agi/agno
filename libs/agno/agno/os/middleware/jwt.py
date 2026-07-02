@@ -13,9 +13,9 @@ from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from agno.os.auth import INTERNAL_SERVICE_SCOPES, build_insufficient_permissions_detail
+from agno.os.authz.provider import AuthorizationContext
 from agno.os.scopes import (
     AgentOSScope,
-    get_accessible_resource_ids,
     get_default_scope_mappings,
     has_required_scopes,
 )
@@ -23,6 +23,8 @@ from agno.utils.log import log_debug, log_warning
 
 if TYPE_CHECKING:
     from jwt import PyJWK
+
+    from agno.os.authz.provider import AuthorizationProvider
 
 
 class TokenSource(str, Enum):
@@ -75,6 +77,8 @@ class JWTValidator:
         session_id_claim: str = "session_id",
         audience_claim: str = "aud",
         leeway: int = 10,
+        issuer: Optional[Union[str, Iterable[str]]] = None,
+        require_expiration: bool = True,
     ):
         """
         Initialize the JWT validator.
@@ -90,7 +94,15 @@ class JWTValidator:
             user_id_claim: JWT claim name for user ID (default: "sub").
             session_id_claim: JWT claim name for session ID (default: "session_id").
             audience_claim: JWT claim name for audience (default: "aud").
-            leeway: Seconds of leeway for clock skew tolerance (default: 10).
+            leeway: Seconds of leeway for clock skew tolerance (default: 10). Clamped to
+                [0, 300] — a large leeway silently accepts long-expired tokens.
+            issuer: Optional expected issuer ("iss"). When set, the token's "iss" claim
+                must match (string or any-of an iterable). Pinning the issuer stops a
+                signature-valid token minted by one trusted issuer for a different
+                relying party from being accepted here. Default None (not checked).
+            require_expiration: Require an "exp" claim on validated tokens (default True).
+                Without this a token that simply omits "exp" never expires. Only applies
+                when validate=True.
         """
         self.algorithm = algorithm
         self.validate = validate
@@ -98,7 +110,15 @@ class JWTValidator:
         self.user_id_claim = user_id_claim
         self.session_id_claim = session_id_claim
         self.audience_claim = audience_claim
-        self.leeway = leeway
+        # Clamp leeway: a huge value would accept tokens long past expiry. Tolerate
+        # None (treat as the default 0) so direct construction can't crash on int(None).
+        self.leeway = max(0, min(int(leeway or 0), 300))
+        self.issuer = issuer
+        # An empty issuer ("" or []) is falsy, so pinning is skipped — make that
+        # non-silent so a blank JWT_ISSUER env var doesn't quietly disable the check.
+        if issuer is not None and not issuer:
+            log_warning("issuer is set but empty; issuer ('iss') pinning is DISABLED. Unset it or provide a value.")
+        self.require_expiration = require_expiration
 
         # Build list of verification keys
         self.verification_keys: List[str] = []
@@ -107,6 +127,11 @@ class JWTValidator:
 
         # Add key from environment variable if not already provided
         env_key = getenv("JWT_VERIFICATION_KEY", "")
+        if env_key and "-----BEGIN" in env_key and "\\n" in env_key:
+            # A PEM exported as a single line carries literal "\n" sequences
+            # (e.g. JWT_VERIFICATION_KEY="-----BEGIN PUBLIC KEY-----\nMII...").
+            # Un-escape it, otherwise it reaches PyJWT as an unparseable key.
+            env_key = env_key.replace("\\n", "\n")
         if env_key and env_key not in self.verification_keys:
             self.verification_keys.append(env_key)
 
@@ -125,10 +150,26 @@ class JWTValidator:
         # Validate that at least one key source is provided if validate=True
         if self.validate and not self.verification_keys and not self.jwks_keys:
             raise ValueError(
-                "At least one JWT verification key or JWKS file is required when validate=True. "
-                "Set via verification_keys parameter, JWT_VERIFICATION_KEY environment variable, "
-                "jwks_file parameter or JWT_JWKS_FILE environment variable."
+                "At least one JWT verification key is required when validate=True. "
+                "Set verification keys via the verification_keys parameter, "
+                "JWT_VERIFICATION_KEY environment variable, jwks_file parameter, "
+                "or JWT_JWKS_FILE environment variable."
             )
+
+        # Guard against the classic RS256<->HS256 algorithm-confusion footgun:
+        # configuring an HMAC algorithm with what is clearly an asymmetric PUBLIC
+        # key. The public key is, by definition, public — so if it is used as the
+        # HMAC shared secret an attacker can forge a token by HMAC-signing with it.
+        # Fail closed at startup rather than silently accept forged tokens.
+        if self.validate and self.algorithm.upper().startswith("HS"):
+            for key in self.verification_keys:
+                if isinstance(key, str) and "-----BEGIN" in key and ("PUBLIC KEY" in key or "CERTIFICATE" in key):
+                    raise ValueError(
+                        f"Refusing to use an asymmetric public key with the symmetric "
+                        f"algorithm {self.algorithm!r}: an attacker could HMAC-sign tokens "
+                        f"with the (public) key as the secret. Use an asymmetric algorithm "
+                        f"(e.g. RS256/ES256) with this key, or supply an actual HMAC secret."
+                    )
 
     def _load_jwks_file(self, file_path: str) -> None:
         """
@@ -210,6 +251,10 @@ class JWTValidator:
             decode_kwargs["options"] = decode_options
             return jwt.decode(token, **decode_kwargs)
 
+        # Require an expiration so a token without "exp" can't live forever.
+        if self.require_expiration:
+            decode_options["require"] = ["exp"]
+
         if decode_options:
             decode_kwargs["options"] = decode_options
 
@@ -247,6 +292,19 @@ class JWTValidator:
                     break
                 except jwt.ExpiredSignatureError:
                     raise
+                except jwt.exceptions.InvalidKeyError as e:
+                    # This key is not a parseable key at all (mangled PEM,
+                    # bad newline escaping in JWT_VERIFICATION_KEY, stray
+                    # whitespace). Skip it and keep trying the others —
+                    # one bad key shouldn't abort validation — but say so
+                    # loudly, since the symptom otherwise is a cryptic 401.
+                    log_warning(
+                        f"A configured verification key could not be parsed and was skipped: {e} "
+                        f"(check PEM formatting / newline escapes, e.g. in JWT_VERIFICATION_KEY)"
+                    )
+                    if last_exception is None:  # don't mask a real signature failure
+                        last_exception = e
+                    continue
                 except jwt.InvalidTokenError as e:
                     last_exception = e
                     continue
@@ -285,6 +343,16 @@ class JWTValidator:
             if not any(aud in expected_audiences for aud in token_audiences):
                 raise jwt.InvalidAudienceError(
                     f"Invalid audience. Expected one of: {expected_audiences}, got: {token_audiences}"
+                )
+
+        # Pin the issuer if configured. Like the audience check above, done
+        # manually for a clearer error and to support an allow-list of issuers.
+        if self.issuer:
+            expected_issuers = [self.issuer] if isinstance(self.issuer, str) else list(self.issuer)
+            token_issuer = payload.get("iss")
+            if token_issuer not in expected_issuers:
+                raise jwt.InvalidIssuerError(
+                    f"Invalid issuer. Expected one of: {expected_issuers}, got: {token_issuer!r}"
                 )
 
         return payload
@@ -409,12 +477,16 @@ class JWTMiddleware(BaseHTTPMiddleware):
         audience_claim: str = "aud",
         audience: Optional[Union[str, Iterable[str]]] = None,
         verify_audience: bool = False,
+        issuer: Optional[Union[str, Iterable[str]]] = None,
+        leeway: int = 10,
+        require_expiration: bool = True,
         dependencies_claims: Optional[List[str]] = None,
         session_state_claims: Optional[List[str]] = None,
         scope_mappings: Optional[Dict[str, List[str]]] = None,
         excluded_route_paths: Optional[List[str]] = None,
         admin_scope: Optional[str] = None,
         user_isolation: bool = False,
+        authorization_provider: Optional["AuthorizationProvider"] = None,
     ):
         """
         Initialize the JWT middleware.
@@ -463,6 +535,13 @@ class JWTMiddleware(BaseHTTPMiddleware):
                 ownership/scoping gates stay dormant — preserves backwards
                 compatibility with deployments that handle isolation in their
                 own application layer.
+            authorization_provider: Optional custom AuthorizationProvider that owns the
+                access decision. Mainly for the manual
+                ``app.add_middleware(JWTMiddleware, ...)`` setup path, which never
+                populates ``app.state.authorization_provider``. When set, this provider
+                takes precedence over ``app.state.authorization_provider`` and the
+                default ``ScopeAuthorizationProvider``. The AgentOS path normally seeds
+                the provider on ``app.state`` instead (see ``_resolve_provider``).
 
         Note:
             - At least one verification key or JWKS file must be provided if validate=True
@@ -490,7 +569,22 @@ class JWTMiddleware(BaseHTTPMiddleware):
             user_id_claim=user_id_claim,
             session_id_claim=session_id_claim,
             audience_claim=audience_claim,
+            leeway=leeway,
+            issuer=issuer,
+            require_expiration=require_expiration,
         )
+
+        # Loud warning for a dangerous combination: skipping signature validation
+        # while still making authorization decisions. With validate=False the
+        # middleware trusts the token's claims (incl. scopes) without verifying the
+        # signature — anyone can mint "agent_os:admin". Only safe when an upstream
+        # gateway has already verified the signature.
+        if validate is False and authorization:
+            log_warning(
+                "JWTMiddleware: validate=False with authorization enabled — token signatures are "
+                "NOT verified, so scopes/roles in the token are attacker-controllable. Only use this "
+                "when a trusted upstream (API gateway/proxy) has already verified the JWT signature."
+            )
 
         # Store config for easy access
         self.validate = validate
@@ -531,6 +625,16 @@ class JWTMiddleware(BaseHTTPMiddleware):
         )
         self.admin_scope = admin_scope or AgentOSScope.ADMIN.value
         self.user_isolation = user_isolation
+        # Explicit provider passed to this middleware instance (manual-setup path).
+        # Takes precedence over app.state.authorization_provider and the default.
+        self.authorization_provider = authorization_provider
+        # Lazily-built default provider for manual-setup deployments that don't
+        # populate app.state.authorization_provider (see _resolve_provider).
+        self._fallback_provider: Optional["AuthorizationProvider"] = None
+        # Warn once (not per request) the first time we have to manufacture the
+        # DEFAULT provider — i.e. neither this middleware nor app.state supplied
+        # one. Signals a likely misconfiguration on the manual-install path.
+        self._warned_default_fallback = False
 
     def _get_default_excluded_routes(self) -> List[str]:
         """Get default routes that should be excluded from RBAC checks."""
@@ -543,6 +647,137 @@ class JWTMiddleware(BaseHTTPMiddleware):
             "/openapi.json",
             "/docs/oauth2-redirect",
         ]
+
+    def _resolve_provider(self, request: Request):
+        """Resolve the active AuthorizationProvider.
+
+        Resolution precedence:
+        1. An explicit provider passed to this middleware instance
+           (``JWTMiddleware(..., authorization_provider=...)``) — the manual
+           ``app.add_middleware(JWTMiddleware)`` path's way to supply one.
+        2. The provider AgentOS seeds on ``app.state.authorization_provider``
+           (the normal ``AgentOS(authorization=True)`` path).
+        3. A default ``ScopeAuthorizationProvider`` manufactured here, for manual
+           setups that configured neither. This last case is the silent
+           fail-open the warning below makes observable.
+
+        The default fallback is cached on the instance after first use to avoid
+        rebuilding it on every request.
+        """
+        # (1) Explicit middleware kwarg wins.
+        if self.authorization_provider is not None:
+            return self.authorization_provider
+
+        # (2) Provider seeded on app.state by AgentOS.
+        state = getattr(getattr(request, "app", None), "state", None)
+        provider = getattr(state, "authorization_provider", None) if state is not None else None
+        if provider is not None:
+            return provider
+
+        # (3) Default fallback. Warn once if authorization is actually enforced,
+        # so a manual install that *expected* a custom provider isn't silently
+        # downgraded to default scope-based RBAC without any signal.
+        if self.authorization and not self._warned_default_fallback:
+            self._warned_default_fallback = True
+            log_warning(
+                "JWTMiddleware: no AuthorizationProvider configured — falling back to the default "
+                "ScopeAuthorizationProvider. If you intended to use a custom provider, pass it via "
+                "JWTMiddleware(authorization_provider=...) or AgentOS(authorization_config=...). "
+                "Authorization decisions will use default scope-based RBAC."
+            )
+        if self._fallback_provider is None:
+            from agno.os.authz.scope_provider import ScopeAuthorizationProvider
+
+            self._fallback_provider = ScopeAuthorizationProvider()
+        return self._fallback_provider
+
+    def _record_decision(
+        self,
+        request: Request,
+        *,
+        allowed: bool,
+        method: str,
+        path: str,
+        principal: Optional[str],
+        required_scopes: List[str],
+        scopes: List[str],
+        token: Optional[str],
+        claims: Optional[dict] = None,
+        reason: Optional[str] = None,
+    ) -> None:
+        """Record one authorization decision to the audit sink (if configured).
+
+        Captures the principal, route, required scopes, and a NON-secret token
+        reference so you can tell which token was used without storing the
+        credential. The reference is the token's ``jti`` (a standard, opaque token
+        id) when the token carries one — stable, correlatable to the issuer's logs,
+        and revocation-friendly — falling back to a short SHA-256 of the token
+        otherwise. Never the token itself, and never raises into the request path.
+        """
+        state = getattr(getattr(request, "app", None), "state", None)
+        sink = getattr(state, "authz_audit", None) if state is not None else None
+        if sink is None:
+            return
+        try:
+            import time
+
+            from agno.os.authz.audit import AuditEvent
+
+            token_ref = self._token_reference(token, claims)
+            metadata = {"required": required_scopes, "token": token_ref, "scopes": scopes}
+            if reason:
+                metadata["reason"] = reason
+            sink.record(
+                AuditEvent(
+                    action="access.allowed" if allowed else "access.denied",
+                    actor=principal,
+                    target=f"{method} {path}",
+                    timestamp=int(time.time()),
+                    metadata=metadata,
+                )
+            )
+        except Exception as e:  # pragma: no cover - audit must never break requests
+            log_debug(f"decision audit failed: {e}")
+
+    @staticmethod
+    def _token_reference(token: Optional[str], claims: Optional[dict]) -> Optional[str]:
+        """A non-secret reference to the presented token, for the decision trail.
+
+        Prefer the token's ``jti`` (RFC 7519 JWT ID): it's an opaque identifier the
+        issuer already minted for exactly this purpose, so it correlates to the
+        issuer's own logs and any revocation list. When the token has no ``jti``,
+        fall back to a short SHA-256 of the raw token so we can still tell two
+        distinct tokens apart — without storing the credential itself.
+        """
+        if claims:
+            jti = claims.get("jti")
+            if jti:
+                return str(jti)
+        if token:
+            import hashlib
+
+            return hashlib.sha256(token.encode()).hexdigest()[:12]
+        return None
+
+    # Resource families that get per-resource scopes + list filtering. Order is
+    # irrelevant — a path has at most one leading family segment.
+    _RESOURCE_TYPES = ("agents", "teams", "workflows")
+
+    def _detect_resource_type(self, path: str) -> Optional[str]:
+        """Classify a path's resource family by its FIRST segment, not a substring.
+
+        Must be a leading-segment match (``/agents`` or ``/agents/...``). A naive
+        ``"/agents" in path`` substring test misclassifies unrelated routes whose
+        id segment merely contains the family name — e.g. ``/sessions/agents-1``
+        (a session whose id starts with "agents") would be tagged as an *agents*
+        route with no resource id, and the list-endpoint fallback would then wave
+        it through without the scope the route actually requires. Anchoring to the
+        first segment closes that bypass.
+        """
+        for rt in self._RESOURCE_TYPES:
+            if path == f"/{rt}" or path.startswith(f"/{rt}/"):
+                return rt
+        return None
 
     def _extract_resource_id_from_path(self, path: str, resource_type: str) -> Optional[str]:
         """
@@ -737,6 +972,19 @@ class JWTMiddleware(BaseHTTPMiddleware):
             request.state.authorization_enabled = self.authorization or False
             request.state.admin_scope = self.admin_scope
             request.state.user_isolation_enabled = self.user_isolation
+            # Mark this as the verified internal service caller. This flag can ONLY
+            # be set here, AFTER the constant-time hmac comparison above succeeds —
+            # request.state is a fresh, server-only namespace per request and is
+            # never populated from client input, so a client cannot forge it.
+            # The per-resource handler gate (check_resource_access) honours this
+            # flag so the scheduler isn't re-denied by a provider that doesn't know
+            # the "__scheduler__" subject (e.g. managed roles): the caller was
+            # already authorized at the route gate via INTERNAL_SERVICE_SCOPES.
+            request.state.is_internal_service = True
+            # Set minimal claims so anything reading request.state.claims (e.g. the
+            # authorization context) sees a consistent, non-None subject for the
+            # internal caller rather than an empty dict.
+            request.state.claims = {"sub": "__scheduler__"}
 
             # Enforce RBAC for internal token (do not skip scope checks)
             if self.authorization:
@@ -766,6 +1014,21 @@ class JWTMiddleware(BaseHTTPMiddleware):
             expected_audience = None
             if self.verify_audience:
                 expected_audience = self.audience or agent_os_id
+                # Fail closed: audience verification was explicitly requested but
+                # there is nothing to verify against (no configured audience and no
+                # AgentOS id on app.state). Silently skipping the check would accept
+                # tokens minted for any audience, defeating the point of enabling it.
+                if not expected_audience:
+                    log_warning(
+                        "verify_audience=True but no audience is configured and no AgentOS id is "
+                        "available; rejecting the request instead of skipping the audience check."
+                    )
+                    return self._create_error_response(
+                        401,
+                        "Audience verification is enabled but no expected audience is configured",
+                        origin,
+                        cors_allowed_origins,
+                    )
             payload: Dict[str, Any] = self.validator.validate_token(token, expected_audience)  # type: ignore
 
             # Extract standard claims and store in request.state
@@ -821,16 +1084,8 @@ class JWTMiddleware(BaseHTTPMiddleware):
             # RBAC scope checking (only if enabled)
             if self.authorization:
                 # Extract resource type and ID from path
-                resource_type = None
+                resource_type = self._detect_resource_type(path)
                 resource_id = None
-
-                if "/agents" in path:
-                    resource_type = "agents"
-                elif "/teams" in path:
-                    resource_type = "teams"
-                elif "/workflows" in path:
-                    resource_type = "workflows"
-
                 if resource_type:
                     resource_id = self._extract_resource_id_from_path(path, resource_type)
 
@@ -839,29 +1094,38 @@ class JWTMiddleware(BaseHTTPMiddleware):
 
                 # Empty list [] means no scopes required (allow access)
                 if required_scopes:
-                    # Use the scope validation system
-                    has_access = has_required_scopes(
-                        scopes,
-                        required_scopes,
+                    # Resolve the active authorization provider. Defaults to the
+                    # scope-based provider (identical behaviour); a custom provider
+                    # configured via AuthorizationConfig owns the decision instead.
+                    # Build one context and reuse it for the route gate and the
+                    # listing-endpoint filtering below.
+                    provider = self._resolve_provider(request)
+                    # Derive a single context action only when all required scopes
+                    # agree on one (true for every built-in mapping). For a route
+                    # with mixed actions, leave it None rather than silently picking
+                    # the first — the full required_scopes list is passed to
+                    # authorize_route, which evaluates each one.
+                    _actions = {s.rsplit(":", 1)[1] for s in required_scopes if ":" in s}
+                    action_for_ctx: Optional[str] = next(iter(_actions)) if len(_actions) == 1 else None
+                    authz_ctx = AuthorizationContext(
+                        principal_id=user_id,
+                        scopes=scopes,
+                        claims=payload,
                         resource_type=resource_type,
                         resource_id=resource_id,
+                        action=action_for_ctx,
                         admin_scope=self.admin_scope,
                     )
+
+                    has_access = provider.authorize_route(authz_ctx, required_scopes)
 
                     # Special handling for listing endpoints (no resource_id)
                     if not has_access and not resource_id and resource_type:
                         # For listing endpoints, always allow access but store accessible IDs for filtering
                         # This allows endpoints to return filtered results (including empty list) instead of 403.
-                        # Pass the action from required_scopes (e.g. "read" for "agents:read") so the cached
-                        # IDs only include resources the user is authorised for under that action — otherwise
-                        # a user with only `agents:run` would leak through `GET /agents`.
-                        required_action: Optional[str] = None
-                        first_required = required_scopes[0]
-                        if ":" in first_required:
-                            required_action = first_required.rsplit(":", 1)[1]
-                        accessible_ids = get_accessible_resource_ids(
-                            scopes, resource_type, admin_scope=self.admin_scope, action=required_action
-                        )
+                        # The provider decides which IDs are accessible (the scope provider keys off the
+                        # action so a user with only `agents:run` doesn't leak through `GET /agents`).
+                        accessible_ids = provider.accessible_resource_ids(authz_ctx)
                         has_access = True  # Always allow listing endpoints
                         request.state.accessible_resource_ids = accessible_ids
 
@@ -869,6 +1133,20 @@ class JWTMiddleware(BaseHTTPMiddleware):
                             log_debug(f"User has specific {resource_type} scopes. Accessible IDs: {accessible_ids}")
                         else:
                             log_debug(f"User has no {resource_type} scopes. Will return empty list.")
+
+                    # Decision audit: record the allow/deny with a non-secret
+                    # token reference, if an audit sink is configured.
+                    self._record_decision(
+                        request,
+                        allowed=has_access,
+                        method=method,
+                        path=path,
+                        principal=user_id,
+                        required_scopes=required_scopes,
+                        scopes=scopes,
+                        token=token,
+                        claims=payload,
+                    )
 
                     if not has_access:
                         log_warning(
@@ -885,6 +1163,22 @@ class JWTMiddleware(BaseHTTPMiddleware):
                     log_debug(f"Scope check passed for {method} {path}. User scopes: {scopes}")
                 else:
                     log_debug(f"No scopes required for {method} {path}")
+                    # Decision-audit completeness: record allow-by-default routes
+                    # (empty/unmapped scope map) too, so the trail covers EVERY
+                    # authenticated request, not only the scope-gated ones. No-ops
+                    # when no decision sink is configured.
+                    self._record_decision(
+                        request,
+                        allowed=True,
+                        method=method,
+                        path=path,
+                        principal=user_id,
+                        required_scopes=[],
+                        scopes=scopes,
+                        token=token,
+                        claims=payload,
+                        reason="no_scopes_required",
+                    )
 
             log_debug(f"JWT decoded successfully for user: {user_id}")
 

@@ -3096,3 +3096,138 @@ def test_jwks_parameter_takes_precedence_over_env(test_agent, rsa_key_pair, jwks
 
     # Should work because jwks_file parameter has the correct key
     assert response.status_code == 200
+
+
+# ---------------------------------------------------------------------------
+# Regression: resource-type detection must anchor to the first path segment.
+#
+# A naive substring check ("/agents" in path) misclassified unrelated routes
+# whose id segment merely starts with a resource-family name (e.g. a session
+# whose id is "agents-1" -> path "/sessions/agents-1"). The route would be
+# tagged as an *agents* route with no resource id, and the list-endpoint
+# fallback would wave it through WITHOUT the scope the route actually requires
+# ("sessions:read"). These tests pin the bypass shut.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("session_id", ["agents-1", "agents", "teams-x", "workflows_7"])
+def test_session_id_resembling_resource_family_is_not_a_bypass(test_agent, session_id):
+    """A caller without sessions:read must be denied on /sessions/<id> even when
+    <id> starts with a resource-family name. Previously this returned 404 (the
+    authz gate was skipped and the handler was reached); it must be 403."""
+    agent_os = AgentOS(
+        id=TEST_OS_ID,
+        agents=[test_agent],
+        authorization=True,
+        authorization_config=AuthorizationConfig(verification_keys=[JWT_SECRET], algorithm="HS256"),
+    )
+    client = TestClient(agent_os.get_app())
+
+    token = create_jwt_token(scopes=["config:read"])  # explicitly NOT sessions:read
+    response = client.get(f"/sessions/{session_id}", headers={"Authorization": f"Bearer {token}"})
+    assert response.status_code == 403, response.text
+
+
+def test_session_with_proper_scope_still_reaches_handler(test_agent):
+    """The fix must not over-block: with sessions:read, /sessions/agents-1 passes
+    the authz gate (handler then 404s on the nonexistent session)."""
+    agent_os = AgentOS(
+        id=TEST_OS_ID,
+        agents=[test_agent],
+        authorization=True,
+        authorization_config=AuthorizationConfig(verification_keys=[JWT_SECRET], algorithm="HS256"),
+    )
+    client = TestClient(agent_os.get_app())
+
+    token = create_jwt_token(scopes=["sessions:read"])
+    response = client.get("/sessions/agents-1", headers={"Authorization": f"Bearer {token}"})
+    assert response.status_code != 403, response.text
+
+
+def test_real_agents_routes_unaffected_by_detection_fix(test_agent):
+    """Genuine /agents routes still classify as the agents resource family."""
+    agent_os = AgentOS(
+        id=TEST_OS_ID,
+        agents=[test_agent],
+        authorization=True,
+        authorization_config=AuthorizationConfig(verification_keys=[JWT_SECRET], algorithm="HS256"),
+    )
+    client = TestClient(agent_os.get_app())
+
+    # per-resource read on the real agent is allowed with a global agents:read
+    ok = create_jwt_token(scopes=["agents:read"])
+    assert client.get("/agents/test-agent", headers={"Authorization": f"Bearer {ok}"}).status_code == 200
+
+    # without agents:read it is denied (not silently allowed)
+    no = create_jwt_token(scopes=["config:read"])
+    assert client.get("/agents/test-agent", headers={"Authorization": f"Bearer {no}"}).status_code == 403
+
+
+# ---------------------------------------------------------------------------
+# Regression: DB-loaded resources must be filtered too.
+#
+# get_agents() filtered both static and DB-loaded agents, but get_teams() and
+# get_workflows() filtered only the static (os.teams/os.workflows) list and
+# appended DB-loaded ("component") resources unfiltered. A caller scoped to a
+# single team/workflow therefore saw EVERY team/workflow stored in the DB. We
+# masquerade a second resource as DB-loaded (monkeypatching the module-level
+# loader the handler imports) and assert it is filtered exactly like the static
+# ones.
+# ---------------------------------------------------------------------------
+
+
+def test_get_teams_filters_db_loaded_teams(test_team, second_team, shared_db, monkeypatch):
+    import agno.team.team as team_mod
+
+    # second_team stands in for a team loaded from the DB (is_component=True path)
+    monkeypatch.setattr(team_mod, "get_teams", lambda **kwargs: [second_team])
+
+    agent_os = AgentOS(
+        id=TEST_OS_ID,
+        teams=[test_team],  # only test-team is static
+        db=shared_db,  # BaseDb -> the db-loaded branch runs
+        authorization=True,
+        authorization_config=AuthorizationConfig(verification_keys=[JWT_SECRET], algorithm="HS256"),
+    )
+    client = TestClient(agent_os.get_app())
+
+    # scoped to test-team only: the DB-loaded second-team must NOT leak
+    scoped = create_jwt_token(scopes=["teams:test-team:read"])
+    r = client.get("/teams", headers={"Authorization": f"Bearer {scoped}"})
+    assert r.status_code == 200, r.text
+    ids = {t["id"] for t in r.json()}
+    assert "second-team" not in ids, f"DB-loaded team leaked to a scoped caller: {ids}"
+    assert ids == {"test-team"}
+
+    # global teams:read still sees the DB-loaded team (not over-filtered)
+    glob = create_jwt_token(scopes=["teams:read"])
+    r2 = client.get("/teams", headers={"Authorization": f"Bearer {glob}"})
+    assert r2.status_code == 200, r2.text
+    assert "second-team" in {t["id"] for t in r2.json()}
+
+
+def test_get_workflows_filters_db_loaded_workflows(test_workflow, second_workflow, shared_db, monkeypatch):
+    import agno.workflow.workflow as wf_mod
+
+    monkeypatch.setattr(wf_mod, "get_workflows", lambda **kwargs: [second_workflow])
+
+    agent_os = AgentOS(
+        id=TEST_OS_ID,
+        workflows=[test_workflow],  # only test-workflow is static
+        db=shared_db,
+        authorization=True,
+        authorization_config=AuthorizationConfig(verification_keys=[JWT_SECRET], algorithm="HS256"),
+    )
+    client = TestClient(agent_os.get_app())
+
+    scoped = create_jwt_token(scopes=["workflows:test-workflow:read"])
+    r = client.get("/workflows", headers={"Authorization": f"Bearer {scoped}"})
+    assert r.status_code == 200, r.text
+    ids = {w["id"] for w in r.json()}
+    assert "second-workflow" not in ids, f"DB-loaded workflow leaked to a scoped caller: {ids}"
+    assert ids == {"test-workflow"}
+
+    glob = create_jwt_token(scopes=["workflows:read"])
+    r2 = client.get("/workflows", headers={"Authorization": f"Bearer {glob}"})
+    assert r2.status_code == 200, r2.text
+    assert "second-workflow" in {w["id"] for w in r2.json()}

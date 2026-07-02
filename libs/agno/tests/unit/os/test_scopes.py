@@ -49,6 +49,19 @@ class TestParseScope:
         parsed = parse_scope("malformed:scope:with:too:many:parts")
         assert parsed.scope_type == "unknown"
 
+    def test_empty_components_are_unknown(self):
+        """Scopes with any empty component are junk, not live grants. Without this,
+        split(":") produces content-free parts that compare-equal to each other."""
+        for junk in (":read", "agents:", ":", "::", "agents::run", ":agent-1:read", "agents:agent-1:"):
+            assert parse_scope(junk).scope_type == "unknown", junk
+
+    def test_empty_component_scope_grants_nothing(self):
+        """A token carrying an empty-component scope can't satisfy any requirement."""
+        assert has_required_scopes([":read"], ["agents:read"]) is False
+        assert has_required_scopes(["agents:"], ["agents:read"]) is False
+        # and an (accidental) empty required scope isn't satisfied by junk
+        assert has_required_scopes(["agents:"], ["agents:"]) is False
+
 
 class TestHasRequiredScopes:
     def test_legacy_system_scope_grants_config_access(self):
@@ -101,6 +114,16 @@ class TestDefaultScopeMappings:
     def test_registry_has_its_own_scope(self):
         mappings = get_default_scope_mappings()
         assert mappings["GET /registry"] == ["registry:read"]
+
+    def test_run_lifecycle_endpoints_including_resume_require_run(self):
+        """resume must be gated like continue/cancel; it was previously missing from
+        the map, so the middleware gate fell open and protection depended solely on
+        the route-level dependency."""
+        mappings = get_default_scope_mappings()
+        for family in ("agents", "teams", "workflows"):
+            for action_path in ("continue", "cancel", "resume"):
+                key = f"POST /{family}/*/runs/*/{action_path}"
+                assert mappings[key] == [f"{family}:run"], f"missing/incorrect scope for {key}"
 
     def test_components_endpoints_have_scope_mappings(self):
         mappings = get_default_scope_mappings()

@@ -137,6 +137,12 @@ def parse_scope(scope: str, admin_scope: Optional[str] = None) -> ParsedScope:
 
     parts = scope.split(":")
 
+    # Reject any scope with an empty component (e.g. ":read", "agents:", "a::b").
+    # Without this, split(":") yields content-free parts that compare-equal to
+    # other malformed scopes and would be treated as live grants instead of junk.
+    if any(part == "" for part in parts):
+        return ParsedScope(raw=scope, scope_type="unknown")
+
     # Global resource scope: resource:action (2 parts)
     if len(parts) == 2:
         resource = LEGACY_RESOURCE_ALIASES.get(parts[0], parts[0])
@@ -406,6 +412,7 @@ def get_default_scope_mappings() -> Dict[str, List[str]]:
         "POST /agents/*/runs": ["agents:run"],
         "POST /agents/*/runs/*/continue": ["agents:run"],
         "POST /agents/*/runs/*/cancel": ["agents:run"],
+        "POST /agents/*/runs/*/resume": ["agents:run"],
         # Team endpoints
         "GET /teams": ["teams:read"],
         "GET /teams/*": ["teams:read"],
@@ -415,6 +422,7 @@ def get_default_scope_mappings() -> Dict[str, List[str]]:
         "POST /teams/*/runs": ["teams:run"],
         "POST /teams/*/runs/*/continue": ["teams:run"],
         "POST /teams/*/runs/*/cancel": ["teams:run"],
+        "POST /teams/*/runs/*/resume": ["teams:run"],
         # Workflow endpoints
         "GET /workflows": ["workflows:read"],
         "GET /workflows/*": ["workflows:read"],
@@ -424,6 +432,7 @@ def get_default_scope_mappings() -> Dict[str, List[str]]:
         "POST /workflows/*/runs": ["workflows:run"],
         "POST /workflows/*/runs/*/continue": ["workflows:run"],
         "POST /workflows/*/runs/*/cancel": ["workflows:run"],
+        "POST /workflows/*/runs/*/resume": ["workflows:run"],
         # Session endpoints
         "GET /sessions": ["sessions:read"],
         "GET /sessions/*": ["sessions:read"],

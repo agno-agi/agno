@@ -1,8 +1,12 @@
 """Schemas related to the AgentOS configuration"""
 
-from typing import Any, Callable, Dict, Generic, List, Literal, Optional, Set, TypeVar
+from typing import Any, Callable, Dict, Generic, List, Literal, Optional, Set, TypeVar, Union
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+from agno.os.authz.audit import AuditSink
+from agno.os.authz.provider import AuthorizationProvider
+from agno.os.authz.role_store import ManagedRoleStore
 
 # Tags carried by the built-in MCP tools, exposed here so callers (and the IDE) can see
 # the valid values for ``MCPServerConfig.include_tags`` / ``exclude_tags`` without reading
@@ -107,12 +111,41 @@ class MCPServerConfig(BaseModel):
 class AuthorizationConfig(BaseModel):
     """Configuration for the JWT middleware"""
 
+    model_config = {"arbitrary_types_allowed": True}
+
     verification_keys: Optional[List[str]] = None
     jwks_file: Optional[str] = None
     algorithm: Optional[str] = None
     verify_audience: Optional[bool] = None
     audience: Optional[str] = None
+    # Pin the token issuer ("iss"). When set, a token whose "iss" is not in this
+    # set is rejected, so a signature-valid token minted by a trusted issuer for a
+    # different relying party can't be replayed here. None = not checked.
+    issuer: Optional[Union[str, List[str]]] = None
+    # Clock-skew tolerance in seconds (clamped to [0, 300]).
+    leeway: Optional[int] = None
+    # Require an "exp" claim on validated tokens (default True). Off only if you
+    # deliberately issue non-expiring tokens.
+    require_expiration: Optional[bool] = None
     admin_scope: Optional[str] = None
+    # Pluggable authorization strategy. When None, AgentOS uses the built-in
+    # ScopeAuthorizationProvider (JWT-scope RBAC, no external dependency). Supply an
+    # AuthorizationProvider to swap in a different model (ReBAC/ABAC/OpenFGA/Cerbos)
+    # without changing the request pipeline. (Running several providers at once as a
+    # composite arrives with the multi-plane PR.)
+    authorization_provider: Optional[AuthorizationProvider] = None
+    # Optional AuditSink. When set, AgentOS records each authorization decision
+    # (allow/deny) at the route gate — principal, route, required scopes, and a
+    # non-secret token reference — so you get an access trail, not just a change
+    # trail. Pass the same sink you give ManagedRoleStore to unify both.
+    audit: Optional[AuditSink] = None
+    # Managed-roles shortcut: pass a ManagedRoleStore here instead of wiring
+    # ``authorization_provider=store.provider`` yourself — AgentOS uses the store's
+    # provider. If the store has no DB of its own, AgentOS binds the OS database to
+    # it (when that DB is SQL-capable), so managed roles persist alongside your agent
+    # data with nothing extra to configure. Mutually exclusive with
+    # ``authorization_provider``.
+    role_store: Optional[ManagedRoleStore] = None
     # Opt-in per-user data isolation. When True, AgentOS:
     #   - threads the JWT sub as ``user_id`` on every user-scoped DB read
     #     (sessions, memory, traces) for non-admin callers
@@ -123,6 +156,15 @@ class AuthorizationConfig(BaseModel):
     # When False (default) JWT/RBAC still apply, but routes operate on the
     # unscoped DB and don't add per-user ownership gates on top of RBAC.
     user_isolation: bool = False
+
+    @model_validator(mode="after")
+    def _provider_xor_role_store(self) -> "AuthorizationConfig":
+        if self.role_store is not None and self.authorization_provider is not None:
+            raise ValueError(
+                "Pass either authorization_provider or role_store on AuthorizationConfig, not both — "
+                "role_store is the shortcut that wires the store's provider for you."
+            )
+        return self
 
 
 class EvalsDomainConfig(BaseModel):
