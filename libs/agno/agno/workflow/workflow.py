@@ -286,8 +286,8 @@ def _executor_continue_run_context(paused_run_response: Any) -> RunContext:
     """
 
     return RunContext(
-        run_id=getattr(paused_run_response, "run_id", None),
-        session_id=getattr(paused_run_response, "session_id", None),
+        run_id=getattr(paused_run_response, "run_id", None) or "",
+        session_id=getattr(paused_run_response, "session_id", None) or "",
         user_id=getattr(paused_run_response, "user_id", None),
         session_state=getattr(paused_run_response, "session_state", None) or {},
     )
