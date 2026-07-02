@@ -219,6 +219,15 @@ def _build_team_context(
             content += "If you need to get information about your team members, you can use the `get_member_information` tool at any time.\n"
         content += "</team_members>\n"
         content += _get_mode_instructions(team)
+        if team.enable_dynamic_agents:
+            content += (
+                "<dynamic_agents>\n"
+                "You can create new specialized agents on demand using the `create_agent` tool. "
+                "Use this when none of the existing members have the right expertise for a sub-task. "
+                "Provide a clear name, role, and detailed instructions. "
+                "After creation, delegate to the new agent using its returned member ID.\n"
+                "</dynamic_agents>\n\n"
+            )
     return content
 
 
