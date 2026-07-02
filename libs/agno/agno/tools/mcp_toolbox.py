@@ -54,7 +54,9 @@ class MCPToolbox(MCPTools, metaclass=MCPToolsMeta):
 
         super().__init__(url=url, transport=transport, **kwargs)
 
-        self.name = "toolbox_client"
+        # Keep the historical default name, but let an explicit name= win.
+        if kwargs.get("name") is None:
+            self.name = "toolbox_client"
         self.toolbox_url = url
         self.toolsets = toolsets
         self.tool_name = tool_name
