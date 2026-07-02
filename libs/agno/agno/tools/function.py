@@ -565,10 +565,6 @@ class Function(BaseModel):
 
         pydantic_version = Version(version("pydantic"))
 
-        # Don't wrap async generators validate_call
-        if isasyncgenfunction(func):
-            return func
-
         # Don't wrap coroutines with validate_call if pydantic version is less than 2.10.0
         if iscoroutinefunction(func) and pydantic_version < Version("2.10.0"):
             log_debug(
