@@ -70,9 +70,6 @@ class PandasTools(Toolkit):
             if dataframe_name in self.dataframes:
                 return f"Dataframe already exists: {dataframe_name}"
 
-            # Only allow a fixed set of safe constructors. This blocks reaching
-            # pd.read_pickle (untrusted deserialization -> RCE) and any other
-            # non-constructor callable via model-controlled input.
             if create_using_function not in _ALLOWED_CREATE_FUNCS:
                 return f"Error creating dataframe: unsupported function '{create_using_function}'"
             create_fn = getattr(pd, create_using_function, None)
@@ -117,7 +114,6 @@ class PandasTools(Toolkit):
             if dataframe is None:
                 return f"Error running operation: dataframe not found: {dataframe_name}"
 
-            # Reject private/dunder attributes and code-executing / arbitrary-write methods.
             if operation.startswith("_") or operation in _BLOCKED_DF_OPERATIONS:
                 return f"Error running operation: unsupported operation '{operation}'"
             operation_fn = getattr(dataframe, operation, None)
