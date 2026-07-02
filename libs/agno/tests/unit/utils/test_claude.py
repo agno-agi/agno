@@ -3,7 +3,7 @@ import base64
 import pytest
 
 from agno.media import File
-from agno.utils.models.claude import _format_file_for_message
+from agno.utils.models.claude import _format_file_for_message, _validate_request_cache_order
 
 
 class TestFormatFileForMessage:
@@ -154,3 +154,80 @@ class TestFormatFileForMessage:
 
         assert result["source"]["type"] == "url"
         assert "citations" not in result
+
+
+class TestValidateRequestCacheOrder:
+    def test_no_tools_no_error(self):
+        system = [{"text": "test", "cache_control": {"type": "ephemeral", "ttl": "1h"}}]
+        _validate_request_cache_order(tools=None, system=system)
+
+    def test_no_system_no_error(self):
+        tools = [{"name": "test", "cache_control": {"type": "ephemeral", "ttl": "5m"}}]
+        _validate_request_cache_order(tools=tools, system=None)
+
+    def test_no_cached_tools_no_error(self):
+        tools = [{"name": "test"}]
+        system = [{"text": "test", "cache_control": {"type": "ephemeral", "ttl": "1h"}}]
+        _validate_request_cache_order(tools=tools, system=system)
+
+    def test_5m_tools_with_5m_system_no_error(self):
+        tools = [{"name": "test", "cache_control": {"type": "ephemeral", "ttl": "5m"}}]
+        system = [{"text": "test", "cache_control": {"type": "ephemeral", "ttl": "5m"}}]
+        _validate_request_cache_order(tools=tools, system=system)
+
+    def test_1h_tools_with_1h_system_no_error(self):
+        tools = [{"name": "test", "cache_control": {"type": "ephemeral", "ttl": "1h"}}]
+        system = [{"text": "test", "cache_control": {"type": "ephemeral", "ttl": "1h"}}]
+        _validate_request_cache_order(tools=tools, system=system)
+
+    def test_5m_tools_with_no_cached_system_no_error(self):
+        tools = [{"name": "test", "cache_control": {"type": "ephemeral", "ttl": "5m"}}]
+        system = [{"text": "test"}]
+        _validate_request_cache_order(tools=tools, system=system)
+
+    def test_5m_tools_with_1h_system_raises_error(self):
+        tools = [{"name": "test", "cache_control": {"type": "ephemeral", "ttl": "5m"}}]
+        system = [{"text": "test", "cache_control": {"type": "ephemeral", "ttl": "1h"}}]
+
+        with pytest.raises(ValueError, match="Invalid Anthropic cache TTL ordering"):
+            _validate_request_cache_order(tools=tools, system=system)
+
+    def test_error_message_includes_fix_suggestions(self):
+        tools = [{"name": "test", "cache_control": {"type": "ephemeral", "ttl": "5m"}}]
+        system = [{"text": "test", "cache_control": {"type": "ephemeral", "ttl": "1h"}}]
+
+        with pytest.raises(ValueError) as exc_info:
+            _validate_request_cache_order(tools=tools, system=system)
+
+        error_msg = str(exc_info.value)
+        assert "cache_tools=False" in error_msg
+        assert "ttl to '5m' or None" in error_msg
+        assert "extended_cache_time=True AND cache_tools=False" in error_msg
+
+    def test_multiple_tools_last_one_cached_5m(self):
+        tools = [
+            {"name": "tool1"},
+            {"name": "tool2"},
+            {"name": "tool3", "cache_control": {"type": "ephemeral", "ttl": "5m"}},
+        ]
+        system = [{"text": "test", "cache_control": {"type": "ephemeral", "ttl": "1h"}}]
+
+        with pytest.raises(ValueError, match="Invalid Anthropic cache TTL ordering"):
+            _validate_request_cache_order(tools=tools, system=system)
+
+    def test_multiple_system_blocks_first_one_1h(self):
+        tools = [{"name": "test", "cache_control": {"type": "ephemeral", "ttl": "5m"}}]
+        system = [
+            {"text": "block1", "cache_control": {"type": "ephemeral", "ttl": "1h"}},
+            {"text": "block2"},
+        ]
+
+        with pytest.raises(ValueError, match="Invalid Anthropic cache TTL ordering"):
+            _validate_request_cache_order(tools=tools, system=system)
+
+    def test_default_5m_cache_detected(self):
+        tools = [{"name": "test", "cache_control": {"type": "ephemeral"}}]
+        system = [{"text": "test", "cache_control": {"type": "ephemeral", "ttl": "1h"}}]
+
+        with pytest.raises(ValueError, match="Invalid Anthropic cache TTL ordering"):
+            _validate_request_cache_order(tools=tools, system=system)
