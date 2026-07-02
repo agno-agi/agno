@@ -33,6 +33,7 @@ class RemoteAgent(BaseRemote):
     add_history_to_context: bool = False
     num_history_runs: Optional[int] = None
     num_history_messages: Optional[int] = None
+    add_cancelled_runs_to_context: bool = False
     debug_mode: bool = False
     debug_level: Literal[1, 2] = 1
 

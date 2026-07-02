@@ -92,6 +92,7 @@ class TeamResponse(BaseModel):
             # Sessions defaults
             "add_history_to_context": False,
             "num_history_runs": 3,
+            "add_cancelled_runs_to_context": False,
             "enable_session_summaries": False,
             "cache_session": False,
             # Knowledge defaults
@@ -174,6 +175,7 @@ class TeamResponse(BaseModel):
             "add_history_to_context": team.add_history_to_context,
             "enable_session_summaries": team.enable_session_summaries,
             "num_history_runs": team.num_history_runs,
+            "add_cancelled_runs_to_context": team.add_cancelled_runs_to_context,
             "cache_session": team.cache_session,
         }
         knowledge_info = {

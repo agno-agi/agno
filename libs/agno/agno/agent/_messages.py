@@ -25,6 +25,7 @@ from agno.models.message import Message, MessageReferences
 from agno.models.response import ModelResponse
 from agno.run import RunContext
 from agno.run.agent import RunOutput
+from agno.run.base import RunStatus
 from agno.run.messages import RunMessages
 from agno.session import AgentSession
 from agno.tools.function import Function
@@ -36,7 +37,7 @@ from agno.utils.agent import (
 )
 from agno.utils.common import is_typed_dict
 from agno.utils.log import log_debug, log_warning
-from agno.utils.message import filter_tool_calls, get_text_from_message
+from agno.utils.message import close_incomplete_tool_calls, filter_tool_calls, get_text_from_message
 from agno.utils.prompts import get_json_output_prompt, get_response_model_format_prompt
 from agno.utils.timer import Timer
 
@@ -1248,16 +1249,24 @@ def get_run_messages(
             agent.system_message_role if agent.system_message_role not in ["user", "assistant", "tool"] else None
         )
 
+        # Keep cancelled runs in history when add_cancelled_runs_to_context is set; paused and error stay excluded.
+        skip_statuses = [RunStatus.paused, RunStatus.error] if agent.add_cancelled_runs_to_context else None
+
         history: List[Message] = session.get_messages(
             last_n_runs=agent.num_history_runs,
             limit=agent.num_history_messages,
             skip_roles=[skip_role] if skip_role else None,
+            skip_statuses=skip_statuses,
             agent_id=agent.id if agent.team_id is not None else None,
         )
 
         if len(history) > 0:
             # Create a deep copy of the history messages to avoid modifying the original messages
             history_copy = [deepcopy(msg) for msg in history]
+
+            # Close tool calls left unanswered by a cancelled run so providers don't reject the history.
+            if agent.add_cancelled_runs_to_context:
+                history_copy = close_incomplete_tool_calls(history_copy)
 
             # Tag each message as coming from history
             for _msg in history_copy:
@@ -1453,16 +1462,24 @@ async def aget_run_messages(
             agent.system_message_role if agent.system_message_role not in ["user", "assistant", "tool"] else None
         )
 
+        # Keep cancelled runs in history when add_cancelled_runs_to_context is set; paused and error stay excluded.
+        skip_statuses = [RunStatus.paused, RunStatus.error] if agent.add_cancelled_runs_to_context else None
+
         history: List[Message] = session.get_messages(
             last_n_runs=agent.num_history_runs,
             limit=agent.num_history_messages,
             skip_roles=[skip_role] if skip_role else None,
+            skip_statuses=skip_statuses,
             agent_id=agent.id if agent.team_id is not None else None,
         )
 
         if len(history) > 0:
             # Create a deep copy of the history messages to avoid modifying the original messages
             history_copy = [deepcopy(msg) for msg in history]
+
+            # Close tool calls left unanswered by a cancelled run so providers don't reject the history.
+            if agent.add_cancelled_runs_to_context:
+                history_copy = close_incomplete_tool_calls(history_copy)
 
             # Tag each message as coming from history
             for _msg in history_copy:
@@ -1625,16 +1642,24 @@ def get_continue_run_messages(
             agent.system_message_role if agent.system_message_role not in ["user", "assistant", "tool"] else None
         )
 
+        # Keep cancelled runs in history when add_cancelled_runs_to_context is set; paused and error stay excluded.
+        skip_statuses = [RunStatus.paused, RunStatus.error] if agent.add_cancelled_runs_to_context else None
+
         history: List[Message] = session.get_messages(
             last_n_runs=agent.num_history_runs,
             limit=agent.num_history_messages,
             skip_roles=[skip_role] if skip_role else None,
+            skip_statuses=skip_statuses,
             agent_id=agent.id if agent.team_id is not None else None,
         )
 
         if len(history) > 0:
             # Create a deep copy of the history messages to avoid modifying the original messages
             history_copy = [deepcopy(msg) for msg in history]
+
+            # Close tool calls left unanswered by a cancelled run so providers don't reject the history.
+            if agent.add_cancelled_runs_to_context:
+                history_copy = close_incomplete_tool_calls(history_copy)
 
             # Tag each message as coming from history
             for _msg in history_copy:

@@ -8,6 +8,7 @@ Advanced examples covering caching, compression, concurrency, events, retries, d
 - `03_automatic_cultural_management.py` - Automatic cultural context management.
 - `04_manually_add_culture.py` - Manually add culture to an agent.
 - `advanced_compression.py` - Advanced context compression strategies.
+- `agent_cancelled_runs_in_context.py` - Include a cancelled run's partial content in the history sent to the model.
 - `agent_run_cancel_persistence.py` - Cancel a running agent and verify partial content is persisted.
 - `agent_serialization.py` - Serialize and deserialize agents.
 - `background_execution.py` - Run agents in the background.
