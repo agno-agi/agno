@@ -19,6 +19,7 @@ from agno.utils.models.claude import (
     MCPServerConfiguration,
     _validate_cache_ttl_order,
     build_system_blocks,
+    dump_server_tool_block,
     format_messages,
     format_tools_for_model,
     supports_prefill,
@@ -1029,7 +1030,7 @@ class Claude(Model):
                     if model_response.provider_data is None:
                         model_response.provider_data = {}
                     server_blocks = model_response.provider_data.setdefault("server_tool_blocks", [])
-                    server_blocks.append(block.model_dump())
+                    server_blocks.append(dump_server_tool_block(block))
 
         # Extract tool calls from the response
         if response.stop_reason == "tool_use":
@@ -1180,7 +1181,7 @@ class Claude(Model):
                     "tool_use",
                 ):
                     # Preserve all non-text/thinking/tool_use blocks for history
-                    server_tool_blocks.append(block.model_dump())
+                    server_tool_blocks.append(dump_server_tool_block(block))
 
                 # Handle citations
                 citations = getattr(block, "citations", None)
