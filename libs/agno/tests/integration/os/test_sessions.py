@@ -171,7 +171,7 @@ def test_get_session_runs_with_created_after_filter(session_with_runs, shared_db
     )
     assert response.status_code == 200
 
-    data = response.json()
+    data = response.json()["data"]
     assert len(data) >= 2  # Should have at least run-2, run-3, run-4
     run_ids = [run["run_id"] for run in data]
     assert "run-1" not in run_ids  # run-1 is too old
@@ -196,7 +196,7 @@ def test_get_session_runs_with_created_before_filter(session_with_runs, shared_d
     )
     assert response.status_code == 200
 
-    data = response.json()
+    data = response.json()["data"]
     assert len(data) >= 2  # Should have at least run-1, run-2
     run_ids = [run["run_id"] for run in data]
     assert "run-1" in run_ids
@@ -226,7 +226,7 @@ def test_get_session_runs_with_date_range_filter(session_with_runs, shared_db):
     )
     assert response.status_code == 200
 
-    data = response.json()
+    data = response.json()["data"]
     # Should return runs in the middle (run-2, run-3)
     assert len(data) >= 1
     run_ids = [run["run_id"] for run in data]
@@ -254,7 +254,7 @@ def test_get_session_runs_with_epoch_timestamp(session_with_runs, shared_db):
     )
     assert response.status_code == 200
 
-    data = response.json()
+    data = response.json()["data"]
     assert len(data) >= 1  # Should have at least some runs from today
 
 
@@ -289,7 +289,7 @@ def test_get_session_runs_no_filters(session_with_runs, shared_db):
     response = client.get(f"/sessions/{session_with_runs.session_id}/runs")
     assert response.status_code == 200
 
-    data = response.json()
+    data = response.json()["data"]
     assert len(data) == 4  # Should return all 4 runs
     run_ids = [run["run_id"] for run in data]
     assert "run-1" in run_ids
@@ -314,7 +314,7 @@ def test_get_session_runs_empty_result_with_filters(session_with_runs, shared_db
         params={"created_after": future_timestamp},
     )
     assert response.status_code == 200
-    assert len(response.json()) == 0
+    assert len(response.json()["data"]) == 0
 
 
 def test_endpoints_with_multiple_sessions(shared_db, test_agent: Agent):
@@ -408,7 +408,7 @@ def test_timestamp_filter_with_epoch_precision(session_with_runs, shared_db):
         params={"created_after": two_hours_ago},
     )
     assert response.status_code == 200
-    data = response.json()
+    data = response.json()["data"]
     assert len(data) >= 1
 
     # Test with very old timestamp (should return all runs)
@@ -418,7 +418,7 @@ def test_timestamp_filter_with_epoch_precision(session_with_runs, shared_db):
         params={"created_after": very_old},
     )
     assert response.status_code == 200
-    data = response.json()
+    data = response.json()["data"]
     assert len(data) == 4  # Should return all 4 runs
 
     # Test with very recent timestamp (should return fewer runs)
@@ -583,7 +583,7 @@ def test_update_session_preserves_runs(session_with_runs, shared_db, test_agent:
     # Get runs before update
     response = client.get(f"/sessions/{session_with_runs.session_id}/runs")
     assert response.status_code == 200
-    runs_before = response.json()
+    runs_before = response.json()["data"]
     runs_count_before = len(runs_before)
 
     # Update session
@@ -596,7 +596,7 @@ def test_update_session_preserves_runs(session_with_runs, shared_db, test_agent:
     # Get runs after update
     response = client.get(f"/sessions/{session_with_runs.session_id}/runs")
     assert response.status_code == 200
-    runs_after = response.json()
+    runs_after = response.json()["data"]
 
     # Verify runs are unchanged
     assert len(runs_after) == runs_count_before

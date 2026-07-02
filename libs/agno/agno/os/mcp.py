@@ -476,7 +476,7 @@ def build_mcp_server(
 
     @register_builtin_tool(
         name="get_session_runs",
-        description="Get all runs for a specific session",
+        description="Get a paginated list of runs for a specific session",
         tags={"session"},
     )  # type: ignore
     async def get_session_runs(
@@ -484,7 +484,9 @@ def build_mcp_server(
         db_id: str,
         session_type: str = "agent",
         user_id: Optional[str] = None,
-    ) -> List[Dict[str, Any]]:
+        limit: int = 20,
+        page: int = 1,
+    ) -> Dict[str, Any]:
         user_id = _resolve_user_id(user_id)
         db = await get_db(os.dbs, db_id)
         session_type_enum = SessionType(session_type)
@@ -494,9 +496,11 @@ def build_mcp_server(
                 session_id=session_id,
                 session_type=session_type_enum,
                 user_id=user_id,
+                limit=limit,
+                page=page,
                 db_id=db_id,
             )
-            return [r.model_dump() for r in result]
+            return result.model_dump()
 
         if isinstance(db, AsyncBaseDb):
             db = cast(AsyncBaseDb, db)
@@ -511,9 +515,7 @@ def build_mcp_server(
         if not session:
             raise Exception(f"Session {session_id} not found")
 
-        runs = session.get("runs")  # type: ignore
-        if not runs:
-            return []
+        runs = session.get("runs") or []  # type: ignore
 
         run_responses: List[Dict[str, Any]] = []
         for run in runs:
@@ -532,7 +534,19 @@ def build_mcp_server(
                 else:
                     run_responses.append(RunSchema.from_dict(run).model_dump())
 
-        return run_responses
+        total_count = len(run_responses)
+        start_index = (page - 1) * limit if limit > 0 else 0
+        paginated_runs = run_responses[start_index : start_index + limit] if limit > 0 else run_responses
+
+        return {
+            "data": paginated_runs,
+            "meta": {
+                "page": page,
+                "limit": limit,
+                "total_count": total_count,
+                "total_pages": (total_count + limit - 1) // limit if limit > 0 else 0,
+            },
+        }
 
     @register_builtin_tool(
         name="get_session_run",

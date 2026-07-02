@@ -134,7 +134,7 @@ class RemoteDb:
 
     async def get_session_runs(
         self, session_id: str, **kwargs: Any
-    ) -> List[Union["RunSchema", "TeamRunSchema", "WorkflowRunSchema"]]:
+    ) -> "PaginatedResponse[Union[RunSchema, TeamRunSchema, WorkflowRunSchema]]":
         return await self.client.get_session_runs(session_id, **kwargs)
 
     async def create_session(

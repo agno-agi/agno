@@ -471,12 +471,12 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
 
     @router.get(
         "/sessions/{session_id}/runs",
-        response_model=List[Union[RunSchema, TeamRunSchema, WorkflowRunSchema]],
+        response_model=PaginatedResponse[Union[RunSchema, TeamRunSchema, WorkflowRunSchema]],
         status_code=200,
         operation_id="get_session_runs",
         summary="Get Session Runs",
         description=(
-            "Retrieve all runs (executions) for a specific session with optional timestamp filtering. "
+            "Retrieve a paginated list of runs (executions) for a specific session with optional timestamp filtering. "
             "Runs represent individual interactions or executions within a session. "
             "Response schema varies based on session type."
         ),
@@ -490,82 +490,16 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
                             "completed_run": {
                                 "summary": "Example completed run",
                                 "value": {
-                                    "run_id": "fcdf50f0-7c32-4593-b2ef-68a558774340",
-                                    "parent_run_id": "80056af0-c7a5-4d69-b6a2-c3eba9f040e0",
-                                    "agent_id": "basic-agent",
-                                    "user_id": "",
-                                    "run_input": "Which tools do you have access to?",
-                                    "content": "I don't have access to external tools or the internet. However, I can assist you with a wide range of topics by providing information, answering questions, and offering suggestions based on the knowledge I've been trained on. If there's anything specific you need help with, feel free to ask!",
-                                    "run_response_format": "text",
-                                    "reasoning_content": "",
-                                    "metrics": {
-                                        "input_tokens": 82,
-                                        "output_tokens": 56,
-                                        "total_tokens": 138,
-                                        "time_to_first_token": 0.047505500027909875,
-                                        "duration": 4.840060166025069,
-                                    },
-                                    "messages": [
+                                    "data": [
                                         {
-                                            "content": "<additional_information>\n- Use markdown to format your answers.\n- The current time is 2025-09-08 17:52:10.101003.\n</additional_information>\n\nYou have the capability to retain memories from previous interactions with the user, but have not had any interactions with the user yet.",
-                                            "from_history": False,
-                                            "stop_after_tool_call": False,
-                                            "role": "system",
-                                            "created_at": 1757346730,
-                                        },
-                                        {
-                                            "content": "Which tools do you have access to?",
-                                            "from_history": False,
-                                            "stop_after_tool_call": False,
-                                            "role": "user",
-                                            "created_at": 1757346730,
-                                        },
-                                        {
+                                            "run_id": "fcdf50f0-7c32-4593-b2ef-68a558774340",
+                                            "parent_run_id": "80056af0-c7a5-4d69-b6a2-c3eba9f040e0",
+                                            "agent_id": "basic-agent",
+                                            "user_id": "",
+                                            "run_input": "Which tools do you have access to?",
                                             "content": "I don't have access to external tools or the internet. However, I can assist you with a wide range of topics by providing information, answering questions, and offering suggestions based on the knowledge I've been trained on. If there's anything specific you need help with, feel free to ask!",
-                                            "from_history": False,
-                                            "stop_after_tool_call": False,
-                                            "role": "assistant",
-                                            "metrics": {"input_tokens": 82, "output_tokens": 56, "total_tokens": 138},
-                                            "created_at": 1757346730,
-                                        },
-                                    ],
-                                    "tools": None,
-                                    "events": [
-                                        {
-                                            "created_at": 1757346730,
-                                            "event": "RunStarted",
-                                            "agent_id": "basic-agent",
-                                            "agent_name": "Basic Agent",
-                                            "run_id": "fcdf50f0-7c32-4593-b2ef-68a558774340",
-                                            "session_id": "80056af0-c7a5-4d69-b6a2-c3eba9f040e0",
-                                            "model": "gpt-4o",
-                                            "model_provider": "OpenAI",
-                                        },
-                                        {
-                                            "created_at": 1757346733,
-                                            "event": "MemoryUpdateStarted",
-                                            "agent_id": "basic-agent",
-                                            "agent_name": "Basic Agent",
-                                            "run_id": "fcdf50f0-7c32-4593-b2ef-68a558774340",
-                                            "session_id": "80056af0-c7a5-4d69-b6a2-c3eba9f040e0",
-                                        },
-                                        {
-                                            "created_at": 1757346734,
-                                            "event": "MemoryUpdateCompleted",
-                                            "agent_id": "basic-agent",
-                                            "agent_name": "Basic Agent",
-                                            "run_id": "fcdf50f0-7c32-4593-b2ef-68a558774340",
-                                            "session_id": "80056af0-c7a5-4d69-b6a2-c3eba9f040e0",
-                                        },
-                                        {
-                                            "created_at": 1757346734,
-                                            "event": "RunCompleted",
-                                            "agent_id": "basic-agent",
-                                            "agent_name": "Basic Agent",
-                                            "run_id": "fcdf50f0-7c32-4593-b2ef-68a558774340",
-                                            "session_id": "80056af0-c7a5-4d69-b6a2-c3eba9f040e0",
-                                            "content": "I don't have access to external tools or the internet. However, I can assist you with a wide range of topics by providing information, answering questions, and offering suggestions based on the knowledge I've been trained on. If there's anything specific you need help with, feel free to ask!",
-                                            "content_type": "str",
+                                            "run_response_format": "text",
+                                            "reasoning_content": "",
                                             "metrics": {
                                                 "input_tokens": 82,
                                                 "output_tokens": 56,
@@ -573,16 +507,96 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
                                                 "time_to_first_token": 0.047505500027909875,
                                                 "duration": 4.840060166025069,
                                             },
-                                        },
+                                            "messages": [
+                                                {
+                                                    "content": "<additional_information>\n- Use markdown to format your answers.\n- The current time is 2025-09-08 17:52:10.101003.\n</additional_information>\n\nYou have the capability to retain memories from previous interactions with the user, but have not had any interactions with the user yet.",
+                                                    "from_history": False,
+                                                    "stop_after_tool_call": False,
+                                                    "role": "system",
+                                                    "created_at": 1757346730,
+                                                },
+                                                {
+                                                    "content": "Which tools do you have access to?",
+                                                    "from_history": False,
+                                                    "stop_after_tool_call": False,
+                                                    "role": "user",
+                                                    "created_at": 1757346730,
+                                                },
+                                                {
+                                                    "content": "I don't have access to external tools or the internet. However, I can assist you with a wide range of topics by providing information, answering questions, and offering suggestions based on the knowledge I've been trained on. If there's anything specific you need help with, feel free to ask!",
+                                                    "from_history": False,
+                                                    "stop_after_tool_call": False,
+                                                    "role": "assistant",
+                                                    "metrics": {
+                                                        "input_tokens": 82,
+                                                        "output_tokens": 56,
+                                                        "total_tokens": 138,
+                                                    },
+                                                    "created_at": 1757346730,
+                                                },
+                                            ],
+                                            "tools": None,
+                                            "events": [
+                                                {
+                                                    "created_at": 1757346730,
+                                                    "event": "RunStarted",
+                                                    "agent_id": "basic-agent",
+                                                    "agent_name": "Basic Agent",
+                                                    "run_id": "fcdf50f0-7c32-4593-b2ef-68a558774340",
+                                                    "session_id": "80056af0-c7a5-4d69-b6a2-c3eba9f040e0",
+                                                    "model": "gpt-4o",
+                                                    "model_provider": "OpenAI",
+                                                },
+                                                {
+                                                    "created_at": 1757346733,
+                                                    "event": "MemoryUpdateStarted",
+                                                    "agent_id": "basic-agent",
+                                                    "agent_name": "Basic Agent",
+                                                    "run_id": "fcdf50f0-7c32-4593-b2ef-68a558774340",
+                                                    "session_id": "80056af0-c7a5-4d69-b6a2-c3eba9f040e0",
+                                                },
+                                                {
+                                                    "created_at": 1757346734,
+                                                    "event": "MemoryUpdateCompleted",
+                                                    "agent_id": "basic-agent",
+                                                    "agent_name": "Basic Agent",
+                                                    "run_id": "fcdf50f0-7c32-4593-b2ef-68a558774340",
+                                                    "session_id": "80056af0-c7a5-4d69-b6a2-c3eba9f040e0",
+                                                },
+                                                {
+                                                    "created_at": 1757346734,
+                                                    "event": "RunCompleted",
+                                                    "agent_id": "basic-agent",
+                                                    "agent_name": "Basic Agent",
+                                                    "run_id": "fcdf50f0-7c32-4593-b2ef-68a558774340",
+                                                    "session_id": "80056af0-c7a5-4d69-b6a2-c3eba9f040e0",
+                                                    "content": "I don't have access to external tools or the internet. However, I can assist you with a wide range of topics by providing information, answering questions, and offering suggestions based on the knowledge I've been trained on. If there's anything specific you need help with, feel free to ask!",
+                                                    "content_type": "str",
+                                                    "metrics": {
+                                                        "input_tokens": 82,
+                                                        "output_tokens": 56,
+                                                        "total_tokens": 138,
+                                                        "time_to_first_token": 0.047505500027909875,
+                                                        "duration": 4.840060166025069,
+                                                    },
+                                                },
+                                            ],
+                                            "created_at": "2025-09-08T15:52:10Z",
+                                        }
                                     ],
-                                    "created_at": "2025-09-08T15:52:10Z",
+                                    "meta": {
+                                        "page": 1,
+                                        "limit": 20,
+                                        "total_pages": 1,
+                                        "total_count": 1,
+                                    },
                                 },
                             }
                         }
                     }
                 },
             },
-            404: {"description": "Session not found or has no runs", "model": NotFoundResponse},
+            404: {"description": "Session not found", "model": NotFoundResponse},
             422: {"description": "Invalid session type", "model": ValidationErrorResponse},
         },
     )
@@ -603,9 +617,11 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
             default=None,
             description="Filter runs created before this Unix timestamp (epoch time in seconds)",
         ),
+        limit: Optional[int] = Query(default=20, description="Number of runs to return per page", ge=1),
+        page: Optional[int] = Query(default=1, description="Page number for pagination", ge=1),
         db_id: Optional[str] = Query(default=None, description="Database ID to query runs from"),
         table: Optional[str] = Query(default=None, description="Table to query runs from"),
-    ) -> List[Union[RunSchema, TeamRunSchema, WorkflowRunSchema]]:
+    ) -> PaginatedResponse[Union[RunSchema, TeamRunSchema, WorkflowRunSchema]]:
         db, effective_user_id = await resolve_db_and_scope(request, dbs, db_id, table, fallback_user_id=user_id)
 
         if isinstance(db, RemoteDb):
@@ -617,6 +633,8 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
                 user_id=effective_user_id,
                 created_after=created_after,
                 created_before=created_before,
+                limit=limit,
+                page=page,
                 db_id=db_id,
                 table=table,
                 headers=headers,
@@ -648,9 +666,7 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
             detected = detect_session_type(session if isinstance(session, dict) else {})
             session_type = SessionType(detected)
 
-        runs = session.get("runs")  # type: ignore
-        if not runs:
-            return []
+        runs = session.get("runs") or []  # type: ignore
 
         # Filter runs by timestamp if specified
         # TODO: Move this filtering into the DB layer
@@ -667,13 +683,10 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
 
             filtered_runs.append(run)
 
-        if not filtered_runs:
-            return []
-
         run_responses: List[Union[RunSchema, TeamRunSchema, WorkflowRunSchema]] = []
 
         if session_type == SessionType.AGENT:
-            return [RunSchema.from_dict(run) for run in filtered_runs]
+            run_responses = [RunSchema.from_dict(run) for run in filtered_runs]
 
         elif session_type == SessionType.TEAM:
             for run in filtered_runs:
@@ -681,7 +694,6 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
                     run_responses.append(RunSchema.from_dict(run))
                 elif run.get("team_id") is not None:
                     run_responses.append(TeamRunSchema.from_dict(run))
-            return run_responses
 
         elif session_type == SessionType.WORKFLOW:
             for run in filtered_runs:
@@ -691,9 +703,30 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
                     run_responses.append(TeamRunSchema.from_dict(run))
                 else:
                     run_responses.append(RunSchema.from_dict(run))
-            return run_responses
         else:
             raise HTTPException(status_code=400, detail=f"Invalid session type: {session_type}")
+
+        # Paginate the runs in memory
+        # TODO: Move pagination into the DB layer to avoid loading all runs into memory
+        total_count = len(run_responses)
+        if limit is not None and limit > 0:
+            current_page = page if page is not None and page > 0 else 1
+            start_index = (current_page - 1) * limit
+            paginated_runs = run_responses[start_index : start_index + limit]
+            total_pages = (total_count + limit - 1) // limit
+        else:
+            paginated_runs = run_responses
+            total_pages = 1 if total_count > 0 else 0
+
+        return PaginatedResponse(
+            data=paginated_runs,
+            meta=PaginationInfo(
+                page=page if page is not None and page > 0 else 1,
+                limit=limit if limit is not None and limit > 0 else (total_count or 1),
+                total_count=total_count,
+                total_pages=total_pages,
+            ),
+        )
 
     @router.get(
         "/sessions/{session_id}/runs/{run_id}",
