@@ -1,7 +1,8 @@
 import copy
 import uuid
-from typing import AsyncIterator, Optional, Union
+from typing import AsyncIterator, Optional, Sequence, Union
 
+from agno.os.interfaces.agui.redact import DEFAULT_SENSITIVE_KEY_PATTERNS, redact_sensitive_data, resolve_key_patterns
 from agno.utils.log import log_error
 
 try:
@@ -30,9 +31,12 @@ from agno.team.team import Team
 async def run_entity(
     entity: Union[Agent, RemoteAgent, Team, RemoteTeam],
     run_input: RunAgentInput,
+    enable_state_redaction: bool = True,
+    redact_state_keys: Optional[Sequence[str]] = None,
 ) -> AsyncIterator[BaseEvent]:
     """Shared handler for running an Agent or Team with AG-UI input/output mapping."""
     run_id = run_input.run_id or str(uuid.uuid4())
+    redact_state_keys = resolve_key_patterns(redact_state_keys)
 
     try:
         # AG-UI frontends send full conversation history every request.
@@ -46,7 +50,10 @@ async def run_entity(
         session_state = validate_state(run_input.state, run_input.thread_id)
 
         if session_state is not None:
-            yield StateSnapshotEvent(type=EventType.STATE_SNAPSHOT, snapshot=copy.deepcopy(session_state))
+            snapshot = copy.deepcopy(session_state)
+            if enable_state_redaction:
+                snapshot = redact_sensitive_data(snapshot, redact_state_keys)
+            yield StateSnapshotEvent(type=EventType.STATE_SNAPSHOT, snapshot=snapshot)
 
         ui_deps = extract_context(run_input.context)
         run_kwargs: dict = {}
@@ -74,6 +81,8 @@ async def run_entity(
             thread_id=run_input.thread_id,
             run_id=run_id,
             run_state=session_state,
+            enable_state_redaction=enable_state_redaction,
+            redact_state_keys=redact_state_keys,
         ):
             yield event
 
@@ -83,18 +92,29 @@ async def run_entity(
 
 
 def attach_routes(
-    router: APIRouter, agent: Optional[Union[Agent, RemoteAgent]] = None, team: Optional[Union[Team, RemoteTeam]] = None
+    router: APIRouter,
+    agent: Optional[Union[Agent, RemoteAgent]] = None,
+    team: Optional[Union[Team, RemoteTeam]] = None,
+    enable_state_redaction: bool = True,
+    redact_state_keys: Optional[Sequence[str]] = None,
 ) -> APIRouter:
-    if agent is None and team is None:
+    if agent is not None:
+        entity = agent
+    elif team is not None:
+        entity = team
+    else:
         raise ValueError("Either agent or team must be provided.")
-
-    entity = agent or team
     encoder = EventEncoder()
 
     @router.post("/agui", name="run_agent")
     async def run_agent_agui(run_input: RunAgentInput):
         async def event_generator():
-            async for event in run_entity(entity, run_input):  # type: ignore
+            async for event in run_entity(
+                entity,
+                run_input,
+                enable_state_redaction=enable_state_redaction,
+                redact_state_keys=redact_state_keys,
+            ):  # type: ignore
                 yield encoder.encode(event)
 
         return StreamingResponse(

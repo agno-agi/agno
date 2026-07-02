@@ -36,7 +36,7 @@ def parse_sse_events(content: str) -> List[Dict[str, Any]]:
 
 
 def get_event_types(events: List[Dict[str, Any]]) -> List[str]:
-    return [e.get("type") for e in events]
+    return [str(e.get("type")) for e in events if e.get("type") is not None]
 
 
 def make_request_body(message: str, state: Any = None, thread_id: str = "test-thread") -> Dict[str, Any]:
@@ -295,6 +295,169 @@ class TestAgentStateDelta:
         assert "STATE_DELTA" not in types
         # But still have snapshots
         assert "STATE_SNAPSHOT" in types
+
+    def test_state_redaction_integration(self, agent_client):
+        client, agent = agent_client
+
+        mutable_state: Dict[str, Any] = {"public_info": "safe"}
+
+        async def mock_stream() -> AsyncIterator[RunOutputEvent]:
+            yield RunContentEvent(content="Calling tool")
+
+            tool_mock = MagicMock()
+            tool_mock.tool_call_id = "tc_1"
+            tool_mock.tool_name = "login"
+            tool_mock.tool_args = {}
+
+            yield ToolCallStartedEvent(content="", tool=tool_mock)
+
+            # Tool writes a secret to state
+            mutable_state["api_key"] = "sk-1234567890abcdefg"
+            mutable_state["nested"] = {"password": "supersecret"}
+
+            tool_mock.result = "Logged in"
+            yield ToolCallCompletedEvent(content="", tool=tool_mock)
+
+            yield RunCompletedEvent(content="", session_state=mutable_state)
+
+        def mock_validate(state, thread_id):
+            if state is not None:
+                mutable_state.clear()
+                mutable_state.update(state)
+                return mutable_state
+            return None
+
+        with (
+            patch.object(
+                agent,
+                "arun",
+            ) as mock_arun,
+            patch("agno.os.interfaces.agui.router.validate_state", side_effect=mock_validate),
+        ):
+            mock_arun.return_value = mock_stream()
+            response = client.post("/agui", json=make_request_body("Login", state={"public_info": "safe"}))
+
+        events = parse_sse_events(response.text)
+        types = get_event_types(events)
+
+        assert "STATE_DELTA" in types
+        assert "STATE_SNAPSHOT" in types
+
+        # Check raw response text to ensure no leak of the literal string
+        assert "sk-1234567890abcdefg" not in response.text
+        assert "supersecret" not in response.text
+        assert "[REDACTED]" in response.text
+
+    def test_state_redaction_regression_non_sensitive(self, agent_client):
+        client, agent = agent_client
+
+        mutable_state = {"counter": 0}
+
+        async def mock_stream() -> AsyncIterator[RunOutputEvent]:
+            yield RunContentEvent(content="Calling tool")
+
+            tool_mock = MagicMock()
+            tool_mock.tool_call_id = "tc_1"
+            tool_mock.tool_name = "increment"
+            tool_mock.tool_args = {}
+
+            yield ToolCallStartedEvent(content="", tool=tool_mock)
+
+            mutable_state["counter"] = 5
+
+            tool_mock.result = "Incremented"
+            yield ToolCallCompletedEvent(content="", tool=tool_mock)
+
+            yield RunCompletedEvent(content="", session_state=mutable_state)
+
+        def mock_validate(state, thread_id):
+            if state is not None:
+                mutable_state.clear()
+                mutable_state.update(state)
+                return mutable_state
+            return None
+
+        with (
+            patch.object(
+                agent,
+                "arun",
+            ) as mock_arun,
+            patch("agno.os.interfaces.agui.router.validate_state", side_effect=mock_validate),
+        ):
+            mock_arun.return_value = mock_stream()
+            response = client.post("/agui", json=make_request_body("Increment", state={"counter": 0}))
+
+        events = parse_sse_events(response.text)
+        types = get_event_types(events)
+
+        assert "STATE_DELTA" in types
+        delta_event = next(e for e in events if e.get("type") == "STATE_DELTA")
+        assert len(delta_event["delta"]) > 0
+        paths = [op["path"] for op in delta_event["delta"]]
+        assert "/counter" in paths
+
+        # Verify the non-sensitive value is NOT redacted
+        assert any(op.get("value") == 5 for op in delta_event["delta"])
+
+    def test_state_redaction_custom_keys_merge(self, test_agent: Agent):
+        # Construct AGUI with a custom key, ensuring it doesn't overwrite defaults
+        agui_iface = AGUI(agent=test_agent, redact_state_keys=["ssn"])
+        agent_os = AgentOS(agents=[test_agent], interfaces=[agui_iface])
+        app = agent_os.get_app()
+        client = TestClient(app)
+
+        mutable_state = {"safe_data": "ok"}
+
+        async def mock_stream() -> AsyncIterator[RunOutputEvent]:
+            yield RunContentEvent(content="Processing")
+            tool_mock = MagicMock()
+            tool_mock.tool_call_id = "tc_1"
+            tool_mock.tool_name = "fetch_data"
+            tool_mock.tool_args = {}
+            yield ToolCallStartedEvent(content="", tool=tool_mock)
+
+            # Write BOTH a custom sensitive key and a default sensitive key
+            mutable_state["ssn"] = "123-45-6789"
+            mutable_state["api_key"] = "sk-defaultsecret"
+
+            tool_mock.result = "Fetched"
+            yield ToolCallCompletedEvent(content="", tool=tool_mock)
+            yield RunCompletedEvent(content="", session_state=mutable_state)
+
+        def mock_validate(state, thread_id):
+            if state is not None:
+                mutable_state.clear()
+                mutable_state.update(state)
+                return mutable_state
+            return None
+
+        with (
+            patch.object(
+                test_agent,
+                "arun",
+            ) as mock_arun,
+            patch("agno.os.interfaces.agui.router.validate_state", side_effect=mock_validate),
+        ):
+            mock_arun.return_value = mock_stream()
+            response = client.post("/agui", json=make_request_body("Fetch", state={"safe_data": "ok"}))
+
+        events = parse_sse_events(response.text)
+        types = get_event_types(events)
+
+        assert "STATE_DELTA" in types
+        assert "STATE_SNAPSHOT" in types
+
+        # Check raw response text to ensure NEITHER string leaked
+        assert "123-45-6789" not in response.text
+        assert "sk-defaultsecret" not in response.text
+        
+        # Verify both custom and default keys were redacted in delta
+        delta_event = next(e for e in events if e.get("type") == "STATE_DELTA")
+        ssn_op = next((op for op in delta_event["delta"] if op["path"] == "/ssn"), None)
+        api_key_op = next((op for op in delta_event["delta"] if op["path"] == "/api_key"), None)
+        
+        assert ssn_op and ssn_op["value"] == "[REDACTED]"
+        assert api_key_op and api_key_op["value"] == "[REDACTED]"
 
 
 class TestAgentStateEdgeCases:
