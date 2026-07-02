@@ -681,9 +681,9 @@ class StepMetrics:
                 metrics = metrics_data
 
         return cls(
-            step_name=data["step_name"],
-            executor_type=data["executor_type"],
-            executor_name=data["executor_name"],
+            step_name=data.get("step_name", ""),
+            executor_type=data.get("executor_type", ""),
+            executor_name=data.get("executor_name", ""),
             metrics=metrics,
         )
 
@@ -709,7 +709,7 @@ class WorkflowMetrics:
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "WorkflowMetrics":
         """Create WorkflowMetrics from dictionary"""
-        steps = {name: StepMetrics.from_dict(step_data) for name, step_data in data["steps"].items()}
+        steps = {name: StepMetrics.from_dict(step_data) for name, step_data in data.get("steps", {}).items()}
 
         return cls(
             steps=steps,
