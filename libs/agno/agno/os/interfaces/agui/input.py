@@ -8,7 +8,31 @@ from ag_ui.core.types import Message as AGUIMessage
 from pydantic import BaseModel
 
 from agno.media import Audio, File, Image, Video
+from agno.models.message import Message
 from agno.utils.log import log_warning
+
+
+def has_tool_state(messages: List[AGUIMessage]) -> bool:
+    """Return True when AG-UI history carries tool calls or tool results."""
+    for msg in messages:
+        if msg.role == "tool":
+            return True
+        if msg.role == "assistant" and getattr(msg, "tool_calls", None):
+            return True
+    return False
+
+
+def convert_agui_messages_to_agno_messages(messages: List[AGUIMessage]) -> List[Message]:
+    """Convert AG-UI messages into Agno messages while preserving tool state."""
+    converted_messages: List[Message] = []
+    tool_names_by_call_id: Dict[str, str] = {}
+
+    for msg in messages:
+        converted_message = _convert_agui_message_to_agno_message(msg, tool_names_by_call_id)
+        if converted_message is not None:
+            converted_messages.append(converted_message)
+
+    return converted_messages
 
 
 def extract_user_input(messages: List[AGUIMessage]) -> str:
@@ -163,3 +187,93 @@ def _decode_base64(value: str) -> Optional[bytes]:
     except Exception:
         log_warning("Failed to decode base64 content")
         return None
+
+
+def _convert_agui_message_to_agno_message(
+    message: AGUIMessage, tool_names_by_call_id: Dict[str, str]
+) -> Optional[Message]:
+    role = message.role
+
+    if role == "user":
+        images, audio, videos, files = extract_media([message])
+        return Message(
+            id=message.id,
+            role="user",
+            content=_extract_agui_text_content(message.content),
+            name=getattr(message, "name", None),
+            images=images or None,
+            audio=audio or None,
+            videos=videos or None,
+            files=files or None,
+        )
+
+    if role == "assistant":
+        tool_calls: List[Dict[str, Any]] = []
+        for tool_call in getattr(message, "tool_calls", []) or []:
+            converted_tool_call = _convert_agui_tool_call(tool_call)
+            tool_calls.append(converted_tool_call)
+
+            tool_call_id = converted_tool_call.get("id")
+            function = converted_tool_call.get("function") or {}
+            tool_name = function.get("name")
+            if tool_call_id and tool_name:
+                tool_names_by_call_id[tool_call_id] = tool_name
+
+        return Message(
+            id=message.id,
+            role="assistant",
+            content=message.content,
+            name=getattr(message, "name", None),
+            tool_calls=tool_calls or None,
+        )
+
+    if role == "tool":
+        tool_error = getattr(message, "error", None)
+        return Message(
+            id=message.id,
+            role="tool",
+            content=message.content,
+            tool_call_id=message.tool_call_id,
+            tool_name=tool_names_by_call_id.get(message.tool_call_id),
+            tool_call_error=bool(tool_error),
+        )
+
+    if role in ("system", "developer"):
+        return Message(
+            id=message.id,
+            role=role,
+            content=message.content,
+            name=getattr(message, "name", None),
+        )
+
+    return None
+
+
+def _extract_agui_text_content(content: Any) -> Optional[str]:
+    if content is None or isinstance(content, str):
+        return content
+
+    if isinstance(content, list):
+        text_parts: List[str] = []
+        for part in content:
+            if hasattr(part, "type") and part.type == "text" and hasattr(part, "text"):
+                text_parts.append(part.text)
+        return "\n".join(text_parts)
+
+    return str(content)
+
+
+def _convert_agui_tool_call(tool_call: Any) -> Dict[str, Any]:
+    function = getattr(tool_call, "function", None)
+    converted: Dict[str, Any] = {
+        "id": tool_call.id,
+        "type": getattr(tool_call, "type", "function"),
+    }
+
+    if function is not None:
+        converted["function"] = {
+            "name": function.name,
+            "arguments": function.arguments,
+        }
+
+    return converted

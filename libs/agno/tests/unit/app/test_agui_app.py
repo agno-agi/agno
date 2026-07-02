@@ -4,18 +4,28 @@ from unittest.mock import MagicMock
 import pytest
 from ag_ui.core import EventType, RunAgentInput
 from ag_ui.core.types import (
+    AssistantMessage,
     AudioInputContent,
     BinaryInputContent,
     DocumentInputContent,
+    FunctionCall,
     ImageInputContent,
     InputContentDataSource,
     InputContentUrlSource,
     TextInputContent,
+    ToolCall,
+    ToolMessage,
     UserMessage,
     VideoInputContent,
 )
 
-from agno.os.interfaces.agui.input import extract_context, extract_media, extract_user_input
+from agno.os.interfaces.agui.input import (
+    convert_agui_messages_to_agno_messages,
+    extract_context,
+    extract_media,
+    extract_user_input,
+    has_tool_state,
+)
 from agno.os.interfaces.agui.router import run_entity
 from agno.os.interfaces.agui.state import StreamState
 from agno.os.interfaces.agui.stream import async_stream_agno_response_as_agui_events
@@ -2085,6 +2095,33 @@ def _media_run_input():
     )
 
 
+def _tool_history_run_input():
+    """Build an AG-UI transcript carrying an external tool result."""
+    return RunAgentInput(
+        thread_id="thread_1",
+        run_id="run_1",
+        state={},
+        messages=[
+            UserMessage(id="u1", content="say hello to Bob"),
+            AssistantMessage(
+                id="a1",
+                content=None,
+                tool_calls=[
+                    ToolCall(
+                        id="call_1",
+                        function=FunctionCall(name="sayHello", arguments='{"name":"Bob"}'),
+                    )
+                ],
+            ),
+            ToolMessage(id="t1", content="Hello Bob", tool_call_id="call_1"),
+            UserMessage(id="u2", content="thanks"),
+        ],
+        tools=[],
+        context=[],
+        forwarded_props={},
+    )
+
+
 def _assert_media_forwarded(captured_kwargs):
     """Assert the router forwarded every media part into the run kwargs."""
     assert captured_kwargs["input"] == "please inspect"
@@ -2106,6 +2143,36 @@ async def test_run_entity_passes_agui_media():
     events = [event async for event in run_entity(fake_entity, _media_run_input())]
     assert events[0].type == EventType.RUN_STARTED
     _assert_media_forwarded(fake_entity.captured_kwargs)
+
+
+def test_convert_agui_messages_preserves_tool_state():
+    """AG-UI assistant tool calls and tool results survive conversion."""
+    messages = _tool_history_run_input().messages
+
+    assert has_tool_state(messages)
+
+    converted = convert_agui_messages_to_agno_messages(messages)
+
+    assert [message.role for message in converted] == ["user", "assistant", "tool", "user"]
+    assert converted[1].tool_calls == [
+        {"id": "call_1", "type": "function", "function": {"name": "sayHello", "arguments": '{"name":"Bob"}'}}
+    ]
+    assert converted[2].tool_call_id == "call_1"
+    assert converted[2].tool_name == "sayHello"
+    assert converted[2].content == "Hello Bob"
+
+
+@pytest.mark.asyncio
+async def test_run_entity_passes_full_history_when_tool_state_present():
+    """Tool-result turns need the full AG-UI transcript, not just the last user text."""
+    fake_entity = _FakeRunner()
+    events = [event async for event in run_entity(fake_entity, _tool_history_run_input())]
+
+    assert events[0].type == EventType.RUN_STARTED
+    forwarded_input = fake_entity.captured_kwargs["input"]
+    assert [message.role for message in forwarded_input] == ["user", "assistant", "tool", "user"]
+    assert forwarded_input[2].tool_call_id == "call_1"
+    assert fake_entity.captured_kwargs["add_history_to_context"] is False
 
 
 def test_extract_context_none_returns_none():
