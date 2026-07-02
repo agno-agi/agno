@@ -245,6 +245,14 @@ class TestListEvents:
         mock_calendar_service.events().list().execute.return_value = {"items": mock_events}
         result = calendar_tools.list_events(start_date="2025-07-19T10:00:00")
         assert json.loads(result) == mock_events
+        assert mock_calendar_service.events().list.call_args.kwargs["timeMin"] == "2025-07-19T10:00:00.000000Z"
+
+    def test_list_events_with_timezone_aware_start_date(self, calendar_tools, mock_calendar_service):
+        mock_events = [{"id": "1", "summary": "Test Event"}]
+        mock_calendar_service.events().list().execute.return_value = {"items": mock_events}
+        result = calendar_tools.list_events(start_date="2026-07-01T10:00:00+02:00")
+        assert json.loads(result) == mock_events
+        assert mock_calendar_service.events().list.call_args.kwargs["timeMin"] == "2026-07-01T08:00:00.000000Z"
 
     def test_list_events_invalid_date_format(self, calendar_tools):
         result = calendar_tools.list_events(start_date="invalid-date")
