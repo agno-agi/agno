@@ -117,9 +117,8 @@ def test_write_file_filename_with_dot_parses_extension(tools, temp_dir):
 
 def test_write_file_custom_directory(tools, temp_dir):
     """write_file uses the directory parameter when provided."""
-    subdir = Path(temp_dir) / "subdir"
-    tools.write_file("nested", filename="nested_file", directory=str(subdir))
-    filepath = subdir / "nested_file.txt"
+    tools.write_file("nested", filename="nested_file", directory="subdir")
+    filepath = Path(temp_dir) / "subdir" / "nested_file.txt"
     assert filepath.exists()
     assert filepath.read_text() == "nested"
 
@@ -157,10 +156,9 @@ def test_read_file_custom_directory(tools, temp_dir):
     """read_file reads from the specified directory."""
     subdir = Path(temp_dir) / "data"
     subdir.mkdir(parents=True)
-    filepath = subdir / "info.txt"
-    filepath.write_text("custom dir content")
+    (subdir / "info.txt").write_text("custom dir content")
 
-    result = tools.read_file("info.txt", directory=str(subdir))
+    result = tools.read_file("info.txt", directory="data")
     assert result == "custom dir content"
 
 
@@ -207,3 +205,100 @@ def test_write_file_logs_debug(tools, temp_dir):
     with patch("agno.tools.local_file_system.log_debug") as mock_debug:
         tools.write_file("hello", filename="debug_test")
         mock_debug.assert_called_once()
+
+
+# --- Path Sandboxing ---
+
+
+def test_write_file_blocks_absolute_filename_outside_target(temp_dir):
+    """write_file rejects an absolute filename pointing outside target_directory."""
+    safe_dir = Path(temp_dir) / "safe"
+    outside_dir = Path(temp_dir) / "outside"
+    outside_dir.mkdir()
+    tools = LocalFileSystemTools(target_directory=str(safe_dir))
+
+    result = tools.write_file("owned", filename=str(outside_dir / "pwn"))
+
+    assert "Error" in result
+    assert "outside the allowed base directory" in result
+    assert not (outside_dir / "pwn.txt").exists()
+
+
+def test_write_file_blocks_directory_outside_target(temp_dir):
+    """write_file rejects a directory argument pointing outside target_directory."""
+    safe_dir = Path(temp_dir) / "safe"
+    outside_dir = Path(temp_dir) / "outside"
+    outside_dir.mkdir()
+    tools = LocalFileSystemTools(target_directory=str(safe_dir))
+
+    result = tools.write_file("owned", filename="pwn", directory=str(outside_dir))
+
+    assert "Error" in result
+    assert "outside the allowed base directory" in result
+    assert not (outside_dir / "pwn.txt").exists()
+
+
+def test_write_file_allows_relative_directory_inside_target(temp_dir):
+    """write_file allows a relative directory resolved inside target_directory."""
+    safe_dir = Path(temp_dir) / "safe"
+    tools = LocalFileSystemTools(target_directory=str(safe_dir))
+
+    result = tools.write_file("hello", filename="note", directory="nested")
+
+    assert "Successfully wrote file" in result
+    assert (safe_dir / "nested" / "note.txt").read_text() == "hello"
+
+
+def test_write_file_blocks_parent_traversal(temp_dir):
+    """write_file rejects a relative directory that escapes target via '..'."""
+    safe_dir = Path(temp_dir) / "safe"
+    tools = LocalFileSystemTools(target_directory=str(safe_dir))
+
+    result = tools.write_file("owned", filename="pwn", directory="../outside")
+
+    assert "Error" in result
+    assert "outside the allowed base directory" in result
+    assert not (Path(temp_dir) / "outside" / "pwn.txt").exists()
+
+
+def test_read_file_blocks_absolute_outside_target(temp_dir):
+    """read_file rejects an absolute path pointing outside target_directory."""
+    safe_dir = Path(temp_dir) / "safe"
+    safe_dir.mkdir()
+    secret = Path(temp_dir) / "secret.txt"
+    secret.write_text("top secret")
+    tools = LocalFileSystemTools(target_directory=str(safe_dir))
+
+    result = tools.read_file(str(secret))
+
+    assert "Error" in result
+    assert "outside the allowed base directory" in result
+    assert "top secret" not in result
+
+
+def test_read_file_blocks_parent_traversal(temp_dir):
+    """read_file rejects a '..' traversal escaping target_directory."""
+    safe_dir = Path(temp_dir) / "safe"
+    safe_dir.mkdir()
+    secret = Path(temp_dir) / "secret.txt"
+    secret.write_text("top secret")
+    tools = LocalFileSystemTools(target_directory=str(safe_dir))
+
+    result = tools.read_file("secret.txt", directory="..")
+
+    assert "Error" in result
+    assert "outside the allowed base directory" in result
+    assert "top secret" not in result
+
+
+def test_restrict_to_base_dir_false_allows_escape(temp_dir):
+    """restrict_to_base_dir=False disables the sandbox for callers that opt out."""
+    safe_dir = Path(temp_dir) / "safe"
+    outside_dir = Path(temp_dir) / "outside"
+    outside_dir.mkdir()
+    tools = LocalFileSystemTools(target_directory=str(safe_dir), restrict_to_base_dir=False)
+
+    result = tools.write_file("escaped", filename="pwn", directory=str(outside_dir))
+
+    assert "Successfully wrote file" in result
+    assert (outside_dir / "pwn.txt").read_text() == "escaped"

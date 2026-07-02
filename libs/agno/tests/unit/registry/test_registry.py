@@ -261,8 +261,11 @@ class TestEntrypointLookup:
         reg = Registry(tools=[function_tool])
         lookup = reg._entrypoint_lookup
 
+        # Function tools are stored as the source Function itself, so
+        # rehydration can also recover flags like skip_entrypoint_processing.
         assert "sample_function" in lookup
-        assert lookup["sample_function"] == function_tool.entrypoint
+        assert lookup["sample_function"] is function_tool
+        assert lookup["sample_function"].entrypoint == function_tool.entrypoint
 
     def test_entrypoint_lookup_with_callable(self):
         """Test entrypoint lookup with raw callable."""
@@ -392,6 +395,57 @@ class TestRehydrateFunction:
         for func in funcs:
             rehydrated = reg.rehydrate_function(func.to_dict())
             assert rehydrated.entrypoint is not None
+
+    def test_rehydrate_function_after_toolkit_gains_functions(self):
+        """A stale cached lookup is rebuilt when a name misses.
+
+        MCP toolkits only register their functions once connected, which may
+        happen after the lookup was first built (e.g. it was primed during
+        startup, before the connect lifespan ran).
+        """
+        toolkit = Toolkit(name="mcp_stub")
+        reg = Registry(tools=[toolkit])
+
+        # Prime the cache while the toolkit is still "unconnected"
+        assert reg._entrypoint_lookup == {}
+
+        # Simulate connect(): the toolkit registers a function with a fixed schema
+        async def search_docs(query: str) -> str:
+            return query
+
+        func = Function(
+            name="search_docs",
+            parameters={"type": "object", "properties": {"query": {"type": "string"}}, "required": ["query"]},
+            entrypoint=search_docs,
+            skip_entrypoint_processing=True,
+        )
+        toolkit.functions[func.name] = func
+
+        rehydrated = reg.rehydrate_function(func.to_dict())
+
+        assert rehydrated.entrypoint is search_docs
+
+    def test_rehydrate_function_preserves_skip_entrypoint_processing(self):
+        """Fixed-schema entrypoints (e.g. MCP call proxies) must not be
+        re-introspected at run time, so the source flag is carried over."""
+
+        async def call_proxy(**kwargs) -> str:
+            return "ok"
+
+        func = Function(
+            name="mcp_func",
+            parameters={"type": "object", "properties": {"query": {"type": "string"}}, "required": ["query"]},
+            entrypoint=call_proxy,
+            skip_entrypoint_processing=True,
+        )
+        toolkit = Toolkit(name="mcp_stub")
+        toolkit.functions[func.name] = func
+        reg = Registry(tools=[toolkit])
+
+        rehydrated = reg.rehydrate_function(func.to_dict())
+
+        assert rehydrated.entrypoint is call_proxy
+        assert rehydrated.skip_entrypoint_processing is True
 
 
 # =============================================================================
@@ -1237,6 +1291,32 @@ class TestAddTool:
         reg.add_tool(tk1)
         reg.add_tool(tk2)
         assert tk1 in reg.tools and tk2 in reg.tools
+
+    def test_keeps_mcp_toolkits_for_distinct_servers(self):
+        # Two unconnected MCP toolkits have identical (empty) function sets, so
+        # they are only distinguishable by name. The derived default name keeps
+        # them from collapsing into one entry.
+        pytest.importorskip("mcp")
+        from agno.tools.mcp import MCPTools
+
+        reg = Registry()
+        docs = MCPTools(url="https://docs.example.com/mcp")
+        search = MCPTools(url="https://search.example.com/mcp")
+        reg.add_tool(docs)
+        reg.add_tool(search)
+        assert docs in reg.tools and search in reg.tools
+
+    def test_dedupes_mcp_toolkits_for_same_server(self):
+        # Same server re-instantiated in two places is still a duplicate.
+        pytest.importorskip("mcp")
+        from agno.tools.mcp import MCPTools
+
+        reg = Registry()
+        first = MCPTools(url="https://docs.example.com/mcp")
+        second = MCPTools(url="https://docs.example.com/mcp")
+        reg.add_tool(first)
+        reg.add_tool(second)
+        assert reg.tools == [first]
 
     def test_keeps_distinct_toolkit_subclasses_sharing_a_name(self):
         class ToolkitA(Toolkit):
