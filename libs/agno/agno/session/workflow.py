@@ -346,9 +346,18 @@ class WorkflowSession:
 
             return False
 
-        # Filter for top-level runs (main team runs or agent runs when sharing session)
+        # Expand each top-level team run with its member sub-runs.
+        session_runs: List[TeamRunOutput] = []
+        for run in runs:
+            session_runs.append(run)
+            for member_run in getattr(run, "member_responses", None) or []:
+                session_runs.append(member_run)  # type: ignore[arg-type]
+
+        # A member is a run whose parent_run_id points at another run in the list.
         if skip_member_messages:
-            session_runs = [run for run in runs if run.team_id == team_id]
+            run_ids_in_input = {getattr(run, "run_id", None) for run in session_runs}
+            run_ids_in_input.discard(None)
+            session_runs = [run for run in session_runs if getattr(run, "parent_run_id", None) not in run_ids_in_input]
 
         # Filter runs by status
         if skip_statuses:
@@ -456,12 +465,14 @@ class WorkflowSession:
             )
 
         elif team_id:
+            # Collect top-level team runs; the helper expands member sub-runs.
             team_runs: List[TeamRunOutput] = []
             for run in self.runs:
-                if run.step_executor_runs:
-                    for executor_run in run.step_executor_runs:
-                        if isinstance(executor_run, TeamRunOutput) and executor_run.team_id == team_id:
-                            team_runs.append(executor_run)
+                if not run.step_executor_runs:
+                    continue
+                for executor_run in run.step_executor_runs:
+                    if isinstance(executor_run, TeamRunOutput) and executor_run.team_id == team_id:
+                        team_runs.append(executor_run)
             return self.get_messages_from_team_runs(
                 team_id=team_id,
                 runs=team_runs,
