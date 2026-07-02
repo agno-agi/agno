@@ -206,6 +206,9 @@ def get_entrypoint_for_tool(
                     # Handle other content types
                     response_str += f"[Unsupported content type: {content_item.type}]\n"
 
+            if not response_str.strip():
+                response_str = _structured_content_as_tool_output(result) or ""
+
             return ToolResult(
                 content=response_str.strip(),
                 metadata=_build_mcp_metadata(result),
@@ -272,6 +275,19 @@ def _build_mcp_metadata(result: "CallToolResult") -> Optional[Dict[str, Any]]:
     if structured_content is not None:
         metadata["structured_content"] = structured_content
     return metadata or None
+
+
+def _structured_content_as_tool_output(result: "CallToolResult") -> Optional[str]:
+    """Serialize structuredContent so structured-only MCP responses reach the model loop."""
+
+    structured_content = getattr(result, "structuredContent", None)
+    if structured_content is None:
+        return None
+
+    try:
+        return json.dumps(structured_content, ensure_ascii=False, sort_keys=True, default=str)
+    except (TypeError, ValueError):
+        return str(structured_content)
 
 
 def prepare_command(command: str) -> list[str]:
