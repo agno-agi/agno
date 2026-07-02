@@ -1,12 +1,16 @@
 """Schedule API router -- CRUD + trigger for cron schedules."""
 
 import asyncio
+import fnmatch
+import re
 import time
-from typing import Any, Dict, Literal, Optional
+from typing import Any, Dict, List, Literal, Optional
+from urllib.parse import unquote, urlsplit
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
+from agno.os.auth import build_insufficient_permissions_detail
 from agno.os.routers.schedules.schema import (
     ScheduleCreate,
     ScheduleResponse,
@@ -15,6 +19,7 @@ from agno.os.routers.schedules.schema import (
     ScheduleUpdate,
 )
 from agno.os.schema import PaginatedResponse, PaginationInfo
+from agno.os.scopes import get_default_scope_mappings, has_required_scopes
 from agno.utils.log import log_info
 
 # Valid DB method names that _db_call can invoke
@@ -28,6 +33,63 @@ _SchedulerDbMethod = Literal[
     "get_schedule_run",
     "get_schedule_runs",
 ]
+
+_TARGET_SCOPE_MAPPINGS = get_default_scope_mappings()
+
+
+def _get_required_scopes_for_target(method: str, endpoint: str) -> List[str]:
+    """Resolve the AgentOS scopes required by a scheduled target endpoint."""
+    target_path = unquote(urlsplit(endpoint).path).rstrip("/") or "/"
+    route_key = f"{method.upper()} {target_path}"
+
+    if route_key in _TARGET_SCOPE_MAPPINGS:
+        return _TARGET_SCOPE_MAPPINGS[route_key]
+
+    for pattern, scopes in _TARGET_SCOPE_MAPPINGS.items():
+        pattern_method, pattern_path = pattern.split(" ", 1)
+        if pattern_method != method.upper():
+            continue
+
+        normalized_pattern = re.sub(r"\{[^}]+\}", "*", pattern_path)
+        if fnmatch.fnmatch(target_path, normalized_pattern):
+            return scopes
+
+    return []
+
+
+def _extract_target_resource_context(endpoint: str) -> tuple[Optional[str], Optional[str]]:
+    """Return the resource type/id used for per-resource scope checks."""
+    target_path = unquote(urlsplit(endpoint).path)
+    match = re.match(r"^/(agents|teams|workflows)/([^/]+)(?:/|$)", target_path)
+    if match is None:
+        return None, None
+    return match.group(1), match.group(2)
+
+
+def _require_target_endpoint_scopes(request: Request, method: str, endpoint: str) -> None:
+    """Ensure the caller can access the endpoint a schedule will execute."""
+    if not getattr(request.state, "authorization_enabled", False):
+        return
+
+    required_scopes = _get_required_scopes_for_target(method, endpoint)
+    if not required_scopes:
+        return
+
+    resource_type, resource_id = _extract_target_resource_context(endpoint)
+    user_scopes = getattr(request.state, "scopes", [])
+    admin_scope_raw = getattr(request.state, "admin_scope", None)
+    admin_scope = admin_scope_raw if isinstance(admin_scope_raw, str) else None
+
+    if has_required_scopes(
+        user_scopes,
+        required_scopes,
+        resource_type=resource_type,
+        resource_id=resource_id,
+        admin_scope=admin_scope,
+    ):
+        return
+
+    raise HTTPException(status_code=403, detail=build_insufficient_permissions_detail(required_scopes))
 
 
 def get_schedule_router(os_db: Any, settings: Any) -> APIRouter:
@@ -96,6 +158,7 @@ def get_schedule_router(os_db: Any, settings: Any) -> APIRouter:
     @router.post("/schedules", response_model=ScheduleResponse, status_code=201)
     async def create_schedule(
         body: ScheduleCreate,
+        request: Request,
         _: bool = Depends(auth_dependency),
     ) -> Dict[str, Any]:
         _check_scheduler_deps()
@@ -105,6 +168,8 @@ def get_schedule_router(os_db: Any, settings: Any) -> APIRouter:
             raise HTTPException(status_code=422, detail=f"Invalid cron expression: {body.cron_expr}")
         if not validate_timezone(body.timezone):
             raise HTTPException(status_code=422, detail=f"Invalid timezone: {body.timezone}")
+
+        _require_target_endpoint_scopes(request, body.method, body.endpoint)
 
         # Check name uniqueness
         existing = await _db_call("get_schedule_by_name", body.name)
@@ -153,6 +218,7 @@ def get_schedule_router(os_db: Any, settings: Any) -> APIRouter:
     async def update_schedule(
         schedule_id: str,
         body: ScheduleUpdate,
+        request: Request,
         _: bool = Depends(auth_dependency),
     ) -> Dict[str, Any]:
         existing = await _db_call("get_schedule", schedule_id)
@@ -162,6 +228,10 @@ def get_schedule_router(os_db: Any, settings: Any) -> APIRouter:
         updates = body.model_dump(exclude_unset=True)
         if not updates:
             return existing
+
+        target_method = updates.get("method", existing["method"])
+        target_endpoint = updates.get("endpoint", existing["endpoint"])
+        _require_target_endpoint_scopes(request, target_method, target_endpoint)
 
         # Validate cron/timezone if changing
         cron_changed = "cron_expr" in updates or "timezone" in updates
@@ -204,11 +274,14 @@ def get_schedule_router(os_db: Any, settings: Any) -> APIRouter:
     @router.post("/schedules/{schedule_id}/enable", response_model=ScheduleStateResponse)
     async def enable_schedule(
         schedule_id: str,
+        request: Request,
         _: bool = Depends(auth_dependency),
     ) -> Dict[str, Any]:
         existing = await _db_call("get_schedule", schedule_id)
         if existing is None:
             raise HTTPException(status_code=404, detail="Schedule not found")
+
+        _require_target_endpoint_scopes(request, existing.get("method", "POST"), existing["endpoint"])
 
         _check_scheduler_deps()
         from agno.scheduler.cron import compute_next_run
@@ -247,6 +320,8 @@ def get_schedule_router(os_db: Any, settings: Any) -> APIRouter:
 
         if not existing.get("enabled", True):
             raise HTTPException(status_code=409, detail="Schedule is disabled")
+
+        _require_target_endpoint_scopes(request, existing.get("method", "POST"), existing["endpoint"])
 
         executor = getattr(request.app.state, "scheduler_executor", None)
         if executor is not None:

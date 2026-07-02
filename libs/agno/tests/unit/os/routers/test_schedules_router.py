@@ -3,10 +3,12 @@
 import time
 from unittest.mock import MagicMock, patch
 
+import jwt
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from agno.os.middleware.jwt import JWTMiddleware
 from agno.os.routers.schedules import get_schedule_router
 from agno.os.settings import AgnoAPISettings
 
@@ -68,6 +70,18 @@ def client(mock_db, settings):
     router = get_schedule_router(os_db=mock_db, settings=settings)
     app.include_router(router)
     return TestClient(app)
+
+
+def _make_auth_client(mock_db):
+    app = FastAPI()
+    app.include_router(get_schedule_router(os_db=mock_db, settings=AgnoAPISettings(authorization_enabled=True)))
+    app.add_middleware(JWTMiddleware, validate=False, authorization=True)
+    return TestClient(app)
+
+
+def _auth_headers(scopes):
+    token = jwt.encode({"sub": "schedule-writer", "scopes": scopes}, key=None, algorithm="none")
+    return {"Authorization": f"Bearer {token}"}
 
 
 # =============================================================================
@@ -161,6 +175,80 @@ class TestCreateSchedule:
         assert resp.status_code == 409
         assert "already exists" in resp.json()["detail"]
 
+    @patch("agno.scheduler.cron._require_pytz")
+    @patch("agno.scheduler.cron._require_croniter")
+    @patch("agno.scheduler.cron.validate_cron_expr", return_value=True)
+    @patch("agno.scheduler.cron.validate_timezone", return_value=True)
+    @patch("agno.scheduler.cron.compute_next_run", return_value=int(time.time()) + 60)
+    def test_create_rejects_target_endpoint_without_required_scope(
+        self, mock_compute, mock_tz, mock_cron, mock_req_cron, mock_req_pytz, mock_db
+    ):
+        client = _make_auth_client(mock_db)
+
+        resp = client.post(
+            "/schedules",
+            json={
+                "name": "agent-hop",
+                "cron_expr": "0 9 * * *",
+                "endpoint": "/agents/secret-agent/runs",
+            },
+            headers=_auth_headers(["schedules:write"]),
+        )
+
+        assert resp.status_code == 403
+        assert "agents:run" in resp.json()["detail"]
+        mock_db.create_schedule.assert_not_called()
+
+    @patch("agno.scheduler.cron._require_pytz")
+    @patch("agno.scheduler.cron._require_croniter")
+    @patch("agno.scheduler.cron.validate_cron_expr", return_value=True)
+    @patch("agno.scheduler.cron.validate_timezone", return_value=True)
+    @patch("agno.scheduler.cron.compute_next_run", return_value=int(time.time()) + 60)
+    def test_create_rejects_url_encoded_target_endpoint_without_required_scope(
+        self, mock_compute, mock_tz, mock_cron, mock_req_cron, mock_req_pytz, mock_db
+    ):
+        client = _make_auth_client(mock_db)
+
+        resp = client.post(
+            "/schedules",
+            json={
+                "name": "agent-hop-encoded",
+                "cron_expr": "0 9 * * *",
+                "endpoint": "/agents/secret-agent/%72uns",
+            },
+            headers=_auth_headers(["schedules:write"]),
+        )
+
+        assert resp.status_code == 403
+        assert "agents:run" in resp.json()["detail"]
+        mock_db.create_schedule.assert_not_called()
+
+    @patch("agno.scheduler.cron._require_pytz")
+    @patch("agno.scheduler.cron._require_croniter")
+    @patch("agno.scheduler.cron.validate_cron_expr", return_value=True)
+    @patch("agno.scheduler.cron.validate_timezone", return_value=True)
+    @patch("agno.scheduler.cron.compute_next_run", return_value=int(time.time()) + 60)
+    def test_create_allows_target_endpoint_with_required_scope(
+        self, mock_compute, mock_tz, mock_cron, mock_req_cron, mock_req_pytz, mock_db
+    ):
+        client = _make_auth_client(mock_db)
+        created = _make_schedule_dict(name="agent-hop", endpoint="/agents/secret-agent/runs")
+        mock_db.create_schedule = MagicMock(return_value=created)
+
+        resp = client.post(
+            "/schedules",
+            json={
+                "name": "agent-hop",
+                "cron_expr": "0 9 * * *",
+                "endpoint": "/agents/secret-agent/runs",
+            },
+            headers=_auth_headers(["schedules:write", "agents:secret-agent:run"]),
+        )
+
+        assert resp.status_code == 201
+        assert resp.json()["endpoint"] == "/agents/secret-agent/runs"
+        mock_db.create_schedule.assert_called_once()
+
 
 # =============================================================================
 # Tests: GET /schedules/{schedule_id}
@@ -253,6 +341,23 @@ class TestEnableSchedule:
         resp = client.post("/schedules/missing/enable")
         assert resp.status_code == 404
 
+    @patch("agno.scheduler.cron._require_pytz")
+    @patch("agno.scheduler.cron._require_croniter")
+    @patch("agno.scheduler.cron.compute_next_run", return_value=int(time.time()) + 60)
+    def test_enable_rejects_target_endpoint_without_required_scope(
+        self, mock_compute, mock_req_cron, mock_req_pytz, mock_db
+    ):
+        client = _make_auth_client(mock_db)
+        mock_db.get_schedule = MagicMock(
+            return_value=_make_schedule_dict(enabled=False, endpoint="/agents/secret-agent/runs")
+        )
+
+        resp = client.post("/schedules/sched-1/enable", headers=_auth_headers(["schedules:write"]))
+
+        assert resp.status_code == 403
+        assert "agents:run" in resp.json()["detail"]
+        mock_db.update_schedule.assert_not_called()
+
 
 # =============================================================================
 # Tests: POST /schedules/{schedule_id}/disable
@@ -293,6 +398,15 @@ class TestTriggerSchedule:
         resp = client.post("/schedules/sched-1/trigger")
         assert resp.status_code == 409
         assert "disabled" in resp.json()["detail"].lower()
+
+    def test_trigger_rejects_target_endpoint_without_required_scope(self, mock_db):
+        client = _make_auth_client(mock_db)
+        mock_db.get_schedule = MagicMock(return_value=_make_schedule_dict(endpoint="/agents/secret-agent/runs"))
+
+        resp = client.post("/schedules/sched-1/trigger", headers=_auth_headers(["schedules:write"]))
+
+        assert resp.status_code == 403
+        assert "agents:run" in resp.json()["detail"]
 
 
 # =============================================================================
