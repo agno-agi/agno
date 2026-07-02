@@ -535,7 +535,7 @@ class MCPTools(Toolkit):
         try:
             await self.session.send_ping()
             return True
-        except (RuntimeError, BaseException):
+        except Exception:
             return False
 
     async def _safe_cleanup(self) -> None:
@@ -791,7 +791,7 @@ class MCPTools(Toolkit):
                 except Exception as e:
                     log_error(f"Failed to register tool {tool.name}: {str(e)}")
 
-        except (RuntimeError, BaseException):
+        except Exception:
             log_error(f"Failed to get tools for {str(self)}")
             raise
 
@@ -811,5 +811,5 @@ class MCPTools(Toolkit):
 
             self._initialized = True
 
-        except (RuntimeError, BaseException):
+        except Exception:
             log_error("Failed to initialize MCP toolkit")
