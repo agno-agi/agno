@@ -469,42 +469,47 @@ def attach_routes(
         else:
             raise HTTPException(status_code=400, detail="One of agent_id or team_id must be provided")
 
-        # Run the evaluation
-        if eval_run_input.eval_type == EvalType.ACCURACY:
-            if isinstance(agent, RemoteAgent) or isinstance(team, RemoteTeam):
-                # TODO: Handle remote evaluation
-                log_warning("Evaluation against remote agents are not supported yet")
-                return None
-            return await run_accuracy_eval(
-                eval_run_input=eval_run_input, db=db, agent=agent, team=team, default_model=default_model
-            )
+        # Run the evaluation. The model override applied above is temporary, so it
+        # must be restored on the shared in-memory agent/team regardless of whether
+        # the eval succeeds, raises during validation, or fails while running.
+        try:
+            if eval_run_input.eval_type == EvalType.ACCURACY:
+                if isinstance(agent, RemoteAgent) or isinstance(team, RemoteTeam):
+                    # TODO: Handle remote evaluation
+                    log_warning("Evaluation against remote agents are not supported yet")
+                    return None
+                return await run_accuracy_eval(
+                    eval_run_input=eval_run_input, db=db, agent=agent, team=team, default_model=default_model
+                )
 
-        elif eval_run_input.eval_type == EvalType.AGENT_AS_JUDGE:
-            return await run_agent_as_judge_eval(
-                eval_run_input=eval_run_input,
-                db=db,
-                agent=agent,
-                team=team,
-                default_model=default_model,  # type: ignore
-            )
+            elif eval_run_input.eval_type == EvalType.AGENT_AS_JUDGE:
+                return await run_agent_as_judge_eval(
+                    eval_run_input=eval_run_input,
+                    db=db,
+                    agent=agent,
+                    team=team,
+                    default_model=default_model,  # type: ignore
+                )
 
-        elif eval_run_input.eval_type == EvalType.PERFORMANCE:
-            if isinstance(agent, RemoteAgent) or isinstance(team, RemoteTeam):
-                # TODO: Handle remote evaluation
-                log_warning("Evaluation against remote agents are not supported yet")
-                return None
-            return await run_performance_eval(
-                eval_run_input=eval_run_input, db=db, agent=agent, team=team, default_model=default_model
-            )
+            elif eval_run_input.eval_type == EvalType.PERFORMANCE:
+                if isinstance(agent, RemoteAgent) or isinstance(team, RemoteTeam):
+                    # TODO: Handle remote evaluation
+                    log_warning("Evaluation against remote agents are not supported yet")
+                    return None
+                return await run_performance_eval(eval_run_input=eval_run_input, db=db, agent=agent, team=team)
 
-        else:
-            if isinstance(agent, RemoteAgent) or isinstance(team, RemoteTeam):
-                # TODO: Handle remote evaluation
-                log_warning("Evaluation against remote agents are not supported yet")
-                return None
-            return await run_reliability_eval(
-                eval_run_input=eval_run_input, db=db, agent=agent, team=team, default_model=default_model
-            )
+            else:
+                if isinstance(agent, RemoteAgent) or isinstance(team, RemoteTeam):
+                    # TODO: Handle remote evaluation
+                    log_warning("Evaluation against remote agents are not supported yet")
+                    return None
+                return await run_reliability_eval(eval_run_input=eval_run_input, db=db, agent=agent, team=team)
+        finally:
+            if default_model is not None:
+                if isinstance(agent, Agent):
+                    agent.model = default_model
+                elif isinstance(team, Team):
+                    team.model = default_model
 
     return router
 
