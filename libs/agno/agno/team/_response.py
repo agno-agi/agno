@@ -63,6 +63,7 @@ from agno.utils.reasoning import (
     add_reasoning_metrics_to_metadata,
     add_reasoning_step_to_metadata,
     append_to_reasoning_content,
+    extract_thinking_content,
     update_run_output_with_reasoning,
 )
 from agno.utils.string import parse_response_dict_str, parse_response_model_str
@@ -1127,6 +1128,14 @@ def _handle_model_response_stream(
             run_context=run_context,
         )
 
+    # Extract <think> or <thinking> tags from accumulated streaming content
+    if full_model_response.content and isinstance(full_model_response.content, str):
+        reasoning_content, clean_content = extract_thinking_content(full_model_response.content)
+        if reasoning_content:
+            full_model_response.content = clean_content
+            if not full_model_response.reasoning_content:
+                full_model_response.reasoning_content = reasoning_content
+
     # 3. Update TeamRunOutput
     if full_model_response.content is not None:
         run_response.content = full_model_response.content
@@ -1288,6 +1297,14 @@ async def _ahandle_model_response_stream(
             run_context=run_context,
         ):
             yield event
+
+    # Extract <think> or <thinking> tags from accumulated streaming content
+    if full_model_response.content and isinstance(full_model_response.content, str):
+        reasoning_content, clean_content = extract_thinking_content(full_model_response.content)
+        if reasoning_content:
+            full_model_response.content = clean_content
+            if not full_model_response.reasoning_content:
+                full_model_response.reasoning_content = reasoning_content
 
     # Update TeamRunOutput
     if full_model_response.content is not None:

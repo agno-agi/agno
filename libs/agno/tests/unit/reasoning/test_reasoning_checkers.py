@@ -250,6 +250,150 @@ def test_openai_like_without_deepseek_r1():
     assert is_openai_reasoning_model(model) is False
 
 
+def test_openai_like_with_qwq():
+    """Test OpenAILike model with qwq in ID returns True (Together, Fireworks, etc.)."""
+    from agno.models.openai.like import OpenAILike
+
+    model = OpenAILike(
+        id="Qwen/QwQ-32B",
+        name="Together",
+    )
+    assert is_openai_reasoning_model(model) is True
+
+
+def test_openai_like_with_qwen3():
+    """Test OpenAILike model with qwen3 in ID returns True."""
+    from agno.models.openai.like import OpenAILike
+
+    model = OpenAILike(
+        id="Qwen/Qwen3-8B",
+        name="OpenRouter",
+    )
+    assert is_openai_reasoning_model(model) is True
+
+
+def test_openai_like_with_openthinker():
+    """Test OpenAILike model with openthinker in ID returns True."""
+    from agno.models.openai.like import OpenAILike
+
+    model = OpenAILike(
+        id="openthinker-7b",
+        name="DeepInfra",
+    )
+    assert is_openai_reasoning_model(model) is True
+
+
+def test_openai_chat_self_hosted_with_reasoning_model():
+    """Test OpenAIChat with custom base_url and reasoning model returns True."""
+    model = MockModel(
+        class_name="OpenAIChat",
+        model_id="Qwen/QwQ-32B",
+        base_url="http://localhost:8080/v1",
+    )
+    assert is_openai_reasoning_model(model) is True
+
+
+def test_openai_chat_self_hosted_without_reasoning_model():
+    """Test OpenAIChat with custom base_url but non-reasoning model returns False."""
+    model = MockModel(
+        class_name="OpenAIChat",
+        model_id="Llama-3.1-8B",
+        base_url="http://localhost:8080/v1",
+    )
+    assert is_openai_reasoning_model(model) is False
+
+
+def test_vllm_matched_by_openai_checker():
+    """VLLM extends OpenAILike, so it's handled by the OpenAI reasoning checker."""
+    from agno.models.vllm import VLLM
+
+    model = VLLM(id="Qwen/Qwen3-8B", enable_thinking=True)
+    assert is_openai_reasoning_model(model) is True
+
+
+def test_vllm_without_enable_thinking_non_reasoning_model():
+    """VLLM without enable_thinking and non-reasoning model ID returns False."""
+    from agno.models.vllm import VLLM
+
+    model = VLLM(id="meta-llama/Llama-3.1-70B")
+    assert is_openai_reasoning_model(model) is False
+
+
+def test_vllm_with_qwq_model_id():
+    """VLLM with qwq in model ID is auto-detected as reasoning."""
+    from agno.models.vllm import VLLM
+
+    model = VLLM(id="Qwen/QwQ-32B")
+    assert is_openai_reasoning_model(model) is True
+
+
+def test_vllm_with_deepseek_r1_model_id():
+    """VLLM with deepseek-r1 in model ID is auto-detected as reasoning."""
+    from agno.models.vllm import VLLM
+
+    model = VLLM(id="deepseek-ai/deepseek-r1-distill-qwen-32b")
+    assert is_openai_reasoning_model(model) is True
+
+
+def test_vllm_with_openthinker_model_id():
+    """VLLM with openthinker in model ID is auto-detected as reasoning."""
+    from agno.models.vllm import VLLM
+
+    model = VLLM(id="openthinker-7b")
+    assert is_openai_reasoning_model(model) is True
+
+
+def test_vllm_enable_thinking_false():
+    """VLLM with enable_thinking=False and non-reasoning ID returns False."""
+    from agno.models.vllm import VLLM
+
+    model = VLLM(id="Llama-3.1-8B", enable_thinking=False)
+    assert is_openai_reasoning_model(model) is False
+
+
+def test_dashscope_with_enable_thinking():
+    """DashScope extends OpenAILike, detected when enable_thinking=True."""
+    from agno.models.dashscope import DashScope
+
+    model = DashScope(id="qwen-plus", enable_thinking=True)
+    assert is_openai_reasoning_model(model) is True
+
+
+def test_dashscope_without_enable_thinking():
+    """DashScope without enable_thinking returns False for non-reasoning model IDs."""
+    from agno.models.dashscope import DashScope
+
+    model = DashScope(id="qwen-plus")
+    assert is_openai_reasoning_model(model) is False
+
+
+def test_dashscope_with_qwen3_model():
+    """DashScope with qwen3 in model ID is auto-detected as reasoning."""
+    from agno.models.dashscope import DashScope
+
+    model = DashScope(id="qwen3-72b")
+    assert is_openai_reasoning_model(model) is True
+
+
+def test_dashscope_with_qwq_model():
+    """DashScope with qwq model ID is auto-detected as reasoning."""
+    from agno.models.dashscope import DashScope
+
+    model = DashScope(id="qwq-32b-preview")
+    assert is_openai_reasoning_model(model) is True
+
+
+def test_openai_like_with_minimax_m3():
+    """Test OpenAILike model with minimax-m3 in ID returns True."""
+    from agno.models.openai.like import OpenAILike
+
+    model = OpenAILike(
+        id="minimax-m3-01-128k",
+        name="MiniMax",
+    )
+    assert is_openai_reasoning_model(model) is True
+
+
 # ============================================================================
 # Anthropic Reasoning Model Tests
 # ============================================================================
@@ -615,13 +759,17 @@ def test_ollama_with_deepseek_r1():
     assert is_ollama_reasoning_model(model) is True
 
 
-def test_ollama_with_qwen2_5_coder():
-    """Test Ollama model with qwen2.5-coder in ID returns True."""
+def test_ollama_with_qwen2_5_coder_is_not_reasoning():
+    """Test Ollama model with qwen2.5-coder in ID returns False.
+
+    qwen2.5-coder is a code-focused model without <think> tag support.
+    Only Qwen3 and QwQ models have thinking capability.
+    """
     model = MockModel(
         class_name="Ollama",
         model_id="qwen2.5-coder:32b",
     )
-    assert is_ollama_reasoning_model(model) is True
+    assert is_ollama_reasoning_model(model) is False
 
 
 def test_ollama_with_openthinker():
