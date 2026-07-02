@@ -85,6 +85,22 @@ _MAX_NESTED_WORKFLOW_DEPTH = 10
 # not per thread. This prevents concurrent async workflows from interfering with each other.
 _nested_workflow_depth: contextvars.ContextVar[int] = contextvars.ContextVar("_nested_workflow_depth", default=0)
 
+
+def _close_stream_if_possible(stream: Any) -> None:
+    close = getattr(stream, "close", None)
+    if callable(close):
+        close()
+
+
+async def _aclose_stream_if_possible(stream: Any) -> None:
+    aclose = getattr(stream, "aclose", None)
+    if callable(aclose):
+        await aclose()
+        return
+
+    _close_stream_if_possible(stream)
+
+
 StepExecutor = Callable[
     [StepInput],
     Union[
@@ -1260,16 +1276,19 @@ class Step:
                         )
 
                         active_executor_run_response = None
-                        for event in response_stream:
-                            if isinstance(event, RunOutput) or isinstance(event, TeamRunOutput):
-                                active_executor_run_response = event
-                                continue
-                            # Only yield executor events if stream_executor_events is True
-                            if stream_executor_events or isinstance(event, _EXECUTOR_TERMINAL_EVENT_TYPES):
-                                enriched_event = self._enrich_event_with_context(
-                                    event, workflow_run_response, step_index
-                                )
-                                yield enriched_event  # type: ignore[misc]
+                        try:
+                            for event in response_stream:
+                                if isinstance(event, RunOutput) or isinstance(event, TeamRunOutput):
+                                    active_executor_run_response = event
+                                    continue
+                                # Only yield executor events if stream_executor_events is True
+                                if stream_executor_events or isinstance(event, _EXECUTOR_TERMINAL_EVENT_TYPES):
+                                    enriched_event = self._enrich_event_with_context(
+                                        event, workflow_run_response, step_index
+                                    )
+                                    yield enriched_event  # type: ignore[misc]
+                        finally:
+                            _close_stream_if_possible(response_stream)
 
                         # Update workflow session state
                         if run_context is None and session_state is not None:
@@ -1908,16 +1927,19 @@ class Step:
                         )
 
                         active_executor_run_response = None
-                        async for event in response_stream:
-                            if isinstance(event, RunOutput) or isinstance(event, TeamRunOutput):
-                                active_executor_run_response = event
-                                break
-                            # Only yield executor events if stream_executor_events is True
-                            if stream_executor_events or isinstance(event, _EXECUTOR_TERMINAL_EVENT_TYPES):
-                                enriched_event = self._enrich_event_with_context(
-                                    event, workflow_run_response, step_index
-                                )
-                                yield enriched_event  # type: ignore[misc]
+                        try:
+                            async for event in response_stream:
+                                if isinstance(event, RunOutput) or isinstance(event, TeamRunOutput):
+                                    active_executor_run_response = event
+                                    break
+                                # Only yield executor events if stream_executor_events is True
+                                if stream_executor_events or isinstance(event, _EXECUTOR_TERMINAL_EVENT_TYPES):
+                                    enriched_event = self._enrich_event_with_context(
+                                        event, workflow_run_response, step_index
+                                    )
+                                    yield enriched_event  # type: ignore[misc]
+                        finally:
+                            await _aclose_stream_if_possible(response_stream)
 
                         # Update workflow session state
                         if run_context is None and session_state is not None:
