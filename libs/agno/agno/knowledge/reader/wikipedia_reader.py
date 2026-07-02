@@ -52,13 +52,14 @@ class WikipediaReader(Reader):
 
         # Only create Document if we successfully got a summary
         if summary:
-            return [
-                Document(
-                    name=topic,
-                    meta_data={"topic": topic},
-                    content=summary,
-                )
-            ]
+            document = Document(
+                name=topic,
+                meta_data={"topic": topic},
+                content=summary,
+            )
+            if self.chunk:
+                return self.chunk_document(document)
+            return [document]
         return []
 
     async def async_read(self, topic: str) -> List[Document]:
@@ -83,11 +84,12 @@ class WikipediaReader(Reader):
 
         # Only create Document if we successfully got a summary
         if summary:
-            return [
-                Document(
-                    name=topic,
-                    meta_data={"topic": topic},
-                    content=summary,
-                )
-            ]
+            document = Document(
+                name=topic,
+                meta_data={"topic": topic},
+                content=summary,
+            )
+            if self.chunk:
+                return self.chunk_document(document)
+            return [document]
         return []
