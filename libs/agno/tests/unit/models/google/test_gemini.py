@@ -7,6 +7,8 @@ import pytest
 
 pytest.importorskip("google.genai")
 
+from google.genai import types
+
 from agno.exceptions import ModelProviderError
 from agno.media import File
 from agno.models.google.gemini import Gemini
@@ -89,6 +91,62 @@ def test_gemini_invoke_wraps_generic_errors_with_exception_type():
     ):
         with pytest.raises(ModelProviderError, match="TimeoutError"):
             model.invoke(messages=[Message(role="user", content="Hello")], assistant_message=assistant_message)
+
+
+def test_gemini_parse_provider_response_includes_retrieved_context_citations():
+    response = types.GenerateContentResponse(
+        candidates=[
+            types.Candidate(
+                content=types.Content(role="model", parts=[types.Part(text="Grounded answer")]),
+                grounding_metadata=types.GroundingMetadata(
+                    grounding_chunks=[
+                        types.GroundingChunk(
+                            retrieved_context=types.GroundingChunkRetrievedContext(
+                                uri="https://vertex.example/doc1",
+                                title="Vertex document",
+                            )
+                        )
+                    ]
+                ),
+            )
+        ]
+    )
+
+    model_response = Gemini(api_key="test-key")._parse_provider_response(response)
+
+    assert model_response.citations is not None
+    assert model_response.citations.urls is not None
+    assert len(model_response.citations.urls) == 1
+    assert model_response.citations.urls[0].url == "https://vertex.example/doc1"
+    assert model_response.citations.urls[0].title == "Vertex document"
+
+
+def test_gemini_parse_provider_response_delta_includes_retrieved_context_citations():
+    response_delta = types.GenerateContentResponse(
+        candidates=[
+            types.Candidate(
+                content=types.Content(role="model", parts=[types.Part(text="Grounded answer")]),
+                grounding_metadata=types.GroundingMetadata(
+                    grounding_chunks=[
+                        types.GroundingChunk(
+                            retrieved_context=types.GroundingChunkRetrievedContext(
+                                uri="https://vertex.example/doc1",
+                                title="Vertex document",
+                            )
+                        )
+                    ]
+                ),
+            )
+        ]
+    )
+
+    model_response = Gemini(api_key="test-key")._parse_provider_response_delta(response_delta)
+
+    assert model_response.citations is not None
+    assert model_response.citations.urls is not None
+    assert len(model_response.citations.urls) == 1
+    assert model_response.citations.urls[0].url == "https://vertex.example/doc1"
+    assert model_response.citations.urls[0].title == "Vertex document"
 
 
 class TestFormatFileForMessage:
