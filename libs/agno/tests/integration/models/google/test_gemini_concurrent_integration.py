@@ -522,19 +522,19 @@ class TestGeminiThoughtSignatures:
 
     def test_tool_call_with_thought_signatures(self):
         """Verify a Gemini 3 tool-call round-trip completes on a cached client."""
-        agent = Agent(model=Gemini(id="gemini-3-flash-preview"), tools=[get_capital])
+        agent = Agent(model=Gemini(id="gemini-3.5-flash"), tools=[get_capital])
 
         try:
             response = agent.run("Use the get_capital tool to find the capital of France.")
         except ModelProviderError as e:
             if "404" in str(e) or "NOT_FOUND" in str(e):
-                pytest.skip("gemini-3-flash-preview not available for this API key")
+                pytest.skip("gemini-3.5-flash not available for this API key")
             raise
 
         if not run_succeeded(response):
             content = str(response.content)
             if "404" in content or "NOT_FOUND" in content:
-                pytest.skip("gemini-3-flash-preview not available for this API key")
+                pytest.skip("gemini-3.5-flash not available for this API key")
             pytest.fail(f"Run failed: {content[:120]}")
 
         tool_messages = [m for m in (response.messages or []) if m.role == "tool"]
