@@ -466,7 +466,8 @@ class TestPopulateRegistryComponentsToolDedup:
 
         kept = [t for t in os.registry.tools if isinstance(t, DuckDuckGoTools)]
         assert len(kept) == 1 and kept[0] is first
-        assert os.registry._entrypoint_lookup["web_search"].__self__ is first
+        # The lookup stores the source Function; its entrypoint is bound to the kept instance
+        assert os.registry._entrypoint_lookup["web_search"].entrypoint.__self__ is first
 
     def test_toolkits_sharing_name_with_different_functions_both_kept(self):
         # Same name but different function sets are genuinely different tools and
