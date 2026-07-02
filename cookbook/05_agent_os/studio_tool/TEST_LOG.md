@@ -6,7 +6,7 @@
 
 **Status:** PASS
 
-**Description:** Standalone StudioTool agent backed by local SQLite persistence with `versions=True`. The agent created the `math-tutor` agent (published v1), edited it (draft v2), listed both versions, and published the draft to current.
+**Description:** Standalone StudioTools agent backed by local SQLite persistence with `versions=True`. The agent created the `math-tutor` agent (published v1), edited it (draft v2), listed both versions, and published the draft to current.
 
 **Result:** Full create -> edit -> list_versions -> publish lifecycle completed successfully.
 
@@ -16,7 +16,7 @@
 
 **Status:** PASS (smoke test)
 
-**Description:** AgentOS Studio example with registry primitives, code-defined agents, and StudioTool component CRUD/versioning. Verified by importing the module: the FastAPI app builds (107 routes, `/agents` present), `enable_versions` is True, and `publish_component` is registered on the studio toolkit.
+**Description:** AgentOS Studio example with registry primitives, code-defined agents, and StudioTools component CRUD/versioning. Verified by importing the module: the FastAPI app builds (107 routes, `/agents` present), `enable_versions` is True, and `publish_component` is registered on the studio toolkit.
 
 **Result:** App construction and tool registration verified. Interactive Studio UI flow not exercised.
 

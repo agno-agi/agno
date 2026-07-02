@@ -365,6 +365,66 @@ async def test_aget_last_run_output(async_test_team):
     assert last_output.run_id == response2.run_id
 
 
+def test_get_last_run_output_supports_team_subclasses(shared_db, simple_agent):
+    """A user-defined Team subclass with the same id must find its persisted
+    runs. The retrieval loop previously compared ``__class__.__name__`` to
+    ``"Team"``, which silently returned None for subclasses.
+    """
+
+    class CustomTeam(Team):
+        pass
+
+    session_id = str(uuid.uuid4())
+
+    writer = CustomTeam(
+        id="custom-team",
+        members=[simple_agent],
+        model=OpenAIChat(id="gpt-4o-mini"),
+        db=shared_db,
+    )
+    response = writer.run("Hello", session_id=session_id)
+
+    reader = CustomTeam(
+        id="custom-team",
+        members=[simple_agent],
+        model=OpenAIChat(id="gpt-4o-mini"),
+        db=shared_db,
+    )
+    last_output = reader.get_last_run_output(session_id=session_id)
+
+    assert last_output is not None
+    assert last_output.run_id == response.run_id
+
+
+@pytest.mark.asyncio
+async def test_aget_last_run_output_supports_team_subclasses(async_shared_db, simple_agent):
+    """Async variant of the subclass regression."""
+
+    class CustomTeam(Team):
+        pass
+
+    session_id = str(uuid.uuid4())
+
+    writer = CustomTeam(
+        id="custom-team-async",
+        members=[simple_agent],
+        model=OpenAIChat(id="gpt-4o-mini"),
+        db=async_shared_db,
+    )
+    response = await writer.arun("Hello", session_id=session_id)
+
+    reader = CustomTeam(
+        id="custom-team-async",
+        members=[simple_agent],
+        model=OpenAIChat(id="gpt-4o-mini"),
+        db=async_shared_db,
+    )
+    last_output = await reader.aget_last_run_output(session_id=session_id)
+
+    assert last_output is not None
+    assert last_output.run_id == response.run_id
+
+
 # Tests for delete_session()
 def test_delete_session(test_team):
     """Test delete_session removes a session."""

@@ -1,16 +1,16 @@
 # Studio Cookbook
 
-Examples for composing AgentOS agents, teams, and workflows with `StudioTool`.
+Examples for composing AgentOS agents, teams, and workflows with `StudioTools`.
 
 ## Files
-- `standalone_studio_agent.py` — Runs a local agent with `StudioTool` and SQLite persistence, without starting AgentOS.
+- `standalone_studio_agent.py` — Runs a local agent with `StudioTools` and SQLite persistence, without starting AgentOS.
 - `studio_tools_agent.py` — Starts an AgentOS app with code-defined agents, registry primitives, and a Studio agent that can create/edit/version components.
 - `studio_hitl_agent.py` — Human-in-the-loop studio on the console: the agent pauses with a structured multi-select question for tool choice (`UserFeedbackTools`), asks for free-text instructions (`UserControlFlowTools`), and `create_agent` requires explicit user confirmation before anything is persisted.
 - `studio_hitl_agent_os.py` — The same HITL studio agent served through AgentOS: pauses surface through the AgentOS API/chat UI, which collects the answers and continues the run.
 
 ## Versioning
 
-Versioning tools (`list_versions`, `get_version`, `publish_component`, `set_current_version`, `delete_version`) are opt-in: pass `versions=True` to `StudioTool`. With versioning enabled, edits are saved as drafts that need `publish_component`; without it (the default), edits are published immediately as the new current version.
+Versioning tools (`list_versions`, `get_version`, `publish_component`, `set_current_version`, `delete_version`) are opt-in: pass `versions=True` to `StudioTools`. With versioning enabled, edits are saved as drafts that need `publish_component`; without it (the default), edits are published immediately as the new current version.
 
 ## Prerequisites
 - Load environment variables with `direnv allow` (requires `.envrc`).
@@ -33,7 +33,7 @@ Useful Studio routes:
 - Teams: `/studio/teams/edit?team_id=<component_id>`
 - Workflows: `/studio/workflows/edit?workflow_id=<component_id>`
 
-## Expected StudioTool Output
+## Expected StudioTools Output
 
 When the Studio agent creates or edits a component, the user-facing response should include:
 - `component_type`

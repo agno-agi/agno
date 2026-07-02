@@ -548,6 +548,11 @@ def _accumulate_member_metrics(
 
 def delete_session(team: "Team", session_id: str, user_id: Optional[str] = None):
     """Delete the current session and save to storage"""
+    from agno.team._init import _has_async_db
+
+    if _has_async_db(team):
+        raise ValueError("Cannot use sync delete_session() with an async database. Use adelete_session() instead.")
+
     if team.db is None:
         return
 
