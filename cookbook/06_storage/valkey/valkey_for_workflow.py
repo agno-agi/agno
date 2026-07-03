@@ -1,13 +1,13 @@
 """
 Valkey Storage for Workflow
-==========================
+===========================
 
 Demonstrates using ValkeyDb as the session storage backend for a workflow.
 """
 
 from agno.agent import Agent
 from agno.db.valkey import ValkeyDb
-from agno.models.openai import OpenAIChat
+from agno.models.openai import OpenAIResponses
 from agno.team import Team
 from agno.tools.hackernews import HackerNewsTools
 from agno.tools.websearch import WebSearchTools
@@ -19,13 +19,13 @@ from agno.workflow.workflow import Workflow
 # ---------------------------------------------------------------------------
 hackernews_agent = Agent(
     name="Hackernews Agent",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIResponses(id="gpt-5.5"),
     tools=[HackerNewsTools()],
     role="Extract key insights and content from Hackernews posts",
 )
 web_agent = Agent(
     name="Web Agent",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIResponses(id="gpt-5.5"),
     tools=[WebSearchTools()],
     role="Search the web for the latest news and trends",
 )
@@ -39,7 +39,7 @@ research_team = Team(
 
 content_planner = Agent(
     name="Content Planner",
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIResponses(id="gpt-5.5"),
     instructions=[
         "Plan a content schedule over 4 weeks for the provided topic and research content",
         "Ensure that I have posts for 3 posts per week",

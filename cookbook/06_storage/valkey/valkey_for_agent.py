@@ -5,10 +5,10 @@ Run `uv pip install valkey-glide-sync openai ddgs` to install dependencies.
 
 We can start Valkey locally using docker:
 1. Start Valkey container
-docker run --name my-valkey -p 6379:6379 -d valkey/valkey-bundle
+`docker run --name my-valkey -p 6379:6379 -d valkey/valkey-bundle`
 
 2. Verify container is running
-docker ps
+`docker ps`
 
 3. Run the file
 `python cookbook/06_storage/valkey/valkey_for_agent.py`

@@ -233,6 +233,16 @@ def test_search_keyword(valkey_db):
     assert len(docs) == 1 and docs[0].name == "doc_c"
 
 
+def test_search_hybrid_unsupported(valkey_db):
+    db, client, ft_mock = valkey_db
+
+    db.search_type = SearchType.hybrid
+    docs = db.search("curry", limit=1)
+    assert docs == []
+    ft_mock.search.assert_not_called()
+    assert "hybrid" not in db.get_supported_search_types()
+
+
 def test_delete_by_name_and_metadata_and_content_id(valkey_db):
     db, client, ft_mock = valkey_db
 

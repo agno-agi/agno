@@ -64,7 +64,7 @@ def _ensure_glide_sync_stub():
         def get(self, key):
             self.commands.append(("get", key))
 
-        def set(self, key, value):
+        def set(self, key, value, expiry=None):
             self.commands.append(("set", key, value))
 
         def delete(self, keys):
@@ -90,7 +90,7 @@ def _ensure_glide_sync_stub():
             self.port = port
 
     class _GlideClientConfiguration:
-        def __init__(self, addresses=None, database_id=None, credentials=None, use_tls=False):
+        def __init__(self, addresses=None, database_id=None, credentials=None, use_tls=False, client_name=None):
             pass
 
     class _ServerCredentials:
@@ -104,6 +104,10 @@ def _ensure_glide_sync_stub():
     class _ExpiryType:
         SEC = "SEC"
 
+    class _RequestError(Exception):
+        pass
+
+    glide_mod.RequestError = _RequestError
     glide_mod.GlideClient = _GlideClient
     glide_mod.GlideClusterClient = _GlideClusterClient
     glide_mod.Batch = _Batch
@@ -151,6 +155,7 @@ def _patch_missing_attrs(glide_mod):
         "GlideClientConfiguration",
         "GlideClusterClient",
         "NodeAddress",
+        "RequestError",
         "ServerCredentials",
         "DistanceMetricType",
         "FtCreateOptions",
@@ -168,6 +173,9 @@ def _patch_missing_attrs(glide_mod):
     for attr in needed:
         if not hasattr(glide_mod, attr):
             setattr(glide_mod, attr, MagicMock(name=attr))
+    # RequestError is used in isinstance checks, so it must be a real exception class
+    if not isinstance(getattr(glide_mod, "RequestError", None), type):
+        glide_mod.RequestError = type("RequestError", (Exception,), {})
     if not hasattr(glide_mod, "ft"):
         glide_mod.ft = MagicMock(name="glide_ft_module")  # type: ignore[attr-defined]
 

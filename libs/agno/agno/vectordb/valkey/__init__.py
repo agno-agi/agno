@@ -1,6 +1,6 @@
 from agno.vectordb.valkey.valkeydb import SearchType, ValkeyDB
 
-# Backward compatibility alias
+# Alias to disambiguate from the ValkeyDb storage adapter
 ValkeyVectorDb = ValkeyDB
 
 __all__ = [

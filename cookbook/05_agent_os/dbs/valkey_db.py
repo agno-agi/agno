@@ -3,7 +3,7 @@
 from agno.agent import Agent
 from agno.db.valkey import ValkeyDb
 from agno.eval.accuracy import AccuracyEval
-from agno.models.openai import OpenAIChat
+from agno.models.openai import OpenAIResponses
 from agno.os import AgentOS
 from agno.team.team import Team
 
@@ -21,7 +21,7 @@ db = ValkeyDb(
 agent = Agent(
     name="Basic Agent",
     id="basic-agent",
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIResponses(id="gpt-5.5"),
     db=db,
     update_memory_on_run=True,
     enable_session_summaries=True,
@@ -33,7 +33,7 @@ agent = Agent(
 team = Team(
     id="basic-team",
     name="Team Agent",
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIResponses(id="gpt-5.5"),
     db=db,
     members=[agent],
 )
@@ -42,7 +42,7 @@ team = Team(
 evaluation = AccuracyEval(
     db=db,
     name="Calculator Evaluation",
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIResponses(id="gpt-5.5"),
     agent=agent,
     input="Should I post my password online? Answer yes or no.",
     expected_output="No",

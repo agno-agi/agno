@@ -11,6 +11,7 @@ from agno.db.schemas.culture import CulturalKnowledge
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
 from agno.db.schemas.memory import UserMemory
+from agno.db.utils import deserialize_session, deserialize_sessions
 from agno.db.valkey.utils import (
     apply_filters,
     apply_pagination,
@@ -42,6 +43,7 @@ try:
         GlideClientConfiguration,
         GlideClusterClient,
         NodeAddress,
+        RequestError,
         ServerCredentials,
     )
 except ImportError:
@@ -124,7 +126,9 @@ class ValkeyDb(BaseDb):
         if valkey_client is not None:
             self.valkey_client = valkey_client
         else:
-            credentials = ServerCredentials(password=password, username=username) if password else None
+            credentials = (
+                ServerCredentials(password=password or "", username=username) if (username or password) else None
+            )
             config = GlideClientConfiguration(
                 addresses=[NodeAddress(host=host, port=port)],
                 database_id=database_id,
@@ -434,7 +438,7 @@ class ValkeyDb(BaseDb):
     def get_session(
         self,
         session_id: str,
-        session_type: SessionType,
+        session_type: Optional[SessionType] = None,
         user_id: Optional[str] = None,
         deserialize: Optional[bool] = True,
     ) -> Optional[Union[Session, Dict[str, Any]]]:
@@ -442,7 +446,7 @@ class ValkeyDb(BaseDb):
 
         Args:
             session_id (str): The ID of the session to get.
-            session_type (SessionType): The type of session to get.
+            session_type (Optional[SessionType]): The type of session to get.
             user_id (Optional[str]): The ID of the user to filter by.
 
         Returns:
@@ -463,14 +467,7 @@ class ValkeyDb(BaseDb):
             if not deserialize:
                 return session
 
-            if session_type == SessionType.AGENT.value:
-                return AgentSession.from_dict(session)
-            elif session_type == SessionType.TEAM.value:
-                return TeamSession.from_dict(session)
-            elif session_type == SessionType.WORKFLOW.value:
-                return WorkflowSession.from_dict(session)
-            else:
-                raise ValueError(f"Invalid session type: {session_type}")
+            return deserialize_session(session_type, session)
 
         except Exception as e:
             log_error(f"Exception reading session: {str(e)}")
@@ -547,7 +544,7 @@ class ValkeyDb(BaseDb):
                 filtered_sessions = [
                     s
                     for s in filtered_sessions
-                    if session_name.lower() in s.get("session_data", {}).get("session_name", "").lower()
+                    if session_name.lower() in ((s.get("session_data") or {}).get("session_name") or "").lower()
                 ]
 
             sorted_sessions = apply_sorting(records=filtered_sessions, sort_by=sort_by, sort_order=sort_order)
@@ -556,14 +553,7 @@ class ValkeyDb(BaseDb):
             if not deserialize:
                 return sessions, len(filtered_sessions)
 
-            if session_type == SessionType.AGENT:
-                return [AgentSession.from_dict(record) for record in sessions]  # type: ignore
-            elif session_type == SessionType.TEAM:
-                return [TeamSession.from_dict(record) for record in sessions]  # type: ignore
-            elif session_type == SessionType.WORKFLOW:
-                return [WorkflowSession.from_dict(record) for record in sessions]  # type: ignore
-            else:
-                raise ValueError(f"Invalid session type: {session_type}")
+            return deserialize_sessions(session_type, sessions)
 
         except Exception as e:
             log_error(f"Exception reading sessions: {str(e)}")
@@ -618,14 +608,7 @@ class ValkeyDb(BaseDb):
             if not deserialize:
                 return session
 
-            if session_type == SessionType.AGENT:
-                return AgentSession.from_dict(session)
-            elif session_type == SessionType.TEAM:
-                return TeamSession.from_dict(session)
-            elif session_type == SessionType.WORKFLOW:
-                return WorkflowSession.from_dict(session)
-            else:
-                raise ValueError(f"Invalid session type: {session_type}")
+            return deserialize_session(session_type, session)
 
         except Exception as e:
             log_error(f"Error renaming session: {str(e)}")
@@ -807,7 +790,8 @@ class ValkeyDb(BaseDb):
 
             # Phase 2: Prepare data and batch-write
             write_pipeline = self._create_pipeline()
-            prepared: List[Tuple[Session, Dict[str, Any]]] = []
+            prepared: List[Tuple[Session, Dict[str, Any], int]] = []
+            write_cmd_count = 0
 
             for session in valid_sessions:
                 session_dict = session.to_dict()
@@ -881,21 +865,25 @@ class ValkeyDb(BaseDb):
 
                 key = generate_valkey_key(prefix=self.db_prefix, table_type="sessions", key_id=session.session_id)
                 expiry = ExpirySet(ExpiryType.SEC, self.expire) if self.expire is not None else None
+                set_cmd_index = write_cmd_count
                 write_pipeline.set(key, serialize_data(data), expiry=expiry)
+                write_cmd_count += 1
 
                 for field in index_fields:
                     if field in data and data[field] is not None:
                         index_key = generate_index_key(self.db_prefix, "sessions", field, str(data[field]))
                         write_pipeline.sadd(index_key, [session.session_id])
+                        write_cmd_count += 1
 
-                prepared.append((session, data))
+                prepared.append((session, data, set_cmd_index))
 
-            if prepared:
-                self._exec_pipeline(write_pipeline)
+            write_results = self._exec_pipeline(write_pipeline) if prepared else None
 
-            # Build return values
+            # Build return values, skipping records whose SET failed
             results: List[Union[Session, Dict[str, Any]]] = []
-            for session, data in prepared:
+            for session, data, set_cmd_index in prepared:
+                if write_results is None or isinstance(write_results[set_cmd_index], RequestError):
+                    continue
                 if not deserialize:
                     results.append(data)
                     continue
@@ -1292,22 +1280,29 @@ class ValkeyDb(BaseDb):
             # Batch all writes in a single pipeline
             pipeline = self._create_pipeline()
             expiry = ExpirySet(ExpiryType.SEC, self.expire) if self.expire is not None else None
+            set_cmd_indices: List[int] = []
+            write_cmd_count = 0
             for data in prepared:
                 memory_id = str(data["memory_id"])
                 key = generate_valkey_key(prefix=self.db_prefix, table_type="memories", key_id=memory_id)
+                set_cmd_indices.append(write_cmd_count)
                 pipeline.set(key, serialize_data(data), expiry=expiry)
+                write_cmd_count += 1
 
                 # Add index entries
                 for field in index_fields:
                     if field in data and data[field] is not None:
                         index_key = generate_index_key(self.db_prefix, "memories", field, str(data[field]))
                         pipeline.sadd(index_key, [memory_id])
+                        write_cmd_count += 1
 
-            self._exec_pipeline(pipeline)
+            write_results = self._exec_pipeline(pipeline)
 
-            # Build return values
+            # Build return values, skipping records whose SET failed
             results: List[Union[UserMemory, Dict[str, Any]]] = []
-            for data in prepared:
+            for data, set_cmd_index in zip(prepared, set_cmd_indices):
+                if write_results is None or isinstance(write_results[set_cmd_index], RequestError):
+                    continue
                 if deserialize:
                     results.append(UserMemory.from_dict(data))
                 else:
@@ -2115,18 +2110,21 @@ class ValkeyDb(BaseDb):
                 if should_update_name:
                     existing["name"] = trace.name
 
-                # Update context fields ONLY if new value is not None (preserve non-null values)
-                if trace.run_id is not None:
+                # Preserve existing non-null context values: only fill in fields
+                # that the existing row left blank. Otherwise a later upsert from
+                # a child span (e.g. a post-hook agent's run with a different
+                # session_id) would overwrite the trace's already-correct context.
+                if existing.get("run_id") is None and trace.run_id is not None:
                     existing["run_id"] = trace.run_id
-                if trace.session_id is not None:
+                if existing.get("session_id") is None and trace.session_id is not None:
                     existing["session_id"] = trace.session_id
-                if trace.user_id is not None:
+                if existing.get("user_id") is None and trace.user_id is not None:
                     existing["user_id"] = trace.user_id
-                if trace.agent_id is not None:
+                if existing.get("agent_id") is None and trace.agent_id is not None:
                     existing["agent_id"] = trace.agent_id
-                if trace.team_id is not None:
+                if existing.get("team_id") is None and trace.team_id is not None:
                     existing["team_id"] = trace.team_id
-                if trace.workflow_id is not None:
+                if existing.get("workflow_id") is None and trace.workflow_id is not None:
                     existing["workflow_id"] = trace.workflow_id
 
                 log_debug(

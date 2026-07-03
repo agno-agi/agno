@@ -75,6 +75,9 @@ class ValkeyDB(VectorDb):
         distance: Distance = Distance.cosine,
         vector_algorithm: str = "HNSW",
         reranker: Optional[Reranker] = None,
+        id: Optional[str] = None,
+        name: Optional[str] = None,
+        description: Optional[str] = None,
     ):
         """
         Initialize the ValkeyDB instance.
@@ -96,9 +99,14 @@ class ValkeyDB(VectorDb):
             distance (Distance): Distance metric for vector comparisons.
             vector_algorithm (str): Vector indexing algorithm ("HNSW" or "FLAT").
             reranker (Optional[Reranker]): Reranker instance.
+            id (Optional[str]): Optional custom ID. If not provided, an id will be generated.
+            name (Optional[str]): Optional name for the vector database.
+            description (Optional[str]): Optional description for the vector database.
         """
         if not index_name:
             raise ValueError("Index name must be provided.")
+
+        super().__init__(id=id, name=name, description=description)
 
         self.host = host
         self.port = port
@@ -139,12 +147,17 @@ class ValkeyDB(VectorDb):
     def _get_client(self) -> GlideClient:
         """Get or create the GlideClient."""
         if self._glide_client is None or not self._client_initialized:
-            credentials = ServerCredentials(username=self.username, password=self.password) if self.password else None
+            credentials = (
+                ServerCredentials(username=self.username, password=self.password or "")
+                if (self.username or self.password)
+                else None
+            )
             config = GlideClientConfiguration(
                 addresses=[NodeAddress(host=self.host, port=self.port)],
                 database_id=self.database_id,
                 credentials=credentials,
                 use_tls=self.use_tls,
+                client_name="agno_vectordb_client",
             )
             self._glide_client = GlideClient.create(config)
             self._client_initialized = True
@@ -337,9 +350,10 @@ class ValkeyDB(VectorDb):
             for doc in documents:
                 parsed_doc = self._parse_hash(doc)
                 parsed_doc["content_hash"] = content_hash
-                doc_id = parsed_doc.pop("id")
+                # Keep "id" as a hash field so it is indexed (used by id_exists/delete_by_id)
+                doc_id = parsed_doc["id"]
                 key = f"{self.prefix}{doc_id}"
-                client.hset(key, cast(Mapping[str, str | bytes], parsed_doc))  # type: ignore[arg-type]
+                client.hset(key, cast(Mapping[str, Union[str, bytes]], parsed_doc))  # type: ignore[arg-type]
             log_debug(f"Inserted {len(documents)} documents with content_hash: {content_hash}")
         except Exception as e:
             log_error(f"Error inserting documents: {str(e)}")
@@ -443,8 +457,8 @@ class ValkeyDB(VectorDb):
 
         Note:
             The query is passed directly to FT.SEARCH without escaping special characters
-            (@, {, }, -, |, etc.). Left as-is for consistent behavior with the Redis implementation.
-            Queries containing these characters may fail or produce unexpected results.
+            (@, {, }, -, |, etc.). Queries containing these characters may fail or produce
+            unexpected results; failures are caught and return an empty list.
         """
         try:
             client = self._get_client()
@@ -562,8 +576,10 @@ class ValkeyDB(VectorDb):
         try:
             client = self._get_client()
             keys = self._find_keys_by_tag("content_id", content_id)
+            # Valkey HASH values must be str or bytes — coerce everything else
+            sanitized = {k: v if isinstance(v, bytes) else str(v) for k, v in metadata.items() if v is not None}
             for key in keys:
-                client.hset(key, cast(Mapping[str, str | bytes], metadata))  # type: ignore[arg-type]
+                client.hset(key, cast(Mapping[str, Union[str, bytes]], sanitized))  # type: ignore[arg-type]
             log_debug(f"Updated metadata for documents with content_id '{content_id}'")
         except Exception as e:
             log_error(f"Error updating metadata: {str(e)}")
@@ -628,13 +644,13 @@ class ValkeyDB(VectorDb):
     def _delete_all_keys(self) -> None:
         """Delete all keys with the index prefix."""
         client = self._get_client()
-        cursor: bytes | str = b"0"
+        cursor: Union[bytes, str] = b"0"
         while True:
             scan_result = client.scan(cursor=cursor, match=f"{self.prefix}*", count=100)
             cursor = scan_result[0]  # type: ignore[assignment]
             keys = scan_result[1]
             if keys:
-                str_keys: List[str | bytes] = [_decode_value(k) for k in keys]
+                str_keys: List[Union[str, bytes]] = [_decode_value(k) for k in keys]
                 client.delete(str_keys)
             cursor_str = cursor.decode("utf-8") if isinstance(cursor, bytes) else str(cursor)
             if cursor_str == "0":

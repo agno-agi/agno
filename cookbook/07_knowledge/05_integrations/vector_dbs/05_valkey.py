@@ -50,7 +50,7 @@ if __name__ == "__main__":
 
     knowledge.insert(url=pdf_url)
     agent = Agent(
-        model=OpenAIResponses(id="gpt-5.2"),
+        model=OpenAIResponses(id="gpt-5.5"),
         knowledge=knowledge,
         search_knowledge=True,
         markdown=True,
