@@ -17,6 +17,7 @@ class ClickUpTools(Toolkit):
         self,
         api_key: Optional[str] = None,
         master_space_id: Optional[str] = None,
+        timeout: int = 30,
         **kwargs,
     ):
         self.api_key = api_key or getenv("CLICKUP_API_KEY")
@@ -39,7 +40,7 @@ class ClickUpTools(Toolkit):
             self.list_lists,
         ]
 
-        super().__init__(name="clickup", tools=tools, **kwargs)
+        super().__init__(name="clickup", tools=tools, timeout=timeout, **kwargs)
 
     def _make_request(
         self, method: str, endpoint: str, params: Optional[Dict] = None, data: Optional[Dict] = None
@@ -47,7 +48,9 @@ class ClickUpTools(Toolkit):
         """Make a request to the ClickUp API."""
         url = f"{self.base_url}/{endpoint}"
         try:
-            response = requests.request(method=method, url=url, headers=self.headers, params=params, json=data)
+            response = requests.request(
+                method=method, url=url, headers=self.headers, params=params, json=data, timeout=self.timeout
+            )
             response.raise_for_status()
             return response.json()
         except requests.exceptions.RequestException as e:
