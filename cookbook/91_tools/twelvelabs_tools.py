@@ -24,7 +24,7 @@ agent = Agent(
 )
 
 agent.print_response(
-    "What is happening in this video? https://sample-videos.com/video321/mp4/720/big_buck_bunny_720p_1mb.mp4",
+    "What is happening in this video? https://interactive-examples.mdn.mozilla.net/media/cc0-videos/flower.mp4",
 )
 
 # Example 2: Enable only text embedding (useful for embedding search queries
