@@ -157,6 +157,10 @@ trafilatura = ["trafilatura"]
 neo4j = ["neo4j"]
 telegram = ["pyTelegramBotAPI>=4.32.0", "aiohttp"]
 
+# Dependencies for Lark (Feishu) integration
+lark = []
+lark-crypto = ["cryptography>=41.0"]
+
 # Dependencies for Storage
 sql = ["sqlalchemy"]
 postgres = ["psycopg-binary"]
@@ -475,6 +479,7 @@ module = [
   "clickhouse_connect.*",
   "clip.*",
   "cohere.*",
+  "cryptography.*",
   "crawl4ai.*",
   "daytona.*",
   "daytona_api_client.*",
