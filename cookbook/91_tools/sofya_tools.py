@@ -54,5 +54,5 @@ if __name__ == "__main__":
     )
 
     research_agent.print_response(
-        "Write a short report on how AI agents use web search tools", markdown=True
+        "Write a short report on how AI agents use web search tools", markdown=True, stream=True
     )
