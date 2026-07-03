@@ -202,7 +202,7 @@ async def test_agentic_filtering_gemini(knowledge_base):
 
 @pytest.mark.skipif(not os.environ.get("ANTHROPIC_API_KEY"), reason="ANTHROPIC_API_KEY not set")
 async def test_agentic_filtering_claude(knowledge_base):
-    agent = Agent(model=Claude("claude-sonnet-4-0"), knowledge=knowledge_base, enable_agentic_knowledge_filters=True)
+    agent = Agent(model=Claude("claude-sonnet-4-5"), knowledge=knowledge_base, enable_agentic_knowledge_filters=True)
     response = await agent.arun(
         "Tell me about revenue performance and top selling products in the region north_america and data_type sales",
         markdown=True,

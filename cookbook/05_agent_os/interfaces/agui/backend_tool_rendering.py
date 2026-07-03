@@ -18,13 +18,52 @@ from agno.tools import tool
 def get_weather(location: str) -> dict:
     """Get detailed weather for a location. Returns structured data for frontend rendering."""
     data = {
-        "San Francisco": {"city": "San Francisco", "temperature": 18, "humidity": 65, "wind_speed": 12, "conditions": "Sunny"},
-        "New York": {"city": "New York", "temperature": 22, "humidity": 55, "wind_speed": 8, "conditions": "Cloudy"},
-        "Tokyo": {"city": "Tokyo", "temperature": 26, "humidity": 70, "wind_speed": 5, "conditions": "Rainy"},
-        "London": {"city": "London", "temperature": 15, "humidity": 80, "wind_speed": 15, "conditions": "Overcast"},
-        "Paris": {"city": "Paris", "temperature": 20, "humidity": 60, "wind_speed": 10, "conditions": "Partly cloudy"},
+        "San Francisco": {
+            "city": "San Francisco",
+            "temperature": 18,
+            "humidity": 65,
+            "wind_speed": 12,
+            "conditions": "Sunny",
+        },
+        "New York": {
+            "city": "New York",
+            "temperature": 22,
+            "humidity": 55,
+            "wind_speed": 8,
+            "conditions": "Cloudy",
+        },
+        "Tokyo": {
+            "city": "Tokyo",
+            "temperature": 26,
+            "humidity": 70,
+            "wind_speed": 5,
+            "conditions": "Rainy",
+        },
+        "London": {
+            "city": "London",
+            "temperature": 15,
+            "humidity": 80,
+            "wind_speed": 15,
+            "conditions": "Overcast",
+        },
+        "Paris": {
+            "city": "Paris",
+            "temperature": 20,
+            "humidity": 60,
+            "wind_speed": 10,
+            "conditions": "Partly cloudy",
+        },
     }
-    return data.get(location, {"city": location, "temperature": 20, "humidity": 60, "wind_speed": 10, "conditions": "Partly cloudy"})
+    return data.get(
+        location,
+        {
+            "city": location,
+            "temperature": 20,
+            "humidity": 60,
+            "wind_speed": 10,
+            "conditions": "Partly cloudy",
+        },
+    )
 
 
 backend_tool_agent = Agent(

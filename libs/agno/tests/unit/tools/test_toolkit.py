@@ -856,3 +856,43 @@ def test_check_path_restrict_false_returns_false_on_nul_byte(basic_toolkit):
         ok, path = basic_toolkit._check_path("name\x00", base, restrict_to_base_dir=False)
         assert ok is False
         assert path == base
+
+
+def test_default_tools_not_shared_between_instances():
+    """The default `tools` must not be a shared mutable object across instances."""
+    first = Toolkit(name="first")
+    second = Toolkit(name="second")
+
+    assert first.tools is not second.tools
+    assert first.tools == []
+    assert second.tools == []
+
+
+def test_subclass_mutating_self_tools_does_not_leak():
+    """A subclass that appends to self.tools must not leak into other instances or
+    poison the default for future constructions."""
+
+    class MutatingToolkit(Toolkit):
+        def __init__(self, name: str):
+            super().__init__(name=name)
+            self.tools.append(self.extra_tool)
+
+        def extra_tool(self) -> str:
+            return "ok"
+
+    first = MutatingToolkit(name="first")
+    second = MutatingToolkit(name="second")
+
+    assert len(first.tools) == 1
+    assert len(second.tools) == 1
+
+    # A plain Toolkit built afterwards must still start empty.
+    assert Toolkit(name="plain").tools == []
+
+
+def test_explicit_tools_argument_preserved():
+    """Passing an explicit tools list must still register normally."""
+    toolkit = Toolkit(name="explicit", tools=[example_func])
+
+    assert example_func in toolkit.tools
+    assert "example_func" in toolkit.functions

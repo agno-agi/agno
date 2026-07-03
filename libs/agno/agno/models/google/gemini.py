@@ -83,7 +83,7 @@ class Gemini(Model):
     Based on https://googleapis.github.io/python-genai/
     """
 
-    id: str = "gemini-flash-latest"
+    id: str = "gemini-3.5-flash"
     name: str = "Gemini"
     provider: str = "Google"
 

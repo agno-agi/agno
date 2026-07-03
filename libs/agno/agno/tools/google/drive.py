@@ -43,9 +43,11 @@ from os import getenv
 from pathlib import Path
 from typing import Any, List, Optional, Tuple, Union, cast
 
+from agno.exceptions import PathSecurityError
 from agno.tools.google.auth import google_authenticate
 from agno.tools.google.base import GoogleToolkit
 from agno.utils.log import log_debug, log_error, log_warning
+from agno.utils.path_safety import safe_join_filename
 
 try:
     from google.oauth2.credentials import Credentials
@@ -720,7 +722,10 @@ class GoogleDriveTools(GoogleToolkit):
             service = cast(Resource, self.service)
             metadata = self._get_file_metadata(file_id, "id,name,mimeType")
             mime_type = metadata.get("mimeType", "")
-            path = self.download_dir / metadata.get("name", file_id)
+            try:
+                path = safe_join_filename(self.download_dir, metadata.get("name", file_id))
+            except PathSecurityError as e:
+                return json.dumps({"error": f"Invalid file name from Google Drive: {e}", "file": metadata})
 
             # Resolve export target — user override > auto-detect > None for regular files
             if export_format:
