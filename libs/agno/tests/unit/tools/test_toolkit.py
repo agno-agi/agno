@@ -157,6 +157,49 @@ def test_caching_parameters():
     assert toolkit.cache_dir == "/tmp/cache"
 
 
+def test_timeout_defaults_to_none():
+    """Timeout is opt-in — the base default is None so subclasses can decide
+    whether to expose it and what value to use."""
+    toolkit = Toolkit(name="notimeout", tools=[example_func])
+    assert toolkit.timeout is None
+
+
+def test_timeout_is_stored_on_instance():
+    """A user-supplied timeout is stored on the toolkit for subclasses to consume."""
+    toolkit = Toolkit(name="withtimeout", tools=[example_func], timeout=45)
+    assert toolkit.timeout == 45
+
+
+def test_subclass_forwards_timeout_via_super():
+    """Regression: subclasses that accept their own ``timeout`` and forward it via
+    ``super().__init__(timeout=...)`` end up with the value on ``self.timeout``.
+    This is the pattern documented in the Toolkit docstring and the calcom /
+    hackernews tools rely on it.
+    """
+
+    class _HttpToolkit(Toolkit):
+        def __init__(self, timeout: int = 30):
+            super().__init__(name="http", tools=[example_func], timeout=timeout)
+
+    assert _HttpToolkit().timeout == 30
+    assert _HttpToolkit(timeout=5).timeout == 5
+
+
+def test_subclass_setting_timeout_before_super_is_preserved():
+    """Regression: many existing toolkits assign ``self.timeout = timeout`` in
+    their own ``__init__`` before calling ``super().__init__(**kwargs)``. The
+    base class must not clobber that pre-existing value with its default None.
+    """
+
+    class _LegacyToolkit(Toolkit):
+        def __init__(self, timeout: int = 42, **kwargs):
+            self.timeout = timeout
+            super().__init__(name="legacy", tools=[example_func], **kwargs)
+
+    assert _LegacyToolkit().timeout == 42
+    assert _LegacyToolkit(timeout=7).timeout == 7
+
+
 def test_toolkit_repr(multi_func_toolkit):
     """Test the string representation of a toolkit."""
     repr_str = repr(multi_func_toolkit)
@@ -856,3 +899,43 @@ def test_check_path_restrict_false_returns_false_on_nul_byte(basic_toolkit):
         ok, path = basic_toolkit._check_path("name\x00", base, restrict_to_base_dir=False)
         assert ok is False
         assert path == base
+
+
+def test_default_tools_not_shared_between_instances():
+    """The default `tools` must not be a shared mutable object across instances."""
+    first = Toolkit(name="first")
+    second = Toolkit(name="second")
+
+    assert first.tools is not second.tools
+    assert first.tools == []
+    assert second.tools == []
+
+
+def test_subclass_mutating_self_tools_does_not_leak():
+    """A subclass that appends to self.tools must not leak into other instances or
+    poison the default for future constructions."""
+
+    class MutatingToolkit(Toolkit):
+        def __init__(self, name: str):
+            super().__init__(name=name)
+            self.tools.append(self.extra_tool)
+
+        def extra_tool(self) -> str:
+            return "ok"
+
+    first = MutatingToolkit(name="first")
+    second = MutatingToolkit(name="second")
+
+    assert len(first.tools) == 1
+    assert len(second.tools) == 1
+
+    # A plain Toolkit built afterwards must still start empty.
+    assert Toolkit(name="plain").tools == []
+
+
+def test_explicit_tools_argument_preserved():
+    """Passing an explicit tools list must still register normally."""
+    toolkit = Toolkit(name="explicit", tools=[example_func])
+
+    assert example_func in toolkit.tools
+    assert "example_func" in toolkit.functions

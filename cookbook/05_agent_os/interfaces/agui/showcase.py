@@ -8,16 +8,15 @@ Run this to test AG-UI integration with the Dojo frontend at localhost:3002.
 Imports agents from individual files and mounts them at Dojo-compatible paths.
 """
 
+from agent_with_media import media_agent
+from agentic_chat import agentic_chat_agent
 from agno.os import AgentOS
 from agno.os.interfaces.agui import AGUI
-
-from agentic_chat import agentic_chat_agent
 from backend_tool_rendering import backend_tool_agent
 from human_in_the_loop import hitl_agent
-from tool_based_generative_ui import generative_ui_agent
-from shared_state import shared_state_agent
 from reasoning_agent import chat_agent as reasoning_agent
-from agent_with_media import media_agent
+from shared_state import shared_state_agent
+from tool_based_generative_ui import generative_ui_agent
 
 agent_os = AgentOS(
     agents=[

@@ -4,8 +4,7 @@ from agno.models.openai import OpenAIChat
 from agno.os import AgentOS
 from agno.tools.websearch import WebSearchTools
 
-
-db = PostgresDb(db_url="postgresql+psycopg://ai:ai@localhost:5532/ai") 
+db = PostgresDb(db_url="postgresql+psycopg://ai:ai@localhost:5532/ai")
 
 research_agent = Agent(
     name="Research Agent",
