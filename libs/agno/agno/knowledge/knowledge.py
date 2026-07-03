@@ -2534,11 +2534,13 @@ class Knowledge(RemoteKnowledge):
                 log_warning("Content id is required to update Knowledge content")
                 return None
 
-            # TODO: we shouldn't check for content here, we should trust the upsert method to handle conflicts
+            # Upsert semantics: if the row does not exist yet, build it from the
+            # incoming Content so the call actually inserts a row. The previous
+            # behavior returned None on a missing id, silently dropping the
+            # caller's data (issue #7754).
             content_row = self.contents_db.get_knowledge_content(content.id)
             if content_row is None:
-                log_warning(f"Content row not found for id: {content.id}, cannot update status")
-                return None
+                content_row = self._build_knowledge_row(content)
 
             # Apply safe string handling for updates as well
             if content.name is not None:
@@ -2578,14 +2580,15 @@ class Knowledge(RemoteKnowledge):
                 log_warning("Content id is required to update Knowledge content")
                 return None
 
-            # TODO: we shouldn't check for content here, we should trust the upsert method to handle conflicts
+            # Upsert semantics: if the row does not exist yet, build it from the
+            # incoming Content so the call actually inserts a row. Mirrors the
+            # fix in _update_content for the async path (issue #7754).
             if isinstance(self.contents_db, AsyncBaseDb):
                 content_row = await self.contents_db.get_knowledge_content(content.id)
             else:
                 content_row = self.contents_db.get_knowledge_content(content.id)
             if content_row is None:
-                log_warning(f"Content row not found for id: {content.id}, cannot update status")
-                return None
+                content_row = self._build_knowledge_row(content)
 
             # Apply safe string handling for updates
             if content.name is not None:
