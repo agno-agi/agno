@@ -1391,6 +1391,26 @@ def collect_mcp_tools_from_team(team: Team, mcp_tools: List[Any]) -> None:
                 collect_mcp_tools_from_team(member, mcp_tools)
 
 
+def collect_mcp_tools_from_registry(registry: Optional[Registry], mcp_tools: List[Any]) -> None:
+    """Collect MCP tools declared directly on the registry.
+
+    Registry tools are not attached to any agent, team or workflow, so the
+    other collectors never see them. They still must be connected in the
+    AgentOS lifespan: components created from registry tools (e.g. via
+    StudioTool) serialize a toolkit's functions at persist time, and an
+    unconnected MCP toolkit has none -- its tools would be silently dropped.
+    """
+    if registry is None or not registry.tools:
+        return
+    for tool in registry.tools:
+        # Alternate method of using isinstance(tool, (MCPTools, MultiMCPTools)) to avoid imports
+        if hasattr(type(tool), "__mro__") and any(
+            c.__name__ in ["MCPTools", "MultiMCPTools"] for c in type(tool).__mro__
+        ):
+            if tool not in mcp_tools:
+                mcp_tools.append(tool)
+
+
 def collect_mcp_tools_from_workflow(workflow: Workflow, mcp_tools: List[Any]) -> None:
     """Recursively collect MCP tools from a workflow and its steps."""
     from agno.workflow.steps import Steps

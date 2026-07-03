@@ -105,7 +105,10 @@ def test_parallel_tool_calls():
         telemetry=False,
     )
 
-    response = agent.run("What is the current price of TSLA and AAPL?")
+    response = agent.run(
+        "Use the available tool to look up the current stock price of TSLA, "
+        "and separately look up the current stock price of AAPL."
+    )
 
     # Verify tool usage
     assert response.messages is not None
