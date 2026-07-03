@@ -11,89 +11,6 @@ except ImportError:
     raise ImportError("`duckdb` not installed. Please install using `pip install duckdb`.")
 
 
-# DuckDB reserved keywords (from duckdb_keywords()). A derived table name matching one of these
-# is not a valid unquoted identifier, so get_table_name_from_path suffixes it with "_".
-_DUCKDB_RESERVED_KEYWORDS = frozenset(
-    {
-        "all",
-        "analyse",
-        "analyze",
-        "and",
-        "any",
-        "array",
-        "as",
-        "asc",
-        "asymmetric",
-        "both",
-        "case",
-        "cast",
-        "check",
-        "collate",
-        "column",
-        "constraint",
-        "create",
-        "default",
-        "deferrable",
-        "desc",
-        "describe",
-        "distinct",
-        "do",
-        "else",
-        "end",
-        "except",
-        "false",
-        "fetch",
-        "for",
-        "foreign",
-        "from",
-        "group",
-        "having",
-        "in",
-        "initially",
-        "intersect",
-        "into",
-        "lambda",
-        "lateral",
-        "leading",
-        "limit",
-        "not",
-        "null",
-        "offset",
-        "on",
-        "only",
-        "or",
-        "order",
-        "pivot",
-        "pivot_longer",
-        "pivot_wider",
-        "placing",
-        "primary",
-        "qualify",
-        "references",
-        "returning",
-        "select",
-        "show",
-        "some",
-        "summarize",
-        "symmetric",
-        "table",
-        "then",
-        "to",
-        "trailing",
-        "true",
-        "union",
-        "unique",
-        "unpivot",
-        "using",
-        "variadic",
-        "when",
-        "where",
-        "window",
-        "with",
-    }
-)
-
-
 class DuckDbTools(Toolkit):
     def __init__(
         self,
@@ -109,6 +26,7 @@ class DuckDbTools(Toolkit):
         self.config: Optional[dict] = config
         self._connection: Optional[duckdb.DuckDBPyConnection] = connection
         self.init_commands: Optional[List] = init_commands
+        self._reserved_keywords: Optional[frozenset] = None
 
         tools: List[Any] = [
             self.show_tables,
@@ -281,10 +199,19 @@ class DuckDbTools(Toolkit):
             table = f"_{table}"
         # The agent reuses this name verbatim in later free-form SQL, so a reserved keyword would
         # break the next query even though the create succeeds. Suffix it to keep it unquoted-safe.
-        if table.lower() in _DUCKDB_RESERVED_KEYWORDS:
+        if table.lower() in self._reserved_keywords_set():
             table = f"{table}_"
 
         return table
+
+    def _reserved_keywords_set(self) -> frozenset:
+        """Fetch and cache DuckDB's reserved keywords so derived table names stay valid identifiers."""
+        if self._reserved_keywords is None:
+            rows = self.connection.sql(
+                "SELECT keyword_name FROM duckdb_keywords() WHERE keyword_category = 'reserved'"
+            ).fetchall()
+            self._reserved_keywords = frozenset(str(row[0]).lower() for row in rows)
+        return self._reserved_keywords
 
     def _escape_sql_string(self, value: str) -> str:
         """Escape single quotes so a value is safe inside a SQL string literal."""
@@ -488,8 +415,15 @@ class DuckDbTools(Toolkit):
         return result
 
     def _fts_schema_name(self, table: str) -> str:
-        """Get the FTS macro schema (fts_main_<table>) DuckDB creates for a table."""
-        return f"fts_main_{table.split('.')[-1]}"
+        """Get the FTS macro schema DuckDB creates for a table, quoted as an identifier.
+
+        DuckDB names it fts_<schema>_<table>, so a schema-qualified table lands in
+        fts_<schema>_<table> rather than fts_main_<table>.
+        """
+        parts = table.split(".")
+        schema = parts[0] if len(parts) > 1 else "main"
+        name = f"fts_{schema}_{parts[-1]}"
+        return '"' + name.replace('"', '""') + '"'
 
     def full_text_search(self, table: str, unique_key: str, search_text: str) -> str:
         """Full text Search in a table column for a specific text/keyword

@@ -165,14 +165,24 @@ def test_get_table_name_from_path_special_characters(duckdb_tools_instance):
         ("/path/to/team's-data.csv", "team_s_data"),
         ("/path/to/2024 team's-data.csv", "_2024_team_s_data"),
         ("/path/to/###.csv", "tbl"),  # nothing valid left -> non-reserved fallback
-        ("/path/to/select.csv", "select_"),  # reserved keyword -> suffixed so it stays unquoted-safe
-        ("/path/to/order.csv", "order_"),  # reserved keyword
-        ("/path/to/table.csv", "table_"),  # reserved keyword
     ]
 
     for path, expected_table_name in test_cases:
         result = duckdb_tools_instance.get_table_name_from_path(path)
         assert result == expected_table_name, f"Failed for path: {path}"
+
+
+def test_get_table_name_from_path_suffixes_reserved_keywords():
+    """Reserved keywords are suffixed with _ so the bare name stays a valid unquoted identifier.
+
+    Uses a real DuckDB connection so the reserved list comes from duckdb_keywords().
+    """
+    tools = DuckDbTools()
+    assert tools.get_table_name_from_path("/path/to/select.csv") == "select_"
+    assert tools.get_table_name_from_path("/path/to/order.csv") == "order_"
+    assert tools.get_table_name_from_path("/path/to/table.csv") == "table_"
+    # a non-reserved name is left unchanged
+    assert tools.get_table_name_from_path("/path/to/report.csv") == "report"
 
 
 # --- Test Cases for Query Execution ---
@@ -403,5 +413,14 @@ def test_full_text_search_uses_table_specific_fts_schema(duckdb_tools_instance, 
     duckdb_tools_instance.full_text_search("docs", "id", "butter")
 
     call_args = mock_duckdb_connection.sql.call_args[0][0]
-    assert "fts_main_docs.match_bm25(id, 'butter')" in call_args
+    assert "\"fts_main_docs\".match_bm25(id, 'butter')" in call_args
     assert "fts_main_corpus" not in call_args
+
+
+def test_full_text_search_uses_schema_for_qualified_table(duckdb_tools_instance, mock_duckdb_connection):
+    """Test that a schema-qualified table resolves to fts_<schema>_<table>, matching DuckDB's naming."""
+    duckdb_tools_instance.full_text_search("myschema.docs", "id", "butter")
+
+    call_args = mock_duckdb_connection.sql.call_args[0][0]
+    assert "\"fts_myschema_docs\".match_bm25(id, 'butter')" in call_args
+    assert "fts_main_docs" not in call_args
