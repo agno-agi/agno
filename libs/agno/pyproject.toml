@@ -547,6 +547,7 @@ module = [
   "pinecone.*",
   "portkey_ai.*",
   "playwright.sync_api.*",
+  "plivo.*",
   "psycopg.*",
   "pyarrow.*",
   "pycountry.*",
