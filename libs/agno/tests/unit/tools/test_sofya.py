@@ -171,3 +171,51 @@ def test_research_success_markdown():
     assert "MCP is a protocol." in result
     assert "## Sources" in result
     assert "[Spec](https://spec.example)" in result
+
+
+# Tests for markdown fallbacks and API limits.
+def test_search_markdown_handles_missing_title_and_content():
+    """Sofya may omit title/content for some results; markdown must not render the literal 'None'."""
+    tools = SofyaTools(api_key="test_key", format="markdown")
+    payload = {
+        "query": "q",
+        "results": [
+            {"url": "https://e.com"},  # no title, no content
+            {"title": None, "url": "https://f.com", "content": None},
+        ],
+    }
+    with patch("agno.tools.sofya.requests.post", return_value=_mock_response(payload)):
+        result = tools.search_web("q")
+    assert "None" not in result
+    # Falls back to the URL as the link text when title is missing.
+    assert "[https://e.com](https://e.com)" in result
+    assert "[https://f.com](https://f.com)" in result
+
+
+def test_extract_url_content_caps_at_ten_urls(api_tools):
+    """Sofya's fetch endpoint caps at 10 URLs — the tool must trim client-side."""
+    urls = ",".join(f"https://e{i}.com" for i in range(15))
+    with patch(
+        "agno.tools.sofya.requests.post",
+        return_value=_mock_response({"results": []}),
+    ) as mock_post:
+        api_tools.extract_url_content(urls)
+    sent = mock_post.call_args.kwargs["json"]["urls"]
+    assert len(sent) == 10
+    assert sent[0] == "https://e0.com"
+    assert sent[-1] == "https://e9.com"
+
+
+def test_post_surfaces_http_error_body(api_tools):
+    """HTTP errors should include Sofya's response body, not just the status line."""
+    mock_resp = Mock(spec=requests.Response)
+    mock_resp.text = '{"error":"insufficient credits"}'
+    mock_resp.raise_for_status.side_effect = requests.HTTPError(
+        "402 Client Error: Payment Required for url: https://sofya.co/v1/search",
+        response=mock_resp,
+    )
+    with patch("agno.tools.sofya.requests.post", return_value=mock_resp):
+        result = json.loads(api_tools.search_web("q"))
+    assert "error" in result
+    assert "insufficient credits" in result["error"]
+    assert "402" in result["error"]

@@ -7,6 +7,11 @@ import requests
 from agno.tools import Toolkit
 from agno.utils.log import log_debug, log_error
 
+# Sofya's fetch endpoint is documented as "1 credit per URL, max 10 URLs" per
+# https://sofya.co/docs — enforce it client-side to give a clean error instead
+# of an opaque 400 from the API.
+FETCH_MAX_URLS = 10
+
 
 class SofyaTools(Toolkit):
     def __init__(
@@ -65,7 +70,11 @@ class SofyaTools(Toolkit):
         super().__init__(name="sofya_tools", tools=tools, **kwargs)
 
     def _post(self, path: str, payload: Dict[str, Any]) -> Dict[str, Any]:
-        """POST to the Sofya API and return the parsed JSON response."""
+        """POST to the Sofya API and return the parsed JSON response.
+
+        On HTTP errors, re-raises with the response body appended (truncated),
+        so callers see the Sofya-side error message instead of just the status.
+        """
         url = f"{self.base_url}/v1/{path}"
         headers = {
             "Authorization": f"Bearer {self.api_key}",
@@ -74,7 +83,11 @@ class SofyaTools(Toolkit):
         }
         log_debug(f"Calling Sofya {path}")
         response = requests.post(url, json=payload, headers=headers, timeout=self.timeout)
-        response.raise_for_status()
+        try:
+            response.raise_for_status()
+        except requests.HTTPError as e:
+            body = (response.text or "")[:500]
+            raise requests.HTTPError(f"{e} - body: {body}", response=response) from e
         return response.json()
 
     def search_web(self, query: str, max_results: Optional[int] = None) -> str:
@@ -125,11 +138,17 @@ class SofyaTools(Toolkit):
         if "answer" in clean:
             markdown += f"### Summary\n{clean['answer']}\n\n"
         for r in clean["results"]:
-            markdown += f"### [{r['title']}]({r['url']})\n{r['content']}\n\n"
+            url = r.get("url") or ""
+            title = r.get("title") or url or "Untitled"
+            content = r.get("content") or ""
+            markdown += f"### [{title}]({url})\n{content}\n\n"
         return markdown
 
     def extract_url_content(self, urls: str) -> str:
         """Fetch one or more URLs as clean markdown using Sofya. Also handles PDF, DOCX, and more.
+
+        Sofya's fetch endpoint accepts up to 10 URLs per call; extra URLs are dropped
+        client-side to avoid an opaque API error.
 
         Args:
             urls (str): Single URL or multiple comma-separated URLs to fetch.
@@ -144,6 +163,9 @@ class SofyaTools(Toolkit):
         url_list = [u.strip() for u in urls.split(",") if u.strip()]
         if not url_list:
             return json.dumps({"error": "No valid URLs provided"})
+        if len(url_list) > FETCH_MAX_URLS:
+            log_debug(f"Sofya fetch capped at {FETCH_MAX_URLS} URLs; dropping {len(url_list) - FETCH_MAX_URLS}")
+            url_list = url_list[:FETCH_MAX_URLS]
 
         try:
             data = self._post("fetch", {"urls": url_list})
