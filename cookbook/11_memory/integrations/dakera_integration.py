@@ -23,6 +23,7 @@ Usage:
 import os
 from dataclasses import dataclass, field
 from typing import Optional
+
 import httpx
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
@@ -40,6 +41,7 @@ except ImportError:
 # Dakera memory store — thin REST client
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class DakeraMemoryStore:
     """Persistent memory store backed by a self-hosted Dakera server.
@@ -52,7 +54,9 @@ class DakeraMemoryStore:
         POST /v1/memories/search   — semantic recall (decay-weighted)
     """
 
-    base_url: str = field(default_factory=lambda: os.getenv("DAKERA_URL", "http://localhost:3300"))
+    base_url: str = field(
+        default_factory=lambda: os.getenv("DAKERA_URL", "http://localhost:3300")
+    )
     api_key: str = field(default_factory=lambda: os.getenv("DAKERA_API_KEY", ""))
     namespace: str = "agno-agent"
 
@@ -62,7 +66,9 @@ class DakeraMemoryStore:
             "Content-Type": "application/json",
         }
 
-    def store(self, content: str, user_id: str = "default", session_id: str = "default") -> None:
+    def store(
+        self, content: str, user_id: str = "default", session_id: str = "default"
+    ) -> None:
         """Persist a memory entry to Dakera."""
         httpx.post(
             f"{self.base_url}/v1/memories",
@@ -76,7 +82,9 @@ class DakeraMemoryStore:
             timeout=10.0,
         ).raise_for_status()
 
-    def recall(self, query: str, user_id: Optional[str] = None, top_k: int = 5) -> list[str]:
+    def recall(
+        self, query: str, user_id: Optional[str] = None, top_k: int = 5
+    ) -> list[str]:
         """Recall memories semantically relevant to the query.
 
         Dakera uses decay-weighted scoring: memories that are recent and
@@ -119,6 +127,7 @@ print(f"Stored {len(initial_facts)} memories.\n")
 # ---------------------------------------------------------------------------
 # Build agent with recalled context
 # ---------------------------------------------------------------------------
+
 
 def build_agent_with_memory(task: str) -> Agent:
     """Build an Agno agent with prior memories injected into the system prompt."""
