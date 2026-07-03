@@ -1,6 +1,5 @@
 """JWTIssuer: minting tokens that JWTValidator accepts (the two are symmetric)."""
 
-
 import jwt
 import pytest
 

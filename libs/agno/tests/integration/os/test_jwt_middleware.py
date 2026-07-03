@@ -2247,9 +2247,7 @@ def test_expiration_is_required_by_default():
     with pytest.raises(jwt.InvalidTokenError):
         v.validate_token(no_exp)
 
-    with_exp = jwt.encode(
-        {"sub": "u", "exp": datetime.now(UTC) + timedelta(hours=1)}, JWT_SECRET, algorithm="HS256"
-    )
+    with_exp = jwt.encode({"sub": "u", "exp": datetime.now(UTC) + timedelta(hours=1)}, JWT_SECRET, algorithm="HS256")
     assert v.validate_token(with_exp)["sub"] == "u"
 
     lax = JWTValidator(verification_keys=[JWT_SECRET], algorithm="HS256", require_expiration=False)

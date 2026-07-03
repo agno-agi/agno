@@ -6,9 +6,7 @@ try:
         TokenSource,
     )
 except ImportError:
-    _PYJWT_MISSING = (
-        "PyJWT is not installed. Please install using `pip install 'agno[os]'` or `pip install PyJWT`"
-    )
+    _PYJWT_MISSING = "PyJWT is not installed. Please install using `pip install 'agno[os]'` or `pip install PyJWT`"
 
     class JWTMiddleware:  # type: ignore
         def __init__(self, *args, **kwargs):

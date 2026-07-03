@@ -28,7 +28,12 @@ class _CapturingSink(AuditSink):
 
 
 def _token(sub: str, **claims) -> str:
-    payload = {"sub": sub, "aud": OS_ID, "scopes": claims.pop("scopes", []), "exp": datetime.now(UTC) + timedelta(hours=1)}
+    payload = {
+        "sub": sub,
+        "aud": OS_ID,
+        "scopes": claims.pop("scopes", []),
+        "exp": datetime.now(UTC) + timedelta(hours=1),
+    }
     payload.update(claims)
     return jwt.encode(payload, SECRET, algorithm="HS256")
 
@@ -73,6 +78,25 @@ def test_store_crud_and_disable(tmp_path, db_url):
     assert store.remove("u2") is True
     assert store.get("u2") is None
     assert store.remove("u2") is False
+
+
+@pytest.mark.parametrize("db_url", [None, "sqlite"])
+def test_store_remove_many(tmp_path, db_url):
+    url = None if db_url is None else f"sqlite:///{tmp_path / 'users.db'}"
+    store = ManagedUserStore(db_url=url)
+    for i in ("u1", "u2", "u3"):
+        store.upsert(i, email=f"{i}@co")
+
+    # only existing ids are removed/returned; unknown ids and dups are skipped
+    removed = store.remove_many(["u1", "u2", "ghost", "u1"])
+    assert sorted(removed) == ["u1", "u2"]
+    assert store.get("u1") is None and store.get("u2") is None
+    assert store.get("u3") is not None
+    assert store.count() == 1
+
+    # empty list and all-unknown ids are no-ops
+    assert store.remove_many([]) == []
+    assert store.remove_many(["ghost"]) == []
 
 
 def test_store_emits_audit_with_actor_and_diff():
@@ -209,6 +233,34 @@ def test_users_api_is_admin_only():
 
     assert client.get("/authz/users", headers=_auth("bob")).status_code == 403  # non-admin
     assert client.get("/authz/users").status_code == 401  # anonymous
+
+
+def test_users_api_bulk_delete():
+    roles = ManagedRoleStore(db_url=_db_url())
+    roles.set_role_scopes("admin", ["agent_os:admin"])
+    roles.set_role_scopes("viewer", ["agents:*:read"])
+    roles.assign("alice", "admin")
+    roles.assign("bob", "viewer")
+    users = ManagedUserStore()
+
+    app = _os(roles, users).get_app()
+    app.include_router(get_roles_router(roles, user_store=users))
+    client = TestClient(app)
+
+    for uid in ("u1", "u2", "u3"):
+        client.post("/authz/users", headers=_auth("alice"), json={"id": uid, "email": f"{uid}@co"})
+
+    # bulk delete two known + one unknown id -> 204, only the known ones go
+    resp = client.request("DELETE", "/authz/users", headers=_auth("alice"), json={"user_ids": ["u1", "u2", "ghost"]})
+    assert resp.status_code == 204, resp.text
+    assert client.get("/authz/users/u1", headers=_auth("alice")).status_code == 404
+    assert client.get("/authz/users/u2", headers=_auth("alice")).status_code == 404
+    assert client.get("/authz/users/u3", headers=_auth("alice")).status_code == 200
+
+    # admin-only and validation (empty list is a 422)
+    assert client.request("DELETE", "/authz/users", headers=_auth("bob"), json={"user_ids": ["u3"]}).status_code == 403
+    assert client.request("DELETE", "/authz/users", json={"user_ids": ["u3"]}).status_code == 401
+    assert client.request("DELETE", "/authz/users", headers=_auth("alice"), json={"user_ids": []}).status_code == 422
 
 
 def test_disabled_user_is_denied_even_with_valid_token():

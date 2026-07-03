@@ -46,7 +46,9 @@ class TestScopeProviderAccessibleIds:
         self.p = ScopeAuthorizationProvider()
 
     def test_wildcard(self):
-        assert self.p.accessible_resource_ids(ctx(scopes=["agents:*:read"], resource_type="agents", action="read")) == {"*"}
+        assert self.p.accessible_resource_ids(ctx(scopes=["agents:*:read"], resource_type="agents", action="read")) == {
+            "*"
+        }
 
     def test_specific_ids(self):
         got = self.p.accessible_resource_ids(
@@ -55,7 +57,9 @@ class TestScopeProviderAccessibleIds:
         assert got == {"a1", "a2"}
 
     def test_admin_wildcard(self):
-        assert self.p.accessible_resource_ids(ctx(scopes=["agent_os:admin"], resource_type="agents", action="read")) == {"*"}
+        assert self.p.accessible_resource_ids(
+            ctx(scopes=["agent_os:admin"], resource_type="agents", action="read")
+        ) == {"*"}
 
 
 class TestRequireDefault:
