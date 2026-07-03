@@ -38,7 +38,7 @@ You are an audio analysis expert. Transcribe and summarize audio content clearly
 # ---------------------------------------------------------------------------
 audio_agent = Agent(
     name="Audio Analyst",
-    model=Gemini(id="gemini-3-flash-preview"),
+    model=Gemini(id="gemini-3.5-flash"),
     instructions=instructions,
     markdown=True,
 )

@@ -457,9 +457,6 @@ class Qdrant(VectorDb):
                         iter(self.sparse_encoder.embed([document.content]))
                     ).as_object()  # type: ignore
 
-            if self.search_type in [SearchType.keyword, SearchType.hybrid]:
-                vector[self.sparse_vector_name] = next(iter(self.sparse_encoder.embed([document.content]))).as_object()
-
             # Create payload with document properties
             payload = {
                 "name": document.name,

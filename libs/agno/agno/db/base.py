@@ -51,6 +51,7 @@ class BaseDb(ABC):
         schedules_table: Optional[str] = None,
         schedule_runs_table: Optional[str] = None,
         approvals_table: Optional[str] = None,
+        auth_tokens_table: Optional[str] = None,
         id: Optional[str] = None,
     ):
         self.id = id or str(uuid4())
@@ -70,6 +71,7 @@ class BaseDb(ABC):
         self.schedules_table_name = schedules_table or "agno_schedules"
         self.schedule_runs_table_name = schedule_runs_table or "agno_schedule_runs"
         self.approvals_table_name = approvals_table or "agno_approvals"
+        self.auth_tokens_table_name = auth_tokens_table or "agno_auth_tokens"
 
     def to_dict(self) -> Dict[str, Any]:
         """
@@ -93,6 +95,7 @@ class BaseDb(ABC):
             "schedules_table": self.schedules_table_name,
             "schedule_runs_table": self.schedule_runs_table_name,
             "approvals_table": self.approvals_table_name,
+            "auth_tokens_table": self.auth_tokens_table_name,
         }
 
     @classmethod
@@ -117,6 +120,7 @@ class BaseDb(ABC):
             schedules_table=data.get("schedules_table"),
             schedule_runs_table=data.get("schedule_runs_table"),
             approvals_table=data.get("approvals_table"),
+            auth_tokens_table=data.get("auth_tokens_table"),
             id=data.get("id"),
         )
 
@@ -159,7 +163,7 @@ class BaseDb(ABC):
     def get_session(
         self,
         session_id: str,
-        session_type: SessionType,
+        session_type: Optional[SessionType] = None,
         user_id: Optional[str] = None,
         deserialize: Optional[bool] = True,
     ) -> Optional[Union[Session, Dict[str, Any]]]:
@@ -168,7 +172,7 @@ class BaseDb(ABC):
     @abstractmethod
     def get_sessions(
         self,
-        session_type: SessionType,
+        session_type: Optional[SessionType] = None,
         user_id: Optional[str] = None,
         component_id: Optional[str] = None,
         session_name: Optional[str] = None,
@@ -186,7 +190,7 @@ class BaseDb(ABC):
     def rename_session(
         self,
         session_id: str,
-        session_type: SessionType,
+        session_type: Optional[SessionType],
         session_name: str,
         user_id: Optional[str] = None,
         deserialize: Optional[bool] = True,
@@ -402,25 +406,22 @@ class BaseDb(ABC):
         self,
         trace_id: Optional[str] = None,
         run_id: Optional[str] = None,
-        session_id: Optional[str] = None,
-        user_id: Optional[str] = None,
-        agent_id: Optional[str] = None,
     ):
-        """Get a single trace by trace_id or other filters.
+        """Get a single trace by trace_id (or run_id).
+
+        A trace_id deterministically identifies one trace, which already
+        belongs to one agent / team / workflow / session / user. Adding any of
+        those as filters would just narrow a unique lookup redundantly — they
+        don't belong here. Ownership / authorization checks live at the route
+        layer (compare ``trace.user_id`` to the caller after fetching).
 
         Args:
             trace_id: The unique trace identifier.
-            run_id: Filter by run ID (returns first match).
-            session_id: Filter by session ID (returns first match).
-            user_id: Filter by user ID (returns first match).
-            agent_id: Filter by agent ID (returns first match).
+            run_id: Fallback lookup when the caller has run_id but not trace_id
+                (one trace per run, so this is also a unique alternative key).
 
         Returns:
             Optional[Trace]: The trace if found, None otherwise.
-
-        Note:
-            If multiple filters are provided, trace_id takes precedence.
-            For other filters, the most recent trace is returned.
         """
         raise NotImplementedError
 
@@ -940,6 +941,41 @@ class BaseDb(ABC):
         """
         raise NotImplementedError
 
+    def update_learning(self, id: str, content: Dict[str, Any], metadata: Optional[Dict[str, Any]] = None) -> bool:
+        """Update an existing learning record in place. Does NOT insert.
+
+        Unlike ``upsert_learning`` this only touches an existing row (sets content/metadata/
+        updated_at; never inserts and never changes created_at or identity fields). It exists
+        so PATCH can be a true update: a row deleted out from under the caller simply isn't
+        matched, instead of being silently re-created (which would also let a concurrent agent
+        write get clobbered/destroyed).
+
+        Args:
+            id: The learning ID to update.
+            content: Replacement content.
+            metadata: Replacement metadata.
+
+        Returns:
+            True if a row was updated, False if no row with that id exists.
+        """
+        raise NotImplementedError
+
+    def delete_user_learnings(self, user_id: str, learning_type: Optional[str] = None) -> int:
+        """Delete every learning record owned by a user.
+
+        Removes all rows where ``user_id`` matches. Records with no owner
+        (``user_id IS NULL``) are not affected.
+
+        Args:
+            user_id: The user whose learnings should be deleted.
+            learning_type: When provided, restrict deletion to this single learning type;
+                otherwise all of the user's learnings are removed.
+
+        Returns:
+            The number of records deleted.
+        """
+        raise NotImplementedError
+
     @abstractmethod
     def get_learnings(
         self,
@@ -968,6 +1004,87 @@ class BaseDb(ABC):
 
         Returns:
             List of learning records.
+        """
+        raise NotImplementedError
+
+    def get_learning_by_id(self, id: str) -> Optional[Dict[str, Any]]:
+        """Retrieve a single learning record by its primary key.
+
+        Args:
+            id: The learning ID.
+
+        Returns:
+            The learning record dict, or None if not found.
+        """
+        raise NotImplementedError
+
+    def list_learnings(
+        self,
+        learning_type: Optional[str] = None,
+        user_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+        namespace: Optional[str] = None,
+        entity_id: Optional[str] = None,
+        entity_type: Optional[str] = None,
+        include_global: bool = False,
+        limit: int = 100,
+        page: int = 1,
+        sort_by: Optional[str] = None,
+        sort_order: Optional[str] = None,
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        """List learning records with pagination, returning the page and total count.
+
+        Args:
+            learning_type: Filter by learning type.
+            user_id: Filter by user ID.
+            agent_id: Filter by agent ID.
+            team_id: Filter by team ID.
+            session_id: Filter by session ID.
+            namespace: Filter by namespace.
+            entity_id: Filter by entity ID.
+            entity_type: Filter by entity type.
+            include_global: When True and ``user_id`` is set, also include records where
+                ``user_id IS NULL`` (global / non-user-scoped). Has no effect when
+                ``user_id`` is None.
+            limit: Page size.
+            page: 1-indexed page number.
+            sort_by: Field to sort by (defaults to ``updated_at``).
+            sort_order: Sort order, ``'asc'`` or ``'desc'`` (defaults to ``desc``).
+
+        Returns:
+            Tuple of (records, total_count) where records is the requested page.
+        """
+        raise NotImplementedError
+
+    def get_learnings_user_stats(
+        self,
+        learning_type: Optional[str] = None,
+        limit: Optional[int] = None,
+        page: Optional[int] = None,
+        user_id: Optional[str] = None,
+        sort_by: Optional[str] = None,
+        sort_order: Optional[str] = None,
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        """List the users that own learning records, with per-user counts.
+
+        Groups the learnings table by ``user_id`` (excluding records with no owner) so a
+        client can present a list of users before drilling into a single user's profile
+        and memories. Mirrors ``get_user_memory_stats``.
+
+        Args:
+            learning_type: Restrict the grouping to a single learning type (e.g.
+                ``'user_profile'`` or ``'user_memory'``).
+            limit: Page size.
+            page: 1-indexed page number.
+            user_id: Restrict the result to a single user.
+            sort_by: Field to sort by -- ``user_id`` or ``last_learning_updated_at`` (the default).
+            sort_order: Sort order, ``'asc'`` or ``'desc'`` (defaults to ``desc``).
+
+        Returns:
+            Tuple of (user_stats, total_count) where each entry has the shape
+            ``{"user_id": str, "last_learning_updated_at": int}``.
         """
         raise NotImplementedError
 
@@ -1097,6 +1214,20 @@ class BaseDb(ABC):
         """
         raise NotImplementedError
 
+    # --- Auth Tokens (Optional) ---
+
+    def get_auth_token(self, provider: str, user_id: Optional[str], service: str) -> Optional[Dict[str, Any]]:
+        """Get stored OAuth token for a provider/user/service combination."""
+        raise NotImplementedError
+
+    def upsert_auth_token(self, token: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """Store or update OAuth token. Token dict must include provider, user_id, service, token_data."""
+        raise NotImplementedError
+
+    def delete_auth_token(self, provider: str, user_id: Optional[str], service: str) -> bool:
+        """Delete stored OAuth token for a provider/user/service combination. Returns True if deleted."""
+        raise NotImplementedError
+
 
 class AsyncBaseDb(ABC):
     """Base abstract class for all our async database implementations."""
@@ -1117,6 +1248,7 @@ class AsyncBaseDb(ABC):
         schedules_table: Optional[str] = None,
         schedule_runs_table: Optional[str] = None,
         approvals_table: Optional[str] = None,
+        auth_tokens_table: Optional[str] = None,
     ):
         self.id = id or str(uuid4())
         self.session_table_name = session_table or "agno_sessions"
@@ -1132,6 +1264,7 @@ class AsyncBaseDb(ABC):
         self.schedules_table_name = schedules_table or "agno_schedules"
         self.schedule_runs_table_name = schedule_runs_table or "agno_schedule_runs"
         self.approvals_table_name = approvals_table or "agno_approvals"
+        self.auth_tokens_table_name = auth_tokens_table or "agno_auth_tokens"
 
     async def _create_all_tables(self) -> None:
         """Create all tables for this database. Override in subclasses."""
@@ -1182,7 +1315,7 @@ class AsyncBaseDb(ABC):
     async def get_session(
         self,
         session_id: str,
-        session_type: SessionType,
+        session_type: Optional[SessionType] = None,
         user_id: Optional[str] = None,
         deserialize: Optional[bool] = True,
     ) -> Optional[Union[Session, Dict[str, Any]]]:
@@ -1209,7 +1342,7 @@ class AsyncBaseDb(ABC):
     async def rename_session(
         self,
         session_id: str,
-        session_type: SessionType,
+        session_type: Optional[SessionType],
         session_name: str,
         user_id: Optional[str] = None,
         deserialize: Optional[bool] = True,
@@ -1403,25 +1536,16 @@ class AsyncBaseDb(ABC):
         self,
         trace_id: Optional[str] = None,
         run_id: Optional[str] = None,
-        session_id: Optional[str] = None,
-        user_id: Optional[str] = None,
-        agent_id: Optional[str] = None,
     ):
-        """Get a single trace by trace_id or other filters.
+        """Async variant of ``BaseDb.get_trace`` — see that docstring for the
+        rationale on why no other filters are accepted here.
 
         Args:
             trace_id: The unique trace identifier.
-            run_id: Filter by run ID (returns first match).
-            session_id: Filter by session ID (returns first match).
-            user_id: Filter by user ID (returns first match).
-            agent_id: Filter by agent ID (returns first match).
+            run_id: Fallback unique-alternative-key lookup.
 
         Returns:
             Optional[Trace]: The trace if found, None otherwise.
-
-        Note:
-            If multiple filters are provided, trace_id takes precedence.
-            For other filters, the most recent trace is returned.
         """
         raise NotImplementedError
 
@@ -1656,6 +1780,43 @@ class AsyncBaseDb(ABC):
         """
         raise NotImplementedError
 
+    async def update_learning(
+        self, id: str, content: Dict[str, Any], metadata: Optional[Dict[str, Any]] = None
+    ) -> bool:
+        """Async update an existing learning record in place. Does NOT insert.
+
+        Unlike ``upsert_learning`` this only touches an existing row (sets content/metadata/
+        updated_at; never inserts and never changes created_at or identity fields). It exists
+        so PATCH can be a true update: a row deleted out from under the caller simply isn't
+        matched, instead of being silently re-created (which would also let a concurrent agent
+        write get clobbered/destroyed).
+
+        Args:
+            id: The learning ID to update.
+            content: Replacement content.
+            metadata: Replacement metadata.
+
+        Returns:
+            True if a row was updated, False if no row with that id exists.
+        """
+        raise NotImplementedError
+
+    async def delete_user_learnings(self, user_id: str, learning_type: Optional[str] = None) -> int:
+        """Async delete every learning record owned by a user.
+
+        Removes all rows where ``user_id`` matches. Records with no owner
+        (``user_id IS NULL``) are not affected.
+
+        Args:
+            user_id: The user whose learnings should be deleted.
+            learning_type: When provided, restrict deletion to this single learning type;
+                otherwise all of the user's learnings are removed.
+
+        Returns:
+            The number of records deleted.
+        """
+        raise NotImplementedError
+
     @abstractmethod
     async def get_learnings(
         self,
@@ -1684,6 +1845,87 @@ class AsyncBaseDb(ABC):
 
         Returns:
             List of learning records.
+        """
+        raise NotImplementedError
+
+    async def get_learning_by_id(self, id: str) -> Optional[Dict[str, Any]]:
+        """Async retrieve a single learning record by its primary key.
+
+        Args:
+            id: The learning ID.
+
+        Returns:
+            The learning record dict, or None if not found.
+        """
+        raise NotImplementedError
+
+    async def list_learnings(
+        self,
+        learning_type: Optional[str] = None,
+        user_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+        namespace: Optional[str] = None,
+        entity_id: Optional[str] = None,
+        entity_type: Optional[str] = None,
+        include_global: bool = False,
+        limit: int = 100,
+        page: int = 1,
+        sort_by: Optional[str] = None,
+        sort_order: Optional[str] = None,
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        """Async list learning records with pagination, returning the page and total count.
+
+        Args:
+            learning_type: Filter by learning type.
+            user_id: Filter by user ID.
+            agent_id: Filter by agent ID.
+            team_id: Filter by team ID.
+            session_id: Filter by session ID.
+            namespace: Filter by namespace.
+            entity_id: Filter by entity ID.
+            entity_type: Filter by entity type.
+            include_global: When True and ``user_id`` is set, also include records where
+                ``user_id IS NULL`` (global / non-user-scoped). Has no effect when
+                ``user_id`` is None.
+            limit: Page size.
+            page: 1-indexed page number.
+            sort_by: Field to sort by (defaults to ``updated_at``).
+            sort_order: Sort order, ``'asc'`` or ``'desc'`` (defaults to ``desc``).
+
+        Returns:
+            Tuple of (records, total_count) where records is the requested page.
+        """
+        raise NotImplementedError
+
+    async def get_learnings_user_stats(
+        self,
+        learning_type: Optional[str] = None,
+        limit: Optional[int] = None,
+        page: Optional[int] = None,
+        user_id: Optional[str] = None,
+        sort_by: Optional[str] = None,
+        sort_order: Optional[str] = None,
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        """Async list the users that own learning records, with per-user counts.
+
+        Groups the learnings table by ``user_id`` (excluding records with no owner) so a
+        client can present a list of users before drilling into a single user's profile
+        and memories. Mirrors ``get_user_memory_stats``.
+
+        Args:
+            learning_type: Restrict the grouping to a single learning type (e.g.
+                ``'user_profile'`` or ``'user_memory'``).
+            limit: Page size.
+            page: 1-indexed page number.
+            user_id: Restrict the result to a single user.
+            sort_by: Field to sort by -- ``user_id`` or ``last_learning_updated_at`` (the default).
+            sort_order: Sort order, ``'asc'`` or ``'desc'`` (defaults to ``desc``).
+
+        Returns:
+            Tuple of (user_stats, total_count) where each entry has the shape
+            ``{"user_id": str, "last_learning_updated_at": int}``.
         """
         raise NotImplementedError
 
@@ -1811,4 +2053,18 @@ class AsyncBaseDb(ABC):
         Returns:
             Number of approvals updated.
         """
+        raise NotImplementedError
+
+    # --- Auth Tokens (Optional) ---
+
+    async def get_auth_token(self, provider: str, user_id: Optional[str], service: str) -> Optional[Dict[str, Any]]:
+        """Get stored OAuth token for a provider/user/service combination."""
+        raise NotImplementedError
+
+    async def upsert_auth_token(self, token: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """Store or update OAuth token. Token dict must include provider, user_id, service, token_data."""
+        raise NotImplementedError
+
+    async def delete_auth_token(self, provider: str, user_id: Optional[str], service: str) -> bool:
+        """Delete stored OAuth token for a provider/user/service combination. Returns True if deleted."""
         raise NotImplementedError

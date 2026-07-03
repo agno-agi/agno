@@ -5,7 +5,7 @@ from typing import Any, Dict, List, Optional, Type, Union
 from pydantic import BaseModel
 
 from agno.filters import FilterExpr
-from agno.media import Audio, Image, Video
+from agno.media import Audio, File, Image, Video
 from agno.models.message import Citations, Message, MessageReferences
 from agno.models.metrics import RunMetrics
 from agno.reasoning.step import ReasoningStep
@@ -117,11 +117,25 @@ class BaseRunOutputEvent:
                 else:
                     _dict["audio"].append(aud)
 
+        if hasattr(self, "files") and self.files is not None:
+            _dict["files"] = []
+            for file in self.files:
+                if isinstance(file, File):
+                    _dict["files"].append(file.to_dict())
+                else:
+                    _dict["files"].append(file)
+
         if hasattr(self, "response_audio") and self.response_audio is not None:
             if isinstance(self.response_audio, Audio):
                 _dict["response_audio"] = self.response_audio.to_dict()
             else:
                 _dict["response_audio"] = self.response_audio
+
+        if hasattr(self, "image") and self.image is not None:
+            if isinstance(self.image, Image):
+                _dict["image"] = self.image.to_dict()
+            else:
+                _dict["image"] = self.image
 
         if hasattr(self, "citations") and self.citations is not None:
             if isinstance(self.citations, Citations):
@@ -212,9 +226,19 @@ class BaseRunOutputEvent:
         if audio:
             data["audio"] = [Audio.model_validate(audio) for audio in audio]
 
+        files = data.pop("files", None)
+        if files:
+            from agno.utils.media import reconstruct_files
+
+            data["files"] = reconstruct_files(files)
+
         response_audio = data.pop("response_audio", None)
         if response_audio:
             data["response_audio"] = Audio.model_validate(response_audio)
+
+        image = data.pop("image", None)
+        if image:
+            data["image"] = Image.model_validate(image)
 
         additional_input = data.pop("additional_input", None)
         if additional_input is not None:
@@ -305,3 +329,9 @@ class RunStatus(str, Enum):
     paused = "PAUSED"
     cancelled = "CANCELLED"
     error = "ERROR"
+    # Marker for a run whose response was regenerated via /continue?regenerate=true
+    # (replace_original defaults to true). The new regenerated run sits alongside it
+    # as a sibling (via fork mechanics); the old run keeps this status so
+    # history-builders can skip it when rebuilding context. Pass replace_original=false
+    # to keep the original COMPLETED and visible instead.
+    regenerated = "REGENERATED"

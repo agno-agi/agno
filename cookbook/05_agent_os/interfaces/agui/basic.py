@@ -6,7 +6,7 @@ Demonstrates basic.
 """
 
 from agno.agent.agent import Agent
-from agno.models.openai import OpenAIChat
+from agno.models.openai import OpenAIResponses
 from agno.os import AgentOS
 from agno.os.interfaces.agui import AGUI
 
@@ -16,7 +16,7 @@ from agno.os.interfaces.agui import AGUI
 
 chat_agent = Agent(
     name="Assistant",
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIResponses(id="gpt-5.4"),
     instructions="You are a helpful AI assistant.",
     add_datetime_to_context=True,
     markdown=True,

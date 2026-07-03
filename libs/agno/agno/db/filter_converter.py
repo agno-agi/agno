@@ -43,6 +43,22 @@ TRACE_COLUMNS: Set[str] = {
     "created_at",
 }
 
+# Columns that store ISO 8601 datetime strings in UTC.
+# Filter values for these columns are normalized to UTC before comparison
+# so that timezone-aware inputs (e.g. "+05:30") compare correctly against
+# the stored UTC strings via lexicographic ordering.
+DATETIME_COLUMNS: Set[str] = {"start_time", "end_time", "created_at"}
+
+
+def _normalize_datetime_value(value: Any) -> Any:
+    """Parse an ISO 8601 string and return it in UTC for consistent comparison."""
+    from agno.utils.dttm import parse_datetime_utc
+
+    try:
+        return parse_datetime_utc(value).isoformat()
+    except (TypeError, ValueError):
+        return value
+
 
 def filter_expr_to_sqlalchemy(
     filter_dict: Dict[str, Any],
@@ -89,6 +105,11 @@ def filter_expr_to_sqlalchemy(
         if allowed_columns and key not in allowed_columns:
             raise ValueError(f"Invalid filter field: '{key}'. Allowed: {sorted(allowed_columns)}")
 
+        # Normalize timezone-aware datetime strings to UTC so that
+        # lexicographic comparison against stored UTC values is correct.
+        if key in DATETIME_COLUMNS:
+            value = _normalize_datetime_value(value)
+
         col = table.c[key]
 
         if op == "EQ":
@@ -119,6 +140,9 @@ def filter_expr_to_sqlalchemy(
 
         if allowed_columns and key not in allowed_columns:
             raise ValueError(f"Invalid filter field: '{key}'. Allowed: {sorted(allowed_columns)}")
+
+        if key in DATETIME_COLUMNS:
+            values = [_normalize_datetime_value(v) for v in values]
 
         return table.c[key].in_(values)
 

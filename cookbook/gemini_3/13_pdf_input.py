@@ -38,7 +38,7 @@ and provide clear summaries.
 # ---------------------------------------------------------------------------
 doc_reader = Agent(
     name="Document Reader",
-    model=Gemini(id="gemini-3-flash-preview"),
+    model=Gemini(id="gemini-3.5-flash"),
     instructions=instructions,
     markdown=True,
 )

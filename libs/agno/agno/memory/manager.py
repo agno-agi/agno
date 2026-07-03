@@ -3,6 +3,7 @@ from dataclasses import dataclass
 from os import getenv
 from textwrap import dedent
 from typing import TYPE_CHECKING, Any, Callable, Dict, List, Literal, Optional, Type, Union
+from uuid import uuid4
 
 from pydantic import BaseModel, Field
 
@@ -85,7 +86,15 @@ class MemoryManager:
         add_memories: bool = True,
         clear_memories: bool = False,
         debug_mode: bool = False,
+        id: Optional[str] = None,
+        name: Optional[str] = None,
+        owner_id: Optional[str] = None,
+        owner_type: Optional[str] = None,
     ):
+        self.id = id if id is not None else f"memory_manager_{uuid4().hex[:8]}"
+        self.name = name
+        self.owner_id = owner_id
+        self.owner_type = owner_type
         self.model = model  # type: ignore[assignment]
         self.system_message = system_message
         self.memory_capture_instructions = memory_capture_instructions
@@ -1377,9 +1386,11 @@ class MemoryManager:
                 db.upsert_user_memory(
                     UserMemory(
                         memory_id=memory_id,
+                        user_id=user_id,
+                        agent_id=agent_id,
+                        team_id=team_id,
                         memory=memory,
                         topics=topics,
-                        user_id=user_id,
                         input=input_string,
                     )
                 )
@@ -1500,6 +1511,9 @@ class MemoryManager:
                     await db.upsert_user_memory(
                         UserMemory(
                             memory_id=memory_id,
+                            user_id=user_id,
+                            agent_id=agent_id,
+                            team_id=team_id,
                             memory=memory,
                             topics=topics,
                             input=input_string,
@@ -1509,6 +1523,9 @@ class MemoryManager:
                     db.upsert_user_memory(
                         UserMemory(
                             memory_id=memory_id,
+                            user_id=user_id,
+                            agent_id=agent_id,
+                            team_id=team_id,
                             memory=memory,
                             topics=topics,
                             input=input_string,
@@ -1529,9 +1546,9 @@ class MemoryManager:
             """
             try:
                 if isinstance(db, AsyncBaseDb):
-                    await db.delete_user_memory(memory_id=memory_id)
+                    await db.delete_user_memory(memory_id=memory_id, user_id=user_id)
                 else:
-                    db.delete_user_memory(memory_id=memory_id)
+                    db.delete_user_memory(memory_id=memory_id, user_id=user_id)
                 log_debug("Memory deleted")
                 return "Memory deleted successfully"
             except Exception as e:

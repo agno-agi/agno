@@ -419,6 +419,9 @@ def attach_routes(
             if isinstance(agent, RemoteAgent):
                 log_warning("Evaluation against remote agents are not supported yet")
                 return None
+            if not isinstance(agent, Agent):
+                log_warning("Evaluation against external framework agents is not supported yet")
+                return None
 
             default_model = None
             if (

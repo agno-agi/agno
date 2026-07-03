@@ -35,7 +35,7 @@ class OpenAIResponses(Model):
     For more information, see: https://platform.openai.com/docs/api-reference/responses
     """
 
-    id: str = "gpt-4o"
+    id: str = "gpt-5.4-mini"
     name: str = "OpenAIResponses"
     provider: str = "OpenAI"
     supports_native_structured_outputs: bool = True
@@ -303,6 +303,21 @@ class OpenAIResponses(Model):
                     "name": response_format.__name__,
                     "schema": schema,
                     "strict": self.strict_output,
+                }
+            elif (
+                isinstance(response_format, dict)
+                and response_format.get("type") == "json_schema"
+                and isinstance(response_format.get("json_schema"), dict)
+            ):
+                # Flatten the Chat Completions json_schema shape (name/schema nested under
+                # "json_schema") into the flat shape the Responses API requires. The user
+                # owns this schema, so strict is only applied when they ask for it.
+                json_schema = response_format["json_schema"]
+                text_params["format"] = {
+                    "type": "json_schema",
+                    "name": json_schema.get("name", "output"),
+                    "schema": json_schema.get("schema", {}),
+                    "strict": json_schema.get("strict", False),
                 }
             else:
                 # Pass through directly, user handles everything

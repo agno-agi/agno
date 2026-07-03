@@ -2,6 +2,16 @@
 
 > Tests not yet run. Run each file and update this log.
 
+### agent_with_media.py
+
+**Status:** PASS
+
+**Description:** Agent With Media - AG-UI agent (Google Gemini) that accepts multimodal user input.
+
+**Result:** AgentOS boots with the AG-UI interface; /config returns 200. Media sent through POST /agui reaches the Gemini agent, which describes it accurately - verified with an image via CLI and interactively in a browser. Multimodal input path verified end-to-end.
+
+---
+
 ### agent_with_silent_tools.py
 
 **Status:** PENDING
@@ -47,6 +57,14 @@
 **Status:** PENDING
 
 **Description:** Research Team.
+
+---
+
+### state_events.py
+
+**Status:** PENDING
+
+**Description:** Outbound state synchronization via STATE_SNAPSHOT + STATE_DELTA events. Emits initial and final STATE_SNAPSHOT events plus STATE_DELTA JSON Patch ops after each state-mutating tool call.
 
 ---
 

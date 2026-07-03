@@ -3,6 +3,7 @@ from unittest.mock import AsyncMock, Mock, patch
 import pytest
 
 from agno.os.interfaces.slack.helpers import (
+    BotNameResolver,
     download_event_files_async,
     extract_event_context,
     member_name,
@@ -276,6 +277,67 @@ class TestResolveSlackUser:
         assert display_name is None
 
 
+# -- resolve_bot_name --
+
+
+class TestBotNameResolver:
+    @pytest.mark.asyncio
+    async def test_resolves_bot_display_name(self):
+        resolver = BotNameResolver()
+        client = AsyncMock()
+        client.users_info = AsyncMock(
+            return_value={"user": {"name": "scout_bot", "profile": {"display_name": "Scout", "real_name": "Scout Bot"}}}
+        )
+        name = await resolver.resolve(client, "UBOT123")
+        assert name == "Scout"
+
+    @pytest.mark.asyncio
+    async def test_falls_back_to_real_name(self):
+        resolver = BotNameResolver()
+        client = AsyncMock()
+        client.users_info = AsyncMock(
+            return_value={"user": {"name": "scout_bot", "profile": {"display_name": "", "real_name": "Scout Bot"}}}
+        )
+        name = await resolver.resolve(client, "UBOT456")
+        assert name == "Scout Bot"
+
+    @pytest.mark.asyncio
+    async def test_falls_back_to_username(self):
+        resolver = BotNameResolver()
+        client = AsyncMock()
+        client.users_info = AsyncMock(return_value={"user": {"name": "scout_bot", "profile": {}}})
+        name = await resolver.resolve(client, "UBOT789")
+        assert name == "scout_bot"
+
+    @pytest.mark.asyncio
+    async def test_caches_result(self):
+        resolver = BotNameResolver()
+        client = AsyncMock()
+        client.users_info = AsyncMock(return_value={"user": {"profile": {"display_name": "Scout"}}})
+        await resolver.resolve(client, "UCACHED")
+        await resolver.resolve(client, "UCACHED")
+        assert client.users_info.call_count == 1
+
+    @pytest.mark.asyncio
+    async def test_api_error_returns_none(self):
+        resolver = BotNameResolver()
+        client = AsyncMock()
+        client.users_info = AsyncMock(side_effect=RuntimeError("API error"))
+        name = await resolver.resolve(client, "UFAIL")
+        assert name is None
+
+    @pytest.mark.asyncio
+    async def test_api_error_not_cached(self):
+        resolver = BotNameResolver()
+        client = AsyncMock()
+        client.users_info = AsyncMock(side_effect=RuntimeError("API error"))
+        await resolver.resolve(client, "UFAIL")
+        # Fix the client for the retry
+        client.users_info = AsyncMock(return_value={"user": {"profile": {"display_name": "Scout"}}})
+        name = await resolver.resolve(client, "UFAIL")
+        assert name == "Scout"
+
+
 # -- strip_bot_mention --
 
 
@@ -307,3 +369,19 @@ class TestStripBotMention:
     def test_mention_in_middle(self):
         result = strip_bot_mention("hey <@U0APCSS3MDH> what's up", "U0APCSS3MDH")
         assert result == "hey what's up"
+
+    def test_replaces_with_bot_name(self):
+        result = strip_bot_mention("<@U0APCSS3MDH> hello world", "U0APCSS3MDH", "Scout")
+        assert result == "Scout hello world"
+
+    def test_replaces_mention_in_middle_with_bot_name(self):
+        result = strip_bot_mention("hey <@U0APCSS3MDH> what's up", "U0APCSS3MDH", "Scout")
+        assert result == "hey Scout what's up"
+
+    def test_preserves_other_mentions_when_replacing_with_name(self):
+        result = strip_bot_mention("<@U0APCSS3MDH> hey <@U999OTHER>", "U0APCSS3MDH", "Scout")
+        assert result == "Scout hey <@U999OTHER>"
+
+    def test_mention_only_with_bot_name(self):
+        result = strip_bot_mention("<@U0APCSS3MDH>", "U0APCSS3MDH", "Scout")
+        assert result == "Scout"

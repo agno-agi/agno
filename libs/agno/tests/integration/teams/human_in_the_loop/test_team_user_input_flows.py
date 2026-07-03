@@ -8,7 +8,7 @@ import os
 import pytest
 
 from agno.agent import Agent
-from agno.models.openai import OpenAIChat
+from agno.models.openai import OpenAIResponses
 from agno.run.team import RunPausedEvent as TeamRunPausedEvent
 from agno.team.team import Team
 from agno.tools.decorator import tool
@@ -30,7 +30,7 @@ def _make_agent(db=None):
     return Agent(
         name="Weather Agent",
         role="Provides weather information. Use the get_the_weather tool to get weather data.",
-        model=OpenAIChat(id="gpt-4o-mini"),
+        model=OpenAIResponses(id="gpt-5.4"),
         tools=[get_the_weather],
         db=db,
         telemetry=False,
@@ -40,7 +40,7 @@ def _make_agent(db=None):
 def _make_team(agent, db=None):
     return Team(
         name="Weather Team",
-        model=OpenAIChat(id="gpt-4o-mini"),
+        model=OpenAIResponses(id="gpt-5.4"),
         members=[agent],
         db=db,
         telemetry=False,

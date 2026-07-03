@@ -873,13 +873,13 @@ class TestMultipleHITLPauses:
         # Confirm first step
         response.step_requirements[0].confirm()
 
-        # Continue - pauses at process2
+        # Continue - pauses at process2 (requirements accumulate: [0]=process1 resolved, [-1]=process2 active)
         response = workflow.continue_run(response)
         assert response.is_paused is True
-        assert response.step_requirements[0].step_name == "process2"
+        assert response.step_requirements[-1].step_name == "process2"
 
         # Confirm second step
-        response.step_requirements[0].confirm()
+        response.step_requirements[-1].confirm()
 
         # Continue - completes
         final_response = workflow.continue_run(response)
@@ -914,13 +914,13 @@ class TestMultipleHITLPauses:
         # Confirm
         response.step_requirements[0].confirm()
 
-        # Continue - pauses at user input
+        # Continue - pauses at user input (requirements accumulate: [0]=confirm resolved, [-1]=input active)
         response = workflow.continue_run(response)
         assert response.is_paused is True
-        assert response.step_requirements[0].requires_user_input is True
+        assert response.step_requirements[-1].requires_user_input is True
 
         # Provide input (set_user_input takes **kwargs)
-        response.step_requirements[0].set_user_input(preference="final")
+        response.step_requirements[-1].set_user_input(preference="final")
 
         # Continue - completes
         final_response = workflow.continue_run(response)

@@ -747,8 +747,8 @@ def test_session_state_claims_extraction(test_agent):
     assert response.status_code == 200
 
 
-def test_system_scope(test_agent):
-    """Test system-level scope for reading configuration."""
+def test_config_scope(test_agent):
+    """Test config-level scope for reading configuration."""
     agent_os = AgentOS(
         id=TEST_OS_ID,
         agents=[test_agent],
@@ -759,15 +759,168 @@ def test_system_scope(test_agent):
 
     client = TestClient(app)
 
-    # Token with system read scope
-    token = create_jwt_token(scopes=["system:read"])
-
-    response = client.get(
-        "/config",
-        headers={"Authorization": f"Bearer {token}"},
-    )
-
+    token = create_jwt_token(scopes=["config:read"])
+    response = client.get("/config", headers={"Authorization": f"Bearer {token}"})
     assert response.status_code == 200
+
+
+def test_legacy_system_scope_still_grants_config_access(test_agent):
+    """Legacy `system:*` scopes are aliased to `config:*` for backwards compatibility."""
+    agent_os = AgentOS(
+        id=TEST_OS_ID,
+        agents=[test_agent],
+        authorization=True,
+        authorization_config=AuthorizationConfig(verification_keys=[JWT_SECRET], algorithm="HS256"),
+    )
+    app = agent_os.get_app()
+
+    client = TestClient(app)
+
+    # Old token still issued with `system:read` should continue to access /config
+    token = create_jwt_token(scopes=["system:read"])
+    response = client.get("/config", headers={"Authorization": f"Bearer {token}"})
+    assert response.status_code == 200
+
+
+def test_registry_scope_required_for_registry_endpoint(test_agent, shared_db):
+    """GET /registry is gated by registry:read (no longer by system/config scopes)."""
+    from agno.registry import Registry
+
+    registry = Registry()
+    agent_os = AgentOS(
+        id=TEST_OS_ID,
+        agents=[test_agent],
+        db=shared_db,
+        registry=registry,
+        authorization=True,
+        authorization_config=AuthorizationConfig(verification_keys=[JWT_SECRET], algorithm="HS256"),
+    )
+    client = TestClient(agent_os.get_app())
+
+    # registry:read grants access
+    ok_token = create_jwt_token(scopes=["registry:read"])
+    response = client.get("/registry", headers={"Authorization": f"Bearer {ok_token}"})
+    assert response.status_code == 200
+
+    # config:read (formerly system:read) does NOT grant registry access
+    config_token = create_jwt_token(scopes=["config:read"])
+    response = client.get("/registry", headers={"Authorization": f"Bearer {config_token}"})
+    assert response.status_code == 403
+
+    # legacy system:read does NOT grant registry access either
+    legacy_token = create_jwt_token(scopes=["system:read"])
+    response = client.get("/registry", headers={"Authorization": f"Bearer {legacy_token}"})
+    assert response.status_code == 403
+
+
+# ---------------------------------------------------------------------------
+# Components endpoint RBAC
+# ---------------------------------------------------------------------------
+
+
+def _components_client(test_agent, shared_db):
+    agent_os = AgentOS(
+        id=TEST_OS_ID,
+        agents=[test_agent],
+        db=shared_db,
+        authorization=True,
+        authorization_config=AuthorizationConfig(verification_keys=[JWT_SECRET], algorithm="HS256"),
+    )
+    return TestClient(agent_os.get_app())
+
+
+def _auth(scopes):
+    return {"Authorization": f"Bearer {create_jwt_token(scopes=scopes)}"}
+
+
+@pytest.mark.parametrize(
+    "method,path",
+    [
+        ("GET", "/components"),
+        ("GET", "/components/some-id"),
+        ("GET", "/components/some-id/configs"),
+        ("GET", "/components/some-id/configs/1"),
+        ("GET", "/components/some-id/configs/current"),
+    ],
+)
+def test_components_read_endpoints_require_read_scope(test_agent, shared_db, method, path):
+    """All components read endpoints must 403 without components:read."""
+    client = _components_client(test_agent, shared_db)
+
+    # No scopes -> 403
+    response = client.request(method, path, headers=_auth([]))
+    assert response.status_code == 403, f"{method} {path} with no scope returned {response.status_code}"
+
+    # Wrong scope -> 403
+    response = client.request(method, path, headers=_auth(["agents:read"]))
+    assert response.status_code == 403, f"{method} {path} with agents:read returned {response.status_code}"
+
+    # Correct scope -> not 403 (may be 404/500 since resource doesn't exist; what matters is the scope gate lets it through)
+    response = client.request(method, path, headers=_auth(["components:read"]))
+    assert response.status_code != 403, f"{method} {path} with components:read got 403 (should be allowed)"
+
+
+@pytest.mark.parametrize(
+    "method,path,body",
+    [
+        ("POST", "/components", {"name": "x", "component_type": "agent", "config": {}}),
+        ("PATCH", "/components/some-id", {"name": "renamed"}),
+        ("POST", "/components/some-id/configs", {"config": {}}),
+        ("PATCH", "/components/some-id/configs/1", {"config": {}}),
+        ("POST", "/components/some-id/configs/1/set-current", None),
+    ],
+)
+def test_components_write_endpoints_require_write_scope(test_agent, shared_db, method, path, body):
+    """Components write endpoints must 403 with only read or delete scopes."""
+    client = _components_client(test_agent, shared_db)
+
+    # components:read alone must NOT authorize writes
+    response = client.request(method, path, headers=_auth(["components:read"]), json=body)
+    assert response.status_code == 403, f"{method} {path} with read-only returned {response.status_code}"
+
+    # components:delete alone must NOT authorize writes
+    response = client.request(method, path, headers=_auth(["components:delete"]), json=body)
+    assert response.status_code == 403, f"{method} {path} with delete-only returned {response.status_code}"
+
+    # components:write is accepted (may still fail with 404/400/500 downstream)
+    response = client.request(method, path, headers=_auth(["components:write"]), json=body)
+    assert response.status_code != 403, f"{method} {path} with components:write got 403"
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/components/some-id",
+        "/components/some-id/configs/1",
+    ],
+)
+def test_components_delete_endpoints_require_delete_scope(test_agent, shared_db, path):
+    """Components delete endpoints must 403 without components:delete."""
+    client = _components_client(test_agent, shared_db)
+
+    response = client.delete(path, headers=_auth(["components:read"]))
+    assert response.status_code == 403, f"DELETE {path} with read-only returned {response.status_code}"
+
+    response = client.delete(path, headers=_auth(["components:write"]))
+    assert response.status_code == 403, f"DELETE {path} with write-only returned {response.status_code}"
+
+    response = client.delete(path, headers=_auth(["components:delete"]))
+    assert response.status_code != 403, f"DELETE {path} with components:delete got 403"
+
+
+def test_components_admin_scope_grants_full_access(test_agent, shared_db):
+    """agent_os:admin bypasses components scope checks."""
+    client = _components_client(test_agent, shared_db)
+    admin_headers = _auth(["agent_os:admin"])
+
+    for method, path in [
+        ("GET", "/components"),
+        ("GET", "/components/some-id"),
+        ("PATCH", "/components/some-id"),
+        ("DELETE", "/components/some-id"),
+    ]:
+        response = client.request(method, path, headers=admin_headers)
+        assert response.status_code != 403, f"admin got 403 on {method} {path}"
 
 
 def test_different_audience_blocks_access(test_agent):
@@ -2168,13 +2321,15 @@ def test_agent_cancel_with_run_scope(test_agent):
     # Token with run scope
     token = create_jwt_token(scopes=["agents:test-agent:run"])
 
-    # Should be able to cancel (returns 200, cancel stores intent even for nonexistent runs)
+    # Should pass the RBAC scope check. Non-admin callers must also supply a
+    # session_id for ownership verification (added by user-scoped DB work), so
+    # without it the route returns 400 — which still means scope check passed.
     response = client.post(
         "/agents/test-agent/runs/nonexistent-run-id/cancel",
         headers={"Authorization": f"Bearer {token}"},
     )
-    # 200 means auth passed and cancel intent stored, 403 would mean auth failed
-    assert response.status_code == 200
+    # 403 would mean auth failed. Anything else means the scope check passed.
+    assert response.status_code != 403, response.text
 
 
 def test_agent_cancel_blocked_without_run_scope(test_agent, second_agent):
@@ -2219,8 +2374,10 @@ def test_agent_cancel_with_global_scope(test_agent):
         "/agents/test-agent/runs/nonexistent-run-id/cancel",
         headers={"Authorization": f"Bearer {token}"},
     )
-    # 200 means auth passed and cancel intent stored
-    assert response.status_code == 200
+    # Anything other than 403 means the RBAC scope check passed. Non-admin
+    # callers also need session_id for the ownership check; missing it yields
+    # 400 here, which is still an auth pass.
+    assert response.status_code != 403, response.text
 
 
 def test_agent_continue_with_run_scope(test_agent):
@@ -2287,13 +2444,13 @@ def test_team_cancel_with_run_scope(test_team):
     # Token with run scope
     token = create_jwt_token(scopes=["teams:test-team:run"])
 
-    # Should be able to cancel (returns 200, cancel stores intent even for nonexistent runs)
+    # Non-admin callers also need session_id for ownership verification; the
+    # 400 that returns when it's missing still proves the scope check passed.
     response = client.post(
         "/teams/test-team/runs/nonexistent-run-id/cancel",
         headers={"Authorization": f"Bearer {token}"},
     )
-    # 200 means auth passed and cancel intent stored, 403 would mean auth failed
-    assert response.status_code == 200
+    assert response.status_code != 403, response.text
 
 
 def test_team_cancel_blocked_without_run_scope(test_team, second_team):
@@ -2338,8 +2495,9 @@ def test_team_cancel_with_global_scope(test_team):
         "/teams/test-team/runs/nonexistent-run-id/cancel",
         headers={"Authorization": f"Bearer {token}"},
     )
-    # 200 means auth passed and cancel intent stored
-    assert response.status_code == 200
+    # Anything other than 403 means scope check passed (see notes on the
+    # per-team variant above for the session_id requirement).
+    assert response.status_code != 403, response.text
 
 
 def test_workflow_cancel_with_run_scope(test_workflow):
@@ -2357,13 +2515,13 @@ def test_workflow_cancel_with_run_scope(test_workflow):
     # Token with run scope
     token = create_jwt_token(scopes=["workflows:test-workflow:run"])
 
-    # Should be able to cancel (returns 200, cancel stores intent even for nonexistent runs)
+    # Non-admin callers also need session_id for ownership verification; the
+    # 400 that returns when it's missing still proves the scope check passed.
     response = client.post(
         "/workflows/test-workflow/runs/nonexistent-run-id/cancel",
         headers={"Authorization": f"Bearer {token}"},
     )
-    # 200 means auth passed and cancel intent stored, 403 would mean auth failed
-    assert response.status_code == 200
+    assert response.status_code != 403, response.text
 
 
 def test_workflow_cancel_blocked_without_run_scope(test_workflow, second_workflow):
@@ -2408,8 +2566,8 @@ def test_workflow_cancel_with_global_scope(test_workflow):
         "/workflows/test-workflow/runs/nonexistent-run-id/cancel",
         headers={"Authorization": f"Bearer {token}"},
     )
-    # 200 means auth passed and cancel intent stored
-    assert response.status_code == 200
+    # Anything other than 403 means scope check passed.
+    assert response.status_code != 403, response.text
 
 
 def test_cancel_with_wildcard_scope(test_agent, second_agent):
@@ -2427,19 +2585,19 @@ def test_cancel_with_wildcard_scope(test_agent, second_agent):
     # Token with wildcard run scope
     token = create_jwt_token(scopes=["agents:*:run"])
 
-    # Should be able to cancel test-agent
+    # Wildcard run scope is not the same as admin; non-admin callers still
+    # need session_id for ownership verification. != 403 proves auth passed.
     response = client.post(
         "/agents/test-agent/runs/nonexistent-run-id/cancel",
         headers={"Authorization": f"Bearer {token}"},
     )
-    assert response.status_code == 200  # Auth passed
+    assert response.status_code != 403, response.text
 
-    # Should also be able to cancel second-agent
     response = client.post(
         "/agents/second-agent/runs/nonexistent-run-id/cancel",
         headers={"Authorization": f"Bearer {token}"},
     )
-    assert response.status_code == 200  # Auth passed
+    assert response.status_code != 403, response.text
 
 
 def test_cancel_with_admin_scope(test_agent, test_team, test_workflow):

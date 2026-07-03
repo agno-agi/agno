@@ -82,7 +82,7 @@ class LearningMachine:
     session_context: SessionContextInput = False
     entity_memory: EntityMemoryInput = False
     learned_knowledge: LearnedKnowledgeInput = False
-    decision_log: DecisionLogInput = False  # Phase 2
+    decision_log: DecisionLogInput = False
 
     # Namespace for entity_memory and learned_knowledge
     namespace: str = "global"
@@ -147,7 +147,7 @@ class LearningMachine:
                 store_type="learned_knowledge",
             )
 
-        # Decision Log (Phase 2)
+        # Decision Log
         if self.decision_log:
             self._stores["decision_log"] = self._resolve_store(
                 input_value=self.decision_log,

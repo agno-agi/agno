@@ -15,7 +15,7 @@ COPY . /app/agno
 
 # Install agno from local source
 WORKDIR /app/agno
-RUN pip install --no-cache-dir -e .
+RUN pip install --no-cache-dir .
 
 # Install additional dependencies for the server
 RUN pip install --no-cache-dir \
@@ -29,7 +29,7 @@ RUN pip install --no-cache-dir \
     pgvector \
     openai \
     PyJWT \
-    a2a-sdk \
+    "a2a-sdk>=0.3.0,<1.0" \
     slack-sdk
 
 # Copy the remote server script

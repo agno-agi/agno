@@ -98,14 +98,12 @@ def serialize_session(session: Session, table_names: dict[TableType, str]) -> di
     return _dict
 
 
-def desurrealize_session(session_raw: dict, session_type: Optional[SessionType] = None) -> dict:
+def desurrealize_session(session_raw: dict) -> dict:
     session_raw = deserialize_record_id(session_raw, "session_id", "id")
-    if session_type == SessionType.AGENT:
-        session_raw = deserialize_record_id(session_raw, "agent_id", "agent")
-    elif session_type == SessionType.TEAM:
-        session_raw = deserialize_record_id(session_raw, "team_id", "team")
-    elif session_type == SessionType.WORKFLOW:
-        session_raw = deserialize_record_id(session_raw, "workflow_id", "workflow")
+    # Always attempt to convert all RecordID fields so agent_id/team_id/workflow_id are populated
+    session_raw = deserialize_record_id(session_raw, "agent_id", "agent")
+    session_raw = deserialize_record_id(session_raw, "team_id", "team")
+    session_raw = deserialize_record_id(session_raw, "workflow_id", "workflow")
 
     session_raw = desurrealize_dates(session_raw)
 
@@ -117,23 +115,6 @@ def desurrealize_session(session_raw: dict, session_type: Optional[SessionType] 
         session_raw["session_type"] = SessionType.WORKFLOW
 
     return session_raw
-
-
-def deserialize_session(session_type: SessionType, session_raw: dict) -> Optional[Session]:
-    session_raw = desurrealize_session(session_raw, session_type)
-
-    if session_type == SessionType.AGENT:
-        return AgentSession.from_dict(session_raw)
-    elif session_type == SessionType.TEAM:
-        return TeamSession.from_dict(session_raw)
-    elif session_type == SessionType.WORKFLOW:
-        return WorkflowSession.from_dict(session_raw)
-    else:
-        raise ValueError(f"Invalid session type: {session_type}")
-
-
-def deserialize_sessions(session_type: SessionType, sessions_raw: List[dict]) -> List[Session]:
-    return [x for x in [deserialize_session(session_type, x) for x in sessions_raw] if x is not None]
 
 
 def get_session_type(session: Session) -> SessionType:
