@@ -3,7 +3,7 @@ from os import getenv
 from typing import Any, List, Optional
 
 from agno.tools import Toolkit
-from agno.utils.log import log_debug, log_info, logger
+from agno.utils.log import log_error, log_info, logger
 
 try:
     from twelvelabs import TwelveLabs
@@ -95,7 +95,7 @@ class TwelveLabsTools(Toolkit):
             )
             return response.data or "No analysis returned"
         except Exception as e:
-            log_debug(f"Error analyzing video {video_url}: {e}")
+            log_error(f"Error analyzing video {video_url}: {e}")
             return f"Error analyzing video: {e}"
 
     def embed_text(self, text: str) -> str:
@@ -123,5 +123,5 @@ class TwelveLabsTools(Toolkit):
                 return "No embedding returned"
             return json.dumps({"model": self.embed_model, "dimensions": len(vector), "embedding": vector})
         except Exception as e:
-            log_debug(f"Error embedding text: {e}")
+            log_error(f"Error embedding text: {e}")
             return f"Error embedding text: {e}"
