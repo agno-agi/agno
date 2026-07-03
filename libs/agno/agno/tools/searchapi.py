@@ -13,7 +13,7 @@ class SearchApiTools(Toolkit):
     SearchApiTools is a toolkit for searching the web using the SearchAPI.io API.
 
     SearchAPI provides real-time SERP data for Google, Google News, Google Images,
-    Google Shopping, YouTube, and more.
+    YouTube, and more.
 
     Args:
         api_key (Optional[str]): SearchAPI key. If not provided, uses SEARCHAPI_API_KEY env var.
@@ -23,6 +23,7 @@ class SearchApiTools(Toolkit):
         enable_search_news (bool): Enable Google News search. Default is False.
         enable_search_images (bool): Enable Google Images search. Default is False.
         enable_search_youtube (bool): Enable YouTube search. Default is False.
+        all (bool): If True, enable every search engine regardless of the individual flags.
     """
 
     def __init__(
@@ -264,10 +265,13 @@ class SearchApiTools(Toolkit):
 
         Args:
             query (str): The YouTube search query.
-            num_results (Optional[int]): Number of results to return. Defaults to instance setting.
+            num_results (Optional[int]): Maximum number of results to return. SearchAPI's
+                YouTube engine has no server-side count parameter (it paginates via
+                next_page_token), so this is applied client-side by slicing the response.
 
         Returns:
-            str: JSON string containing video results with title, link, channel, and duration.
+            str: JSON string containing video results with title, link, channel, length, views,
+                published_time, description, and thumbnail.
         """
         if not query:
             return json.dumps({"error": "Please provide a query to search for"})
@@ -284,23 +288,27 @@ class SearchApiTools(Toolkit):
         if "error" in data:
             return json.dumps({"error": data["error"]})
 
+        limit = num_results or self.num_results
+        videos = data.get("videos", []) or []
         result = {
             "video_results": [
                 {
                     "position": r.get("position"),
+                    "id": r.get("id"),
                     "title": r.get("title"),
                     "link": r.get("link"),
-                    "channel": r.get("channel", {}).get("name")
+                    "channel": r.get("channel", {}).get("title")
                     if isinstance(r.get("channel"), dict)
                     else r.get("channel"),
-                    "duration": r.get("duration"),
+                    "length": r.get("length"),
                     "views": r.get("views"),
+                    "published_time": r.get("published_time"),
                     "description": r.get("description"),
                     "thumbnail": r.get("thumbnail", {}).get("static")
                     if isinstance(r.get("thumbnail"), dict)
                     else r.get("thumbnail"),
                 }
-                for r in data.get("videos", [])
+                for r in videos[:limit]
             ]
         }
 

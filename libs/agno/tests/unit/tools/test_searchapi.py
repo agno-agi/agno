@@ -24,7 +24,13 @@ def mock_google_response():
     mock = Mock(spec=requests.Response)
     mock.json.return_value = {
         "organic_results": [
-            {"position": 1, "title": "Result 1", "link": "http://example.com", "snippet": "Snippet 1", "source": "Example"}
+            {
+                "position": 1,
+                "title": "Result 1",
+                "link": "http://example.com",
+                "snippet": "Snippet 1",
+                "source": "Example",
+            }
         ],
         "knowledge_graph": None,
         "related_questions": [],
@@ -75,16 +81,24 @@ def mock_images_response():
 
 @pytest.fixture
 def mock_youtube_response():
+    """Mirrors SearchAPI's real YouTube response shape (see
+    https://www.searchapi.io/docs/youtube): items live under ``videos`` with
+    ``channel.title``, ``length``, ``published_time``, and a nested
+    ``thumbnail`` object.
+    """
     mock = Mock(spec=requests.Response)
     mock.json.return_value = {
         "videos": [
             {
                 "position": 1,
+                "id": "abc123",
                 "title": "Video 1",
                 "link": "https://www.youtube.com/watch?v=abc123",
-                "channel": {"name": "Test Channel"},
-                "duration": "5:30",
-                "views": 10000,
+                "channel": {"id": "chan-1", "title": "Test Channel"},
+                "length": "5:30",
+                "views": "10K views",
+                "extracted_views": 10000,
+                "published_time": "2 hours ago",
                 "description": "A test video",
                 "thumbnail": {"static": "http://thumb.youtube.com/img.jpg"},
             }
@@ -314,9 +328,14 @@ def test_search_youtube_success(api_tools, mock_youtube_response):
     with patch("requests.get", return_value=mock_youtube_response):
         result = json.loads(api_tools.search_youtube("python tutorial"))
     assert "video_results" in result
-    assert result["video_results"][0]["title"] == "Video 1"
-    assert result["video_results"][0]["channel"] == "Test Channel"
-    assert result["video_results"][0]["thumbnail"] == "http://thumb.youtube.com/img.jpg"
+    video = result["video_results"][0]
+    assert video["title"] == "Video 1"
+    # Real API returns channel.title, not channel.name.
+    assert video["channel"] == "Test Channel"
+    # Real API returns "length", not "duration".
+    assert video["length"] == "5:30"
+    assert video["published_time"] == "2 hours ago"
+    assert video["thumbnail"] == "http://thumb.youtube.com/img.jpg"
 
 
 def test_search_youtube_uses_q_param(api_tools, mock_youtube_response):
@@ -326,6 +345,8 @@ def test_search_youtube_uses_q_param(api_tools, mock_youtube_response):
     assert params["engine"] == "youtube"
     assert params["q"] == "python tutorial"
     assert "search_query" not in params
+    # SearchAPI's YouTube engine has no server-side count param; we must NOT send "num".
+    assert "num" not in params
 
 
 def test_search_youtube_empty_results(api_tools):
@@ -335,3 +356,31 @@ def test_search_youtube_empty_results(api_tools):
     with patch("requests.get", return_value=mock):
         result = json.loads(api_tools.search_youtube("xyznotfound123"))
     assert result["video_results"] == []
+
+
+def test_search_youtube_client_side_truncation(api_tools):
+    """SearchAPI's YouTube engine can't limit result count server-side; the tool
+    must slice client-side to honour ``num_results``.
+    """
+    videos = [
+        {
+            "position": i,
+            "id": f"vid{i}",
+            "title": f"Video {i}",
+            "link": f"https://youtube.com/watch?v=vid{i}",
+            "channel": {"title": "Chan"},
+            "length": "1:00",
+            "views": "1 view",
+            "published_time": "1 day ago",
+            "description": "",
+            "thumbnail": {"static": "http://t/img.jpg"},
+        }
+        for i in range(10)
+    ]
+    mock = Mock(spec=requests.Response)
+    mock.json.return_value = {"videos": videos}
+    mock.raise_for_status.return_value = None
+    with patch("requests.get", return_value=mock):
+        result = json.loads(api_tools.search_youtube("many", num_results=3))
+    assert len(result["video_results"]) == 3
+    assert [v["id"] for v in result["video_results"]] == ["vid0", "vid1", "vid2"]
