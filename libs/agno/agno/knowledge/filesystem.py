@@ -132,24 +132,34 @@ class FileSystemKnowledge:
         return results
 
     def _get_file(self, query: str) -> List[Document]:
-        """Get the contents of a specific file."""
-        # Handle both relative and absolute paths
-        if path_isabs(query):
-            file_path = Path(query)
-        else:
-            file_path = self.base_path / query
+        """Get the contents of a specific file.
 
-        if not file_path.exists():
+        The resolved target must stay within ``self.base_path``. Both
+        ``../`` traversal segments and absolute paths pointing outside
+        the knowledge base are rejected to keep agent-driven reads
+        scoped to the configured directory (issue #8624).
+        """
+        # Handle both relative and absolute paths, then resolve the
+        # candidate to its canonical location before any I/O so the
+        # containment check cannot be bypassed via symlinks or "..".
+        candidate = Path(query) if path_isabs(query) else self.base_path / query
+        try:
+            file_path = candidate.resolve(strict=True)
+        except (OSError, RuntimeError):
             log_warning(f"File not found: {query}")
             return []
 
         if not file_path.is_file():
-            log_warning(f"Path is not a file: {query}")
+            log_warning(f"File not found: {query}")
+            return []
+
+        if not file_path.is_relative_to(self.base_path):
+            log_warning(f"Path escapes knowledge base: {query}")
             return []
 
         try:
             content = file_path.read_text(encoding="utf-8", errors="replace")
-            rel_path = file_path.relative_to(self.base_path) if file_path.is_relative_to(self.base_path) else file_path
+            rel_path = file_path.relative_to(self.base_path)
 
             return [
                 Document(
