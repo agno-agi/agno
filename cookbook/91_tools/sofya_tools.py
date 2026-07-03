@@ -45,14 +45,19 @@ research_agent = Agent(
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
     agent.print_response(
-        "Search for recent developments in the Model Context Protocol", markdown=True, stream=True
+        "Search for recent developments in the Model Context Protocol",
+        markdown=True,
+        stream=True,
     )
 
     extract_agent.print_response(
         "Extract the main content from https://modelcontextprotocol.io/introduction",
-        markdown=True, stream=True
+        markdown=True,
+        stream=True,
     )
 
     research_agent.print_response(
-        "Write a short report on how AI agents use web search tools", markdown=True, stream=True
+        "Write a short report on how AI agents use web search tools",
+        markdown=True,
+        stream=True,
     )
