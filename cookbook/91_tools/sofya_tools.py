@@ -50,7 +50,7 @@ if __name__ == "__main__":
 
     extract_agent.print_response(
         "Extract the main content from https://modelcontextprotocol.io/introduction",
-        markdown=True,
+        markdown=True, stream=True
     )
 
     research_agent.print_response(
