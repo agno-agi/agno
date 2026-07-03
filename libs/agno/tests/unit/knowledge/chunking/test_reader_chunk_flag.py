@@ -91,8 +91,8 @@ def test_s3_reader_propagates_chunk_flag_to_inner_reader():
     """S3Reader must forward chunk/chunk_size/chunking_strategy to its inner reader."""
     pytest.importorskip("agno.knowledge.reader.s3_reader", exc_type=ImportError)
 
-    from agno.knowledge.reader.s3_reader import S3Reader
     from agno.knowledge.chunking.fixed import FixedSizeChunking
+    from agno.knowledge.reader.s3_reader import S3Reader
     from agno.knowledge.reader.text_reader import TextReader
 
     strategy = FixedSizeChunking(chunk_size=123)
