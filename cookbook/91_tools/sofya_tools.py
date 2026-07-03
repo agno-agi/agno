@@ -45,7 +45,7 @@ research_agent = Agent(
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
     agent.print_response(
-        "Search for recent developments in the Model Context Protocol", markdown=True
+        "Search for recent developments in the Model Context Protocol", markdown=True, stream=True
     )
 
     extract_agent.print_response(
