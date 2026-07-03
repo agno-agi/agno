@@ -250,14 +250,10 @@ async def aget_tools(
                         is_alive = await tool.is_alive()  # type: ignore
                         if not is_alive:
                             await tool.connect(force=True)  # type: ignore
-                    except (RuntimeError, BaseException) as e:
-                        log_warning(f"Failed to check if MCP tool is alive or to connect to it: {str(e)}")
-                        continue
-
-                    try:
-                        await tool.build_tools()  # type: ignore
-                    except (RuntimeError, BaseException) as e:
-                        log_warning(f"Failed to build tools for {str(tool)}: {str(e)}")
+                        else:
+                            await tool.build_tools()  # type: ignore
+                    except Exception as e:
+                        log_warning(f"Failed to refresh MCP tool {str(tool)}: {str(e)}")
                         continue
 
                 # Only add the tool if it successfully connected and built its tools
@@ -568,7 +564,7 @@ def handle_get_user_input_tool_update(agent: Agent, run_messages: RunMessages, t
     run_messages.messages.append(
         Message(
             role=agent.model.tool_message_role,
-            content=f"User inputs retrieved: {json.dumps(user_input_result)}",
+            content=f"User inputs retrieved: {json.dumps(user_input_result, ensure_ascii=False)}",
             tool_call_id=tool.tool_call_id,
             tool_name=tool.tool_name,
             tool_args=tool.tool_args,
@@ -589,7 +585,7 @@ def handle_ask_user_tool_update(agent: Agent, run_messages: RunMessages, tool: T
     run_messages.messages.append(
         Message(
             role=agent.model.tool_message_role,
-            content=f"User feedback received: {json.dumps(feedback_result)}",
+            content=f"User feedback received: {json.dumps(feedback_result, ensure_ascii=False)}",
             tool_call_id=tool.tool_call_id,
             tool_name=tool.tool_name,
             tool_args=tool.tool_args,

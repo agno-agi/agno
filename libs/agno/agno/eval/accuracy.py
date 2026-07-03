@@ -62,11 +62,11 @@ class AccuracyEvaluation:
 @dataclass
 class AccuracyResult:
     results: List[AccuracyEvaluation] = field(default_factory=list)
-    avg_score: float = field(init=False)
-    mean_score: float = field(init=False)
-    min_score: float = field(init=False)
-    max_score: float = field(init=False)
-    std_dev_score: float = field(init=False)
+    avg_score: Optional[float] = field(init=False)
+    mean_score: Optional[float] = field(init=False)
+    min_score: Optional[float] = field(init=False)
+    max_score: Optional[float] = field(init=False)
+    std_dev_score: Optional[float] = field(init=False)
 
     def __post_init__(self):
         self.compute_stats()
@@ -81,6 +81,12 @@ class AccuracyResult:
             self.min_score = min(_results)
             self.max_score = max(_results)
             self.std_dev_score = statistics.stdev(_results) if len(_results) > 1 else 0
+        else:
+            self.avg_score = None
+            self.mean_score = None
+            self.min_score = None
+            self.max_score = None
+            self.std_dev_score = None
 
     def print_summary(self, console: Optional["Console"] = None):
         from rich.box import ROUNDED

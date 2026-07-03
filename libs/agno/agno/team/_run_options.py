@@ -19,8 +19,9 @@ class ResolvedRunOptions:
     """Immutable snapshot of resolved run options.
 
     All values are fully resolved (call-site > team default > fallback)
-    at construction time, except metadata where team-level values take
-    precedence on conflicting keys.
+    at construction time. Two fields merge instead of replacing: ``metadata``
+    (team-level values win on conflicting keys) and ``dependencies``
+    (call-site values win on conflicting keys).
     """
 
     stream: bool
@@ -119,9 +120,14 @@ def resolve_run_options(
         add_session_state_to_context if add_session_state_to_context is not None else team.add_session_state_to_context
     )
 
-    # dependencies: call-site > team.dependencies
-    # Defensive copy to prevent dependency resolution from mutating team defaults
-    if dependencies is not None:
+    # dependencies: merge call-site over team.dependencies (call-site keys win on conflict).
+    # Runtime context (e.g. Slack/WhatsApp channel ids) overrides static config, but team-level
+    # template vars and resolver callables are preserved instead of being wholesale-clobbered.
+    # Defensive copy to prevent dependency resolution from mutating team defaults.
+    resolved_deps: Optional[Dict[str, Any]]
+    if dependencies is not None and team.dependencies is not None:
+        resolved_deps = {**team.dependencies, **dependencies}
+    elif dependencies is not None:
         resolved_deps = dependencies.copy()
     elif team.dependencies is not None:
         resolved_deps = team.dependencies.copy()

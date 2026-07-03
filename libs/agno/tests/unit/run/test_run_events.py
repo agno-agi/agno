@@ -144,6 +144,34 @@ def test_run_completed_event_includes_files():
     assert reconstructed.files[0].filename == "report.pdf"
 
 
+def test_run_content_event_includes_image():
+    """RunContentEvent must serialize its singular `image` field in to_dict().
+
+    `image` is excluded from the asdict() call but, unlike its sibling media
+    fields (images/videos/audio/response_audio), was never re-added, so it was
+    silently dropped from to_dict()/to_json() (e.g. in AgentOS SSE streaming).
+    """
+    from agno.media import Image
+    from agno.run.agent import RunContentEvent
+
+    event = RunContentEvent(
+        content="hello",
+        image=Image(id="img-1", url="https://example.com/a.png"),
+    )
+
+    assert event.image is not None
+
+    event_dict = event.to_dict()
+    assert "image" in event_dict
+    assert event_dict["image"]["id"] == "img-1"
+    assert event_dict["image"]["url"] == "https://example.com/a.png"
+
+    reconstructed = type(event).from_dict(event_dict)
+    assert isinstance(reconstructed.image, Image)
+    assert reconstructed.image.id == "img-1"
+    assert reconstructed.image.url == "https://example.com/a.png"
+
+
 def test_agent_session_state_in_completed_event():
     """Test that RunCompletedEvent includes session_state field."""
     from agno.run.agent import RunOutput

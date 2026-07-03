@@ -1278,6 +1278,29 @@ def update_cors_middleware(app: FastAPI, new_origins: list):
     )
 
 
+def flatten_routes(routes: Sequence[Any]) -> List[Any]:
+    """Expand included routers into their underlying routes.
+
+    FastAPI 0.137 wraps each included router in a single path-less object instead of
+    inlining its routes, so recurse through those wrappers to recover the real routes.
+
+    Each route keeps the path defined on its own router; a prefix passed at include time
+    (include_router(prefix=...)) is not applied. AgentOS bakes prefixes into the routers
+    themselves, so its routes are unaffected.
+
+    Returns:
+        List[Any]: The routes with any included routers expanded in place.
+    """
+    flattened_routes: List[Any] = []
+    for route in routes:
+        included_router = getattr(route, "original_router", None)
+        if included_router is not None and hasattr(included_router, "routes"):
+            flattened_routes.extend(flatten_routes(included_router.routes))
+        else:
+            flattened_routes.append(route)
+    return flattened_routes
+
+
 def get_existing_route_paths(fastapi_app: FastAPI) -> Dict[str, List[str]]:
     """Get all existing route paths and methods from the FastAPI app.
 
@@ -1366,6 +1389,26 @@ def collect_mcp_tools_from_team(team: Team, mcp_tools: List[Any]) -> None:
             elif isinstance(member, Team):
                 # Recursively check nested team
                 collect_mcp_tools_from_team(member, mcp_tools)
+
+
+def collect_mcp_tools_from_registry(registry: Optional[Registry], mcp_tools: List[Any]) -> None:
+    """Collect MCP tools declared directly on the registry.
+
+    Registry tools are not attached to any agent, team or workflow, so the
+    other collectors never see them. They still must be connected in the
+    AgentOS lifespan: components created from registry tools (e.g. via
+    StudioTool) serialize a toolkit's functions at persist time, and an
+    unconnected MCP toolkit has none -- its tools would be silently dropped.
+    """
+    if registry is None or not registry.tools:
+        return
+    for tool in registry.tools:
+        # Alternate method of using isinstance(tool, (MCPTools, MultiMCPTools)) to avoid imports
+        if hasattr(type(tool), "__mro__") and any(
+            c.__name__ in ["MCPTools", "MultiMCPTools"] for c in type(tool).__mro__
+        ):
+            if tool not in mcp_tools:
+                mcp_tools.append(tool)
 
 
 def collect_mcp_tools_from_workflow(workflow: Workflow, mcp_tools: List[Any]) -> None:

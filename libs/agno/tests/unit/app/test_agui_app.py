@@ -15,27 +15,24 @@ from ag_ui.core.types import (
     VideoInputContent,
 )
 
-from agno.os.interfaces.agui.media import extract_agui_media
-from agno.os.interfaces.agui.router import run_agent, run_team
-from agno.os.interfaces.agui.utils import (
-    EventBuffer,
-    async_stream_agno_response_as_agui_events,
-    extract_agui_user_input,
-)
+from agno.os.interfaces.agui.input import extract_context, extract_media, extract_user_input
+from agno.os.interfaces.agui.router import run_entity
+from agno.os.interfaces.agui.state import StreamState
+from agno.os.interfaces.agui.stream import async_stream_agno_response_as_agui_events
 from agno.run.agent import RunContentEvent, RunEvent, ToolCallCompletedEvent, ToolCallStartedEvent
 
 
 def test_event_buffer_initial_state():
-    """Test EventBuffer initial state"""
-    buffer = EventBuffer()
+    """Test StreamState initial state"""
+    buffer = StreamState()
 
     assert len(buffer.active_tool_call_ids) == 0
     assert len(buffer.ended_tool_call_ids) == 0
 
 
 def test_event_buffer_tool_call_lifecycle():
-    """Test complete tool call lifecycle in EventBuffer"""
-    buffer = EventBuffer()
+    """Test complete tool call lifecycle in StreamState"""
+    buffer = StreamState()
 
     # Initial state
     assert len(buffer.active_tool_call_ids) == 0
@@ -52,7 +49,7 @@ def test_event_buffer_tool_call_lifecycle():
 
 def test_event_buffer_multiple_tool_calls():
     """Test multiple concurrent tool calls"""
-    buffer = EventBuffer()
+    buffer = StreamState()
 
     # Start first tool call
     buffer.start_tool_call("tool_1")
@@ -79,7 +76,7 @@ def test_event_buffer_multiple_tool_calls():
 
 def test_event_buffer_end_nonexistent_tool_call():
     """Test ending a tool call that was never started"""
-    buffer = EventBuffer()
+    buffer = StreamState()
 
     # End tool call that was never started
     buffer.end_tool_call("nonexistent_tool")
@@ -88,7 +85,7 @@ def test_event_buffer_end_nonexistent_tool_call():
 
 def test_event_buffer_duplicate_start_tool_call():
     """Test starting the same tool call multiple times"""
-    buffer = EventBuffer()
+    buffer = StreamState()
 
     # Start same tool call twice
     buffer.start_tool_call("tool_1")
@@ -100,7 +97,7 @@ def test_event_buffer_duplicate_start_tool_call():
 
 def test_event_buffer_duplicate_end_tool_call():
     """Test ending the same tool call multiple times"""
-    buffer = EventBuffer()
+    buffer = StreamState()
 
     buffer.start_tool_call("tool_1")
 
@@ -114,7 +111,7 @@ def test_event_buffer_duplicate_end_tool_call():
 
 def test_event_buffer_complex_sequence():
     """Test complex sequence of tool call operations"""
-    buffer = EventBuffer()
+    buffer = StreamState()
 
     # Start multiple tool calls
     buffer.start_tool_call("tool_1")
@@ -143,7 +140,7 @@ def test_event_buffer_complex_sequence():
 
 def test_event_buffer_edge_cases():
     """Test edge cases in tool call handling"""
-    buffer = EventBuffer()
+    buffer = StreamState()
 
     # Test that empty string tool_call_id is handled gracefully
     buffer.start_tool_call("")  # Empty string
@@ -1560,57 +1557,57 @@ async def test_message_id_regression_prevention():
     )
 
 
-def test_validate_agui_state_with_valid_dict():
-    """Test validate_agui_state with valid dict."""
-    from agno.os.interfaces.agui.utils import validate_agui_state
+def test_validate_state_with_valid_dict():
+    """Test validate_state with valid dict."""
+    from agno.os.interfaces.agui.input import validate_state
 
-    result = validate_agui_state({"user_name": "Alice", "counter": 5}, "test_thread")
+    result = validate_state({"user_name": "Alice", "counter": 5}, "test_thread")
     assert result == {"user_name": "Alice", "counter": 5}
 
 
-def test_validate_agui_state_with_none():
-    """Test validate_agui_state with None state."""
-    from agno.os.interfaces.agui.utils import validate_agui_state
+def test_validate_state_with_none():
+    """Test validate_state with None state."""
+    from agno.os.interfaces.agui.input import validate_state
 
-    result = validate_agui_state(None, "test_thread")
+    result = validate_state(None, "test_thread")
     assert result is None
 
 
-def test_validate_agui_state_with_invalid_type():
-    """Test validate_agui_state with non-dict type returns None."""
-    from agno.os.interfaces.agui.utils import validate_agui_state
+def test_validate_state_with_invalid_type():
+    """Test validate_state with non-dict type returns None."""
+    from agno.os.interfaces.agui.input import validate_state
 
     # String state should be rejected
-    result = validate_agui_state("invalid_string", "test_thread")
+    result = validate_state("invalid_string", "test_thread")
     assert result is None
     # List state should be rejected
-    result = validate_agui_state([1, 2, 3], "test_thread")
+    result = validate_state([1, 2, 3], "test_thread")
     assert result is None
     # Number state should be rejected
-    result = validate_agui_state(42, "test_thread")
+    result = validate_state(42, "test_thread")
     assert result is None
 
 
-def test_validate_agui_state_with_basemodel():
-    """Test validate_agui_state with Pydantic BaseModel."""
+def test_validate_state_with_basemodel():
+    """Test validate_state with Pydantic BaseModel."""
     from pydantic import BaseModel
 
-    from agno.os.interfaces.agui.utils import validate_agui_state
+    from agno.os.interfaces.agui.input import validate_state
 
     class TestModel(BaseModel):
         name: str
         count: int
 
     model = TestModel(name="test", count=10)
-    result = validate_agui_state(model, "test_thread")
+    result = validate_state(model, "test_thread")
     assert result == {"name": "test", "count": 10}
 
 
-def test_validate_agui_state_with_dataclass():
-    """Test validate_agui_state with dataclass."""
+def test_validate_state_with_dataclass():
+    """Test validate_state with dataclass."""
     from dataclasses import dataclass
 
-    from agno.os.interfaces.agui.utils import validate_agui_state
+    from agno.os.interfaces.agui.input import validate_state
 
     @dataclass
     class TestDataclass:
@@ -1618,13 +1615,13 @@ def test_validate_agui_state_with_dataclass():
         count: int
 
     data = TestDataclass(name="test", count=10)
-    result = validate_agui_state(data, "test_thread")
+    result = validate_state(data, "test_thread")
     assert result == {"name": "test", "count": 10}
 
 
-def test_validate_agui_state_with_to_dict_method():
-    """Test validate_agui_state with object having to_dict method."""
-    from agno.os.interfaces.agui.utils import validate_agui_state
+def test_validate_state_with_to_dict_method():
+    """Test validate_state with object having to_dict method."""
+    from agno.os.interfaces.agui.input import validate_state
 
     class TestClass:
         def __init__(self, name: str, count: int):
@@ -1635,20 +1632,20 @@ def test_validate_agui_state_with_to_dict_method():
             return {"name": self.name, "count": self.count}
 
     obj = TestClass(name="test", count=10)
-    result = validate_agui_state(obj, "test_thread")
+    result = validate_state(obj, "test_thread")
     assert result == {"name": "test", "count": 10}
 
 
-def test_validate_agui_state_with_invalid_to_dict():
-    """Test validate_agui_state with to_dict method returning non-dict."""
-    from agno.os.interfaces.agui.utils import validate_agui_state
+def test_validate_state_with_invalid_to_dict():
+    """Test validate_state with to_dict method returning non-dict."""
+    from agno.os.interfaces.agui.input import validate_state
 
     class TestClass:
         def to_dict(self):
             return "not_a_dict"
 
     obj = TestClass()
-    result = validate_agui_state(obj, "test_thread")
+    result = validate_state(obj, "test_thread")
     assert result is None
 
 
@@ -1656,8 +1653,8 @@ def test_validate_agui_state_with_invalid_to_dict():
 
 
 def test_event_buffer_state_snapshot_deep_copy():
-    """Test EventBuffer state snapshot stores a deep copy and computes deltas correctly."""
-    buffer = EventBuffer()
+    """Test StreamState state snapshot stores a deep copy and computes deltas correctly."""
+    buffer = StreamState()
 
     state = {"score": 0, "items": ["a"]}
     buffer.set_state_snapshot(state)
@@ -1680,7 +1677,7 @@ def test_event_buffer_state_snapshot_deep_copy():
 
 def test_event_buffer_compute_delta_no_snapshot():
     """Test compute_state_delta returns None when no snapshot has been set."""
-    buffer = EventBuffer()
+    buffer = StreamState()
     result = buffer.compute_state_delta({"key": "value"})
     assert result is None
 
@@ -1860,7 +1857,7 @@ async def test_no_delta_when_state_unchanged():
     assert EventType.STATE_SNAPSHOT in event_types
 
 
-def test_extract_agui_media_with_images():
+def test_extract_media_with_images():
     """Test extraction preserves image parts from the latest multimodal user message."""
     image_bytes = b"fake-image-bytes"
     messages = [
@@ -1879,8 +1876,8 @@ def test_extract_agui_media_with_images():
         ),
     ]
 
-    user_input = extract_agui_user_input(messages)
-    images, _, _, _ = extract_agui_media(messages)
+    user_input = extract_user_input(messages)
+    images, _, _, _ = extract_media(messages)
 
     assert user_input == "please inspect"
     assert len(images) == 2
@@ -1890,7 +1887,7 @@ def test_extract_agui_media_with_images():
     assert images[1].mime_type == "image/jpeg"
 
 
-def test_extract_agui_media_all_types():
+def test_extract_media_all_types():
     """Test extraction preserves all AG-UI media input content types."""
     image_bytes = b"fake-image-bytes"
     audio_bytes = b"fake-audio-bytes"
@@ -1919,8 +1916,8 @@ def test_extract_agui_media_all_types():
         ),
     ]
 
-    user_input = extract_agui_user_input(messages)
-    images, audio, videos, files = extract_agui_media(messages)
+    user_input = extract_user_input(messages)
+    images, audio, videos, files = extract_media(messages)
 
     assert user_input == "please inspect"
     assert len(images) == 1
@@ -1937,7 +1934,7 @@ def test_extract_agui_media_all_types():
     assert files[0].mime_type == "application/pdf"
 
 
-def test_extract_agui_media_binary_content():
+def test_extract_media_binary_content():
     """Test AG-UI binary content is routed to the matching Agno media bucket."""
     image_bytes = b"binary-image"
     audio_bytes = b"binary-audio"
@@ -1965,8 +1962,8 @@ def test_extract_agui_media_binary_content():
         ),
     ]
 
-    user_input = extract_agui_user_input(messages)
-    images, audio, videos, files = extract_agui_media(messages)
+    user_input = extract_user_input(messages)
+    images, audio, videos, files = extract_media(messages)
 
     assert user_input == ""
     assert images[0].content == image_bytes
@@ -1980,7 +1977,7 @@ def test_extract_agui_media_binary_content():
     assert files[0].filename == "archive.bin"
 
 
-def test_extract_agui_media_url_without_mime():
+def test_extract_media_url_without_mime():
     """Test URL sources without mime_type route by part.type, not MIME."""
     messages = [
         UserMessage(
@@ -1993,7 +1990,7 @@ def test_extract_agui_media_url_without_mime():
         ),
     ]
 
-    images, audio, videos, files = extract_agui_media(messages)
+    images, audio, videos, files = extract_media(messages)
 
     assert len(images) == 1
     assert images[0].url == "https://example.com/cat.png"
@@ -2004,7 +2001,7 @@ def test_extract_agui_media_url_without_mime():
     assert len(files) == 0
 
 
-def test_extract_agui_media_skips_malformed_base64():
+def test_extract_media_skips_malformed_base64():
     """Test a content part with undecodable base64 data is skipped, not raised."""
     messages = [
         UserMessage(
@@ -2017,8 +2014,8 @@ def test_extract_agui_media_skips_malformed_base64():
         ),
     ]
 
-    user_input = extract_agui_user_input(messages)
-    images, audio, videos, files = extract_agui_media(messages)
+    user_input = extract_user_input(messages)
+    images, audio, videos, files = extract_media(messages)
 
     assert user_input == "check this"
     assert len(images) == 0
@@ -2103,18 +2100,54 @@ def _assert_media_forwarded(captured_kwargs):
 
 
 @pytest.mark.asyncio
-async def test_run_agent_passes_agui_media_to_agent():
-    """Test the AG-UI router forwards extracted media parts to Agent.arun."""
-    fake_agent = _FakeRunner()
-    events = [event async for event in run_agent(fake_agent, _media_run_input())]
+async def test_run_entity_passes_agui_media():
+    """Test the AG-UI router forwards extracted media parts to entity.arun."""
+    fake_entity = _FakeRunner()
+    events = [event async for event in run_entity(fake_entity, _media_run_input())]
     assert events[0].type == EventType.RUN_STARTED
-    _assert_media_forwarded(fake_agent.captured_kwargs)
+    _assert_media_forwarded(fake_entity.captured_kwargs)
 
 
-@pytest.mark.asyncio
-async def test_run_team_passes_agui_media_to_team():
-    """Test the AG-UI router forwards extracted media parts to Team.arun."""
-    fake_team = _FakeRunner()
-    events = [event async for event in run_team(fake_team, _media_run_input())]
-    assert events[0].type == EventType.RUN_STARTED
-    _assert_media_forwarded(fake_team.captured_kwargs)
+def test_extract_context_none_returns_none():
+    """None input returns None."""
+    assert extract_context(None) is None
+
+
+def test_extract_context_empty_list_returns_none():
+    """Empty list returns None."""
+    assert extract_context([]) is None
+
+
+def test_extract_context_converts_to_dict():
+    """Context items are converted to a flat dict keyed by description."""
+    item = MagicMock(description="user_state", value="viewing dashboard")
+    result = extract_context([item])
+    assert result == {"user_state": "viewing dashboard"}
+
+
+def test_extract_context_parses_json_values():
+    """JSON string values are parsed into structured data."""
+    item = MagicMock(description="movies", value='{"count":2,"titles":["A","B"]}')
+    result = extract_context([item])
+    assert result == {"movies": {"count": 2, "titles": ["A", "B"]}}
+
+
+def test_extract_context_preserves_non_json_strings():
+    """Non-JSON strings are kept verbatim."""
+    item = MagicMock(description="note", value="just plain text {{{ not json")
+    result = extract_context([item])
+    assert result == {"note": "just plain text {{{ not json"}
+
+
+def test_extract_context_fallback_key_for_empty_description():
+    """Empty description falls back to context_N."""
+    item = MagicMock(description="", value="some value")
+    result = extract_context([item])
+    assert result == {"context_1": "some value"}
+
+
+def test_extract_context_preserves_none_value():
+    """None values are preserved."""
+    item = MagicMock(description="empty", value=None)
+    result = extract_context([item])
+    assert result == {"empty": None}
