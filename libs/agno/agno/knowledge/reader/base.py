@@ -57,9 +57,18 @@ class Reader:
             raise ValueError(f"Failed to set chunking strategy: {e}")
 
     def read(self, obj: Any, name: Optional[str] = None, password: Optional[str] = None) -> List[Document]:
+        """Read ``obj`` and return the resulting documents.
+
+        Subclasses must honor ``self.chunk``. When ``self.chunk``
+        is True, apply ``self.chunk_document`` to each document before returning;
+        when False, return whole documents unchanged. Ingestion does not chunk on
+        the reader's behalf, so a reader that ignores ``self.chunk`` will silently
+        drop the caller's chunking preference.
+        """
         raise NotImplementedError
 
     async def async_read(self, obj: Any, name: Optional[str] = None, password: Optional[str] = None) -> List[Document]:
+        """Async variant of :meth:`read`. Subclasses must honor ``self.chunk`` (see :meth:`read`)."""
         raise NotImplementedError
 
     @classmethod
