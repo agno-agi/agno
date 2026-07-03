@@ -579,6 +579,7 @@ module = [
   "torch.*",
   "todoist_api_python.*",
   "tweepy.*",
+  "twelvelabs.*",
   "twilio.*",
   "tzlocal.*",
   "upstash_vector.*",
