@@ -34,6 +34,7 @@ from typing import TYPE_CHECKING, Any, Callable, List, Optional
 from agno.learn.config import LearnedKnowledgeConfig, LearningMode
 from agno.learn.schemas import LearnedKnowledge
 from agno.learn.stores.protocol import LearningStore
+from agno.learn.stores.utils import build_functions_for_model
 from agno.learn.utils import to_dict_safe
 from agno.utils.log import (
     log_debug,
@@ -1355,25 +1356,7 @@ These insights are already in the knowledge base. Do not save variations of thes
 
     def _build_functions_for_model(self, tools: List[Callable]) -> List[Any]:
         """Convert callables to Functions for model."""
-        from agno.tools.function import Function
-
-        functions = []
-        seen_names = set()
-
-        for tool in tools:
-            try:
-                name = tool.__name__
-                if name in seen_names:
-                    continue
-                seen_names.add(name)
-
-                func = Function.from_callable(tool, strict=True)
-                func.strict = True
-                functions.append(func)
-            except Exception as e:
-                log_warning(f"Could not add function {tool}: {str(e)}")
-
-        return functions
+        return build_functions_for_model(tools, self.model)
 
     def _summarize_existing(self, learnings: List[Any]) -> str:
         """Summarize existing learnings to help avoid duplicates."""

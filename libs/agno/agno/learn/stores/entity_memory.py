@@ -44,6 +44,7 @@ from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Union, ca
 from agno.learn.config import EntityMemoryConfig, LearningMode
 from agno.learn.schemas import EntityMemory
 from agno.learn.stores.protocol import LearningStore
+from agno.learn.stores.utils import build_functions_for_model
 from agno.learn.utils import build_learning_id
 from agno.utils.log import (
     log_debug,
@@ -3065,25 +3066,7 @@ class EntityMemoryStore(LearningStore):
 
     def _build_functions_for_model(self, tools: List[Callable]) -> List[Any]:
         """Convert callables to Functions for model."""
-        from agno.tools.function import Function
-
-        functions = []
-        seen_names = set()
-
-        for tool in tools:
-            try:
-                name = tool.__name__
-                if name in seen_names:
-                    continue
-                seen_names.add(name)
-
-                func = Function.from_callable(tool, strict=True)
-                func.strict = True
-                functions.append(func)
-            except Exception as e:
-                log_warning(f"Could not add function {tool}: {str(e)}")
-
-        return functions
+        return build_functions_for_model(tools, self.model)
 
     # =========================================================================
     # Private Helpers
