@@ -132,6 +132,41 @@ def get_scoped_user_id(request: Request) -> Optional[str]:
     return user_id
 
 
+def resolve_run_user_id(request: Request, client_user_id: Optional[str] = None) -> Optional[str]:
+    """Resolve the ``user_id`` a run should be attributed to, pinning authenticated callers.
+
+    Interfaces (A2A, AGUI) accept a client-supplied identity for anonymous attribution,
+    but must never take run identity from the client once the server has assigned one.
+    Precedence, mirroring the REST run route:
+
+    1. A non-admin scoped caller (a JWT user under ``user_isolation`` or any
+       service-account principal) is pinned to its own principal — the
+       client-supplied identity is ignored.
+    2. Any other authenticated caller (admin, or an unscoped JWT user) is pinned
+       to ``request.state.user_id``.
+    3. An anonymous caller (no server-assigned identity) may supply an identity
+       for attribution, but must not claim a server-reserved principal
+       (``sa:*`` / ``__scheduler__``).
+    """
+    # Local import: the jwt middleware imports modules that must stay importable
+    # without user_scope, so keep this edge lazy rather than module-level.
+    from agno.os.middleware.jwt import is_reserved_principal
+
+    scoped = get_scoped_user_id(request)
+    if scoped is not None:
+        return scoped
+
+    # Truthiness, not `is not None`: a validated JWT with an empty-string sub carries no
+    # usable identity, so fall through to anonymous handling rather than pinning user_id="".
+    state_uid = getattr(request.state, "user_id", None)
+    if state_uid:
+        return state_uid
+
+    if is_reserved_principal(client_user_id):
+        raise HTTPException(status_code=403, detail="Client-supplied user_id may not claim a reserved principal")
+    return client_user_id
+
+
 async def resolve_db_and_scope(
     request: Request,
     dbs: dict[str, list[Union[BaseDb, AsyncBaseDb, RemoteDb]]],

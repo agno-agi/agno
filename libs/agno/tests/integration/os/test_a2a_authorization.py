@@ -22,6 +22,7 @@ from agno.db.in_memory import InMemoryDb
 from agno.os import AgentOS
 from agno.os.config import AuthorizationConfig
 from agno.run.agent import RunOutput
+from agno.session.agent import AgentSession
 from agno.team import Team
 from agno.workflow import Step, Workflow
 
@@ -302,6 +303,43 @@ class TestA2ACustomPrefix:
         assert resp.status_code not in (401, 403), resp.text
 
 
+class TestA2ARootPrefix:
+    """A2A(prefix="") mounts routes at the app root. The scope map must be built from the
+    verbatim prefix -- a fallback (e.g. `prefix or "/a2a"`) would key the map under /a2a
+    while the routes live at the root, leaving every route unmapped -> default-allow."""
+
+    @pytest.fixture
+    def root_prefix_authz_client(self, agent):
+        from agno.os.interfaces.a2a import A2A
+
+        agent_os = AgentOS(
+            id="a2a-root-prefix-os",
+            agents=[agent],
+            interfaces=[A2A(prefix="", agents=[agent])],
+            authorization=True,
+            authorization_config=AuthorizationConfig(verification_keys=[JWT_SECRET], algorithm="HS256"),
+        )
+        return TestClient(agent_os.get_app())
+
+    def test_root_prefix_blocked_without_run_scope(self, root_prefix_authz_client):
+        resp = root_prefix_authz_client.post(
+            f"/agents/{AGENT_ID}/v1/message:send",
+            json=_message_body(),
+            headers={"Authorization": f"Bearer {_token(['config:read'])}"},
+        )
+        assert resp.status_code == 403, resp.text
+
+    def test_root_prefix_allowed_with_run_scope(self, agent, root_prefix_authz_client):
+        with patch.object(agent, "arun", new_callable=AsyncMock) as mock_arun:
+            mock_arun.return_value = RunOutput(run_id="r", session_id="ctx", agent_id=AGENT_ID, content="ok")
+            resp = root_prefix_authz_client.post(
+                f"/agents/{AGENT_ID}/v1/message:send",
+                json=_message_body(),
+                headers={"Authorization": f"Bearer {_token(['agents:run'])}"},
+            )
+        assert resp.status_code not in (401, 403), resp.text
+
+
 # ------------------------------------------- deprecated dynamic-dispatch family gate
 
 
@@ -360,7 +398,17 @@ class TestA2ATasksGetScoping:
             assert mock_get.call_args.kwargs["user_id"] is None
 
     def test_scoped_caller_pins_own_user_id(self, agent, authz_client):
-        with patch.object(agent, "aget_run_output", new_callable=AsyncMock) as mock_get:
+        # The scoped path first verifies ownership (aget_session), then reads the run.
+        owned_session = AgentSession(
+            session_id="ctx-1",
+            agent_id=AGENT_ID,
+            user_id="user-1",
+            runs=[RunOutput(run_id="task-1", agent_id=AGENT_ID)],
+        )
+        with (
+            patch.object(agent, "aget_session", new_callable=AsyncMock, return_value=owned_session),
+            patch.object(agent, "aget_run_output", new_callable=AsyncMock) as mock_get,
+        ):
             mock_get.return_value = RunOutput(run_id="task-1", session_id="ctx-1", agent_id=AGENT_ID, content="x")
             resp = authz_client.post(
                 f"/a2a/agents/{AGENT_ID}/v1/tasks:get",
@@ -369,6 +417,43 @@ class TestA2ATasksGetScoping:
             )
             assert resp.status_code == 200, resp.text
             assert mock_get.call_args.kwargs["user_id"] == "user-1"
+
+    def test_scoped_caller_cannot_poll_cross_component_run(self, agent, authz_client):
+        # A session the caller owns but that belongs to ANOTHER agent must 404 through
+        # this agent's tasks:get -- otherwise agents:<id>:read on one agent reads runs
+        # of any component the caller ever talked to (per-resource RBAC bypass).
+        foreign_session = AgentSession(
+            session_id="ctx-1",
+            agent_id="other-agent",
+            user_id="user-1",
+            runs=[RunOutput(run_id="task-1", agent_id="other-agent")],
+        )
+        with (
+            patch.object(agent, "aget_session", new_callable=AsyncMock, return_value=foreign_session),
+            patch.object(agent, "aget_run_output", new_callable=AsyncMock) as mock_get,
+        ):
+            resp = authz_client.post(
+                f"/a2a/agents/{AGENT_ID}/v1/tasks:get",
+                json={"id": "r1", "params": {"id": "task-1", "contextId": "ctx-1"}},
+                headers={"Authorization": f"Bearer {_token(['agents:read'], sub='user-1')}"},
+            )
+            assert resp.status_code == 404, resp.text
+            mock_get.assert_not_called()
+
+    def test_scoped_caller_cannot_poll_unowned_session(self, agent, authz_client):
+        # aget_session filters by user_id, so a session owned by someone else resolves to
+        # None for the caller -> 404 before any run content is read.
+        with (
+            patch.object(agent, "aget_session", new_callable=AsyncMock, return_value=None),
+            patch.object(agent, "aget_run_output", new_callable=AsyncMock) as mock_get,
+        ):
+            resp = authz_client.post(
+                f"/a2a/agents/{AGENT_ID}/v1/tasks:get",
+                json={"id": "r1", "params": {"id": "task-1", "contextId": "ctx-1"}},
+                headers={"Authorization": f"Bearer {_token(['agents:read'], sub='user-1')}"},
+            )
+            assert resp.status_code == 404, resp.text
+            mock_get.assert_not_called()
 
     def test_missing_context_id_returns_400_not_500(self, authz_client):
         resp = authz_client.post(

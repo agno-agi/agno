@@ -31,8 +31,7 @@ from agno.os.interfaces.a2a.utils import (
     stream_a2a_response_with_error_handling,
 )
 from agno.os.auth import check_resource_access
-from agno.os.middleware.jwt import is_reserved_principal
-from agno.os.middleware.user_scope import get_scoped_user_id, verify_run_in_session
+from agno.os.middleware.user_scope import get_scoped_user_id, resolve_run_user_id, verify_run_in_session
 from agno.os.utils import get_agent_by_id, get_request_kwargs, get_team_by_id, get_workflow_by_id
 from agno.team import RemoteTeam, Team
 from agno.workflow import RemoteWorkflow, Workflow
@@ -62,33 +61,14 @@ def _enforce_dynamic_dispatch_scope(request: Request, entity: object, entity_id:
 def _resolve_a2a_user_id(request: Request, request_body: dict) -> Optional[str]:
     """Resolve the run's ``user_id``, mirroring the REST run route's identity pinning.
 
-    A2A must not take run identity from the client. Precedence:
-
-    1. A non-admin scoped caller (a JWT user under ``user_isolation`` or any
-       service-account principal) is pinned to its own principal — the
-       client-supplied ``X-User-ID`` / ``metadata.userId`` is ignored.
-    2. Any other authenticated caller (admin, or an unscoped JWT user) is pinned
-       to ``request.state.user_id``.
-    3. An anonymous caller (no server-assigned identity) may supply an identity
-       for attribution, but must not claim a server-reserved principal
-       (``sa:*`` / ``__scheduler__``).
+    A2A must not take run identity from the client: the client-supplied ``X-User-ID``
+    header / ``metadata.userId`` is honoured for attribution only when the caller is
+    anonymous (see ``resolve_run_user_id`` for the full precedence).
     """
-    scoped = get_scoped_user_id(request)
-    if scoped is not None:
-        return scoped
-
-    # Truthiness, not `is not None`: a validated JWT with an empty-string sub carries no
-    # usable identity, so fall through to anonymous handling rather than pinning user_id="".
-    state_uid = getattr(request.state, "user_id", None)
-    if state_uid:
-        return state_uid
-
     client_uid = request.headers.get("X-User-ID")
     if not client_uid:
         client_uid = request_body.get("params", {}).get("message", {}).get("metadata", {}).get("userId")
-    if is_reserved_principal(client_uid):
-        raise HTTPException(status_code=403, detail="X-User-ID may not claim a reserved principal")
-    return client_uid
+    return resolve_run_user_id(request, client_uid)
 
 
 def attach_routes(
@@ -274,6 +254,13 @@ def attach_routes(
         if not context_id:
             raise HTTPException(status_code=400, detail="contextId is required to poll a task")
         scoped_user_id = get_scoped_user_id(request)
+        if scoped_user_id is not None:
+            # Ownership + component pin before the read, mirroring tasks:cancel and the REST
+            # run-read route: a scoped caller may only reach runs that live in a session it
+            # owns AND that belong to this path component (fails closed on cross-component).
+            await verify_run_in_session(
+                agent, context_id, task_id, scoped_user_id, component_type="agents", component_id=id
+            )
         run_output = await agent.aget_run_output(run_id=task_id, session_id=context_id, user_id=scoped_user_id)
         if not run_output:
             raise HTTPException(status_code=404, detail="Task not found")
@@ -572,6 +559,13 @@ def attach_routes(
         if not context_id:
             raise HTTPException(status_code=400, detail="contextId is required to poll a task")
         scoped_user_id = get_scoped_user_id(request)
+        if scoped_user_id is not None:
+            # Ownership + component pin before the read, mirroring tasks:cancel and the REST
+            # run-read route: a scoped caller may only reach runs that live in a session it
+            # owns AND that belong to this path component (fails closed on cross-component).
+            await verify_run_in_session(
+                team, context_id, task_id, scoped_user_id, component_type="teams", component_id=id
+            )
         run_output = await team.aget_run_output(run_id=task_id, session_id=context_id, user_id=scoped_user_id)
         if not run_output:
             raise HTTPException(status_code=404, detail="Task not found")
