@@ -96,8 +96,9 @@ class AgentOSScope(str, Enum):
 
     # Special scopes
     ADMIN = "agent_os:admin"
-    # Cross-user grant for machine identities (see CROSS_USER_SCOPE alias below).
-    CROSS_USER = "agent_os:cross_user"
+    # Cross-user grant for machine identities; CROSS_USER_SCOPE (module constant above)
+    # is the same value, referenced here so the two never drift.
+    CROSS_USER = CROSS_USER_SCOPE
 
 
 @dataclass

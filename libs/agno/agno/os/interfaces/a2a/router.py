@@ -30,9 +30,9 @@ from agno.os.interfaces.a2a.utils import (
     map_run_output_to_a2a_task,
     stream_a2a_response_with_error_handling,
 )
+from agno.os.auth import check_resource_access
 from agno.os.middleware.jwt import is_reserved_principal
 from agno.os.middleware.user_scope import get_scoped_user_id, verify_run_in_session
-from agno.os.scopes import has_required_scopes
 from agno.os.utils import get_agent_by_id, get_request_kwargs, get_team_by_id, get_workflow_by_id
 from agno.team import RemoteTeam, Team
 from agno.workflow import RemoteWorkflow, Workflow
@@ -43,9 +43,9 @@ def _enforce_dynamic_dispatch_scope(request: Request, entity: object, entity_id:
 
     ``POST /message:send`` / ``:stream`` resolve the target as an agent, team, OR workflow
     at runtime, so the route-level gate can only require a single coarse scope (``agents:run``).
-    That would let an ``agents:run``-only token execute teams/workflows (and 403 a
-    ``teams:run``-only token from its own team). Once the entity is resolved we know its
-    family, so enforce ``<family>:run`` here. No-op when RBAC is not active.
+    That would let an ``agents:run``-only token execute teams/workflows. Once the entity is
+    resolved we know its family, so enforce ``<family>:run`` via the canonical RBAC decision.
+    No-op when RBAC is not active.
     """
     if not getattr(request.state, "authorization_enabled", False):
         return
@@ -55,12 +55,7 @@ def _enforce_dynamic_dispatch_scope(request: Request, entity: object, entity_id:
         family = "workflows"
     else:
         family = "agents"
-    scopes: List[str] = getattr(request.state, "scopes", []) or []
-    admin_scope_raw = getattr(request.state, "admin_scope", None)
-    admin_scope = admin_scope_raw if isinstance(admin_scope_raw, str) else None
-    if not has_required_scopes(
-        scopes, [f"{family}:run"], resource_type=family, resource_id=entity_id, admin_scope=admin_scope
-    ):
+    if not check_resource_access(request, entity_id, family, "run"):
         raise HTTPException(status_code=403, detail=f"Insufficient permissions to run this {family[:-1]}")
 
 

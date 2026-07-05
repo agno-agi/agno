@@ -108,14 +108,16 @@ def get_scoped_user_id(request: Request) -> Optional[str]:
     # Ignore non-string values (e.g. MagicMock auto-attrs in tests).
     admin_scope: Optional[str] = admin_scope_raw if isinstance(admin_scope_raw, str) else None
     is_admin = _has_admin_scope(scopes, admin_scope=admin_scope)
+    is_service_account = isinstance(user_id, str) and user_id.startswith(SERVICE_ACCOUNT_PRINCIPAL_PREFIX)
+
+    # Admin and the explicit cross-user grant read across users, so they are never
+    # scoped — checked first so the grant works regardless of the user_isolation flag
+    # (a service account with CROSS_USER_SCOPE must not fall through to self-scoping).
+    if is_admin or CROSS_USER_SCOPE in scopes:
+        return None
 
     # Service-account self-scoping — independent of the user_isolation flag.
-    if (
-        isinstance(user_id, str)
-        and user_id.startswith(SERVICE_ACCOUNT_PRINCIPAL_PREFIX)
-        and not is_admin
-        and CROSS_USER_SCOPE not in scopes
-    ):
+    if is_service_account:
         return user_id
 
     # Opt-in gate: when user isolation is disabled, human/JWT callers see the raw,
@@ -125,9 +127,6 @@ def get_scoped_user_id(request: Request) -> Optional[str]:
         return None
 
     if not user_id:
-        return None
-
-    if is_admin:
         return None
 
     return user_id

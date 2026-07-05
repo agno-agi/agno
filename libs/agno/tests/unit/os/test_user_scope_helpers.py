@@ -160,6 +160,15 @@ class TestServiceAccountSelfScoping:
         )
         assert get_scoped_user_id(request) is None
 
+    def test_sa_with_cross_user_scope_reads_across_users_isolation_on(self):
+        # The escape hatch must also work with user_isolation enabled, not only off.
+        request = _make_request(
+            user_id="sa:bot",
+            scopes=["sessions:read", "agent_os:cross_user"],
+            user_isolation_enabled=True,
+        )
+        assert get_scoped_user_id(request) is None
+
     def test_human_user_still_unscoped_when_isolation_off(self):
         """The self-scoping is scoped to sa: principals — humans keep legacy behaviour."""
         request = _make_request(user_id="alice", scopes=["sessions:read"], user_isolation_enabled=False)

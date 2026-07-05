@@ -1273,24 +1273,23 @@ class AgentOS:
 
         middleware_kwargs["excluded_route_paths"] = excluded_route_paths
 
-        # A2A's mount prefix is operator-configurable (A2A(prefix=...)). The default
-        # scope map only covers "/a2a", so an A2A interface mounted under a custom prefix
-        # would have zero scope entries and fall through to the unmapped-route default
-        # (allow) -- silently ungating agent/team/workflow execution. Merge scope entries
-        # for each custom-prefix A2A interface so it is gated exactly like the default one.
-        from agno.os.scopes import get_a2a_scope_mappings
-
-        custom_a2a_mappings: Dict[str, List[str]] = {}
+        # Interface routes are authorization-gated by the scope entries each interface
+        # declares (Interface.get_scope_mappings), merged here against its ACTUAL mount
+        # prefix. This covers operator-configurable prefixes (A2A/AGUI(prefix=...)) and
+        # subclasses, which the default scope map (keyed on default prefixes) cannot -- an
+        # interface that runs entities but has no scope entry falls through to the
+        # unmapped-route default (allow). Self-authenticating interfaces are excluded from
+        # the auth layer entirely, so their mappings are irrelevant here.
+        interface_mappings: Dict[str, List[str]] = {}
         for interface in self.interfaces:
-            if interface.__class__.__name__ != "A2A":
+            if getattr(interface, "authenticates_own_requests", False):
                 continue
-            prefix = getattr(interface, "prefix", "/a2a") or "/a2a"
-            if prefix.rstrip("/") != "/a2a":
-                custom_a2a_mappings.update(get_a2a_scope_mappings(prefix))
-        if custom_a2a_mappings:
+            interface_mappings.update(interface.get_scope_mappings())
+        if interface_mappings:
             merged = dict(middleware_kwargs.get("scope_mappings") or {})
-            merged.update(custom_a2a_mappings)
-            middleware_kwargs["scope_mappings"] = merged
+            # Operator-supplied mappings still win over interface defaults.
+            interface_mappings.update(merged)
+            middleware_kwargs["scope_mappings"] = interface_mappings
 
         # Behaviour-change notice: service-account (PAT) principals now self-scope to the
         # data they created even with user_isolation off, so a default token no longer reads
