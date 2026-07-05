@@ -229,7 +229,13 @@ class OpenAIChat(Model):
                 # Convert Pydantic to JSON schema for regular endpoint
                 from agno.utils.models.schema_utils import get_response_schema_for_provider
 
-                schema = get_response_schema_for_provider(response_format, "openai")
+                # `additionalProperties: false` is an OpenAI strict-mode requirement. It is only
+                # needed when strict output is on, and OpenAI-compatible providers reached through
+                # subclasses (e.g. OpenRouter routing to xAI/Grok) reject it. Only apply the
+                # OpenAI-specific normalization when strict output is requested; otherwise normalize
+                # generically so provider-incompatible constraints are not injected.
+                schema_provider = "openai" if self.strict_output else "generic"
+                schema = get_response_schema_for_provider(response_format, schema_provider)
                 base_params["response_format"] = {
                     "type": "json_schema",
                     "json_schema": {

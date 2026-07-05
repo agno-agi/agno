@@ -297,7 +297,13 @@ class OpenAIResponses(Model):
         # Set the response format
         if response_format is not None:
             if isinstance(response_format, type) and issubclass(response_format, BaseModel):
-                schema = get_response_schema_for_provider(response_format, "openai")
+                # `additionalProperties: false` is an OpenAI strict-mode requirement. It is only
+                # needed when strict output is on, and OpenAI-compatible providers reached through
+                # subclasses (e.g. OpenRouter routing to xAI/Grok) reject it. Only apply the
+                # OpenAI-specific normalization when strict output is requested; otherwise normalize
+                # generically so provider-incompatible constraints are not injected.
+                schema_provider = "openai" if self.strict_output else "generic"
+                schema = get_response_schema_for_provider(response_format, schema_provider)
                 text_params["format"] = {
                     "type": "json_schema",
                     "name": response_format.__name__,
