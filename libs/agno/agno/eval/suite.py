@@ -1,0 +1,577 @@
+"""Eval suite runner: declare `Case`s, run them with `run_cases`/`arun_cases`, ship a CLI with `cli`.
+
+A `Case` is one input to one agent plus optional checks (`AgentAsJudgeEval` via
+`criteria`, `ReliabilityEval` via `expected_tool_calls`). The runner executes the
+selected cases sequentially on a single event loop and returns a `SuiteResult`
+whose `to_dict()` payload is a stable contract for CI consumers.
+
+The runner performs no console I/O: presentation flows through the
+`on_case_start` / `on_run_event` / `on_case_end` hooks. `cli()` is a pure
+consumer of that public API.
+"""
+
+import asyncio
+import json
+import time
+from dataclasses import dataclass, field
+from inspect import iscoroutinefunction
+from pathlib import Path
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Sequence, Tuple, Union
+from uuid import uuid4
+
+from agno.agent import Agent
+from agno.db.base import AsyncBaseDb, BaseDb
+from agno.eval.agent_as_judge import AgentAsJudgeEval
+from agno.eval.reliability import ReliabilityEval
+from agno.models.base import Model
+from agno.run.agent import RunOutput, RunOutputEvent
+
+if TYPE_CHECKING:
+    from rich.console import Console
+    from rich.live import Live
+    from rich.status import Status
+
+__all__ = [
+    "Case",
+    "CaseResult",
+    "SuiteResult",
+    "arun_cases",
+    "run_cases",
+    "cli",
+]
+
+
+@dataclass(frozen=True)
+class Case:
+    """One eval case: an input to one agent, plus optional judge/reliability checks."""
+
+    name: str
+    agent: Agent
+    input: str
+    tags: Tuple[str, ...] = ()
+    # Per-case timeout in seconds; falls back to the runner's default_timeout
+    timeout_seconds: Optional[int] = None
+
+    # Judge check - set `criteria` to enable AgentAsJudgeEval (binary pass/fail).
+    criteria: Optional[str] = None
+    # Per-case judge model override; falls back to the runner's judge_model=,
+    # then AgentAsJudgeEval's default
+    judge_model: Optional[Model] = None
+
+    # Reliability check - set `expected_tool_calls` to enable ReliabilityEval.
+    expected_tool_calls: Optional[Tuple[str, ...]] = None
+    allow_additional_tool_calls: bool = True
+
+    # Lifecycle hooks. setup runs before the agent (outside the timeout); its return
+    # value ("context") is passed to teardown. teardown always runs once setup has
+    # completed (pass, fail, error, timeout) and receives (context, result) so it can
+    # inspect result.error / result.timed_out. Sync callables run via
+    # asyncio.to_thread; async callables are awaited.
+    setup: Optional[Callable[[], Any]] = None
+    teardown: Optional[Callable[[Any, "CaseResult"], Any]] = None
+
+    def __post_init__(self) -> None:
+        if self.criteria is None and self.expected_tool_calls is None:
+            raise ValueError(f"case {self.name!r} has no checks: set criteria and/or expected_tool_calls")
+
+
+@dataclass
+class CaseResult:
+    """Outcome of one case, with enough evidence to debug a failure from the payload alone."""
+
+    name: str
+    agent_id: str
+    tags: Tuple[str, ...]
+    # The generated eval session id - links the case to its stored session/trace when db= is set
+    session_id: str = ""
+    duration_seconds: float = 0.0
+    judge_passed: Optional[bool] = None  # None = check not configured
+    judge_reason: Optional[str] = None  # the judge's stated reason, when available
+    reliability_passed: Optional[bool] = None  # None = check not configured
+    output: Optional[str] = None  # response text - what the judge graded
+    tools_called: Tuple[str, ...] = ()  # tool names fired during the run, in order
+    timed_out: bool = False
+    # Agent error, judge/reliability error, teardown error - "; "-joined
+    error: Optional[str] = None
+    # Raw run output - full programmatic access to content, tool calls, metrics.
+    # Excluded from to_dict().
+    response: Optional[RunOutput] = None
+
+    @property
+    def passed(self) -> bool:
+        if self.error:
+            return False
+        checks = [c for c in (self.judge_passed, self.reliability_passed) if c is not None]
+        return bool(checks) and all(checks)
+
+
+@dataclass
+class SuiteResult:
+    """Results of a suite run. The summary is derived from the per-case results."""
+
+    results: List[CaseResult] = field(default_factory=list)
+
+    @property
+    def total(self) -> int:
+        return len(self.results)
+
+    @property
+    def passed(self) -> int:
+        return sum(1 for result in self.results if result.passed)
+
+    @property
+    def failed(self) -> int:
+        return self.total - self.passed
+
+    @property
+    def status(self) -> str:
+        return "PASS" if self.passed == self.total else "FAIL"
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Machine-readable payload. This shape is a contract parsed by CI consumers."""
+        return {
+            "summary": {
+                "total": self.total,
+                "passed": self.passed,
+                "failed": self.failed,
+                "status": self.status,
+            },
+            "cases": [
+                {
+                    "name": result.name,
+                    "agent_id": result.agent_id,
+                    "tags": list(result.tags),
+                    "session_id": result.session_id,
+                    "duration_seconds": result.duration_seconds,
+                    "judge_passed": result.judge_passed,
+                    "judge_reason": result.judge_reason,
+                    "reliability_passed": result.reliability_passed,
+                    "output": result.output,
+                    "tools_called": list(result.tools_called),
+                    "timed_out": result.timed_out,
+                    "passed": result.passed,
+                    "error": result.error,
+                }
+                for result in self.results
+            ],
+        }
+
+
+def _agent_id(case: Case) -> str:
+    return case.agent.id or case.name
+
+
+def _case_matches(case: Case, *, tag: Optional[str], name: Optional[str]) -> bool:
+    if name is not None and case.name != name:
+        return False
+    if tag is not None and tag not in case.tags:
+        return False
+    return True
+
+
+def _append_error(result: CaseResult, message: str) -> None:
+    result.error = "; ".join(part for part in (result.error, message) if part)
+
+
+async def _call_hook(hook: Callable[..., Any], *args: Any) -> Any:
+    if iscoroutinefunction(hook):
+        return await hook(*args)
+    return await asyncio.to_thread(hook, *args)
+
+
+async def _run_case_body(
+    case: Case,
+    result: CaseResult,
+    *,
+    judge_model: Optional[Model],
+    db: Optional[Union[BaseDb, AsyncBaseDb]],
+    on_run_event: Optional[Callable[[Case, RunOutputEvent], None]],
+) -> None:
+    """Agent run + judge + reliability checks. Runs inside the case timeout; mutates result."""
+    response: Optional[RunOutput] = None
+    try:
+        async for event in case.agent.arun(
+            input=case.input,
+            stream=True,
+            stream_events=True,
+            yield_run_output=True,
+            session_id=result.session_id,
+        ):
+            if isinstance(event, RunOutput):
+                # The final run output arrives in-stream (yield_run_output=True). It is
+                # captured, not forwarded to on_run_event - on_case_end delivers it.
+                response = event
+                continue
+            if on_run_event is not None:
+                on_run_event(case, event)
+    except Exception as exc:
+        _append_error(result, f"{type(exc).__name__}: {exc}")
+        return
+
+    if response is None:
+        _append_error(result, "agent: no run output recorded")
+        return
+
+    result.response = response
+    result.output = str(response.content) if response.content else ""
+    result.tools_called = tuple(tool.tool_name or "?" for tool in (response.tools or []))
+
+    if case.criteria is not None:
+        try:
+            judge = await AgentAsJudgeEval(
+                name=case.name,
+                criteria=case.criteria,
+                scoring_strategy="binary",
+                model=case.judge_model or judge_model,
+                db=db,
+            ).arun(input=case.input, output=result.output or "")
+        except Exception as exc:
+            _append_error(result, f"judge: {type(exc).__name__}: {exc}")
+        else:
+            if judge is not None and judge.results:
+                result.judge_passed = judge.results[0].passed
+                result.judge_reason = judge.results[0].reason or None
+            else:
+                _append_error(result, "judge: returned no result")
+
+    if case.expected_tool_calls is not None:
+        try:
+            reliability = await ReliabilityEval(
+                name=case.name,
+                agent_response=response,
+                expected_tool_calls=list(case.expected_tool_calls),
+                allow_additional_tool_calls=case.allow_additional_tool_calls,
+                db=db,
+            ).arun()
+        except Exception as exc:
+            _append_error(result, f"reliability: {type(exc).__name__}: {exc}")
+        else:
+            if reliability is None:
+                _append_error(result, "reliability: returned no result")
+            else:
+                result.reliability_passed = reliability.eval_status == "PASSED"
+
+
+async def _arun_case(
+    case: Case,
+    *,
+    default_timeout: int,
+    judge_model: Optional[Model],
+    db: Optional[Union[BaseDb, AsyncBaseDb]],
+    on_run_event: Optional[Callable[[Case, RunOutputEvent], None]],
+) -> CaseResult:
+    start = time.perf_counter()
+    result = CaseResult(
+        name=case.name,
+        agent_id=_agent_id(case),
+        tags=case.tags,
+        # Dedicated session per case so eval traffic doesn't pollute agent history
+        session_id=f"eval-{case.name}-{uuid4().hex[:8]}",
+    )
+    timeout = case.timeout_seconds if case.timeout_seconds is not None else default_timeout
+
+    context: Any = None
+    setup_completed = True
+    if case.setup is not None:
+        try:
+            context = await _call_hook(case.setup)
+        except Exception as exc:
+            _append_error(result, f"setup: {type(exc).__name__}: {exc}")
+            setup_completed = False
+
+    if setup_completed:
+        try:
+            try:
+                await asyncio.wait_for(
+                    _run_case_body(case, result, judge_model=judge_model, db=db, on_run_event=on_run_event),
+                    timeout=timeout,
+                )
+            except asyncio.TimeoutError:
+                result.timed_out = True
+                _append_error(result, f"timeout: exceeded {timeout}s")
+        finally:
+            # Teardown runs even on timeout/error - a mutation may have landed before
+            # the clock ran out. A teardown failure must be visible in the payload,
+            # not only on a console.
+            if case.teardown is not None:
+                try:
+                    await _call_hook(case.teardown, context, result)
+                except Exception as exc:
+                    _append_error(result, f"cleanup: {type(exc).__name__}: {exc}")
+
+    result.duration_seconds = round(time.perf_counter() - start, 3)
+    return result
+
+
+async def arun_cases(
+    cases: Sequence[Case],
+    *,
+    tag: Optional[str] = None,
+    name: Optional[str] = None,
+    default_timeout: int = 120,
+    judge_model: Optional[Model] = None,
+    db: Optional[Union[BaseDb, AsyncBaseDb]] = None,
+    on_case_start: Optional[Callable[[Case], None]] = None,
+    on_case_end: Optional[Callable[[CaseResult], None]] = None,
+    on_run_event: Optional[Callable[[Case, RunOutputEvent], None]] = None,
+) -> SuiteResult:
+    """Run the selected cases sequentially and return a SuiteResult.
+
+    Args:
+        cases: The cases to select from.
+        tag: Keep only cases with this tag.
+        name: Keep only the case with this name.
+        default_timeout: Per-case timeout in seconds, when Case.timeout_seconds is None.
+        judge_model: Suite-wide default judge model; Case.judge_model overrides it.
+        db: Passed to AgentAsJudgeEval/ReliabilityEval so results log to storage.
+        on_case_start: Presentation hook, called before each case runs.
+        on_case_end: Presentation hook, called with each case's CaseResult.
+        on_run_event: Presentation hook, called with every streamed run event.
+
+    Performs no console I/O - all presentation flows through the hooks. Hooks are
+    plain sync callables invoked on the event loop; keep them fast.
+    """
+    selected = [case for case in cases if _case_matches(case, tag=tag, name=name)]
+
+    results: List[CaseResult] = []
+    for case in selected:
+        if on_case_start is not None:
+            on_case_start(case)
+        result = await _arun_case(
+            case,
+            default_timeout=default_timeout,
+            judge_model=judge_model,
+            db=db,
+            on_run_event=on_run_event,
+        )
+        results.append(result)
+        if on_case_end is not None:
+            on_case_end(result)
+
+    # Some toolkit transports schedule async close work after a case finishes.
+    # Yielding once before the loop closes avoids "event loop is closed" noise.
+    await asyncio.sleep(0)
+    return SuiteResult(results=results)
+
+
+def run_cases(
+    cases: Sequence[Case],
+    *,
+    tag: Optional[str] = None,
+    name: Optional[str] = None,
+    default_timeout: int = 120,
+    judge_model: Optional[Model] = None,
+    db: Optional[Union[BaseDb, AsyncBaseDb]] = None,
+    on_case_start: Optional[Callable[[Case], None]] = None,
+    on_case_end: Optional[Callable[[CaseResult], None]] = None,
+    on_run_event: Optional[Callable[[Case, RunOutputEvent], None]] = None,
+) -> SuiteResult:
+    """Sync wrapper over arun_cases. The whole suite runs on a single event loop."""
+    return asyncio.run(
+        arun_cases(
+            cases,
+            tag=tag,
+            name=name,
+            default_timeout=default_timeout,
+            judge_model=judge_model,
+            db=db,
+            on_case_start=on_case_start,
+            on_case_end=on_case_end,
+            on_run_event=on_run_event,
+        )
+    )
+
+
+class _CliRenderer:
+    """Console UI for cli(), driven entirely by the public runner hooks."""
+
+    def __init__(self, console: "Console", total: int, verbose: bool) -> None:
+        self._console = console
+        self._total = total
+        self._verbose = verbose
+        self._index = 0
+        self._case: Optional[Case] = None
+        self._live: Optional["Live"] = None
+        self._status: Optional["Status"] = None
+        self._base_label = ""
+
+    def on_case_start(self, case: Case) -> None:
+        from rich.live import Live
+        from rich.status import Status
+
+        self._index += 1
+        self._case = case
+        self._console.rule(f"[bold]{case.name}[/bold]  [dim]{_agent_id(case)} · {self._index}/{self._total}[/dim]")
+        self._base_label = f"[bold]running[/bold] {_agent_id(case)}…"
+        self._status = Status(self._base_label, spinner="dots")
+        self._live = Live(self._status, console=self._console, transient=True, refresh_per_second=10)
+        self._live.start()
+
+    def on_run_event(self, case: Case, event: RunOutputEvent) -> None:
+        if self._status is None:
+            return
+        event_type = getattr(event, "event", None)
+        if event_type == "ToolCallStarted":
+            tool = getattr(event, "tool", None)
+            tool_name = getattr(tool, "tool_name", None)
+            if tool_name:
+                self._status.update(f"[bold]running[/bold] {_agent_id(case)} → [cyan]{tool_name}[/cyan]…")
+        elif event_type == "ToolCallCompleted":
+            self._status.update(self._base_label)
+
+    def on_case_end(self, result: CaseResult) -> None:
+        if self._live is not None:
+            self._live.stop()
+            self._live = None
+            self._status = None
+        if self._verbose and result.response is not None:
+            from agno.utils.pprint import pprint_run_response
+
+            pprint_run_response(result.response, markdown=True)
+            self._console.print(f"[dim]session: {result.session_id} · {result.duration_seconds}s[/dim]")
+        else:
+            self._print_response(result)
+        self._print_verdicts(result)
+        self._case = None
+
+    def _print_response(self, result: CaseResult) -> None:
+        self._console.print()
+        self._console.print("[bold]Response[/bold]")
+        self._console.print(result.output or "[dim](empty)[/dim]")
+        if result.tools_called:
+            names = ", ".join(result.tools_called)
+            self._console.print(f"\n[dim]tools fired:[/dim] {names}")
+
+    def _print_verdicts(self, result: CaseResult) -> None:
+        if result.judge_passed is not None:
+            style = "green" if result.judge_passed else "red"
+            verdict = "PASS" if result.judge_passed else "FAIL"
+            self._console.print(f"\n[bold]Judge:[/bold] [{style}]{verdict}[/{style}]")
+            if result.judge_reason:
+                self._console.print(f"[dim]  {result.judge_reason}[/dim]")
+        if result.reliability_passed is not None:
+            style = "green" if result.reliability_passed else "red"
+            verdict = "PASS" if result.reliability_passed else "FAIL"
+            line = f"\n[bold]Reliability:[/bold] [{style}]{verdict}[/{style}]"
+            if self._case is not None and self._case.expected_tool_calls:
+                expected = ", ".join(self._case.expected_tool_calls)
+                line += f"  [dim]expected: {expected}[/dim]"
+            self._console.print(line)
+        if result.error:
+            self._console.print(f"\n[red]error:[/red] {result.error}")
+
+
+def _check_cell(passed: Optional[bool]) -> str:
+    if passed is None:
+        return "[dim]—[/dim]"
+    style = "green" if passed else "red"
+    verdict = "PASS" if passed else "FAIL"
+    return f"[{style}]{verdict}[/{style}]"
+
+
+def _print_case_list(console: "Console", cases: Sequence[Case], *, default_timeout: int) -> None:
+    from rich.table import Table
+
+    table = Table(title="Eval Cases", title_style="bold sky_blue1", show_header=True, header_style="bold")
+    table.add_column("Case", overflow="fold")
+    table.add_column("Agent")
+    table.add_column("Tags")
+    table.add_column("Timeout")
+    for case in cases:
+        timeout = case.timeout_seconds if case.timeout_seconds is not None else default_timeout
+        table.add_row(case.name, _agent_id(case), ", ".join(case.tags), str(timeout))
+    console.print(table)
+
+
+def _print_summary(console: "Console", suite: SuiteResult) -> None:
+    from rich.table import Table
+
+    table = Table(title="Eval Summary", title_style="bold sky_blue1", show_header=True, header_style="bold")
+    table.add_column("Case", overflow="fold")
+    table.add_column("Judge")
+    table.add_column("Reliability")
+    table.add_column("Status")
+    for result in suite.results:
+        status = "[green]PASS[/green]" if result.passed else "[red]FAIL[/red]"
+        table.add_row(result.name, _check_cell(result.judge_passed), _check_cell(result.reliability_passed), status)
+
+    console.print()
+    console.print(table)
+
+    summary = f"[green]{suite.passed}/{suite.total} passed[/green]"
+    if suite.failed:
+        summary += f", [red]{suite.failed} failed[/red]"
+    console.print(f"\n{summary}")
+
+    for result in suite.results:
+        if result.error:
+            console.print(f"  [dim]{result.name}:[/dim] [red]{result.error}[/red]")
+
+
+def _write_json_output(path: Path, suite: SuiteResult) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(suite.to_dict(), indent=2) + "\n", encoding="utf-8")
+
+
+def cli(
+    cases: Sequence[Case],
+    *,
+    db: Optional[Union[BaseDb, AsyncBaseDb]] = None,
+    judge_model: Optional[Model] = None,
+    argv: Optional[Sequence[str]] = None,
+) -> int:
+    """Run an argparse CLI over the given cases and return the exit code.
+
+    Exit codes: 0 all selected cases passed, 1 any failure, 2 no cases matched
+    the selector. Built purely on the public runner API - call it from a
+    template's __main__.py with `sys.exit(cli(CASES, db=eval_db))`.
+    """
+    import argparse
+
+    from rich.console import Console
+
+    parser = argparse.ArgumentParser(description="Run the eval suite, or a subset with --name/--tag.")
+    parser.add_argument("--name", default=None, help="Run only the case with this name")
+    parser.add_argument("--tag", default=None, help="Run only cases with this tag")
+    parser.add_argument("--timeout", type=int, default=120, help="Default per-case timeout in seconds")
+    parser.add_argument("--json-output", type=Path, default=None, help="Write machine-readable JSON results")
+    parser.add_argument(
+        "--list", action="store_true", dest="list_cases", help="List selected cases without running them"
+    )
+    parser.add_argument(
+        "-v",
+        "--verbose",
+        action="store_true",
+        help="Render the full run panels (Message, Tool Calls, Response) after each case",
+    )
+    args = parser.parse_args(argv if argv is None else list(argv))
+
+    console = Console()
+    selected = [case for case in cases if _case_matches(case, tag=args.tag, name=args.name)]
+    if not selected:
+        console.print(f"[red]no cases selected[/red] (name={args.name!r}, tag={args.tag!r})")
+        console.print(f"  [dim]available:[/dim] {', '.join(case.name for case in cases)}")
+        return 2
+
+    if args.list_cases:
+        _print_case_list(console, selected, default_timeout=args.timeout)
+        return 0
+
+    renderer = _CliRenderer(console=console, total=len(selected), verbose=args.verbose)
+    suite = run_cases(
+        selected,
+        default_timeout=args.timeout,
+        judge_model=judge_model,
+        db=db,
+        on_case_start=renderer.on_case_start,
+        on_case_end=renderer.on_case_end,
+        on_run_event=renderer.on_run_event,
+    )
+
+    _print_summary(console, suite)
+
+    if args.json_output is not None:
+        _write_json_output(args.json_output, suite)
+        console.print(f"[dim]json output:[/dim] {args.json_output}")
+
+    return 0 if suite.failed == 0 else 1
