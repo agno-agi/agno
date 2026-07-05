@@ -14,7 +14,7 @@ import asyncio
 import json
 import time
 from dataclasses import dataclass, field
-from inspect import isawaitable, iscoroutinefunction
+from inspect import isawaitable, iscoroutine, iscoroutinefunction
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Sequence, Tuple, Union
 from uuid import uuid4
@@ -27,6 +27,7 @@ from agno.models.base import Model
 from agno.run.agent import RunErrorEvent, RunOutput, RunOutputEvent
 from agno.run.base import RunStatus
 from agno.run.team import RunErrorEvent as TeamRunErrorEvent
+from agno.run.workflow import WorkflowErrorEvent
 
 if TYPE_CHECKING:
     from rich.console import Console
@@ -168,9 +169,11 @@ class SuiteResult:
         }
 
 
-# Team runs yield their own error event class (no shared base with the agent's) -
-# match both so the team fast-follow cannot silently reintroduce error loss.
-_RUN_ERROR_EVENTS = (RunErrorEvent, TeamRunErrorEvent)
+# Team and workflow runs yield their own error event classes (no shared base or
+# is_error marker with the agent's) - match all three so the team/workflow
+# fast-follows cannot silently reintroduce error loss. If run/base.py ever grows
+# an is_error property (mirroring is_cancelled), switch to that.
+_RUN_ERROR_EVENTS = (RunErrorEvent, TeamRunErrorEvent, WorkflowErrorEvent)
 
 _STATUS_ERRORS = {
     RunStatus.paused: "agent: run paused awaiting user input",
@@ -219,6 +222,19 @@ async def _call_hook(hook: Callable[..., Any], *args: Any) -> Any:
     return result
 
 
+def _call_presentation_hook(hook: Callable[..., Any], *args: Any) -> None:
+    """Presentation hooks are sync-only: they run inline on the event loop.
+
+    An async hook would return a coroutine that never executes - no rendering, no
+    error, just a GC-time warning. Since setup/teardown DO await async callables,
+    users will assume symmetry: surface the mistake as a hook error instead.
+    """
+    result = hook(*args)
+    if iscoroutine(result):
+        result.close()
+        raise TypeError("presentation hooks must be sync callables; use setup/teardown for async work")
+
+
 async def _run_case_body(
     case: Case,
     result: CaseResult,
@@ -254,13 +270,16 @@ async def _run_case_body(
                 # yields an error event and ends without the final RunOutput. Recorded
                 # at capture time so a later timeout cannot discard it.
                 agent_errored = True
-                error_text = event.content or "unknown error"
-                if event.error_type:
-                    error_text = f"{event.error_type}: {error_text}"
+                # Agent/team error events carry the message in .content, the
+                # workflow's in .error
+                error_text = getattr(event, "content", None) or getattr(event, "error", None) or "unknown error"
+                error_type = getattr(event, "error_type", None)
+                if error_type:
+                    error_text = f"{error_type}: {error_text}"
                 _append_error(result, f"agent: {error_text}")
             if forward_events and on_run_event is not None:
                 try:
-                    on_run_event(case, event)
+                    _call_presentation_hook(on_run_event, case, event)
                 except Exception as exc:
                     # A presentation-hook bug must not read as an agent failure: record
                     # it once and stop forwarding for the rest of this case.
@@ -409,16 +428,22 @@ async def arun_cases(
 
     Performs no console I/O - all presentation flows through the hooks. Hooks are
     plain sync callables invoked on the event loop; keep them fast. A hook that
-    raises is recorded on the case ("hook: ..." error) without aborting the suite.
+    raises (or an async hook, which is rejected) is recorded on the case
+    ("hook: ..." error) without aborting the suite.
+
+    A cancelled run (Ctrl-C, or a server-side cancel_run) aborts the suite; the
+    unrun cases are recorded as failed with a "skipped: ..." error so the payload
+    still accounts for every selected case.
     """
     selected = [case for case in cases if _case_matches(case, tag=tag, name=name)]
 
     results: List[CaseResult] = []
-    for case in selected:
+    aborted_at: Optional[int] = None
+    for index, case in enumerate(selected):
         start_hook_error: Optional[str] = None
         if on_case_start is not None:
             try:
-                on_case_start(case)
+                _call_presentation_hook(on_case_start, case)
             except Exception as exc:
                 start_hook_error = f"hook: on_case_start {type(exc).__name__}: {exc}"
         result = await _arun_case(
@@ -433,14 +458,28 @@ async def arun_cases(
         results.append(result)
         if on_case_end is not None:
             try:
-                on_case_end(case, result)
+                _call_presentation_hook(on_case_end, case, result)
             except Exception as exc:
                 _append_error(result, f"hook: on_case_end {type(exc).__name__}: {exc}")
         if result.response is not None and result.response.status == RunStatus.cancelled:
             # agno converts Ctrl-C during a run into a cancelled RunOutput instead of
-            # re-raising - stop the suite here rather than marching through the
-            # remaining cases, forcing one Ctrl-C per case.
+            # re-raising (a server-side cancel_run produces the same status) - stop
+            # the suite here rather than marching through the remaining cases.
+            aborted_at = index
             break
+
+    if aborted_at is not None:
+        # The unrun remainder stays visible in the payload: a consumer must see the
+        # abort, not a silently shorter case list.
+        for case in selected[aborted_at + 1 :]:
+            results.append(
+                CaseResult(
+                    name=case.name,
+                    agent_id=_agent_id(case),
+                    tags=case.tags,
+                    error="skipped: suite aborted after cancelled run",
+                )
+            )
 
     # Some toolkit transports schedule async close work after a case finishes.
     # Yielding once before the loop closes avoids "event loop is closed" noise.

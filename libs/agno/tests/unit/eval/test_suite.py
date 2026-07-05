@@ -294,22 +294,29 @@ def test_cancelled_run_is_not_judged(monkeypatch):
     assert reliability_instances == []
 
 
-def test_cancelled_run_aborts_the_suite(monkeypatch):
+def test_cancelled_run_aborts_the_suite_and_records_skipped_cases(monkeypatch):
     # agno converts Ctrl-C during a run into a cancelled RunOutput instead of
-    # re-raising - the suite must stop, not force one Ctrl-C per remaining case.
+    # re-raising (server-side cancel_run produces the same status) - the suite
+    # must stop, and the unrun cases must stay visible in the payload rather
+    # than silently disappearing from it.
     _install_fake_evals(monkeypatch)
     cancelled_agent = StubAgent(output=_output(content="cancelled", status=RunStatus.cancelled))
     never_run = StubAgent()
     cases = [
         _make_case(agent=cancelled_agent, name="interrupted"),
-        _make_case(agent=never_run, name="never_run"),
+        _make_case(agent=never_run, name="never_run", tags=("smoke",)),
     ]
 
     result = run_cases(cases)
 
-    assert [r.name for r in result.results] == ["interrupted"]
+    assert [r.name for r in result.results] == ["interrupted", "never_run"]
     assert never_run.run_count == 0
     assert result.status == "FAIL"
+    skipped = result.results[1]
+    assert skipped.error == "skipped: suite aborted after cancelled run"
+    assert skipped.passed is False
+    assert skipped.tags == ("smoke",)
+    assert result.to_dict()["summary"] == {"total": 2, "passed": 0, "failed": 2, "status": "FAIL"}
 
 
 def test_non_completed_status_is_not_graded(monkeypatch):
@@ -336,6 +343,20 @@ def test_team_run_error_event_is_recorded(monkeypatch):
     result = run_cases([_make_case(agent=agent)]).results[0]
 
     assert result.error == "agent: team member failed"
+    assert result.passed is False
+
+
+def test_workflow_run_error_event_is_recorded(monkeypatch):
+    # The workflow error event carries its message in .error (not .content) and
+    # shares no base with the agent's - the workflow fast-follow must not lose it.
+    from agno.run.workflow import WorkflowErrorEvent
+
+    _install_fake_evals(monkeypatch)
+    agent = StubAgent(events=[WorkflowErrorEvent(error="step failed")], emit_output=False)
+
+    result = run_cases([_make_case(agent=agent)]).results[0]
+
+    assert result.error == "agent: step failed"
     assert result.passed is False
 
 
@@ -810,6 +831,30 @@ def test_case_start_and_end_hook_errors_are_isolated(monkeypatch):
     assert "hook: on_case_end BrokenPipeError: stdout gone" in first.error
     assert first.judge_passed is True  # checks still ran
     assert first.passed is False
+
+
+def test_async_presentation_hooks_are_flagged_not_dropped(monkeypatch):
+    # Presentation hooks are sync-only; an async hook returns a coroutine that
+    # would silently never execute. Since setup/teardown DO await async callables,
+    # surface the asymmetry as a hook error instead of a GC-time warning.
+    _install_fake_evals(monkeypatch)
+
+    async def async_start(case):
+        pass  # pragma: no cover - never awaited by design
+
+    async def async_event(case, event):
+        pass  # pragma: no cover - never awaited by design
+
+    case = _make_case(agent=StubAgent(events=[ToolCallStartedEvent(tool=ToolExecution(tool_name="a"))]))
+
+    result = run_cases([case], on_case_start=async_start, on_run_event=async_event).results[0]
+
+    assert result.error is not None
+    assert "hook: on_case_start TypeError" in result.error
+    assert "hook: on_run_event TypeError" in result.error
+    assert "must be sync" in result.error
+    assert result.judge_passed is True  # checks still ran
+    assert result.passed is False
 
 
 def test_on_run_event_error_recorded_once_and_checks_still_run(monkeypatch):
