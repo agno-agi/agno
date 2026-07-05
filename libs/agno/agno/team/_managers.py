@@ -24,7 +24,6 @@ from agno.utils.log import log_debug, log_warning
 # Memory
 # ---------------------------------------------------------------------------
 
-
 def _make_memories(
     team: Team,
     run_messages: RunMessages,
@@ -128,9 +127,13 @@ def _start_memory_future(
     Returns:
         A new memory future if conditions are met, None otherwise.
     """
-    # Cancel any existing future from a previous retry attempt
+    # Cancel any existing task from a previous retry attempt
     if existing_future is not None and not existing_future.done():
         existing_future.cancel()
+        try:
+            existing_future.result()
+        except Exception:
+            pass
 
     # Create new future if conditions are met
     if (
@@ -139,167 +142,39 @@ def _start_memory_future(
         and team.update_memory_on_run
         and not team.enable_agentic_memory
     ):
-        log_debug("Starting memory creation in background thread.")
-        return team.background_executor.submit(_make_memories, team, run_messages=run_messages, user_id=user_id)
+        log_debug("Starting memory creation in background task.")
+        return asyncio.run_coroutine_threadsafe(_amake_memories(team, run_messages=run_messages, user_id=user_id), asyncio.get_event_loop()).task
 
     return None
 
 
-def get_user_memories(team: "Team", user_id: Optional[str] = None) -> Optional[List[UserMemory]]:
-    """Get the user memories for the given user ID.
+async def _create_session_summary(
+    agent_session: TeamSession,
+    run_metrics: RunMetrics,
+) -> None:
+    await agent_session.upsert_run(run_metrics)
+    await agent_session.session_summary_manager.acreate_session_summary(
+        session=agent_session,
+        run_metrics=run_metrics,
+    )
+
+
+async def _start_session_summary_task(
+    agent_session: TeamSession,
+    run_metrics: RunMetrics,
+    existing_task: Optional[asyncio.Task],
+) -> Optional[asyncio.Task]:
+    """Cancel any existing session summary task and start a new one if conditions are met.
 
     Args:
-        user_id: The user ID to get the memories for. If not provided, the current cached user ID is used.
-    Returns:
-        Optional[List[UserMemory]]: The user memories.
-    """
-    from agno.team._init import _set_memory_manager
-
-    if team.memory_manager is None:
-        _set_memory_manager(team)
-
-    user_id = user_id if user_id is not None else team.user_id
-    if user_id is None:
-        user_id = "default"
-
-    return team.memory_manager.get_user_memories(user_id=user_id)  # type: ignore
-
-
-async def aget_user_memories(team: "Team", user_id: Optional[str] = None) -> Optional[List[UserMemory]]:
-    """Get the user memories for the given user ID.
-
-    Args:
-        user_id: The user ID to get the memories for. If not provided, the current cached user ID is used.
-    Returns:
-        Optional[List[UserMemory]]: The user memories.
-    """
-    from agno.team._init import _set_memory_manager
-
-    if team.memory_manager is None:
-        _set_memory_manager(team)
-
-    user_id = user_id if user_id is not None else team.user_id
-    if user_id is None:
-        user_id = "default"
-
-    return await team.memory_manager.aget_user_memories(user_id=user_id)  # type: ignore
-
-
-# ---------------------------------------------------------------------------
-# Learning
-# ---------------------------------------------------------------------------
-
-
-def _process_learnings(
-    team: "Team",
-    run_messages: RunMessages,
-    session: TeamSession,
-    user_id: Optional[str],
-) -> Optional[RunMetrics]:
-    """Process learnings from conversation (runs in background thread)."""
-    if team._learning is None:
-        return None
-
-    from agno.metrics import RunMetrics
-
-    collector = RunMetrics()
-    try:
-        messages = list(run_messages.messages) if run_messages else []
-        team._learning.process(
-            messages=messages,
-            user_id=user_id,
-            session_id=session.session_id if session else None,
-            team_id=team.id,
-            run_metrics=collector,
-        )
-        log_debug("Learning extraction completed.")
-    except Exception as e:
-        log_warning(f"Error processing learnings: {str(e)}")
-    return collector
-
-
-async def _aprocess_learnings(
-    team: "Team",
-    run_messages: RunMessages,
-    session: TeamSession,
-    user_id: Optional[str],
-) -> Optional[RunMetrics]:
-    """Async process learnings from conversation."""
-    if team._learning is None:
-        return None
-
-    from agno.metrics import RunMetrics
-
-    collector = RunMetrics()
-    try:
-        messages = list(run_messages.messages) if run_messages else []
-        await team._learning.aprocess(
-            messages=messages,
-            user_id=user_id,
-            session_id=session.session_id if session else None,
-            team_id=team.id,
-            run_metrics=collector,
-        )
-        log_debug("Learning extraction completed.")
-    except Exception as e:
-        log_warning(f"Error processing learnings: {str(e)}")
-    return collector
-
-
-def _start_learning_future(
-    team: "Team",
-    run_messages: RunMessages,
-    session: TeamSession,
-    user_id: Optional[str],
-    existing_future: Optional[Future] = None,
-) -> Optional[Future]:
-    """Start learning extraction in background thread.
-
-    Args:
-        team: The Team instance.
-        run_messages: The run messages containing conversation.
-        session: The team session.
-        user_id: The user ID for learning extraction.
-        existing_future: An existing future to cancel before starting a new one.
+        agent_session: The agent session.
+        run_metrics: The run metrics.
+        existing_task: An existing session summary task to cancel before starting a new one.
 
     Returns:
-        A new learning future if conditions are met, None otherwise.
+        A new session summary task if conditions are met, None otherwise.
     """
-    if existing_future is not None and not existing_future.done():
-        existing_future.cancel()
-
-    if team._learning is not None:
-        log_debug("Starting learning extraction in background thread.")
-        return team.background_executor.submit(
-            _process_learnings,
-            team,
-            run_messages=run_messages,
-            session=session,
-            user_id=user_id,
-        )
-
-    return None
-
-
-async def _astart_learning_task(
-    team: "Team",
-    run_messages: RunMessages,
-    session: TeamSession,
-    user_id: Optional[str],
-    existing_task: Optional[asyncio.Task[Optional[RunMetrics]]] = None,
-) -> Optional[asyncio.Task[Optional[RunMetrics]]]:
-    """Start learning extraction as async task.
-
-    Args:
-        team: The Team instance.
-        run_messages: The run messages containing conversation.
-        session: The team session.
-        user_id: The user ID for learning extraction.
-        existing_task: An existing task to cancel before starting a new one.
-
-    Returns:
-        A new learning task if conditions are met, None otherwise.
-    """
+    # Cancel any existing task from a previous retry attempt
     if existing_task is not None and not existing_task.done():
         existing_task.cancel()
         try:
@@ -307,15 +182,9 @@ async def _astart_learning_task(
         except asyncio.CancelledError:
             pass
 
-    if team._learning is not None:
-        log_debug("Starting learning extraction as async task.")
-        return asyncio.create_task(
-            _aprocess_learnings(
-                team,
-                run_messages=run_messages,
-                session=session,
-                user_id=user_id,
-            )
-        )
+    # Create new task if conditions are met
+    if agent_session.session_summary_manager is not None and agent_session.enable_session_summaries:
+        log_debug("Starting session summary creation in background task.")
+        return asyncio.create_task(_create_session_summary(agent_session, run_metrics))
 
     return None
