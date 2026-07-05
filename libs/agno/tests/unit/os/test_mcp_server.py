@@ -297,6 +297,34 @@ async def test_run_workflow_threads_resolved_identity(monkeypatch):
     assert captured["session_id"] == "s-3"
 
 
+def test_detached_trace_context_starts_a_new_root_trace():
+    """The MCP tracing fix: `_detached_trace_context` makes a span started inside it the
+    ROOT of a new trace. FastMCP wraps every tool call in an identity-less `tools/call ...`
+    span; without detaching, the agno run span nests under it and the trace layer (which
+    reads a trace's identity from its root span) attributes the run to that protocol span,
+    producing a NULL/mislabeled trace. Detaching makes the run its own root, attributed like
+    a REST run."""
+    pytest.importorskip("opentelemetry")
+    from opentelemetry import trace as otel_trace
+    from opentelemetry.sdk.trace import TracerProvider
+
+    tracer = TracerProvider().get_tracer("test")
+    with tracer.start_as_current_span("tools/call run_agent") as protocol_span:
+        protocol_ctx = protocol_span.get_span_context()
+        assert protocol_ctx.is_valid
+
+        with mcp_mod._detached_trace_context():
+            # No current recording span inside the detach -> the run span cannot inherit
+            # FastMCP's protocol span.
+            assert not otel_trace.get_current_span().get_span_context().is_valid
+            with tracer.start_as_current_span("Demo.arun") as run_span:
+                assert run_span.parent is None, "run span must be a root, not nested"
+                assert run_span.get_span_context().trace_id != protocol_ctx.trace_id
+
+        # The FastMCP span is current again once the run completes.
+        assert otel_trace.get_current_span().get_span_context().trace_id == protocol_ctx.trace_id
+
+
 # ==================== Session minting (omitted session_id -> fresh session per call) ====================
 #
 # The run tools must mint a fresh session_id when the caller omits one, exactly like the

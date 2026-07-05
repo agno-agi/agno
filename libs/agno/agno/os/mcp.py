@@ -3,7 +3,8 @@
 import functools
 import inspect
 import logging
-from typing import TYPE_CHECKING, Any, Callable, Dict, List, Literal, Optional, Union
+from contextlib import contextmanager
+from typing import TYPE_CHECKING, Any, Callable, Dict, Iterator, List, Literal, Optional, Union
 from uuid import uuid4
 
 from fastmcp import Context, FastMCP
@@ -365,6 +366,33 @@ async def _consume_agentic_stream(ctx: Context, stream: Any, label: str) -> Unio
     return final
 
 
+@contextmanager
+def _detached_trace_context() -> Iterator[None]:
+    """Run a component in a fresh OTel root trace, detached from FastMCP's tool-call span.
+
+    FastMCP wraps every tool call in an identity-less ``tools/call ...`` SERVER span. Left
+    attached, the agno run span nests under it, and the trace layer -- which reads a trace's
+    identity (run_id / session_id / user_id / agent_id) from its root span -- takes it from
+    that context-less protocol span instead of the run, so runs invoked over MCP land with a
+    NULL, mislabeled trace. Detaching to an invalid parent makes the run span its own root,
+    so the run is attributed exactly like the REST run routes (which have no wrapping span).
+
+    No-op when OpenTelemetry is not installed.
+    """
+    try:
+        from opentelemetry import context as otel_context
+        from opentelemetry import trace as otel_trace
+    except ImportError:
+        yield
+        return
+
+    token = otel_context.attach(otel_trace.set_span_in_context(otel_trace.INVALID_SPAN))
+    try:
+        yield
+    finally:
+        otel_context.detach(token)
+
+
 async def _run_agentic_component(
     ctx: Context, component: Any, message: str, user_id: Optional[str], session_id: Optional[str], label: str
 ) -> Union[RunOutput, TeamRunOutput]:
@@ -380,18 +408,19 @@ async def _run_agentic_component(
     from agno.agent.agent import Agent
     from agno.team.team import Team
 
-    if not isinstance(component, (Agent, Team)):
-        return await component.arun(message, user_id=user_id, session_id=session_id)
+    with _detached_trace_context():
+        if not isinstance(component, (Agent, Team)):
+            return await component.arun(message, user_id=user_id, session_id=session_id)
 
-    stream = component.arun(
-        message,
-        user_id=user_id,
-        session_id=session_id,
-        stream=True,
-        stream_events=True,
-        yield_run_output=True,
-    )
-    return await _consume_agentic_stream(ctx, stream, label=label)
+        stream = component.arun(
+            message,
+            user_id=user_id,
+            session_id=session_id,
+            stream=True,
+            stream_events=True,
+            yield_run_output=True,
+        )
+        return await _consume_agentic_stream(ctx, stream, label=label)
 
 
 def _describe_step_event(event: Any, total_steps: Optional[float]) -> str:
@@ -783,19 +812,21 @@ def build_mcp_server(
         workflow = await _resolve_run_component(os, "workflows", workflow_id, user_id=user_id, session_id=session_id)
         # Mint a fresh session per call when omitted (matches REST), never the sticky default.
         session_id = _session_id_or_new(session_id)
-        if isinstance(workflow, RemoteWorkflow):
-            run_output = await workflow.arun(message, user_id=user_id, session_id=session_id)
-            return build_run_tool_result(run_output, result_mode)
-        steps = getattr(workflow, "steps", None)
-        total_steps = float(len(steps)) if isinstance(steps, (list, tuple)) and steps else None
-        stream = workflow.arun(
-            message,
-            user_id=user_id,
-            session_id=session_id,
-            stream=True,
-            stream_events=True,
-        )
-        run_output = await _consume_workflow_stream(ctx, workflow, stream, total_steps, user_id)
+        # Detach from FastMCP's tool-call span so the workflow run is its own root trace.
+        with _detached_trace_context():
+            if isinstance(workflow, RemoteWorkflow):
+                run_output = await workflow.arun(message, user_id=user_id, session_id=session_id)
+                return build_run_tool_result(run_output, result_mode)
+            steps = getattr(workflow, "steps", None)
+            total_steps = float(len(steps)) if isinstance(steps, (list, tuple)) and steps else None
+            stream = workflow.arun(
+                message,
+                user_id=user_id,
+                session_id=session_id,
+                stream=True,
+                stream_events=True,
+            )
+            run_output = await _consume_workflow_stream(ctx, workflow, stream, total_steps, user_id)
         return build_run_tool_result(run_output, result_mode)
 
     # ==================== Run Lifecycle Tools ====================
@@ -834,13 +865,15 @@ def build_mcp_server(
         await _enforce_run_continuation_allowed(os.db, run_id)
         await _report_progress(ctx, 0.0, f"Continuing run {run_id}")
         try:
-            run_output = await run_service.continue_paused_run(
-                component,
-                run_id=run_id,
-                session_id=session_id,
-                user_id=user_id,
-                requirements=requirements,
-            )
+            # Detach from FastMCP's tool-call span so the resumed run is its own root trace.
+            with _detached_trace_context():
+                run_output = await run_service.continue_paused_run(
+                    component,
+                    run_id=run_id,
+                    session_id=session_id,
+                    user_id=user_id,
+                    requirements=requirements,
+                )
         except run_service.RemoteContinuationUnsupported as e:
             raise Exception(str(e))
         return build_run_tool_result(run_output, result_mode)
