@@ -1,11 +1,11 @@
 import asyncio
 from dataclasses import asdict
 from pathlib import Path
-from typing import TYPE_CHECKING, ContextManager, Optional, Union
+from typing import TYPE_CHECKING, Optional, Union
 
 from agno.db.base import AsyncBaseDb, BaseDb
 from agno.db.schemas.evals import EvalRunRecord, EvalType
-from agno.utils.log import log_debug, log_warning
+from agno.utils.log import log_warning
 
 if TYPE_CHECKING:
     from rich.console import Console
@@ -17,18 +17,18 @@ if TYPE_CHECKING:
     from agno.eval.reliability import ReliabilityResult
 
 
-def spinner_live(console: "Console", enabled: bool = True) -> "ContextManager[Optional[Live]]":
+def spinner_live(console: "Console", enabled: bool = True) -> "Live":
     """Transient Live context for an eval progress spinner.
 
-    A no-op yielding None when disabled - used by embedders like the suite
-    runner, which must not write to the console.
+    When disabled (embedders like the suite runner, which must not write to the
+    console), the Live is bound to a quiet console and emits nothing - not even
+    cursor control sequences.
     """
-    from contextlib import nullcontext
-
+    from rich.console import Console
     from rich.live import Live
 
     if not enabled:
-        return nullcontext()
+        console = Console(quiet=True)
     return Live(console=console, transient=True)
 
 
@@ -65,7 +65,8 @@ def log_eval_run(
             )
         )
     except Exception as e:
-        log_debug(f"Could not create agent event: {e}")
+        # A failed write means eval history silently stops persisting - warn, don't debug-log.
+        log_warning(f"Could not log eval run: {e}")
 
 
 async def async_log_eval(
@@ -104,6 +105,9 @@ async def async_log_eval(
         else:
             # A sync db driver would block the event loop (and defeat any caller-side
             # timeout, e.g. the suite runner's per-case wait_for) - run it off-loop.
+            # Caveat: thread-affine drivers (e.g. sqlite :memory:, whose pool keeps a
+            # separate database per thread) won't see writes made from this worker
+            # thread; use a file-backed or server database for eval history.
             await asyncio.to_thread(
                 db.create_eval_run,
                 EvalRunRecord(
@@ -121,7 +125,8 @@ async def async_log_eval(
                 ),
             )
     except Exception as e:
-        log_debug(f"Could not create agent event: {e}")
+        # A failed write means eval history silently stops persisting - warn, don't debug-log.
+        log_warning(f"Could not log eval run: {e}")
 
 
 def store_result_in_file(

@@ -238,8 +238,7 @@ class ReliabilityEval:
         console = Console()
         with spinner_live(console, self.show_spinner) as live_log:
             status = Status("Running evaluation...", spinner="dots", speed=1.0, refresh_per_second=10)
-            if live_log is not None:
-                live_log.update(status)
+            live_log.update(status)
 
             self.result = self._evaluate()
 
@@ -321,8 +320,7 @@ class ReliabilityEval:
         console = Console()
         with spinner_live(console, self.show_spinner) as live_log:
             status = Status("Running evaluation...", spinner="dots", speed=1.0, refresh_per_second=10)
-            if live_log is not None:
-                live_log.update(status)
+            live_log.update(status)
 
             self.result = self._evaluate()
 

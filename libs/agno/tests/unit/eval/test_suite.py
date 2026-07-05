@@ -14,6 +14,12 @@ from agno.run.agent import RunErrorEvent, RunOutput, ToolCallCompletedEvent, Too
 from agno.run.base import RunStatus
 
 
+def _output(**kwargs):
+    """RunOutput factory defaulting to status=completed, like real finished runs."""
+    kwargs.setdefault("status", RunStatus.completed)
+    return RunOutput(**kwargs)
+
+
 class StubAgent:
     """Stands in for Agent: arun yields scripted events, then the final RunOutput.
 
@@ -22,12 +28,15 @@ class StubAgent:
     A raising `error` models pre-stream failures (e.g. input validation).
     """
 
-    def __init__(self, *, id="stub-agent", events=(), output=None, error=None, delay=0.0, emit_output=True):
+    def __init__(
+        self, *, id="stub-agent", events=(), output=None, error=None, delay=0.0, post_delay=0.0, emit_output=True
+    ):
         self.id = id
         self._events = list(events)
-        self._output = output if output is not None else RunOutput(content="stub response")
+        self._output = output if output is not None else _output(content="stub response")
         self._error = error
         self._delay = delay
+        self._post_delay = post_delay
         self._emit_output = emit_output
         self.run_count = 0
         self.session_ids = []
@@ -43,6 +52,8 @@ class StubAgent:
             await asyncio.sleep(self._delay)
         for event in self._events:
             yield event
+        if self._post_delay:
+            await asyncio.sleep(self._post_delay)
         if self._emit_output:
             yield self._output
 
@@ -162,6 +173,9 @@ def test_unknown_tag_returns_empty_suite(monkeypatch):
     assert isinstance(result, SuiteResult)
     assert result.results == []
     assert agent.run_count == 0
+    # An empty selection must not green-light a CI gate comparing == "PASS"
+    assert result.status == "FAIL"
+    assert result.to_dict()["summary"] == {"total": 0, "passed": 0, "failed": 0, "status": "FAIL"}
 
 
 # ---------------------------------------------------------------------------
@@ -182,7 +196,7 @@ def test_agent_error_is_captured_and_suite_continues(monkeypatch):
 
     broken, fine = result.results
     assert broken.error is not None
-    assert broken.error.startswith("RuntimeError")
+    assert broken.error.startswith("agent: RuntimeError")
     assert broken.passed is False
     assert fine.name == "fine"
     assert fine.passed is True
@@ -214,7 +228,7 @@ def test_streamed_run_error_event_is_recorded(monkeypatch):
 
 def test_paused_run_is_not_judged(monkeypatch):
     judge_instances, _ = _install_fake_evals(monkeypatch)
-    paused_output = RunOutput(content="I have tools to execute, but I need confirmation.", status=RunStatus.paused)
+    paused_output = _output(content="I have tools to execute, but I need confirmation.", status=RunStatus.paused)
 
     result = run_cases([_make_case(agent=StubAgent(output=paused_output))]).results[0]
 
@@ -229,7 +243,7 @@ def test_paused_run_is_not_judged(monkeypatch):
 
 def test_cancelled_run_is_not_judged(monkeypatch):
     judge_instances, reliability_instances = _install_fake_evals(monkeypatch)
-    cancelled_output = RunOutput(content="Run cancelled by user.", status=RunStatus.cancelled)
+    cancelled_output = _output(content="Run cancelled by user.", status=RunStatus.cancelled)
     case = _make_case(agent=StubAgent(output=cancelled_output), expected_tool_calls=("search_web",))
 
     result = run_cases([case]).results[0]
@@ -240,6 +254,64 @@ def test_cancelled_run_is_not_judged(monkeypatch):
     assert result.reliability_passed is None
     assert judge_instances == []
     assert reliability_instances == []
+
+
+def test_cancelled_run_aborts_the_suite(monkeypatch):
+    # agno converts Ctrl-C during a run into a cancelled RunOutput instead of
+    # re-raising - the suite must stop, not force one Ctrl-C per remaining case.
+    _install_fake_evals(monkeypatch)
+    cancelled_agent = StubAgent(output=_output(content="cancelled", status=RunStatus.cancelled))
+    never_run = StubAgent()
+    cases = [
+        _make_case(agent=cancelled_agent, name="interrupted"),
+        _make_case(agent=never_run, name="never_run"),
+    ]
+
+    result = run_cases(cases)
+
+    assert [r.name for r in result.results] == ["interrupted"]
+    assert never_run.run_count == 0
+    assert result.status == "FAIL"
+
+
+def test_non_completed_status_is_not_graded(monkeypatch):
+    # Allowlist, not denylist: statuses beyond the known failure modes
+    # (pending/running/regenerated) must not be graded as real answers.
+    judge_instances, _ = _install_fake_evals(monkeypatch)
+    running_output = _output(content="partial text", status=RunStatus.running)
+
+    result = run_cases([_make_case(agent=StubAgent(output=running_output))]).results[0]
+
+    assert result.error == "agent: run ended with status RUNNING"
+    assert result.passed is False
+    assert judge_instances == []
+
+
+def test_team_run_error_event_is_recorded(monkeypatch):
+    # Team runs yield a distinct RunErrorEvent class with no shared base -
+    # the runner must match both so the team fast-follow keeps error capture.
+    from agno.run.team import RunErrorEvent as TeamRunErrorEvent
+
+    _install_fake_evals(monkeypatch)
+    agent = StubAgent(events=[TeamRunErrorEvent(content="team member failed")], emit_output=False)
+
+    result = run_cases([_make_case(agent=agent)]).results[0]
+
+    assert result.error == "agent: team member failed"
+    assert result.passed is False
+
+
+def test_error_and_evidence_survive_a_timeout(monkeypatch):
+    # Errors and the captured RunOutput are committed at capture time: a stream
+    # that stalls afterwards (hung transport cleanup) must not evaporate them
+    # when wait_for cancels.
+    _install_fake_evals(monkeypatch)
+    agent = StubAgent(events=[RunErrorEvent(content="boom mid-stream")], post_delay=5.0, emit_output=False)
+
+    result = run_cases([_make_case(agent=agent, timeout_seconds=1)]).results[0]
+
+    assert result.timed_out is True
+    assert result.error == "agent: boom mid-stream; timeout: exceeded 1s"
 
 
 # ---------------------------------------------------------------------------
@@ -482,7 +554,7 @@ def test_judge_model_resolution_order(monkeypatch):
 
 def test_reliability_kwargs_forwarded(monkeypatch):
     _, reliability_instances = _install_fake_evals(monkeypatch)
-    output = RunOutput(content="done")
+    output = _output(content="done")
     case = _make_case(
         agent=StubAgent(output=output),
         criteria=None,
@@ -505,7 +577,7 @@ def test_reliability_kwargs_forwarded(monkeypatch):
 
 def test_to_dict_matches_contract(monkeypatch):
     _install_fake_evals(monkeypatch)
-    output = RunOutput(content="Paris.", tools=[ToolExecution(tool_name="search_web")])
+    output = _output(content="Paris.", tools=[ToolExecution(tool_name="search_web")])
     case = _make_case(
         agent=StubAgent(id="geo-agent", output=output),
         name="capital_of_france",
@@ -625,10 +697,35 @@ def test_case_start_and_end_hooks(monkeypatch):
     cases = [_make_case(name="a"), _make_case(name="b")]
     started, ended = [], []
 
-    run_cases(cases, on_case_start=lambda c: started.append(c.name), on_case_end=lambda r: ended.append(r.name))
+    run_cases(
+        cases,
+        on_case_start=lambda c: started.append(c.name),
+        on_case_end=lambda c, r: ended.append((c.name, r.name)),
+    )
 
     assert started == ["a", "b"]
-    assert ended == ["a", "b"]
+    assert ended == [("a", "a"), ("b", "b")]
+
+
+def test_case_start_and_end_hook_errors_are_isolated(monkeypatch):
+    _install_fake_evals(monkeypatch)
+    cases = [_make_case(name="a"), _make_case(name="b")]
+
+    def bad_start(case):
+        raise ValueError("start bug")
+
+    def bad_end(case, result):
+        raise BrokenPipeError("stdout gone")
+
+    result = run_cases(cases, on_case_start=bad_start, on_case_end=bad_end)
+
+    assert len(result.results) == 2  # the suite survived both hook failures
+    first = result.results[0]
+    assert first.error is not None
+    assert "hook: on_case_start ValueError: start bug" in first.error
+    assert "hook: on_case_end BrokenPipeError: stdout gone" in first.error
+    assert first.judge_passed is True  # checks still ran
+    assert first.passed is False
 
 
 def test_on_run_event_error_recorded_once_and_checks_still_run(monkeypatch):
@@ -659,7 +756,7 @@ def test_on_run_event_error_recorded_once_and_checks_still_run(monkeypatch):
 
 def test_evidence_fields_and_response_exclusion(monkeypatch):
     _install_fake_evals(monkeypatch)
-    output = RunOutput(
+    output = _output(
         content="Paris is the capital of France.",
         tools=[ToolExecution(tool_name="search_web"), ToolExecution(tool_name="summarize")],
     )
@@ -686,7 +783,7 @@ def test_evidence_fields_and_response_exclusion(monkeypatch):
 def test_structured_content_serialized_without_repr(monkeypatch):
     _install_fake_evals(monkeypatch)
 
-    result = run_cases([_make_case(agent=StubAgent(output=RunOutput(content={"answer": 42})))]).results[0]
+    result = run_cases([_make_case(agent=StubAgent(output=_output(content={"answer": 42})))]).results[0]
 
     assert result.output == '{"answer": 42}'
 
@@ -694,9 +791,24 @@ def test_structured_content_serialized_without_repr(monkeypatch):
 def test_falsy_content_is_preserved(monkeypatch):
     _install_fake_evals(monkeypatch)
 
-    result = run_cases([_make_case(agent=StubAgent(output=RunOutput(content=0)))]).results[0]
+    result = run_cases([_make_case(agent=StubAgent(output=_output(content=0)))]).results[0]
 
     assert result.output == "0"
+
+
+def test_non_serializable_content_falls_back_to_repr(monkeypatch):
+    # get_content_as_string json-serializes dict content and raises on values
+    # json can't handle - the case (and suite) must survive on a repr fallback.
+    from datetime import datetime
+
+    _install_fake_evals(monkeypatch)
+    content = {"when": datetime(2026, 7, 5, 12, 0, 0)}
+
+    result = run_cases([_make_case(agent=StubAgent(output=_output(content=content)))]).results[0]
+
+    assert result.output == str(content)
+    assert result.judge_passed is True  # the judge still ran on the fallback text
+    assert result.passed is True
 
 
 # ---------------------------------------------------------------------------
@@ -760,7 +872,7 @@ def test_cli_json_output_writes_payload(monkeypatch, tmp_path):
 
 def test_cli_verbose_renders_response_post_hoc(monkeypatch):
     _install_fake_evals(monkeypatch)
-    output = RunOutput(content="verbose output")
+    output = _output(content="verbose output")
     rendered = []
     monkeypatch.setattr("agno.utils.pprint.pprint_run_response", lambda response, **kwargs: rendered.append(response))
 
@@ -801,7 +913,7 @@ def test_cli_survives_rich_markup_in_model_output(monkeypatch, capsys):
     # Model- and user-derived strings must not be parsed as rich markup: a stray
     # closing tag raised MarkupError and killed the suite after the case passed.
     _install_fake_evals(monkeypatch, judge_reason="reason with [/dim] tag")
-    output = RunOutput(
+    output = _output(
         content="model said [/dim] oops [bold]",
         tools=[ToolExecution(tool_name="tool [/red] name")],
     )
@@ -829,6 +941,37 @@ def test_acli_runs_inside_existing_event_loop(monkeypatch):
         return await acli([_make_case()], argv=[])
 
     assert asyncio.run(main()) == 0
+
+
+def test_acli_bad_flag_returns_2_without_system_exit(monkeypatch):
+    # argparse raises SystemExit on usage errors - acli must swallow it and
+    # return the code, not tear through a host event loop.
+    _install_fake_evals(monkeypatch)
+    agent = StubAgent()
+
+    async def main():
+        return await acli([_make_case(agent=agent)], argv=["--nope"])
+
+    assert asyncio.run(main()) == 2
+    assert agent.run_count == 0
+
+
+def test_acli_help_returns_0(monkeypatch, capsys):
+    _install_fake_evals(monkeypatch)
+
+    exit_code = asyncio.run(acli([_make_case()], argv=["--help"]))
+
+    assert exit_code == 0
+    assert "--tag" in capsys.readouterr().out
+
+
+def test_cli_default_timeout_parameter(monkeypatch, capsys):
+    _install_fake_evals(monkeypatch)
+
+    exit_code = cli([_make_case(agent=StubAgent(delay=5.0))], default_timeout=1, argv=[])
+
+    assert exit_code == 1
+    assert "timeout: exceeded 1s" in capsys.readouterr().out
 
 
 # ---------------------------------------------------------------------------

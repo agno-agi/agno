@@ -31,8 +31,10 @@ def test_async_log_eval_runs_sync_db_off_loop():
     assert db.threads[0] is not threading.main_thread()
 
 
-def test_spinner_live_disabled_is_a_noop():
+def test_spinner_live_disabled_emits_nothing(capsys):
     from rich.console import Console
 
     with spinner_live(Console(), enabled=False) as live:
-        assert live is None
+        # Bound to a quiet console: renders nothing, not even control sequences
+        assert live.console.quiet is True
+    assert capsys.readouterr().out == ""

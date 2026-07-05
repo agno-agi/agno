@@ -530,8 +530,7 @@ class AgentAsJudgeEval(BaseEval):
             evaluator = self.get_evaluator_agent()
 
             status = Status("Running evaluation...", spinner="dots", speed=1.0, refresh_per_second=10)
-            if live_log is not None:
-                live_log.update(status)
+            live_log.update(status)
 
             evaluation = self._evaluate(input=input, output=output, evaluator_agent=evaluator, run_metrics=run_metrics)
 
@@ -633,8 +632,7 @@ class AgentAsJudgeEval(BaseEval):
             evaluator = self.get_evaluator_agent()
 
             status = Status("Running evaluation...", spinner="dots", speed=1.0, refresh_per_second=10)
-            if live_log is not None:
-                live_log.update(status)
+            live_log.update(status)
 
             evaluation = await self._aevaluate(
                 input=input, output=output, evaluator_agent=evaluator, run_metrics=run_metrics
@@ -708,8 +706,7 @@ class AgentAsJudgeEval(BaseEval):
 
             for i, case in enumerate(cases):
                 status = Status(f"Evaluating {i + 1}/{len(cases)}...", spinner="dots")
-                if live_log is not None:
-                    live_log.update(status)
+                live_log.update(status)
 
                 evaluation = self._evaluate(
                     input=case["input"], output=case["output"], evaluator_agent=evaluator, run_metrics=run_metrics
@@ -779,8 +776,7 @@ class AgentAsJudgeEval(BaseEval):
 
             for i, case in enumerate(cases):
                 status = Status(f"Evaluating {i + 1}/{len(cases)}...", spinner="dots")
-                if live_log is not None:
-                    live_log.update(status)
+                live_log.update(status)
 
                 evaluation = await self._aevaluate(
                     input=case["input"],

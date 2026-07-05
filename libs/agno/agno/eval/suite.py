@@ -26,6 +26,7 @@ from agno.eval.reliability import ReliabilityEval
 from agno.models.base import Model
 from agno.run.agent import RunErrorEvent, RunOutput, RunOutputEvent
 from agno.run.base import RunStatus
+from agno.run.team import RunErrorEvent as TeamRunErrorEvent
 
 if TYPE_CHECKING:
     from rich.console import Console
@@ -128,6 +129,10 @@ class SuiteResult:
 
     @property
     def status(self) -> str:
+        # An empty suite fails: CI gates compare == "PASS", and a typo'd tag must
+        # not green-light a release having run nothing.
+        if not self.results:
+            return "FAIL"
         return "PASS" if self.passed == self.total else "FAIL"
 
     def to_dict(self) -> Dict[str, Any]:
@@ -158,6 +163,17 @@ class SuiteResult:
                 for result in self.results
             ],
         }
+
+
+# Team runs yield their own error event class (no shared base with the agent's) -
+# match both so the team fast-follow cannot silently reintroduce error loss.
+_RUN_ERROR_EVENTS = (RunErrorEvent, TeamRunErrorEvent)
+
+_STATUS_ERRORS = {
+    RunStatus.paused: "agent: run paused awaiting user input",
+    RunStatus.cancelled: "agent: run cancelled",
+    RunStatus.error: "agent: run ended in error status",
+}
 
 
 def _agent_id(case: Case) -> str:
@@ -198,8 +214,7 @@ async def _run_case_body(
 ) -> None:
     """Agent run + judge + reliability checks. Runs inside the case timeout; mutates result."""
     response: Optional[RunOutput] = None
-    run_error: Optional[str] = None
-    hook_error: Optional[str] = None
+    agent_errored = False
     forward_events = on_run_event is not None
     try:
         async for event in case.agent.arun(
@@ -212,14 +227,20 @@ async def _run_case_body(
             if isinstance(event, RunOutput):
                 # The final run output arrives in-stream (yield_run_output=True). It is
                 # captured, not forwarded to on_run_event - on_case_end delivers it.
+                # Committed to the result immediately so the evidence survives a
+                # timeout cancelling the rest of the stream.
                 response = event
+                result.response = event
                 continue
-            if isinstance(event, RunErrorEvent):
+            if isinstance(event, _RUN_ERROR_EVENTS):
                 # The streaming path does not raise on in-run model/API failures: it
-                # yields a RunErrorEvent and ends without the final RunOutput. Capture
-                # the error text here or it is lost.
+                # yields an error event and ends without the final RunOutput. Recorded
+                # at capture time so a later timeout cannot discard it.
+                agent_errored = True
                 error_text = event.content or "unknown error"
-                run_error = f"{event.error_type}: {error_text}" if event.error_type else error_text
+                if event.error_type:
+                    error_text = f"{event.error_type}: {error_text}"
+                _append_error(result, f"agent: {error_text}")
             if forward_events and on_run_event is not None:
                 try:
                     on_run_event(case, event)
@@ -227,36 +248,35 @@ async def _run_case_body(
                     # A presentation-hook bug must not read as an agent failure: record
                     # it once and stop forwarding for the rest of this case.
                     forward_events = False
-                    hook_error = f"hook: on_run_event {type(exc).__name__}: {exc}"
+                    _append_error(result, f"hook: on_run_event {type(exc).__name__}: {exc}")
     except Exception as exc:
         # Only pre-stream failures (e.g. input validation) raise out of arun.
-        _append_error(result, f"{type(exc).__name__}: {exc}")
-        if hook_error:
-            _append_error(result, hook_error)
+        _append_error(result, f"agent: {type(exc).__name__}: {exc}")
         return
 
-    # A paused/cancelled run yields a RunOutput whose content is placeholder text
-    # (e.g. HITL boilerplate) - grading it would report a misleading quality failure.
-    status_errors = {
-        RunStatus.paused: "agent: run paused awaiting user input",
-        RunStatus.cancelled: "agent: run cancelled",
-        RunStatus.error: "agent: run ended in error status",
-    }
-    if run_error is not None:
-        _append_error(result, f"agent: {run_error}")
-    elif response is not None and response.status in status_errors:
-        _append_error(result, status_errors[response.status])
-    elif response is None:
-        _append_error(result, "agent: no run output recorded")
-    if hook_error:
-        _append_error(result, hook_error)
-
     if response is not None:
-        result.response = response
-        result.output = response.get_content_as_string() if response.content is not None else ""
+        try:
+            result.output = response.get_content_as_string() if response.content is not None else ""
+        except Exception:
+            # get_content_as_string json-serializes non-str content and raises on
+            # values json can't handle (datetime, bytes, ...) - fall back to repr
+            # rather than failing the case on evidence extraction.
+            result.output = str(response.content)
         result.tools_called = tuple(tool.tool_name or "?" for tool in (response.tools or []))
 
-    if response is None or run_error is not None or response.status in status_errors:
+    # Only a completed run is gradeable: paused/cancelled runs carry placeholder
+    # content (e.g. HITL boilerplate), and any other status (pending, running,
+    # regenerated, ...) is not a real answer either.
+    gradeable = not agent_errored and response is not None and response.status == RunStatus.completed
+    if not gradeable:
+        if not agent_errored:
+            if response is None:
+                _append_error(result, "agent: no run output recorded")
+            else:
+                _append_error(
+                    result,
+                    _STATUS_ERRORS.get(response.status, f"agent: run ended with status {response.status.value}"),
+                )
         return
 
     if case.criteria is not None:
@@ -357,7 +377,7 @@ async def arun_cases(
     judge_model: Optional[Model] = None,
     db: Optional[Union[BaseDb, AsyncBaseDb]] = None,
     on_case_start: Optional[Callable[[Case], None]] = None,
-    on_case_end: Optional[Callable[[CaseResult], None]] = None,
+    on_case_end: Optional[Callable[[Case, CaseResult], None]] = None,
     on_run_event: Optional[Callable[[Case, RunOutputEvent], None]] = None,
 ) -> SuiteResult:
     """Run the selected cases sequentially and return a SuiteResult.
@@ -370,18 +390,23 @@ async def arun_cases(
         judge_model: Suite-wide default judge model; Case.judge_model overrides it.
         db: Passed to AgentAsJudgeEval/ReliabilityEval so results log to storage.
         on_case_start: Presentation hook, called before each case runs.
-        on_case_end: Presentation hook, called with each case's CaseResult.
+        on_case_end: Presentation hook, called with each case and its CaseResult.
         on_run_event: Presentation hook, called with every streamed run event.
 
     Performs no console I/O - all presentation flows through the hooks. Hooks are
-    plain sync callables invoked on the event loop; keep them fast.
+    plain sync callables invoked on the event loop; keep them fast. A hook that
+    raises is recorded on the case ("hook: ..." error) without aborting the suite.
     """
     selected = [case for case in cases if _case_matches(case, tag=tag, name=name)]
 
     results: List[CaseResult] = []
     for case in selected:
+        start_hook_error: Optional[str] = None
         if on_case_start is not None:
-            on_case_start(case)
+            try:
+                on_case_start(case)
+            except Exception as exc:
+                start_hook_error = f"hook: on_case_start {type(exc).__name__}: {exc}"
         result = await _arun_case(
             case,
             default_timeout=default_timeout,
@@ -389,9 +414,19 @@ async def arun_cases(
             db=db,
             on_run_event=on_run_event,
         )
+        if start_hook_error:
+            _append_error(result, start_hook_error)
         results.append(result)
         if on_case_end is not None:
-            on_case_end(result)
+            try:
+                on_case_end(case, result)
+            except Exception as exc:
+                _append_error(result, f"hook: on_case_end {type(exc).__name__}: {exc}")
+        if result.response is not None and result.response.status == RunStatus.cancelled:
+            # agno converts Ctrl-C during a run into a cancelled RunOutput instead of
+            # re-raising - stop the suite here rather than marching through the
+            # remaining cases, forcing one Ctrl-C per case.
+            break
 
     # Some toolkit transports schedule async close work after a case finishes.
     # Yielding once before the loop closes avoids "event loop is closed" noise.
@@ -408,7 +443,7 @@ def run_cases(
     judge_model: Optional[Model] = None,
     db: Optional[Union[BaseDb, AsyncBaseDb]] = None,
     on_case_start: Optional[Callable[[Case], None]] = None,
-    on_case_end: Optional[Callable[[CaseResult], None]] = None,
+    on_case_end: Optional[Callable[[Case, CaseResult], None]] = None,
     on_run_event: Optional[Callable[[Case, RunOutputEvent], None]] = None,
 ) -> SuiteResult:
     """Sync wrapper over arun_cases. The whole suite runs on a single event loop."""
@@ -440,7 +475,6 @@ class _CliRenderer:
         self._total = total
         self._verbose = verbose
         self._index = 0
-        self._case: Optional[Case] = None
         self._status: Optional["Status"] = None
         self._base_label = ""
 
@@ -449,7 +483,6 @@ class _CliRenderer:
         from rich.status import Status
 
         self._index += 1
-        self._case = case
         self._console.rule(
             f"[bold]{escape(case.name)}[/bold]  [dim]{escape(_agent_id(case))} · {self._index}/{self._total}[/dim]"
         )
@@ -479,7 +512,7 @@ class _CliRenderer:
             self._status.stop()
             self._status = None
 
-    def on_case_end(self, result: CaseResult) -> None:
+    def on_case_end(self, case: Case, result: CaseResult) -> None:
         from rich.markup import escape
 
         self.close()
@@ -490,8 +523,7 @@ class _CliRenderer:
             self._console.print(f"[dim]session: {escape(result.session_id)} · {result.duration_seconds}s[/dim]")
         else:
             self._print_response(result)
-        self._print_verdicts(result)
-        self._case = None
+        self._print_verdicts(case, result)
 
     def _print_response(self, result: CaseResult) -> None:
         from rich.markup import escape
@@ -506,7 +538,7 @@ class _CliRenderer:
             names = ", ".join(result.tools_called)
             self._console.print(f"\n[dim]tools fired:[/dim] {escape(names)}")
 
-    def _print_verdicts(self, result: CaseResult) -> None:
+    def _print_verdicts(self, case: Case, result: CaseResult) -> None:
         from rich.markup import escape
 
         if result.judge_passed is not None:
@@ -519,8 +551,8 @@ class _CliRenderer:
             style = "green" if result.reliability_passed else "red"
             verdict = "PASS" if result.reliability_passed else "FAIL"
             line = f"\n[bold]Reliability:[/bold] [{style}]{verdict}[/{style}]"
-            if self._case is not None and self._case.expected_tool_calls:
-                expected = ", ".join(self._case.expected_tool_calls)
+            if case.expected_tool_calls:
+                expected = ", ".join(case.expected_tool_calls)
                 line += f"  [dim]expected: {escape(expected)}[/dim]"
             self._console.print(line)
         if result.error:
@@ -578,9 +610,9 @@ def _print_summary(console: "Console", suite: SuiteResult) -> None:
             console.print(f"  [dim]{escape(result.name)}:[/dim] [red]{escape(result.error)}[/red]")
 
 
-def _write_json_output(path: Path, suite: SuiteResult) -> None:
+def _write_json_output(path: Path, payload: Dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(suite.to_dict(), indent=2) + "\n", encoding="utf-8")
+    path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
 
 
 async def acli(
@@ -588,6 +620,7 @@ async def acli(
     *,
     db: Optional[Union[BaseDb, AsyncBaseDb]] = None,
     judge_model: Optional[Model] = None,
+    default_timeout: int = 120,
     argv: Optional[Sequence[str]] = None,
 ) -> int:
     """Async variant of cli() for callers already inside an event loop."""
@@ -599,7 +632,7 @@ async def acli(
     parser = argparse.ArgumentParser(description="Run the eval suite, or a subset with --name/--tag.")
     parser.add_argument("--name", default=None, help="Run only the case with this name")
     parser.add_argument("--tag", default=None, help="Run only cases with this tag")
-    parser.add_argument("--timeout", type=int, default=120, help="Default per-case timeout in seconds")
+    parser.add_argument("--timeout", type=int, default=default_timeout, help="Default per-case timeout in seconds")
     parser.add_argument("--json-output", type=Path, default=None, help="Write machine-readable JSON results")
     parser.add_argument(
         "--list", action="store_true", dest="list_cases", help="List selected cases without running them"
@@ -610,7 +643,12 @@ async def acli(
         action="store_true",
         help="Render the full run panels (Message, Tool Calls, Response) after each case",
     )
-    args = parser.parse_args(argv if argv is None else list(argv))
+    try:
+        args = parser.parse_args(argv if argv is None else list(argv))
+    except SystemExit as exc:
+        # argparse exits on --help and usage errors; return the code instead of
+        # letting SystemExit tear through a host event loop (server, notebook).
+        return exc.code if isinstance(exc.code, int) else 2
 
     console = Console()
     selected = [case for case in cases if _case_matches(case, tag=args.tag, name=args.name)]
@@ -633,8 +671,7 @@ async def acli(
                     for case in selected
                 ]
             }
-            args.json_output.parent.mkdir(parents=True, exist_ok=True)
-            args.json_output.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+            _write_json_output(args.json_output, payload)
             console.print(f"[dim]json output:[/dim] {escape(str(args.json_output))}")
         return 0
 
@@ -656,7 +693,7 @@ async def acli(
     _print_summary(console, suite)
 
     if args.json_output is not None:
-        _write_json_output(args.json_output, suite)
+        _write_json_output(args.json_output, suite.to_dict())
         console.print(f"[dim]json output:[/dim] {escape(str(args.json_output))}")
 
     return 0 if suite.failed == 0 else 1
@@ -667,6 +704,7 @@ def cli(
     *,
     db: Optional[Union[BaseDb, AsyncBaseDb]] = None,
     judge_model: Optional[Model] = None,
+    default_timeout: int = 120,
     argv: Optional[Sequence[str]] = None,
 ) -> int:
     """Run an argparse CLI over the given cases and return the exit code.
@@ -676,4 +714,4 @@ def cli(
     template's __main__.py with `sys.exit(cli(CASES, db=eval_db))`. Inside an
     already-running event loop, use `await acli(...)` instead.
     """
-    return asyncio.run(acli(cases, db=db, judge_model=judge_model, argv=argv))
+    return asyncio.run(acli(cases, db=db, judge_model=judge_model, default_timeout=default_timeout, argv=argv))
