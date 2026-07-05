@@ -1286,21 +1286,12 @@ class AgentOS:
                 continue
             interface_mappings.update(interface.get_scope_mappings())
         if interface_mappings:
+            # middleware_kwargs carries no scope_mappings today (AuthorizationConfig has no
+            # such field); the merge is defensive so that if one is ever threaded through,
+            # it wins over interface defaults instead of being clobbered.
             merged = dict(middleware_kwargs.get("scope_mappings") or {})
-            # Operator-supplied mappings still win over interface defaults.
             interface_mappings.update(merged)
             middleware_kwargs["scope_mappings"] = interface_mappings
-
-        # Behaviour-change notice: service-account (PAT) principals now self-scope to the
-        # data they created even with user_isolation off, so a default token no longer reads
-        # other users' sessions/memories. Surface this once at startup so an operator whose
-        # PAT-driven dashboard suddenly returns empty results knows why (and how to opt out).
-        if middleware_kwargs.get("service_account_verifier") is not None and not user_isolation:
-            log_info(
-                "Service-account (PAT) tokens self-scope to the data they created; a default token "
-                "no longer reads other users' sessions/memories. Grant 'agent_os:cross_user' (or "
-                "'agent_os:admin') to mint a cross-user/debugging token."
-            )
 
         fastapi_app.add_middleware(AuthMiddleware, **middleware_kwargs)
 

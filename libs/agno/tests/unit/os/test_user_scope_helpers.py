@@ -128,9 +128,9 @@ class TestGetScopedUserId:
 
 class TestServiceAccountSelfScoping:
     """D1: service-account (``sa:``) principals always self-scope to the data they
-    created, even when ``user_isolation`` is off, unless the token carries admin or
-    the explicit cross-user grant. This keeps a default PAT from reading every
-    user's history while leaving an opt-in debugging escape hatch."""
+    created, even when ``user_isolation`` is off, unless the token carries admin.
+    This keeps a default PAT from reading every user's history while leaving an
+    admin-minted debugging escape hatch."""
 
     def test_sa_self_scopes_when_isolation_off(self):
         request = _make_request(
@@ -152,19 +152,11 @@ class TestServiceAccountSelfScoping:
         )
         assert get_scoped_user_id(request) is None
 
-    def test_sa_with_cross_user_scope_reads_across_users(self):
+    def test_sa_with_admin_reads_across_users_isolation_on(self):
+        # The admin escape hatch must also work with user_isolation enabled, not only off.
         request = _make_request(
             user_id="sa:bot",
-            scopes=["sessions:read", "agent_os:cross_user"],
-            user_isolation_enabled=False,
-        )
-        assert get_scoped_user_id(request) is None
-
-    def test_sa_with_cross_user_scope_reads_across_users_isolation_on(self):
-        # The escape hatch must also work with user_isolation enabled, not only off.
-        request = _make_request(
-            user_id="sa:bot",
-            scopes=["sessions:read", "agent_os:cross_user"],
+            scopes=["agent_os:admin"],
             user_isolation_enabled=True,
         )
         assert get_scoped_user_id(request) is None

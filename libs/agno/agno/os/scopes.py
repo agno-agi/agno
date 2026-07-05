@@ -34,14 +34,6 @@ LEGACY_RESOURCE_ALIASES: Dict[str, str] = {
     "system": "config",
 }
 
-# Cross-user grant for machine identities. A service-account (``sa:``) principal
-# self-scopes to the data it created regardless of the ``user_isolation`` flag
-# (see get_scoped_user_id). Adding this scope to a token lifts that self-scoping
-# without granting full ``agent_os:admin`` — the intended shape for a read-only
-# debugging token that must see every user's data. It is inert for route-level
-# RBAC (no route requires it); only the user-scoping helpers honour it.
-CROSS_USER_SCOPE = "agent_os:cross_user"
-
 
 class AgentOSScope(str, Enum):
     """
@@ -96,9 +88,6 @@ class AgentOSScope(str, Enum):
 
     # Special scopes
     ADMIN = "agent_os:admin"
-    # Cross-user grant for machine identities; CROSS_USER_SCOPE (module constant above)
-    # is the same value, referenced here so the two never drift.
-    CROSS_USER = CROSS_USER_SCOPE
 
 
 @dataclass

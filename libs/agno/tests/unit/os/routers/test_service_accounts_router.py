@@ -133,15 +133,6 @@ class TestCreateServiceAccount:
         response = client.post("/service-accounts", json={"name": "ci", "scopes": ["service_accounts:write"]})
         assert response.status_code == 400
 
-    def test_cross_user_scope_requires_flag(self, client):
-        # agent_os:cross_user lifts service-account self-scoping (reads every user's data),
-        # so it must be gated like admin -- not mintable with a plain request.
-        response = client.post(
-            "/service-accounts", json={"name": "ci", "scopes": ["sessions:read", "agent_os:cross_user"]}
-        )
-        assert response.status_code == 400
-        assert "allow_privileged_scopes" in response.json()["detail"]
-
     def test_privileged_scope_allowed_with_flag_for_authenticated_root(self, mock_db, settings):
         # A trusted root (os_security_key / internal token sets request.state.authenticated)
         # may mint a privileged token when the explicit flag is set. An UNauthenticated

@@ -32,7 +32,7 @@ from starlette.concurrency import run_in_threadpool
 
 from agno.db.base import AsyncBaseDb, BaseDb
 from agno.db.schemas.service_accounts import SERVICE_ACCOUNT_PRINCIPAL_PREFIX, ServiceAccount
-from agno.os.scopes import CROSS_USER_SCOPE, AgentOSScope, check_route_scopes, parse_scope
+from agno.os.scopes import AgentOSScope, check_route_scopes, parse_scope
 from agno.utils.log import log_debug, log_error, log_warning
 from agno.utils.string import hash_string_sha256
 
@@ -68,12 +68,6 @@ _PRIVILEGED_ACTIONS = {"write", "delete"}
 
 # Resource whose scopes are always privileged: tokens that can manage tokens.
 _SERVICE_ACCOUNTS_RESOURCE = "service_accounts"
-
-# Individual scopes that are always privileged regardless of their action word.
-# ``agent_os:cross_user`` lifts service-account self-scoping so the token reads every
-# user's sessions/memories -- an admin-adjacent grant that must not mint freely (its
-# action "cross_user" is not in _PRIVILEGED_ACTIONS, so it needs listing here).
-_PRIVILEGED_SCOPES = {CROSS_USER_SCOPE}
 
 
 def _base62_encode(data: bytes) -> str:
@@ -126,7 +120,6 @@ def get_privileged_scopes(scopes: List[str], admin_scope: Optional[str] = None) 
         if (
             parsed.scope_type == "admin"
             or scope == AgentOSScope.ADMIN.value
-            or scope in _PRIVILEGED_SCOPES
             or (parsed.action in _PRIVILEGED_ACTIONS)
             or (parsed.resource == _SERVICE_ACCOUNTS_RESOURCE)
         ):

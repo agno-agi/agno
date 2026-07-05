@@ -45,7 +45,7 @@ from fastapi import HTTPException, Query, Request
 
 from agno.db.base import AsyncBaseDb, BaseDb
 from agno.db.schemas.service_accounts import SERVICE_ACCOUNT_PRINCIPAL_PREFIX
-from agno.os.scopes import CROSS_USER_SCOPE, AgentOSScope
+from agno.os.scopes import AgentOSScope
 from agno.os.utils import get_db
 from agno.remote.base import RemoteDb
 from agno.utils.log import log_warning
@@ -96,11 +96,11 @@ def get_scoped_user_id(request: Request) -> Optional[str]:
 
     Service-account (``sa:``) principals are the exception to the isolation
     opt-in: they always self-scope to the data they created, even when
-    ``user_isolation`` is off, unless the token carries admin or the explicit
-    ``CROSS_USER_SCOPE``. A service account is a machine identity whose sessions
-    and memories are stamped with its own principal, so "unscoped" would mean
-    "reads every user's history" — never the intended default for a minted
-    token. An operator who wants a cross-user debugging token opts in per token.
+    ``user_isolation`` is off, unless the token carries admin. A service account
+    is a machine identity whose sessions and memories are stamped with its own
+    principal, so "unscoped" would mean "reads every user's history" — never the
+    intended default for a minted token. An operator who wants a cross-user
+    debugging token mints one with the admin scope.
     """
     user_id = getattr(request.state, "user_id", None)
     scopes: List[str] = getattr(request.state, "scopes", [])
@@ -110,10 +110,10 @@ def get_scoped_user_id(request: Request) -> Optional[str]:
     is_admin = _has_admin_scope(scopes, admin_scope=admin_scope)
     is_service_account = isinstance(user_id, str) and user_id.startswith(SERVICE_ACCOUNT_PRINCIPAL_PREFIX)
 
-    # Admin and the explicit cross-user grant read across users, so they are never
-    # scoped — checked first so the grant works regardless of the user_isolation flag
-    # (a service account with CROSS_USER_SCOPE must not fall through to self-scoping).
-    if is_admin or CROSS_USER_SCOPE in scopes:
+    # Admin reads across users, so it is never scoped — checked first so it works
+    # regardless of the user_isolation flag (an admin service account must not
+    # fall through to self-scoping).
+    if is_admin:
         return None
 
     # Service-account self-scoping — independent of the user_isolation flag.
