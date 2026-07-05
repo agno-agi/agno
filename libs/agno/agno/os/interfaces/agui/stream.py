@@ -1,5 +1,5 @@
 from collections.abc import Iterator
-from typing import Any, AsyncIterator, Dict, Optional, Union
+from typing import Any, AsyncIterator, Dict, Optional, Sequence, Union
 
 from ag_ui.core import BaseEvent
 
@@ -14,9 +14,17 @@ def stream_agno_response_as_agui_events(
     thread_id: str,
     run_id: str,
     run_state: Optional[Dict[str, Any]] = None,
+    enable_state_redaction: bool = True,
+    redact_state_keys: Optional[Sequence[str]] = None,
 ) -> Iterator[BaseEvent]:
     """Map the Agno response stream to AG-UI format."""
-    state = StreamState(thread_id=thread_id, run_id=run_id, run_state=run_state)
+    state = StreamState(
+        thread_id=thread_id,
+        run_id=run_id,
+        run_state=run_state,
+        enable_state_redaction=enable_state_redaction,
+        redact_state_keys=redact_state_keys,
+    )
 
     if run_state is not None:
         state.set_state_snapshot(run_state)
@@ -41,9 +49,17 @@ async def async_stream_agno_response_as_agui_events(
     thread_id: str,
     run_id: str,
     run_state: Optional[Dict[str, Any]] = None,
+    enable_state_redaction: bool = True,
+    redact_state_keys: Optional[Sequence[str]] = None,
 ) -> AsyncIterator[BaseEvent]:
     """Map the Agno response stream to AG-UI format."""
-    state = StreamState(thread_id=thread_id, run_id=run_id, run_state=run_state)
+    state = StreamState(
+        thread_id=thread_id,
+        run_id=run_id,
+        run_state=run_state,
+        enable_state_redaction=enable_state_redaction,
+        redact_state_keys=redact_state_keys,
+    )
 
     if run_state is not None:
         state.set_state_snapshot(run_state)
