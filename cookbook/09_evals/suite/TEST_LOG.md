@@ -8,4 +8,6 @@
 
 **Result:** 2/2 cases passed with exit code 0. JSON payload written with the expected summary/cases shape. Unknown tag exited with code 2 and listed the available case names.
 
+**Re-test (2026-07-05, after the external-review fix round):** full run with `--json-output` passed 2/2 with exit code 0 and the expected payload (`tools_called: ["factorial"]`, `status: "PASS"`); the falsy-check guard rejects `expected_tool_calls=()` at construction; the `python -m agno.eval` module entry is removed.
+
 ---
