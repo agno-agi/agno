@@ -34,7 +34,12 @@ def test_async_log_eval_runs_sync_db_off_loop():
     assert db.threads[0].daemon is True
 
 
-def test_async_log_eval_write_failure_is_swallowed_and_warned(caplog):
+def test_async_log_eval_write_failure_is_swallowed_and_warned(monkeypatch):
+    # log_warning wraps the agno logger, which may be built with propagate=False -
+    # pytest's caplog can't reliably observe it, so capture the call directly.
+    warnings = []
+    monkeypatch.setattr("agno.eval.utils.log_warning", warnings.append)
+
     class FailingSyncDb:
         def create_eval_run(self, record):
             raise RuntimeError("db exploded")
@@ -45,7 +50,7 @@ def test_async_log_eval_write_failure_is_swallowed_and_warned(caplog):
         )
     )  # must not raise
 
-    assert any("Could not log eval run" in message for message in caplog.messages)
+    assert any("Could not log eval run" in message for message in warnings)
 
 
 def test_async_log_eval_in_memory_sqlite_stays_on_loop_and_persists():
