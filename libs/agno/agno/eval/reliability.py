@@ -12,7 +12,7 @@ if TYPE_CHECKING:
 
 from agno.agent import RunOutput
 from agno.db.schemas.evals import EvalType
-from agno.eval.utils import async_log_eval, log_eval_run, store_result_in_file
+from agno.eval.utils import async_log_eval, log_eval_run, spinner_live, store_result_in_file
 from agno.utils.log import logger
 
 
@@ -77,6 +77,9 @@ class ReliabilityEval:
 
     # Print detailed results
     print_results: bool = False
+    # Render the transient progress spinner. Embedders that must not write to the
+    # console (e.g. the suite runner) disable it.
+    show_spinner: bool = True
     # If set, results will be saved in the given file path
     file_path_to_save_results: Optional[str] = None
     # Enable debug logs
@@ -226,7 +229,6 @@ class ReliabilityEval:
             )
 
         from rich.console import Console
-        from rich.live import Live
         from rich.status import Status
 
         # Generate unique run_id for this execution (don't modify self.eval_id due to concurrency)
@@ -234,9 +236,10 @@ class ReliabilityEval:
 
         # Add a spinner while running the evaluations
         console = Console()
-        with Live(console=console, transient=True) as live_log:
+        with spinner_live(console, self.show_spinner) as live_log:
             status = Status("Running evaluation...", spinner="dots", speed=1.0, refresh_per_second=10)
-            live_log.update(status)
+            if live_log is not None:
+                live_log.update(status)
 
             self.result = self._evaluate()
 
@@ -309,7 +312,6 @@ class ReliabilityEval:
             )
 
         from rich.console import Console
-        from rich.live import Live
         from rich.status import Status
 
         # Generate unique run_id for this execution (don't modify self.eval_id due to concurrency)
@@ -317,9 +319,10 @@ class ReliabilityEval:
 
         # Add a spinner while running the evaluations
         console = Console()
-        with Live(console=console, transient=True) as live_log:
+        with spinner_live(console, self.show_spinner) as live_log:
             status = Status("Running evaluation...", spinner="dots", speed=1.0, refresh_per_second=10)
-            live_log.update(status)
+            if live_log is not None:
+                live_log.update(status)
 
             self.result = self._evaluate()
 

@@ -1,16 +1,35 @@
+import asyncio
 from dataclasses import asdict
 from pathlib import Path
-from typing import TYPE_CHECKING, Optional, Union
+from typing import TYPE_CHECKING, ContextManager, Optional, Union
 
 from agno.db.base import AsyncBaseDb, BaseDb
 from agno.db.schemas.evals import EvalRunRecord, EvalType
 from agno.utils.log import log_debug, log_warning
 
 if TYPE_CHECKING:
+    from rich.console import Console
+    from rich.live import Live
+
     from agno.eval.accuracy import AccuracyResult
     from agno.eval.agent_as_judge import AgentAsJudgeResult
     from agno.eval.performance import PerformanceResult
     from agno.eval.reliability import ReliabilityResult
+
+
+def spinner_live(console: "Console", enabled: bool = True) -> "ContextManager[Optional[Live]]":
+    """Transient Live context for an eval progress spinner.
+
+    A no-op yielding None when disabled - used by embedders like the suite
+    runner, which must not write to the console.
+    """
+    from contextlib import nullcontext
+
+    from rich.live import Live
+
+    if not enabled:
+        return nullcontext()
+    return Live(console=console, transient=True)
 
 
 def log_eval_run(
@@ -83,7 +102,10 @@ async def async_log_eval(
                 )
             )
         else:
-            db.create_eval_run(
+            # A sync db driver would block the event loop (and defeat any caller-side
+            # timeout, e.g. the suite runner's per-case wait_for) - run it off-loop.
+            await asyncio.to_thread(
+                db.create_eval_run,
                 EvalRunRecord(
                     run_id=run_id,
                     eval_type=eval_type,
@@ -96,7 +118,7 @@ async def async_log_eval(
                     evaluated_component_name=evaluated_component_name,
                     team_id=team_id,
                     workflow_id=workflow_id,
-                )
+                ),
             )
     except Exception as e:
         log_debug(f"Could not create agent event: {e}")

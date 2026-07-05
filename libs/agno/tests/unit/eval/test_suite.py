@@ -2,25 +2,33 @@
 
 import asyncio
 import json
+from dataclasses import fields
 from types import SimpleNamespace
 
 import pytest
 
 from agno.eval import suite
-from agno.eval.suite import Case, SuiteResult, arun_cases, cli, run_cases
+from agno.eval.suite import Case, SuiteResult, acli, arun_cases, cli, run_cases
 from agno.models.response import ToolExecution
-from agno.run.agent import RunOutput, ToolCallCompletedEvent, ToolCallStartedEvent
+from agno.run.agent import RunErrorEvent, RunOutput, ToolCallCompletedEvent, ToolCallStartedEvent
+from agno.run.base import RunStatus
 
 
 class StubAgent:
-    """Stands in for Agent: arun yields scripted events, then the final RunOutput."""
+    """Stands in for Agent: arun yields scripted events, then the final RunOutput.
 
-    def __init__(self, *, id="stub-agent", events=(), output=None, error=None, delay=0.0):
+    Mirrors the real streaming contract: in-run failures do NOT raise - the stream
+    yields a RunErrorEvent and ends without the final RunOutput (emit_output=False).
+    A raising `error` models pre-stream failures (e.g. input validation).
+    """
+
+    def __init__(self, *, id="stub-agent", events=(), output=None, error=None, delay=0.0, emit_output=True):
         self.id = id
         self._events = list(events)
         self._output = output if output is not None else RunOutput(content="stub response")
         self._error = error
         self._delay = delay
+        self._emit_output = emit_output
         self.run_count = 0
         self.session_ids = []
         self.loops = []
@@ -35,7 +43,8 @@ class StubAgent:
             await asyncio.sleep(self._delay)
         for event in self._events:
             yield event
-        yield self._output
+        if self._emit_output:
+            yield self._output
 
 
 def _install_fake_evals(
@@ -109,6 +118,12 @@ def test_case_with_either_check_constructs():
     _make_case(criteria=None, expected_tool_calls=("search_web",))
 
 
+def test_agent_is_the_last_required_field():
+    # agent must stay last of the required fields so it can gain a default later
+    # (team/workflow alternatives) without a non-default-after-default TypeError.
+    assert [f.name for f in fields(Case)[:3]] == ["name", "input", "agent"]
+
+
 # ---------------------------------------------------------------------------
 # Selection (check 2)
 # ---------------------------------------------------------------------------
@@ -150,7 +165,7 @@ def test_unknown_tag_returns_empty_suite(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# Agent errors (check 3)
+# Agent errors (check 3) and run status handling
 # ---------------------------------------------------------------------------
 
 
@@ -172,6 +187,59 @@ def test_agent_error_is_captured_and_suite_continues(monkeypatch):
     assert fine.name == "fine"
     assert fine.passed is True
     assert ok_agent.run_count == 1
+
+
+def test_streamed_run_error_event_is_recorded(monkeypatch):
+    # The real streaming path never raises on in-run failure: it yields a
+    # RunErrorEvent and ends without the final RunOutput.
+    judge_instances, _ = _install_fake_evals(monkeypatch)
+    failing_agent = StubAgent(events=[RunErrorEvent(content="rate limited by provider")], emit_output=False)
+    typed_agent = StubAgent(events=[RunErrorEvent(content="boom", error_type="ModelProviderError")], emit_output=False)
+    ok_agent = StubAgent()
+    cases = [
+        _make_case(agent=failing_agent, name="stream_error"),
+        _make_case(agent=typed_agent, name="typed_error"),
+        _make_case(agent=ok_agent, name="fine"),
+    ]
+
+    result = run_cases(cases)
+
+    stream_error, typed_error, fine = result.results
+    assert stream_error.error == "agent: rate limited by provider"
+    assert stream_error.passed is False
+    assert typed_error.error == "agent: ModelProviderError: boom"
+    assert fine.passed is True
+    assert len(judge_instances) == 1  # only the successful case was judged
+
+
+def test_paused_run_is_not_judged(monkeypatch):
+    judge_instances, _ = _install_fake_evals(monkeypatch)
+    paused_output = RunOutput(content="I have tools to execute, but I need confirmation.", status=RunStatus.paused)
+
+    result = run_cases([_make_case(agent=StubAgent(output=paused_output))]).results[0]
+
+    assert result.error == "agent: run paused awaiting user input"
+    assert result.passed is False
+    assert result.judge_passed is None
+    assert judge_instances == []
+    # Evidence fields are still populated for the post-mortem
+    assert result.response is paused_output
+    assert result.output == "I have tools to execute, but I need confirmation."
+
+
+def test_cancelled_run_is_not_judged(monkeypatch):
+    judge_instances, reliability_instances = _install_fake_evals(monkeypatch)
+    cancelled_output = RunOutput(content="Run cancelled by user.", status=RunStatus.cancelled)
+    case = _make_case(agent=StubAgent(output=cancelled_output), expected_tool_calls=("search_web",))
+
+    result = run_cases([case]).results[0]
+
+    assert result.error == "agent: run cancelled"
+    assert result.passed is False
+    assert result.judge_passed is None
+    assert result.reliability_passed is None
+    assert judge_instances == []
+    assert reliability_instances == []
 
 
 # ---------------------------------------------------------------------------
@@ -239,6 +307,39 @@ def test_async_hooks_are_awaited(monkeypatch):
     result = run_cases([_make_case(setup=setup, teardown=teardown)]).results[0]
 
     assert received == [("async-context", "sample_case")]
+    assert result.passed is True
+
+
+def test_async_callable_object_hooks_are_awaited(monkeypatch):
+    # iscoroutinefunction is False for instances with async __call__ - the
+    # returned coroutine must still be awaited, not dropped.
+    _install_fake_evals(monkeypatch)
+    received = []
+
+    class AsyncSetup:
+        async def __call__(self):
+            return "object-context"
+
+    class AsyncTeardown:
+        async def __call__(self, context, result):
+            received.append((context, result.name))
+
+    result = run_cases([_make_case(setup=AsyncSetup(), teardown=AsyncTeardown())]).results[0]
+
+    assert received == [("object-context", "sample_case")]
+    assert result.passed is True
+
+
+def test_sync_hook_returning_coroutine_is_awaited(monkeypatch):
+    _install_fake_evals(monkeypatch)
+    received = []
+
+    async def async_cleanup(context, result):
+        received.append(result.name)
+
+    result = run_cases([_make_case(teardown=lambda context, result: async_cleanup(context, result))]).results[0]
+
+    assert received == ["sample_case"]
     assert result.passed is True
 
 
@@ -354,6 +455,15 @@ def test_db_propagates_to_both_evals(monkeypatch):
 
     assert judge_instances[0].kwargs["db"] is db
     assert reliability_instances[0].kwargs["db"] is db
+
+
+def test_suite_disables_eval_spinners(monkeypatch):
+    judge_instances, reliability_instances = _install_fake_evals(monkeypatch)
+
+    run_cases([_make_case(expected_tool_calls=("search_web",))])
+
+    assert judge_instances[0].kwargs["show_spinner"] is False
+    assert reliability_instances[0].kwargs["show_spinner"] is False
 
 
 def test_judge_model_resolution_order(monkeypatch):
@@ -521,6 +631,27 @@ def test_case_start_and_end_hooks(monkeypatch):
     assert ended == ["a", "b"]
 
 
+def test_on_run_event_error_recorded_once_and_checks_still_run(monkeypatch):
+    # A presentation-hook bug must not read as an agent failure or abort the case.
+    _install_fake_evals(monkeypatch)
+    events = [
+        ToolCallStartedEvent(tool=ToolExecution(tool_name="a")),
+        ToolCallStartedEvent(tool=ToolExecution(tool_name="b")),
+    ]
+    forwarded = []
+
+    def bad_hook(case, event):
+        forwarded.append(event)
+        raise TypeError("renderer bug")
+
+    result = run_cases([_make_case(agent=StubAgent(events=events))], on_run_event=bad_hook).results[0]
+
+    assert len(forwarded) == 1  # forwarding stops after the first failure
+    assert result.error == "hook: on_run_event TypeError: renderer bug"
+    assert result.judge_passed is True  # the judge check still ran
+    assert result.passed is False
+
+
 # ---------------------------------------------------------------------------
 # Evidence fields (check 15)
 # ---------------------------------------------------------------------------
@@ -550,6 +681,22 @@ def test_evidence_fields_and_response_exclusion(monkeypatch):
     assert case_payload["judge_reason"] == "meets the criteria"
     assert case_payload["session_id"] == result.session_id
     assert "response" not in case_payload
+
+
+def test_structured_content_serialized_without_repr(monkeypatch):
+    _install_fake_evals(monkeypatch)
+
+    result = run_cases([_make_case(agent=StubAgent(output=RunOutput(content={"answer": 42})))]).results[0]
+
+    assert result.output == '{"answer": 42}'
+
+
+def test_falsy_content_is_preserved(monkeypatch):
+    _install_fake_evals(monkeypatch)
+
+    result = run_cases([_make_case(agent=StubAgent(output=RunOutput(content=0)))]).results[0]
+
+    assert result.output == "0"
 
 
 # ---------------------------------------------------------------------------
@@ -630,6 +777,58 @@ def test_cli_timeout_flag_sets_default_timeout(monkeypatch, capsys):
 
     assert exit_code == 1
     assert "timeout: exceeded 1s" in capsys.readouterr().out
+
+
+def test_cli_list_with_json_output_writes_case_list(monkeypatch, tmp_path):
+    _install_fake_evals(monkeypatch)
+    agent = StubAgent()
+    json_path = tmp_path / "cases.json"
+
+    exit_code = cli(
+        [_make_case(agent=agent, name="listed", tags=("smoke",), timeout_seconds=30)],
+        argv=["--list", "--json-output", str(json_path)],
+    )
+
+    assert exit_code == 0
+    payload = json.loads(json_path.read_text(encoding="utf-8"))
+    assert payload == {
+        "cases": [{"name": "listed", "agent_id": "stub-agent", "tags": ["smoke"], "timeout_seconds": 30}]
+    }
+    assert agent.run_count == 0
+
+
+def test_cli_survives_rich_markup_in_model_output(monkeypatch, capsys):
+    # Model- and user-derived strings must not be parsed as rich markup: a stray
+    # closing tag raised MarkupError and killed the suite after the case passed.
+    _install_fake_evals(monkeypatch, judge_reason="reason with [/dim] tag")
+    output = RunOutput(
+        content="model said [/dim] oops [bold]",
+        tools=[ToolExecution(tool_name="tool [/red] name")],
+    )
+    case = _make_case(agent=StubAgent(output=output), name="markup [case]")
+
+    exit_code = cli([case], argv=[])
+
+    assert exit_code == 0
+    assert "model said" in capsys.readouterr().out
+
+
+def test_acli_returns_exit_code(monkeypatch, capsys):
+    _install_fake_evals(monkeypatch)
+
+    exit_code = asyncio.run(acli([_make_case()], argv=[]))
+
+    assert exit_code == 0
+    assert "1/1 passed" in capsys.readouterr().out
+
+
+def test_acli_runs_inside_existing_event_loop(monkeypatch):
+    _install_fake_evals(monkeypatch)
+
+    async def main():
+        return await acli([_make_case()], argv=[])
+
+    assert asyncio.run(main()) == 0
 
 
 # ---------------------------------------------------------------------------

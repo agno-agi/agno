@@ -6,15 +6,15 @@ selected cases sequentially on a single event loop and returns a `SuiteResult`
 whose `to_dict()` payload is a stable contract for CI consumers.
 
 The runner performs no console I/O: presentation flows through the
-`on_case_start` / `on_run_event` / `on_case_end` hooks. `cli()` is a pure
-consumer of that public API.
+`on_case_start` / `on_run_event` / `on_case_end` hooks. `cli()` (and its async
+twin `acli()`) is a pure consumer of that public API.
 """
 
 import asyncio
 import json
 import time
 from dataclasses import dataclass, field
-from inspect import iscoroutinefunction
+from inspect import isawaitable, iscoroutinefunction
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Sequence, Tuple, Union
 from uuid import uuid4
@@ -24,20 +24,21 @@ from agno.db.base import AsyncBaseDb, BaseDb
 from agno.eval.agent_as_judge import AgentAsJudgeEval
 from agno.eval.reliability import ReliabilityEval
 from agno.models.base import Model
-from agno.run.agent import RunOutput, RunOutputEvent
+from agno.run.agent import RunErrorEvent, RunOutput, RunOutputEvent
+from agno.run.base import RunStatus
 
 if TYPE_CHECKING:
     from rich.console import Console
-    from rich.live import Live
     from rich.status import Status
 
 __all__ = [
     "Case",
     "CaseResult",
     "SuiteResult",
+    "acli",
     "arun_cases",
-    "run_cases",
     "cli",
+    "run_cases",
 ]
 
 
@@ -46,8 +47,10 @@ class Case:
     """One eval case: an input to one agent, plus optional judge/reliability checks."""
 
     name: str
-    agent: Agent
     input: str
+    # agent is the last required field so it can gain a default later (team/workflow
+    # alternatives per the spec's fast-follow) without a non-default-after-default error.
+    agent: Agent
     tags: Tuple[str, ...] = ()
     # Per-case timeout in seconds; falls back to the runner's default_timeout
     timeout_seconds: Optional[int] = None
@@ -176,7 +179,13 @@ def _append_error(result: CaseResult, message: str) -> None:
 async def _call_hook(hook: Callable[..., Any], *args: Any) -> Any:
     if iscoroutinefunction(hook):
         return await hook(*args)
-    return await asyncio.to_thread(hook, *args)
+    result = await asyncio.to_thread(hook, *args)
+    if isawaitable(result):
+        # Async callable objects and sync wrappers returning a coroutine land here:
+        # iscoroutinefunction misses both, so await the result back on the loop
+        # instead of silently dropping an un-awaited coroutine.
+        return await result
+    return result
 
 
 async def _run_case_body(
@@ -189,6 +198,9 @@ async def _run_case_body(
 ) -> None:
     """Agent run + judge + reliability checks. Runs inside the case timeout; mutates result."""
     response: Optional[RunOutput] = None
+    run_error: Optional[str] = None
+    hook_error: Optional[str] = None
+    forward_events = on_run_event is not None
     try:
         async for event in case.agent.arun(
             input=case.input,
@@ -202,19 +214,50 @@ async def _run_case_body(
                 # captured, not forwarded to on_run_event - on_case_end delivers it.
                 response = event
                 continue
-            if on_run_event is not None:
-                on_run_event(case, event)
+            if isinstance(event, RunErrorEvent):
+                # The streaming path does not raise on in-run model/API failures: it
+                # yields a RunErrorEvent and ends without the final RunOutput. Capture
+                # the error text here or it is lost.
+                error_text = event.content or "unknown error"
+                run_error = f"{event.error_type}: {error_text}" if event.error_type else error_text
+            if forward_events and on_run_event is not None:
+                try:
+                    on_run_event(case, event)
+                except Exception as exc:
+                    # A presentation-hook bug must not read as an agent failure: record
+                    # it once and stop forwarding for the rest of this case.
+                    forward_events = False
+                    hook_error = f"hook: on_run_event {type(exc).__name__}: {exc}"
     except Exception as exc:
+        # Only pre-stream failures (e.g. input validation) raise out of arun.
         _append_error(result, f"{type(exc).__name__}: {exc}")
+        if hook_error:
+            _append_error(result, hook_error)
         return
 
-    if response is None:
+    # A paused/cancelled run yields a RunOutput whose content is placeholder text
+    # (e.g. HITL boilerplate) - grading it would report a misleading quality failure.
+    status_errors = {
+        RunStatus.paused: "agent: run paused awaiting user input",
+        RunStatus.cancelled: "agent: run cancelled",
+        RunStatus.error: "agent: run ended in error status",
+    }
+    if run_error is not None:
+        _append_error(result, f"agent: {run_error}")
+    elif response is not None and response.status in status_errors:
+        _append_error(result, status_errors[response.status])
+    elif response is None:
         _append_error(result, "agent: no run output recorded")
-        return
+    if hook_error:
+        _append_error(result, hook_error)
 
-    result.response = response
-    result.output = str(response.content) if response.content else ""
-    result.tools_called = tuple(tool.tool_name or "?" for tool in (response.tools or []))
+    if response is not None:
+        result.response = response
+        result.output = response.get_content_as_string() if response.content is not None else ""
+        result.tools_called = tuple(tool.tool_name or "?" for tool in (response.tools or []))
+
+    if response is None or run_error is not None or response.status in status_errors:
+        return
 
     if case.criteria is not None:
         try:
@@ -224,6 +267,7 @@ async def _run_case_body(
                 scoring_strategy="binary",
                 model=case.judge_model or judge_model,
                 db=db,
+                show_spinner=False,
             ).arun(input=case.input, output=result.output or "")
         except Exception as exc:
             _append_error(result, f"judge: {type(exc).__name__}: {exc}")
@@ -242,6 +286,7 @@ async def _run_case_body(
                 expected_tool_calls=list(case.expected_tool_calls),
                 allow_additional_tool_calls=case.allow_additional_tool_calls,
                 db=db,
+                show_spinner=False,
             ).arun()
         except Exception as exc:
             _append_error(result, f"reliability: {type(exc).__name__}: {exc}")
@@ -383,7 +428,12 @@ def run_cases(
 
 
 class _CliRenderer:
-    """Console UI for cli(), driven entirely by the public runner hooks."""
+    """Console UI for cli(), driven entirely by the public runner hooks.
+
+    All model- and user-derived strings (case names, outputs, tool names, judge
+    reasons, errors) are markup-escaped: a model emitting rich tags like [/dim]
+    must not crash or restyle the console.
+    """
 
     def __init__(self, console: "Console", total: int, verbose: bool) -> None:
         self._console = console
@@ -391,23 +441,25 @@ class _CliRenderer:
         self._verbose = verbose
         self._index = 0
         self._case: Optional[Case] = None
-        self._live: Optional["Live"] = None
         self._status: Optional["Status"] = None
         self._base_label = ""
 
     def on_case_start(self, case: Case) -> None:
-        from rich.live import Live
+        from rich.markup import escape
         from rich.status import Status
 
         self._index += 1
         self._case = case
-        self._console.rule(f"[bold]{case.name}[/bold]  [dim]{_agent_id(case)} · {self._index}/{self._total}[/dim]")
-        self._base_label = f"[bold]running[/bold] {_agent_id(case)}…"
-        self._status = Status(self._base_label, spinner="dots")
-        self._live = Live(self._status, console=self._console, transient=True, refresh_per_second=10)
-        self._live.start()
+        self._console.rule(
+            f"[bold]{escape(case.name)}[/bold]  [dim]{escape(_agent_id(case))} · {self._index}/{self._total}[/dim]"
+        )
+        self._base_label = f"[bold]running[/bold] {escape(_agent_id(case))}…"
+        self._status = Status(self._base_label, console=self._console, spinner="dots")
+        self._status.start()
 
     def on_run_event(self, case: Case, event: RunOutputEvent) -> None:
+        from rich.markup import escape
+
         if self._status is None:
             return
         event_type = getattr(event, "event", None)
@@ -415,50 +467,64 @@ class _CliRenderer:
             tool = getattr(event, "tool", None)
             tool_name = getattr(tool, "tool_name", None)
             if tool_name:
-                self._status.update(f"[bold]running[/bold] {_agent_id(case)} → [cyan]{tool_name}[/cyan]…")
+                self._status.update(
+                    f"[bold]running[/bold] {escape(_agent_id(case))} → [cyan]{escape(tool_name)}[/cyan]…"
+                )
         elif event_type == "ToolCallCompleted":
             self._status.update(self._base_label)
 
-    def on_case_end(self, result: CaseResult) -> None:
-        if self._live is not None:
-            self._live.stop()
-            self._live = None
+    def close(self) -> None:
+        """Stop the active spinner, restoring the terminal. Safe to call repeatedly."""
+        if self._status is not None:
+            self._status.stop()
             self._status = None
+
+    def on_case_end(self, result: CaseResult) -> None:
+        from rich.markup import escape
+
+        self.close()
         if self._verbose and result.response is not None:
             from agno.utils.pprint import pprint_run_response
 
             pprint_run_response(result.response, markdown=True)
-            self._console.print(f"[dim]session: {result.session_id} · {result.duration_seconds}s[/dim]")
+            self._console.print(f"[dim]session: {escape(result.session_id)} · {result.duration_seconds}s[/dim]")
         else:
             self._print_response(result)
         self._print_verdicts(result)
         self._case = None
 
     def _print_response(self, result: CaseResult) -> None:
+        from rich.markup import escape
+
         self._console.print()
         self._console.print("[bold]Response[/bold]")
-        self._console.print(result.output or "[dim](empty)[/dim]")
+        if result.output:
+            self._console.print(result.output, markup=False)
+        else:
+            self._console.print("[dim](empty)[/dim]")
         if result.tools_called:
             names = ", ".join(result.tools_called)
-            self._console.print(f"\n[dim]tools fired:[/dim] {names}")
+            self._console.print(f"\n[dim]tools fired:[/dim] {escape(names)}")
 
     def _print_verdicts(self, result: CaseResult) -> None:
+        from rich.markup import escape
+
         if result.judge_passed is not None:
             style = "green" if result.judge_passed else "red"
             verdict = "PASS" if result.judge_passed else "FAIL"
             self._console.print(f"\n[bold]Judge:[/bold] [{style}]{verdict}[/{style}]")
             if result.judge_reason:
-                self._console.print(f"[dim]  {result.judge_reason}[/dim]")
+                self._console.print(f"[dim]  {escape(result.judge_reason)}[/dim]")
         if result.reliability_passed is not None:
             style = "green" if result.reliability_passed else "red"
             verdict = "PASS" if result.reliability_passed else "FAIL"
             line = f"\n[bold]Reliability:[/bold] [{style}]{verdict}[/{style}]"
             if self._case is not None and self._case.expected_tool_calls:
                 expected = ", ".join(self._case.expected_tool_calls)
-                line += f"  [dim]expected: {expected}[/dim]"
+                line += f"  [dim]expected: {escape(expected)}[/dim]"
             self._console.print(line)
         if result.error:
-            self._console.print(f"\n[red]error:[/red] {result.error}")
+            self._console.print(f"\n[red]error:[/red] {escape(result.error)}")
 
 
 def _check_cell(passed: Optional[bool]) -> str:
@@ -470,6 +536,7 @@ def _check_cell(passed: Optional[bool]) -> str:
 
 
 def _print_case_list(console: "Console", cases: Sequence[Case], *, default_timeout: int) -> None:
+    from rich.markup import escape
     from rich.table import Table
 
     table = Table(title="Eval Cases", title_style="bold sky_blue1", show_header=True, header_style="bold")
@@ -479,11 +546,12 @@ def _print_case_list(console: "Console", cases: Sequence[Case], *, default_timeo
     table.add_column("Timeout")
     for case in cases:
         timeout = case.timeout_seconds if case.timeout_seconds is not None else default_timeout
-        table.add_row(case.name, _agent_id(case), ", ".join(case.tags), str(timeout))
+        table.add_row(escape(case.name), escape(_agent_id(case)), escape(", ".join(case.tags)), str(timeout))
     console.print(table)
 
 
 def _print_summary(console: "Console", suite: SuiteResult) -> None:
+    from rich.markup import escape
     from rich.table import Table
 
     table = Table(title="Eval Summary", title_style="bold sky_blue1", show_header=True, header_style="bold")
@@ -493,7 +561,9 @@ def _print_summary(console: "Console", suite: SuiteResult) -> None:
     table.add_column("Status")
     for result in suite.results:
         status = "[green]PASS[/green]" if result.passed else "[red]FAIL[/red]"
-        table.add_row(result.name, _check_cell(result.judge_passed), _check_cell(result.reliability_passed), status)
+        table.add_row(
+            escape(result.name), _check_cell(result.judge_passed), _check_cell(result.reliability_passed), status
+        )
 
     console.print()
     console.print(table)
@@ -505,7 +575,7 @@ def _print_summary(console: "Console", suite: SuiteResult) -> None:
 
     for result in suite.results:
         if result.error:
-            console.print(f"  [dim]{result.name}:[/dim] [red]{result.error}[/red]")
+            console.print(f"  [dim]{escape(result.name)}:[/dim] [red]{escape(result.error)}[/red]")
 
 
 def _write_json_output(path: Path, suite: SuiteResult) -> None:
@@ -513,22 +583,18 @@ def _write_json_output(path: Path, suite: SuiteResult) -> None:
     path.write_text(json.dumps(suite.to_dict(), indent=2) + "\n", encoding="utf-8")
 
 
-def cli(
+async def acli(
     cases: Sequence[Case],
     *,
     db: Optional[Union[BaseDb, AsyncBaseDb]] = None,
     judge_model: Optional[Model] = None,
     argv: Optional[Sequence[str]] = None,
 ) -> int:
-    """Run an argparse CLI over the given cases and return the exit code.
-
-    Exit codes: 0 all selected cases passed, 1 any failure, 2 no cases matched
-    the selector. Built purely on the public runner API - call it from a
-    template's __main__.py with `sys.exit(cli(CASES, db=eval_db))`.
-    """
+    """Async variant of cli() for callers already inside an event loop."""
     import argparse
 
     from rich.console import Console
+    from rich.markup import escape
 
     parser = argparse.ArgumentParser(description="Run the eval suite, or a subset with --name/--tag.")
     parser.add_argument("--name", default=None, help="Run only the case with this name")
@@ -549,29 +615,65 @@ def cli(
     console = Console()
     selected = [case for case in cases if _case_matches(case, tag=args.tag, name=args.name)]
     if not selected:
-        console.print(f"[red]no cases selected[/red] (name={args.name!r}, tag={args.tag!r})")
-        console.print(f"  [dim]available:[/dim] {', '.join(case.name for case in cases)}")
+        console.print(f"[red]no cases selected[/red] {escape(f'(name={args.name!r}, tag={args.tag!r})')}")
+        console.print(f"  [dim]available:[/dim] {escape(', '.join(case.name for case in cases))}")
         return 2
 
     if args.list_cases:
         _print_case_list(console, selected, default_timeout=args.timeout)
+        if args.json_output is not None:
+            payload = {
+                "cases": [
+                    {
+                        "name": case.name,
+                        "agent_id": _agent_id(case),
+                        "tags": list(case.tags),
+                        "timeout_seconds": case.timeout_seconds if case.timeout_seconds is not None else args.timeout,
+                    }
+                    for case in selected
+                ]
+            }
+            args.json_output.parent.mkdir(parents=True, exist_ok=True)
+            args.json_output.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+            console.print(f"[dim]json output:[/dim] {escape(str(args.json_output))}")
         return 0
 
     renderer = _CliRenderer(console=console, total=len(selected), verbose=args.verbose)
-    suite = run_cases(
-        selected,
-        default_timeout=args.timeout,
-        judge_model=judge_model,
-        db=db,
-        on_case_start=renderer.on_case_start,
-        on_case_end=renderer.on_case_end,
-        on_run_event=renderer.on_run_event,
-    )
+    try:
+        suite = await arun_cases(
+            selected,
+            default_timeout=args.timeout,
+            judge_model=judge_model,
+            db=db,
+            on_case_start=renderer.on_case_start,
+            on_case_end=renderer.on_case_end,
+            on_run_event=renderer.on_run_event,
+        )
+    finally:
+        # Restore the terminal (stop the spinner) even on error or Ctrl-C.
+        renderer.close()
 
     _print_summary(console, suite)
 
     if args.json_output is not None:
         _write_json_output(args.json_output, suite)
-        console.print(f"[dim]json output:[/dim] {args.json_output}")
+        console.print(f"[dim]json output:[/dim] {escape(str(args.json_output))}")
 
     return 0 if suite.failed == 0 else 1
+
+
+def cli(
+    cases: Sequence[Case],
+    *,
+    db: Optional[Union[BaseDb, AsyncBaseDb]] = None,
+    judge_model: Optional[Model] = None,
+    argv: Optional[Sequence[str]] = None,
+) -> int:
+    """Run an argparse CLI over the given cases and return the exit code.
+
+    Exit codes: 0 all selected cases passed, 1 any failure, 2 no cases matched
+    the selector. Built purely on the public runner API - call it from a
+    template's __main__.py with `sys.exit(cli(CASES, db=eval_db))`. Inside an
+    already-running event loop, use `await acli(...)` instead.
+    """
+    return asyncio.run(acli(cases, db=db, judge_model=judge_model, argv=argv))
