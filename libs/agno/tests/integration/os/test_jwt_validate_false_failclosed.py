@@ -60,3 +60,28 @@ class TestValidateFalseFailsClosed:
         assert body["authenticated"] is True
         assert body["authorization_enabled"] is True
         assert body["scopes"] == ["agents:read"]
+
+
+class TestValidateFalseEnforcesScopesOnFallThrough:
+    """The fall-through must run the SAME scope gate as the success path, so a malformed
+    token is denied on scope-protected routes -- including routes gated only by the
+    middleware's _check_scopes (memory/knowledge/sessions/metrics), which have no
+    downstream dependency to catch them."""
+
+    def test_garbage_token_denied_on_scope_gated_route(self, state_client):
+        # /memories requires memories:read in the default scope map; a garbage token holds
+        # no scopes, so the middleware denies it (403) before the request is routed.
+        resp = state_client.get("/memories", headers={"Authorization": "Bearer not-a-jwt"})
+        assert resp.status_code == 403, resp.text
+
+    def test_garbage_matches_valid_empty_scope_token_on_scope_gated_route(self, state_client):
+        garbage = state_client.get("/memories", headers={"Authorization": "Bearer not-a-jwt"})
+        valid_empty = state_client.get("/memories", headers={"Authorization": f"Bearer {_unsigned_token([])}"})
+        # Malformed input must be no more permissive than a valid zero-scope token.
+        assert garbage.status_code == valid_empty.status_code == 403
+
+    def test_garbage_token_allowed_on_unmapped_route(self, state_client):
+        # An un-mapped path requires no scope, so it stays reachable -- matching a valid
+        # zero-scope token (no over-denial).
+        resp = state_client.get("/whoami", headers={"Authorization": "Bearer not-a-jwt"})
+        assert resp.status_code == 200

@@ -1081,16 +1081,6 @@ class AuthMiddleware(BaseHTTPMiddleware):
                 return self._create_error_response(401, "Token has expired", origin, cors_allowed_origins)
             request.state.authenticated = False
             request.state.token = token
-            # Fail closed: a token was presented but could not be decoded. Do not leave RBAC
-            # dormant on this validate=False fall-through — mark authorization enabled with an
-            # empty scope set so route/tool gates deny protected routes exactly as they would
-            # for a valid zero-scope token. Otherwise a garbage token gets MORE access than a
-            # well-formed one, because downstream gates read authorization_enabled (default
-            # False) and skip enforcement entirely.
-            request.state.authorization_enabled = self.authorization or False
-            request.state.scopes = []
-            request.state.admin_scope = self.admin_scope
-            request.state.user_isolation_enabled = self.user_isolation
 
         except jwt.InvalidTokenError as e:
             if self.validate:
@@ -1098,32 +1088,31 @@ class AuthMiddleware(BaseHTTPMiddleware):
                 return self._create_error_response(401, f"Invalid token: {str(e)}", origin, cors_allowed_origins)
             request.state.authenticated = False
             request.state.token = token
-            # Fail closed: a token was presented but could not be decoded. Do not leave RBAC
-            # dormant on this validate=False fall-through — mark authorization enabled with an
-            # empty scope set so route/tool gates deny protected routes exactly as they would
-            # for a valid zero-scope token. Otherwise a garbage token gets MORE access than a
-            # well-formed one, because downstream gates read authorization_enabled (default
-            # False) and skip enforcement entirely.
-            request.state.authorization_enabled = self.authorization or False
-            request.state.scopes = []
-            request.state.admin_scope = self.admin_scope
-            request.state.user_isolation_enabled = self.user_isolation
         except Exception as e:
             if self.validate:
                 log_warning(f"Error decoding token: {str(e)}")
                 return self._create_error_response(401, f"Error decoding token: {str(e)}", origin, cors_allowed_origins)
             request.state.authenticated = False
             request.state.token = token
-            # Fail closed: a token was presented but could not be decoded. Do not leave RBAC
-            # dormant on this validate=False fall-through — mark authorization enabled with an
-            # empty scope set so route/tool gates deny protected routes exactly as they would
-            # for a valid zero-scope token. Otherwise a garbage token gets MORE access than a
-            # well-formed one, because downstream gates read authorization_enabled (default
-            # False) and skip enforcement entirely.
+
+        # validate=False decode-failure fall-through: a token was present but could not be
+        # decoded (this mode skips signature verification, so only a structurally-malformed
+        # token lands here). The success path sets the completion marker and runs _check_scopes;
+        # its ABSENCE identifies this fall-through. Treat the caller as authenticated-but-empty
+        # (no claims, no scopes) and -- when RBAC is on -- run the SAME scope gate the success
+        # path runs, so a malformed token is never more permissive than a valid zero-scope one.
+        # Without this, routes gated only by the middleware's own _check_scopes (memory,
+        # knowledge, sessions, metrics, ...) would skip enforcement, while the state below only
+        # covers the downstream route/tool gates (runs, MCP).
+        if not getattr(request.state, _AUTH_COMPLETE_ATTR, False):
             request.state.authorization_enabled = self.authorization or False
             request.state.scopes = []
             request.state.admin_scope = self.admin_scope
             request.state.user_isolation_enabled = self.user_isolation
+            if self.authorization:
+                error_response = self._check_scopes(request, method, path, [], origin, cors_allowed_origins)
+                if error_response is not None:
+                    return error_response
 
         return await call_next(request)
 
