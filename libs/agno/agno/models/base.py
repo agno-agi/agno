@@ -832,6 +832,9 @@ class Model(ABC):
                 for function_call_result in function_call_results:
                     function_call_result.log(metrics=True, use_compressed_content=_compress_tool_results)
 
+                if self._all_tool_calls_blocked_by_limit(function_call_results):
+                    break
+
                 # Check if we should stop after tool calls
                 if any(m.stop_after_tool_call for m in function_call_results):
                     break
@@ -1052,6 +1055,9 @@ class Model(ABC):
 
                 for function_call_result in function_call_results:
                     function_call_result.log(metrics=True, use_compressed_content=_compress_tool_results)
+
+                if self._all_tool_calls_blocked_by_limit(function_call_results):
+                    break
 
                 # Check if we should stop after tool calls
                 if any(m.stop_after_tool_call for m in function_call_results):
@@ -1559,6 +1565,9 @@ class Model(ABC):
                 for function_call_result in function_call_results:
                     function_call_result.log(metrics=True, use_compressed_content=_compress_tool_results)
 
+                if self._all_tool_calls_blocked_by_limit(function_call_results):
+                    break
+
                 # Check if we should stop after tool calls
                 if any(m.stop_after_tool_call for m in function_call_results):
                     break
@@ -1837,6 +1846,9 @@ class Model(ABC):
 
                 for function_call_result in function_call_results:
                     function_call_result.log(metrics=True, use_compressed_content=_compress_tool_results)
+
+                if self._all_tool_calls_blocked_by_limit(function_call_results):
+                    break
 
                 # Check if we should stop after tool calls
                 if any(m.stop_after_tool_call for m in function_call_results):
@@ -2128,7 +2140,12 @@ class Model(ABC):
             tool_name=function_call.function.name,
             tool_args=function_call.arguments,
             tool_call_error=True,
+            tool_call_limit_reached=True,
         )
+
+    @staticmethod
+    def _all_tool_calls_blocked_by_limit(function_call_results: List[Message]) -> bool:
+        return bool(function_call_results) and all(m.tool_call_limit_reached for m in function_call_results)
 
     def run_function_call(
         self,

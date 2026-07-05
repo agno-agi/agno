@@ -103,6 +103,8 @@ class Message(BaseModel):
     tool_args: Optional[Any] = None
     # The error of the tool call
     tool_call_error: Optional[bool] = None
+    # True only when the tool call was blocked by tool_call_limit.
+    tool_call_limit_reached: bool = False
     # If True, the agent will stop executing after this tool call.
     stop_after_tool_call: bool = False
     # When True, the message will be added to the agent's memory.
