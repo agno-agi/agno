@@ -1,5 +1,5 @@
 import logging
-from typing import Optional, Union
+from typing import Any, Optional, Union
 
 from fastapi import Depends, HTTPException, Query, Request
 from fastapi.routing import APIRouter
@@ -51,6 +51,20 @@ def _apply_user_scope_to_filter(filter_expr_dict: Optional[dict], effective_user
     if filter_expr_dict is None:
         return user_clause
     return {"op": "AND", "conditions": [user_clause, filter_expr_dict]}
+
+
+def _require_trace_owner(trace: Any, effective_user_id: Optional[str]) -> None:
+    """Enforce single-trace ownership for non-admin scoped callers.
+
+    ``get_trace`` looks a trace up by its unique ``trace_id`` / ``run_id`` with no
+    user filter (the DB contract delegates the ownership check to the route layer),
+    so a scoped caller must be shown only their own trace. A ``trace_id`` / ``run_id``
+    is not a capability — both leak through run/session APIs, SSE streams and logs —
+    so a mismatch is masked as a 404 rather than a 403. Admins / unscoped callers
+    (``effective_user_id is None``) are unaffected.
+    """
+    if effective_user_id is not None and getattr(trace, "user_id", None) != effective_user_id:
+        raise HTTPException(status_code=404, detail="Trace not found")
 
 
 def get_traces_router(
@@ -375,14 +389,12 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
         db_id: Optional[str] = Query(default=None, description="Database ID to query trace from"),
     ):
         """Get detailed trace with hierarchical span tree, or a specific span within the trace"""
-        # ``trace_id`` is a unique key — there's nothing to narrow further at
-        # the DB layer, so ``get_trace`` only takes ``trace_id`` / ``run_id``.
-        # Authorization for this endpoint is upheld by the list endpoint
-        # (``GET /traces``), which is the only way for a non-admin caller to
-        # discover trace_ids in the first place; that listing is scoped to
-        # the caller's ``user_id``, so by the time a request lands here the
-        # caller necessarily owns the trace they're asking about.
-        db, _ = await resolve_db_and_scope(request, dbs, db_id)
+        # ``trace_id`` / ``run_id`` are unique keys, so ``get_trace`` takes no user
+        # filter at the DB layer; ownership is enforced here at the route layer (see
+        # ``_require_trace_owner``) after the trace is fetched. Both ids leak through
+        # run/session APIs, SSE and logs, so a non-admin caller reaching this route
+        # does NOT necessarily own the trace and must be checked.
+        db, effective_user_id = await resolve_db_and_scope(request, dbs, db_id)
 
         if isinstance(db, RemoteDb):
             auth_token = get_auth_token_from_request(request)
@@ -407,6 +419,7 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
 
                 if parent_trace is None:
                     raise HTTPException(status_code=404, detail="Trace not found")
+                _require_trace_owner(parent_trace, effective_user_id)
 
                 if isinstance(db, AsyncBaseDb):
                     span = await db.get_span(span_id)
@@ -431,6 +444,7 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
 
             if trace is None:
                 raise HTTPException(status_code=404, detail="Trace not found")
+            _require_trace_owner(trace, effective_user_id)
 
             # Get all spans for this trace
             if isinstance(db, AsyncBaseDb):

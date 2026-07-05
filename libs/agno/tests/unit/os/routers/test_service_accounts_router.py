@@ -117,8 +117,21 @@ class TestCreateServiceAccount:
         response = client.post("/service-accounts", json={"name": "ci", "scopes": ["service_accounts:write"]})
         assert response.status_code == 400
 
-    def test_privileged_scope_allowed_with_flag(self, client):
-        response = client.post(
+    def test_privileged_scope_allowed_with_flag_for_authenticated_root(self, mock_db, settings):
+        # A trusted root (os_security_key / internal token sets request.state.authenticated)
+        # may mint a privileged token when the explicit flag is set. An UNauthenticated
+        # (open-mode) caller may not -- see TestCreateServiceAccountUnauthenticatedOpenMode.
+        from fastapi import Request
+
+        app = FastAPI()
+
+        @app.middleware("http")
+        async def set_authenticated(request: Request, call_next):
+            request.state.authenticated = True
+            return await call_next(request)
+
+        app.include_router(get_service_accounts_router(os_db=mock_db, settings=settings))
+        response = TestClient(app).post(
             "/service-accounts",
             json={"name": "ci", "scopes": ["sessions:write"], "allow_privileged_scopes": True},
         )
@@ -199,12 +212,59 @@ class TestCreateServiceAccountSubsetRule:
         response = client.post("/service-accounts", json={"name": "ci", "scopes": ["agents:other-agent:run"]})
         assert response.status_code == 403
 
-    def test_unscoped_root_caller_is_exempt(self, mock_db, settings):
-        # No request.state.scopes (os_security_key or open dev instance)
+    def test_unscoped_caller_can_mint_non_privileged(self, mock_db, settings):
+        # No request.state.scopes and not authenticated (an open dev instance): a plain
+        # non-privileged token is still allowed so open-mode ergonomics are preserved.
+        # Privileged/admin tokens are blocked for this caller -- see
+        # TestCreateServiceAccountUnauthenticatedOpenMode.
         app = FastAPI()
         app.include_router(get_service_accounts_router(os_db=mock_db, settings=settings))
         response = TestClient(app).post("/service-accounts", json={"name": "ci", "scopes": ["teams:run"]})
         assert response.status_code == 201
+
+
+class TestCreateServiceAccountUnauthenticatedOpenMode:
+    """S4: on an OPEN instance (no security key, no JWT) request.state.authenticated is
+    falsy and scopes is unset. Such an anonymous caller may mint a plain non-privileged
+    token, but must NOT be able to mint a privileged/admin token -- which would otherwise
+    persist as a durable admin credential even after the operator later enables auth."""
+
+    @pytest.fixture
+    def anon_client(self, mock_db, settings):
+        app = FastAPI()
+        app.include_router(get_service_accounts_router(os_db=mock_db, settings=settings))
+        return TestClient(app)
+
+    def test_anonymous_can_mint_default_non_privileged_token(self, anon_client):
+        response = anon_client.post("/service-accounts", json={"name": "ci"})
+        assert response.status_code == 201
+
+    def test_anonymous_cannot_mint_admin_even_with_flag(self, anon_client):
+        response = anon_client.post(
+            "/service-accounts",
+            json={
+                "name": "backdoor",
+                "scopes": ["agent_os:admin"],
+                "allow_privileged_scopes": True,
+                "never_expires": True,
+            },
+        )
+        assert response.status_code == 401
+        assert "Authentication is required" in response.json()["detail"]
+
+    def test_anonymous_cannot_mint_write_scope_even_with_flag(self, anon_client):
+        response = anon_client.post(
+            "/service-accounts",
+            json={"name": "w", "scopes": ["sessions:write"], "allow_privileged_scopes": True},
+        )
+        assert response.status_code == 401
+
+    def test_anonymous_cannot_mint_service_accounts_scope_even_with_flag(self, anon_client):
+        response = anon_client.post(
+            "/service-accounts",
+            json={"name": "minter", "scopes": ["service_accounts:write"], "allow_privileged_scopes": True},
+        )
+        assert response.status_code == 401
 
 
 # =============================================================================

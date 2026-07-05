@@ -130,13 +130,10 @@ def custom_admin_client(test_agent):
 class TestTraceListScoping:
     """``GET /traces`` must only return traces owned by the caller.
 
-    The single-trace detail endpoint (``GET /traces/{trace_id}``) does NOT
-    enforce row-level ownership: a unique ``trace_id`` is sufficient — see
-    the design notes at the top of this file. The list endpoint is where
-    isolation actually matters, because that's how non-admin callers
-    discover which trace_ids exist at all. If the list endpoint leaked
-    other users' rows, every downstream "knew the trace_id" assumption
-    falls apart.
+    The list endpoint is how a non-admin caller discovers which trace_ids
+    exist; ``TestTraceDetailScoping`` covers the single-trace detail endpoint,
+    which enforces row-level ownership after fetching (a trace_id / run_id is
+    not a secret, so it cannot be relied on as an implicit authorization).
     """
 
     def _insert_trace(self, db, *, trace_id: str, user_id: str):
@@ -205,6 +202,68 @@ class TestTraceListScoping:
         assert {"trace-admin-a", "trace-admin-b"}.issubset(returned_ids), (
             f"admin should see all traces; got {returned_ids}"
         )
+
+
+class TestTraceDetailScoping:
+    """``GET /traces/{trace_id}`` must enforce row-level ownership for non-admin
+    callers (S2). A trace_id / run_id is not a capability -- both leak through
+    run/session APIs, SSE and logs -- so a scoped caller asking for another
+    user's trace (by trace_id or run_id, full trace or a single span) gets a
+    masking 404, while the owner and admins still get 200.
+    """
+
+    def _insert_trace(self, db, *, trace_id: str, user_id: str):
+        from agno.tracing.schemas import Trace
+
+        now = datetime.now(UTC)
+        db.upsert_trace(
+            Trace(
+                trace_id=trace_id,
+                name="root",
+                status="OK",
+                start_time=now,
+                end_time=now,
+                duration_ms=0,
+                total_spans=0,
+                error_count=0,
+                run_id=f"run-{trace_id}",
+                session_id=f"session-{trace_id}",
+                user_id=user_id,
+                agent_id="test-agent",
+                team_id=None,
+                workflow_id=None,
+                created_at=now,
+            )
+        )
+
+    def test_owner_can_read_own_trace(self, client, shared_db):
+        self._insert_trace(shared_db, trace_id="trace-own-1", user_id="user-a")
+        resp = client.get("/traces/trace-own-1", headers=auth_header(make_token("user-a")))
+        assert resp.status_code == 200, resp.text
+
+    def test_non_owner_cannot_read_trace_by_id(self, client, shared_db):
+        self._insert_trace(shared_db, trace_id="trace-priv-1", user_id="user-a")
+        resp = client.get("/traces/trace-priv-1", headers=auth_header(make_token("user-b")))
+        assert resp.status_code == 404, resp.text
+
+    def test_non_owner_cannot_read_trace_by_run_id(self, client, shared_db):
+        # The run_id fallback lookup must not become an ownership bypass.
+        self._insert_trace(shared_db, trace_id="trace-priv-2", user_id="user-a")
+        resp = client.get("/traces/unknown?run_id=run-trace-priv-2", headers=auth_header(make_token("user-b")))
+        assert resp.status_code == 404, resp.text
+
+    def test_non_owner_cannot_read_span_of_foreign_trace(self, client, shared_db):
+        # Parent-trace ownership is checked before the span is fetched, so a
+        # non-owner is masked with 404 even with a guessed span_id.
+        self._insert_trace(shared_db, trace_id="trace-priv-3", user_id="user-a")
+        resp = client.get("/traces/trace-priv-3?span_id=any-span", headers=auth_header(make_token("user-b")))
+        assert resp.status_code == 404, resp.text
+
+    def test_admin_can_read_any_trace(self, client, shared_db):
+        self._insert_trace(shared_db, trace_id="trace-admin-x", user_id="user-a")
+        admin_token = make_token("admin-1", scopes=["agent_os:admin"])
+        resp = client.get("/traces/trace-admin-x", headers=auth_header(admin_token))
+        assert resp.status_code == 200, resp.text
 
 
 # ---------------------------------------------------------------------------

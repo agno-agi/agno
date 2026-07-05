@@ -116,10 +116,30 @@ def get_service_accounts_router(os_db: Any, settings: Any) -> APIRouter:
 
         # Subset rule: minted scopes must be held by the creator, so a caller with
         # only service_accounts:write can never escalate by minting a token more
-        # powerful than itself. Callers without scope context (root os_security_key
-        # or open dev instances) are exempt - they are unscoped by definition.
+        # powerful than itself.
         caller_scopes = getattr(request.state, "scopes", None)
         if caller_scopes is None:
+            # No scope context. Two very different callers land here:
+            #   - a trusted root (os_security_key / internal service token): the auth
+            #     layer set request.state.authenticated = True. It is unscoped by
+            #     definition and may mint anything.
+            #   - an anonymous caller on an OPEN instance (no security key, no JWT):
+            #     authenticated is falsy. It must NOT be able to mint a privileged
+            #     token, which would persist as a durable admin credential even after
+            #     the operator later switches authentication on (PAT scopes are enforced
+            #     independently of the authorization flag).
+            if getattr(request.state, "authenticated", False):
+                return
+            unauth_privileged = get_privileged_scopes(scopes, admin_scope=admin_scope)
+            if unauth_privileged:
+                raise HTTPException(
+                    status_code=401,
+                    detail=(
+                        "Authentication is required to mint a service account with privileged "
+                        f"scope(s): {', '.join(unauth_privileged)}. Configure OS_SECURITY_KEY or JWT "
+                        "authentication before creating privileged tokens."
+                    ),
+                )
             return
         effective_admin_scope = admin_scope or AgentOSScope.ADMIN.value
         if effective_admin_scope in caller_scopes:

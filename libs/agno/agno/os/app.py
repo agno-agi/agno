@@ -1246,16 +1246,19 @@ class AgentOS:
         # added by the user-scoped-DB work stay dormant.
         fastapi_app.state.user_isolation_enabled = user_isolation
 
-        # Interfaces authenticate themselves (Slack HMAC, Telegram webhook verification),
-        # so their route prefixes are excluded from the auth layer alongside the public
-        # routes. Passing excluded_route_paths replaces the middleware defaults, so the
+        # Only interfaces that verify the authenticity of their own inbound requests
+        # (Slack HMAC, Telegram/WhatsApp webhook secrets -- see
+        # BaseInterface.authenticates_own_requests) are excluded from the central auth
+        # layer alongside the public routes. Interfaces that do NOT self-authenticate
+        # (e.g. A2A) stay behind AuthMiddleware, so enabling authentication protects them
+        # too. Passing excluded_route_paths replaces the middleware defaults, so the
         # defaults are repeated here.
         excluded_route_paths: Optional[List[str]] = None
         if self.interfaces:
             interface_prefixes = [
                 f"{interface.prefix}/*"
                 for interface in self.interfaces
-                if hasattr(interface, "prefix") and interface.prefix
+                if getattr(interface, "authenticates_own_requests", False) and getattr(interface, "prefix", None)
             ]
             if interface_prefixes:
                 excluded_route_paths = [
