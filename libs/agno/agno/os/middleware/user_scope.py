@@ -44,7 +44,8 @@ from typing import TYPE_CHECKING, Any, Callable, Dict, List, Literal, Optional, 
 from fastapi import HTTPException, Query, Request
 
 from agno.db.base import AsyncBaseDb, BaseDb
-from agno.os.scopes import AgentOSScope
+from agno.db.schemas.service_accounts import SERVICE_ACCOUNT_PRINCIPAL_PREFIX
+from agno.os.scopes import CROSS_USER_SCOPE, AgentOSScope
 from agno.os.utils import get_db
 from agno.remote.base import RemoteDb
 from agno.utils.log import log_warning
@@ -92,22 +93,41 @@ def get_scoped_user_id(request: Request) -> Optional[str]:
 
     If the operator configured a custom ``admin_scope`` on JWTMiddleware, that
     value is honoured here too (read from ``request.state.admin_scope``).
+
+    Service-account (``sa:``) principals are the exception to the isolation
+    opt-in: they always self-scope to the data they created, even when
+    ``user_isolation`` is off, unless the token carries admin or the explicit
+    ``CROSS_USER_SCOPE``. A service account is a machine identity whose sessions
+    and memories are stamped with its own principal, so "unscoped" would mean
+    "reads every user's history" — never the intended default for a minted
+    token. An operator who wants a cross-user debugging token opts in per token.
     """
-    # Opt-in gate: when user isolation is disabled, callers see the raw,
+    user_id = getattr(request.state, "user_id", None)
+    scopes: List[str] = getattr(request.state, "scopes", [])
+    admin_scope_raw = getattr(request.state, "admin_scope", None)
+    # Ignore non-string values (e.g. MagicMock auto-attrs in tests).
+    admin_scope: Optional[str] = admin_scope_raw if isinstance(admin_scope_raw, str) else None
+    is_admin = _has_admin_scope(scopes, admin_scope=admin_scope)
+
+    # Service-account self-scoping — independent of the user_isolation flag.
+    if (
+        isinstance(user_id, str)
+        and user_id.startswith(SERVICE_ACCOUNT_PRINCIPAL_PREFIX)
+        and not is_admin
+        and CROSS_USER_SCOPE not in scopes
+    ):
+        return user_id
+
+    # Opt-in gate: when user isolation is disabled, human/JWT callers see the raw,
     # unscoped DB and route-level ownership checks behave as if no JWT user
     # were present. JWT/RBAC remain in force; they're orthogonal to scoping.
     if not getattr(request.state, "user_isolation_enabled", False):
         return None
 
-    user_id = getattr(request.state, "user_id", None)
     if not user_id:
         return None
 
-    scopes: List[str] = getattr(request.state, "scopes", [])
-    admin_scope_raw = getattr(request.state, "admin_scope", None)
-    # Ignore non-string values (e.g. MagicMock auto-attrs in tests).
-    admin_scope: Optional[str] = admin_scope_raw if isinstance(admin_scope_raw, str) else None
-    if _has_admin_scope(scopes, admin_scope=admin_scope):
+    if is_admin:
         return None
 
     return user_id

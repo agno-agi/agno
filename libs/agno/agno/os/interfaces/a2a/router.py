@@ -30,9 +30,41 @@ from agno.os.interfaces.a2a.utils import (
     map_run_output_to_a2a_task,
     stream_a2a_response_with_error_handling,
 )
+from agno.os.middleware.jwt import is_reserved_principal
+from agno.os.middleware.user_scope import get_scoped_user_id, verify_run_in_session
 from agno.os.utils import get_agent_by_id, get_request_kwargs, get_team_by_id, get_workflow_by_id
 from agno.team import RemoteTeam, Team
 from agno.workflow import RemoteWorkflow, Workflow
+
+
+def _resolve_a2a_user_id(request: Request, request_body: dict) -> Optional[str]:
+    """Resolve the run's ``user_id``, mirroring the REST run route's identity pinning.
+
+    A2A must not take run identity from the client. Precedence:
+
+    1. A non-admin scoped caller (a JWT user under ``user_isolation`` or any
+       service-account principal) is pinned to its own principal — the
+       client-supplied ``X-User-ID`` / ``metadata.userId`` is ignored.
+    2. Any other authenticated caller (admin, or an unscoped JWT user) is pinned
+       to ``request.state.user_id``.
+    3. An anonymous caller (no server-assigned identity) may supply an identity
+       for attribution, but must not claim a server-reserved principal
+       (``sa:*`` / ``__scheduler__``).
+    """
+    scoped = get_scoped_user_id(request)
+    if scoped is not None:
+        return scoped
+
+    state_uid = getattr(request.state, "user_id", None)
+    if state_uid is not None:
+        return state_uid
+
+    client_uid = request.headers.get("X-User-ID")
+    if not client_uid:
+        client_uid = request_body.get("params", {}).get("message", {}).get("metadata", {}).get("userId")
+    if is_reserved_principal(client_uid):
+        raise HTTPException(status_code=403, detail="X-User-ID may not claim a reserved principal")
+    return client_uid
 
 
 def attach_routes(
@@ -130,9 +162,7 @@ def attach_routes(
         # 2. Map the request to our run_input and run variables
         run_input = await map_a2a_request_to_run_input(request_body, stream=False)
         context_id = request_body.get("params", {}).get("message", {}).get("contextId")
-        user_id = request.headers.get("X-User-ID")
-        if not user_id:
-            user_id = request_body.get("params", {}).get("message", {}).get("metadata", {}).get("userId")
+        user_id = _resolve_a2a_user_id(request, request_body)
 
         # 3. Check if non-blocking execution is requested
         blocking = request_body.get("params", {}).get("configuration", {}).get("blocking", True)
@@ -213,7 +243,14 @@ def attach_routes(
         if not isinstance(agent, Agent):
             raise HTTPException(status_code=501, detail="Task polling is not supported for this agent type")
 
-        run_output = await agent.aget_run_output(run_id=task_id, session_id=context_id)
+        # Pin identity to the caller so a scoped principal can only poll its own
+        # runs (aget_run_output scopes the session lookup by user_id). A scoped
+        # caller must name the session (contextId) it is polling.
+        user_id = _resolve_a2a_user_id(request, request_body)
+        if get_scoped_user_id(request) is not None and not context_id:
+            raise HTTPException(status_code=400, detail="contextId is required to poll a task")
+
+        run_output = await agent.aget_run_output(run_id=task_id, session_id=context_id, user_id=user_id)
         if not run_output:
             raise HTTPException(status_code=404, detail="Task not found")
 
@@ -248,6 +285,16 @@ def attach_routes(
             raise HTTPException(status_code=400, detail="Task cancellation is not supported for remote agents")
         if not isinstance(agent, Agent):
             raise HTTPException(status_code=501, detail="Task cancellation is not supported for this agent type")
+
+        # Verify ownership before applying a global cancellation intent: a scoped
+        # principal may only cancel a run inside a session it owns. acancel_run is
+        # keyed on run_id alone, so the check has to happen here.
+        scoped_user_id = get_scoped_user_id(request)
+        if scoped_user_id is not None:
+            context_id = params.get("contextId")
+            if not context_id:
+                raise HTTPException(status_code=400, detail="contextId is required to cancel a task")
+            await verify_run_in_session(agent, context_id, task_id, scoped_user_id)
 
         # cancel_run always stores cancellation intent (even for not-yet-registered runs
         # in cancel-before-start scenarios), so we always return success.
@@ -302,9 +349,7 @@ def attach_routes(
         # 2. Map the request to our run_input and run variables
         run_input = await map_a2a_request_to_run_input(request_body, stream=True)
         context_id = request_body.get("params", {}).get("message", {}).get("contextId")
-        user_id = request.headers.get("X-User-ID")
-        if not user_id:
-            user_id = request_body.get("params", {}).get("message", {}).get("metadata", {}).get("userId")
+        user_id = _resolve_a2a_user_id(request, request_body)
 
         # 3. Run the Agent and stream the response
         try:
@@ -412,9 +457,7 @@ def attach_routes(
         # 2. Map the request to our run_input and run variables
         run_input = await map_a2a_request_to_run_input(request_body, stream=False)
         context_id = request_body.get("params", {}).get("message", {}).get("contextId")
-        user_id = request.headers.get("X-User-ID")
-        if not user_id:
-            user_id = request_body.get("params", {}).get("message", {}).get("metadata", {}).get("userId")
+        user_id = _resolve_a2a_user_id(request, request_body)
 
         # 3. Check if non-blocking execution is requested
         blocking = request_body.get("params", {}).get("configuration", {}).get("blocking", True)
@@ -493,7 +536,14 @@ def attach_routes(
         if isinstance(team, RemoteTeam):
             raise HTTPException(status_code=400, detail="Task polling is not supported for remote teams")
 
-        run_output = await team.aget_run_output(run_id=task_id, session_id=context_id)
+        # Pin identity to the caller so a scoped principal can only poll its own
+        # runs (aget_run_output scopes the session lookup by user_id). A scoped
+        # caller must name the session (contextId) it is polling.
+        user_id = _resolve_a2a_user_id(request, request_body)
+        if get_scoped_user_id(request) is not None and not context_id:
+            raise HTTPException(status_code=400, detail="contextId is required to poll a task")
+
+        run_output = await team.aget_run_output(run_id=task_id, session_id=context_id, user_id=user_id)
         if not run_output:
             raise HTTPException(status_code=404, detail="Task not found")
 
@@ -526,6 +576,16 @@ def attach_routes(
             raise HTTPException(status_code=404, detail="Team not found")
         if isinstance(team, RemoteTeam):
             raise HTTPException(status_code=400, detail="Task cancellation is not supported for remote teams")
+
+        # Verify ownership before applying a global cancellation intent: a scoped
+        # principal may only cancel a run inside a session it owns. acancel_run is
+        # keyed on run_id alone, so the check has to happen here.
+        scoped_user_id = get_scoped_user_id(request)
+        if scoped_user_id is not None:
+            context_id = params.get("contextId")
+            if not context_id:
+                raise HTTPException(status_code=400, detail="contextId is required to cancel a task")
+            await verify_run_in_session(team, context_id, task_id, scoped_user_id)
 
         # cancel_run always stores cancellation intent (even for not-yet-registered runs
         # in cancel-before-start scenarios), so we always return success.
@@ -580,9 +640,7 @@ def attach_routes(
         # 2. Map the request to our run_input and run variables
         run_input = await map_a2a_request_to_run_input(request_body, stream=True)
         context_id = request_body.get("params", {}).get("message", {}).get("contextId")
-        user_id = request.headers.get("X-User-ID")
-        if not user_id:
-            user_id = request_body.get("params", {}).get("message", {}).get("metadata", {}).get("userId")
+        user_id = _resolve_a2a_user_id(request, request_body)
 
         # 3. Run the Team and stream the response
         try:
@@ -690,9 +748,7 @@ def attach_routes(
         # 2. Map the request to our run_input and run variables
         run_input = await map_a2a_request_to_run_input(request_body, stream=False)
         context_id = request_body.get("params", {}).get("message", {}).get("contextId")
-        user_id = request.headers.get("X-User-ID")
-        if not user_id:
-            user_id = request_body.get("params", {}).get("message", {}).get("metadata", {}).get("userId")
+        user_id = _resolve_a2a_user_id(request, request_body)
 
         # 3. Run the Workflow
         try:
@@ -775,9 +831,7 @@ def attach_routes(
         # 2. Map the request to our run_input and run variables
         run_input = await map_a2a_request_to_run_input(request_body, stream=True)
         context_id = request_body.get("params", {}).get("message", {}).get("contextId")
-        user_id = request.headers.get("X-User-ID")
-        if not user_id:
-            user_id = request_body.get("params", {}).get("message", {}).get("metadata", {}).get("userId")
+        user_id = _resolve_a2a_user_id(request, request_body)
 
         # 3. Run the Workflow and stream the response
         try:
@@ -874,9 +928,7 @@ def attach_routes(
         # 2. Map the request to our run_input and run variables
         run_input = await map_a2a_request_to_run_input(request_body, stream=False)
         context_id = request_body.get("params", {}).get("message", {}).get("contextId")
-        user_id = request.headers.get("X-User-ID")
-        if not user_id:
-            user_id = request_body.get("params", {}).get("message", {}).get("metadata", {}).get("userId")
+        user_id = _resolve_a2a_user_id(request, request_body)
 
         # 3. Run the agent, team, or workflow
         try:
@@ -988,9 +1040,7 @@ def attach_routes(
         # 2. Map the request to our run_input and run variables
         run_input = await map_a2a_request_to_run_input(request_body, stream=True)
         context_id = request_body.get("params", {}).get("message", {}).get("contextId")
-        user_id = request.headers.get("X-User-ID")
-        if not user_id:
-            user_id = request_body.get("params", {}).get("message", {}).get("metadata", {}).get("userId")
+        user_id = _resolve_a2a_user_id(request, request_body)
 
         # 3. Run the Agent, Team, or Workflow and stream the response
         try:

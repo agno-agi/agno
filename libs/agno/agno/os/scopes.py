@@ -34,6 +34,14 @@ LEGACY_RESOURCE_ALIASES: Dict[str, str] = {
     "system": "config",
 }
 
+# Cross-user grant for machine identities. A service-account (``sa:``) principal
+# self-scopes to the data it created regardless of the ``user_isolation`` flag
+# (see get_scoped_user_id). Adding this scope to a token lifts that self-scoping
+# without granting full ``agent_os:admin`` — the intended shape for a read-only
+# debugging token that must see every user's data. It is inert for route-level
+# RBAC (no route requires it); only the user-scoping helpers honour it.
+CROSS_USER_SCOPE = "agent_os:cross_user"
+
 
 class AgentOSScope(str, Enum):
     """
@@ -521,6 +529,30 @@ def get_default_scope_mappings() -> Dict[str, List[str]]:
         "PATCH /components/*/configs/*": ["components:write"],
         "DELETE /components/*/configs/*": ["components:delete"],
         "POST /components/*/configs/*/set-current": ["components:write"],
+        # A2A interface endpoints (mounted under /a2a). message:send / message:stream
+        # and tasks:cancel actually execute or mutate a run -> :run. The agent-card and
+        # tasks:get are read-only -> :read. Without these entries the unmapped-route
+        # default (allow, see get_required_scopes_for_route) would let any authenticated
+        # token run agents/teams/workflows over A2A regardless of its scopes.
+        "GET /a2a/agents/*/.well-known/agent-card.json": ["agents:read"],
+        "POST /a2a/agents/*/v1/message:send": ["agents:run"],
+        "POST /a2a/agents/*/v1/message:stream": ["agents:run"],
+        "POST /a2a/agents/*/v1/tasks:get": ["agents:read"],
+        "POST /a2a/agents/*/v1/tasks:cancel": ["agents:run"],
+        "GET /a2a/teams/*/.well-known/agent-card.json": ["teams:read"],
+        "POST /a2a/teams/*/v1/message:send": ["teams:run"],
+        "POST /a2a/teams/*/v1/message:stream": ["teams:run"],
+        "POST /a2a/teams/*/v1/tasks:get": ["teams:read"],
+        "POST /a2a/teams/*/v1/tasks:cancel": ["teams:run"],
+        "GET /a2a/workflows/*/.well-known/agent-card.json": ["workflows:read"],
+        "POST /a2a/workflows/*/v1/message:send": ["workflows:run"],
+        "POST /a2a/workflows/*/v1/message:stream": ["workflows:run"],
+        # Deprecated dynamic-dispatch endpoints resolve the target component at
+        # runtime, so they cannot be typed to one resource family. Gate them on
+        # agents:run as the representative run scope (all three run scopes are in
+        # the default service-account set).
+        "POST /a2a/message/send": ["agents:run"],
+        "POST /a2a/message/stream": ["agents:run"],
     }
 
 
@@ -581,13 +613,15 @@ def get_resource_context_from_path(path: str) -> Tuple[Optional[str], Optional[s
     # then slip through the GET-listing escape hatch below into a foreign family. Only
     # /agents, /teams, /workflows (and their sub-paths) own the resource type.
     resource_type = None
-    type_match = re.match(r"^/(agents|teams|workflows)(?:/|$)", path)
+    # Optional /a2a prefix so per-resource scopes (agents:<id>:run) authorize the
+    # A2A surface the same way they do REST.
+    type_match = re.match(r"^/(?:a2a/)?(agents|teams|workflows)(?:/|$)", path)
     if type_match:
         resource_type = type_match.group(1)
 
     resource_id = None
     if resource_type:
-        match = re.match(f"^/{resource_type}/([^/]+)", path)
+        match = re.match(rf"^/(?:a2a/)?{resource_type}/([^/]+)", path)
         if match:
             resource_id = match.group(1)
 
