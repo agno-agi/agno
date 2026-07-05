@@ -347,6 +347,14 @@ def db_from_dict(db_data: Dict[str, Any]) -> Optional[Union["BaseDb"]]:
         except Exception as e:
             log_error(f"Error reconstructing ClickhouseDb from dictionary: {str(e)}")
             return None
+    elif db_type == "turso":
+        try:
+            from agno.db.turso import TursoDb
+
+            return TursoDb.from_dict(db_data)
+        except Exception as e:
+            log_error(f"Error reconstructing TursoDb from dictionary: {str(e)}")
+            return None
     else:
         log_warning(f"Unknown database type: {db_type}")
         return None
@@ -387,6 +395,21 @@ def _clone_db_with_table_overrides(
             )
     except Exception as e:
         log_error(f"Error cloning PostgresDb with table overrides: {str(e)}")
+        return None
+
+    try:
+        from agno.db.turso import TursoDb
+
+        # TursoDb subclasses SqliteDb, so this check must come before the SqliteDb one.
+        if isinstance(source_db, TursoDb):
+            return TursoDb(
+                db_file=source_db.db_file,
+                db_engine=source_db.db_engine,
+                id=source_db.id,
+                **overrides,
+            )
+    except Exception as e:
+        log_error(f"Error cloning TursoDb with table overrides: {str(e)}")
         return None
 
     try:
