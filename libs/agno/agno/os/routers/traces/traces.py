@@ -401,16 +401,21 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
         if isinstance(db, RemoteDb):
             auth_token = get_auth_token_from_request(request)
             headers = {"Authorization": f"Bearer {auth_token}"} if auth_token else None
-            # Thread the scoped ``user_id`` to the remote so ownership is enforced there,
-            # exactly as the list endpoint (``GET /traces``) does. Without it the single-trace
-            # detail endpoint would be strictly weaker than the list it mirrors: a scoped
-            # caller could read another user's trace by id. ``effective_user_id`` is None for
-            # admins / unscoped callers, which the remote treats as unrestricted.
+            # Enforce ownership locally for a scoped caller, not only via the forwarded bearer.
+            # The remote also scopes by the bearer, but a remote that predates this fix (or
+            # trusts an upstream gateway) would otherwise leak. The full-trace result carries
+            # user_id; for a single span we fetch the parent trace first (a span has no
+            # user_id) and check it, mirroring the local branch below. Admin / unscoped callers
+            # (effective_user_id is None) keep the single-call fast path.
+            if effective_user_id is not None:
+                parent_trace = await db.get_trace(trace_id=trace_id, run_id=run_id, db_id=db_id, headers=headers)
+                _require_trace_owner(parent_trace, effective_user_id)
+                if span_id is None:
+                    return parent_trace
             return await db.get_trace(
                 trace_id=trace_id,
                 span_id=span_id,
                 run_id=run_id,
-                user_id=effective_user_id,
                 db_id=db_id,
                 headers=headers,
             )

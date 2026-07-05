@@ -306,8 +306,28 @@ class TestServiceAccountsOnOpenInstance:
         agent_os = AgentOS(agents=[test_agent], db=sqlite_db)
         return TestClient(agent_os.get_app())
 
-    def test_pat_authenticates_and_attributes_on_open_instance(self, open_client, test_agent):
-        pat = _mint(open_client, "anything-goes").json()["token"]
+    def test_pat_authenticates_and_attributes_on_open_instance(self, open_client, test_agent, sqlite_db):
+        # Anonymous mint is refused on an open instance (S4: a token minted with no auth would
+        # be a durable credential surviving a later lockdown). A PAT reaches an open instance
+        # only if it was minted earlier under a security key / JWT -- simulate that by inserting
+        # the account directly. The point here is that the PAT AUTHENTICATES and attributes
+        # correctly on an open box.
+        import uuid
+
+        from agno.db.schemas.service_accounts import ServiceAccount
+        from agno.os.service_accounts import DEFAULT_SERVICE_ACCOUNT_SCOPES, generate_token
+
+        plaintext, token_hash, token_prefix = generate_token()
+        account = ServiceAccount(
+            id=str(uuid.uuid4()),
+            name="claude-code",
+            token_hash=token_hash,
+            token_prefix=token_prefix,
+            scopes=list(DEFAULT_SERVICE_ACCOUNT_SCOPES),
+            created_at=int(time.time()),
+        )
+        sqlite_db.create_service_account(account.to_dict())
+        pat = plaintext
 
         with patch.object(test_agent, "arun", new_callable=AsyncMock) as mock_arun:
             mock_arun.return_value = _mock_run_output()
