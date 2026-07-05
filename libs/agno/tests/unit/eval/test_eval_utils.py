@@ -66,6 +66,61 @@ def test_async_log_eval_in_memory_sqlite_stays_on_loop_and_persists():
     assert [run.run_id for run in runs] == ["run-1"]
 
 
+def test_async_log_eval_uri_form_in_memory_sqlite_stays_on_loop_and_persists():
+    # URI-form in-memory sqlite gets the same thread-affine SingletonThreadPool as
+    # ":memory:" but a different url.database - the pool class, not the URL
+    # spelling, must decide the routing.
+    from agno.db.sqlite import SqliteDb
+
+    db = SqliteDb(db_url="sqlite:///file:eval_mem?mode=memory&uri=true")
+
+    asyncio.run(async_log_eval(db=db, run_id="run-1", run_data={}, eval_type=EvalType.AGENT_AS_JUDGE, eval_input={}))
+
+    runs = db.get_eval_runs()
+    assert [run.run_id for run in runs] == ["run-1"]
+
+
+def test_abandoned_write_warns_at_cancellation_and_on_late_failure(monkeypatch):
+    # A per-case timeout cancels the awaiter mid-write. The CancelledError bypasses
+    # async_log_eval's except-Exception warning path, and the daemon thread's late
+    # outcome hits the cancelled-future guard - both moments must warn, or eval
+    # history stops persisting with zero signal.
+    warnings = []
+    monkeypatch.setattr("agno.eval.utils.log_warning", warnings.append)
+    release = threading.Event()
+
+    class SlowFailingSyncDb:
+        def create_eval_run(self, record):
+            release.wait(timeout=5)
+            raise RuntimeError("db exploded late")
+
+    async def main():
+        try:
+            await asyncio.wait_for(
+                async_log_eval(
+                    db=SlowFailingSyncDb(),
+                    run_id="run-1",
+                    run_data={},
+                    eval_type=EvalType.AGENT_AS_JUDGE,
+                    eval_input={},
+                ),
+                timeout=0.05,
+            )
+        except asyncio.TimeoutError:
+            pass
+        release.set()
+        # Keep the loop alive so the daemon thread's resolve() can land.
+        for _ in range(100):
+            if len(warnings) >= 2:
+                break
+            await asyncio.sleep(0.02)
+
+    asyncio.run(main())
+
+    assert any("abandoned by timeout; the row may not be persisted" in str(w) for w in warnings)
+    assert any("Could not log eval run (write abandoned by timeout): db exploded late" in str(w) for w in warnings)
+
+
 def test_spinner_live_disabled_emits_nothing(capsys):
     from rich.console import Console
 

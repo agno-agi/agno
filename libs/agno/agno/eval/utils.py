@@ -34,17 +34,20 @@ def spinner_live(console: "Console", enabled: bool = True) -> "Live":
     return Live(console=console, transient=True, auto_refresh=enabled)
 
 
-def _is_in_memory_sqlite(db: BaseDb) -> bool:
-    """In-memory sqlite is thread-affine: SQLAlchemy's SingletonThreadPool keeps one
-    private database per thread, so a write from a worker thread lands in a throwaway
-    db and silently disappears. Detect it so the write can stay on the loop thread."""
-    url = getattr(getattr(db, "db_engine", None), "url", None)
-    if url is None:
+def _is_thread_affine_db(db: BaseDb) -> bool:
+    """In-memory sqlite is thread-affine: SQLAlchemy gives it a SingletonThreadPool,
+    which keeps one private database per thread, so a write from a worker thread lands
+    in a throwaway db and silently disappears. Detect the pool class, not the URL -
+    in-memory sqlite has too many spellings (":memory:", "", "file:x?mode=memory&uri=true")
+    to enumerate. Such writes must stay on the loop thread."""
+    pool = getattr(getattr(db, "db_engine", None), "pool", None)
+    if pool is None:
         return False
     try:
-        return url.get_backend_name() == "sqlite" and url.database in (None, ":memory:")
-    except Exception:
+        from sqlalchemy.pool import SingletonThreadPool
+    except ImportError:
         return False
+    return isinstance(pool, SingletonThreadPool)
 
 
 async def _run_in_daemon_thread(fn: Callable[..., Any], *args: Any) -> None:
@@ -59,6 +62,11 @@ async def _run_in_daemon_thread(fn: Callable[..., Any], *args: Any) -> None:
 
     def resolve(outcome: Optional[BaseException]) -> None:
         if future.cancelled():
+            # The awaiter timed out and moved on - its CancelledError bypassed the
+            # caller's except-Exception warning path, so a late failure is only
+            # visible here.
+            if outcome is not None:
+                log_warning(f"Could not log eval run (write abandoned by timeout): {outcome}")
             return
         if outcome is None:
             future.set_result(None)
@@ -79,7 +87,15 @@ async def _run_in_daemon_thread(fn: Callable[..., Any], *args: Any) -> None:
             pass
 
     threading.Thread(target=worker, name="agno-eval-log", daemon=True).start()
-    await future
+    try:
+        await future
+    except asyncio.CancelledError:
+        # The caller's timeout abandoned the write mid-flight: the daemon thread may
+        # still land it, but it is killed outright if the interpreter exits first,
+        # and its outcome can no longer be awaited. Warn now - cancellation is the
+        # only moment a lost-at-exit write can still be reported.
+        log_warning("eval-run db write abandoned by timeout; the row may not be persisted")
+        raise
 
 
 def log_eval_run(
@@ -166,7 +182,7 @@ async def async_log_eval(
                 team_id=team_id,
                 workflow_id=workflow_id,
             )
-            if _is_in_memory_sqlite(db):
+            if _is_thread_affine_db(db):
                 # Thread-affine: an off-loop write would land in a throwaway per-thread
                 # db. In-memory writes don't block on I/O, so run on the loop.
                 db.create_eval_run(record)

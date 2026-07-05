@@ -306,17 +306,24 @@ def test_cancelled_run_aborts_the_suite_and_records_skipped_cases(monkeypatch):
         _make_case(agent=cancelled_agent, name="interrupted"),
         _make_case(agent=never_run, name="never_run", tags=("smoke",)),
     ]
+    ended = []
 
-    result = run_cases(cases)
+    result = run_cases(cases, on_case_end=lambda c, r: ended.append((c.name, r.skipped)))
 
     assert [r.name for r in result.results] == ["interrupted", "never_run"]
     assert never_run.run_count == 0
     assert result.status == "FAIL"
     skipped = result.results[1]
+    assert skipped.skipped is True
     assert skipped.error == "skipped: suite aborted after cancelled run"
     assert skipped.passed is False
     assert skipped.tags == ("smoke",)
-    assert result.to_dict()["summary"] == {"total": 2, "passed": 0, "failed": 2, "status": "FAIL"}
+    # Hook-driven reporters must see the skipped cases too, or they silently
+    # disagree with to_dict() about how many cases the suite accounted for.
+    assert ended == [("interrupted", False), ("never_run", True)]
+    payload = result.to_dict()
+    assert payload["summary"] == {"total": 2, "passed": 0, "failed": 2, "status": "FAIL"}
+    assert [case["skipped"] for case in payload["cases"]] == [False, True]
 
 
 def test_non_completed_status_is_not_graded(monkeypatch):
@@ -706,6 +713,7 @@ def test_to_dict_matches_contract(monkeypatch):
         "output",
         "tools_called",
         "timed_out",
+        "skipped",
         "passed",
         "error",
     ]
@@ -720,6 +728,7 @@ def test_to_dict_matches_contract(monkeypatch):
     assert case_payload["output"] == "Paris."
     assert case_payload["tools_called"] == ["search_web"]
     assert case_payload["timed_out"] is False
+    assert case_payload["skipped"] is False
     assert case_payload["passed"] is True
     assert case_payload["error"] is None
     json.dumps(payload)

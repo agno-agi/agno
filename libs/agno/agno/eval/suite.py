@@ -90,7 +90,8 @@ class CaseResult:
     name: str
     agent_id: str
     tags: Tuple[str, ...]
-    # The generated eval session id - links the case to its stored session/trace when db= is set
+    # The generated eval session id - links the case to its stored session/trace when
+    # db= is set. Empty for skipped cases: no session was created.
     session_id: str = ""
     duration_seconds: float = 0.0
     judge_passed: Optional[bool] = None  # None = check not configured
@@ -99,6 +100,8 @@ class CaseResult:
     output: Optional[str] = None  # response text - what the judge graded
     tools_called: Tuple[str, ...] = ()  # tool names fired during the run, in order
     timed_out: bool = False
+    # True for cases the suite never ran (appended after a cancelled-run abort)
+    skipped: bool = False
     # Agent error, judge/reliability error, teardown error - "; "-joined
     error: Optional[str] = None
     # Raw run output - full programmatic access to content, tool calls, metrics.
@@ -161,6 +164,7 @@ class SuiteResult:
                     "output": result.output,
                     "tools_called": list(result.tools_called),
                     "timed_out": result.timed_out,
+                    "skipped": result.skipped,
                     "passed": result.passed,
                     "error": result.error,
                 }
@@ -423,7 +427,9 @@ async def arun_cases(
         judge_model: Suite-wide default judge model; Case.judge_model overrides it.
         db: Passed to AgentAsJudgeEval/ReliabilityEval so results log to storage.
         on_case_start: Presentation hook, called before each case runs.
-        on_case_end: Presentation hook, called with each case and its CaseResult.
+        on_case_end: Presentation hook, called with each case and its CaseResult -
+            including the skipped cases appended after an abort (result.skipped=True),
+            so hook-driven reporters and to_dict() agree on the case count.
         on_run_event: Presentation hook, called with every streamed run event.
 
     Performs no console I/O - all presentation flows through the hooks. Hooks are
@@ -438,8 +444,7 @@ async def arun_cases(
     selected = [case for case in cases if _case_matches(case, tag=tag, name=name)]
 
     results: List[CaseResult] = []
-    aborted_at: Optional[int] = None
-    for index, case in enumerate(selected):
+    for case in selected:
         start_hook_error: Optional[str] = None
         if on_case_start is not None:
             try:
@@ -465,21 +470,26 @@ async def arun_cases(
             # agno converts Ctrl-C during a run into a cancelled RunOutput instead of
             # re-raising (a server-side cancel_run produces the same status) - stop
             # the suite here rather than marching through the remaining cases.
-            aborted_at = index
             break
 
-    if aborted_at is not None:
-        # The unrun remainder stays visible in the payload: a consumer must see the
-        # abort, not a silently shorter case list.
-        for case in selected[aborted_at + 1 :]:
-            results.append(
-                CaseResult(
-                    name=case.name,
-                    agent_id=_agent_id(case),
-                    tags=case.tags,
-                    error="skipped: suite aborted after cancelled run",
-                )
-            )
+    # The unrun remainder (non-empty only after a cancelled-run abort; the cancelled
+    # case's own result was appended before the break) stays visible everywhere a run
+    # case would be: in the payload AND through on_case_end, so hook-driven reporters
+    # cannot silently disagree with to_dict() about the case count.
+    for case in selected[len(results) :]:
+        result = CaseResult(
+            name=case.name,
+            agent_id=_agent_id(case),
+            tags=case.tags,
+            skipped=True,
+            error="skipped: suite aborted after cancelled run",
+        )
+        results.append(result)
+        if on_case_end is not None:
+            try:
+                _call_presentation_hook(on_case_end, case, result)
+            except Exception as exc:
+                _append_error(result, f"hook: on_case_end {type(exc).__name__}: {exc}")
 
     # Some toolkit transports schedule async close work after a case finishes.
     # Yielding once before the loop closes avoids "event loop is closed" noise.
@@ -569,6 +579,11 @@ class _CliRenderer:
         from rich.markup import escape
 
         self.close()
+        if result.skipped:
+            # Skipped cases never started, so there is no rule header or response
+            # to render - one compact line each keeps the abort visible.
+            self._console.print(f"[dim]skipped:[/dim] {escape(result.name)}")
+            return
         if self._verbose and result.response is not None:
             from agno.utils.pprint import pprint_run_response
 
