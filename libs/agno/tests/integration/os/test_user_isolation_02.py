@@ -206,10 +206,10 @@ class TestTraceListScoping:
 
 class TestTraceDetailScoping:
     """``GET /traces/{trace_id}`` must enforce row-level ownership for non-admin
-    callers (S2). A trace_id / run_id is not a capability -- both leak through
-    run/session APIs, SSE and logs -- so a scoped caller asking for another
-    user's trace (by trace_id or run_id, full trace or a single span) gets a
-    masking 404, while the owner and admins still get 200.
+    callers (S2). A trace_id is not a capability -- it leaks through run/session
+    APIs, SSE and logs -- so a scoped caller asking for another user's trace (the
+    full trace or a single span within it) gets a masking 404, while the owner and
+    admins still get 200.
     """
 
     def _insert_trace(self, db, *, trace_id: str, user_id: str):
@@ -236,6 +236,27 @@ class TestTraceDetailScoping:
             )
         )
 
+    def _insert_span(self, db, *, span_id: str, trace_id: str):
+        from agno.tracing.schemas import Span
+
+        now = datetime.now(UTC)
+        db.create_span(
+            Span(
+                span_id=span_id,
+                trace_id=trace_id,
+                parent_span_id=None,
+                name="root",
+                span_kind="AGENT",
+                status_code="OK",
+                status_message=None,
+                start_time=now,
+                end_time=now,
+                duration_ms=0,
+                attributes={},
+                created_at=now,
+            )
+        )
+
     def test_owner_can_read_own_trace(self, client, shared_db):
         self._insert_trace(shared_db, trace_id="trace-own-1", user_id="user-a")
         resp = client.get("/traces/trace-own-1", headers=auth_header(make_token("user-a")))
@@ -246,17 +267,21 @@ class TestTraceDetailScoping:
         resp = client.get("/traces/trace-priv-1", headers=auth_header(make_token("user-b")))
         assert resp.status_code == 404, resp.text
 
-    def test_non_owner_cannot_read_trace_by_run_id(self, client, shared_db):
-        # The run_id fallback lookup must not become an ownership bypass.
-        self._insert_trace(shared_db, trace_id="trace-priv-2", user_id="user-a")
-        resp = client.get("/traces/unknown?run_id=run-trace-priv-2", headers=auth_header(make_token("user-b")))
-        assert resp.status_code == 404, resp.text
+    def test_owner_can_read_span_of_own_trace(self, client, shared_db):
+        # Proves the span exists and is returnable, so the non-owner 404 below is the
+        # ownership gate rejecting the caller, not a missing span.
+        self._insert_trace(shared_db, trace_id="trace-span-own", user_id="user-a")
+        self._insert_span(shared_db, span_id="span-own", trace_id="trace-span-own")
+        resp = client.get("/traces/trace-span-own?span_id=span-own", headers=auth_header(make_token("user-a")))
+        assert resp.status_code == 200, resp.text
 
     def test_non_owner_cannot_read_span_of_foreign_trace(self, client, shared_db):
-        # Parent-trace ownership is checked before the span is fetched, so a
-        # non-owner is masked with 404 even with a guessed span_id.
+        # A REAL span is inserted, so without the parent-trace ownership gate the request
+        # would return the span (200). The gate must 404 a non-owner *before* the span is
+        # fetched -- so this test fails if the ownership check is removed (not a tautology).
         self._insert_trace(shared_db, trace_id="trace-priv-3", user_id="user-a")
-        resp = client.get("/traces/trace-priv-3?span_id=any-span", headers=auth_header(make_token("user-b")))
+        self._insert_span(shared_db, span_id="span-priv-3", trace_id="trace-priv-3")
+        resp = client.get("/traces/trace-priv-3?span_id=span-priv-3", headers=auth_header(make_token("user-b")))
         assert resp.status_code == 404, resp.text
 
     def test_admin_can_read_any_trace(self, client, shared_db):

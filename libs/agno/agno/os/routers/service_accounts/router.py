@@ -119,15 +119,18 @@ def get_service_accounts_router(os_db: Any, settings: Any) -> APIRouter:
         # powerful than itself.
         caller_scopes = getattr(request.state, "scopes", None)
         if caller_scopes is None:
-            # No scope context. Two very different callers land here:
-            #   - a trusted root (os_security_key / internal service token): the auth
-            #     layer set request.state.authenticated = True. It is unscoped by
-            #     definition and may mint anything.
+            # No scope context (request.state.scopes is None). Two very different callers
+            # can land here:
+            #   - a trusted root authenticated by the OS security key: the auth layer set
+            #     request.state.authenticated = True but attached no scopes. It is unscoped
+            #     by definition and may mint anything. (The internal service token carries
+            #     INTERNAL_SERVICE_SCOPES, so it is NOT None here and takes the subset-rule
+            #     path below instead.)
             #   - an anonymous caller on an OPEN instance (no security key, no JWT):
-            #     authenticated is falsy. It must NOT be able to mint a privileged
-            #     token, which would persist as a durable admin credential even after
-            #     the operator later switches authentication on (PAT scopes are enforced
-            #     independently of the authorization flag).
+            #     authenticated is falsy. It must NOT be able to mint a privileged token,
+            #     which would persist as a durable admin credential even after the operator
+            #     later switches authentication on (PAT scopes are enforced independently of
+            #     the authorization flag).
             if getattr(request.state, "authenticated", False):
                 return
             unauth_privileged = get_privileged_scopes(scopes, admin_scope=admin_scope)

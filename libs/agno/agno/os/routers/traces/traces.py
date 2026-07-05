@@ -61,7 +61,9 @@ def _require_trace_owner(trace: Any, effective_user_id: Optional[str]) -> None:
     so a scoped caller must be shown only their own trace. A ``trace_id`` / ``run_id``
     is not a capability — both leak through run/session APIs, SSE streams and logs —
     so a mismatch is masked as a 404 rather than a 403. Admins / unscoped callers
-    (``effective_user_id is None``) are unaffected.
+    (``effective_user_id is None``) are unaffected. A trace with no ``user_id`` is
+    treated as not-owned for a scoped caller (fail-closed), consistent with the list
+    endpoint, which also excludes NULL-user rows from a scoped caller's results.
     """
     if effective_user_id is not None and getattr(trace, "user_id", None) != effective_user_id:
         raise HTTPException(status_code=404, detail="Trace not found")
