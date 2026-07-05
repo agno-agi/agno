@@ -127,23 +127,22 @@ def get_service_accounts_router(os_db: Any, settings: Any) -> APIRouter:
             #     INTERNAL_SERVICE_SCOPES, so it is NOT None here and takes the subset-rule
             #     path below instead.)
             #   - an anonymous caller on an OPEN instance (no security key, no JWT):
-            #     authenticated is falsy. It must NOT be able to mint a privileged token,
-            #     which would persist as a durable admin credential even after the operator
-            #     later switches authentication on (PAT scopes are enforced independently of
-            #     the authorization flag).
+            #     authenticated is falsy. It must NOT be able to mint ANY token. A minted PAT
+            #     persists as a durable credential even after the operator later switches
+            #     authentication on (PAT scopes are enforced independently of the authorization
+            #     flag), so a briefly-exposed open instance would leak a permanent credential.
+            #     Even a non-privileged run/read token grants durable compute and cross-user
+            #     reads, so anonymous minting is refused outright -- not just for privileged
+            #     scopes. Minting requires a real credential (OS_SECURITY_KEY or JWT).
             if getattr(request.state, "authenticated", False):
                 return
-            unauth_privileged = get_privileged_scopes(scopes, admin_scope=admin_scope)
-            if unauth_privileged:
-                raise HTTPException(
-                    status_code=401,
-                    detail=(
-                        "Authentication is required to mint a service account with privileged "
-                        f"scope(s): {', '.join(unauth_privileged)}. Configure OS_SECURITY_KEY or JWT "
-                        "authentication before creating privileged tokens."
-                    ),
-                )
-            return
+            raise HTTPException(
+                status_code=401,
+                detail=(
+                    "Authentication is required to mint a service account. Configure "
+                    "OS_SECURITY_KEY or JWT authentication before creating tokens."
+                ),
+            )
         effective_admin_scope = admin_scope or AgentOSScope.ADMIN.value
         if effective_admin_scope in caller_scopes:
             return

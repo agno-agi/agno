@@ -1099,14 +1099,17 @@ class AuthMiddleware(BaseHTTPMiddleware):
         # decoded (this mode skips signature verification, so only a structurally-malformed
         # token lands here). The success path sets the completion marker and runs _check_scopes;
         # its ABSENCE identifies this fall-through. Treat the caller as authenticated-but-empty
-        # (no claims, no scopes) and -- when RBAC is on -- run the SAME scope gate the success
-        # path runs, so a malformed token is never more permissive than a valid zero-scope one.
-        # Without this, routes gated only by the middleware's own _check_scopes (memory,
-        # knowledge, sessions, metrics, ...) would skip enforcement, while the state below only
-        # covers the downstream route/tool gates (runs, MCP).
+        # -- no identity, no claims, no scopes -- identical to a valid token carrying no ``sub``
+        # and no scopes, so a malformed token is never more permissive than such a token. When
+        # RBAC is on, run the SAME scope gate the success path runs; without it, routes gated
+        # only by the middleware's own _check_scopes (memory, knowledge, sessions, metrics, ...)
+        # would skip enforcement, while the state below only covers the downstream route/tool
+        # gates (runs, MCP). ``user_id`` is pinned to None (matching the no-``sub`` success path)
+        # so the user-isolation layer scopes queries by owner rather than reading a stale id.
         if not getattr(request.state, _AUTH_COMPLETE_ATTR, False):
             request.state.authorization_enabled = self.authorization or False
             request.state.scopes = []
+            request.state.user_id = None
             request.state.admin_scope = self.admin_scope
             request.state.user_isolation_enabled = self.user_isolation
             if self.authorization:

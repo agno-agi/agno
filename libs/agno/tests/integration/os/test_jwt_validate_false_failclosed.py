@@ -20,10 +20,12 @@ def state_client():
 
     @app.get("/whoami")
     async def whoami(request: Request):
+        # "UNSET" distinguishes "attribute never set" from an explicit None identity.
         return {
             "authenticated": getattr(request.state, "authenticated", None),
             "authorization_enabled": getattr(request.state, "authorization_enabled", None),
             "scopes": getattr(request.state, "scopes", None),
+            "user_id": getattr(request.state, "user_id", "UNSET"),
         }
 
     # Unverified dev mode with RBAC requested. No verification key needed (validate=False).
@@ -45,6 +47,8 @@ class TestValidateFalseFailsClosed:
         assert body["authorization_enabled"] is True
         assert body["scopes"] == []
         assert body["authenticated"] is False
+        # Identity is pinned to None (no stale id leaks in), so user-isolation scopes by owner.
+        assert body["user_id"] is None
 
     def test_garbage_token_matches_valid_empty_scope_token(self, state_client):
         garbage = state_client.get("/whoami", headers={"Authorization": "Bearer not-a-jwt"}).json()

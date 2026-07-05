@@ -191,11 +191,12 @@ class TestTraceRouterUserIdThreading:
 
     def test_get_trace_does_not_pass_user_id(self, trace_db, no_security_key):
         """``trace_id`` is a unique key — a trace already belongs to one
-        owner, so ``get_trace`` doesn't accept ``user_id`` / ``session_id`` /
-        ``agent_id`` filters. Authorization for the detail endpoint is
-        carried by the list endpoint (which scopes trace_id discovery to
-        the caller). The router must not pass extra kwargs that don't exist
-        in ``BaseDb.get_trace`` — otherwise non-sqlite backends TypeError."""
+        owner, so the LOCAL-DB ``get_trace`` doesn't accept ``user_id`` /
+        ``session_id`` / ``agent_id`` filters; ownership is enforced at the
+        route layer by ``_require_trace_owner`` after fetch. The router must
+        not pass extra kwargs that don't exist in ``BaseDb.get_trace`` —
+        otherwise non-sqlite backends TypeError. (RemoteDb is different — see
+        ``test_get_trace_remote_db_threads_jwt_sub``.)"""
         app = _build_trace_app(trace_db, isolation=True)
         TestClient(app).get("/traces/trace-1")
         kwargs = trace_db.get_trace.call_args.kwargs
@@ -203,6 +204,28 @@ class TestTraceRouterUserIdThreading:
         assert "session_id" not in kwargs
         assert "agent_id" not in kwargs
         assert kwargs["trace_id"] == "trace-1"
+
+    def test_get_trace_remote_db_threads_jwt_sub(self, no_security_key):
+        """RemoteDb single-trace detail (S2): the scoped ``user_id`` must be forwarded to the
+        remote so ownership is enforced there, matching the list endpoint. Unlike a local DB
+        (whose ``_require_trace_owner`` check runs in-process), a RemoteDb call leaves the
+        process, so without forwarding the scope the detail endpoint would be strictly weaker
+        than the list it mirrors — a scoped caller could read another user's trace by id."""
+        from unittest.mock import AsyncMock
+
+        from agno.os.routers.traces.traces import get_traces_router
+        from agno.remote.base import RemoteDb
+
+        remote = MagicMock(spec=RemoteDb)
+        remote.get_trace = AsyncMock(return_value={"trace_id": "t1"})
+        app = FastAPI()
+        app.include_router(get_traces_router({"default": [remote]}, AgnoAPISettings()))
+        app.add_middleware(_make_jwt_middleware(user_isolation_enabled=True))
+        # The remote's response shape is validated by FastAPI's response_model and isn't what
+        # this test exercises; we assert only that the scoped user_id was forwarded (not the
+        # ?user_id=attacker query param).
+        TestClient(app, raise_server_exceptions=False).get("/traces/t1?user_id=attacker")
+        assert remote.get_trace.call_args.kwargs["user_id"] == "jwt_alice"
 
     def test_trace_stats_isolation_on_forces_jwt_sub(self, trace_db, no_security_key):
         app = _build_trace_app(trace_db, isolation=True)

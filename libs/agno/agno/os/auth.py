@@ -226,6 +226,11 @@ def get_authentication_dependency(settings: AgnoAPISettings):
         if token != settings.os_security_key:
             raise HTTPException(status_code=401, detail="Invalid authentication token")
 
+        # A valid security key is a trusted, unscoped root. Mark it authenticated like the
+        # internal-token path above, so downstream gates that distinguish an authenticated
+        # root from an anonymous open-mode caller (e.g. service-account minting) treat it as
+        # a real credential rather than falling through to the fail-closed anonymous branch.
+        request.state.authenticated = True
         return True
 
     return auth_dependency
