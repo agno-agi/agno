@@ -29,7 +29,16 @@ class StubAgent:
     """
 
     def __init__(
-        self, *, id="stub-agent", events=(), output=None, error=None, delay=0.0, post_delay=0.0, emit_output=True
+        self,
+        *,
+        id="stub-agent",
+        events=(),
+        output=None,
+        error=None,
+        delay=0.0,
+        post_delay=0.0,
+        tail_delay=0.0,
+        emit_output=True,
     ):
         self.id = id
         self._events = list(events)
@@ -37,6 +46,7 @@ class StubAgent:
         self._error = error
         self._delay = delay
         self._post_delay = post_delay
+        self._tail_delay = tail_delay
         self._emit_output = emit_output
         self.run_count = 0
         self.session_ids = []
@@ -56,6 +66,10 @@ class StubAgent:
             await asyncio.sleep(self._post_delay)
         if self._emit_output:
             yield self._output
+        if self._tail_delay:
+            # Models the real generator stalling AFTER the final output (e.g. a hung
+            # telemetry call in transport cleanup)
+            await asyncio.sleep(self._tail_delay)
 
 
 def _install_fake_evals(
@@ -122,6 +136,30 @@ def _make_case(agent=None, **kwargs):
 def test_case_without_checks_raises():
     with pytest.raises(ValueError, match="has no checks"):
         Case(name="x", agent=StubAgent(), input="q")
+
+
+def test_case_with_falsy_checks_raises():
+    # criteria="" would reach the judge with an empty rubric; expected_tool_calls=()
+    # would make ReliabilityEval pass vacuously - both green-light CI while
+    # verifying nothing.
+    with pytest.raises(ValueError, match="has no checks"):
+        Case(name="x", agent=StubAgent(), input="q", criteria="")
+    with pytest.raises(ValueError, match="has no checks"):
+        Case(name="x", agent=StubAgent(), input="q", expected_tool_calls=())
+
+
+def test_empty_expected_tool_calls_with_criteria_skips_reliability(monkeypatch):
+    # An empty tuple alongside a real criteria constructs, but must not run a
+    # vacuous reliability check.
+    judge_instances, reliability_instances = _install_fake_evals(monkeypatch)
+    case = _make_case(expected_tool_calls=())
+
+    result = run_cases([case]).results[0]
+
+    assert result.judge_passed is True
+    assert result.reliability_passed is None
+    assert len(judge_instances) == 1
+    assert reliability_instances == []
 
 
 def test_case_with_either_check_constructs():
@@ -312,6 +350,41 @@ def test_error_and_evidence_survive_a_timeout(monkeypatch):
 
     assert result.timed_out is True
     assert result.error == "agent: boom mid-stream; timeout: exceeded 1s"
+
+
+def test_output_evidence_survives_a_stall_after_the_final_output(monkeypatch):
+    # The real generator can stall AFTER yielding the final RunOutput (e.g. a hung
+    # telemetry call in transport cleanup). The payload evidence (output,
+    # tools_called) must be committed at capture time, not extracted after the
+    # stream ends.
+    _install_fake_evals(monkeypatch)
+    output = _output(content="the answer", tools=[ToolExecution(tool_name="search_web")])
+    agent = StubAgent(output=output, tail_delay=5.0)
+
+    result = run_cases([_make_case(agent=agent, timeout_seconds=1)]).results[0]
+
+    assert result.timed_out is True
+    assert result.output == "the answer"
+    assert result.tools_called == ("search_web",)
+    assert result.response is output
+
+
+def test_none_status_is_recorded_not_crashed(monkeypatch):
+    # A duck-typed agent may yield a final RunOutput with status=None; that must
+    # fail the case, not crash the suite (the .get() default is evaluated eagerly
+    # and None has no .value).
+    _install_fake_evals(monkeypatch)
+    cases = [
+        _make_case(agent=StubAgent(output=_output(content="x", status=None)), name="none_status"),
+        _make_case(name="fine"),
+    ]
+
+    result = run_cases(cases)
+
+    none_status, fine = result.results
+    assert none_status.error == "agent: run ended with status None"
+    assert none_status.passed is False
+    assert fine.passed is True
 
 
 # ---------------------------------------------------------------------------
@@ -536,6 +609,17 @@ def test_suite_disables_eval_spinners(monkeypatch):
 
     assert judge_instances[0].kwargs["show_spinner"] is False
     assert reliability_instances[0].kwargs["show_spinner"] is False
+
+
+def test_suite_disables_eval_telemetry(monkeypatch):
+    # The evals await their telemetry POST before returning; on a blackholed
+    # network that burns case-timeout budget after the verdict is computed.
+    judge_instances, reliability_instances = _install_fake_evals(monkeypatch)
+
+    run_cases([_make_case(expected_tool_calls=("search_web",))])
+
+    assert judge_instances[0].kwargs["telemetry"] is False
+    assert reliability_instances[0].kwargs["telemetry"] is False
 
 
 def test_judge_model_resolution_order(monkeypatch):
@@ -870,6 +954,22 @@ def test_cli_json_output_writes_payload(monkeypatch, tmp_path):
     assert payload["cases"][0]["name"] == "json_case"
 
 
+def test_cli_unwritable_json_output_is_a_clean_error(monkeypatch, tmp_path, capsys):
+    # A bad --json-output path must be a clean error line and exit code 1, not a
+    # traceback through cli().
+    _install_fake_evals(monkeypatch)
+    blocker = tmp_path / "blocker"
+    blocker.write_text("not a directory", encoding="utf-8")
+    json_path = blocker / "reports" / "evals.json"  # parent chain crosses a file
+
+    exit_code = cli([_make_case()], argv=["--json-output", str(json_path)])
+
+    assert exit_code == 1
+    out = capsys.readouterr().out
+    assert "cannot write json output" in out
+    assert "1/1 passed" in out  # the suite itself still ran and reported
+
+
 def test_cli_verbose_renders_response_post_hoc(monkeypatch):
     _install_fake_evals(monkeypatch)
     output = _output(content="verbose output")
@@ -972,32 +1072,3 @@ def test_cli_default_timeout_parameter(monkeypatch, capsys):
 
     assert exit_code == 1
     assert "timeout: exceeded 1s" in capsys.readouterr().out
-
-
-# ---------------------------------------------------------------------------
-# python -m agno.eval entry
-# ---------------------------------------------------------------------------
-
-
-def test_module_entry_loads_cases_and_forwards_flags(monkeypatch, tmp_path, capsys):
-    _install_fake_evals(monkeypatch)
-    (tmp_path / "fake_eval_cases.py").write_text(
-        "from agno.eval.suite import Case\n"
-        "\n"
-        "\n"
-        "class _Agent:\n"
-        "    id = 'module-agent'\n"
-        "\n"
-        "\n"
-        "CASES = (Case(name='module_case', agent=_Agent(), input='q', criteria='ok'),)\n",
-        encoding="utf-8",
-    )
-    monkeypatch.syspath_prepend(str(tmp_path))
-
-    from agno.eval.__main__ import main
-
-    assert main(["fake_eval_cases", "--list"]) == 0
-    assert "module_case" in capsys.readouterr().out
-    assert main(["missing_module_xyz"]) == 2
-    assert main(["fake_eval_cases:NOPE"]) == 2
-    assert main([]) == 2

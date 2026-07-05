@@ -75,7 +75,10 @@ class Case:
     teardown: Optional[Callable[[Any, "CaseResult"], Any]] = None
 
     def __post_init__(self) -> None:
-        if self.criteria is None and self.expected_tool_calls is None:
+        # Truthiness, not `is None`: criteria="" or expected_tool_calls=() would
+        # otherwise construct a case whose checks pass vacuously - a green CI gate
+        # that verified nothing.
+        if not self.criteria and not self.expected_tool_calls:
             raise ValueError(f"case {self.name!r} has no checks: set criteria and/or expected_tool_calls")
 
 
@@ -192,6 +195,18 @@ def _append_error(result: CaseResult, message: str) -> None:
     result.error = "; ".join(part for part in (result.error, message) if part)
 
 
+def _extract_evidence(result: CaseResult, response: RunOutput) -> None:
+    """Copy the payload evidence fields (output, tools_called) off the run output."""
+    try:
+        result.output = response.get_content_as_string() if response.content is not None else ""
+    except Exception:
+        # get_content_as_string json-serializes non-str content and raises on
+        # values json can't handle (datetime, bytes, ...) - fall back to repr
+        # rather than failing the case on evidence extraction.
+        result.output = str(response.content)
+    result.tools_called = tuple(tool.tool_name or "?" for tool in (response.tools or []))
+
+
 async def _call_hook(hook: Callable[..., Any], *args: Any) -> Any:
     if iscoroutinefunction(hook):
         return await hook(*args)
@@ -227,10 +242,12 @@ async def _run_case_body(
             if isinstance(event, RunOutput):
                 # The final run output arrives in-stream (yield_run_output=True). It is
                 # captured, not forwarded to on_run_event - on_case_end delivers it.
-                # Committed to the result immediately so the evidence survives a
-                # timeout cancelling the rest of the stream.
+                # Response AND evidence fields are committed immediately: the stream can
+                # stall after the final output (e.g. a hung telemetry call in transport
+                # cleanup) and a timeout then must not discard what the run produced.
                 response = event
                 result.response = event
+                _extract_evidence(result, event)
                 continue
             if isinstance(event, _RUN_ERROR_EVENTS):
                 # The streaming path does not raise on in-run model/API failures: it
@@ -254,16 +271,6 @@ async def _run_case_body(
         _append_error(result, f"agent: {type(exc).__name__}: {exc}")
         return
 
-    if response is not None:
-        try:
-            result.output = response.get_content_as_string() if response.content is not None else ""
-        except Exception:
-            # get_content_as_string json-serializes non-str content and raises on
-            # values json can't handle (datetime, bytes, ...) - fall back to repr
-            # rather than failing the case on evidence extraction.
-            result.output = str(response.content)
-        result.tools_called = tuple(tool.tool_name or "?" for tool in (response.tools or []))
-
     # Only a completed run is gradeable: paused/cancelled runs carry placeholder
     # content (e.g. HITL boilerplate), and any other status (pending, running,
     # regenerated, ...) is not a real answer either.
@@ -275,11 +282,14 @@ async def _run_case_body(
             else:
                 _append_error(
                     result,
-                    _STATUS_ERRORS.get(response.status, f"agent: run ended with status {response.status.value}"),
+                    # `or` instead of a .get() default: the default is evaluated eagerly,
+                    # and a duck-typed agent may yield status=None (no .value).
+                    _STATUS_ERRORS.get(response.status)
+                    or f"agent: run ended with status {getattr(response.status, 'value', response.status)}",
                 )
         return
 
-    if case.criteria is not None:
+    if case.criteria:
         try:
             judge = await AgentAsJudgeEval(
                 name=case.name,
@@ -288,6 +298,9 @@ async def _run_case_body(
                 model=case.judge_model or judge_model,
                 db=db,
                 show_spinner=False,
+                # The eval awaits its telemetry POST before returning; on a blackholed
+                # network that burns case-timeout budget after the verdict is computed.
+                telemetry=False,
             ).arun(input=case.input, output=result.output or "")
         except Exception as exc:
             _append_error(result, f"judge: {type(exc).__name__}: {exc}")
@@ -298,7 +311,7 @@ async def _run_case_body(
             else:
                 _append_error(result, "judge: returned no result")
 
-    if case.expected_tool_calls is not None:
+    if case.expected_tool_calls:
         try:
             reliability = await ReliabilityEval(
                 name=case.name,
@@ -307,6 +320,7 @@ async def _run_case_body(
                 allow_additional_tool_calls=case.allow_additional_tool_calls,
                 db=db,
                 show_spinner=False,
+                telemetry=False,
             ).arun()
         except Exception as exc:
             _append_error(result, f"reliability: {type(exc).__name__}: {exc}")
@@ -610,9 +624,22 @@ def _print_summary(console: "Console", suite: SuiteResult) -> None:
             console.print(f"  [dim]{escape(result.name)}:[/dim] [red]{escape(result.error)}[/red]")
 
 
-def _write_json_output(path: Path, payload: Dict[str, Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+def _write_json_output(console: "Console", path: Path, payload: Dict[str, Any]) -> bool:
+    """Write the JSON payload and echo the path; returns False on a write failure.
+
+    A bad --json-output path must be a clean error line and a failing exit code,
+    not a traceback through cli().
+    """
+    from rich.markup import escape
+
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+    except OSError as exc:
+        console.print(f"[red]error:[/red] cannot write json output to {escape(str(path))}: {escape(str(exc))}")
+        return False
+    console.print(f"[dim]json output:[/dim] {escape(str(path))}")
+    return True
 
 
 async def acli(
@@ -671,8 +698,8 @@ async def acli(
                     for case in selected
                 ]
             }
-            _write_json_output(args.json_output, payload)
-            console.print(f"[dim]json output:[/dim] {escape(str(args.json_output))}")
+            if not _write_json_output(console, args.json_output, payload):
+                return 1
         return 0
 
     renderer = _CliRenderer(console=console, total=len(selected), verbose=args.verbose)
@@ -692,9 +719,8 @@ async def acli(
 
     _print_summary(console, suite)
 
-    if args.json_output is not None:
-        _write_json_output(args.json_output, suite.to_dict())
-        console.print(f"[dim]json output:[/dim] {escape(str(args.json_output))}")
+    if args.json_output is not None and not _write_json_output(console, args.json_output, suite.to_dict()):
+        return 1
 
     return 0 if suite.failed == 0 else 1
 
@@ -709,9 +735,10 @@ def cli(
 ) -> int:
     """Run an argparse CLI over the given cases and return the exit code.
 
-    Exit codes: 0 all selected cases passed, 1 any failure, 2 no cases matched
-    the selector. Built purely on the public runner API - call it from a
-    template's __main__.py with `sys.exit(cli(CASES, db=eval_db))`. Inside an
-    already-running event loop, use `await acli(...)` instead.
+    Exit codes: 0 all selected cases passed, 1 any failure (including a failed
+    --json-output write), 2 no cases matched the selector. Built purely on the
+    public runner API - call it from a template's __main__.py with
+    `sys.exit(cli(CASES, db=my_db))`. Inside an already-running event loop, use
+    `await acli(...)` instead.
     """
     return asyncio.run(acli(cases, db=db, judge_model=judge_model, default_timeout=default_timeout, argv=argv))

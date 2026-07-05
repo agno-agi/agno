@@ -1,7 +1,8 @@
 import asyncio
+import threading
 from dataclasses import asdict
 from pathlib import Path
-from typing import TYPE_CHECKING, Optional, Union
+from typing import TYPE_CHECKING, Any, Callable, Optional, Union
 
 from agno.db.base import AsyncBaseDb, BaseDb
 from agno.db.schemas.evals import EvalRunRecord, EvalType
@@ -29,7 +30,56 @@ def spinner_live(console: "Console", enabled: bool = True) -> "Live":
 
     if not enabled:
         console = Console(quiet=True)
-    return Live(console=console, transient=True)
+    # auto_refresh spawns a render thread per Live; skip it when nothing renders.
+    return Live(console=console, transient=True, auto_refresh=enabled)
+
+
+def _is_in_memory_sqlite(db: BaseDb) -> bool:
+    """In-memory sqlite is thread-affine: SQLAlchemy's SingletonThreadPool keeps one
+    private database per thread, so a write from a worker thread lands in a throwaway
+    db and silently disappears. Detect it so the write can stay on the loop thread."""
+    url = getattr(getattr(db, "db_engine", None), "url", None)
+    if url is None:
+        return False
+    try:
+        return url.get_backend_name() == "sqlite" and url.database in (None, ":memory:")
+    except Exception:
+        return False
+
+
+async def _run_in_daemon_thread(fn: Callable[..., Any], *args: Any) -> None:
+    """Run a blocking call on a daemon thread and await its completion.
+
+    Not asyncio.to_thread: executor threads are non-daemon and are joined at
+    interpreter shutdown, so a single hung db write would keep the process alive
+    after the suite has finished. A daemon thread cannot block exit.
+    """
+    loop = asyncio.get_running_loop()
+    future: "asyncio.Future[None]" = loop.create_future()
+
+    def resolve(outcome: Optional[BaseException]) -> None:
+        if future.cancelled():
+            return
+        if outcome is None:
+            future.set_result(None)
+        else:
+            future.set_exception(outcome)
+
+    def worker() -> None:
+        outcome: Optional[BaseException] = None
+        try:
+            fn(*args)
+        except BaseException as exc:
+            outcome = exc
+        try:
+            loop.call_soon_threadsafe(resolve, outcome)
+        except RuntimeError:
+            # Loop already closed (the caller gave up on a hung write) - the
+            # outcome has nowhere to go.
+            pass
+
+    threading.Thread(target=worker, name="agno-eval-log", daemon=True).start()
+    await future
 
 
 def log_eval_run(
@@ -103,27 +153,27 @@ async def async_log_eval(
                 )
             )
         else:
-            # A sync db driver would block the event loop (and defeat any caller-side
-            # timeout, e.g. the suite runner's per-case wait_for) - run it off-loop.
-            # Caveat: thread-affine drivers (e.g. sqlite :memory:, whose pool keeps a
-            # separate database per thread) won't see writes made from this worker
-            # thread; use a file-backed or server database for eval history.
-            await asyncio.to_thread(
-                db.create_eval_run,
-                EvalRunRecord(
-                    run_id=run_id,
-                    eval_type=eval_type,
-                    eval_data=run_data,
-                    eval_input=eval_input,
-                    agent_id=agent_id,
-                    model_id=model_id,
-                    model_provider=model_provider,
-                    name=name,
-                    evaluated_component_name=evaluated_component_name,
-                    team_id=team_id,
-                    workflow_id=workflow_id,
-                ),
+            record = EvalRunRecord(
+                run_id=run_id,
+                eval_type=eval_type,
+                eval_data=run_data,
+                eval_input=eval_input,
+                agent_id=agent_id,
+                model_id=model_id,
+                model_provider=model_provider,
+                name=name,
+                evaluated_component_name=evaluated_component_name,
+                team_id=team_id,
+                workflow_id=workflow_id,
             )
+            if _is_in_memory_sqlite(db):
+                # Thread-affine: an off-loop write would land in a throwaway per-thread
+                # db. In-memory writes don't block on I/O, so run on the loop.
+                db.create_eval_run(record)
+            else:
+                # A sync db driver would block the event loop (and defeat any caller-side
+                # timeout, e.g. the suite runner's per-case wait_for) - run it off-loop.
+                await _run_in_daemon_thread(db.create_eval_run, record)
     except Exception as e:
         # A failed write means eval history silently stops persisting - warn, don't debug-log.
         log_warning(f"Could not log eval run: {e}")
