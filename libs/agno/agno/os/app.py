@@ -1272,6 +1272,37 @@ class AgentOS:
                 ] + interface_prefixes
 
         middleware_kwargs["excluded_route_paths"] = excluded_route_paths
+
+        # A2A's mount prefix is operator-configurable (A2A(prefix=...)). The default
+        # scope map only covers "/a2a", so an A2A interface mounted under a custom prefix
+        # would have zero scope entries and fall through to the unmapped-route default
+        # (allow) -- silently ungating agent/team/workflow execution. Merge scope entries
+        # for each custom-prefix A2A interface so it is gated exactly like the default one.
+        from agno.os.scopes import get_a2a_scope_mappings
+
+        custom_a2a_mappings: Dict[str, List[str]] = {}
+        for interface in self.interfaces:
+            if interface.__class__.__name__ != "A2A":
+                continue
+            prefix = getattr(interface, "prefix", "/a2a") or "/a2a"
+            if prefix.rstrip("/") != "/a2a":
+                custom_a2a_mappings.update(get_a2a_scope_mappings(prefix))
+        if custom_a2a_mappings:
+            merged = dict(middleware_kwargs.get("scope_mappings") or {})
+            merged.update(custom_a2a_mappings)
+            middleware_kwargs["scope_mappings"] = merged
+
+        # Behaviour-change notice: service-account (PAT) principals now self-scope to the
+        # data they created even with user_isolation off, so a default token no longer reads
+        # other users' sessions/memories. Surface this once at startup so an operator whose
+        # PAT-driven dashboard suddenly returns empty results knows why (and how to opt out).
+        if middleware_kwargs.get("service_account_verifier") is not None and not user_isolation:
+            log_info(
+                "Service-account (PAT) tokens self-scope to the data they created; a default token "
+                "no longer reads other users' sessions/memories. Grant 'agent_os:cross_user' (or "
+                "'agent_os:admin') to mint a cross-user/debugging token."
+            )
+
         fastapi_app.add_middleware(AuthMiddleware, **middleware_kwargs)
 
     def get_routes(self) -> List[Any]:

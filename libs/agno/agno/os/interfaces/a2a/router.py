@@ -32,9 +32,36 @@ from agno.os.interfaces.a2a.utils import (
 )
 from agno.os.middleware.jwt import is_reserved_principal
 from agno.os.middleware.user_scope import get_scoped_user_id, verify_run_in_session
+from agno.os.scopes import has_required_scopes
 from agno.os.utils import get_agent_by_id, get_request_kwargs, get_team_by_id, get_workflow_by_id
 from agno.team import RemoteTeam, Team
 from agno.workflow import RemoteWorkflow, Workflow
+
+
+def _enforce_dynamic_dispatch_scope(request: Request, entity: object, entity_id: str) -> None:
+    """Re-check the run scope for the resolved family on the deprecated dispatch routes.
+
+    ``POST /message:send`` / ``:stream`` resolve the target as an agent, team, OR workflow
+    at runtime, so the route-level gate can only require a single coarse scope (``agents:run``).
+    That would let an ``agents:run``-only token execute teams/workflows (and 403 a
+    ``teams:run``-only token from its own team). Once the entity is resolved we know its
+    family, so enforce ``<family>:run`` here. No-op when RBAC is not active.
+    """
+    if not getattr(request.state, "authorization_enabled", False):
+        return
+    if isinstance(entity, (Team, RemoteTeam)):
+        family = "teams"
+    elif isinstance(entity, (Workflow, RemoteWorkflow)):
+        family = "workflows"
+    else:
+        family = "agents"
+    scopes: List[str] = getattr(request.state, "scopes", []) or []
+    admin_scope_raw = getattr(request.state, "admin_scope", None)
+    admin_scope = admin_scope_raw if isinstance(admin_scope_raw, str) else None
+    if not has_required_scopes(
+        scopes, [f"{family}:run"], resource_type=family, resource_id=entity_id, admin_scope=admin_scope
+    ):
+        raise HTTPException(status_code=403, detail=f"Insufficient permissions to run this {family[:-1]}")
 
 
 def _resolve_a2a_user_id(request: Request, request_body: dict) -> Optional[str]:
@@ -55,8 +82,10 @@ def _resolve_a2a_user_id(request: Request, request_body: dict) -> Optional[str]:
     if scoped is not None:
         return scoped
 
+    # Truthiness, not `is not None`: a validated JWT with an empty-string sub carries no
+    # usable identity, so fall through to anonymous handling rather than pinning user_id="".
     state_uid = getattr(request.state, "user_id", None)
-    if state_uid is not None:
+    if state_uid:
         return state_uid
 
     client_uid = request.headers.get("X-User-ID")
@@ -243,14 +272,14 @@ def attach_routes(
         if not isinstance(agent, Agent):
             raise HTTPException(status_code=501, detail="Task polling is not supported for this agent type")
 
-        # Pin identity to the caller so a scoped principal can only poll its own
-        # runs (aget_run_output scopes the session lookup by user_id). A scoped
-        # caller must name the session (contextId) it is polling.
-        user_id = _resolve_a2a_user_id(request, request_body)
-        if get_scoped_user_id(request) is not None and not context_id:
+        # Scope the run lookup to the caller for non-admins (aget_run_output filters the
+        # session by user_id); admins and unscoped callers read unfiltered, matching the REST
+        # run-read route. contextId names the session the run lives in and is required to
+        # look it up at all (a missing one would otherwise raise deep in storage).
+        if not context_id:
             raise HTTPException(status_code=400, detail="contextId is required to poll a task")
-
-        run_output = await agent.aget_run_output(run_id=task_id, session_id=context_id, user_id=user_id)
+        scoped_user_id = get_scoped_user_id(request)
+        run_output = await agent.aget_run_output(run_id=task_id, session_id=context_id, user_id=scoped_user_id)
         if not run_output:
             raise HTTPException(status_code=404, detail="Task not found")
 
@@ -286,15 +315,20 @@ def attach_routes(
         if not isinstance(agent, Agent):
             raise HTTPException(status_code=501, detail="Task cancellation is not supported for this agent type")
 
-        # Verify ownership before applying a global cancellation intent: a scoped
-        # principal may only cancel a run inside a session it owns. acancel_run is
-        # keyed on run_id alone, so the check has to happen here.
+        # Verify ownership before applying a global cancellation intent: a scoped principal
+        # may only cancel a run inside a session it owns AND reached through the component that
+        # owns the run (component_type/component_id mirror the REST cancel route and fail closed
+        # on a cross-component run). acancel_run is keyed on run_id alone, so the check happens
+        # here. Like REST, a scoped caller therefore cannot cancel-before-start (no persisted
+        # session yet); admins/unscoped callers skip the check and retain that behaviour.
         scoped_user_id = get_scoped_user_id(request)
         if scoped_user_id is not None:
             context_id = params.get("contextId")
             if not context_id:
                 raise HTTPException(status_code=400, detail="contextId is required to cancel a task")
-            await verify_run_in_session(agent, context_id, task_id, scoped_user_id)
+            await verify_run_in_session(
+                agent, context_id, task_id, scoped_user_id, component_type="agents", component_id=id
+            )
 
         # cancel_run always stores cancellation intent (even for not-yet-registered runs
         # in cancel-before-start scenarios), so we always return success.
@@ -536,14 +570,14 @@ def attach_routes(
         if isinstance(team, RemoteTeam):
             raise HTTPException(status_code=400, detail="Task polling is not supported for remote teams")
 
-        # Pin identity to the caller so a scoped principal can only poll its own
-        # runs (aget_run_output scopes the session lookup by user_id). A scoped
-        # caller must name the session (contextId) it is polling.
-        user_id = _resolve_a2a_user_id(request, request_body)
-        if get_scoped_user_id(request) is not None and not context_id:
+        # Scope the run lookup to the caller for non-admins (aget_run_output filters the
+        # session by user_id); admins and unscoped callers read unfiltered, matching the REST
+        # run-read route. contextId names the session the run lives in and is required to
+        # look it up at all (a missing one would otherwise raise deep in storage).
+        if not context_id:
             raise HTTPException(status_code=400, detail="contextId is required to poll a task")
-
-        run_output = await team.aget_run_output(run_id=task_id, session_id=context_id, user_id=user_id)
+        scoped_user_id = get_scoped_user_id(request)
+        run_output = await team.aget_run_output(run_id=task_id, session_id=context_id, user_id=scoped_user_id)
         if not run_output:
             raise HTTPException(status_code=404, detail="Task not found")
 
@@ -577,15 +611,20 @@ def attach_routes(
         if isinstance(team, RemoteTeam):
             raise HTTPException(status_code=400, detail="Task cancellation is not supported for remote teams")
 
-        # Verify ownership before applying a global cancellation intent: a scoped
-        # principal may only cancel a run inside a session it owns. acancel_run is
-        # keyed on run_id alone, so the check has to happen here.
+        # Verify ownership before applying a global cancellation intent: a scoped principal
+        # may only cancel a run inside a session it owns AND reached through the component that
+        # owns the run (component_type/component_id mirror the REST cancel route and fail closed
+        # on a cross-component run). acancel_run is keyed on run_id alone, so the check happens
+        # here. Like REST, a scoped caller therefore cannot cancel-before-start (no persisted
+        # session yet); admins/unscoped callers skip the check and retain that behaviour.
         scoped_user_id = get_scoped_user_id(request)
         if scoped_user_id is not None:
             context_id = params.get("contextId")
             if not context_id:
                 raise HTTPException(status_code=400, detail="contextId is required to cancel a task")
-            await verify_run_in_session(team, context_id, task_id, scoped_user_id)
+            await verify_run_in_session(
+                team, context_id, task_id, scoped_user_id, component_type="teams", component_id=id
+            )
 
         # cancel_run always stores cancellation intent (even for not-yet-registered runs
         # in cancel-before-start scenarios), so we always return success.
@@ -925,6 +964,9 @@ def attach_routes(
         if entity is None:
             raise HTTPException(status_code=404, detail=f"Agent, Team, or Workflow with ID '{agent_id}' not found")
 
+        # The route gate only required agents:run; enforce the resolved family's run scope.
+        _enforce_dynamic_dispatch_scope(request, entity, agent_id)
+
         # 2. Map the request to our run_input and run variables
         run_input = await map_a2a_request_to_run_input(request_body, stream=False)
         context_id = request_body.get("params", {}).get("message", {}).get("contextId")
@@ -1036,6 +1078,9 @@ def attach_routes(
             entity = get_workflow_by_id(agent_id, workflows, create_fresh=True)
         if entity is None:
             raise HTTPException(status_code=404, detail=f"Agent, Team, or Workflow with ID '{agent_id}' not found")
+
+        # The route gate only required agents:run; enforce the resolved family's run scope.
+        _enforce_dynamic_dispatch_scope(request, entity, agent_id)
 
         # 2. Map the request to our run_input and run variables
         run_input = await map_a2a_request_to_run_input(request_body, stream=True)

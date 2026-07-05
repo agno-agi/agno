@@ -97,6 +97,39 @@ def anon_client(agent):
     return TestClient(agent_os.get_app())
 
 
+@pytest.fixture
+def multi_entity_authz_client():
+    """A2A with agent + team + workflow behind authorization=True (for dynamic dispatch)."""
+    agent = Agent(id=AGENT_ID, name="Authz Agent", db=InMemoryDb())
+    team = Team(id="authz-team", name="Authz Team", members=[agent], db=InMemoryDb())
+    workflow = Workflow(id="authz-wf", name="Authz WF", steps=[Step(name="s", agent=agent)], db=InMemoryDb())
+    agent_os = AgentOS(
+        id="a2a-multi-os",
+        agents=[agent],
+        teams=[team],
+        workflows=[workflow],
+        a2a_interface=True,
+        authorization=True,
+        authorization_config=AuthorizationConfig(verification_keys=[JWT_SECRET], algorithm="HS256"),
+    )
+    return agent, team, workflow, TestClient(agent_os.get_app())
+
+
+@pytest.fixture
+def custom_prefix_authz_client(agent):
+    """A2A mounted under a NON-default prefix, behind authorization=True."""
+    from agno.os.interfaces.a2a import A2A
+
+    agent_os = AgentOS(
+        id="a2a-custom-prefix-os",
+        agents=[agent],
+        interfaces=[A2A(prefix="/protocol", agents=[agent])],
+        authorization=True,
+        authorization_config=AuthorizationConfig(verification_keys=[JWT_SECRET], algorithm="HS256"),
+    )
+    return TestClient(agent_os.get_app())
+
+
 # --------------------------------------------------------------------------- B1
 
 
@@ -241,3 +274,106 @@ def test_every_a2a_route_has_a_scope_mapping():
                 unmapped.append(f"{method} {path}")
 
     assert not unmapped, f"A2A routes missing scope mappings: {unmapped}"
+
+
+# ------------------------------------------------------- custom-prefix gating
+
+
+class TestA2ACustomPrefix:
+    """A2A(prefix=...) is operator-configurable; a custom prefix must be gated too,
+    not fall through to the unmapped-route default-allow."""
+
+    def test_custom_prefix_blocked_without_run_scope(self, custom_prefix_authz_client):
+        resp = custom_prefix_authz_client.post(
+            f"/protocol/agents/{AGENT_ID}/v1/message:send",
+            json=_message_body(),
+            headers={"Authorization": f"Bearer {_token(['config:read'])}"},
+        )
+        assert resp.status_code == 403, resp.text
+
+    def test_custom_prefix_allowed_with_run_scope(self, agent, custom_prefix_authz_client):
+        with patch.object(agent, "arun", new_callable=AsyncMock) as mock_arun:
+            mock_arun.return_value = RunOutput(run_id="r", session_id="ctx", agent_id=AGENT_ID, content="ok")
+            resp = custom_prefix_authz_client.post(
+                f"/protocol/agents/{AGENT_ID}/v1/message:send",
+                json=_message_body(),
+                headers={"Authorization": f"Bearer {_token(['agents:run'])}"},
+            )
+        assert resp.status_code not in (401, 403), resp.text
+
+
+# ------------------------------------------- deprecated dynamic-dispatch family gate
+
+
+class TestA2ADeprecatedDispatchFamilyScope:
+    """The deprecated /a2a/message/send route dispatches to agent/team/workflow at
+    runtime; the resolved family's run scope must be enforced in the handler, not just
+    the coarse agents:run route gate."""
+
+    def test_agents_run_cannot_execute_workflow(self, multi_entity_authz_client):
+        _agent, _team, workflow, client = multi_entity_authz_client
+        resp = client.post(
+            "/a2a/message/send",
+            json=_message_body(),
+            headers={"X-Agent-ID": workflow.id, "Authorization": f"Bearer {_token(['agents:run'])}"},
+        )
+        assert resp.status_code == 403, resp.text
+
+    def test_agents_run_cannot_execute_team(self, multi_entity_authz_client):
+        _agent, team, _workflow, client = multi_entity_authz_client
+        resp = client.post(
+            "/a2a/message/send",
+            json=_message_body(),
+            headers={"X-Agent-ID": team.id, "Authorization": f"Bearer {_token(['agents:run'])}"},
+        )
+        assert resp.status_code == 403, resp.text
+
+    def test_matching_family_scope_allowed(self, multi_entity_authz_client):
+        # The deprecated route's coarse gate requires agents:run; to run a team through it a
+        # token needs agents:run (gate) AND teams:run (resolved-family handler check). Teams-
+        # only tokens should use the typed /a2a/teams/... route instead.
+        _agent, team, _workflow, client = multi_entity_authz_client
+        with patch.object(team, "arun", new_callable=AsyncMock) as mock_arun:
+            mock_arun.return_value = RunOutput(run_id="r", session_id="ctx", content="ok")
+            resp = client.post(
+                "/a2a/message/send",
+                json=_message_body(),
+                headers={"X-Agent-ID": team.id, "Authorization": f"Bearer {_token(['agents:run', 'teams:run'])}"},
+            )
+        assert resp.status_code not in (401, 403), resp.text
+
+
+# ----------------------------------------------------------- tasks:get read scoping
+
+
+class TestA2ATasksGetScoping:
+    def test_admin_can_poll_another_users_task(self, agent, authz_client):
+        # Admin read must be unfiltered (user_id=None passed to aget_run_output), matching REST.
+        with patch.object(agent, "aget_run_output", new_callable=AsyncMock) as mock_get:
+            mock_get.return_value = RunOutput(run_id="task-1", session_id="ctx-1", agent_id=AGENT_ID, content="x")
+            resp = authz_client.post(
+                f"/a2a/agents/{AGENT_ID}/v1/tasks:get",
+                json={"id": "r1", "params": {"id": "task-1", "contextId": "ctx-1"}},
+                headers={"Authorization": f"Bearer {_token(['agent_os:admin'], sub='admin-1')}"},
+            )
+            assert resp.status_code == 200, resp.text
+            assert mock_get.call_args.kwargs["user_id"] is None
+
+    def test_scoped_caller_pins_own_user_id(self, agent, authz_client):
+        with patch.object(agent, "aget_run_output", new_callable=AsyncMock) as mock_get:
+            mock_get.return_value = RunOutput(run_id="task-1", session_id="ctx-1", agent_id=AGENT_ID, content="x")
+            resp = authz_client.post(
+                f"/a2a/agents/{AGENT_ID}/v1/tasks:get",
+                json={"id": "r1", "params": {"id": "task-1", "contextId": "ctx-1"}},
+                headers={"Authorization": f"Bearer {_token(['agents:read', 'agents:run'], sub='user-1')}"},
+            )
+            assert resp.status_code == 200, resp.text
+            assert mock_get.call_args.kwargs["user_id"] == "user-1"
+
+    def test_missing_context_id_returns_400_not_500(self, authz_client):
+        resp = authz_client.post(
+            f"/a2a/agents/{AGENT_ID}/v1/tasks:get",
+            json={"id": "r1", "params": {"id": "task-1"}},
+            headers={"Authorization": f"Bearer {_token(['agents:read'])}"},
+        )
+        assert resp.status_code == 400, resp.text
