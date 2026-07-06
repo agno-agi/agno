@@ -31,7 +31,7 @@ from agno.os.utils import (
     resolve_team,
     resolve_workflow,
 )
-from agno.remote.base import RemoteDb
+from agno.remote.base import BaseRemote, RemoteDb
 from agno.run.agent import RunEvent, RunOutput
 from agno.run.team import TeamRunEvent, TeamRunOutput
 from agno.run.workflow import WorkflowRunEvent, WorkflowRunOutput
@@ -614,6 +614,12 @@ def _make_run_ownership_verifier(os: "AgentOS"):
     ):
         if component is None:
             raise Exception(f"Component {component_id} not found")
+        if isinstance(component, BaseRemote):
+            # Remote components keep their sessions on the remote OS -- there is no
+            # local session to prove ownership against (BaseRemote has no aget_session).
+            # Defer to the downstream helpers, mirroring the REST surface: continue
+            # raises RemoteContinuationUnsupported, cancel forwards to the remote.
+            return
         scoped_user_id = _scoped_caller_user_id()
         if scoped_user_id is None:
             return

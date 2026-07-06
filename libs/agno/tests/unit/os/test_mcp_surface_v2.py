@@ -241,9 +241,55 @@ async def test_get_session_runs_history_is_trimmed():
     trimmed = trim_session_run(RunSchema.from_dict(session["runs"][0]))
     assert trimmed["content"] == "hi there"
     assert trimmed["status"] == "COMPLETED"
+    assert trimmed["agent_id"] == "a-1"
     assert "messages" not in trimmed
     assert "events" not in trimmed
     assert "SECRET_PROMPT" not in str(trimmed)
+
+
+def test_trim_session_run_keeps_workflow_id():
+    """Workflow runs keep the id of the workflow that produced them, exactly like
+    agent and team runs keep agent_id/team_id in trimmed history."""
+    from agno.os.mcp_results import trim_session_run
+    from agno.os.schema import WorkflowRunSchema
+
+    run = WorkflowRunSchema.from_dict(
+        {"run_id": "wr-1", "workflow_id": "wf-1", "content": "wf result", "status": "COMPLETED"}
+    )
+    trimmed = trim_session_run(run)
+    assert trimmed["workflow_id"] == "wf-1"
+    assert trimmed["run_id"] == "wr-1"
+    assert "step_results" not in trimmed
+
+
+# ==================== Run-lifecycle ownership gate ====================
+
+
+async def test_run_ownership_gate_skips_remote_components(monkeypatch):
+    """A scoped caller acting on a remote component must not hit the local session
+    lookup -- BaseRemote has no aget_session, so the old path raised AttributeError.
+    The downstream helpers own the outcome (RemoteContinuationUnsupported for
+    continue, acancel_run forwarding for cancel), mirroring REST."""
+    from agno.agent.remote import RemoteAgent
+
+    monkeypatch.setattr(mcp_mod, "_scoped_caller_user_id", lambda: "user-1")
+    verify = mcp_mod._make_run_ownership_verifier(None)  # type: ignore[arg-type]
+    remote = RemoteAgent(base_url="http://remote.invalid:1", agent_id="remote-agent")
+
+    # Must not raise and must not attempt any network call.
+    await verify(remote, "agents", "remote-agent", "session-1", "run-1")
+
+
+async def test_run_ownership_gate_still_blocks_unowned_local_runs(monkeypatch):
+    monkeypatch.setattr(mcp_mod, "_scoped_caller_user_id", lambda: "user-1")
+    verify = mcp_mod._make_run_ownership_verifier(None)  # type: ignore[arg-type]
+
+    class _LocalAgent:
+        async def aget_session(self, session_id, user_id):
+            return None
+
+    with pytest.raises(Exception, match="Run not found"):
+        await verify(_LocalAgent(), "agents", "demo-agent", "session-1", "run-1")
 
 
 # ==================== Session service ====================
