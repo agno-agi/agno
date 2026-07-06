@@ -56,7 +56,7 @@ def _is_jwt_configured() -> bool:
 
     This covers cases where JWT middleware is set up manually (not via authorization=True).
     """
-    return bool(getenv("JWT_VERIFICATION_KEY") or getenv("JWT_JWKS_FILE"))
+    return bool(getenv("JWT_VERIFICATION_KEY") or getenv("JWT_JWKS_FILE") or getenv("JWT_JWKS_URL"))
 
 
 def get_authentication_dependency(settings: AgnoAPISettings):

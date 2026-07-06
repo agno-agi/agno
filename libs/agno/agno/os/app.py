@@ -1082,11 +1082,11 @@ class AgentOS:
             # Set authorization_enabled flag on settings so security key validation is skipped
             self.settings.authorization_enabled = True
 
-            jwt_configured = bool(getenv("JWT_VERIFICATION_KEY") or getenv("JWT_JWKS_FILE"))
+            jwt_configured = bool(getenv("JWT_VERIFICATION_KEY") or getenv("JWT_JWKS_FILE") or getenv("JWT_JWKS_URL"))
             security_key_set = bool(self.settings.os_security_key)
             if jwt_configured and security_key_set:
                 log_warning(
-                    "Both JWT configuration (JWT_VERIFICATION_KEY or JWT_JWKS_FILE) and OS_SECURITY_KEY are set. "
+                    "Both JWT configuration (JWT_VERIFICATION_KEY, JWT_JWKS_FILE or JWT_JWKS_URL) and OS_SECURITY_KEY are set. "
                     "With authorization=True, only JWT authorization will be used. "
                     "Consider removing OS_SECURITY_KEY from your environment."
                 )
@@ -1106,6 +1106,7 @@ class AgentOS:
 
         verify_audience = False
         jwks_file = None
+        jwks_url = None
         verification_keys = None
         algorithm = "RS256"
         audience = None
@@ -1116,6 +1117,7 @@ class AgentOS:
             algorithm = self.authorization_config.algorithm or "RS256"
             verification_keys = self.authorization_config.verification_keys
             jwks_file = self.authorization_config.jwks_file
+            jwks_url = self.authorization_config.jwks_url
             verify_audience = self.authorization_config.verify_audience or False
             audience = self.authorization_config.audience
             admin_scope = self.authorization_config.admin_scope
@@ -1127,6 +1129,7 @@ class AgentOS:
         jwt_validator = JWTValidator(
             verification_keys=verification_keys,
             jwks_file=jwks_file,
+            jwks_url=jwks_url,
             algorithm=algorithm,
         )
         fastapi_app.state.jwt_validator = jwt_validator
@@ -1167,6 +1170,7 @@ class AgentOS:
         middleware_kwargs: Dict[str, Any] = {
             "verification_keys": verification_keys,
             "jwks_file": jwks_file,
+            "jwks_url": jwks_url,
             "algorithm": algorithm,
             "authorization": self.authorization,
             "verify_audience": verify_audience,
