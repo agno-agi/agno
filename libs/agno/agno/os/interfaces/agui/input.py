@@ -221,8 +221,8 @@ def merge_tool_results_into_requirements(
         content, error = results_map[te.tool_call_id]
         data = _parse_payload(content)
         pause_type = req.pause_type
-        # user_feedback is out of V0 scope and never emitted; an unhandled pause_type falls through
-        # here and ensure_requirements_resolved raises on it (fail-loud, never a silent skip).
+        # Each pause_type resolves via its own core method (below). An unknown pause_type falls
+        # through unresolved and ensure_requirements_resolved raises on it (fail-loud, never a silent skip).
         if pause_type == "external_execution":
             if error:
                 te.tool_call_error = True
@@ -237,6 +237,11 @@ def merge_tool_results_into_requirements(
             if not isinstance(values, dict):
                 raise ValueError("user_input resume expects a {'values': {...}} object")
             req.provide_user_input(values)
+        elif pause_type == "user_feedback":
+            selections = data.get("selections")
+            if not isinstance(selections, dict) or not all(isinstance(v, list) for v in selections.values()):
+                raise ValueError("user_feedback resume expects {'selections': {<question>: [<labels>]}}")
+            req.provide_user_feedback(selections)
     return stored_requirements
 
 
