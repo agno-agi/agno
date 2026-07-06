@@ -9,7 +9,11 @@ from agno.tools.api import CustomApiTools
 
 def _skip_if_upstream_down(data: dict) -> None:
     # dog.ceo is a live third-party service; a 5xx from it (Cloudflare 520s are
-    # common) says nothing about our code, so it must not red the build.
+    # common) or a transport-level failure (SSL/connection errors yield an
+    # "error" dict with no status_code) says nothing about our code, so it
+    # must not red the build.
+    if "status_code" not in data:
+        pytest.skip(f"dog.ceo unreachable: {data.get('error', 'no response')}")
     if data["status_code"] >= 500:
         pytest.skip(f"dog.ceo unavailable (HTTP {data['status_code']})")
 
