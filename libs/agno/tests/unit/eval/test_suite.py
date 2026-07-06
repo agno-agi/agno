@@ -169,6 +169,24 @@ def test_case_with_either_check_constructs():
     _make_case(criteria=None, expected_tool_calls=("search_web",))
 
 
+def test_invalid_judge_mode_is_rejected_at_construction():
+    # judge_mode is a Literal, not enforced at runtime by the dataclass - guard it explicitly so a
+    # typo fails fast here, not silently as a degraded binary run after a model call is spent.
+    with pytest.raises(ValueError, match="judge_mode must be 'binary' or 'numeric'"):
+        _make_case(judge_mode="Numeric")
+
+
+def test_numeric_threshold_out_of_range_is_rejected_at_construction():
+    # A numeric judge_threshold outside 1-10 fails fast (mirroring AgentAsJudgeEval's own bound),
+    # so a bad bar is caught before the run rather than surfacing as a post-run judge error.
+    with pytest.raises(ValueError, match="judge_threshold must be 1-10"):
+        _make_case(judge_mode="numeric", judge_threshold=0)
+    with pytest.raises(ValueError, match="judge_threshold must be 1-10"):
+        _make_case(judge_mode="numeric", judge_threshold=11)
+    # Out of range is fine in binary mode - the threshold is never read.
+    _make_case(judge_mode="binary", judge_threshold=99)
+
+
 def test_exactly_one_of_agent_or_team_required():
     # A case takes exactly one of agent/team: neither leaves nothing to run, both is ambiguous.
     from agno.agent import Agent
@@ -632,7 +650,7 @@ def test_judge_only_case(monkeypatch):
 
 
 def test_binary_scoring_is_the_default(monkeypatch):
-    # Default judge_scoring forwards "binary" and the default threshold; no score captured.
+    # Default judge_mode forwards "binary" and the default threshold; no score captured.
     judge_instances, _ = _install_fake_evals(monkeypatch)
 
     result = run_cases([_make_case()]).results[0]
@@ -643,10 +661,10 @@ def test_binary_scoring_is_the_default(monkeypatch):
 
 
 def test_numeric_scoring_forwards_mode_and_threshold_and_captures_score(monkeypatch):
-    # judge_scoring="numeric" forwards the mode + per-case threshold to the judge (which derives
+    # judge_mode="numeric" forwards the mode + per-case threshold to the judge (which derives
     # passed = score >= threshold itself), and the 1-10 score lands on the result and the payload.
     judge_instances, _ = _install_fake_evals(monkeypatch, judge_passed=True, judge_score=8)
-    case = _make_case(judge_scoring="numeric", judge_threshold=8)
+    case = _make_case(judge_mode="numeric", judge_threshold=8)
 
     suite_result = run_cases([case])
     result = suite_result.results[0]
@@ -662,7 +680,7 @@ def test_numeric_scoring_forwards_mode_and_threshold_and_captures_score(monkeypa
 def test_numeric_score_below_threshold_fails_the_case(monkeypatch):
     # The judge computes passed=False when score < threshold; the suite reflects it faithfully.
     _install_fake_evals(monkeypatch, judge_passed=False, judge_score=5)
-    case = _make_case(judge_scoring="numeric", judge_threshold=7)
+    case = _make_case(judge_mode="numeric", judge_threshold=7)
 
     result = run_cases([case]).results[0]
 

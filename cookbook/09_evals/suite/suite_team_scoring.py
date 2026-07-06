@@ -50,7 +50,7 @@ CASES = (
         input="What is 4891 multiplied by 7238?",
         tags=("smoke",),
         criteria="States that the product is 35,401,058.",
-        judge_scoring="numeric",
+        judge_mode="numeric",
         judge_threshold=7,
         expected_tool_calls=("multiply",),
     ),
@@ -59,7 +59,7 @@ CASES = (
         team=assistant_team,
         input="Explain compound interest in one paragraph.",
         criteria="Explains that interest is earned on both the principal and previously earned interest.",
-        judge_scoring="numeric",
+        judge_mode="numeric",
         judge_threshold=7,
     ),
 )

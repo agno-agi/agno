@@ -61,15 +61,18 @@ class Case:
     # Per-case timeout in seconds; falls back to the runner's default_timeout
     timeout_seconds: Optional[int] = None
 
-    # Judge check - set `criteria` to enable AgentAsJudgeEval (binary pass/fail).
+    # Judge check - set `criteria` to enable AgentAsJudgeEval. Verdict is binary pass/fail by
+    # default; set judge_mode="numeric" for a 1-10 score gated on judge_threshold.
     criteria: Optional[str] = None
     # Per-case judge model override; falls back to the runner's judge_model=,
     # then AgentAsJudgeEval's default
     judge_model: Optional[Model] = None
-    # Judge scoring: "binary" is a pass/fail verdict; "numeric" grades 1-10 and passes when
+    # Judge scoring mode. "binary" is a pass/fail verdict; "numeric" grades 1-10 and passes when
     # the score meets judge_threshold (the judge computes both, so results still gate cleanly).
-    judge_scoring: Literal["binary", "numeric"] = "binary"
-    # Pass bar for numeric scoring (1-10); ignored when judge_scoring is "binary".
+    # Named judge_mode, not judge_scoring, to stay distinct from the judge_score it produces.
+    judge_mode: Literal["binary", "numeric"] = "binary"
+    # Pass bar for numeric scoring (1-10); read only when judge_mode is "numeric". Kept beside
+    # judge_mode (rather than folded into a single Optional) so a case documents its bar inline.
     judge_threshold: int = 7
 
     # Reliability check - set `expected_tool_calls` to enable ReliabilityEval.
@@ -95,6 +98,13 @@ class Case:
         # that verified nothing.
         if not self.criteria and not self.expected_tool_calls:
             raise ValueError(f"case {self.name!r} has no checks: set criteria and/or expected_tool_calls")
+        # Validate the judge config here, not at run time: Literal is not enforced at runtime, so a
+        # typo'd mode ("Numeric") or an out-of-range threshold would otherwise sail through
+        # construction and only surface as a judge error - after a full model run is already spent.
+        if self.judge_mode not in ("binary", "numeric"):
+            raise ValueError(f"case {self.name!r}: judge_mode must be 'binary' or 'numeric', got {self.judge_mode!r}")
+        if self.judge_mode == "numeric" and not 1 <= self.judge_threshold <= 10:
+            raise ValueError(f"case {self.name!r}: judge_threshold must be 1-10, got {self.judge_threshold}")
 
 
 @dataclass
@@ -365,7 +375,7 @@ async def _run_case_body(
                 criteria=case.criteria,
                 # Numeric mode grades 1-10 and derives passed = score >= threshold itself, so the
                 # verdict still gates cleanly; binary mode ignores threshold.
-                scoring_strategy=case.judge_scoring,
+                scoring_strategy=case.judge_mode,
                 threshold=case.judge_threshold,
                 model=case.judge_model or judge_model,
                 db=db,
