@@ -180,8 +180,8 @@ def test_judge_mode_is_a_binary_numeric_enum():
 
 
 def test_judge_mode_accepts_enum_member_and_equal_string():
-    # Passing the enum is the blessed path; the equal raw string still constructs (str-enum), so
-    # judge_mode="numeric" keeps working alongside JudgeMode.NUMERIC.
+    # The enum and its equal string both construct (str-enum): JudgeMode.NUMERIC and
+    # judge_mode="numeric" are interchangeable.
     _make_case(judge_mode=JudgeMode.NUMERIC, judge_threshold=8)
     _make_case(judge_mode="numeric", judge_threshold=8)
 
