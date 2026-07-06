@@ -59,9 +59,22 @@ class FakeAgentOS:
 
     def _account_response(self, account: Dict[str, Any], include_token: bool = False) -> Dict[str, Any]:
         payload = {k: v for k, v in account.items() if k != "token"}
+        # Render scopes in the parsed RBAC shape the server returns; the store keeps raw strings.
+        payload["scopes"] = [self._scope_object(s) for s in account.get("scopes") or []]
         if include_token:
             payload["token"] = account["token"]
         return payload
+
+    def _scope_object(self, raw: str) -> Dict[str, Any]:
+        parts = raw.split(":")
+        return {
+            "id": None,
+            "raw": raw,
+            "namespace": parts[0],
+            "sub_namespace": ":".join(parts[1:-1]) if len(parts) > 2 else None,
+            "permission": parts[-1],
+            "value": "allow",
+        }
 
     def _jsonrpc_response(self, payload: Dict[str, Any], headers: Optional[Dict[str, str]] = None) -> httpx.Response:
         if self.sse_responses:

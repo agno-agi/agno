@@ -21,6 +21,7 @@ from agno.os.config import (
     SessionConfig,
     TracesConfig,
 )
+from agno.os.scopes import split_scope
 from agno.os.utils import extract_input_media, get_run_input, get_session_name, to_utc_datetime
 from agno.session import AgentSession, TeamSession, WorkflowSession
 from agno.team.factory import TeamFactory
@@ -79,6 +80,36 @@ class InternalServerErrorResponse(BaseModel):
 
     detail: str = Field(..., description="Error detail message")
     error_code: Optional[str] = Field(None, description="Error code for categorization")
+
+
+class ScopeItem(BaseModel):
+    """Write shape for one scope grant — the RBAC payload shared by every scope-bearing API.
+
+    Endpoints that take scopes accept plain strings or these objects interchangeably.
+    """
+
+    scope: str = Field(..., description="Scope string, e.g. 'agents:*:run'")
+    effect: str = Field("allow", description="'allow' or 'deny'")
+
+
+class ScopeSchema(BaseModel):
+    """Read shape for one scope — the parsed RBAC payload shared by every scope-bearing API.
+
+    Mirrors the cloud RBAC scope shape ({raw, namespace, sub_namespace, permission, value})
+    so a frontend renders scopes from any AgentOS API with one integration.
+    """
+
+    id: Optional[str] = Field(None, description="Scope id (null — scopes aren't individually addressable)")
+    raw: str = Field(..., description="Original scope string, e.g. 'agents:*:run'")
+    namespace: str = Field(..., description="Resource namespace, e.g. 'agents'")
+    sub_namespace: Optional[str] = Field(None, description="Specific resource id or wildcard '*'")
+    permission: str = Field(..., description="Action, e.g. 'read' / 'run' / 'write'")
+    value: str = Field("allow", description="'allow' or 'deny'")
+
+    @classmethod
+    def from_raw(cls, raw: str, value: str = "allow") -> "ScopeSchema":
+        namespace, sub_namespace, permission = split_scope(raw)
+        return cls(raw=raw, namespace=namespace, sub_namespace=sub_namespace, permission=permission, value=value)
 
 
 class HealthResponse(BaseModel):

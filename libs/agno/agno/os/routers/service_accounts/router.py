@@ -160,7 +160,8 @@ def get_service_accounts_router(os_db: Any, settings: Any) -> APIRouter:
         _: bool = Depends(auth_dependency),
     ) -> ServiceAccountCreateResponse:
         """Mint a service account token. The plaintext token is returned exactly once."""
-        scopes = list(body.scopes) if body.scopes is not None else list(DEFAULT_SERVICE_ACCOUNT_SCOPES)
+        requested_scopes = body.scope_strings()
+        scopes = requested_scopes if requested_scopes is not None else list(DEFAULT_SERVICE_ACCOUNT_SCOPES)
         _validate_requested_scopes(request, body, scopes)
 
         existing = await _db_call("get_service_account_by_name", body.name)

@@ -1,9 +1,15 @@
-"""Pydantic request/response models for the service accounts API."""
+"""Pydantic request/response models for the service accounts API.
 
-from typing import Any, Dict, List, Optional
+Scopes ride the shared RBAC payload shapes (:class:`~agno.os.schema.ScopeItem` for
+writes, :class:`~agno.os.schema.ScopeSchema` for reads) so this API and the RBAC
+governance APIs present one payload structure to frontends.
+"""
+
+from typing import Any, Dict, List, Optional, Union
 
 from pydantic import BaseModel, Field, field_validator
 
+from agno.os.schema import ScopeItem, ScopeSchema
 from agno.os.service_accounts import (
     DEFAULT_EXPIRY_DAYS,
     get_principal,
@@ -17,10 +23,11 @@ class ServiceAccountCreate(BaseModel):
         max_length=63,
         description="Machine identity name (lowercase slug), e.g. 'claude-code' or 'github-actions'",
     )
-    scopes: Optional[List[str]] = Field(
+    scopes: Optional[List[Union[str, ScopeItem]]] = Field(
         default=None,
-        description="Scopes granted to the token. Defaults to run and read scopes: "
-        "agents:run, teams:run, workflows:run, sessions:read",
+        description="Scopes granted to the token, as plain strings or {scope, effect} objects "
+        "(the shared RBAC write shape; token scopes are grants, so only effect='allow' is accepted). "
+        "Defaults to run and read scopes: agents:run, teams:run, workflows:run, sessions:read",
     )
     expires_in_days: Optional[int] = Field(
         default=DEFAULT_EXPIRY_DAYS,
@@ -48,6 +55,22 @@ class ServiceAccountCreate(BaseModel):
             )
         return v
 
+    @field_validator("scopes")
+    @classmethod
+    def validate_scopes(cls, v: Optional[List[Union[str, ScopeItem]]]) -> Optional[List[Union[str, ScopeItem]]]:
+        for item in v or []:
+            if isinstance(item, ScopeItem) and item.effect != "allow":
+                raise ValueError(
+                    f"Token scopes are grants: effect must be 'allow' (got {item.effect!r} for {item.scope!r})"
+                )
+        return v
+
+    def scope_strings(self) -> Optional[List[str]]:
+        """The requested scopes as raw strings, whichever write shape the client used."""
+        if self.scopes is None:
+            return None
+        return [item if isinstance(item, str) else item.scope for item in self.scopes]
+
 
 class ServiceAccountResponse(BaseModel):
     """Service account metadata. Never includes the token hash or plaintext."""
@@ -56,7 +79,9 @@ class ServiceAccountResponse(BaseModel):
     name: str
     principal: str = Field(..., description="The user_id attached to runs made with this token, e.g. 'sa:claude-code'")
     token_prefix: str = Field(..., description="First characters of the token, for display only")
-    scopes: List[str]
+    scopes: List[ScopeSchema] = Field(
+        default_factory=list, description="Scopes granted to the token, in the shared RBAC read shape"
+    )
     created_at: int
     expires_at: Optional[int] = None
     last_used_at: Optional[int] = None
@@ -70,7 +95,7 @@ class ServiceAccountResponse(BaseModel):
             name=data["name"],
             principal=get_principal(data["name"]),
             token_prefix=data["token_prefix"],
-            scopes=data.get("scopes") or [],
+            scopes=[ScopeSchema.from_raw(scope) for scope in data.get("scopes") or []],
             created_at=data["created_at"],
             expires_at=data.get("expires_at"),
             last_used_at=data.get("last_used_at"),

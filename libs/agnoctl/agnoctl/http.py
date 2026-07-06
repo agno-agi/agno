@@ -47,12 +47,14 @@ class ServiceAccount:
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "ServiceAccount":
+        # Servers send scopes as parsed RBAC objects ({raw, namespace, ...}) or as
+        # plain strings; keep the raw string either way.
         return cls(
             id=data["id"],
             name=data["name"],
             principal=data.get("principal") or "sa:" + data["name"],
             token_prefix=data.get("token_prefix") or "",
-            scopes=data.get("scopes") or [],
+            scopes=[s if isinstance(s, str) else s.get("raw", "") for s in data.get("scopes") or []],
             created_at=data.get("created_at"),
             expires_at=data.get("expires_at"),
             last_used_at=data.get("last_used_at"),
