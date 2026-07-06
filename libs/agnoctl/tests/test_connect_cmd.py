@@ -336,6 +336,65 @@ def test_connect_chatgpt_public_url_has_no_unreachable_note(monkeypatch, fake_cl
     assert entry["note"] is None
 
 
+def test_connect_claude_ai_prints_manual_instructions(monkeypatch, fake_os, fake_clients):
+    """claude-ai is opt-in like chatgpt: mints nothing, reports a 'manual' status (exit 0)."""
+    result = _connect(["--clients", "claude-ai"])
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert len(payload["results"]) == 1
+    entry = payload["results"][0]
+    assert entry["client"] == "claude-ai"
+    assert entry["status"] == "manual"
+    assert entry["url"] == MCP_URL
+    assert any("claude.ai" in step for step in entry["instructions"])
+    # localhost AgentOS is unreachable from Claude's cloud: the note must say so.
+    assert "public HTTPS" in entry["note"]
+    assert fake_os.create_calls == 0
+
+
+def test_connect_public_url_surfaces_chat_apps(monkeypatch, fake_clients):
+    """AGENTOS_URL pointing at a deployed AgentOS: coding agents connect to it, and the
+    report additionally surfaces the Claude and ChatGPT app setup steps."""
+    fake = FakeAgentOS()
+    install_fake(monkeypatch, fake)
+    monkeypatch.setenv("AGENTOS_URL", "https://os.example.com")
+    monkeypatch.setenv("AGNO_ADMIN_TOKEN", fake.security_key)
+    result = runner.invoke(app, ["connect", "--json"])
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+
+    assert payload["os"]["url"] == "https://os.example.com"
+    assert payload["os"]["url_source"] == "env"
+    by_client = {r["client"]: r for r in payload["results"]}
+    assert set(by_client) == {"claude-code", "codex", "cursor", "claude-ai", "chatgpt"}
+    for client in ("claude-code", "codex", "cursor"):
+        assert by_client[client]["status"] == "connected"
+    for chat_app in ("claude-ai", "chatgpt"):
+        assert by_client[chat_app]["status"] == "manual"
+        assert by_client[chat_app]["url"] == "https://os.example.com/mcp"
+        assert by_client[chat_app]["note"] is None
+
+
+def test_connect_localhost_does_not_surface_chat_apps(monkeypatch, fake_os, fake_clients):
+    """The chat apps' clouds cannot reach localhost, so auto-detect must not offer them."""
+    monkeypatch.setenv("AGNO_ADMIN_TOKEN", fake_os.security_key)
+    result = _connect()
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert {r["client"] for r in payload["results"]} == {"claude-code", "codex", "cursor"}
+
+
+def test_connect_explicit_clients_suppress_chat_app_autodetect(monkeypatch, fake_clients):
+    """--clients scopes the run: no chat-app entries are appended even on a public URL."""
+    fake = FakeAgentOS()
+    install_fake(monkeypatch, fake)
+    monkeypatch.setenv("AGNO_ADMIN_TOKEN", fake.security_key)
+    result = runner.invoke(app, ["connect", "--json", "--url", "https://os.example.com", "--clients", "cursor"])
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert {r["client"] for r in payload["results"]} == {"cursor"}
+
+
 def test_connect_mixes_chatgpt_with_a_real_client(monkeypatch, fake_os, fake_clients):
     """cursor connects and verifies; chatgpt is manual; the run still exits 0."""
     monkeypatch.setenv("AGNO_ADMIN_TOKEN", fake_os.security_key)

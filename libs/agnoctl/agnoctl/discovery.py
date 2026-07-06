@@ -37,6 +37,7 @@ class OSInfo:
     mcp_path: Optional[str]
     auth_mode: str  # "none" | "security_key" | "jwt" | "unknown"
     discovered_via: str  # "info" | "probe"
+    url_source: str = "default"  # "flag" | "env" | "default"
 
     @property
     def mcp_url(self) -> str:
@@ -54,16 +55,17 @@ class OSInfo:
             "mcp": {"enabled": self.mcp_enabled, "path": self.mcp_path},
             "auth_mode": self.auth_mode,
             "discovered_via": self.discovered_via,
+            "url_source": self.url_source,
         }
 
 
-def _candidate_urls(url: Optional[str]) -> List[str]:
+def _candidate_urls(url: Optional[str]) -> "tuple[List[str], str]":
     if url:
-        return [url.rstrip("/")]
+        return [url.rstrip("/")], "flag"
     env_url = os.environ.get(URL_ENV_VAR)
     if env_url:
-        return [env_url.rstrip("/")]
-    return list(DEFAULT_URLS)
+        return [env_url.rstrip("/")], "env"
+    return list(DEFAULT_URLS), "default"
 
 
 def _probe_mcp(base_url: str) -> bool:
@@ -86,7 +88,7 @@ def _probe_mcp(base_url: str) -> bool:
 
 def discover(url: Optional[str] = None) -> OSInfo:
     """Find a running AgentOS and return what the CLI needs to know about it."""
-    candidates = _candidate_urls(url)
+    candidates, url_source = _candidate_urls(url)
     for candidate in candidates:
         with AgentOSAPI(candidate) as api:
             if api.health() is None:
@@ -103,6 +105,7 @@ def discover(url: Optional[str] = None) -> OSInfo:
                     mcp_path=mcp_field.get("path") or ("/mcp" if mcp_field.get("enabled") else None),
                     auth_mode=auth_mode,
                     discovered_via="info",
+                    url_source=url_source,
                 )
 
             mcp_enabled = _probe_mcp(candidate)
@@ -113,6 +116,7 @@ def discover(url: Optional[str] = None) -> OSInfo:
                 mcp_path="/mcp" if mcp_enabled else None,
                 auth_mode=api.probe_auth_mode(),
                 discovered_via="probe",
+                url_source=url_source,
             )
 
     tried = ", ".join(candidates)

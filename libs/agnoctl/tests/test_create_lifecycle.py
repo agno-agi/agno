@@ -83,6 +83,14 @@ def test_create_unknown_template(fake_git):
     assert "agentos-docker" in payload["hint"]
 
 
+@pytest.mark.parametrize("template", sorted(create_module.TEMPLATES))
+def test_create_known_templates_clone_their_repo(fake_git, template):
+    result = runner.invoke(app, ["create", "my-os", "-t", template, "--json"])
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.output)["template"] == template
+    assert create_module.TEMPLATES[template] in fake_git.calls[0]
+
+
 def test_create_custom_url(fake_git):
     result = runner.invoke(app, ["create", "my-os", "-u", "https://example.com/custom.git", "--json"])
     assert result.exit_code == 0, result.output

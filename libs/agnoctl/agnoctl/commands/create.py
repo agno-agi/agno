@@ -19,6 +19,8 @@ from agnoctl.errors import CLIError
 TEMPLATES: Dict[str, str] = {
     "agentos-docker": "https://github.com/agno-agi/agentos-docker",
     "agentos-aws": "https://github.com/agno-agi/agentos-aws",
+    "agentos-fly": "https://github.com/agno-agi/agentos-fly",
+    "agentos-gcp": "https://github.com/agno-agi/agentos-gcp",
     "agentos-railway": "https://github.com/agno-agi/agentos-railway",
 }
 

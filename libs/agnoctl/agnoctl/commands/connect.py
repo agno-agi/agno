@@ -34,47 +34,76 @@ EXIT_PARTIAL = 3
 
 ROTATE_HINT = "Re-run with --rotate to revoke and re-mint it, or --skip-existing to leave it untouched."
 
-# ChatGPT is not a ClientAdapter: it has no local config to write and nothing agnoctl
-# can verify (the connector is added later, by a human, in ChatGPT's cloud UI). It is
-# handled out of band as printed setup instructions, opt-in via --clients only.
-CHATGPT_ALIASES = {"chatgpt", "gpt", "openai"}
+# The hosted chat apps (Claude, ChatGPT) are not ClientAdapters: they have no local
+# config to write and nothing agnoctl can verify (the connector is added later, by a
+# human, in the app's own UI). They are handled out of band as printed setup
+# instructions: opt-in via --clients, and included automatically when the AgentOS is on
+# a public URL the apps' clouds can actually reach.
+CHAT_APP_ALIASES = {
+    "claude-ai": "claude-ai",
+    "claudeai": "claude-ai",
+    "claude.ai": "claude-ai",
+    "chatgpt": "chatgpt",
+    "gpt": "chatgpt",
+    "openai": "chatgpt",
+}
+CHAT_APPS = ("claude-ai", "chatgpt")
+CHAT_APP_UI_NAMES = {"claude-ai": "Claude", "chatgpt": "ChatGPT"}
 
 
-def _split_chatgpt(clients: Optional[str]) -> "tuple[Optional[str], bool]":
-    """Peel a ChatGPT request out of --clients; returns (remaining clients, want_chatgpt)."""
+def _split_chat_apps(clients: Optional[str]) -> "tuple[Optional[str], List[str]]":
+    """Peel chat-app requests out of --clients; returns (remaining clients, wanted apps)."""
     if not clients:
-        return clients, False
+        return clients, []
     tokens = [t.strip() for t in clients.split(",") if t.strip()]
-    remaining = [t for t in tokens if t.lower() not in CHATGPT_ALIASES]
-    want_chatgpt = any(t.lower() in CHATGPT_ALIASES for t in tokens)
-    return (",".join(remaining) if remaining else None), want_chatgpt
+    remaining = [t for t in tokens if t.lower() not in CHAT_APP_ALIASES]
+    wanted: List[str] = []
+    for token in tokens:
+        app = CHAT_APP_ALIASES.get(token.lower())
+        if app is not None and app not in wanted:
+            wanted.append(app)
+    return (",".join(remaining) if remaining else None), wanted
 
 
-def _chatgpt_instructions(os_info: OSInfo, server_name: str) -> Dict[str, Any]:
-    """A manual-setup result for ChatGPT: honest steps, never a verified connection."""
-    mcp_url = os_info.mcp_url
+def _reachable_from_cloud(os_info: OSInfo) -> bool:
+    """True when the hosted chat apps can plausibly reach this AgentOS: public HTTPS."""
     lowered = os_info.base_url.lower()
-    is_public = mcp_url.lower().startswith("https://") and not any(
+    return os_info.mcp_url.lower().startswith("https://") and not any(
         h in lowered for h in ("localhost", "127.0.0.1", "0.0.0.0")
     )
+
+
+def _chat_app_instructions(app: str, os_info: OSInfo) -> Dict[str, Any]:
+    """A manual-setup result for a hosted chat app: honest steps, never a verified connection."""
+    ui_name = CHAT_APP_UI_NAMES[app]
     note = None
-    if not is_public:
+    if not _reachable_from_cloud(os_info):
         note = (
-            "ChatGPT adds connectors from its own cloud and cannot reach a local AgentOS at "
+            ui_name
+            + " adds connectors from its own cloud and cannot reach a local AgentOS at "
             + os_info.base_url
             + "; deploy it behind a public HTTPS URL (or a tunnel) before adding it."
         )
+    if app == "claude-ai":
+        where = (
+            "In claude.ai or the Claude desktop app: Settings -> Connectors -> Add custom connector, "
+            "paste the MCP URL below, and follow the prompts (custom connectors need a paid plan)."
+        )
+    else:
+        where = (
+            "In ChatGPT: Settings -> Connectors -> Add custom connector, paste the MCP URL below, and follow "
+            "the prompts (custom connectors need a paid plan; enable Developer Mode for full tool access)."
+        )
     return {
-        "client": "chatgpt",
+        "client": app,
         "status": "manual",
         "error": None,
-        "url": mcp_url,
+        "url": os_info.mcp_url,
         "instructions": [
-            "ChatGPT reaches MCP servers from its cloud, so the AgentOS must be on a public HTTPS URL.",
-            "ChatGPT's Connectors UI authenticates with OAuth, not bearer tokens, so a token-protected "
+            ui_name + " reaches MCP servers from its cloud, so the AgentOS must be on a public HTTPS URL.",
+            ui_name + "'s Connectors UI authenticates with OAuth, not bearer tokens, so a token-protected "
             "AgentOS cannot be added from the UI yet; use a public or OAuth-enabled AgentOS.",
-            "In ChatGPT: Settings -> Connectors -> Add custom connector, paste the MCP URL below, and follow "
-            "the prompts (custom connectors need a paid plan; enable Developer Mode for full tool access).",
+            where,
         ],
         "note": note,
     }
@@ -86,7 +115,7 @@ def _resolve_clients(clients: Optional[str], adapters: Dict[str, ClientAdapter])
         for raw in clients.split(","):
             key = CLIENT_ALIASES.get(raw.strip().lower())
             if key is None:
-                supported = ", ".join(sorted(set(CLIENT_ALIASES.keys())))
+                supported = ", ".join(sorted(set(CLIENT_ALIASES.keys()) | set(CHAT_APP_ALIASES.keys())))
                 raise CLIError("Unknown client: " + raw.strip(), hint="Supported clients: " + supported)
             adapter = adapters[key]
             if adapter not in selected:
@@ -154,8 +183,9 @@ def connect(
         None,
         "--clients",
         help=(
-            "Comma-separated clients (claude-code,claude-desktop,codex,cursor; chatgpt prints manual "
-            "setup steps). Default: detected."
+            "Comma-separated clients (claude-code,claude-desktop,codex,cursor; claude-ai and chatgpt "
+            "print manual setup steps). Default: detected, plus claude-ai/chatgpt steps when the "
+            "AgentOS is on a public URL."
         ),
     ),
     name: Optional[str] = typer.Option(
@@ -228,11 +258,12 @@ def _connect(
         )
     if not json_mode:
         version = " (agno " + os_info.version + ")" if os_info.version else ""
-        print_info("AgentOS at " + os_info.base_url + version + ", MCP at " + os_info.mcp_url)
+        source = " (from AGENTOS_URL)" if os_info.url_source == "env" else ""
+        print_info("AgentOS at " + os_info.base_url + version + source + ", MCP at " + os_info.mcp_url)
 
     adapters = build_adapters(project=project)
-    clients_remaining, want_chatgpt = _split_chatgpt(clients)
-    # Auto-detect only when no --clients was given; a chatgpt-only request selects no adapters.
+    clients_remaining, wanted_apps = _split_chat_apps(clients)
+    # Auto-detect only when no --clients was given; a chat-app-only request selects no adapters.
     selected = _resolve_clients(clients_remaining, adapters) if clients is None or clients_remaining else []
 
     minting = os_info.auth_mode not in ("none",) and bool(selected)
@@ -310,8 +341,13 @@ def _connect(
         if api is not None:
             api.close()
 
-    if want_chatgpt:
-        results.append(_chatgpt_instructions(os_info, server_name))
+    # Spot a deployed AgentOS: when discovery lands on a public URL (typically AGENTOS_URL
+    # set to the production domain), the hosted chat apps can use it too -- surface their
+    # setup steps without requiring --clients. An explicit --clients scopes the run.
+    if clients is None and _reachable_from_cloud(os_info):
+        wanted_apps = list(CHAT_APPS)
+    for app in wanted_apps:
+        results.append(_chat_app_instructions(app, os_info))
 
     _report(os_info, results, server_name, open_mcp_warning, json_mode)
 
@@ -500,7 +536,8 @@ def _report(
         elif r["status"] == "skipped":
             print_warning("  skipped        " + label + "  (" + str(r.get("error") or "") + ")")
         elif r["status"] == "manual":
-            print_warning("  action needed  " + label + "  (set up in the ChatGPT UI)")
+            ui_name = CHAT_APP_UI_NAMES.get(label, label)
+            print_warning("  action needed  " + label + "  (set up in the " + ui_name + " UI)")
             for step in r.get("instructions", []):
                 print_info("                 - " + step)
             if r.get("url"):
