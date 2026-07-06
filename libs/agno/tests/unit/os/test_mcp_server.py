@@ -977,18 +977,25 @@ async def test_pat_without_db_gets_service_accounts_disabled_401():
     assert response.json()["detail"] == "Service accounts are not enabled on this AgentOS instance"
 
 
-async def test_open_mode_with_db_stays_open_but_verifies_pats(tmp_path):
-    """No security key: requests without a PAT pass through (open, matching REST), but a
-    presented PAT is still verified and rejected when invalid."""
+async def test_open_mode_with_db_stays_open_and_ignores_stale_pats(tmp_path):
+    """A db-only AgentOS (no security key, no JWT) does NOT provision the SA verifier:
+    the operator did not configure auth, so no auth layer runs.
+
+    Regression: before this behaviour changed, ``AgentOS(db=db)`` silently attached the
+    verifier and installed the AuthMiddleware; a stale ``agno_pat_...`` in a client would
+    then 401 an instance the operator meant to be open. Now stale PATs are ignored --
+    same as any other bearer on an open instance.
+    """
     db = _sqlite_db(tmp_path)
     async with _mcp_http_client(_auth_os(security_key=None, db=db)) as client:
         open_response = await client.post("/mcp", json=_MCP_INIT_BODY, headers=_MCP_HEADERS)
-        bad_pat_response = await client.post(
+        stale_pat_response = await client.post(
             "/mcp", json=_MCP_INIT_BODY, headers=_bearer("agno_pat_invalid00000000000")
         )
     assert open_response.status_code == 200
-    assert bad_pat_response.status_code == 401
-    assert bad_pat_response.json()["detail"] == "Invalid or expired service account token"
+    # Stale PAT passes through anonymously on an open instance -- the verifier was never
+    # provisioned (no base auth mechanism configured), so nothing is looking at the token.
+    assert stale_pat_response.status_code == 200
 
 
 def test_no_auth_mode_installs_no_auth_layer():
