@@ -121,7 +121,7 @@ def build_run_tool_result(run_output: AnyRunOutput, result_mode: str = "trimmed"
     ``to_dict()`` (media base64-encoded there — no separate media blocks, so large
     payloads are not shipped twice).
     """
-    from fastmcp.tools.tool import ToolResult
+    from fastmcp.tools import ToolResult
 
     text = _content_text(run_output)
     if not text and getattr(run_output, "is_paused", False):

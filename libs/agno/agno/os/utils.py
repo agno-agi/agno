@@ -311,8 +311,13 @@ async def get_db(
             status_code=400, detail="The db_id query parameter is required when using multiple databases"
         )
 
+    # Raise if no database is registered (an empty dict, or ids mapped to empty lists)
+    all_dbs = [db for db_list in dbs.values() for db in db_list]
+    if not all_dbs:
+        raise HTTPException(status_code=400, detail="No database is configured on this AgentOS")
+
     # Return the first (and only) database
-    return next(db for dbs in dbs.values() for db in dbs)
+    return all_dbs[0]
 
 
 def _generate_knowledge_id(name: str, db_id: str, table_name: str) -> str:

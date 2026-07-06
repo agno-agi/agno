@@ -11,7 +11,7 @@ from fastmcp import Context, FastMCP
 from fastmcp.server.http import (
     StarletteWithLifespan,
 )
-from fastmcp.tools.tool import ToolResult
+from fastmcp.tools import ToolResult
 
 from agno.db.base import SessionType
 from agno.os.mcp_results import build_run_tool_result, trim_session_run
@@ -735,7 +735,9 @@ def build_mcp_server(
         return {
             "os_id": os.id or "AgentOS",
             "description": os.description,
-            "databases": [db.id for db_list in os.dbs.values() for db in db_list],
+            # A db shared by several components is registered once per component in os.dbs,
+            # so collect the ids into a set to list each database once -- matching the REST /config route.
+            "databases": list({db.id for db_id, dbs in os.dbs.items() for db in dbs}),
             "agents": agents_out,
             "teams": teams_out,
             "workflows": workflows_out,
