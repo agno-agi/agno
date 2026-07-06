@@ -184,6 +184,7 @@ def get_service_accounts_router(os_db: Any, settings: Any) -> APIRouter:
             created_at=now,
             expires_at=expires_at,
             created_by=getattr(request.state, "user_id", None),
+            user_id=getattr(request.state, "user_id", None),
         )
 
         try:

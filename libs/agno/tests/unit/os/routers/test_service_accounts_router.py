@@ -22,6 +22,7 @@ def _make_account_dict(**overrides):
     d = {
         "id": "sa-1",
         "name": "claude-code",
+        "user_id": "admin-user",
         "token_hash": "a" * 64,
         "token_prefix": "agno_pat_abc1234",
         "scopes": list(DEFAULT_SERVICE_ACCOUNT_SCOPES),
@@ -107,6 +108,34 @@ class TestCreateServiceAccount:
         stored = mock_db.create_service_account.call_args.args[0]
         assert body["token"] not in str(stored)
         assert stored["token_hash"] != body["token"]
+
+    def test_mint_records_owner_and_creator(self, mock_db, settings):
+        """A JWT-authenticated mint stamps both user_id (ownership) and created_by (audit)."""
+        app = FastAPI()
+
+        @app.middleware("http")
+        async def set_authenticated_user(request, call_next):
+            request.state.authenticated = True
+            request.state.user_id = "alice"
+            return await call_next(request)
+
+        app.include_router(get_service_accounts_router(os_db=mock_db, settings=settings))
+        response = TestClient(app).post("/service-accounts", json={"name": "claude-code"})
+        assert response.status_code == 201
+        body = response.json()
+        assert body["user_id"] == "alice"
+        assert body["created_by"] == "alice"
+        stored = mock_db.create_service_account.call_args.args[0]
+        assert stored["user_id"] == "alice"
+        assert stored["created_by"] == "alice"
+
+    def test_mint_without_user_context_leaves_owner_unset(self, client, mock_db):
+        """A root minted without a user context (os_security_key) has no owning user."""
+        response = client.post("/service-accounts", json={"name": "claude-code"})
+        assert response.status_code == 201
+        assert response.json()["user_id"] is None
+        stored = mock_db.create_service_account.call_args.args[0]
+        assert stored["user_id"] is None
 
     def test_custom_expiry(self, client):
         response = client.post("/service-accounts", json={"name": "cursor", "expires_in_days": 7})

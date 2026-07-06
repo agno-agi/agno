@@ -47,12 +47,13 @@ class TestServiceAccountsTable:
         assert "revoked_at IS NULL" in indexes[partial_index_name]
 
     def test_crud_roundtrip(self, postgres_db_real):
-        created = postgres_db_real.create_service_account(_account("sa-1", "claude-code", "hash-1"))
+        created = postgres_db_real.create_service_account(_account("sa-1", "claude-code", "hash-1", user_id="alice"))
         assert created["name"] == "claude-code"
 
         fetched = postgres_db_real.get_service_account("sa-1")
         assert fetched is not None
         assert fetched["scopes"] == ["agents:run", "sessions:read"]
+        assert fetched["user_id"] == "alice"
 
         by_hash = postgres_db_real.get_service_account_by_token_hash("hash-1")
         assert by_hash is not None and by_hash["id"] == "sa-1"

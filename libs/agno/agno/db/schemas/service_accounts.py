@@ -29,6 +29,10 @@ class ServiceAccount:
     token_hash: str
     token_prefix: str
     scopes: List[str] = field(default_factory=list)
+    # The user this account belongs to. Distinct from created_by (audit: who minted
+    # the token); user_id is ownership. None means a workspace-level machine account
+    # with no owning user.
+    user_id: Optional[str] = None
     created_at: Optional[int] = None
     expires_at: Optional[int] = None
     last_used_at: Optional[int] = None
@@ -62,6 +66,7 @@ class ServiceAccount:
         return {
             "id": self.id,
             "name": self.name,
+            "user_id": self.user_id,
             "token_hash": self.token_hash,
             "token_prefix": self.token_prefix,
             "scopes": self.scopes,
@@ -78,6 +83,7 @@ class ServiceAccount:
         valid_keys = {
             "id",
             "name",
+            "user_id",
             "token_hash",
             "token_prefix",
             "scopes",

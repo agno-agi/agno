@@ -40,12 +40,13 @@ class TestServiceAccountsTable:
         assert "revoked_at IS NULL" in indexes[partial_index_name]
 
     def test_crud_roundtrip(self, sqlite_db_real):
-        created = sqlite_db_real.create_service_account(_account("sa-1", "claude-code", "hash-1"))
+        created = sqlite_db_real.create_service_account(_account("sa-1", "claude-code", "hash-1", user_id="alice"))
         assert created["name"] == "claude-code"
 
         fetched = sqlite_db_real.get_service_account("sa-1")
         assert fetched is not None
         assert fetched["scopes"] == ["agents:run", "sessions:read"]
+        assert fetched["user_id"] == "alice"
 
         by_hash = sqlite_db_real.get_service_account_by_token_hash("hash-1")
         assert by_hash is not None and by_hash["id"] == "sa-1"

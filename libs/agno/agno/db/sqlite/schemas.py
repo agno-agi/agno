@@ -287,6 +287,9 @@ AUTH_TOKEN_TABLE_SCHEMA = {
 SERVICE_ACCOUNT_TABLE_SCHEMA = {
     "id": {"type": String, "primary_key": True, "nullable": False},
     "name": {"type": String, "nullable": False},
+    # Ownership: the user this account belongs to (created_by is audit: who minted it).
+    # NULL means a workspace-level machine account with no owning user.
+    "user_id": {"type": String, "nullable": True},
     "token_hash": {"type": String, "nullable": False, "unique": True, "index": True},
     "token_prefix": {"type": String, "nullable": False},
     "scopes": {"type": JSON, "nullable": False},

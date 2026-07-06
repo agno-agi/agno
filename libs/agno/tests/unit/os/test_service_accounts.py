@@ -42,6 +42,7 @@ def _account_row(
     return {
         "id": "sa-id-1",
         "name": name,
+        "user_id": "admin-user",
         "token_hash": token_hash,
         "token_prefix": "agno_pat_abc1234",
         "scopes": list(DEFAULT_SERVICE_ACCOUNT_SCOPES),

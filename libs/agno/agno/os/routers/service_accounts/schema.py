@@ -78,6 +78,11 @@ class ServiceAccountResponse(BaseModel):
     id: str
     name: str
     principal: str = Field(..., description="The user_id attached to runs made with this token, e.g. 'sa:claude-code'")
+    user_id: Optional[str] = Field(
+        default=None,
+        description="The user this account belongs to; None for workspace-level accounts. "
+        "Distinct from created_by, which records who minted the token.",
+    )
     token_prefix: str = Field(..., description="First characters of the token, for display only")
     scopes: List[ScopeSchema] = Field(
         default_factory=list, description="Scopes granted to the token, in the shared RBAC read shape"
@@ -101,6 +106,7 @@ class ServiceAccountResponse(BaseModel):
             last_used_at=data.get("last_used_at"),
             revoked_at=data.get("revoked_at"),
             created_by=data.get("created_by"),
+            user_id=data.get("user_id"),
         )
 
 
