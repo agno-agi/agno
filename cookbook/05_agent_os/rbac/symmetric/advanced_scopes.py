@@ -27,7 +27,7 @@ from datetime import UTC, datetime, timedelta
 import jwt
 from agno.agent import Agent
 from agno.db.postgres import PostgresDb
-from agno.models.openai import OpenAIChat
+from agno.models.openai import OpenAIResponses
 from agno.os import AgentOS
 from agno.os.config import AuthorizationConfig
 from agno.tools.websearch import WebSearchTools
@@ -46,7 +46,7 @@ db = PostgresDb(db_url="postgresql+psycopg://ai:ai@localhost:5532/ai")
 web_search_agent = Agent(
     id="web-search-agent",
     name="Web Search Agent",
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIResponses(id="gpt-5.5"),
     db=db,
     tools=[WebSearchTools()],
     add_history_to_context=True,
@@ -56,7 +56,7 @@ web_search_agent = Agent(
 analyst_agent = Agent(
     id="analyst-agent",
     name="Data Analyst Agent",
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIResponses(id="gpt-5.5"),
     db=db,
     add_history_to_context=True,
     markdown=True,
@@ -65,7 +65,7 @@ analyst_agent = Agent(
 admin_agent = Agent(
     id="admin-agent",
     name="Admin Agent",
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIResponses(id="gpt-5.5"),
     db=db,
     markdown=True,
 )
