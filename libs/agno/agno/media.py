@@ -21,6 +21,19 @@ class Image(BaseModel):
     format: Optional[str] = None  # E.g. 'png', 'jpeg', 'webp', 'gif'
     mime_type: Optional[str] = None  # E.g. 'image/png', 'image/jpeg'
 
+    @field_validator("mime_type", mode="before")
+    @classmethod
+    def validate_mime_type(cls, v: Optional[str]) -> Optional[str]:
+        if v is not None:
+            v = v.strip().lower()
+            valid_types = [
+                "image/png", "image/jpeg", "image/jpg", "image/gif", "image/webp",
+                "image/bmp", "image/tiff", "image/tif", "image/avif", "image/heic", "image/heif"
+            ]
+            if v not in valid_types:
+                raise ValueError(f"Invalid MIME type: {v}. Must be one of: {valid_types}")
+        return v
+
     # Input-specific fields
     detail: Optional[str] = (
         None  # low, medium, high or auto (per OpenAI spec https://platform.openai.com/docs/guides/vision?lang=node#low-or-high-fidelity-image-understanding)
@@ -139,6 +152,19 @@ class Audio(BaseModel):
     id: Optional[str] = None
     format: Optional[str] = None  # E.g. 'mp3', 'wav', 'ogg'
     mime_type: Optional[str] = None  # E.g. 'audio/mpeg', 'audio/wav'
+
+    @field_validator("mime_type", mode="before")
+    @classmethod
+    def validate_mime_type(cls, v: Optional[str]) -> Optional[str]:
+        if v is not None:
+            v = v.strip().lower()
+            valid_types = [
+                "audio/wav", "audio/wave", "audio/mp3", "audio/mpeg", "audio/ogg",
+                "audio/mp4", "audio/m4a", "audio/aac", "audio/flac"
+            ]
+            if v not in valid_types:
+                raise ValueError(f"Invalid MIME type: {v}. Must be one of: {valid_types}")
+        return v
 
     # Audio-specific metadata
     duration: Optional[float] = None  # Duration in seconds
@@ -269,6 +295,19 @@ class Video(BaseModel):
     id: Optional[str] = None
     format: Optional[str] = None  # E.g. 'mp4', 'mov', 'avi', 'webm'
     mime_type: Optional[str] = None  # E.g. 'video/mp4', 'video/quicktime'
+
+    @field_validator("mime_type", mode="before")
+    @classmethod
+    def validate_mime_type(cls, v: Optional[str]) -> Optional[str]:
+        if v is not None:
+            v = v.strip().lower()
+            valid_types = [
+                "video/x-flv", "video/quicktime", "video/mpeg", "video/mpegs",
+                "video/mpgs", "video/mpg", "video/mp4", "video/webm", "video/wmv", "video/3gpp"
+            ]
+            if v not in valid_types:
+                raise ValueError(f"Invalid MIME type: {v}. Must be one of: {valid_types}")
+        return v
 
     # Video-specific metadata
     duration: Optional[float] = None  # Duration in seconds
@@ -411,12 +450,25 @@ class File(BaseModel):
             raise ValueError("At least one of id, url, filepath, content or external must be provided")
         return data
 
-    @field_validator("mime_type")
+    @field_validator("mime_type", mode="before")
     @classmethod
     def validate_mime_type(cls, v):
         """Validate that the mime_type is one of the allowed types."""
-        if v is not None and v not in cls.valid_mime_types():
-            raise ValueError(f"Invalid MIME type: {v}. Must be one of: {cls.valid_mime_types()}")
+        if v is not None:
+            v = v.strip().lower()
+            if v not in cls.valid_mime_types():
+                raise ValueError(f"Invalid MIME type: {v}. Must be one of: {cls.valid_mime_types()}")
+        return v
+
+    @field_validator("filename", mode="before")
+    @classmethod
+    def validate_filename(cls, v: Optional[str]) -> Optional[str]:
+        if v is not None:
+            import os
+            v = os.path.basename(v)
+            v = "".join(c for c in v if c.isalnum() or c in "._- ").strip()
+            if not v:
+                v = "unnamed"
         return v
 
     @classmethod
