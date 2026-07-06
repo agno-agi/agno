@@ -885,6 +885,28 @@ async def test_authenticated_server_does_not_gate_hosts_by_default():
     assert response.status_code == 200
 
 
+def test_manual_jwt_middleware_on_base_app_is_not_open():
+    """A base_app carrying a manually installed JWTMiddleware is authenticated, so /mcp must not
+    be treated as open: no default localhost host gate is added (its deployed hostname would
+    otherwise be 400'd). Mirrors get_effective_auth_mode / the /info auth-mode detection, which
+    both recognize the manual-middleware path."""
+    from fastapi import FastAPI
+
+    from agno.os.middleware.jwt import JWTMiddleware
+
+    base = FastAPI()
+    base.add_middleware(JWTMiddleware, validate=False)  # validate=False counts as a JWT key source
+    os = AgentOS(
+        agents=[_agent()],
+        base_app=base,
+        enable_mcp_server=True,
+        mcp_config=MCPServerConfig(tools=[_ok_tool], enable_builtin_tools=False),
+    )
+    assert mcp_mod._mcp_server_is_open(os) is False
+    names = [m.cls.__name__ for m in get_mcp_server(os).user_middleware]
+    assert "_MCPTransportSecurityMiddleware" not in names
+
+
 # ==================== Security key + service account auth (non-JWT modes) ====================
 
 # Router dependencies never run for mounted sub-apps, so in non-JWT modes /mcp gets its own

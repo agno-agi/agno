@@ -1115,20 +1115,27 @@ def _add_transport_security_middleware(
 
 
 def _mcp_server_is_open(os: "AgentOS") -> bool:
-    """True when /mcp serves anonymous callers: no JWT source and no security key.
+    """True when /mcp serves anonymous callers: no auth is effectively enforced.
 
-    Mirrors ``AuthMiddleware.dispatch``: with neither a JWT source nor a security key, a
-    request carrying no bearer token passes through unauthenticated. A service-account
-    verifier alone does NOT close this -- PATs are only checked when actually presented, so
-    a caller that sends none is still served. This is the one configuration a rebound web
-    page could drive, so it is the case that needs default transport security.
+    Delegates to :func:`get_effective_auth_mode` -- the same detection the auth layer and
+    ``/info`` use -- so this agrees with them on every mode: ``AgentOS(authorization=True)``,
+    JWT env vars, a manually installed ``JWTMiddleware`` on a ``base_app``, and the security
+    key all count as authenticated. Only when it returns "none" does /mcp answer requests
+    carrying no bearer token (a service-account verifier alone does NOT close that path --
+    PATs are checked only when presented). That anonymous case is the one a rebound web page
+    could drive, so it is the case that needs default transport security. Authenticated
+    deployments rely on the bearer token instead, so their deployed hostname is not gated.
     """
-    from os import getenv
+    from agno.os.auth import get_effective_auth_mode
 
-    settings = getattr(os, "settings", None)
-    security_key = bool(getattr(settings, "os_security_key", None)) if settings is not None else False
-    jwt_env = bool(getenv("JWT_VERIFICATION_KEY") or getenv("JWT_JWKS_FILE"))
-    return not (bool(getattr(os, "authorization", False)) or jwt_env or security_key)
+    return (
+        get_effective_auth_mode(
+            getattr(os, "settings", None),
+            bool(getattr(os, "authorization", False)),
+            getattr(os, "base_app", None),
+        )
+        == "none"
+    )
 
 
 def get_mcp_server(
