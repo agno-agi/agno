@@ -87,7 +87,16 @@ class TestCreateServiceAccount:
         body = response.json()
         assert body["name"] == "claude-code"
         assert body["principal"] == "sa:claude-code"
-        assert body["scopes"] == DEFAULT_SERVICE_ACCOUNT_SCOPES
+        assert [s["raw"] for s in body["scopes"]] == list(DEFAULT_SERVICE_ACCOUNT_SCOPES)
+        # Scopes ride the shared RBAC read shape so governance and token UIs render alike
+        assert body["scopes"][0] == {
+            "id": None,
+            "raw": "agents:run",
+            "namespace": "agents",
+            "sub_namespace": None,
+            "permission": "run",
+            "value": "allow",
+        }
         assert body["token"].startswith(TOKEN_PREFIX)
         assert body["token_prefix"] == body["token"][:16]
         # Default expiry ~90 days out
@@ -152,7 +161,37 @@ class TestCreateServiceAccount:
             json={"name": "ci", "scopes": ["sessions:write"], "allow_privileged_scopes": True},
         )
         assert response.status_code == 201
-        assert response.json()["scopes"] == ["sessions:write"]
+        assert [s["raw"] for s in response.json()["scopes"]] == ["sessions:write"]
+
+    def test_mint_accepts_scope_objects(self, client):
+        # The shared RBAC write shape ({scope, effect}) is accepted alongside plain strings
+        response = client.post(
+            "/service-accounts",
+            json={"name": "ci", "scopes": [{"scope": "agents:run", "effect": "allow"}, "sessions:read"]},
+        )
+        assert response.status_code == 201
+        assert [s["raw"] for s in response.json()["scopes"]] == ["agents:run", "sessions:read"]
+
+    def test_mint_rejects_deny_effect(self, client):
+        # Token scopes are pure grants; a deny rule belongs on a role, not a token
+        response = client.post(
+            "/service-accounts",
+            json={"name": "ci", "scopes": [{"scope": "agents:run", "effect": "deny"}]},
+        )
+        assert response.status_code == 422
+        assert "allow" in response.text
+
+    def test_per_resource_scope_parses_into_sub_namespace(self, client):
+        response = client.post("/service-accounts", json={"name": "ci", "scopes": ["agents:my-agent:run"]})
+        assert response.status_code == 201
+        assert response.json()["scopes"][0] == {
+            "id": None,
+            "raw": "agents:my-agent:run",
+            "namespace": "agents",
+            "sub_namespace": "my-agent",
+            "permission": "run",
+            "value": "allow",
+        }
 
     def test_duplicate_active_name_conflicts(self, client, mock_db):
         mock_db.get_service_account_by_name = MagicMock(return_value=_make_account_dict())
@@ -308,7 +347,7 @@ class TestCreateServiceAccountSecurityKeyRoot:
             json={"name": "ci", "scopes": ["agent_os:admin"], "allow_privileged_scopes": True},
         )
         assert response.status_code == 201, response.text
-        assert response.json()["scopes"] == ["agent_os:admin"]
+        assert [s["raw"] for s in response.json()["scopes"]] == ["agent_os:admin"]
 
     def test_invalid_security_key_is_rejected(self, mock_db):
         settings = AgnoAPISettings(os_security_key="root-key-123")
@@ -344,6 +383,10 @@ class TestListServiceAccounts:
         entry = body["data"][0]
         assert entry["token_prefix"] == "agno_pat_abc1234"
         assert entry["principal"] == "sa:claude-code"
+        # List responses carry the same parsed scope shape as the create response
+        assert [s["raw"] for s in entry["scopes"]] == list(DEFAULT_SERVICE_ACCOUNT_SCOPES)
+        assert entry["scopes"][0]["namespace"] == "agents"
+        assert entry["scopes"][0]["value"] == "allow"
         assert "token" not in entry
         assert "token_hash" not in entry
         assert "a" * 64 not in response.text

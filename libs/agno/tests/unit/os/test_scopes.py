@@ -8,6 +8,7 @@ from agno.os.scopes import (
     get_resource_context_from_path,
     has_required_scopes,
     parse_scope,
+    split_scope,
 )
 
 
@@ -75,6 +76,29 @@ class TestParseScope:
     def test_unknown_scope(self):
         parsed = parse_scope("malformed:scope:with:too:many:parts")
         assert parsed.scope_type == "unknown"
+
+
+class TestSplitScope:
+    """The wire-format split behind the {raw, namespace, sub_namespace, permission} payloads."""
+
+    def test_global_scope(self):
+        assert split_scope("agents:read") == ("agents", None, "read")
+
+    def test_per_resource_scope(self):
+        assert split_scope("agents:my-agent:run") == ("agents", "my-agent", "run")
+
+    def test_wildcard_scope(self):
+        assert split_scope("agents:*:run") == ("agents", "*", "run")
+
+    def test_admin_scope_splits_literally(self):
+        # No admin special-casing on the wire: UIs see the literal parts
+        assert split_scope("agent_os:admin") == ("agent_os", None, "admin")
+
+    def test_extra_segments_fold_into_sub_namespace(self):
+        assert split_scope("agents:a:b:run") == ("agents", "a:b", "run")
+
+    def test_malformed_scope(self):
+        assert split_scope("justoneword") == ("justoneword", None, "unknown")
 
 
 class TestHasRequiredScopes:

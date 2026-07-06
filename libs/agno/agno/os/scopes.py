@@ -171,6 +171,25 @@ def parse_scope(scope: str, admin_scope: Optional[str] = None) -> ParsedScope:
     return ParsedScope(raw=scope, scope_type="unknown")
 
 
+def split_scope(raw: str) -> Tuple[str, Optional[str], str]:
+    """Split a scope string into its wire-format parts: (namespace, sub_namespace, permission).
+
+    This is the parse behind the ``{raw, namespace, sub_namespace, permission}`` payload
+    shape shared by every scope-bearing management API (service accounts, RBAC governance),
+    so all surfaces render a scope identically for UIs:
+
+        ``agents:read``    -> ("agents", None, "read")
+        ``agents:*:run``   -> ("agents", "*", "run")
+        ``agent_os:admin`` -> ("agent_os", None, "admin")
+    """
+    parts = raw.split(":")
+    if len(parts) == 2:
+        return parts[0], None, parts[1]
+    if len(parts) >= 3:
+        return parts[0], ":".join(parts[1:-1]), parts[-1]
+    return (parts[0] if parts else "unknown"), None, "unknown"
+
+
 def matches_scope(
     user_scope: ParsedScope,
     required_scope: ParsedScope,
