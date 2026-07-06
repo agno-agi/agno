@@ -164,6 +164,7 @@ postgres = ["psycopg-binary"]
 async_postgres = ["asyncpg"]
 async_mongo = ["pymongo>=4.9", "motor"]
 sqlite = ["sqlalchemy", "aiosqlite"]
+turso = ["sqlalchemy", "sqlalchemy-libsql>=0.2.0"]
 gcs = ["google-cloud-storage"]
 firestore = ["google-cloud-firestore"]
 redis = ["redis", "redisvl>=0.12.1"]
@@ -303,6 +304,7 @@ storage = [
   "agno[async_postgres]",
   "agno[async_mongo]",
   "agno[sqlite]",
+  "agno[turso]",
   "agno[gcs]",
   "agno[firestore]",
   "agno[redis]",
@@ -568,6 +570,8 @@ module = [
   "slack_sdk.*",
   "spider.*",
   "sqlalchemy.*",
+  "sqlalchemy_libsql.*",
+  "libsql.*",
   "starlette.*",
   "streamlit.*",
   "tavily.*",
