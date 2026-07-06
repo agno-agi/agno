@@ -67,19 +67,34 @@ def get_auth_token_from_request(request: Request) -> Optional[str]:
     return None
 
 
-async def _authenticate_service_account(request: Request, token: str) -> bool:
-    """
-    Authenticate a service account token (agno_pat_...) outside the JWT middleware,
-    i.e. in os_security_key or open deployments.
+async def _authenticate_service_account(
+    request: Request, token: str, treat_unverifiable_as_anonymous: bool = False
+) -> bool:
+    """Verify a service account token (agno_pat_...) and attach its identity to the request.
 
-    Attaches the account identity to request.state exactly like the JWT middleware
-    does (user_id = the sa:<name> principal, scopes = the account's scopes) and
-    enforces the account's scopes against the default scope mappings. Service account
-    scopes are ACL data owned by this AgentOS instance, so - unlike JWT scopes - they
-    are enforced in every deployment mode.
+    Runs for requests that carry an ``agno_pat_`` bearer but were not already
+    authenticated by the auth middleware. On success, request.state gets the same
+    identity the middleware would attach (user_id = the ``sa:<name>`` principal,
+    the account's scopes) and the scopes are enforced against the route. Scope
+    enforcement is never skipped: service account scopes are ACL data owned by
+    this AgentOS instance, unlike JWT claims.
+
+    ``treat_unverifiable_as_anonymous`` selects what happens when the token can
+    NOT be verified (unknown, expired, revoked, or verification unavailable):
+
+    - ``False`` (instances with auth configured): the request is rejected.
+    - ``True`` (open instances -- no security key, no JWT): the token is ignored
+      and the request proceeds anonymously, the same as any other unrecognized
+      header on a server without auth. This keeps a stale token left behind in a
+      client from locking out an instance that has no auth on it.
+
+    A token that DOES verify is never ignored: it attributes the request and its
+    scopes apply, in both modes.
     """
     verifier = getattr(request.app.state, "service_account_verifier", None)
     if verifier is None:
+        if treat_unverifiable_as_anonymous:
+            return True
         raise HTTPException(status_code=401, detail="Service accounts are not enabled on this AgentOS instance")
 
     admin_scope_raw = getattr(request.app.state, "admin_scope", None)
@@ -95,7 +110,11 @@ async def _authenticate_service_account(request: Request, token: str) -> bool:
     if error is not None:
         status_code, detail, required_scopes = error
         if status_code == 403:
+            # The token verified, so the account's ACL applies: insufficient scopes
+            # reject the request even on an otherwise-open instance.
             raise HTTPException(status_code=403, detail=build_insufficient_permissions_detail(required_scopes))
+        if treat_unverifiable_as_anonymous:
+            return True
         raise HTTPException(status_code=status_code, detail=detail)
 
     return True
@@ -194,12 +213,18 @@ def get_authentication_dependency(settings: AgnoAPISettings):
         if getattr(request.state, "authenticated", False):
             return True
 
-        # Service account tokens (agno_pat_...) are verified and scope-checked in
-        # every deployment mode - including os_security_key mode and open dev
-        # instances, where they also provide run attribution.
+        # Service account tokens (agno_pat_...) are dispatched by prefix: they never
+        # reach the JWT validator or the security-key comparison below. With auth
+        # configured (security key or JWT), a PAT must verify or the request is
+        # rejected. On an open instance a PAT that verifies still provides
+        # attribution and scope enforcement, while one that cannot be verified is
+        # ignored like any other unrecognized header on a server without auth.
         token = credentials.credentials if credentials else None
         if token and token.startswith(SERVICE_ACCOUNT_TOKEN_PREFIX):
-            return await _authenticate_service_account(request, token)
+            instance_has_auth = bool(settings and settings.os_security_key) or _is_jwt_configured()
+            return await _authenticate_service_account(
+                request, token, treat_unverifiable_as_anonymous=not instance_has_auth
+            )
 
         # Also skip if JWT is configured via environment variables
         if _is_jwt_configured():

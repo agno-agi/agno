@@ -1138,15 +1138,18 @@ class AgentOS:
                     "Consider removing OS_SECURITY_KEY from your environment."
                 )
 
-        # SAs ride on top of a base auth mechanism -- only provision the verifier when JWT
-        # or a security key is configured. PATs cannot be minted without JWT anyway, so
-        # provisioning it on a db-only instance is dead weight AND traps stale ``agno_pat_``
-        # tokens in clients into 401s on an otherwise-open server.
-        auth_configured = bool(self.authorization or jwt_env_configured or security_key)
-        service_account_verifier = self._get_service_account_verifier() if auth_configured else None
+        # The verifier is the *capability* to check ``agno_pat_`` tokens and exists
+        # whenever there is a db to verify against. It must be on app.state even when
+        # no auth is configured here: the WS authenticate action, the REST dependency,
+        # and any manually added JWTMiddleware all resolve it at request time. Whether
+        # a request is *required* to authenticate is a separate policy decision -- the
+        # middleware below only installs when the operator configured a base auth
+        # mechanism, so a db alone never locks an instance down.
+        service_account_verifier = self._get_service_account_verifier()
         if service_account_verifier is not None:
             fastapi_app.state.service_account_verifier = service_account_verifier
 
+        auth_configured = bool(self.authorization or jwt_env_configured or security_key)
         if auth_configured:
             # In JWT mode the security key is ignored (JWT takes precedence), matching
             # get_effective_auth_mode; pass None so the middleware doesn't fall back to it.

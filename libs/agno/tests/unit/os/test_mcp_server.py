@@ -978,13 +978,12 @@ async def test_pat_without_db_gets_service_accounts_disabled_401():
 
 
 async def test_open_mode_with_db_stays_open_and_ignores_stale_pats(tmp_path):
-    """A db-only AgentOS (no security key, no JWT) does NOT provision the SA verifier:
-    the operator did not configure auth, so no auth layer runs.
+    """A db-only AgentOS (no security key, no JWT) installs no auth layer on /mcp.
 
-    Regression: before this behaviour changed, ``AgentOS(db=db)`` silently attached the
-    verifier and installed the AuthMiddleware; a stale ``agno_pat_...`` in a client would
-    then 401 an instance the operator meant to be open. Now stale PATs are ignored --
-    same as any other bearer on an open instance.
+    The verifier still lives on app.state (the WS authenticate action and manually
+    added JWTMiddleware resolve it at request time), but no middleware runs for the
+    mounted app, so a stale ``agno_pat_...`` in a client is ignored -- same as any
+    other bearer on an open instance.
     """
     db = _sqlite_db(tmp_path)
     async with _mcp_http_client(_auth_os(security_key=None, db=db)) as client:
@@ -993,8 +992,8 @@ async def test_open_mode_with_db_stays_open_and_ignores_stale_pats(tmp_path):
             "/mcp", json=_MCP_INIT_BODY, headers=_bearer("agno_pat_invalid00000000000")
         )
     assert open_response.status_code == 200
-    # Stale PAT passes through anonymously on an open instance -- the verifier was never
-    # provisioned (no base auth mechanism configured), so nothing is looking at the token.
+    # Stale PAT passes through anonymously: no auth middleware is installed on an
+    # open instance, so nothing is looking at the token.
     assert stale_pat_response.status_code == 200
 
 
