@@ -5,7 +5,7 @@ writes, :class:`~agno.os.schema.ScopeSchema` for reads) so this API and the RBAC
 governance APIs present one payload structure to frontends.
 """
 
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -23,9 +23,9 @@ class ServiceAccountCreate(BaseModel):
         max_length=63,
         description="Machine identity name (lowercase slug), e.g. 'claude-code' or 'github-actions'",
     )
-    scopes: Optional[List[Union[str, ScopeItem]]] = Field(
+    scopes: Optional[List[ScopeItem]] = Field(
         default=None,
-        description="Scopes granted to the token, as plain strings or {scope, effect} objects "
+        description="Scopes granted to the token, as {scope, effect} objects "
         "(the shared RBAC write shape; token scopes are grants, so only effect='allow' is accepted). "
         "Defaults to run and read scopes: agents:run, teams:run, workflows:run, sessions:read",
     )
@@ -57,19 +57,19 @@ class ServiceAccountCreate(BaseModel):
 
     @field_validator("scopes")
     @classmethod
-    def validate_scopes(cls, v: Optional[List[Union[str, ScopeItem]]]) -> Optional[List[Union[str, ScopeItem]]]:
+    def validate_scopes(cls, v: Optional[List[ScopeItem]]) -> Optional[List[ScopeItem]]:
         for item in v or []:
-            if isinstance(item, ScopeItem) and item.effect != "allow":
+            if item.effect != "allow":
                 raise ValueError(
                     f"Token scopes are grants: effect must be 'allow' (got {item.effect!r} for {item.scope!r})"
                 )
         return v
 
     def scope_strings(self) -> Optional[List[str]]:
-        """The requested scopes as raw strings, whichever write shape the client used."""
+        """The requested scopes as raw strings."""
         if self.scopes is None:
             return None
-        return [item if isinstance(item, str) else item.scope for item in self.scopes]
+        return [item.scope for item in self.scopes]
 
 
 class ServiceAccountResponse(BaseModel):
