@@ -304,7 +304,7 @@ class TestCreateServiceAccountUnauthenticatedOpenMode:
     def test_anonymous_cannot_mint_default_token(self, anon_client):
         response = anon_client.post("/service-accounts", json={"name": "ci"})
         assert response.status_code == 401
-        assert "Authentication is required" in response.json()["detail"]
+        assert "JWT authentication is required" in response.json()["detail"]
 
     def test_anonymous_cannot_mint_never_expiring_run_token(self, anon_client):
         # The durable-credential case: a never-expiring run/read token would survive the
@@ -330,7 +330,7 @@ class TestCreateServiceAccountUnauthenticatedOpenMode:
             },
         )
         assert response.status_code == 401
-        assert "Authentication is required" in response.json()["detail"]
+        assert "JWT authentication is required" in response.json()["detail"]
 
     def test_anonymous_cannot_mint_write_scope_even_with_flag(self, anon_client):
         response = anon_client.post(
