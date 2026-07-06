@@ -125,21 +125,23 @@ class TestCreateServiceAccount:
             assert response.status_code == 422, bad_name
 
     def test_unknown_scope_rejected(self, client):
-        response = client.post("/service-accounts", json={"name": "ci", "scopes": ["bogus"]})
+        response = client.post("/service-accounts", json={"name": "ci", "scopes": [{"scope": "bogus"}]})
         assert response.status_code == 400
         assert "Invalid scope" in response.json()["detail"]
 
     def test_privileged_scope_requires_flag(self, client):
-        response = client.post("/service-accounts", json={"name": "ci", "scopes": ["sessions:write"]})
+        response = client.post("/service-accounts", json={"name": "ci", "scopes": [{"scope": "sessions:write"}]})
         assert response.status_code == 400
         assert "allow_privileged_scopes" in response.json()["detail"]
 
     def test_admin_scope_requires_flag(self, client):
-        response = client.post("/service-accounts", json={"name": "ci", "scopes": ["agent_os:admin"]})
+        response = client.post("/service-accounts", json={"name": "ci", "scopes": [{"scope": "agent_os:admin"}]})
         assert response.status_code == 400
 
     def test_service_accounts_scope_requires_flag(self, client):
-        response = client.post("/service-accounts", json={"name": "ci", "scopes": ["service_accounts:write"]})
+        response = client.post(
+            "/service-accounts", json={"name": "ci", "scopes": [{"scope": "service_accounts:write"}]}
+        )
         assert response.status_code == 400
 
     def test_privileged_scope_allowed_with_flag_for_authenticated_root(self, mock_db, settings):
@@ -158,19 +160,27 @@ class TestCreateServiceAccount:
         app.include_router(get_service_accounts_router(os_db=mock_db, settings=settings))
         response = TestClient(app).post(
             "/service-accounts",
-            json={"name": "ci", "scopes": ["sessions:write"], "allow_privileged_scopes": True},
+            json={"name": "ci", "scopes": [{"scope": "sessions:write"}], "allow_privileged_scopes": True},
         )
         assert response.status_code == 201
         assert [s["raw"] for s in response.json()["scopes"]] == ["sessions:write"]
 
     def test_mint_accepts_scope_objects(self, client):
-        # The shared RBAC write shape ({scope, effect}) is accepted alongside plain strings
+        # The write shape is the shared RBAC payload: {scope, effect} objects (effect optional)
         response = client.post(
             "/service-accounts",
-            json={"name": "ci", "scopes": [{"scope": "agents:run", "effect": "allow"}, "sessions:read"]},
+            json={"name": "ci", "scopes": [{"scope": "agents:run", "effect": "allow"}, {"scope": "sessions:read"}]},
         )
         assert response.status_code == 201
         assert [s["raw"] for s in response.json()["scopes"]] == ["agents:run", "sessions:read"]
+
+    def test_mint_rejects_plain_string_scopes(self, client):
+        # Objects-only by design: a bare string is a 422, keeping one canonical write shape
+        response = client.post(
+            "/service-accounts",
+            json={"name": "ci", "scopes": ["agents:run"]},
+        )
+        assert response.status_code == 422
 
     def test_mint_rejects_deny_effect(self, client):
         # Token scopes are pure grants; a deny rule belongs on a role, not a token
@@ -182,7 +192,7 @@ class TestCreateServiceAccount:
         assert "allow" in response.text
 
     def test_per_resource_scope_parses_into_sub_namespace(self, client):
-        response = client.post("/service-accounts", json={"name": "ci", "scopes": ["agents:my-agent:run"]})
+        response = client.post("/service-accounts", json={"name": "ci", "scopes": [{"scope": "agents:my-agent:run"}]})
         assert response.status_code == 201
         assert response.json()["scopes"][0] == {
             "id": None,
@@ -231,38 +241,40 @@ class TestCreateServiceAccountSubsetRule:
 
     def test_caller_cannot_grant_scopes_it_does_not_hold(self, mock_db, settings):
         client = self._client_with_state(mock_db, settings, ["service_accounts:write", "agents:run"])
-        response = client.post("/service-accounts", json={"name": "ci", "scopes": ["teams:run"]})
+        response = client.post("/service-accounts", json={"name": "ci", "scopes": [{"scope": "teams:run"}]})
         assert response.status_code == 403
         assert "teams:run" in response.json()["detail"]
 
     def test_caller_can_grant_subset_of_own_scopes(self, mock_db, settings):
         client = self._client_with_state(mock_db, settings, ["service_accounts:write", "agents:run", "sessions:read"])
-        response = client.post("/service-accounts", json={"name": "ci", "scopes": ["agents:run"]})
+        response = client.post("/service-accounts", json={"name": "ci", "scopes": [{"scope": "agents:run"}]})
         assert response.status_code == 201
 
     def test_admin_caller_can_grant_anything(self, mock_db, settings):
         client = self._client_with_state(mock_db, settings, ["agent_os:admin"])
         response = client.post(
             "/service-accounts",
-            json={"name": "ci", "scopes": ["sessions:delete"], "allow_privileged_scopes": True},
+            json={"name": "ci", "scopes": [{"scope": "sessions:delete"}], "allow_privileged_scopes": True},
         )
         assert response.status_code == 201
 
     def test_wildcard_scope_covers_per_resource_grant(self, mock_db, settings):
         client = self._client_with_state(mock_db, settings, ["agents:*:run"])
-        response = client.post("/service-accounts", json={"name": "ci", "scopes": ["agents:my-agent:run"]})
+        response = client.post("/service-accounts", json={"name": "ci", "scopes": [{"scope": "agents:my-agent:run"}]})
         assert response.status_code == 201
 
     def test_caller_can_grant_exact_per_resource_scope_it_holds(self, mock_db, settings):
         # Least-privilege delegation: holding exactly agents:my-agent:run must be
         # enough to grant agents:my-agent:run.
         client = self._client_with_state(mock_db, settings, ["service_accounts:write", "agents:my-agent:run"])
-        response = client.post("/service-accounts", json={"name": "ci", "scopes": ["agents:my-agent:run"]})
+        response = client.post("/service-accounts", json={"name": "ci", "scopes": [{"scope": "agents:my-agent:run"}]})
         assert response.status_code == 201
 
     def test_caller_cannot_grant_per_resource_scope_for_other_resource(self, mock_db, settings):
         client = self._client_with_state(mock_db, settings, ["service_accounts:write", "agents:my-agent:run"])
-        response = client.post("/service-accounts", json={"name": "ci", "scopes": ["agents:other-agent:run"]})
+        response = client.post(
+            "/service-accounts", json={"name": "ci", "scopes": [{"scope": "agents:other-agent:run"}]}
+        )
         assert response.status_code == 403
 
     def test_unscoped_unauthenticated_caller_cannot_mint(self, mock_db, settings):
@@ -272,7 +284,7 @@ class TestCreateServiceAccountSubsetRule:
         # TestCreateServiceAccountUnauthenticatedOpenMode.
         app = FastAPI()
         app.include_router(get_service_accounts_router(os_db=mock_db, settings=settings))
-        response = TestClient(app).post("/service-accounts", json={"name": "ci", "scopes": ["teams:run"]})
+        response = TestClient(app).post("/service-accounts", json={"name": "ci", "scopes": [{"scope": "teams:run"}]})
         assert response.status_code == 401
 
 
@@ -299,7 +311,11 @@ class TestCreateServiceAccountUnauthenticatedOpenMode:
         # operator later enabling auth. Refused even though its scopes are non-privileged.
         response = anon_client.post(
             "/service-accounts",
-            json={"name": "backdoor", "scopes": ["agents:run", "sessions:read"], "never_expires": True},
+            json={
+                "name": "backdoor",
+                "scopes": [{"scope": "agents:run"}, {"scope": "sessions:read"}],
+                "never_expires": True,
+            },
         )
         assert response.status_code == 401
 
@@ -308,7 +324,7 @@ class TestCreateServiceAccountUnauthenticatedOpenMode:
             "/service-accounts",
             json={
                 "name": "backdoor",
-                "scopes": ["agent_os:admin"],
+                "scopes": [{"scope": "agent_os:admin"}],
                 "allow_privileged_scopes": True,
                 "never_expires": True,
             },
@@ -319,14 +335,14 @@ class TestCreateServiceAccountUnauthenticatedOpenMode:
     def test_anonymous_cannot_mint_write_scope_even_with_flag(self, anon_client):
         response = anon_client.post(
             "/service-accounts",
-            json={"name": "w", "scopes": ["sessions:write"], "allow_privileged_scopes": True},
+            json={"name": "w", "scopes": [{"scope": "sessions:write"}], "allow_privileged_scopes": True},
         )
         assert response.status_code == 401
 
     def test_anonymous_cannot_mint_service_accounts_scope_even_with_flag(self, anon_client):
         response = anon_client.post(
             "/service-accounts",
-            json={"name": "minter", "scopes": ["service_accounts:write"], "allow_privileged_scopes": True},
+            json={"name": "minter", "scopes": [{"scope": "service_accounts:write"}], "allow_privileged_scopes": True},
         )
         assert response.status_code == 401
 
@@ -344,7 +360,7 @@ class TestCreateServiceAccountSecurityKeyRoot:
         response = TestClient(app).post(
             "/service-accounts",
             headers={"Authorization": "Bearer root-key-123"},
-            json={"name": "ci", "scopes": ["agent_os:admin"], "allow_privileged_scopes": True},
+            json={"name": "ci", "scopes": [{"scope": "agent_os:admin"}], "allow_privileged_scopes": True},
         )
         assert response.status_code == 201, response.text
         assert [s["raw"] for s in response.json()["scopes"]] == ["agent_os:admin"]

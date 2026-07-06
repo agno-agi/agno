@@ -20,12 +20,12 @@ from datetime import UTC, datetime, timedelta
 import jwt
 from agno.agent import Agent
 from agno.db.postgres import PostgresDb
-from agno.models.openai import OpenAIChat
+from agno.models.openai import OpenAIResponses
 from agno.os import AgentOS
 from agno.os.config import AuthorizationConfig
 from agno.tools.websearch import WebSearchTools
 from agno.utils.cryptography import generate_rsa_keys
-from agno.db.sqlite import SqliteDb
+
 # ---------------------------------------------------------------------------
 # Create Example
 # ---------------------------------------------------------------------------
@@ -33,8 +33,7 @@ from agno.db.sqlite import SqliteDb
 # Keys file path for persistence across reloads
 _KEYS_FILE = "/tmp/agno_rbac_demo_keys.json"
 
-# Setup database. Service accounts are stored here, next to sessions and memories.
-db = SqliteDb(db_file="tmp/service_accounts_demo.db")
+
 def _load_or_generate_keys():
     """Load keys from file or generate new ones. Persists keys for reload consistency."""
     import json
@@ -64,20 +63,12 @@ PRIVATE_KEY, PUBLIC_KEY = _load_or_generate_keys()
 
 # Setup database
 db = PostgresDb(db_url="postgresql+psycopg://ai:ai@localhost:5532/ai")
-PUBLIC_KEY = """-----BEGIN PUBLIC KEY-----
-MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA027xwZ4fhQJOG70ph8+Q
-diofYX1EE9JpD1fnWm34o/W5JKEaB35ZD+y7AbUieyxW+GJb6K5SM2saaiShcI1Q
-voxKC7YY6pa1/xF9FqpqQOCafeC0l9tAPS8VX9MBSe4JejrSU6tkpSl7soSLBW6r
-KD0qGDJ4Yg+Xqja5AXr0RZ5oehFh04tvAMLaRG9ik9HlziIp0vYMTHyWcui3Hips
-4Ddqr0uinCzu7f0p8XjCeMRfSEX3Mr4x7cJhL110ncx9Je62kybcQkDhMa70OJrG
-lrl1X8ycdThwA2EkN2fY+G1bH15VzXalj0GvQunMEskhiwU06E09G8h0c6mG/dKo
-rwIDAQAB
------END PUBLIC KEY-----"""
+
 # Create agents
 research_agent = Agent(
     id="research-agent",
     name="Research Agent",
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIResponses(id="gpt-5.5"),
     db=db,
     tools=[WebSearchTools()],
     add_history_to_context=True,
@@ -94,7 +85,6 @@ agent_os = AgentOS(
         verification_keys=[PUBLIC_KEY],
         algorithm="RS256",
     ),
-    db=db,
 )
 
 # Get the app
@@ -121,7 +111,7 @@ if __name__ == "__main__":
     - GET /agents/{agent_id}: requires "agents:read"
     - POST /agents/{agent_id}/runs: requires "agents:run"
     - GET /sessions: requires "sessions:read"
-    - GET /memory: requires "memory:read"
+    - GET /memories: requires "memories:read"
     - etc.
     
     Scope format:
