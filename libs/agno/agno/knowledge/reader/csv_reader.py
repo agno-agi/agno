@@ -62,12 +62,16 @@ class CSVReader(Reader):
         return [ContentType.CSV]
 
     def read(
-        self, file: Union[Path, IO[Any]], delimiter: str = ",", quotechar: str = '"', name: Optional[str] = None
+        self,
+        file: Union[Path, str, IO[Any]],
+        delimiter: str = ",",
+        quotechar: str = '"',
+        name: Optional[str] = None,
     ) -> List[Document]:
         """Read a CSV file and return a list of documents.
 
         Args:
-            file: Path to CSV file or file-like object.
+            file: Path (or path string) to CSV file, or file-like object.
             delimiter: CSV field delimiter. Default is comma.
             quotechar: CSV quote character. Default is double quote.
             name: Optional name override for the document.
@@ -79,7 +83,8 @@ class CSVReader(Reader):
             FileNotFoundError: If the file path doesn't exist.
         """
         try:
-            if isinstance(file, Path):
+            if isinstance(file, (Path, str)):
+                file = Path(file)
                 if not file.exists():
                     raise FileNotFoundError(f"Could not find file: {file}")
                 log_debug(f"Reading: {file}")
@@ -126,7 +131,7 @@ class CSVReader(Reader):
 
     async def async_read(
         self,
-        file: Union[Path, IO[Any]],
+        file: Union[Path, str, IO[Any]],
         delimiter: str = ",",
         quotechar: str = '"',
         page_size: int = 1000,
@@ -135,7 +140,7 @@ class CSVReader(Reader):
         """Read a CSV file asynchronously, processing batches of rows concurrently.
 
         Args:
-            file: Path to CSV file or file-like object.
+            file: Path (or path string) to CSV file, or file-like object.
             delimiter: CSV field delimiter. Default is comma.
             quotechar: CSV quote character. Default is double quote.
             page_size: Number of rows per page for large files.
@@ -148,7 +153,8 @@ class CSVReader(Reader):
             FileNotFoundError: If the file path doesn't exist.
         """
         try:
-            if isinstance(file, Path):
+            if isinstance(file, (Path, str)):
+                file = Path(file)
                 if not file.exists():
                     raise FileNotFoundError(f"Could not find file: {file}")
                 log_debug(f"Reading async: {file}")

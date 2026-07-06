@@ -67,6 +67,16 @@ def test_read_path(csv_reader, csv_file):
     assert documents[3].content == expected_content_4
 
 
+def test_read_str_path(csv_reader, csv_file):
+    documents = csv_reader.read(str(csv_file))
+
+    assert len(documents) == 4
+    assert documents[0].name == "test"
+
+    expected_content_1 = "name, age, city"
+    assert documents[0].content == expected_content_1
+
+
 def test_read_file_object(csv_reader):
     file_obj = io.BytesIO(SAMPLE_CSV.encode("utf-8"))
     file_obj.name = "memory.csv"
@@ -144,6 +154,15 @@ async def test_async_read_path(csv_reader, csv_file):
     assert documents[1].content == "John, 30, New York"
     assert documents[2].content == "Jane, 25, San Francisco"
     assert documents[3].content == "Bob, 40, Chicago"
+
+
+@pytest.mark.asyncio
+async def test_async_read_str_path(csv_reader, csv_file):
+    documents = await csv_reader.async_read(str(csv_file))
+
+    assert len(documents) == 4
+    assert documents[0].name == "test"
+    assert documents[0].content == "name, age, city"
 
 
 @pytest.fixture
