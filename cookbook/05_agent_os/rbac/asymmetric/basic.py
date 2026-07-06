@@ -60,6 +60,8 @@ def _load_or_generate_keys():
 
 PRIVATE_KEY, PUBLIC_KEY = _load_or_generate_keys()
 
+# Setup database
+db = PostgresDb(db_url="postgresql+psycopg://ai:ai@localhost:5532/ai")
 
 # Create agents
 research_agent = Agent(
