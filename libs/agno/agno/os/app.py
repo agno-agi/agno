@@ -1123,12 +1123,6 @@ class AgentOS:
         if self._internal_service_token:
             fastapi_app.state.internal_service_token = self._internal_service_token
 
-        # Expose the service account verifier for the auth dependency and any
-        # manually added JWTMiddleware.
-        service_account_verifier = self._get_service_account_verifier()
-        if service_account_verifier is not None:
-            fastapi_app.state.service_account_verifier = service_account_verifier
-
         # Install the single auth layer whenever any credential is configured. It
         # covers the REST routes and the mounted /mcp app together (one middleware on
         # the parent app), so the mounted sub-app carries no auth code of its own.
@@ -1143,7 +1137,17 @@ class AgentOS:
                     "With authorization=True, only JWT authorization will be used. "
                     "Consider removing OS_SECURITY_KEY from your environment."
                 )
-        if self.authorization or jwt_env_configured or security_key or service_account_verifier is not None:
+
+        # SAs ride on top of a base auth mechanism -- only provision the verifier when JWT
+        # or a security key is configured. PATs cannot be minted without JWT anyway, so
+        # provisioning it on a db-only instance is dead weight AND traps stale ``agno_pat_``
+        # tokens in clients into 401s on an otherwise-open server.
+        auth_configured = bool(self.authorization or jwt_env_configured or security_key)
+        service_account_verifier = self._get_service_account_verifier() if auth_configured else None
+        if service_account_verifier is not None:
+            fastapi_app.state.service_account_verifier = service_account_verifier
+
+        if auth_configured:
             # In JWT mode the security key is ignored (JWT takes precedence), matching
             # get_effective_auth_mode; pass None so the middleware doesn't fall back to it.
             effective_key = None if (self.authorization or jwt_env_configured) else security_key

@@ -53,8 +53,8 @@ class MCPServerConfig(BaseModel):
     # When ``include_tags`` is set, only built-ins carrying one of those tags are registered.
     # ``exclude_tags`` is then subtracted. Both are ignored when ``enable_builtin_tools`` is False.
     # Typed as ``MCPBuiltinTag`` (a ``Literal``) so the IDE autocompletes the values and pydantic
-    # rejects typos at construction with a message like "Input should be 'core', 'session' or
-    # 'memory'" -- otherwise an unknown tag would silently produce an empty server.
+    # rejects typos at construction with a message like "Input should be 'core' or 'session'"
+    # -- otherwise an unknown tag would silently produce an empty server.
     include_tags: Optional[Set[MCPBuiltinTag]] = None
     exclude_tags: Optional[Set[MCPBuiltinTag]] = None
 

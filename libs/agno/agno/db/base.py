@@ -1271,6 +1271,9 @@ class BaseDb(ABC):
     ) -> Optional[Dict[str, Any]]:
         """Update a service account by ID (e.g. set revoked_at or last_used_at).
 
+        Only SERVICE_ACCOUNT_MUTABLE_COLUMNS may be updated; any other column, an
+        empty update, or resetting revoked_at to None raises ValueError.
+
         With return_record=False the post-update re-fetch is skipped and None is
         returned on success too — for callers that discard the row (last_used touches).
         """
@@ -2160,7 +2163,11 @@ class AsyncBaseDb(ABC):
     async def update_service_account(
         self, service_account_id: str, return_record: bool = True, **kwargs: Any
     ) -> Optional[Dict[str, Any]]:
-        """Update a service account by ID (e.g. set revoked_at or last_used_at)."""
+        """Update a service account by ID (e.g. set revoked_at or last_used_at).
+
+        Only SERVICE_ACCOUNT_MUTABLE_COLUMNS may be updated; any other column, an
+        empty update, or resetting revoked_at to None raises ValueError.
+        """
         raise NotImplementedError
 
     async def delete_service_account(self, service_account_id: str) -> bool:
