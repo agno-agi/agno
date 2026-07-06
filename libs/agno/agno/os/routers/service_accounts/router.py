@@ -139,8 +139,7 @@ def get_service_accounts_router(os_db: Any, settings: Any) -> APIRouter:
             raise HTTPException(
                 status_code=401,
                 detail=(
-                    "Authentication is required to mint a service account. Configure "
-                    "OS_SECURITY_KEY or JWT authentication before creating tokens."
+                    "JWT authentication is required to mint a service account."
                 ),
             )
         effective_admin_scope = admin_scope or AgentOSScope.ADMIN.value
