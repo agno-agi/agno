@@ -15,7 +15,6 @@ from agno.os import AgentOS
 from agno.os.config import AuthorizationConfig
 from agno.os.settings import AgnoAPISettings
 
-
 JWT_SECRET = "test-jwt-secret"
 
 

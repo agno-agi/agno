@@ -97,3 +97,28 @@ class TestServiceAccountsTable:
 
         accounts, _ = postgres_db_real.get_service_accounts(sort_by="name", sort_order="asc")
         assert [account["name"] for account in accounts] == ["account-0", "account-1", "account-2"]
+
+    def test_update_guardrails(self, postgres_db_real):
+        postgres_db_real.create_service_account(_account("sa-1", "claude-code", "hash-1"))
+
+        # Immutable columns are rejected before reaching the database
+        with pytest.raises(ValueError, match="cannot modify"):
+            postgres_db_real.update_service_account("sa-1", token_hash="attacker-hash")
+        with pytest.raises(ValueError, match="cannot modify"):
+            postgres_db_real.update_service_account("sa-1", name="other", last_used_at=int(time.time()))
+
+        # Empty updates are rejected
+        with pytest.raises(ValueError, match="at least one column"):
+            postgres_db_real.update_service_account("sa-1")
+
+        # Revocation is one-way
+        postgres_db_real.update_service_account("sa-1", revoked_at=int(time.time()))
+        with pytest.raises(ValueError, match="one-way"):
+            postgres_db_real.update_service_account("sa-1", revoked_at=None)
+
+        # The record survived every rejected update untouched
+        account = postgres_db_real.get_service_account("sa-1")
+        assert account is not None
+        assert account["token_hash"] == "hash-1"
+        assert account["name"] == "claude-code"
+        assert account["revoked_at"] is not None

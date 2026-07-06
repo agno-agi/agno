@@ -16,7 +16,10 @@ from agno.db.schemas.culture import CulturalKnowledge
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
 from agno.db.schemas.memory import UserMemory
-from agno.db.schemas.service_accounts import resolve_service_account_sort_column
+from agno.db.schemas.service_accounts import (
+    resolve_service_account_sort_column,
+    validate_service_account_update,
+)
 from agno.db.sqlite.schemas import get_table_schema_definition
 from agno.db.sqlite.utils import (
     abulk_upsert_metrics,
@@ -4185,6 +4188,7 @@ class AsyncSqliteDb(AsyncBaseDb):
     async def update_service_account(
         self, service_account_id: str, return_record: bool = True, **kwargs: Any
     ) -> Optional[Dict[str, Any]]:
+        validate_service_account_update(kwargs)
         try:
             table = await self._get_table(table_type="service_accounts")
             if table is None:
