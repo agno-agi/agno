@@ -72,6 +72,28 @@ def test_chunking():
     assert all("chunk" in doc.meta_data for doc in documents)
 
 
+def test_default_chunk_is_false():
+    # JSONReader declares chunk: bool = False, so a plain instance should not chunk
+    reader = JSONReader()
+    assert reader.chunk is False
+
+
+def test_default_does_not_split_large_object(tmp_path):
+    # Large top-level objects should stay intact as valid JSON, not be chunked into fragments
+    json_path = tmp_path / "large.json"
+    test_data = [
+        {"id": 1, "text": "alpha " * 1200},
+        {"id": 2, "text": "beta " * 1200},
+    ]
+    json_path.write_text(json.dumps(test_data))
+
+    reader = JSONReader()
+    documents = reader.read(json_path)
+
+    assert len(documents) == 2
+    assert [json.loads(doc.content) for doc in documents] == test_data
+
+
 def test_file_not_found():
     reader = JSONReader()
     with pytest.raises(FileNotFoundError):
