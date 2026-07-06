@@ -723,8 +723,6 @@ class AgentOS:
         """
         if self.registry is None:
             self.registry = Registry()
-            # Auto-created purely to wire up primitives; suppress duplicate chatter.
-            self.registry._emit_dedup_logs = False
 
         if self._agents:
             existing_agents = {aid: a for a in self.registry.agents if (aid := getattr(a, "id", None)) is not None}
@@ -772,8 +770,6 @@ class AgentOS:
         """
         if self.registry is None:
             self.registry = Registry()
-            # Auto-created purely to wire up primitives; suppress duplicate chatter.
-            self.registry._emit_dedup_logs = False
 
         if self.knowledge_instances:
             existing_knowledge = {
@@ -802,8 +798,6 @@ class AgentOS:
         """
         if self.registry is None:
             self.registry = Registry()
-            # Auto-created purely to wire up primitives; suppress duplicate chatter.
-            self.registry._emit_dedup_logs = False
 
         registry = self.registry
         memory_by_id = {mid: m for m in registry.memory_managers if (mid := getattr(m, "id", None)) is not None}
@@ -872,8 +866,6 @@ class AgentOS:
         """
         if self.registry is None:
             self.registry = Registry()
-            # Auto-created purely to wire up primitives; suppress duplicate chatter.
-            self.registry._emit_dedup_logs = False
 
         try:
             collect_components_from_os(self._agents, self._teams, self._workflows, self.registry)

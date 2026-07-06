@@ -144,7 +144,16 @@ def build_run_tool_result(run_output: AnyRunOutput, result_mode: str = "trimmed"
 # tools, the history tool ships only what a frontend model needs, not the raw internals.
 # Lives here so the two "what MCP clients see of a run" policies (fresh results above,
 # history reads) stay in one file.
-SESSION_RUN_HISTORY_FIELDS = ("run_id", "run_input", "content", "status", "created_at", "agent_id", "team_id")
+SESSION_RUN_HISTORY_FIELDS = (
+    "run_id",
+    "run_input",
+    "content",
+    "status",
+    "created_at",
+    "agent_id",
+    "team_id",
+    "workflow_id",
+)
 
 
 def trim_session_run(run: Any) -> Dict[str, Any]:
