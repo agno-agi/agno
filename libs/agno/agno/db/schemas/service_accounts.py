@@ -20,6 +20,33 @@ def resolve_service_account_sort_column(sort_by: str) -> str:
     return sort_by if sort_by in SERVICE_ACCOUNT_SORTABLE_COLUMNS else "created_at"
 
 
+# Columns update_service_account may modify. Everything else is immutable after creation:
+# identity (id, name), credentials (token_hash, token_prefix), authorization (scopes,
+# user_id) and audit fields (created_at, created_by) — changing any of them would rebind
+# or rescope an already-minted token. Shared by every DB backend's update_service_account
+# so the guardrail cannot drift between them.
+SERVICE_ACCOUNT_MUTABLE_COLUMNS = frozenset({"last_used_at", "revoked_at"})
+
+
+def validate_service_account_update(updates: Dict[str, Any]) -> None:
+    """Reject an update payload that is empty, touches an immutable column, or un-revokes.
+
+    Raises ValueError so misuse fails loudly at the call site instead of reaching the
+    database (or being swallowed by an adapter's catch-all error handling).
+    """
+    if not updates:
+        raise ValueError("update_service_account requires at least one column to update")
+    disallowed = set(updates) - SERVICE_ACCOUNT_MUTABLE_COLUMNS
+    if disallowed:
+        raise ValueError(
+            f"update_service_account cannot modify {sorted(disallowed)}: "
+            f"only {sorted(SERVICE_ACCOUNT_MUTABLE_COLUMNS)} are mutable; "
+            "revoke the account and mint a new token instead"
+        )
+    if updates.get("revoked_at", ...) is None:
+        raise ValueError("revocation is one-way: revoked_at cannot be reset to None")
+
+
 @dataclass
 class ServiceAccount:
     """Model for a service account: a machine identity authenticated by an opaque token."""
