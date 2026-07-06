@@ -32,8 +32,7 @@ from agno.utils.cryptography import generate_rsa_keys
 # Keys file path for persistence across reloads
 _KEYS_FILE = "/tmp/agno_rbac_demo_keys.json"
 
-# Setup database. Service accounts are stored here, next to sessions and memories.
-db = SqliteDb(db_file="tmp/service_accounts_demo.db")
+
 def _load_or_generate_keys():
     """Load keys from file or generate new ones. Persists keys for reload consistency."""
     import json
