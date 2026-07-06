@@ -14,7 +14,7 @@ python cookbook/09_evals/suite/suite_team_scoring.py --json-output tmp/evals.jso
 import sys
 
 from agno.agent import Agent
-from agno.eval import Case, cli
+from agno.eval import Case, JudgeMode, cli
 from agno.models.openai import OpenAIResponses
 from agno.team.team import Team
 from agno.tools.calculator import CalculatorTools
@@ -50,7 +50,7 @@ CASES = (
         input="What is 4891 multiplied by 7238?",
         tags=("smoke",),
         criteria="States that the product is 35,401,058.",
-        judge_mode="numeric",
+        judge_mode=JudgeMode.NUMERIC,
         judge_threshold=7,
         expected_tool_calls=("multiply",),
     ),
@@ -59,7 +59,7 @@ CASES = (
         team=assistant_team,
         input="Explain compound interest in one paragraph.",
         criteria="Explains that interest is earned on both the principal and previously earned interest.",
-        judge_mode="numeric",
+        judge_mode=JudgeMode.NUMERIC,
         judge_threshold=7,
     ),
 )

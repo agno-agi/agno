@@ -11,6 +11,7 @@ __all__ = [
     "BaseEval",
     "Case",
     "CaseResult",
+    "JudgeMode",
     "PerformanceEval",
     "PerformanceResult",
     "ReliabilityEval",
@@ -41,7 +42,7 @@ def __getattr__(name: str):
         from agno.eval import reliability
 
         return getattr(reliability, name)
-    elif name in ("Case", "CaseResult", "SuiteResult", "arun_cases", "run_cases", "cli", "acli"):
+    elif name in ("Case", "CaseResult", "JudgeMode", "SuiteResult", "arun_cases", "run_cases", "cli", "acli"):
         from agno.eval import suite
 
         return getattr(suite, name)

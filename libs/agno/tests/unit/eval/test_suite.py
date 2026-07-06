@@ -7,7 +7,7 @@ from types import SimpleNamespace
 import pytest
 
 from agno.eval import suite
-from agno.eval.suite import Case, SuiteResult, acli, arun_cases, cli, run_cases
+from agno.eval.suite import Case, JudgeMode, SuiteResult, acli, arun_cases, cli, run_cases
 from agno.models.response import ToolExecution
 from agno.run.agent import RunErrorEvent, RunOutput, ToolCallCompletedEvent, ToolCallStartedEvent
 from agno.run.base import RunStatus
@@ -169,10 +169,27 @@ def test_case_with_either_check_constructs():
     _make_case(criteria=None, expected_tool_calls=("search_web",))
 
 
+def test_judge_mode_is_a_binary_numeric_enum():
+    # JudgeMode is the public, importable type; it defaults to BINARY and is a str-enum whose values
+    # are AgentAsJudgeEval's scoring_strategy vocabulary.
+    from agno.eval import JudgeMode as ExportedJudgeMode
+
+    assert ExportedJudgeMode is JudgeMode
+    assert (JudgeMode.BINARY, JudgeMode.NUMERIC) == ("binary", "numeric")
+    assert Case(name="d", agent=StubAgent(), input="q", criteria="c").judge_mode is JudgeMode.BINARY
+
+
+def test_judge_mode_accepts_enum_member_and_equal_string():
+    # Passing the enum is the blessed path; the equal raw string still constructs (str-enum), so
+    # judge_mode="numeric" keeps working alongside JudgeMode.NUMERIC.
+    _make_case(judge_mode=JudgeMode.NUMERIC, judge_threshold=8)
+    _make_case(judge_mode="numeric", judge_threshold=8)
+
+
 def test_invalid_judge_mode_is_rejected_at_construction():
-    # judge_mode is a Literal, not enforced at runtime by the dataclass - guard it explicitly so a
-    # typo fails fast here, not silently as a degraded binary run after a model call is spent.
-    with pytest.raises(ValueError, match="judge_mode must be 'binary' or 'numeric'"):
+    # A raw string bypasses the enum type, so guard it explicitly: a typo fails fast here, not
+    # silently as a degraded binary run after a model call is spent.
+    with pytest.raises(ValueError, match="judge_mode must be a JudgeMode"):
         _make_case(judge_mode="Numeric")
 
 
@@ -180,11 +197,11 @@ def test_numeric_threshold_out_of_range_is_rejected_at_construction():
     # A numeric judge_threshold outside 1-10 fails fast (mirroring AgentAsJudgeEval's own bound),
     # so a bad bar is caught before the run rather than surfacing as a post-run judge error.
     with pytest.raises(ValueError, match="judge_threshold must be 1-10"):
-        _make_case(judge_mode="numeric", judge_threshold=0)
+        _make_case(judge_mode=JudgeMode.NUMERIC, judge_threshold=0)
     with pytest.raises(ValueError, match="judge_threshold must be 1-10"):
-        _make_case(judge_mode="numeric", judge_threshold=11)
+        _make_case(judge_mode=JudgeMode.NUMERIC, judge_threshold=11)
     # Out of range is fine in binary mode - the threshold is never read.
-    _make_case(judge_mode="binary", judge_threshold=99)
+    _make_case(judge_mode=JudgeMode.BINARY, judge_threshold=99)
 
 
 def test_exactly_one_of_agent_or_team_required():
@@ -664,7 +681,7 @@ def test_numeric_scoring_forwards_mode_and_threshold_and_captures_score(monkeypa
     # judge_mode="numeric" forwards the mode + per-case threshold to the judge (which derives
     # passed = score >= threshold itself), and the 1-10 score lands on the result and the payload.
     judge_instances, _ = _install_fake_evals(monkeypatch, judge_passed=True, judge_score=8)
-    case = _make_case(judge_mode="numeric", judge_threshold=8)
+    case = _make_case(judge_mode=JudgeMode.NUMERIC, judge_threshold=8)
 
     suite_result = run_cases([case])
     result = suite_result.results[0]
@@ -680,7 +697,7 @@ def test_numeric_scoring_forwards_mode_and_threshold_and_captures_score(monkeypa
 def test_numeric_score_below_threshold_fails_the_case(monkeypatch):
     # The judge computes passed=False when score < threshold; the suite reflects it faithfully.
     _install_fake_evals(monkeypatch, judge_passed=False, judge_score=5)
-    case = _make_case(judge_mode="numeric", judge_threshold=7)
+    case = _make_case(judge_mode=JudgeMode.NUMERIC, judge_threshold=7)
 
     result = run_cases([case]).results[0]
 
