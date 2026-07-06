@@ -644,7 +644,10 @@ async def _mcp_http_client(os: AgentOS):
     app = os.get_app()
     async with app.router.lifespan_context(app):
         transport = httpx.ASGITransport(app=app)
-        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        # base_url sets the default Host header. Use localhost so the default-on
+        # rebinding protection for open servers allows it; host-gating tests override
+        # the Host explicitly to exercise the reject path.
+        async with httpx.AsyncClient(transport=transport, base_url="http://localhost") as client:
             yield client
 
 
@@ -859,10 +862,26 @@ async def test_transport_security_rejects_unknown_origin():
     assert "invalid_origin" in response.text
 
 
-async def test_no_transport_security_when_unset():
-    """Without allowed_hosts, no host validation is added (unchanged behavior)."""
+async def test_open_server_gets_default_rebinding_protection():
+    """An OPEN server (no JWT, no security key) with no allowed_hosts still gets localhost-only
+    protection by default: a rebound / non-localhost Host is rejected. This is the one config a
+    malicious web page could drive, so it must not serve anonymous cross-host requests."""
     async with _mcp_http_client(_security_os()) as client:
-        response = await client.post("/mcp", json=_MCP_INIT_BODY, headers=_headers(host="anything.example.com"))
+        rejected = await client.post("/mcp", json=_MCP_INIT_BODY, headers=_headers(host="evil.example.com"))
+        allowed = await client.post("/mcp", json=_MCP_INIT_BODY, headers=_headers(host="localhost:7777"))
+    assert rejected.status_code == 400
+    assert "invalid_host" in rejected.text
+    assert allowed.status_code == 200
+
+
+async def test_authenticated_server_does_not_gate_hosts_by_default():
+    """A server with auth configured relies on the bearer token to defeat rebinding, so its real
+    deployed hostname is not gated without allowed_hosts (no 421/400 regression). The security key
+    still guards the request; the Host itself passes."""
+    async with _mcp_http_client(_auth_os(security_key="test-key")) as client:
+        response = await client.post(
+            "/mcp", json=_MCP_INIT_BODY, headers={**_bearer("test-key"), "Host": "myapp.example.com"}
+        )
     assert response.status_code == 200
 
 
