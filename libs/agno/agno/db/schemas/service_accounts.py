@@ -34,6 +34,10 @@ class ServiceAccount:
     last_used_at: Optional[int] = None
     revoked_at: Optional[int] = None
     created_by: Optional[str] = None
+    # Ownership, not audit: the human principal this account belongs to (drives
+    # per-user isolation when user management lands). created_by stays audit-only
+    # (who minted the token). NULL means a workspace/machine-level account.
+    user_id: Optional[str] = None
 
     def __post_init__(self) -> None:
         self.created_at = now_epoch_s() if self.created_at is None else to_epoch_s(self.created_at)
@@ -70,6 +74,7 @@ class ServiceAccount:
             "last_used_at": self.last_used_at,
             "revoked_at": self.revoked_at,
             "created_by": self.created_by,
+            "user_id": self.user_id,
         }
 
     @classmethod
@@ -86,6 +91,7 @@ class ServiceAccount:
             "last_used_at",
             "revoked_at",
             "created_by",
+            "user_id",
         }
         filtered = {k: v for k, v in data.items() if k in valid_keys}
         if filtered.get("scopes") is None:

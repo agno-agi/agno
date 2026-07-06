@@ -106,6 +106,17 @@ class TestPrincipal:
         assert account.principal == "sa:cursor"
 
 
+class TestOwnership:
+    def test_user_id_roundtrips_and_defaults_to_none(self):
+        row = _account_row(name="owned")
+        # Absent key means a workspace-level account with no owning user
+        assert ServiceAccount.from_dict(row).user_id is None
+        row["user_id"] = "alice"
+        account = ServiceAccount.from_dict(row)
+        assert account.user_id == "alice"
+        assert account.to_dict()["user_id"] == "alice"
+
+
 class TestScopeHelpers:
     def test_invalid_scopes_detected(self):
         assert get_invalid_scopes(["agents:run", "bogus"]) == ["bogus"]

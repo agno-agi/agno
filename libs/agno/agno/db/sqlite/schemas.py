@@ -295,6 +295,9 @@ SERVICE_ACCOUNT_TABLE_SCHEMA = {
     "last_used_at": {"type": BigInteger, "nullable": True},
     "revoked_at": {"type": BigInteger, "nullable": True},
     "created_by": {"type": String, "nullable": True},
+    # Ownership (nullable): the human principal the account belongs to; NULL is a
+    # workspace/machine-level account. Distinct from created_by, which is audit-only.
+    "user_id": {"type": String, "nullable": True},
     # Names are reusable after revocation (rotation keeps the same identity),
     # so uniqueness only applies to active accounts.
     "_partial_unique_indexes": [{"name": "uq_active_name", "columns": ["name"], "where": "revoked_at IS NULL"}],

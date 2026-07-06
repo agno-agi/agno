@@ -86,7 +86,10 @@ class ServiceAccountResponse(BaseModel):
     expires_at: Optional[int] = None
     last_used_at: Optional[int] = None
     revoked_at: Optional[int] = None
-    created_by: Optional[str] = None
+    created_by: Optional[str] = Field(None, description="Audit: who minted the token")
+    user_id: Optional[str] = Field(
+        None, description="Ownership: the human principal this account belongs to; null for workspace-level accounts"
+    )
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "ServiceAccountResponse":
@@ -101,6 +104,7 @@ class ServiceAccountResponse(BaseModel):
             last_used_at=data.get("last_used_at"),
             revoked_at=data.get("revoked_at"),
             created_by=data.get("created_by"),
+            user_id=data.get("user_id"),
         )
 
 

@@ -30,6 +30,7 @@ def _make_account_dict(**overrides):
         "last_used_at": None,
         "revoked_at": None,
         "created_by": "admin-user",
+        "user_id": "admin-user",
     }
     d.update(overrides)
     return d
@@ -107,6 +108,10 @@ class TestCreateServiceAccount:
         stored = mock_db.create_service_account.call_args.args[0]
         assert body["token"] not in str(stored)
         assert stored["token_hash"] != body["token"]
+        # Ownership starts as the minting principal (both None here: security-key
+        # auth carries no user identity), and the response exposes it
+        assert stored.get("user_id") == stored.get("created_by")
+        assert body["user_id"] == body["created_by"]
 
     def test_custom_expiry(self, client):
         response = client.post("/service-accounts", json={"name": "cursor", "expires_in_days": 7})

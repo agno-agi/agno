@@ -91,6 +91,9 @@ class TestServiceAccountLifecycleWithJWT:
         assert pat.startswith("agno_pat_")
         assert body["principal"] == "sa:claude-code"
         assert body["created_by"] == "human-admin"
+        # Ownership is populated at mint from the authenticated principal;
+        # created_by stays audit-only (who minted)
+        assert body["user_id"] == "human-admin"
 
         with patch.object(test_agent, "arun", new_callable=AsyncMock) as mock_arun:
             mock_arun.return_value = _mock_run_output()
@@ -255,9 +258,7 @@ class TestServiceAccountLifecycleWithJWT:
         minted_id = minted.json()["id"]
 
         # The admin PAT can revoke without needing service_accounts:delete.
-        revoke = jwt_client.delete(
-            f"/service-accounts/{minted_id}", headers={"Authorization": f"Bearer {admin_pat}"}
-        )
+        revoke = jwt_client.delete(f"/service-accounts/{minted_id}", headers={"Authorization": f"Bearer {admin_pat}"})
         assert revoke.status_code == 204, revoke.text
 
 
