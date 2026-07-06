@@ -36,6 +36,7 @@ from agno.run import RunContext
 from agno.run.agent import RunPausedEvent
 from agno.run.requirement import RunRequirement
 from agno.tools import tool
+from agno.tools.function import UserFeedbackOption, UserFeedbackQuestion
 
 
 def _tool_call_start_ids(events) -> list:
@@ -77,6 +78,26 @@ class TestPauseEmission:
             external_execution_required=True,
         )
         assert "tc-external" in _tool_call_start_ids(on_run_completed(_paused(tool), StreamState()))
+
+    def test_user_feedback_emits_exactly_one_tool_call(self):
+        """A user_feedback (ask_user) tool already surfaces via the user_input partition
+        (core sets requires_user_input=True on it, models/base.py). It must emit EXACTLY
+        ONE TOOL_CALL_START -- a dedicated feedback partition would double-emit the same
+        tool_call_id (the tool sits in both partitions), a protocol violation."""
+        tool = ToolExecution(
+            tool_call_id="tc-feedback",
+            tool_name="ask_user",
+            tool_args={"questions": [{"question": "Pick a color", "options": [{"label": "red"}, {"label": "blue"}]}]},
+            requires_user_input=True,
+            user_feedback_schema=[
+                UserFeedbackQuestion(
+                    question="Pick a color",
+                    options=[UserFeedbackOption(label="red"), UserFeedbackOption(label="blue")],
+                )
+            ],
+        )
+        ids = _tool_call_start_ids(on_run_completed(_paused(tool), StreamState()))
+        assert ids.count("tc-feedback") == 1
 
 
 class TestPauseResolution:
@@ -139,6 +160,55 @@ class TestPauseResolution:
         req = RunRequirement(te)
         merge_tool_results_into_requirements([req], [_tm("tc3", "browser output")])
         assert req.external_execution_result == "browser output"
+
+    def test_user_feedback_provides_selections_and_answers(self):
+        te = ToolExecution(
+            tool_call_id="tc-fb",
+            tool_name="ask_user",
+            requires_user_input=True,
+            user_feedback_schema=[
+                UserFeedbackQuestion(
+                    question="Pick a color",
+                    options=[UserFeedbackOption(label="red"), UserFeedbackOption(label="blue")],
+                )
+            ],
+        )
+        req = RunRequirement(te)
+        merge_tool_results_into_requirements(
+            [req], [_tm("tc-fb", json.dumps({"selections": {"Pick a color": ["red"]}}))]
+        )
+        assert te.user_feedback_schema[0].selected_options == ["red"]
+        assert te.answered is True
+        assert req.is_resolved()
+
+    def test_user_feedback_malformed_payload_raises(self):
+        """A user_feedback payload missing the {'selections': {...}} envelope (or with a
+        non-list value) fails LOUD at merge -- the same fail-loud lane as user_input."""
+        te = ToolExecution(
+            tool_call_id="tc-fb-bad",
+            tool_name="ask_user",
+            requires_user_input=True,
+            user_feedback_schema=[UserFeedbackQuestion(question="Pick", options=[UserFeedbackOption(label="red")])],
+        )
+        with pytest.raises(ValueError, match="user_feedback resume expects"):
+            merge_tool_results_into_requirements(
+                [RunRequirement(te)], [_tm("tc-fb-bad", json.dumps({"Pick": ["red"]}))]
+            )
+
+    def test_user_feedback_empty_selections_not_resolved(self):
+        """An explicit empty {"selections": {}} is a valid dict (user picked nothing): accepted
+        gracefully (no raise), leaving the question unanswered so the resume guard re-prompts --
+        mirrors the user_input empty-values case."""
+        te = ToolExecution(
+            tool_call_id="tc-fb-empty",
+            tool_name="ask_user",
+            requires_user_input=True,
+            user_feedback_schema=[UserFeedbackQuestion(question="Pick", options=[UserFeedbackOption(label="red")])],
+        )
+        req = RunRequirement(te)
+        merge_tool_results_into_requirements([req], [_tm("tc-fb-empty", json.dumps({"selections": {}}))])
+        assert te.user_feedback_schema[0].selected_options is None
+        assert req.is_resolved() is False
 
 
 class TestDedupe:
