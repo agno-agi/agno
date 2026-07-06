@@ -696,6 +696,14 @@ def get_agent_router(
                 else:
                     raise HTTPException(status_code=400, detail="Unsupported file type")
 
+        # Media params are always passed explicitly below (from the processed uploads).
+        # Remote callers -- e.g. a RemoteAgent used as a team member -- serialize
+        # images/audio/videos/files into JSON form fields, which get_request_kwargs then
+        # surfaces in kwargs. Drop them here so they are not also forwarded via **kwargs,
+        # which would raise "got multiple values for keyword argument 'images'". (#8771)
+        for media_key in ("images", "audio", "videos", "files"):
+            kwargs.pop(media_key, None)
+
         # Extract auth token for remote agents
         auth_token = get_auth_token_from_request(request)
 
