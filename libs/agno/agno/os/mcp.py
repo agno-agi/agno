@@ -1114,6 +1114,30 @@ def _add_transport_security_middleware(
     mcp_app.add_middleware(_MCPTransportSecurityMiddleware)
 
 
+def _mcp_server_is_open(os: "AgentOS") -> bool:
+    """True when /mcp serves anonymous callers: no auth is effectively enforced.
+
+    Delegates to :func:`get_effective_auth_mode` -- the same detection the auth layer and
+    ``/info`` use -- so this agrees with them on every mode: ``AgentOS(authorization=True)``,
+    JWT env vars, a manually installed ``JWTMiddleware`` on a ``base_app``, and the security
+    key all count as authenticated. Only when it returns "none" does /mcp answer requests
+    carrying no bearer token (a service-account verifier alone does NOT close that path --
+    PATs are checked only when presented). That anonymous case is the one a rebound web page
+    could drive, so it is the case that needs default transport security. Authenticated
+    deployments rely on the bearer token instead, so their deployed hostname is not gated.
+    """
+    from agno.os.auth import get_effective_auth_mode
+
+    return (
+        get_effective_auth_mode(
+            getattr(os, "settings", None),
+            bool(getattr(os, "authorization", False)),
+            getattr(os, "base_app", None),
+        )
+        == "none"
+    )
+
+
 def get_mcp_server(
     os: "AgentOS",
 ) -> StarletteWithLifespan:
@@ -1133,10 +1157,11 @@ def get_mcp_server(
     mcp_config: "Optional[MCPServerConfig]" = getattr(os, "mcp_config", None)
 
     # Use http_app for Streamable HTTP transport (modern MCP standard).
-    # fastmcp >= 3.4.3 adds a Host/Origin guard with localhost-only defaults,
-    # which 421s deployed hosts. Transport security on /mcp is opt-in via
-    # MCPServerConfig.allowed_hosts (middleware below), so disable the built-in
-    # guard where the parameter exists.
+    # fastmcp >= 3.4.3 adds a Host/Origin guard with localhost-only defaults, which 421s
+    # deployed hosts before our own middleware runs. Disable it where the parameter exists
+    # and run AgentOS's single validation engine instead (the transport-security middleware
+    # below), which protects open servers by default and lets deployed hosts opt in via
+    # MCPServerConfig.allowed_hosts.
     http_app_kwargs: Dict[str, Any] = {"path": "/mcp"}
     if "host_origin_protection" in inspect.signature(mcp.http_app).parameters:
         http_app_kwargs["host_origin_protection"] = False
@@ -1170,7 +1195,20 @@ def get_mcp_server(
             mcp_app.add_middleware(cls, *args, **kwargs)
 
     # Outermost: built-in DNS-rebinding protection (runs first, before auth and tools).
-    if mcp_config is not None and mcp_config.allowed_hosts is not None:
-        _add_transport_security_middleware(mcp_app, mcp_config.allowed_hosts, mcp_config.allowed_origins)
+    #
+    # A configured ``allowed_hosts`` always applies. On top of that, when the server is OPEN
+    # (no JWT and no security key, so /mcp answers anonymous callers) we default to
+    # localhost-only protection even without ``allowed_hosts`` -- this is the one config a
+    # rebound web page could drive, and it restores the safe default fastmcp's own guard gave
+    # before we disabled it. Authenticated deployments rely on the bearer token, which a
+    # rebinding attacker cannot supply, so protection there stays opt-in: their real hostname
+    # is not gated (the 421/400 regression the built-in guard caused) unless they set
+    # ``allowed_hosts`` themselves.
+    allowed_hosts = mcp_config.allowed_hosts if mcp_config is not None else None
+    allowed_origins = mcp_config.allowed_origins if mcp_config is not None else None
+    if allowed_hosts is None and _mcp_server_is_open(os):
+        allowed_hosts = []
+    if allowed_hosts is not None:
+        _add_transport_security_middleware(mcp_app, allowed_hosts, allowed_origins)
 
     return mcp_app
