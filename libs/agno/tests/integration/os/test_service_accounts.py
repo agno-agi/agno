@@ -65,8 +65,15 @@ def jwt_client(test_agent, sqlite_db):
     return TestClient(app)
 
 
+def _scope_items(scopes):
+    """POST /service-accounts takes the RBAC write shape: {scope, effect} objects."""
+    return [{"scope": scope} if isinstance(scope, str) else scope for scope in scopes]
+
+
 def _mint(client, auth_token, name="claude-code", **body_overrides):
     body = {"name": name, **body_overrides}
+    if body.get("scopes"):
+        body["scopes"] = _scope_items(body["scopes"])
     return client.post(
         "/service-accounts",
         headers={"Authorization": f"Bearer {auth_token}"},
@@ -464,10 +471,13 @@ def _ws_authenticate(ws, token):
 
 class TestServiceAccountsOverWebSocket:
     def _mint_with_security_key(self, client, name="ws-sa", **body_overrides):
+        body = {"name": name, **body_overrides}
+        if body.get("scopes"):
+            body["scopes"] = _scope_items(body["scopes"])
         response = client.post(
             "/service-accounts",
             headers={"Authorization": f"Bearer {WS_SECURITY_KEY}"},
-            json={"name": name, **body_overrides},
+            json=body,
         )
         assert response.status_code == 201, response.text
         return response.json()

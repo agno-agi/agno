@@ -118,6 +118,11 @@ class FakeAgentOS:
             if name in self.accounts and not self.accounts[name].get("revoked_at"):
                 return httpx.Response(409, json={"detail": "Service account '" + name + "' already exists"})
             self.create_calls += 1
+            # Like the real server, the write shape is {scope, effect} objects only;
+            # a plain-string scope is a 422. The store keeps raw strings.
+            requested_scopes = body.get("scopes")
+            if requested_scopes is not None and any(not isinstance(s, dict) for s in requested_scopes):
+                return httpx.Response(422, json={"detail": "scopes must be {scope, effect} objects"})
             # Realistic length: real tokens are agno_pat_ + 43 base62 chars, so the
             # 16-char display prefix must never contain the whole token.
             token = "agno_pat_" + (name.replace("-", "") + str(self._next_id) + "x" * 40)[:43]
@@ -126,7 +131,9 @@ class FakeAgentOS:
                 "name": name,
                 "principal": "sa:" + name,
                 "token_prefix": token[:16],
-                "scopes": body.get("scopes") or ["agents:run", "teams:run", "workflows:run", "sessions:read"],
+                "scopes": [s["scope"] for s in requested_scopes]
+                if requested_scopes
+                else ["agents:run", "teams:run", "workflows:run", "sessions:read"],
                 "created_at": 1780000000,
                 "expires_at": None if body.get("never_expires") else 1790000000,
                 "last_used_at": None,

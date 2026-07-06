@@ -170,7 +170,9 @@ class AgentOSAPI:
     ) -> ServiceAccount:
         body: Dict[str, Any] = {"name": name}
         if scopes:
-            body["scopes"] = scopes
+            # The API takes the RBAC write shape ({scope, effect} objects); the CLI
+            # keeps its flags as plain scope strings and converts here.
+            body["scopes"] = [{"scope": scope, "effect": "allow"} for scope in scopes]
         if never_expires:
             body["never_expires"] = True
         elif expires_in_days is not None:

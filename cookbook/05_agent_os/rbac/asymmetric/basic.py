@@ -25,6 +25,7 @@ from agno.os import AgentOS
 from agno.os.config import AuthorizationConfig
 from agno.tools.websearch import WebSearchTools
 from agno.utils.cryptography import generate_rsa_keys
+
 # ---------------------------------------------------------------------------
 # Create Example
 # ---------------------------------------------------------------------------
@@ -83,7 +84,7 @@ agent_os = AgentOS(
     authorization_config=AuthorizationConfig(
         verification_keys=[PUBLIC_KEY],
         algorithm="RS256",
-    )
+    ),
 )
 
 # Get the app
