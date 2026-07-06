@@ -265,18 +265,30 @@ def test_trim_session_run_keeps_workflow_id():
 # ==================== Run-lifecycle ownership gate ====================
 
 
-async def test_run_ownership_gate_skips_remote_components(monkeypatch):
-    """A scoped caller acting on a remote component must not hit the local session
-    lookup -- BaseRemote has no aget_session, so the old path raised AttributeError.
-    The downstream helpers own the outcome (RemoteContinuationUnsupported for
-    continue, acancel_run forwarding for cancel), mirroring REST."""
+async def test_run_ownership_gate_fails_closed_for_scoped_callers_on_remotes(monkeypatch):
+    """A scoped caller acting on a remote component gets a clean refusal, not a raw
+    AttributeError (BaseRemote has no aget_session) -- and NOT a pass-through: skipping
+    the gate would let any scoped run-scope holder cancel other users' runs on the
+    remote, which forwards without this caller's identity."""
     from agno.agent.remote import RemoteAgent
 
     monkeypatch.setattr(mcp_mod, "_scoped_caller_user_id", lambda: "user-1")
     verify = mcp_mod._make_run_ownership_verifier(None)  # type: ignore[arg-type]
     remote = RemoteAgent(base_url="http://remote.invalid:1", agent_id="remote-agent")
 
-    # Must not raise and must not attempt any network call.
+    with pytest.raises(Exception, match="administrator"):
+        await verify(remote, "agents", "remote-agent", "session-1", "run-1")
+
+
+async def test_run_ownership_gate_admin_passes_on_remotes(monkeypatch):
+    """Admins (no scoped user id) bypass the ownership gate for remotes, exactly as
+    they do for local components -- and without any network call."""
+    from agno.agent.remote import RemoteAgent
+
+    monkeypatch.setattr(mcp_mod, "_scoped_caller_user_id", lambda: None)
+    verify = mcp_mod._make_run_ownership_verifier(None)  # type: ignore[arg-type]
+    remote = RemoteAgent(base_url="http://remote.invalid:1", agent_id="remote-agent")
+
     await verify(remote, "agents", "remote-agent", "session-1", "run-1")
 
 
@@ -290,6 +302,34 @@ async def test_run_ownership_gate_still_blocks_unowned_local_runs(monkeypatch):
 
     with pytest.raises(Exception, match="Run not found"):
         await verify(_LocalAgent(), "agents", "demo-agent", "session-1", "run-1")
+
+
+async def test_cancel_component_run_surfaces_remote_failure(monkeypatch):
+    """A remote acancel_run swallows transport errors into False; the service must
+    turn that into an error instead of reporting 'cancellation requested'."""
+    from agno.agent.remote import RemoteAgent
+    from agno.os.services import runs as run_service
+
+    remote = RemoteAgent(base_url="http://remote.invalid:1", agent_id="remote-agent")
+
+    async def _failed_cancel(run_id, auth_token=None):
+        return False
+
+    monkeypatch.setattr(remote, "acancel_run", _failed_cancel)
+    with pytest.raises(Exception, match="could not be delivered"):
+        await run_service.cancel_component_run(remote, "run-1")
+
+
+async def test_cancel_component_run_local_false_is_cancel_before_start():
+    """The local cancellation manager returns False when it stores intent for a
+    not-yet-registered run (cancel-before-start). That is success, not failure."""
+    from agno.os.services import runs as run_service
+
+    class _LocalComponent:
+        async def acancel_run(self, run_id):
+            return False
+
+    await run_service.cancel_component_run(_LocalComponent(), "run-1")  # must not raise
 
 
 # ==================== Session service ====================

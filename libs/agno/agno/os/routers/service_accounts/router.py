@@ -138,9 +138,7 @@ def get_service_accounts_router(os_db: Any, settings: Any) -> APIRouter:
                 return
             raise HTTPException(
                 status_code=401,
-                detail=(
-                    "JWT authentication is required to mint a service account."
-                ),
+                detail=("JWT authentication is required to mint a service account."),
             )
         effective_admin_scope = admin_scope or AgentOSScope.ADMIN.value
         if effective_admin_scope in caller_scopes:

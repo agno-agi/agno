@@ -10,6 +10,7 @@ import agnoctl.commands.connect as connect_module
 from agnoctl.clients.claude_code import ClaudeCodeAdapter
 from agnoctl.clients.codex import CodexAdapter
 from agnoctl.clients.cursor import CursorAdapter
+from agnoctl.errors import CLIError
 from agnoctl.main import app
 from tests.conftest import FakeAgentOS, install_fake
 
@@ -25,6 +26,21 @@ def fake_clients(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     (tmp_path / ".claude.json").write_text("{}")
     (tmp_path / ".codex").mkdir()
     (tmp_path / ".cursor").mkdir()
+
+    def build(home=None, cwd=None, project=False):
+        return {
+            "claude-code": ClaudeCodeAdapter(home=tmp_path, cwd=tmp_path, which=lambda name: None),
+            "codex": CodexAdapter(home=tmp_path),
+            "cursor": CursorAdapter(home=tmp_path, cwd=tmp_path, project=project),
+        }
+
+    monkeypatch.setattr(connect_module, "build_adapters", build)
+    return tmp_path
+
+
+@pytest.fixture
+def no_clients(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """A headless box: adapters build against an empty home, so nothing detects."""
 
     def build(home=None, cwd=None, project=False):
         return {
@@ -353,12 +369,11 @@ def test_connect_claude_ai_prints_manual_instructions(monkeypatch, fake_os, fake
 
 
 def test_connect_public_url_surfaces_chat_apps(monkeypatch, fake_clients):
-    """AGENTOS_URL pointing at a deployed AgentOS: coding agents connect to it, and the
-    report additionally surfaces the Claude and ChatGPT app setup steps."""
-    fake = FakeAgentOS()
+    """AGENTOS_URL pointing at a deployed, token-free AgentOS: coding agents connect to
+    it, and the report additionally surfaces the Claude and ChatGPT app setup steps."""
+    fake = FakeAgentOS(auth_mode="none")
     install_fake(monkeypatch, fake)
     monkeypatch.setenv("AGENTOS_URL", "https://os.example.com")
-    monkeypatch.setenv("AGNO_ADMIN_TOKEN", fake.security_key)
     result = runner.invoke(app, ["connect", "--json"])
     assert result.exit_code == 0, result.output
     payload = json.loads(result.output)
@@ -373,6 +388,67 @@ def test_connect_public_url_surfaces_chat_apps(monkeypatch, fake_clients):
         assert by_client[chat_app]["status"] == "manual"
         assert by_client[chat_app]["url"] == "https://os.example.com/mcp"
         assert by_client[chat_app]["note"] is None
+
+
+def test_connect_token_protected_public_url_does_not_auto_surface(monkeypatch, fake_clients):
+    """The chat apps' Connectors UIs authenticate with OAuth, not bearer tokens, so a
+    token-protected AgentOS cannot be added there -- don't advertise steps that the
+    instructions themselves say cannot work. Explicit --clients still prints them."""
+    fake = FakeAgentOS()  # security_key mode
+    install_fake(monkeypatch, fake)
+    monkeypatch.setenv("AGENTOS_URL", "https://os.example.com")
+    monkeypatch.setenv("AGNO_ADMIN_TOKEN", fake.security_key)
+    result = runner.invoke(app, ["connect", "--json"])
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert {r["client"] for r in payload["results"]} == {"claude-code", "codex", "cursor"}
+
+
+def test_connect_headless_deploy_box_surfaces_chat_apps(no_clients, monkeypatch):
+    """The auto-surface's primary home is a deploy box with no local coding agents:
+    the run must not die on 'no supported clients detected' when there are chat apps
+    to report for the deployed URL."""
+    fake = FakeAgentOS(auth_mode="none")
+    install_fake(monkeypatch, fake)
+    monkeypatch.setenv("AGENTOS_URL", "https://os.example.com")
+    result = runner.invoke(app, ["connect", "--json"])
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    by_client = {r["client"]: r for r in payload["results"]}
+    assert set(by_client) == {"claude-ai", "chatgpt"}
+    assert all(r["status"] == "manual" for r in payload["results"])
+
+
+def test_connect_headless_localhost_still_errors(no_clients, monkeypatch):
+    """With nothing to surface (localhost) and no local clients, the original
+    actionable error remains."""
+    fake = FakeAgentOS(auth_mode="none")
+    install_fake(monkeypatch, fake)
+    result = _connect()
+    assert result.exit_code == 1
+    payload = json.loads(result.output)
+    assert "No supported clients detected" in payload["error"]
+
+
+def test_connect_all_real_clients_failing_exits_failure(monkeypatch, fake_clients):
+    """Auto-added manual chat-app entries must not soften total failure into partial:
+    every real adapter failing is exit 1, not 3."""
+    fake = FakeAgentOS(auth_mode="none")
+    install_fake(monkeypatch, fake)
+    monkeypatch.setenv("AGENTOS_URL", "https://os.example.com")
+
+    def boom(**kwargs):
+        raise CLIError("client exploded")
+
+    monkeypatch.setattr(connect_module, "_connect_one", boom)
+    result = runner.invoke(app, ["connect", "--json"])
+    assert result.exit_code == 1, result.output
+    payload = json.loads(result.output)
+    by_client = {r["client"]: r for r in payload["results"]}
+    for client in ("claude-code", "codex", "cursor"):
+        assert by_client[client]["status"] == "failed"
+    for chat_app in ("claude-ai", "chatgpt"):
+        assert by_client[chat_app]["status"] == "manual"
 
 
 def test_connect_localhost_does_not_surface_chat_apps(monkeypatch, fake_os, fake_clients):

@@ -182,6 +182,14 @@ class TestCreateServiceAccount:
         )
         assert response.status_code == 422
 
+    def test_mint_rejects_unknown_effect(self, client):
+        # effect is constrained at the model layer; typos like "Allow" are a 422
+        response = client.post(
+            "/service-accounts",
+            json={"name": "ci", "scopes": [{"scope": "agents:run", "effect": "Allow"}]},
+        )
+        assert response.status_code == 422
+
     def test_mint_rejects_deny_effect(self, client):
         # Token scopes are pure grants; a deny rule belongs on a role, not a token
         response = client.post(

@@ -83,6 +83,16 @@ def _error_detail(response: httpx.Response) -> str:
         detail = response.json().get("detail")
         if isinstance(detail, str) and detail:
             return detail
+        # FastAPI validation errors (422) ship a list of error objects. Surfacing the
+        # first message beats an opaque "HTTP 422" -- e.g. a payload-shape skew between
+        # this CLI and an older/newer server is otherwise undiagnosable.
+        if isinstance(detail, list) and detail and isinstance(detail[0], dict):
+            msg = detail[0].get("msg")
+            loc = detail[0].get("loc")
+            if isinstance(msg, str) and msg:
+                if isinstance(loc, list) and loc:
+                    return msg + " (at " + ".".join(str(part) for part in loc) + ")"
+                return msg
     except Exception:
         pass
     return "HTTP " + str(response.status_code)

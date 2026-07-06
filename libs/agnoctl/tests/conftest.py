@@ -132,7 +132,7 @@ class FakeAgentOS:
                 "principal": "sa:" + name,
                 "token_prefix": token[:16],
                 "scopes": [s["scope"] for s in requested_scopes]
-                if requested_scopes
+                if requested_scopes is not None
                 else ["agents:run", "teams:run", "workflows:run", "sessions:read"],
                 "created_at": 1780000000,
                 "expires_at": None if body.get("never_expires") else 1790000000,

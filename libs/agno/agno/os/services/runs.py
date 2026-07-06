@@ -80,9 +80,15 @@ async def continue_paused_run(
 async def cancel_component_run(component: Union[Agent, Team, Workflow], run_id: str) -> None:
     """Request cancellation of ``run_id`` on the component that owns it.
 
-    Agent/team/workflow cancellation all delegate to one process-global cancellation
-    manager that records an intent even for a not-yet-registered run, so this always
-    succeeds -- ownership is enforced by the caller before we get here (mirroring the
-    REST cancel endpoints), which is also what keeps a bogus id from leaking an entry.
+    Local agent/team/workflow cancellation all delegate to one process-global
+    cancellation manager that records an intent even for a not-yet-registered run, so
+    it always succeeds -- ownership is enforced by the caller before we get here
+    (mirroring the REST cancel endpoints), which is also what keeps a bogus id from
+    leaking an entry. (Its False return means "intent stored for an unregistered run",
+    which is cancel-before-start, not failure.) Remote components forward the cancel
+    over HTTP and return False when the call fails; that must surface, not read as
+    success.
     """
-    await component.acancel_run(run_id=run_id)
+    cancelled = await component.acancel_run(run_id=run_id)
+    if cancelled is False and isinstance(component, BaseRemote):
+        raise Exception(f"Cancellation of run {run_id} could not be delivered to the remote component.")

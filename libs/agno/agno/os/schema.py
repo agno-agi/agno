@@ -83,13 +83,16 @@ class InternalServerErrorResponse(BaseModel):
 
 
 class ScopeItem(BaseModel):
-    """Write shape for one scope grant — the RBAC payload shared by every scope-bearing API.
+    """Write shape for one scope grant — the canonical RBAC payload for every scope-bearing API.
 
-    Endpoints that take scopes accept plain strings or these objects interchangeably.
+    Endpoints that take scopes accept these objects only (a bare string is a validation
+    error). ``effect`` is constrained here so every consumer rejects typos at the model
+    layer; whether ``deny`` is *semantically* legal stays per-endpoint (roles support
+    deny rules, service-account tokens are pure grants and reject it).
     """
 
     scope: str = Field(..., description="Scope string, e.g. 'agents:*:run'")
-    effect: str = Field("allow", description="'allow' or 'deny'")
+    effect: Literal["allow", "deny"] = Field("allow", description="'allow' or 'deny'")
 
 
 class ScopeSchema(BaseModel):
@@ -99,7 +102,11 @@ class ScopeSchema(BaseModel):
     so a frontend renders scopes from any AgentOS API with one integration.
     """
 
-    id: Optional[str] = Field(None, description="Scope id (null — scopes aren't individually addressable)")
+    id: Optional[str] = Field(
+        None,
+        description="Scope id (always null here; kept for shape parity with the cloud RBAC API, "
+        "which addresses scopes individually)",
+    )
     raw: str = Field(..., description="Original scope string, e.g. 'agents:*:run'")
     namespace: str = Field(..., description="Resource namespace, e.g. 'agents'")
     sub_namespace: Optional[str] = Field(None, description="Specific resource id or wildcard '*'")

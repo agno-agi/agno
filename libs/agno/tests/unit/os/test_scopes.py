@@ -94,6 +94,12 @@ class TestSplitScope:
         # No admin special-casing on the wire: UIs see the literal parts
         assert split_scope("agent_os:admin") == ("agent_os", None, "admin")
 
+    def test_legacy_namespace_renders_under_current_name(self):
+        # Wire shape matches enforcement: system:* is enforced as config:* (raw keeps
+        # the original string), so API responses never misrepresent the permission.
+        assert split_scope("system:read") == ("config", None, "read")
+        assert split_scope("system:dep-1:read") == ("config", "dep-1", "read")
+
     def test_extra_segments_fold_into_sub_namespace(self):
         assert split_scope("agents:a:b:run") == ("agents", "a:b", "run")
 

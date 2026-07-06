@@ -6,14 +6,17 @@ the client will actually use, with a real MCP tools/list call -> report. Re-runs
 safe: entries that already verify are skipped, broken or stale ones are rotated.
 """
 
+import ipaddress
 import sys
 from typing import Any, Dict, List, Optional
+from urllib.parse import urlsplit
 
 import typer
 
 from agnoctl.clients import CLIENT_ALIASES, build_adapters
 from agnoctl.clients.base import ClientAdapter
 from agnoctl.commands._common import (
+    _is_loopback_host,
     handle_cli_error,
     parse_expires,
     require_secure_url,
@@ -47,8 +50,21 @@ CHAT_APP_ALIASES = {
     "gpt": "chatgpt",
     "openai": "chatgpt",
 }
-CHAT_APPS = ("claude-ai", "chatgpt")
-CHAT_APP_UI_NAMES = {"claude-ai": "Claude", "chatgpt": "ChatGPT"}
+# One registry entry per chat app: (UI name, where-to-add-it instructions). Adding an
+# app here is the whole job -- CHAT_APPS and the instruction text derive from it.
+CHAT_APPS_SPEC = {
+    "claude-ai": (
+        "Claude",
+        "In claude.ai or the Claude desktop app: Settings -> Connectors -> Add custom connector, "
+        "paste the MCP URL below, and follow the prompts (custom connectors need a paid plan).",
+    ),
+    "chatgpt": (
+        "ChatGPT",
+        "In ChatGPT: Settings -> Connectors -> Add custom connector, paste the MCP URL below, and follow "
+        "the prompts (custom connectors need a paid plan; enable Developer Mode for full tool access).",
+    ),
+}
+CHAT_APPS = tuple(CHAT_APPS_SPEC)
 
 
 def _split_chat_apps(clients: Optional[str]) -> "tuple[Optional[str], List[str]]":
@@ -66,16 +82,27 @@ def _split_chat_apps(clients: Optional[str]) -> "tuple[Optional[str], List[str]]
 
 
 def _reachable_from_cloud(os_info: OSInfo) -> bool:
-    """True when the hosted chat apps can plausibly reach this AgentOS: public HTTPS."""
-    lowered = os_info.base_url.lower()
-    return os_info.mcp_url.lower().startswith("https://") and not any(
-        h in lowered for h in ("localhost", "127.0.0.1", "0.0.0.0")
-    )
+    """True when the hosted chat apps can plausibly reach this AgentOS: public HTTPS.
+
+    Judged on the parsed hostname, not a substring scan of the URL, so tunnel domains
+    like *.localhost.run count as cloud-reachable while loopback, RFC1918/link-local
+    addresses, and container-internal hosts do not.
+    """
+    if not os_info.mcp_url.lower().startswith("https://"):
+        return False
+    host = urlsplit(os_info.base_url).hostname or ""
+    if _is_loopback_host(host) or host.lower() == "host.docker.internal":
+        return False
+    try:
+        ip = ipaddress.ip_address(host)
+    except ValueError:
+        return True  # a named host on HTTPS: assume public
+    return not (ip.is_private or ip.is_link_local)
 
 
 def _chat_app_instructions(app: str, os_info: OSInfo) -> Dict[str, Any]:
     """A manual-setup result for a hosted chat app: honest steps, never a verified connection."""
-    ui_name = CHAT_APP_UI_NAMES[app]
+    ui_name, where = CHAT_APPS_SPEC[app]
     note = None
     if not _reachable_from_cloud(os_info):
         note = (
@@ -83,16 +110,6 @@ def _chat_app_instructions(app: str, os_info: OSInfo) -> Dict[str, Any]:
             + " adds connectors from its own cloud and cannot reach a local AgentOS at "
             + os_info.base_url
             + "; deploy it behind a public HTTPS URL (or a tunnel) before adding it."
-        )
-    if app == "claude-ai":
-        where = (
-            "In claude.ai or the Claude desktop app: Settings -> Connectors -> Add custom connector, "
-            "paste the MCP URL below, and follow the prompts (custom connectors need a paid plan)."
-        )
-    else:
-        where = (
-            "In ChatGPT: Settings -> Connectors -> Add custom connector, paste the MCP URL below, and follow "
-            "the prompts (custom connectors need a paid plan; enable Developer Mode for full tool access)."
         )
     return {
         "client": app,
@@ -109,7 +126,9 @@ def _chat_app_instructions(app: str, os_info: OSInfo) -> Dict[str, Any]:
     }
 
 
-def _resolve_clients(clients: Optional[str], adapters: Dict[str, ClientAdapter]) -> List[ClientAdapter]:
+def _resolve_clients(
+    clients: Optional[str], adapters: Dict[str, ClientAdapter], required: bool = True
+) -> List[ClientAdapter]:
     if clients:
         selected: List[ClientAdapter] = []
         for raw in clients.split(","):
@@ -122,7 +141,10 @@ def _resolve_clients(clients: Optional[str], adapters: Dict[str, ClientAdapter])
                 selected.append(adapter)
         return selected
     detected = [adapter for adapter in adapters.values() if adapter.detect()]
-    if not detected:
+    if not detected and required:
+        # ``required=False`` when the run has something else to report (the chat-app
+        # auto-surface on a deployed AgentOS) -- a headless deploy box with no local
+        # clients is that feature's primary home, so it must not die here.
         raise CLIError(
             "No supported clients detected on this machine.",
             hint="Install Claude Code, Claude Desktop, Codex, or Cursor, or pass --clients explicitly.",
@@ -263,8 +285,17 @@ def _connect(
 
     adapters = build_adapters(project=project)
     clients_remaining, wanted_apps = _split_chat_apps(clients)
+    # Auto-surface the hosted chat apps only when the run wasn't scoped by --clients AND
+    # the deployed OS is one they can actually add: public HTTPS and no token gate (their
+    # Connectors UIs authenticate with OAuth, not bearer tokens). Explicitly requested
+    # chat apps are honored regardless -- their instructions carry the caveats.
+    auto_surface_apps = clients is None and os_info.auth_mode == "none" and _reachable_from_cloud(os_info)
     # Auto-detect only when no --clients was given; a chat-app-only request selects no adapters.
-    selected = _resolve_clients(clients_remaining, adapters) if clients is None or clients_remaining else []
+    selected = (
+        _resolve_clients(clients_remaining, adapters, required=not auto_surface_apps)
+        if clients is None or clients_remaining
+        else []
+    )
 
     minting = os_info.auth_mode not in ("none",) and bool(selected)
     # When we mint, the admin token is attached to base_url and the minted PATs are written
@@ -341,10 +372,10 @@ def _connect(
         if api is not None:
             api.close()
 
-    # Spot a deployed AgentOS: when discovery lands on a public URL (typically AGENTOS_URL
-    # set to the production domain), the hosted chat apps can use it too -- surface their
-    # setup steps without requiring --clients. An explicit --clients scopes the run.
-    if clients is None and _reachable_from_cloud(os_info):
+    # Spot a deployed AgentOS: when discovery lands on a public, token-free URL (typically
+    # AGENTOS_URL set to the production domain), the hosted chat apps can use it too --
+    # surface their setup steps without requiring --clients.
+    if auto_surface_apps:
         wanted_apps = list(CHAT_APPS)
     for app in wanted_apps:
         results.append(_chat_app_instructions(app, os_info))
@@ -502,12 +533,16 @@ def _report(
     open_mcp_warning: Optional[str],
     json_mode: bool,
 ) -> None:
-    # "manual" (ChatGPT instructions) is not a failure: agnoctl did all it can.
+    # "manual" (chat-app instructions) is not a failure: agnoctl did all it can. But it
+    # must not mask one either -- when every real adapter failed, appended manual
+    # entries cannot soften total failure into "partial".
     ok_statuses = ("connected", "already-connected", "manual")
     ok_count = sum(1 for r in results if r["status"] in ok_statuses)
+    real_results = [r for r in results if r["status"] != "manual"]
+    real_ok = sum(1 for r in real_results if r["status"] in ok_statuses)
     if ok_count == len(results):
         exit_code = EXIT_OK
-    elif ok_count == 0:
+    elif real_results and real_ok == 0:
         exit_code = EXIT_FAILURE
     else:
         exit_code = EXIT_PARTIAL
@@ -536,7 +571,7 @@ def _report(
         elif r["status"] == "skipped":
             print_warning("  skipped        " + label + "  (" + str(r.get("error") or "") + ")")
         elif r["status"] == "manual":
-            ui_name = CHAT_APP_UI_NAMES.get(label, label)
+            ui_name = CHAT_APPS_SPEC[label][0] if label in CHAT_APPS_SPEC else label
             print_warning("  action needed  " + label + "  (set up in the " + ui_name + " UI)")
             for step in r.get("instructions", []):
                 print_info("                 - " + step)
