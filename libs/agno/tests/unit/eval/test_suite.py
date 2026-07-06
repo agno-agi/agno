@@ -2,13 +2,12 @@
 
 import asyncio
 import json
-from dataclasses import fields
 from types import SimpleNamespace
 
 import pytest
 
 from agno.eval import suite
-from agno.eval.suite import Case, SuiteResult, acli, arun_cases, cli, run_cases
+from agno.eval.suite import Case, JudgeMode, SuiteResult, acli, arun_cases, cli, run_cases
 from agno.models.response import ToolExecution
 from agno.run.agent import RunErrorEvent, RunOutput, ToolCallCompletedEvent, ToolCallStartedEvent
 from agno.run.base import RunStatus
@@ -77,6 +76,7 @@ def _install_fake_evals(
     *,
     judge_passed=True,
     judge_reason="meets the criteria",
+    judge_score=None,
     judge_error=None,
     judge_delay=0.0,
     reliability_status="PASSED",
@@ -101,7 +101,9 @@ def _install_fake_evals(
                 await asyncio.sleep(judge_delay)
             if judge_error is not None:
                 raise judge_error
-            return SimpleNamespace(results=[SimpleNamespace(passed=judge_passed, reason=judge_reason)])
+            return SimpleNamespace(
+                results=[SimpleNamespace(passed=judge_passed, reason=judge_reason, score=judge_score)]
+            )
 
     class FakeReliabilityEval:
         def __init__(self, **kwargs):
@@ -167,10 +169,71 @@ def test_case_with_either_check_constructs():
     _make_case(criteria=None, expected_tool_calls=("search_web",))
 
 
-def test_agent_is_the_last_required_field():
-    # agent must stay last of the required fields so it can gain a default later
-    # (team/workflow alternatives) without a non-default-after-default TypeError.
-    assert [f.name for f in fields(Case)[:3]] == ["name", "input", "agent"]
+def test_judge_mode_is_a_binary_numeric_enum():
+    # JudgeMode is the public, importable type; it defaults to BINARY and is a str-enum whose values
+    # are AgentAsJudgeEval's scoring_strategy vocabulary.
+    from agno.eval import JudgeMode as ExportedJudgeMode
+
+    assert ExportedJudgeMode is JudgeMode
+    assert (JudgeMode.BINARY, JudgeMode.NUMERIC) == ("binary", "numeric")
+    assert Case(name="d", agent=StubAgent(), input="q", criteria="c").judge_mode is JudgeMode.BINARY
+
+
+def test_judge_mode_accepts_enum_member_and_equal_string():
+    # The enum and its equal string both construct (str-enum): JudgeMode.NUMERIC and
+    # judge_mode="numeric" are interchangeable.
+    _make_case(judge_mode=JudgeMode.NUMERIC, judge_threshold=8)
+    _make_case(judge_mode="numeric", judge_threshold=8)
+
+
+def test_invalid_judge_mode_is_rejected_at_construction():
+    # A raw string bypasses the enum type, so guard it explicitly: a typo fails fast here, not
+    # silently as a degraded binary run after a model call is spent.
+    with pytest.raises(ValueError, match="judge_mode must be a JudgeMode"):
+        _make_case(judge_mode="Numeric")
+
+
+def test_numeric_threshold_out_of_range_is_rejected_at_construction():
+    # A numeric judge_threshold outside 1-10 fails fast (mirroring AgentAsJudgeEval's own bound),
+    # so a bad bar is caught before the run rather than surfacing as a post-run judge error.
+    with pytest.raises(ValueError, match="judge_threshold must be 1-10"):
+        _make_case(judge_mode=JudgeMode.NUMERIC, judge_threshold=0)
+    with pytest.raises(ValueError, match="judge_threshold must be 1-10"):
+        _make_case(judge_mode=JudgeMode.NUMERIC, judge_threshold=11)
+    # Out of range is fine in binary mode - the threshold is never read.
+    _make_case(judge_mode=JudgeMode.BINARY, judge_threshold=99)
+
+
+def test_exactly_one_of_agent_or_team_required():
+    # A case takes exactly one of agent/team: neither leaves nothing to run, both is ambiguous.
+    from agno.agent import Agent
+    from agno.team.team import Team
+
+    with pytest.raises(ValueError, match="provide one of 'agent' or 'team'"):
+        Case(name="neither", input="q", criteria="c")
+    with pytest.raises(ValueError, match="provide only one of 'agent' or 'team'"):
+        Case(name="both", input="q", criteria="c", agent=Agent(id="a"), team=Team(members=[Agent(id="m")]))
+
+
+def test_agent_and_team_both_construct():
+    # Agent and Team are both supported via their own fields; a Team routes reliability
+    # through team_response=.
+    from agno.agent import Agent
+    from agno.team.team import Team
+
+    Case(name="agent", agent=Agent(id="a"), input="q", criteria="c")
+    Case(name="team", team=Team(members=[Agent(id="m")]), input="q", criteria="c")
+
+
+def test_team_case_populates_team_id_not_agent_id(monkeypatch):
+    # A team's id lands in team_id; agent_id stays None (mirrors AccuracyEval's split).
+    _install_fake_evals(monkeypatch)
+    case = Case(name="t", team=StubAgent(id="research-team"), input="q", criteria="c")
+
+    result = run_cases([case]).results[0]
+
+    assert result.team_id == "research-team"
+    assert result.agent_id is None
 
 
 # ---------------------------------------------------------------------------
@@ -292,6 +355,38 @@ def test_cancelled_run_is_not_judged(monkeypatch):
     assert result.reliability_passed is None
     assert judge_instances == []
     assert reliability_instances == []
+
+
+def test_team_labels_errors_as_team(monkeypatch):
+    # A team reports failures as 'team:', not 'agent:' - the label follows team=.
+    _install_fake_evals(monkeypatch)
+    cancelled_output = _output(content="Run cancelled by user.", status=RunStatus.cancelled)
+    case = Case(name="team_cancel", team=StubAgent(output=cancelled_output), input="q", criteria="c")
+
+    result = run_cases([case]).results[0]
+
+    assert result.error == "team: run cancelled"
+    assert result.passed is False
+
+
+def test_team_label_follows_every_error_route(monkeypatch):
+    # The 'team:' label must follow team= on EVERY failure route (not just the cancelled one
+    # the test above covers): a pre-stream raise, a mid-stream error event, a run that yields
+    # nothing, and a non-completed final status. None may regress to 'agent:'.
+    from agno.run.team import RunErrorEvent as TeamRunErrorEvent
+
+    _install_fake_evals(monkeypatch)
+    routes = {
+        "team: RuntimeError: boom": StubAgent(error=RuntimeError("boom")),
+        "team: member failed": StubAgent(events=[TeamRunErrorEvent(content="member failed")], emit_output=False),
+        "team: no run output recorded": StubAgent(emit_output=False),
+        "team: run paused awaiting user input": StubAgent(output=_output(status=RunStatus.paused)),
+        "team: run ended with status RUNNING": StubAgent(output=_output(content="x", status=RunStatus.running)),
+    }
+    for expected, stub in routes.items():
+        result = run_cases([Case(name="t", team=stub, input="q", criteria="c")]).results[0]
+        assert result.error == expected, f"route {expected!r} produced {result.error!r}"
+        assert result.passed is False
 
 
 def test_cancelled_run_aborts_the_suite_and_records_skipped_cases(monkeypatch):
@@ -571,6 +666,46 @@ def test_judge_only_case(monkeypatch):
     assert result.passed is True
 
 
+def test_binary_scoring_is_the_default(monkeypatch):
+    # Default judge_mode forwards "binary" and the default threshold; no score captured.
+    judge_instances, _ = _install_fake_evals(monkeypatch)
+
+    result = run_cases([_make_case()]).results[0]
+
+    assert judge_instances[0].kwargs["scoring_strategy"] == "binary"
+    assert judge_instances[0].kwargs["threshold"] == 7
+    assert result.judge_score is None
+
+
+def test_numeric_scoring_forwards_mode_and_threshold_and_captures_score(monkeypatch):
+    # judge_mode="numeric" forwards the mode + per-case threshold to the judge (which derives
+    # passed = score >= threshold itself), and the 1-10 score lands on the result and the payload.
+    judge_instances, _ = _install_fake_evals(monkeypatch, judge_passed=True, judge_score=8)
+    case = _make_case(judge_mode=JudgeMode.NUMERIC, judge_threshold=8)
+
+    suite_result = run_cases([case])
+    result = suite_result.results[0]
+
+    assert judge_instances[0].kwargs["scoring_strategy"] == "numeric"
+    assert judge_instances[0].kwargs["threshold"] == 8
+    assert result.judge_passed is True
+    assert result.judge_score == 8
+    assert result.passed is True
+    assert suite_result.to_dict()["cases"][0]["judge_score"] == 8
+
+
+def test_numeric_score_below_threshold_fails_the_case(monkeypatch):
+    # The judge computes passed=False when score < threshold; the suite reflects it faithfully.
+    _install_fake_evals(monkeypatch, judge_passed=False, judge_score=5)
+    case = _make_case(judge_mode=JudgeMode.NUMERIC, judge_threshold=7)
+
+    result = run_cases([case]).results[0]
+
+    assert result.judge_passed is False
+    assert result.judge_score == 5
+    assert result.passed is False
+
+
 def test_reliability_only_case(monkeypatch):
     _install_fake_evals(monkeypatch)
     case = _make_case(criteria=None, expected_tool_calls=("search_web",))
@@ -682,6 +817,32 @@ def test_reliability_kwargs_forwarded(monkeypatch):
     assert kwargs["allow_additional_tool_calls"] is False
 
 
+def test_team_output_routes_reliability_to_team_response_and_flattens_tools(monkeypatch):
+    # A team's members' tool calls live in member_responses; ReliabilityEval merges them only
+    # via team_response= (agent_response= sees just the leader's delegation). The runner routes
+    # by the captured output type, and the evidence surfaces the member's real tool.
+    from agno.run.team import TeamRunOutput
+
+    _, reliability_instances = _install_fake_evals(monkeypatch)
+    member = _output(content="42", tools=[ToolExecution(tool_name="multiply")])
+    team_output = TeamRunOutput(
+        content="42",
+        status=RunStatus.completed,
+        tools=[ToolExecution(tool_name="delegate_task_to_member")],
+        member_responses=[member],
+    )
+    case = _make_case(agent=StubAgent(output=team_output), criteria=None, expected_tool_calls=("multiply",))
+
+    result = run_cases([case]).results[0]
+
+    kwargs = reliability_instances[0].kwargs
+    assert kwargs["team_response"] is team_output
+    assert kwargs["agent_response"] is None
+    # evidence surfaces the member's real tool, not only the leader's delegation
+    assert result.tools_called == ("delegate_task_to_member", "multiply")
+    assert result.reliability_passed is True
+
+
 # ---------------------------------------------------------------------------
 # JSON payload contract (check 9)
 # ---------------------------------------------------------------------------
@@ -704,11 +865,13 @@ def test_to_dict_matches_contract(monkeypatch):
     assert list(case_payload.keys()) == [
         "name",
         "agent_id",
+        "team_id",
         "tags",
         "session_id",
         "duration_seconds",
         "judge_passed",
         "judge_reason",
+        "judge_score",
         "reliability_passed",
         "output",
         "tools_called",
@@ -719,11 +882,13 @@ def test_to_dict_matches_contract(monkeypatch):
     ]
     assert case_payload["name"] == "capital_of_france"
     assert case_payload["agent_id"] == "geo-agent"
+    assert case_payload["team_id"] is None
     assert case_payload["tags"] == ["smoke", "release"]
     assert case_payload["session_id"].startswith("eval-capital_of_france-")
     assert isinstance(case_payload["duration_seconds"], float)
     assert case_payload["judge_passed"] is True
     assert case_payload["judge_reason"] == "meets the criteria"
+    assert case_payload["judge_score"] is None  # binary mode carries no score
     assert case_payload["reliability_passed"] is True
     assert case_payload["output"] == "Paris."
     assert case_payload["tools_called"] == ["search_web"]
@@ -1058,7 +1223,9 @@ def test_cli_list_with_json_output_writes_case_list(monkeypatch, tmp_path):
     assert exit_code == 0
     payload = json.loads(json_path.read_text(encoding="utf-8"))
     assert payload == {
-        "cases": [{"name": "listed", "agent_id": "stub-agent", "tags": ["smoke"], "timeout_seconds": 30}]
+        "cases": [
+            {"name": "listed", "agent_id": "stub-agent", "team_id": None, "tags": ["smoke"], "timeout_seconds": 30}
+        ]
     }
     assert agent.run_count == 0
 

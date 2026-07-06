@@ -1,6 +1,6 @@
 """Eval suite runner: declare `Case`s, run them with `run_cases`/`arun_cases`, ship a CLI with `cli`.
 
-A `Case` is one input to one agent plus optional checks (`AgentAsJudgeEval` via
+A `Case` is one input to one agent or team plus optional checks (`AgentAsJudgeEval` via
 `criteria`, `ReliabilityEval` via `expected_tool_calls`). The runner executes the
 selected cases sequentially on a single event loop and returns a `SuiteResult`
 whose `to_dict()` payload is a stable contract for CI consumers.
@@ -14,9 +14,10 @@ import asyncio
 import json
 import time
 from dataclasses import dataclass, field
+from enum import Enum
 from inspect import isawaitable, iscoroutine, iscoroutinefunction
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Sequence, Tuple, Union
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Literal, Optional, Sequence, Tuple, Union, cast
 from uuid import uuid4
 
 from agno.agent import Agent
@@ -27,7 +28,9 @@ from agno.models.base import Model
 from agno.run.agent import RunErrorEvent, RunOutput, RunOutputEvent
 from agno.run.base import RunStatus
 from agno.run.team import RunErrorEvent as TeamRunErrorEvent
+from agno.run.team import TeamRunOutput
 from agno.run.workflow import WorkflowErrorEvent
+from agno.team.team import Team
 
 if TYPE_CHECKING:
     from rich.console import Console
@@ -36,6 +39,7 @@ if TYPE_CHECKING:
 __all__ = [
     "Case",
     "CaseResult",
+    "JudgeMode",
     "SuiteResult",
     "acli",
     "arun_cases",
@@ -44,30 +48,46 @@ __all__ = [
 ]
 
 
+class JudgeMode(str, Enum):
+    """How the judge grades a Case's answer. A str-enum whose values match AgentAsJudgeEval's
+    scoring_strategy; the equal string (e.g. "numeric") is accepted too."""
+
+    BINARY = "binary"  # a pass/fail verdict
+    NUMERIC = "numeric"  # a 1-10 score, passes when it meets judge_threshold
+
+
 @dataclass(frozen=True)
 class Case:
-    """One eval case: an input to one agent, plus optional judge/reliability checks."""
+    """One eval case: an input to one agent or team, plus optional judge/reliability checks."""
 
     name: str
     input: str
-    # agent is the last required field so it can gain a default later (team/workflow
-    # alternatives per the spec's fast-follow) without a non-default-after-default error.
-    agent: Agent
+    # The agent or team under test: pass exactly one of agent= or team= (separate fields,
+    # mirroring AccuracyEval, so a Team never rides in a param named 'agent'). A Team routes
+    # reliability through team_response=.
+    agent: Optional[Agent] = None
+    team: Optional[Team] = None
     tags: Tuple[str, ...] = ()
     # Per-case timeout in seconds; falls back to the runner's default_timeout
     timeout_seconds: Optional[int] = None
 
-    # Judge check - set `criteria` to enable AgentAsJudgeEval (binary pass/fail).
+    # Judge check - set `criteria` to enable AgentAsJudgeEval. Verdict is binary pass/fail by
+    # default; set judge_mode=JudgeMode.NUMERIC for a 1-10 score gated on judge_threshold.
     criteria: Optional[str] = None
     # Per-case judge model override; falls back to the runner's judge_model=,
     # then AgentAsJudgeEval's default
     judge_model: Optional[Model] = None
+    # Judge scoring mode. BINARY is a pass/fail verdict; NUMERIC grades 1-10 and passes when the
+    # score meets judge_threshold.
+    judge_mode: JudgeMode = JudgeMode.BINARY
+    # Pass bar for numeric scoring (1-10); read only when judge_mode is NUMERIC.
+    judge_threshold: int = 7
 
     # Reliability check - set `expected_tool_calls` to enable ReliabilityEval.
     expected_tool_calls: Optional[Tuple[str, ...]] = None
     allow_additional_tool_calls: bool = True
 
-    # Lifecycle hooks. setup runs before the agent (outside the timeout); its return
+    # Lifecycle hooks. setup runs before the run (outside the timeout); its return
     # value ("context") is passed to teardown. teardown always runs once setup has
     # completed (pass, fail, error, timeout) and receives (context, result) so it can
     # inspect result.error / result.timed_out. Sync callables run via
@@ -76,11 +96,22 @@ class Case:
     teardown: Optional[Callable[[Any, "CaseResult"], Any]] = None
 
     def __post_init__(self) -> None:
+        # Exactly one of agent/team: neither has anything to run, both is ambiguous.
+        if self.agent is None and self.team is None:
+            raise ValueError(f"case {self.name!r}: provide one of 'agent' or 'team'")
+        if self.agent is not None and self.team is not None:
+            raise ValueError(f"case {self.name!r}: provide only one of 'agent' or 'team'")
         # Truthiness, not `is None`: criteria="" or expected_tool_calls=() would
         # otherwise construct a case whose checks pass vacuously - a green CI gate
         # that verified nothing.
         if not self.criteria and not self.expected_tool_calls:
             raise ValueError(f"case {self.name!r} has no checks: set criteria and/or expected_tool_calls")
+        # A raw string bypasses the JudgeMode type, so reject an unknown mode and, for NUMERIC, a
+        # judge_threshold outside 1-10. Membership accepts the enum members and their equal strings.
+        if self.judge_mode not in (JudgeMode.BINARY, JudgeMode.NUMERIC):
+            raise ValueError(f"case {self.name!r}: judge_mode must be a JudgeMode, got {self.judge_mode!r}")
+        if self.judge_mode == JudgeMode.NUMERIC and not 1 <= self.judge_threshold <= 10:
+            raise ValueError(f"case {self.name!r}: judge_threshold must be 1-10, got {self.judge_threshold}")
 
 
 @dataclass
@@ -88,25 +119,29 @@ class CaseResult:
     """Outcome of one case, with enough evidence to debug a failure from the payload alone."""
 
     name: str
-    agent_id: str
     tags: Tuple[str, ...]
+    # Split like AccuracyEval: agent_id for an agent case, team_id for a team; the other
+    # stays None.
+    agent_id: Optional[str] = None
+    team_id: Optional[str] = None
     # The generated eval session id - links the case to its stored session/trace when
     # db= is set. Empty for skipped cases: no session was created.
     session_id: str = ""
     duration_seconds: float = 0.0
     judge_passed: Optional[bool] = None  # None = check not configured
     judge_reason: Optional[str] = None  # the judge's stated reason, when available
+    judge_score: Optional[int] = None  # numeric-mode score (1-10); None in binary mode
     reliability_passed: Optional[bool] = None  # None = check not configured
     output: Optional[str] = None  # response text - what the judge graded
     tools_called: Tuple[str, ...] = ()  # tool names fired during the run, in order
     timed_out: bool = False
     # True for cases the suite never ran (appended after a cancelled-run abort)
     skipped: bool = False
-    # Agent error, judge/reliability error, teardown error - "; "-joined
+    # Run error, judge/reliability error, teardown error - "; "-joined
     error: Optional[str] = None
     # Raw run output - full programmatic access to content, tool calls, metrics.
-    # Excluded from to_dict().
-    response: Optional[RunOutput] = None
+    # Excluded from to_dict(). A team case stores its TeamRunOutput.
+    response: Optional[Union[RunOutput, TeamRunOutput]] = None
 
     @property
     def passed(self) -> bool:
@@ -155,11 +190,13 @@ class SuiteResult:
                 {
                     "name": result.name,
                     "agent_id": result.agent_id,
+                    "team_id": result.team_id,
                     "tags": list(result.tags),
                     "session_id": result.session_id,
                     "duration_seconds": result.duration_seconds,
                     "judge_passed": result.judge_passed,
                     "judge_reason": result.judge_reason,
+                    "judge_score": result.judge_score,
                     "reliability_passed": result.reliability_passed,
                     "output": result.output,
                     "tools_called": list(result.tools_called),
@@ -179,15 +216,21 @@ class SuiteResult:
 # an is_error property (mirroring is_cancelled), switch to that.
 _RUN_ERROR_EVENTS = (RunErrorEvent, TeamRunErrorEvent, WorkflowErrorEvent)
 
+# Keyed by non-completed status; the "agent"/"team" label is prefixed at use.
 _STATUS_ERRORS = {
-    RunStatus.paused: "agent: run paused awaiting user input",
-    RunStatus.cancelled: "agent: run cancelled",
-    RunStatus.error: "agent: run ended in error status",
+    RunStatus.paused: "run paused awaiting user input",
+    RunStatus.cancelled: "run cancelled",
+    RunStatus.error: "run ended in error status",
 }
 
 
-def _agent_id(case: Case) -> str:
-    return case.agent.id or case.name
+def _component_id(case: Case) -> str:
+    # Exactly one of agent/team is set (enforced at construction); fall back to the case name.
+    if case.agent is not None:
+        return case.agent.id or case.name
+    if case.team is not None:
+        return case.team.id or case.name
+    return case.name
 
 
 def _case_matches(case: Case, *, tag: Optional[str], name: Optional[str]) -> bool:
@@ -202,7 +245,17 @@ def _append_error(result: CaseResult, message: str) -> None:
     result.error = "; ".join(part for part in (result.error, message) if part)
 
 
-def _extract_evidence(result: CaseResult, response: RunOutput) -> None:
+def _tool_names(response: Union[RunOutput, TeamRunOutput]) -> Tuple[str, ...]:
+    """Tool names fired during the run, in order. A team's members keep their calls in
+    member_responses, so collect one level down - otherwise only the leader's
+    delegate_task_to_member shows, not the member's real tool."""
+    names = [tool.tool_name or "?" for tool in (response.tools or [])]
+    for member in getattr(response, "member_responses", None) or []:
+        names.extend(tool.tool_name or "?" for tool in (member.tools or []))
+    return tuple(names)
+
+
+def _extract_evidence(result: CaseResult, response: Union[RunOutput, TeamRunOutput]) -> None:
     """Copy the payload evidence fields (output, tools_called) off the run output."""
     try:
         result.output = response.get_content_as_string() if response.content is not None else ""
@@ -211,7 +264,7 @@ def _extract_evidence(result: CaseResult, response: RunOutput) -> None:
         # values json can't handle (datetime, bytes, ...) - fall back to repr
         # rather than failing the case on evidence extraction.
         result.output = str(response.content)
-    result.tools_called = tuple(tool.tool_name or "?" for tool in (response.tools or []))
+    result.tools_called = _tool_names(response)
 
 
 async def _call_hook(hook: Callable[..., Any], *args: Any) -> Any:
@@ -247,19 +300,26 @@ async def _run_case_body(
     db: Optional[Union[BaseDb, AsyncBaseDb]],
     on_run_event: Optional[Callable[[Case, RunOutputEvent], None]],
 ) -> None:
-    """Agent run + judge + reliability checks. Runs inside the case timeout; mutates result."""
-    response: Optional[RunOutput] = None
-    agent_errored = False
+    """Run the agent or team, then judge + reliability checks. Runs inside the case timeout; mutates result."""
+    response: Optional[Union[RunOutput, TeamRunOutput]] = None
+    component_errored = False
+    # Pick the agent or team under test (exactly one is set) and label it for error messages.
+    if case.agent is not None:
+        runner: Union[Agent, Team] = case.agent
+        component_label = "agent"
+    else:
+        runner = case.team  # type: ignore[assignment]
+        component_label = "team"
     forward_events = on_run_event is not None
     try:
-        async for event in case.agent.arun(
+        async for event in runner.arun(
             input=case.input,
             stream=True,
             stream_events=True,
             yield_run_output=True,
             session_id=result.session_id,
         ):
-            if isinstance(event, RunOutput):
+            if isinstance(event, (RunOutput, TeamRunOutput)):
                 # The final run output arrives in-stream (yield_run_output=True). It is
                 # captured, not forwarded to on_run_event - on_case_end delivers it.
                 # Response AND evidence fields are committed immediately: the stream can
@@ -273,42 +333,45 @@ async def _run_case_body(
                 # The streaming path does not raise on in-run model/API failures: it
                 # yields an error event and ends without the final RunOutput. Recorded
                 # at capture time so a later timeout cannot discard it.
-                agent_errored = True
+                component_errored = True
                 # Agent/team error events carry the message in .content, the
                 # workflow's in .error
                 error_text = getattr(event, "content", None) or getattr(event, "error", None) or "unknown error"
                 error_type = getattr(event, "error_type", None)
                 if error_type:
                     error_text = f"{error_type}: {error_text}"
-                _append_error(result, f"agent: {error_text}")
+                _append_error(result, f"{component_label}: {error_text}")
             if forward_events and on_run_event is not None:
                 try:
                     _call_presentation_hook(on_run_event, case, event)
                 except Exception as exc:
-                    # A presentation-hook bug must not read as an agent failure: record
+                    # A presentation-hook bug must not read as a run failure: record
                     # it once and stop forwarding for the rest of this case.
                     forward_events = False
                     _append_error(result, f"hook: on_run_event {type(exc).__name__}: {exc}")
     except Exception as exc:
         # Only pre-stream failures (e.g. input validation) raise out of arun.
-        _append_error(result, f"agent: {type(exc).__name__}: {exc}")
+        _append_error(result, f"{component_label}: {type(exc).__name__}: {exc}")
         return
 
     # Only a completed run is gradeable: paused/cancelled runs carry placeholder
     # content (e.g. HITL boilerplate), and any other status (pending, running,
     # regenerated, ...) is not a real answer either.
-    gradeable = not agent_errored and response is not None and response.status == RunStatus.completed
+    gradeable = not component_errored and response is not None and response.status == RunStatus.completed
     if not gradeable:
-        if not agent_errored:
+        if not component_errored:
             if response is None:
-                _append_error(result, "agent: no run output recorded")
+                _append_error(result, f"{component_label}: no run output recorded")
             else:
                 _append_error(
                     result,
                     # `or` instead of a .get() default: the default is evaluated eagerly,
-                    # and a duck-typed agent may yield status=None (no .value).
-                    _STATUS_ERRORS.get(response.status)
-                    or f"agent: run ended with status {getattr(response.status, 'value', response.status)}",
+                    # and a duck-typed agent or team may yield status=None (no .value).
+                    f"{component_label}: "
+                    + (
+                        _STATUS_ERRORS.get(response.status)
+                        or f"run ended with status {getattr(response.status, 'value', response.status)}"
+                    ),
                 )
         return
 
@@ -317,7 +380,11 @@ async def _run_case_body(
             judge = await AgentAsJudgeEval(
                 name=case.name,
                 criteria=case.criteria,
-                scoring_strategy="binary",
+                # Numeric mode grades 1-10 and derives passed = score >= threshold itself, so the
+                # verdict still gates cleanly; binary mode ignores threshold.
+                # cast the str-enum to the Literal scoring_strategy declares; the value is unchanged.
+                scoring_strategy=cast(Literal["binary", "numeric"], case.judge_mode),
+                threshold=case.judge_threshold,
                 model=case.judge_model or judge_model,
                 db=db,
                 show_spinner=False,
@@ -331,14 +398,21 @@ async def _run_case_body(
             if judge is not None and judge.results:
                 result.judge_passed = judge.results[0].passed
                 result.judge_reason = judge.results[0].reason or None
+                # None in binary mode; the 1-10 number in numeric mode, kept so a payload can
+                # track quality drift a bare pass/fail would hide.
+                result.judge_score = getattr(judge.results[0], "score", None)
             else:
                 _append_error(result, "judge: returned no result")
 
     if case.expected_tool_calls:
+        # A team's real tool calls live in nested member runs; ReliabilityEval merges those via
+        # team_response= (agent_response= sees only the top-level messages - a team leader's
+        # delegation).
         try:
             reliability = await ReliabilityEval(
                 name=case.name,
-                agent_response=response,
+                agent_response=response if isinstance(response, RunOutput) else None,
+                team_response=response if isinstance(response, TeamRunOutput) else None,
                 expected_tool_calls=list(case.expected_tool_calls),
                 allow_additional_tool_calls=case.allow_additional_tool_calls,
                 db=db,
@@ -365,9 +439,10 @@ async def _arun_case(
     start = time.perf_counter()
     result = CaseResult(
         name=case.name,
-        agent_id=_agent_id(case),
         tags=case.tags,
-        # Dedicated session per case so eval traffic doesn't pollute agent history
+        agent_id=_component_id(case) if case.agent is not None else None,
+        team_id=_component_id(case) if case.team is not None else None,
+        # Dedicated session per case so eval traffic doesn't pollute the agent or team's history
         session_id=f"eval-{case.name}-{uuid4().hex[:8]}",
     )
     timeout = case.timeout_seconds if case.timeout_seconds is not None else default_timeout
@@ -437,9 +512,10 @@ async def arun_cases(
     raises (or an async hook, which is rejected) is recorded on the case
     ("hook: ..." error) without aborting the suite.
 
-    A cancelled run (Ctrl-C, or a server-side cancel_run) aborts the suite; the
-    unrun cases are recorded as failed with a "skipped: ..." error so the payload
-    still accounts for every selected case.
+    A cancelled run aborts the suite: the unrun cases are recorded as failed with a
+    "skipped: ..." error so the payload still accounts for every selected case. This
+    fires on a cancelled RunOutput - a server-side cancel_run, or a KeyboardInterrupt
+    agno converts into one.
     """
     selected = [case for case in cases if _case_matches(case, tag=tag, name=name)]
 
@@ -467,9 +543,10 @@ async def arun_cases(
             except Exception as exc:
                 _append_error(result, f"hook: on_case_end {type(exc).__name__}: {exc}")
         if result.response is not None and result.response.status == RunStatus.cancelled:
-            # agno converts Ctrl-C during a run into a cancelled RunOutput instead of
-            # re-raising (a server-side cancel_run produces the same status) - stop
-            # the suite here rather than marching through the remaining cases.
+            # A server-side cancel_run (and a KeyboardInterrupt agno converts into a cancelled
+            # RunOutput) surfaces as status=cancelled - stop here rather than marching through
+            # the remaining cases. A terminal Ctrl-C under asyncio.run instead propagates
+            # CancelledError, which unwinds the suite before reaching this branch.
             break
 
     # The unrun remainder (non-empty only after a cancelled-run abort; the cancelled
@@ -479,8 +556,9 @@ async def arun_cases(
     for case in selected[len(results) :]:
         result = CaseResult(
             name=case.name,
-            agent_id=_agent_id(case),
             tags=case.tags,
+            agent_id=_component_id(case) if case.agent is not None else None,
+            team_id=_component_id(case) if case.team is not None else None,
             skipped=True,
             error="skipped: suite aborted after cancelled run",
         )
@@ -547,9 +625,9 @@ class _CliRenderer:
 
         self._index += 1
         self._console.rule(
-            f"[bold]{escape(case.name)}[/bold]  [dim]{escape(_agent_id(case))} · {self._index}/{self._total}[/dim]"
+            f"[bold]{escape(case.name)}[/bold]  [dim]{escape(_component_id(case))} · {self._index}/{self._total}[/dim]"
         )
-        self._base_label = f"[bold]running[/bold] {escape(_agent_id(case))}…"
+        self._base_label = f"[bold]running[/bold] {escape(_component_id(case))}…"
         self._status = Status(self._base_label, console=self._console, spinner="dots")
         self._status.start()
 
@@ -564,7 +642,7 @@ class _CliRenderer:
             tool_name = getattr(tool, "tool_name", None)
             if tool_name:
                 self._status.update(
-                    f"[bold]running[/bold] {escape(_agent_id(case))} → [cyan]{escape(tool_name)}[/cyan]…"
+                    f"[bold]running[/bold] {escape(_component_id(case))} → [cyan]{escape(tool_name)}[/cyan]…"
                 )
         elif event_type == "ToolCallCompleted":
             self._status.update(self._base_label)
@@ -641,12 +719,12 @@ def _print_case_list(console: "Console", cases: Sequence[Case], *, default_timeo
 
     table = Table(title="Eval Cases", title_style="bold sky_blue1", show_header=True, header_style="bold")
     table.add_column("Case", overflow="fold")
-    table.add_column("Agent")
+    table.add_column("Component")
     table.add_column("Tags")
     table.add_column("Timeout")
     for case in cases:
         timeout = case.timeout_seconds if case.timeout_seconds is not None else default_timeout
-        table.add_row(escape(case.name), escape(_agent_id(case)), escape(", ".join(case.tags)), str(timeout))
+        table.add_row(escape(case.name), escape(_component_id(case)), escape(", ".join(case.tags)), str(timeout))
     console.print(table)
 
 
@@ -745,7 +823,8 @@ async def acli(
                 "cases": [
                     {
                         "name": case.name,
-                        "agent_id": _agent_id(case),
+                        "agent_id": _component_id(case) if case.agent is not None else None,
+                        "team_id": _component_id(case) if case.team is not None else None,
                         "tags": list(case.tags),
                         "timeout_seconds": case.timeout_seconds if case.timeout_seconds is not None else args.timeout,
                     }

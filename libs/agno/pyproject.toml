@@ -1,6 +1,6 @@
 [project]
 name = "agno"
-version = "2.7.0a5"
+version = "2.7.0a7"
 description = "The programming language for agentic software."
 requires-python = ">=3.9,<4"
 readme = "README.md"
@@ -27,7 +27,7 @@ dependencies = [
   # Floor at the latest *published* agnoctl: resolvers install the newest
   # anyway, and a floor referencing an unpublished version breaks every
   # from-source install in the merge-to-publish window of a release.
-  "agnoctl>=0.1.0a4",
+  "agnoctl>=0.1.0a5",
   "docstring-parser",
   # Prevent the request-smuggling CVE in h11 < 0.16
   "h11>=0.16.0",

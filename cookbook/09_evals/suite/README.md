@@ -5,6 +5,7 @@ Suite examples run multiple eval cases as one aggregated suite with tag selectio
 ## Files
 
 - `suite_basic.py` - Two cases (judge + reliability checks) run through the built-in `cli()`.
+- `suite_team_scoring.py` - A Team run through the suite (the leader delegates to a calculator member and a writer member); reliability sees the members' tool calls, and every answer is graded by a numeric 1-10 judge.
 
 ## Usage
 

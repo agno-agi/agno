@@ -166,11 +166,27 @@ class TestServiceAccountLifecycleWithJWT:
         assert response.json()["detail"] == UNIFORM_401_DETAIL
 
     def test_expired_pat_gets_same_uniform_401(self, jwt_client, sqlite_db):
-        admin_jwt = _make_jwt(["agent_os:admin"])
-        minted = _mint(jwt_client, admin_jwt).json()
-        sqlite_db.update_service_account(minted["id"], expires_at=int(time.time()) - 10)
+        # expires_at is immutable after mint (update_service_account whitelists only
+        # last_used_at/revoked_at), so simulate expiry by inserting an account that
+        # is already past its expiry, exactly as a real token ages out.
+        import uuid
 
-        response = jwt_client.get("/sessions", headers={"Authorization": f"Bearer {minted['token']}"})
+        from agno.db.schemas.service_accounts import ServiceAccount
+        from agno.os.service_accounts import DEFAULT_SERVICE_ACCOUNT_SCOPES, generate_token
+
+        plaintext, token_hash, token_prefix = generate_token()
+        account = ServiceAccount(
+            id=str(uuid.uuid4()),
+            name="expired-sa",
+            token_hash=token_hash,
+            token_prefix=token_prefix,
+            scopes=list(DEFAULT_SERVICE_ACCOUNT_SCOPES),
+            created_at=int(time.time()) - 100,
+            expires_at=int(time.time()) - 10,
+        )
+        sqlite_db.create_service_account(account.to_dict())
+
+        response = jwt_client.get("/sessions", headers={"Authorization": f"Bearer {plaintext}"})
         assert response.status_code == 401
         assert response.json()["detail"] == UNIFORM_401_DETAIL
 
@@ -340,7 +356,9 @@ class TestServiceAccountsInSecurityKeyMode:
 
 
 class TestServiceAccountsOnOpenInstance:
-    """On an open dev instance PATs still verify and provide attribution."""
+    """On an open dev instance a PAT that verifies still attributes the request;
+    one that cannot be verified falls through to anonymous access (a stale token
+    in a client must never lock out an instance the operator never put auth on)."""
 
     @pytest.fixture
     def open_client(self, test_agent, sqlite_db):
@@ -380,9 +398,13 @@ class TestServiceAccountsOnOpenInstance:
         assert run_response.status_code == 200
         assert mock_arun.call_args.kwargs["user_id"] == "sa:claude-code"
 
-    def test_invalid_pat_rejected_even_on_open_instance(self, open_client):
+    def test_stale_pat_falls_through_anonymous_on_open_instance(self, open_client):
+        # A PAT that cannot be verified is ignored on an open instance: the request
+        # proceeds anonymously, exactly as if no token had been sent. This is what
+        # keeps a stale token left in a client (e.g. browser localStorage from a
+        # previously auth-enabled deployment) from locking out a server without auth.
         response = open_client.get("/sessions", headers={"Authorization": "Bearer agno_pat_invalid000000000000000000"})
-        assert response.status_code == 401
+        assert response.status_code == 200
 
 
 # A minimal MCP initialize request - enough to reach (or be blocked before) the MCP machinery.
@@ -466,10 +488,12 @@ class TestServiceAccountsOverMCP:
     def test_mcp_stays_open_without_security_key(self, mcp_open_client):
         assert self._mcp_post(mcp_open_client).status_code == 200
 
-    def test_mcp_rejects_invalid_pat_even_on_open_instance(self, mcp_open_client):
+    def test_mcp_ignores_pat_on_open_instance(self, mcp_open_client):
+        # No auth middleware installs on an open instance, and mounted sub-apps never
+        # run route dependencies, so /mcp sees the token but nothing inspects it: the
+        # request passes through anonymously (same stale-PAT tolerance as REST).
         response = self._mcp_post(mcp_open_client, token="agno_pat_invalid000000000000000000")
-        assert response.status_code == 401
-        assert response.json()["detail"] == UNIFORM_401_DETAIL
+        assert response.status_code == 200
 
 
 # ---------------------------------------------------------------------------
@@ -553,7 +577,10 @@ class TestServiceAccountsOverWebSocket:
             patch("agno.os.router.handle_workflow_via_websocket", new_callable=AsyncMock) as handler,
             security_key_client.websocket_connect("/workflows/ws") as ws,
         ):
-            _ws_authenticate(ws, minted["token"])
+            # Assert the auth frame: on auth failure no identity frame ever arrives
+            # and the next receive_text() blocks the suite forever.
+            auth_frame = _ws_authenticate(ws, minted["token"])
+            assert auth_frame["event"] == "authenticated", auth_frame
             ws.receive_text()  # identity frame
             ws.send_text(json.dumps({"action": "start-workflow", "workflow_id": "wf", "message": "go"}))
             frame = json.loads(ws.receive_text())
@@ -568,7 +595,8 @@ class TestServiceAccountsOverWebSocket:
             patch("agno.os.router.handle_workflow_via_websocket", new_callable=AsyncMock) as handler,
             security_key_client.websocket_connect("/workflows/ws") as ws,
         ):
-            _ws_authenticate(ws, minted["token"])
+            auth_frame = _ws_authenticate(ws, minted["token"])
+            assert auth_frame["event"] == "authenticated", auth_frame
             ws.receive_text()  # identity frame
             ws.send_text(
                 json.dumps({"action": "start-workflow", "workflow_id": "wf", "message": "go", "user_id": "mallory"})
@@ -596,7 +624,8 @@ class TestServiceAccountsOverWebSocket:
         admin_jwt = _make_jwt(["agent_os:admin"])
         minted = _mint(jwt_client, admin_jwt, name="ws-jwt-limited", scopes=["sessions:read"]).json()
         with jwt_client.websocket_connect("/workflows/ws") as ws:
-            _ws_authenticate(ws, minted["token"])
+            auth_frame = _ws_authenticate(ws, minted["token"])
+            assert auth_frame["event"] == "authenticated", auth_frame
             ws.receive_text()  # identity frame
             ws.send_text(json.dumps({"action": "start-workflow", "workflow_id": "wf", "message": "go"}))
             frame = json.loads(ws.receive_text())
