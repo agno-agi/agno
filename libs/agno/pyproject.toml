@@ -40,6 +40,7 @@ dependencies = [
   "rich",
   "typer",
   "typing-extensions",
+  "a2a-sdk>=0.3.0,<0.4",
 ]
 
 [project.optional-dependencies]

@@ -1,9 +1,15 @@
-"""Unit tests for A2AClient."""
+"""Unit tests for A2AClient using a2a-sdk.
 
+These tests mock the underlying a2a-sdk Client + AgentCard resolution
+so they can run without a live A2A server. The a2a-sdk types are
+constructed directly with valid Pydantic models so the tests exercise
+the real translation path between SDK and Agno objects.
+"""
+
+from typing import List
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from httpx import HTTPStatusError, Request, Response
 
 from agno.client.a2a import (
     A2AClient,
@@ -13,433 +19,241 @@ from agno.client.a2a import (
 from agno.exceptions import RemoteServerUnavailableError
 
 
+# ---------------------------------------------------------------------------
+# Helpers: build a2a-sdk Pydantic objects for tests
+# ---------------------------------------------------------------------------
+
+
+def _make_agent_card(url: str = "http://localhost:7777"):
+    """Build a minimal AgentCard for tests."""
+    from a2a.types import AgentCapabilities, AgentCard
+
+    return AgentCard(
+        name="test-agent",
+        url=url,
+        description="test agent",
+        version="1.0.0",
+        capabilities=AgentCapabilities(),
+        default_input_modes=["text/plain"],
+        default_output_modes=["text/plain"],
+        skills=[],
+    )
+
+
+def _make_completed_task(task_id: str = "task-123", context_id: str = "ctx-456", agent_text: str = "hi"):
+    """Build a completed a2a Task with a single agent text history entry."""
+    from a2a.types import (
+        Message as A2AMessage,
+        Part,
+        Role,
+        Task as A2ATask,
+        TaskState,
+        TaskStatus,
+        TextPart,
+    )
+
+    return A2ATask(
+        id=task_id,
+        context_id=context_id,
+        status=TaskStatus(state=TaskState.completed),
+        history=[
+            A2AMessage(
+                message_id="m1",
+                role=Role.agent,
+                parts=[Part(root=TextPart(text=agent_text))],
+            )
+        ],
+        artifacts=[],
+    )
+
+
+# ---------------------------------------------------------------------------
+# Test cases
+# ---------------------------------------------------------------------------
+
+
 class TestA2AClientInit:
-    """Test A2AClient initialization."""
+    """A2AClient initialization keeps the previous public shape."""
 
     def test_init_default_values(self):
-        """Test client initialization with default values."""
         client = A2AClient("http://localhost:7777")
         assert client.base_url == "http://localhost:7777"
         assert client.timeout == 30
-        assert client.protocol == "rest"
+        assert client.protocol == "json-rpc"  # default is now JSON-RPC (was 'rest' pre-a2a-sdk)
+        # SDK client is created lazily on first call.
+        assert client._sdk_client is None
 
-    def test_init_custom_values(self):
-        """Test client initialization with custom values."""
-        client = A2AClient(
-            "http://localhost:8080/",
-            timeout=60,
-            protocol="json-rpc",
-        )
+    def test_init_custom_timeout(self):
+        client = A2AClient("http://localhost:8080/", timeout=60, protocol="json-rpc")
         assert client.base_url == "http://localhost:8080"  # Trailing slash stripped
         assert client.timeout == 60
         assert client.protocol == "json-rpc"
 
-    def test_get_endpoint_rest_mode(self):
-        """Test endpoint URL building in REST mode."""
-        client = A2AClient("http://localhost:7777", protocol="rest")
-        assert client._get_endpoint("/v1/message:send") == "http://localhost:7777/v1/message:send"
-
-    def test_get_endpoint_json_rpc_mode(self):
-        """Test endpoint URL building in JSON-RPC mode."""
-        client = A2AClient("http://localhost:7777", protocol="json-rpc")
-        assert client._get_endpoint("/v1/message:send") == "http://localhost:7777/"
-
-
-class TestBuildMessageRequest:
-    """Test message request building."""
-
-    def test_basic_request(self):
-        """Test building basic message request."""
-        client = A2AClient("http://localhost:7777")
-        request = client._build_message_request(
-            message="Hello",
-            stream=False,
-        )
-
-        assert request["jsonrpc"] == "2.0"
-        assert request["method"] == "message/send"
-        assert "id" in request
-        assert request["params"]["message"]["role"] == "user"
-        assert request["params"]["message"]["parts"][0]["kind"] == "text"
-        assert request["params"]["message"]["parts"][0]["text"] == "Hello"
-
-    def test_streaming_request(self):
-        """Test building streaming message request."""
-        client = A2AClient("http://localhost:7777")
-        request = client._build_message_request(
-            message="Hello",
-            stream=True,
-        )
-
-        assert request["method"] == "message/stream"
-
-    def test_request_with_context(self):
-        """Test building request with context ID."""
-        client = A2AClient("http://localhost:7777")
-        request = client._build_message_request(
-            message="Hello",
-            context_id="session-123",
-            user_id="user-456",
-            stream=False,
-        )
-
-        assert request["params"]["message"]["contextId"] == "session-123"
-        assert request["params"]["message"]["metadata"]["userId"] == "user-456"
-
-
-class TestParseTaskResult:
-    """Test task result parsing."""
-
-    def test_parse_basic_response(self):
-        """Test parsing basic A2A response."""
-        client = A2AClient("http://localhost:7777")
-        response_data = {
-            "jsonrpc": "2.0",
-            "id": "req-1",
-            "result": {
-                "id": "task-123",
-                "context_id": "ctx-456",
-                "status": {"state": "completed"},
-                "history": [
-                    {
-                        "role": "agent",
-                        "parts": [{"kind": "text", "text": "Hello, world!"}],
-                    }
-                ],
-            },
-        }
-
-        result = client._parse_task_result(response_data)
-
-        assert isinstance(result, TaskResult)
-        assert result.task_id == "task-123"
-        assert result.context_id == "ctx-456"
-        assert result.status == "completed"
-        assert result.content == "Hello, world!"
-        assert result.is_completed
-        assert not result.is_failed
-
-    def test_parse_failed_response(self):
-        """Test parsing failed task response."""
-        client = A2AClient("http://localhost:7777")
-        response_data = {
-            "result": {
-                "id": "task-123",
-                "context_id": "ctx-456",
-                "status": {"state": "failed"},
-                "history": [
-                    {
-                        "role": "agent",
-                        "parts": [{"kind": "text", "text": "Error occurred"}],
-                    }
-                ],
-            },
-        }
-
-        result = client._parse_task_result(response_data)
-
-        assert result.status == "failed"
-        assert result.is_failed
-        assert result.content == "Error occurred"
-
-    def test_parse_with_artifacts(self):
-        """Test parsing response with artifacts."""
-        client = A2AClient("http://localhost:7777")
-        response_data = {
-            "result": {
-                "id": "task-123",
-                "context_id": "ctx-456",
-                "status": {"state": "completed"},
-                "history": [],
-                "artifacts": [
-                    {
-                        "artifact_id": "art-1",
-                        "name": "image.png",
-                        "mimeType": "image/png",
-                        "uri": "http://example.com/image.png",
-                    }
-                ],
-            },
-        }
-
-        result = client._parse_task_result(response_data)
-
-        assert len(result.artifacts) == 1
-        assert result.artifacts[0].artifact_id == "art-1"
-        assert result.artifacts[0].name == "image.png"
-
-
-class TestParseStreamEvent:
-    """Test stream event parsing."""
-
-    def test_parse_content_event(self):
-        """Test parsing content event."""
-        client = A2AClient("http://localhost:7777")
-        # Content events have kind="message" and parts with text
-        data = {
-            "result": {
-                "kind": "message",
-                "messageId": "msg-1",
-                "role": "agent",
-                "parts": [{"kind": "text", "text": "Hello"}],
-                "contextId": "ctx-456",
-                "taskId": "task-123",
-            },
-        }
-
-        event = client._parse_stream_event(data)
-
-        assert isinstance(event, StreamEvent)
-        assert event.event_type == "content"
-        assert event.content == "Hello"
-        assert event.is_content
-        assert not event.is_final
-
-    def test_parse_status_event(self):
-        """Test parsing status event."""
-        client = A2AClient("http://localhost:7777")
-        data = {
-            "result": {
-                "kind": "status-update",
-                "taskId": "task-123",
-                "contextId": "ctx-456",
-                "status": {"state": "working"},
-                "final": False,
-            },
-        }
-
-        event = client._parse_stream_event(data)
-
-        assert event.event_type == "working"
-        assert not event.is_final
-
-    def test_parse_completed_event(self):
-        """Test parsing completed event."""
-        client = A2AClient("http://localhost:7777")
-        data = {
-            "result": {
-                "kind": "status-update",
-                "taskId": "task-123",
-                "contextId": "ctx-456",
-                "status": {"state": "completed"},
-                "final": True,
-            },
-        }
-
-        event = client._parse_stream_event(data)
-
-        assert event.event_type == "completed"
-        assert event.is_final
+    def test_init_does_not_eagerly_resolve_card(self):
+        """Constructor must stay cheap: it should not touch the network."""
+        with patch("agno.client.a2a.client.A2ACardResolver") as mock_resolver_cls:
+            A2AClient("http://localhost:7777")
+            mock_resolver_cls.assert_not_called()
 
 
 class TestSendMessage:
-    """Test send_message method."""
+    """send_message delegates to the a2a-sdk Client and converts the response."""
 
     @pytest.mark.asyncio
     async def test_send_message_success(self):
-        """Test successful message send."""
-        with patch("agno.client.a2a.client.get_default_async_client") as mock_get_client:
-            mock_response = MagicMock()
-            mock_response.status_code = 200
-            mock_response.json.return_value = {
-                "jsonrpc": "2.0",
-                "id": "req-1",
-                "result": {
-                    "id": "task-123",
-                    "context_id": "ctx-456",
-                    "status": {"state": "completed"},
-                    "history": [
-                        {
-                            "role": "agent",
-                            "parts": [{"kind": "text", "text": "The answer is 4"}],
-                        }
-                    ],
-                },
-            }
-            mock_response.raise_for_status = MagicMock()
+        """The SDK yields a ``(Task, status_update, artifact_update)`` tuple in
+        non-streaming mode. ``A2AClient.send_message`` must turn that into
+        a populated :class:`TaskResult`."""
+        completed_task = _make_completed_task(agent_text="The answer is 4")
+        # Real SDK shape: tuple(Task, status_update, artifact_update)
+        sdk_event = (completed_task, None, None)
 
-            mock_http_client = AsyncMock()
-            mock_http_client.post.return_value = mock_response
-            mock_get_client.return_value = mock_http_client
+        mock_client = MagicMock()
+        mock_client.send_message = MagicMock(return_value=_async_iter([sdk_event]))
 
-            client = A2AClient("http://localhost:7777")
-            result = await client.send_message(
-                message="What is 2 + 2?",
-            )
+        with patch.object(A2AClient, "_ensure_sdk_client", AsyncMock(return_value=mock_client)):
+            client = A2AClient("http://localhost:7777", protocol="json-rpc")
+            result = await client.send_message(message="What is 2 + 2?")
 
-            assert result.content == "The answer is 4"
-            assert result.is_completed
-            mock_http_client.post.assert_called_once()
+        assert isinstance(result, TaskResult)
+        assert result.content == "The answer is 4"
+        assert result.is_completed
+        assert result.task_id == "task-123"
+        assert result.context_id == "ctx-456"
+
+        # Verify the SDK was driven with a proper Message payload.
+        mock_client.send_message.assert_called_once()
+        sent_message = mock_client.send_message.call_args.args[0]
+        assert sent_message.role.value == "user"
+        assert sent_message.parts[0].root.text == "What is 2 + 2?"
 
     @pytest.mark.asyncio
-    async def test_send_message_http_error(self):
-        """Test send_message with HTTP error."""
-        with patch("agno.client.a2a.client.get_default_async_client") as mock_get_client:
-            mock_response = Response(404, request=Request("POST", "http://test"))
-            mock_http_client = AsyncMock()
-            mock_http_client.post.side_effect = HTTPStatusError(
-                "Not Found", request=mock_response.request, response=mock_response
-            )
-            mock_get_client.return_value = mock_http_client
+    async def test_send_message_user_id_in_metadata(self):
+        """The user_id kwarg must land in the message metadata as ``userId``."""
+        completed_task = _make_completed_task()
+        mock_client = MagicMock()
+        mock_client.send_message = MagicMock(return_value=_async_iter([(completed_task, None, None)]))
 
-            client = A2AClient("http://localhost:7777")
-            with pytest.raises(HTTPStatusError) as exc_info:
-                await client.send_message(
-                    message="Hello",
-                )
-            assert exc_info.value.response.status_code == 404
+        with patch.object(A2AClient, "_ensure_sdk_client", AsyncMock(return_value=mock_client)):
+            client = A2AClient("http://localhost:7777", protocol="json-rpc")
+            await client.send_message(message="hi", user_id="alice-123")
+
+        sent_message = mock_client.send_message.call_args.args[0]
+        assert sent_message.metadata is not None
+        assert sent_message.metadata.get("userId") == "alice-123"
 
     @pytest.mark.asyncio
-    async def test_send_message_connection_error(self):
-        """Test send_message with connection error."""
-        with patch("agno.client.a2a.client.get_default_async_client") as mock_get_client:
-            from httpx import ConnectError
+    async def test_send_message_with_context_id(self):
+        """context_id is preserved on the outgoing message."""
+        completed_task = _make_completed_task()
+        mock_client = MagicMock()
+        mock_client.send_message = MagicMock(return_value=_async_iter([(completed_task, None, None)]))
 
-            mock_http_client = AsyncMock()
-            mock_http_client.post.side_effect = ConnectError("Connection refused")
-            mock_get_client.return_value = mock_http_client
+        with patch.object(A2AClient, "_ensure_sdk_client", AsyncMock(return_value=mock_client)):
+            client = A2AClient("http://localhost:7777", protocol="json-rpc")
+            await client.send_message(message="hi", context_id="ctx-abc")
 
-            client = A2AClient("http://localhost:7777")
+        sent_message = mock_client.send_message.call_args.args[0]
+        assert sent_message.context_id == "ctx-abc"
+
+    @pytest.mark.asyncio
+    async def test_send_message_connection_error_during_card_resolve(self):
+        with patch.object(
+            A2AClient,
+            "_ensure_sdk_client",
+            AsyncMock(side_effect=RemoteServerUnavailableError("boom", "http://localhost:7777", None)),
+        ):
+            client = A2AClient("http://localhost:7777", protocol="json-rpc")
+            with pytest.raises(RemoteServerUnavailableError):
+                await client.send_message(message="hi")
+
+    @pytest.mark.asyncio
+    async def test_send_message_runtime_error_during_call(self):
+        """Errors raised inside the SDK call must surface as RemoteServerUnavailableError."""
+        mock_client = MagicMock()
+        mock_client.send_message = MagicMock(side_effect=RuntimeError("upstream boom"))
+
+        with patch.object(A2AClient, "_ensure_sdk_client", AsyncMock(return_value=mock_client)):
+            client = A2AClient("http://localhost:7777", protocol="json-rpc")
             with pytest.raises(RemoteServerUnavailableError) as exc_info:
-                await client.send_message(
-                    message="Hello",
-                )
-            assert "Failed to connect" in str(exc_info.value)
-            assert exc_info.value.base_url == "http://localhost:7777"
-
-    @pytest.mark.asyncio
-    async def test_send_message_timeout(self):
-        """Test send_message with timeout."""
-        with patch("agno.client.a2a.client.get_default_async_client") as mock_get_client:
-            from httpx import TimeoutException
-
-            mock_http_client = AsyncMock()
-            mock_http_client.post.side_effect = TimeoutException("Request timed out")
-            mock_get_client.return_value = mock_http_client
-
-            client = A2AClient("http://localhost:7777")
-            with pytest.raises(RemoteServerUnavailableError) as exc_info:
-                await client.send_message(
-                    message="Hello",
-                )
-            assert "timed out" in str(exc_info.value)
-
-    @pytest.mark.asyncio
-    async def test_send_message_failed_task_returns_result(self):
-        """Test send_message returns TaskResult even when task reports failed status."""
-        with patch("agno.client.a2a.client.get_default_async_client") as mock_get_client:
-            mock_response = MagicMock()
-            mock_response.status_code = 200
-            mock_response.json.return_value = {
-                "result": {
-                    "id": "task-123",
-                    "context_id": "ctx-456",
-                    "status": {"state": "failed"},
-                    "history": [
-                        {
-                            "role": "agent",
-                            "parts": [{"kind": "text", "text": "Error: Something went wrong"}],
-                        }
-                    ],
-                },
-            }
-            mock_response.raise_for_status = MagicMock()
-
-            mock_http_client = AsyncMock()
-            mock_http_client.post.return_value = mock_response
-            mock_get_client.return_value = mock_http_client
-
-            client = A2AClient("http://localhost:7777")
-            result = await client.send_message(
-                message="Do something",
-            )
-            assert result.is_failed
-            assert result.task_id == "task-123"
+                await client.send_message(message="hi")
+            assert "upstream boom" in str(exc_info.value)
 
 
 class TestStreamMessage:
-    """Test stream_message method."""
+    """stream_message yields StreamEvent objects translated from SDK responses."""
 
     @pytest.mark.asyncio
-    async def test_stream_message_success(self):
-        """Test successful message streaming."""
-        with patch("agno.client.a2a.client.get_default_async_client") as mock_get_client:
-            # Create mock streaming response
-            async def mock_aiter_lines():
-                lines = [
-                    '{"result": {"kind": "status-update", "taskId": "task-123", "status": {"state": "working"}}}',
-                    '{"result": {"kind": "message", "messageId": "m1", "parts": [{"kind": "text", "text": "Hello"}]}}',
-                    '{"result": {"kind": "message", "messageId": "m2", "parts": [{"kind": "text", "text": " World"}]}}',
-                    '{"result": {"kind": "status-update", "taskId": "task-123", "status": {"state": "completed"}, "final": true}}',
-                ]
-                for line in lines:
-                    yield line
+    async def test_stream_message_yields_terminal_task(self):
+        """The SDK yields one or more (Task, status_update, artifact_update)
+        tuples. ``A2AClient.stream_message`` must translate them into
+        ``StreamEvent`` objects with the right ``event_type`` and
+        ``is_final`` flags."""
+        terminal_task = _make_completed_task(agent_text="hello")
+        sdk_terminal = (terminal_task, None, None)
 
-            mock_stream_response = MagicMock()
-            mock_stream_response.status_code = 200
-            mock_stream_response.raise_for_status = MagicMock()
-            mock_stream_response.aiter_lines = mock_aiter_lines
+        mock_client = MagicMock()
+        mock_client.send_message = MagicMock(return_value=_async_iter([sdk_terminal]))
 
-            # Create async context manager mock
-            mock_stream_cm = AsyncMock()
-            mock_stream_cm.__aenter__.return_value = mock_stream_response
-            mock_stream_cm.__aexit__.return_value = None
+        with patch.object(A2AClient, "_ensure_sdk_client", AsyncMock(return_value=mock_client)):
+            client = A2AClient("http://localhost:7777", protocol="json-rpc")
+            events: List[StreamEvent] = []
+            async for evt in client.stream_message(message="hello"):
+                events.append(evt)
 
-            mock_http_client = MagicMock()
-            mock_http_client.stream.return_value = mock_stream_cm
-            mock_get_client.return_value = mock_http_client
-
-            events = []
-            client = A2AClient("http://localhost:7777")
-            async for event in client.stream_message(
-                message="Hello",
-            ):
-                events.append(event)
-
-            assert len(events) == 4
-            # Check content events
-            content_events = [e for e in events if e.is_content]
-            assert len(content_events) == 2
-            assert content_events[0].content == "Hello"
-            assert content_events[1].content == " World"
+        assert len(events) == 1
+        assert events[0].event_type == "task"
+        assert events[0].is_final
 
 
-class TestSchemas:
-    """Test schema dataclasses."""
+class TestEnsureSdkClient:
+    """Lazy resolution of the AgentCard and SDK client."""
 
-    def test_task_result_properties(self):
-        """Test TaskResult helper properties."""
-        result = TaskResult(
-            task_id="t1",
-            context_id="c1",
-            status="completed",
-            content="Done",
-        )
-        assert result.is_completed
-        assert not result.is_failed
-        assert not result.is_canceled
+    @pytest.mark.asyncio
+    async def test_ensure_sdk_client_resolves_card(self):
+        from a2a.client import ClientFactory
 
-        failed = TaskResult(
-            task_id="t2",
-            context_id="c2",
-            status="failed",
-            content="Error",
-        )
-        assert not failed.is_completed
-        assert failed.is_failed
+        fake_card = _make_agent_card()
+        fake_sdk_client = MagicMock()
 
-    def test_stream_event_properties(self):
-        """Test StreamEvent helper properties."""
-        content_event = StreamEvent(
-            event_type="content",
-            content="Hello",
-        )
-        assert content_event.is_content
-        assert not content_event.is_final
+        with patch("agno.client.a2a.client.A2ACardResolver") as mock_resolver_cls:
+            mock_resolver = MagicMock()
+            mock_resolver.get_agent_card = AsyncMock(return_value=fake_card)
+            mock_resolver_cls.return_value = mock_resolver
 
-        completed_event = StreamEvent(
-            event_type="completed",
-            is_final=True,
-        )
-        assert completed_event.is_completed
-        assert completed_event.is_final
+            with patch.object(ClientFactory, "create", return_value=fake_sdk_client) as mock_create:
+                client = A2AClient("http://localhost:7777", timeout=15, protocol="json-rpc")
+                got = await client._ensure_sdk_client()
+
+        assert got is fake_sdk_client
+        # Card resolution used the configured timeout.
+        mock_resolver.get_agent_card.assert_awaited_once()
+        # ClientFactory.create was called with the resolved card.
+        mock_create.assert_called_once_with(fake_card)
+        # Subsequent calls do not re-resolve.
+        again = await client._ensure_sdk_client()
+        assert again is fake_sdk_client
+        assert mock_resolver.get_agent_card.await_count == 1
+
+    @pytest.mark.asyncio
+    async def test_ensure_sdk_client_card_failure(self):
+        with patch("agno.client.a2a.client.A2ACardResolver") as mock_resolver_cls:
+            mock_resolver = MagicMock()
+            mock_resolver.get_agent_card = AsyncMock(side_effect=ConnectionError("nope"))
+            mock_resolver_cls.return_value = mock_resolver
+
+            client = A2AClient("http://localhost:7777", protocol="json-rpc")
+            with pytest.raises(RemoteServerUnavailableError) as exc_info:
+                await client._ensure_sdk_client()
+            # The original error message is preserved on the exception chain.
+            assert isinstance(exc_info.value.original_error, ConnectionError)
+
+
+# ---------------------------------------------------------------------------
+# helpers
+# ---------------------------------------------------------------------------
+
+
+async def _async_iter(items):
+    for x in items:
+        yield x
