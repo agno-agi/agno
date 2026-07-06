@@ -16,6 +16,7 @@ from agno.db.schemas import UserMemory
 from agno.os.routers.memory.schemas import (
     UserMemorySchema,
 )
+from agno.os.mcp_auth import require_mcp_scope
 from agno.os.schema import (
     AgentSessionDetailSchema,
     AgentSummaryResponse,
@@ -199,6 +200,7 @@ def build_mcp_server(
         output_schema=ConfigResponse.model_json_schema(),
     )  # type: ignore
     async def config() -> ConfigResponse:
+        require_mcp_scope(["config:read"])
         return ConfigResponse(
             os_id=os.id or "AgentOS",
             description=os.description,
@@ -231,6 +233,7 @@ def build_mcp_server(
         user_id: Optional[str] = None,
         session_id: Optional[str] = None,
     ) -> RunOutput:
+        require_mcp_scope(["agents:run"], resource_type="agents", resource_id=agent_id)
         agent = get_agent_by_id(agent_id, os.agents)
         if agent is None:
             raise Exception(f"Agent {agent_id} not found")
@@ -244,6 +247,7 @@ def build_mcp_server(
         user_id: Optional[str] = None,
         session_id: Optional[str] = None,
     ) -> TeamRunOutput:
+        require_mcp_scope(["teams:run"], resource_type="teams", resource_id=team_id)
         team = get_team_by_id(team_id, os.teams)
         if team is None:
             raise Exception(f"Team {team_id} not found")
@@ -257,6 +261,7 @@ def build_mcp_server(
         user_id: Optional[str] = None,
         session_id: Optional[str] = None,
     ) -> WorkflowRunOutput:
+        require_mcp_scope(["workflows:run"], resource_type="workflows", resource_id=workflow_id)
         workflow = get_workflow_by_id(workflow_id, os.workflows)
         if workflow is None:
             raise Exception(f"Workflow {workflow_id} not found")
@@ -281,6 +286,7 @@ def build_mcp_server(
         sort_by: str = "created_at",
         sort_order: str = "desc",
     ) -> Dict[str, Any]:
+        require_mcp_scope(["sessions:read"])
         user_id = _resolve_user_id(user_id)
         db = await get_db(os.dbs, db_id)
         session_type_enum = SessionType(session_type)
@@ -345,6 +351,7 @@ def build_mcp_server(
         session_type: str = "agent",
         user_id: Optional[str] = None,
     ) -> Dict[str, Any]:
+        require_mcp_scope(["sessions:read"])
         user_id = _resolve_user_id(user_id)
         db = await get_db(os.dbs, db_id)
         session_type_enum = SessionType(session_type)
@@ -394,6 +401,7 @@ def build_mcp_server(
     ) -> Dict[str, Any]:
         import time
 
+        require_mcp_scope(["sessions:write"])
         user_id = _resolve_user_id(user_id)
         db = await get_db(os.dbs, db_id)
         session_type_enum = SessionType(session_type)
@@ -485,6 +493,7 @@ def build_mcp_server(
         session_type: str = "agent",
         user_id: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
+        require_mcp_scope(["sessions:read"])
         user_id = _resolve_user_id(user_id)
         db = await get_db(os.dbs, db_id)
         session_type_enum = SessionType(session_type)
@@ -546,6 +555,7 @@ def build_mcp_server(
         session_type: str = "agent",
         user_id: Optional[str] = None,
     ) -> Dict[str, Any]:
+        require_mcp_scope(["sessions:read"])
         user_id = _resolve_user_id(user_id)
         db = await get_db(os.dbs, db_id)
         session_type_enum = SessionType(session_type)
@@ -605,6 +615,7 @@ def build_mcp_server(
         session_type: str = "agent",
         user_id: Optional[str] = None,
     ) -> Dict[str, Any]:
+        require_mcp_scope(["sessions:write"])
         user_id = _resolve_user_id(user_id)
         db = await get_db(os.dbs, db_id)
         session_type_enum = SessionType(session_type)
@@ -654,6 +665,7 @@ def build_mcp_server(
         summary: Optional[Dict[str, Any]] = None,
         user_id: Optional[str] = None,
     ) -> Dict[str, Any]:
+        require_mcp_scope(["sessions:write"])
         user_id = _resolve_user_id(user_id)
         db = await get_db(os.dbs, db_id)
         session_type_enum = SessionType(session_type)
@@ -730,6 +742,7 @@ def build_mcp_server(
         db_id: str,
         user_id: Optional[str] = None,
     ) -> str:
+        require_mcp_scope(["sessions:delete"])
         user_id = _resolve_user_id(user_id)
         db = await get_db(os.dbs, db_id)
 
@@ -757,6 +770,7 @@ def build_mcp_server(
         session_types: Optional[List[str]] = None,
         user_id: Optional[str] = None,
     ) -> str:
+        require_mcp_scope(["sessions:delete"])
         user_id = _resolve_user_id(user_id)
         db = await get_db(os.dbs, db_id)
 
@@ -784,6 +798,7 @@ def build_mcp_server(
         user_id: str,
         topics: Optional[List[str]] = None,
     ) -> UserMemorySchema:
+        require_mcp_scope(["memories:write"])
         user_id = _resolve_user_id(user_id) or user_id
         db = await get_db(os.dbs, db_id)
 
@@ -833,6 +848,7 @@ def build_mcp_server(
         db_id: str,
         user_id: Optional[str] = None,
     ) -> UserMemorySchema:
+        require_mcp_scope(["memories:read"])
         user_id = _resolve_user_id(user_id)
         db = await get_db(os.dbs, db_id)
 
@@ -868,6 +884,7 @@ def build_mcp_server(
         sort_by: str = "updated_at",
         sort_order: str = "desc",
     ) -> Dict[str, Any]:
+        require_mcp_scope(["memories:read"])
         user_id = _resolve_user_id(user_id)
         db = await get_db(os.dbs, db_id)
 
@@ -934,6 +951,7 @@ def build_mcp_server(
         user_id: str,
         topics: Optional[List[str]] = None,
     ) -> UserMemorySchema:
+        require_mcp_scope(["memories:write"])
         user_id = _resolve_user_id(user_id) or user_id
         db = await get_db(os.dbs, db_id)
 
@@ -980,6 +998,7 @@ def build_mcp_server(
         memory_id: str,
         user_id: Optional[str] = None,
     ) -> str:
+        require_mcp_scope(["memories:delete"])
         user_id = _resolve_user_id(user_id)
         db = await get_db(os.dbs, db_id)
 
@@ -1006,6 +1025,7 @@ def build_mcp_server(
         db_id: str,
         user_id: Optional[str] = None,
     ) -> str:
+        require_mcp_scope(["memories:delete"])
         user_id = _resolve_user_id(user_id)
         db = await get_db(os.dbs, db_id)
 
