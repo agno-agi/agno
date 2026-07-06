@@ -1,6 +1,6 @@
 import copy
 import uuid
-from typing import AsyncIterator, Optional, Union
+from typing import Any, AsyncIterator, Dict, List, Optional, Tuple, Union
 
 from agno.utils.log import log_error
 
@@ -26,10 +26,33 @@ from agno.os.interfaces.agui.stream import async_stream_agno_response_as_agui_ev
 from agno.team.remote import RemoteTeam
 from agno.team.team import Team
 
+DEFAULT_USER_ID_CLAIM = "user_id"
+
+
+def _extract_claims(
+    forwarded_props: Optional[Dict[str, Any]],
+    user_id_claim: str,
+    dependencies_claims: List[str],
+) -> Tuple[Optional[str], Optional[Dict[str, Any]]]:
+    """Extract user_id and dependencies dict from AG-UI forwardedProps using claim names.
+
+    Returns (user_id, dependencies). `dependencies` is None when either no dependency
+    claims were configured or none of the requested keys were present in forwarded_props.
+    """
+    if not forwarded_props or not isinstance(forwarded_props, dict):
+        return None, None
+    user_id = forwarded_props.get(user_id_claim)
+    if not dependencies_claims:
+        return user_id, None
+    deps = {k: forwarded_props[k] for k in dependencies_claims if k in forwarded_props}
+    return user_id, (deps or None)
+
 
 async def run_entity(
     entity: Union[Agent, RemoteAgent, Team, RemoteTeam],
     run_input: RunAgentInput,
+    user_id_claim: str = DEFAULT_USER_ID_CLAIM,
+    dependencies_claims: Optional[List[str]] = None,
 ) -> AsyncIterator[BaseEvent]:
     """Shared handler for running an Agent or Team with AG-UI input/output mapping."""
     run_id = run_input.run_id or str(uuid.uuid4())
@@ -42,16 +65,17 @@ async def run_entity(
 
         yield RunStartedEvent(type=EventType.RUN_STARTED, thread_id=run_input.thread_id, run_id=run_id)
 
-        user_id = run_input.forwarded_props.get("user_id") if run_input.forwarded_props else None
+        user_id, claim_deps = _extract_claims(run_input.forwarded_props, user_id_claim, dependencies_claims or [])
         session_state = validate_state(run_input.state, run_input.thread_id)
 
         if session_state is not None:
             yield StateSnapshotEvent(type=EventType.STATE_SNAPSHOT, snapshot=copy.deepcopy(session_state))
 
         ui_deps = extract_context(run_input.context)
+        merged_deps = {**(claim_deps or {}), **(ui_deps or {})}  # context wins on key collision
         run_kwargs: dict = {}
-        if ui_deps:
-            run_kwargs["dependencies"] = ui_deps
+        if merged_deps:
+            run_kwargs["dependencies"] = merged_deps
             run_kwargs["add_dependencies_to_context"] = True
 
         response_stream = entity.arun(  # type: ignore
@@ -83,7 +107,11 @@ async def run_entity(
 
 
 def attach_routes(
-    router: APIRouter, agent: Optional[Union[Agent, RemoteAgent]] = None, team: Optional[Union[Team, RemoteTeam]] = None
+    router: APIRouter,
+    agent: Optional[Union[Agent, RemoteAgent]] = None,
+    team: Optional[Union[Team, RemoteTeam]] = None,
+    user_id_claim: str = DEFAULT_USER_ID_CLAIM,
+    dependencies_claims: Optional[List[str]] = None,
 ) -> APIRouter:
     if agent is None and team is None:
         raise ValueError("Either agent or team must be provided.")
@@ -94,7 +122,7 @@ def attach_routes(
     @router.post("/agui", name="run_agent")
     async def run_agent_agui(run_input: RunAgentInput):
         async def event_generator():
-            async for event in run_entity(entity, run_input):  # type: ignore
+            async for event in run_entity(entity, run_input, user_id_claim, dependencies_claims):  # type: ignore
                 yield encoder.encode(event)
 
         return StreamingResponse(
