@@ -2,6 +2,8 @@
 
 Examples for persistent memory and learning behavior.
 
+> **Session state vs memory:** See [../05_state_and_session/SESSION_STATE_VS_MEMORY.md](../05_state_and_session/SESSION_STATE_VS_MEMORY.md) for when to use each.
+
 ## Files
 - `learning_machine.py` - Demonstrates LearningMachine-based learning.
 - `memory_manager.py` - Use MemoryManager for persistent memory across sessions.

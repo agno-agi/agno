@@ -2,6 +2,8 @@
 
 Examples for session state management, chat history, and session persistence.
 
+> **Session state vs memory:** See [SESSION_STATE_VS_MEMORY.md](./SESSION_STATE_VS_MEMORY.md) for when to use each.
+
 ## Files
 - `agentic_session_state.py` - Agent-managed session state updates.
 - `chat_history.py` - Access and manage chat history.
