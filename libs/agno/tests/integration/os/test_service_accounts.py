@@ -438,14 +438,15 @@ class TestServiceAccountsOverMCP:
             enable_mcp_server=True,
             settings=AgnoAPISettings(os_security_key="root-security-key"),
         )
-        # Context manager so the MCP session manager lifespan runs.
-        with TestClient(agent_os.get_app()) as client:
+        # Context manager so the MCP session manager lifespan runs. base_url sets the
+        # Host header; localhost passes the default-on rebinding guard on open servers.
+        with TestClient(agent_os.get_app(), base_url="http://localhost") as client:
             yield client
 
     @pytest.fixture
     def mcp_open_client(self, test_agent, sqlite_db):
         agent_os = AgentOS(agents=[test_agent], db=sqlite_db, enable_mcp_server=True)
-        with TestClient(agent_os.get_app()) as client:
+        with TestClient(agent_os.get_app(), base_url="http://localhost") as client:
             yield client
 
     def _mcp_post(self, client, token=None):
