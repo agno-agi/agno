@@ -153,7 +153,7 @@ class CalComTools(Toolkit):
         try:
             url = "https://api.cal.com/v2/bookings"
             start_time = datetime.fromisoformat(start_time).astimezone(pytz.utc).isoformat(timespec="seconds")
-            payload = {
+            payload: Dict[str, Any] = {
                 "start": start_time,
                 "eventTypeId": self.event_type_id,
                 "attendee": {"name": name, "email": email, "timeZone": self.user_timezone},

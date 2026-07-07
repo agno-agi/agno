@@ -1,5 +1,5 @@
 from os import getenv
-from typing import Any, List, Optional, Union
+from typing import Any, Dict, List, Optional, Union
 from uuid import uuid4
 
 import requests
@@ -86,7 +86,7 @@ class DesiVocalTools(Toolkit):
                 "voice_id": voice_id or self.voice_id,
             }
 
-            headers = {
+            headers: Dict[str, Any] = {
                 "X_API_KEY": self.api_key,
                 "Content-Type": "application/json",
             }

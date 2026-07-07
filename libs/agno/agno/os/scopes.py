@@ -22,9 +22,11 @@ Backwards compatibility:
   issued before the rename continue to work. Prefer ``config:*`` in new tokens.
 """
 
+import fnmatch
+import re
 from dataclasses import dataclass
 from enum import Enum
-from typing import Dict, List, Optional, Set
+from typing import Dict, List, Optional, Set, Tuple
 
 # Legacy resource name aliases — keep tokens issued before a rename working.
 # Keys are the legacy resource names, values are the current names.
@@ -67,6 +69,9 @@ class AgentOSScope(str, Enum):
     - evals:write - Create and update evaluation runs
     - evals:delete - Delete evaluation runs
     - traces:read - View traces and trace statistics
+    - service_accounts:read - List service accounts
+    - service_accounts:write - Mint service account tokens
+    - service_accounts:delete - Revoke service account tokens
 
     Per-Resource Scopes (with resource ID):
     - agents:<agent-id>:read - Read specific agent
@@ -164,6 +169,29 @@ def parse_scope(scope: str, admin_scope: Optional[str] = None) -> ParsedScope:
 
     # Invalid format
     return ParsedScope(raw=scope, scope_type="unknown")
+
+
+def split_scope(raw: str) -> Tuple[str, Optional[str], str]:
+    """Split a scope string into its wire-format parts: (namespace, sub_namespace, permission).
+
+    This is the parse behind the ``{raw, namespace, sub_namespace, permission}`` payload
+    shape shared by every scope-bearing management API (service accounts, RBAC governance),
+    so all surfaces render a scope identically for UIs. Legacy namespaces are mapped the
+    same way :func:`parse_scope` maps them for enforcement (``system:read`` renders under
+    ``config``), so the wire shape never misrepresents the effective permission; ``raw``
+    keeps the original string.
+
+        ``agents:read``    -> ("agents", None, "read")
+        ``agents:*:run``   -> ("agents", "*", "run")
+        ``system:read``    -> ("config", None, "read")
+        ``agent_os:admin`` -> ("agent_os", None, "admin")
+    """
+    parts = raw.split(":")
+    if len(parts) == 2:
+        return LEGACY_RESOURCE_ALIASES.get(parts[0], parts[0]), None, parts[1]
+    if len(parts) >= 3:
+        return LEGACY_RESOURCE_ALIASES.get(parts[0], parts[0]), ":".join(parts[1:-1]), parts[-1]
+    return (parts[0] if parts else "unknown"), None, "unknown"
 
 
 def matches_scope(
@@ -386,6 +414,40 @@ def get_accessible_resource_ids(
     return accessible_ids
 
 
+def get_a2a_scope_mappings(prefix: str = "/a2a") -> Dict[str, List[str]]:
+    """Scope requirements for the A2A interface routes mounted under ``prefix``.
+
+    A2A's mount prefix is operator-configurable (``A2A(prefix=...)``), so these are
+    parameterised by prefix rather than hardcoded to ``/a2a``. ``get_default_scope_mappings``
+    includes the default-prefix entries; app startup additionally merges the entries for
+    each mounted A2A interface's *actual* prefix (see ``AgentOS._add_auth_middleware``), so a
+    custom prefix is gated too instead of falling through to the unmapped-route default-allow.
+
+    message:send / message:stream and tasks:cancel execute or mutate a run -> ``:run``;
+    the agent-card and tasks:get are read-only -> ``:read``. The deprecated dynamic-dispatch
+    endpoints resolve the target family at runtime, so they carry a coarse ``agents:run``
+    route gate and re-check the resolved family's run scope inside the handler.
+    """
+    p = prefix.rstrip("/")
+    return {
+        f"GET {p}/agents/*/.well-known/agent-card.json": ["agents:read"],
+        f"POST {p}/agents/*/v1/message:send": ["agents:run"],
+        f"POST {p}/agents/*/v1/message:stream": ["agents:run"],
+        f"POST {p}/agents/*/v1/tasks:get": ["agents:read"],
+        f"POST {p}/agents/*/v1/tasks:cancel": ["agents:run"],
+        f"GET {p}/teams/*/.well-known/agent-card.json": ["teams:read"],
+        f"POST {p}/teams/*/v1/message:send": ["teams:run"],
+        f"POST {p}/teams/*/v1/message:stream": ["teams:run"],
+        f"POST {p}/teams/*/v1/tasks:get": ["teams:read"],
+        f"POST {p}/teams/*/v1/tasks:cancel": ["teams:run"],
+        f"GET {p}/workflows/*/.well-known/agent-card.json": ["workflows:read"],
+        f"POST {p}/workflows/*/v1/message:send": ["workflows:run"],
+        f"POST {p}/workflows/*/v1/message:stream": ["workflows:run"],
+        f"POST {p}/message/send": ["agents:run"],
+        f"POST {p}/message/stream": ["agents:run"],
+    }
+
+
 def get_default_scope_mappings() -> Dict[str, List[str]]:
     """
     Get default scope mappings for AgentOS endpoints.
@@ -393,7 +455,7 @@ def get_default_scope_mappings() -> Dict[str, List[str]]:
     Returns a dictionary mapping route patterns (with HTTP methods) to required scope templates.
     Format: "METHOD /path/pattern": ["resource:action"]
     """
-    return {
+    mappings: Dict[str, List[str]] = {
         # Config endpoints (legacy scope: system:read)
         "GET /config": ["config:read"],
         "GET /models": ["config:read"],
@@ -470,6 +532,10 @@ def get_default_scope_mappings() -> Dict[str, List[str]]:
         "GET /traces": ["traces:read"],
         "GET /traces/*": ["traces:read"],
         "GET /trace_session_stats": ["traces:read"],
+        # Service account endpoints
+        "POST /service-accounts": ["service_accounts:write"],
+        "GET /service-accounts": ["service_accounts:read"],
+        "DELETE /service-accounts/*": ["service_accounts:delete"],
         # Schedule endpoints
         "GET /schedules": ["schedules:read"],
         "GET /schedules/*": ["schedules:read"],
@@ -513,6 +579,160 @@ def get_default_scope_mappings() -> Dict[str, List[str]]:
         "DELETE /components/*/configs/*": ["components:delete"],
         "POST /components/*/configs/*/set-current": ["components:write"],
     }
+    # A2A interface routes under the default prefix. App startup additionally merges
+    # entries for any A2A interface mounted under a custom prefix (see
+    # AgentOS._add_auth_middleware) so a non-default prefix is gated too.
+    mappings.update(get_a2a_scope_mappings("/a2a"))
+    return mappings
+
+
+def get_required_scopes_for_route(scope_mappings: Dict[str, List[str]], method: str, path: str) -> List[str]:
+    """
+    Look up the required scopes for a method and path in a scope-mappings dict.
+
+    Args:
+        scope_mappings: Mapping of "METHOD /path/pattern" to required scope lists
+        method: HTTP method (GET, POST, etc.)
+        path: Request path
+
+    Returns:
+        List of required scopes. Empty list [] means no scopes required (allow access).
+        Routes not present in scope_mappings also return [], allowing access.
+    """
+    route_key = f"{method} {path}"
+
+    # First, try exact match
+    if route_key in scope_mappings:
+        return scope_mappings[route_key]
+
+    # Then try pattern matching
+    for pattern, scopes in scope_mappings.items():
+        pattern_method, pattern_path = pattern.split(" ", 1)
+
+        if pattern_method != method:
+            continue
+
+        # Convert pattern to fnmatch pattern (replace {param} with *)
+        # This handles both /agents/* and /agents/{agent_id} style patterns
+        normalized_pattern = pattern_path
+        if "{" in normalized_pattern:
+            normalized_pattern = re.sub(r"\{[^}]+\}", "*", normalized_pattern)
+
+        if fnmatch.fnmatch(path, normalized_pattern):
+            return scopes
+
+    return []
+
+
+def get_resource_context_from_path(path: str) -> Tuple[Optional[str], Optional[str]]:
+    """
+    Extract the resource type and resource ID from a request path.
+
+    Returns:
+        Tuple of (resource_type, resource_id). Either may be None.
+
+    Examples:
+        >>> get_resource_context_from_path("/agents/my-agent/runs")
+        ('agents', 'my-agent')
+        >>> get_resource_context_from_path("/sessions")
+        (None, None)
+    """
+    # Anchor to the FIRST path segment. A substring test ("/agents" in path) would
+    # mis-classify any path that merely contains the word -- e.g. GET
+    # /knowledge/content/agents-onboarding would be typed as an "agents" resource and
+    # then slip through the GET-listing escape hatch below into a foreign family. Only
+    # /agents, /teams, /workflows (and their sub-paths) own the resource type.
+    resource_type = None
+    # Optional /a2a prefix so per-resource scopes (agents:<id>:run) authorize the
+    # A2A surface the same way they do REST.
+    type_match = re.match(r"^/(?:a2a/)?(agents|teams|workflows)(?:/|$)", path)
+    if type_match:
+        resource_type = type_match.group(1)
+
+    resource_id = None
+    if resource_type:
+        match = re.match(rf"^/(?:a2a/)?{resource_type}/([^/]+)", path)
+        if match:
+            resource_id = match.group(1)
+
+    return resource_type, resource_id
+
+
+@dataclass
+class RouteScopeCheck:
+    """Result of checking a caller's scopes against a route's requirements."""
+
+    allowed: bool
+    required_scopes: List[str]
+    # Set only for listing endpoints where the caller lacks the global scope but may
+    # hold per-resource scopes: the endpoint should filter results to these IDs
+    # (possibly an empty set) instead of rejecting with 403.
+    accessible_resource_ids: Optional[Set[str]] = None
+
+
+def check_route_scopes(
+    user_scopes: List[str],
+    scope_mappings: Dict[str, List[str]],
+    method: str,
+    path: str,
+    admin_scope: Optional[str] = None,
+) -> RouteScopeCheck:
+    """
+    Check a caller's scopes against the scopes required for a route.
+
+    This is the single RBAC decision used for every credential type (JWTs, the internal
+    service token, and service account tokens). Listing endpoints get special handling:
+    a caller without the global scope is still allowed through, with
+    accessible_resource_ids populated so the endpoint returns a filtered (possibly
+    empty) list instead of a 403.
+    """
+    required_scopes = get_required_scopes_for_route(scope_mappings, method, path)
+    if not required_scopes:
+        return RouteScopeCheck(allowed=True, required_scopes=required_scopes)
+
+    resource_type, resource_id = get_resource_context_from_path(path)
+
+    allowed = has_required_scopes(
+        user_scopes,
+        required_scopes,
+        resource_type=resource_type,
+        resource_id=resource_id,
+        admin_scope=admin_scope,
+    )
+
+    accessible_resource_ids: Optional[Set[str]] = None
+    first_required = required_scopes[0]
+    required_family = first_required.split(":", 1)[0] if ":" in first_required else None
+    if (
+        not allowed
+        and method == "GET"
+        and not resource_id
+        and resource_type
+        # Only a genuine listing of THIS resource family gets the filtered-access
+        # treatment. Requiring the required-scope family to equal resource_type stops a
+        # route that requires a foreign scope (e.g. knowledge:read) from being waved
+        # through just because its path was classified as agents/teams/workflows.
+        and required_family == resource_type
+    ):
+        # GET listing endpoints always allow access but expose the accessible IDs for
+        # filtering, so callers with only per-resource scopes get a filtered list
+        # (including an empty one) instead of a 403. Restricted to GET so a non-GET
+        # id-less route (e.g. POST /agents) is never silently allowed through. Pass
+        # the action from the required scope (e.g. "read" for "agents:read") so the
+        # cached IDs only include resources the caller is authorised for under it.
+        required_action: Optional[str] = None
+        if ":" in first_required:
+            required_action = first_required.rsplit(":", 1)[1]
+        accessible_resource_ids = get_accessible_resource_ids(
+            user_scopes, resource_type, admin_scope=admin_scope, action=required_action
+        )
+        allowed = True
+
+    return RouteScopeCheck(
+        allowed=allowed,
+        required_scopes=required_scopes,
+        accessible_resource_ids=accessible_resource_ids,
+    )
 
 
 def get_scope_value(scope: AgentOSScope) -> str:

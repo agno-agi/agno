@@ -23,7 +23,7 @@ class ClickUpTools(Toolkit):
         self.api_key = api_key or getenv("CLICKUP_API_KEY")
         self.master_space_id = master_space_id or getenv("MASTER_SPACE_ID")
         self.base_url = "https://api.clickup.com/api/v2"
-        self.headers = {"Authorization": self.api_key}
+        self.headers: Dict[str, Any] = {"Authorization": self.api_key}
 
         if not self.api_key:
             raise ValueError("CLICKUP_API_KEY not set. Please set the CLICKUP_API_KEY environment variable.")
