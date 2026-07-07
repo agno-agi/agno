@@ -262,7 +262,7 @@ def test_hook_mutation_does_not_affect_run():
         """Return n squared."""
         return n * n
 
-    agent = Agent(tools=[square])
+    agent = Agent(tools=[square], instructions="Always use the square tool to compute squares.")
     response: RunOutput = agent.run("Compute 5 squared")
 
     assert response.content is not None
