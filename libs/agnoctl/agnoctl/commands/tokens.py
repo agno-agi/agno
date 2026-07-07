@@ -26,10 +26,10 @@ UrlOption = typer.Option(
 )
 JsonOption = typer.Option(False, "--json", help="Emit a single JSON document for machine consumption.")
 AllowHttpOption = typer.Option(
-    False, "--allow-http", help="Permit sending credentials over plaintext HTTP to a non-loopback host."
+    False, "--allow-http", help="Permit sending credentials over plaintext HTTP to a remote host."
 )
 TrustEnvFileOption = typer.Option(
-    False, "--yes", "-y", help="Trust a non-loopback AGENTOS_URL read from a .env file without prompting."
+    False, "--yes", "-y", help="Trust a remote AGENTOS_URL from a .env file without prompting."
 )
 
 
@@ -43,7 +43,7 @@ def _api_for(
     url: Optional[str], json_mode: bool, allow_http: bool, sensitive: bool = False, assume_yes: bool = False
 ) -> AgentOSAPI:
     os_info = discover(url)
-    # A non-loopback URL pulled from an ambient .env file could be redirecting this
+    # A remote URL pulled from an ambient .env file could be redirecting this
     # credential-bearing call; confirm it (or refuse in automation) before going further.
     ensure_env_file_url_trusted(
         os_info.base_url, os_info.url_source, os_info.url_source_file, assume_yes=assume_yes, json_mode=json_mode
@@ -159,7 +159,7 @@ def revoke(
     json_output: bool = JsonOption,
     allow_http: bool = AllowHttpOption,
     yes: bool = typer.Option(
-        False, "--yes", "-y", help="Skip confirmation prompts (revoking, and trusting a non-loopback .env-file URL)."
+        False, "--yes", "-y", help="Skip confirmation prompts (revoking, and trusting a remote .env-file URL)."
     ),
 ) -> None:
     """Revoke a service account. Takes effect on the account's next request."""

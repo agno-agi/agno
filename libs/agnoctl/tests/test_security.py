@@ -66,7 +66,7 @@ def test_env_file_gate_refuses_remote_in_automation():
         ensure_env_file_url_trusted(
             "https://prod.example.com", "env-file", ".env.production", assume_yes=False, json_mode=True
         )
-    assert "non-local host" in exc.value.message
+    assert "remote host" in exc.value.message
     assert "--url" in (exc.value.hint or "") and "--yes" in (exc.value.hint or "")
 
 

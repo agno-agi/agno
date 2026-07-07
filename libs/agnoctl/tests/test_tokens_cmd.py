@@ -64,7 +64,7 @@ def test_list_refuses_remote_env_file_url_in_json(monkeypatch, tmp_path, fake_os
     result = _run(["tokens", "list", "--json"])  # no --url: resolve from the env file
     assert result.exit_code == 1, result.output
     payload = json.loads(result.output)
-    assert "non-local host" in payload["error"]
+    assert "remote host" in payload["error"]
     assert "--url" in payload["hint"] and "--yes" in payload["hint"]
 
 

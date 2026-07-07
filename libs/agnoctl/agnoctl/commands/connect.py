@@ -232,10 +232,10 @@ def connect(
         False, "--skip-existing", help="Never touch existing accounts or config entries."
     ),
     allow_http: bool = typer.Option(
-        False, "--allow-http", help="Permit sending credentials over plaintext HTTP to a non-loopback host."
+        False, "--allow-http", help="Permit sending credentials over plaintext HTTP to a remote host."
     ),
     yes: bool = typer.Option(
-        False, "--yes", "-y", help="Trust a non-loopback AGENTOS_URL read from a .env file without prompting."
+        False, "--yes", "-y", help="Trust a remote AGENTOS_URL from a .env file without prompting."
     ),
     json_output: bool = typer.Option(False, "--json", help="Emit a single JSON document for machine consumption."),
 ) -> None:

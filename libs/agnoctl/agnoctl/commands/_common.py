@@ -84,11 +84,12 @@ def ensure_env_file_url_trusted(
     """Guard the ambient-env-file redirect before a credential or config write.
 
     An AGENTOS_URL read from a .env / .env.production in the current directory is trusted
-    automatically only when it points at a loopback host. A non-loopback env-file URL could
-    have been planted by an untrusted directory to redirect the admin credential or rewrite
-    MCP client configs, so require an explicit go-ahead: prompt interactively (default no),
-    and refuse outright in automation (--json or no TTY) unless --yes was passed. An explicit
-    --url or an exported AGENTOS_URL env var is not an ambient file and is trusted as before.
+    automatically only when it points at this machine (localhost / 127.x / ::1). A URL that
+    points at a remote host could have been planted by an untrusted directory to redirect the
+    admin credential or rewrite MCP client configs, so require an explicit go-ahead: prompt
+    interactively (default no), and refuse outright in automation (--json or no TTY) unless
+    --yes was passed. An explicit --url or an exported AGENTOS_URL env var is not an ambient
+    file and is trusted as before.
     """
     if url_source != "env-file":
         return
@@ -99,7 +100,7 @@ def ensure_env_file_url_trusted(
     source = url_source_file or "an env file"
     if json_mode or not stdin_is_interactive():
         raise CLIError(
-            "AGENTOS_URL in " + source + " points at a non-local host (" + base_url + ").",
+            "AGENTOS_URL in " + source + " points to a remote host (" + base_url + ").",
             hint="Pass --url to target it explicitly, or --yes to trust the env file.",
         )
     if not typer.confirm("Trust AGENTOS_URL=" + base_url + " (from " + source + ")?", default=False):
