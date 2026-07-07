@@ -2212,8 +2212,10 @@ class Model(ABC):
                                 else:
                                     function_call_output += str(item.content)
 
-                        # Yield the event itself to bubble it up
-                        yield item
+                        # Yield the event itself to bubble it up. The isinstance guards
+                        # above narrow item at runtime, but mypy cannot see through
+                        # tuple(get_args(...)).
+                        yield item  # type: ignore[misc]
 
                     else:
                         function_call_output += str(item)

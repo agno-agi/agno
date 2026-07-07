@@ -415,8 +415,9 @@ def test_case_sensitive_origin_matching(middleware):
     assert middleware._is_origin_allowed("HTTP://LOCALHOST:3000", allowed_origins) is False
 
 
-def test_raises_error_without_verification_key():
-    """Test that middleware raises error when no verification key provided."""
+def test_raises_error_without_any_credential_source():
+    """No credential source at all (no JWT key, no security key, no verifier) is a
+    silent authorize-everyone footgun; the middleware must refuse to construct."""
     with pytest.raises(ValueError) as exc_info:
         JWTMiddleware(
             app=None,
@@ -424,7 +425,15 @@ def test_raises_error_without_verification_key():
             algorithm="HS256",
         )
 
-    assert "at least one jwt verification key or jwks file is required" in str(exc_info.value).lower()
+    assert "at least one credential source" in str(exc_info.value).lower()
+
+
+def test_security_key_only_is_a_valid_credential_source():
+    """The middleware doubles as the security-key auth layer: a security_key alone,
+    with no JWT source, is a valid construction (JWT stays inert)."""
+    middleware = JWTMiddleware(app=None, security_key="s3cret")
+    assert middleware.validator is None
+    assert middleware.security_key == "s3cret"
 
 
 def test_authorization_enabled_implicitly_with_scope_mappings():
@@ -656,3 +665,168 @@ async def test_dispatch_keeps_user_isolation_false_when_disabled():
     await mw.dispatch(request, call_next)
 
     assert request.state.user_isolation_enabled is False
+
+
+# -- F1: authorization=True must have a JWT source (fail closed) ------------------------
+
+
+def test_authorization_true_without_jwt_source_raises_even_with_security_key():
+    """authorization=True with no JWT key would silently serve an OPEN instance (JWT and
+    anonymous requests fall through); a security_key does not make it enforceable."""
+    with pytest.raises(ValueError, match="authorization=True requires a JWT verification source"):
+        JWTMiddleware(app=None, authorization=True, security_key="a-security-key")
+
+
+def test_authorization_true_without_jwt_source_raises_even_with_service_account_verifier():
+    """A service-account verifier (a db) must not mask a missing JWT key: PAT scopes are
+    enforced independently, but JWT/anonymous requests would still be open."""
+    from unittest.mock import MagicMock
+
+    with pytest.raises(ValueError, match="authorization=True requires a JWT verification source"):
+        JWTMiddleware(app=None, authorization=True, service_account_verifier=MagicMock())
+
+
+def test_authorization_true_with_jwt_source_is_accepted():
+    mw = JWTMiddleware(app=None, authorization=True, verification_keys=[JWT_SECRET], algorithm="HS256")
+    assert mw.authorization is True
+
+
+# -- C1: a JWT may not claim a reserved (sa: / __scheduler__) principal -----------------
+
+
+def test_is_reserved_principal_matches_reserved_namespaces():
+    from agno.os.middleware.jwt import is_reserved_principal
+
+    assert is_reserved_principal("sa:claude-code")
+    assert is_reserved_principal("sa:")
+    assert is_reserved_principal("__scheduler__")
+    assert not is_reserved_principal("alice")
+    assert not is_reserved_principal("user@example.com")
+    assert not is_reserved_principal("scheduler")
+    assert not is_reserved_principal(None)
+    assert not is_reserved_principal(123)
+
+
+def _bearer_request(sub, secret, path="/agents"):
+    from datetime import UTC, datetime, timedelta
+    from types import SimpleNamespace
+    from unittest.mock import MagicMock
+
+    import jwt as jwtlib
+
+    token = jwtlib.encode(
+        {"sub": sub, "scopes": [], "exp": datetime.now(UTC) + timedelta(minutes=5)},
+        secret,
+        algorithm="HS256",
+    )
+    request = MagicMock()
+    request.url = SimpleNamespace(path=path)
+    request.method = "GET"
+    request.headers = {"Authorization": f"Bearer {token}", "origin": None}
+    request.cookies = {}
+    request.app = MagicMock()
+    request.app.state = SimpleNamespace()
+    request.state = _FakeState()
+    return request
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("reserved_sub", ["sa:claude-code", "__scheduler__"])
+async def test_dispatch_rejects_jwt_claiming_reserved_principal(reserved_sub):
+    """A valid-signature JWT whose subject impersonates a service account or the scheduler
+    is rejected 401 before it is trusted — never passed through with the spoofed user_id."""
+    from unittest.mock import AsyncMock, MagicMock
+
+    secret = "reserved-principal-secret"
+    mw = JWTMiddleware(app=None, verification_keys=[secret], algorithm="HS256", excluded_route_paths=[])
+    request = _bearer_request(reserved_sub, secret)
+
+    call_next = AsyncMock(return_value=MagicMock(status_code=200))
+    response = await mw.dispatch(request, call_next)
+
+    assert response.status_code == 401
+    call_next.assert_not_awaited()
+    assert getattr(request.state, "authenticated", False) is False
+
+
+@pytest.mark.asyncio
+async def test_dispatch_allows_normal_subject():
+    from unittest.mock import AsyncMock, MagicMock
+
+    secret = "normal-subject-secret"
+    mw = JWTMiddleware(app=None, verification_keys=[secret], algorithm="HS256", excluded_route_paths=[])
+    request = _bearer_request("alice", secret)
+
+    call_next = AsyncMock(return_value=MagicMock(status_code=200))
+    await mw.dispatch(request, call_next)
+
+    call_next.assert_awaited_once()
+    assert request.state.user_id == "alice"
+
+
+# -- C4: the mount short-circuit trusts only this middleware's private marker -----------
+
+
+def _no_token_request(path="/agents"):
+    from types import SimpleNamespace
+    from unittest.mock import MagicMock
+
+    request = MagicMock()
+    request.url = SimpleNamespace(path=path)
+    request.method = "GET"
+    request.headers = {"origin": None}  # no Authorization
+    request.cookies = {}
+    request.app = MagicMock()
+    request.app.state = SimpleNamespace()
+    request.state = _FakeState()
+    return request
+
+
+@pytest.mark.asyncio
+async def test_dispatch_does_not_trust_public_authenticated_flag():
+    """A different middleware setting the public request.state.authenticated must NOT let
+    a request skip AuthMiddleware: with a JWT source configured and no token, it 401s."""
+    from unittest.mock import AsyncMock, MagicMock
+
+    mw = JWTMiddleware(app=None, verification_keys=[JWT_SECRET], algorithm="HS256", excluded_route_paths=[])
+    request = _no_token_request()
+    request.state.authenticated = True  # spoofed by an unrelated middleware
+
+    call_next = AsyncMock(return_value=MagicMock(status_code=200))
+    response = await mw.dispatch(request, call_next)
+
+    assert response.status_code == 401
+    call_next.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_dispatch_short_circuits_on_private_marker():
+    """The private marker set by an outer AuthMiddleware instance short-circuits re-verification."""
+    from unittest.mock import AsyncMock, MagicMock
+
+    from agno.os.middleware.jwt import _AUTH_COMPLETE_ATTR
+
+    mw = JWTMiddleware(app=None, verification_keys=[JWT_SECRET], algorithm="HS256", excluded_route_paths=[])
+    request = _no_token_request()
+    setattr(request.state, _AUTH_COMPLETE_ATTR, True)
+
+    call_next = AsyncMock(return_value=MagicMock(status_code=200))
+    await mw.dispatch(request, call_next)
+
+    call_next.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_dispatch_sets_private_marker_on_success():
+    from unittest.mock import AsyncMock, MagicMock
+
+    from agno.os.middleware.jwt import _AUTH_COMPLETE_ATTR
+
+    secret = "marker-on-success-secret"
+    mw = JWTMiddleware(app=None, verification_keys=[secret], algorithm="HS256", excluded_route_paths=[])
+    request = _bearer_request("alice", secret)
+
+    call_next = AsyncMock(return_value=MagicMock(status_code=200))
+    await mw.dispatch(request, call_next)
+
+    assert getattr(request.state, _AUTH_COMPLETE_ATTR, False) is True

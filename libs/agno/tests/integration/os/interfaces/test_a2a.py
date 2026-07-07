@@ -40,6 +40,28 @@ from agno.team import Team
 from agno.workflow import Workflow
 
 
+@pytest.fixture(autouse=True)
+def _a2a_resolve_shared_instance(monkeypatch):
+    """Resolve A2A components to the shared fixture instance the tests patch.
+
+    The A2A router now resolves with ``create_fresh=True`` (per-request isolation), which
+    deep-copies the component and would discard the ``.arun`` / ``.acancel_run`` patches
+    these tests set on the shared instance. Force ``create_fresh=False`` so the patched
+    instance is what runs; request isolation itself is covered by unit tests.
+    """
+    import agno.os.interfaces.a2a.router as a2a_router
+
+    def _force_shared(real):
+        def wrapper(*args, **kwargs):
+            kwargs["create_fresh"] = False
+            return real(*args, **kwargs)
+
+        return wrapper
+
+    for fn_name in ("get_agent_by_id", "get_team_by_id", "get_workflow_by_id"):
+        monkeypatch.setattr(a2a_router, fn_name, _force_shared(getattr(a2a_router, fn_name)))
+
+
 @pytest.fixture
 def test_agent():
     """Create a test agent for A2A."""

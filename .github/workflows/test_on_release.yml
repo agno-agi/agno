@@ -7,6 +7,7 @@ on:
     branches:
       - "*release*" # Run on release-* format
       - "release/*" # Run on release/1.2.3 branch format
+      - "feat/v2.7" # Release-bound branch: full matrix on every push
   workflow_dispatch: # Allows manual triggering
     inputs:
       branch:
@@ -18,10 +19,24 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+# Every job in this matrix drives live model APIs: a single blanket retry
+# absorbs one-shot model-nondeterminism (a model skipping a tool call, a
+# provider-side tool_use_failed) while anything deterministically broken
+# still fails twice and stays red. Requires pytest-rerunfailures in every
+# job env that runs pytest.
+#
+# Every job also carries timeout-minutes so a hung provider stream fails the
+# job instead of wedging it until GitHub's 6-hour default. The ceiling is
+# 20 min, except the three jobs whose green runs are measured above that
+# (test-google, test-teams-3, test-knowledge-1: 30 min).
+env:
+  PYTEST_ADDOPTS: "--reruns 1"
+
 jobs:
   # Run tests for OpenAI
   test-openai:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     strategy:
       matrix:
         python-version: ["3.12"]
@@ -47,6 +62,7 @@ jobs:
   # Run tests for Google
   test-google:
     runs-on: ubuntu-latest
+    timeout-minutes: 30 # Green runs regularly reach ~22 min
     strategy:
       matrix:
         python-version: ["3.12"]
@@ -73,6 +89,7 @@ jobs:
   # Run tests for Anthropic
   test-anthropic:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     strategy:
       matrix:
         python-version: ["3.12"]
@@ -129,6 +146,7 @@ jobs:
   test-cohere:
     if: false # Disable cohere tests until we get a production account
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     strategy:
       matrix:
         python-version: ["3.12"]
@@ -155,6 +173,7 @@ jobs:
   test-deepseek:
     if: false # Disable deepseek tests until we get a production account
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     strategy:
       matrix:
         python-version: ["3.12"]
@@ -180,6 +199,7 @@ jobs:
   test-fireworks:
     if: false # Disable fireworks tests until we get a production account
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     strategy:
       matrix:
         python-version: ["3.12"]
@@ -210,6 +230,7 @@ jobs:
   # Run tests for Groq
   test-groq:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     strategy:
       matrix:
         python-version: ["3.12"]
@@ -236,6 +257,7 @@ jobs:
   test-mistral:
     if: false # Disable mistral tests until we get a production account
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     strategy:
       matrix:
         python-version: ["3.12"]
@@ -262,6 +284,7 @@ jobs:
   test-nvidia:
     if: false # Disable nvidia tests until we get a test account
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     strategy:
       matrix:
         python-version: ["3.12"]
@@ -287,6 +310,7 @@ jobs:
   test-openrouter:
     if: false # Disable openrouter tests until we get a test account
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     strategy:
       matrix:
         python-version: ["3.12"]
@@ -313,6 +337,7 @@ jobs:
   test-perplexity:
     if: false # Disable perplexity tests until we get a production account
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     strategy:
       matrix:
         python-version: ["3.12"]
@@ -338,6 +363,7 @@ jobs:
   test-sambanova:
     if: false # Temporarily disabled
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     strategy:
       matrix:
         python-version: ["3.12"]
@@ -363,6 +389,7 @@ jobs:
   test-together:
     if: false # The tests take too long to run
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     strategy:
       matrix:
         python-version: ["3.12"]
@@ -388,6 +415,7 @@ jobs:
   # Run tests for xAI
   test-xai:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     if: false # Disable xAI tests until we get a test account
     strategy:
       matrix:
@@ -415,6 +443,7 @@ jobs:
   test-v0:
     if: false # We don't have credits
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     strategy:
       matrix:
         python-version: ["3.12"]
@@ -440,6 +469,7 @@ jobs:
   test-ibm-watsonx:
     if: false # Our account is not working
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     strategy:
       matrix:
         python-version: ["3.12"]
@@ -468,6 +498,7 @@ jobs:
   test-cerebras:
     if: false
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     strategy:
       matrix:
         python-version: ["3.12"]
@@ -491,6 +522,7 @@ jobs:
 
   test-deepinfra:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     strategy:
       matrix:
         python-version: ["3.12"]
@@ -517,6 +549,7 @@ jobs:
   test-aimlapi:
     if: false # We need more credits
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     strategy:
       matrix:
         python-version: ["3.12"]
@@ -548,6 +581,7 @@ jobs:
   test-dashscope:
     if: false # We need more credits
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     strategy:
       matrix:
         python-version: ["3.12"]
@@ -579,6 +613,7 @@ jobs:
   test-langdb:
     if: false # We do not have a company account
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     strategy:
       matrix:
         python-version: ["3.12"]
@@ -609,6 +644,7 @@ jobs:
 
   test-agents:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     strategy:
       matrix:
         python-version: ["3.12"]
@@ -653,6 +689,7 @@ jobs:
 
   test-agents-2:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     strategy:
       matrix:
         python-version: ["3.12"]
@@ -695,6 +732,7 @@ jobs:
 
   test-teams-1:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     strategy:
       matrix:
         python-version: ["3.12"]
@@ -735,6 +773,7 @@ jobs:
 
   test-teams-2:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     strategy:
       matrix:
         python-version: ["3.12"]
@@ -775,6 +814,7 @@ jobs:
 
   test-teams-3:
     runs-on: ubuntu-latest
+    timeout-minutes: 30 # Green runs take 24-26 min; split the job to get under 20
     strategy:
       matrix:
         python-version: ["3.12"]
@@ -815,6 +855,7 @@ jobs:
 
   test-teams-4:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     strategy:
       matrix:
         python-version: ["3.12"]
@@ -860,6 +901,7 @@ jobs:
 
   verify-split-test-coverage:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v3
       - name: Verify all split integration tests are assigned to CI jobs
@@ -880,6 +922,7 @@ jobs:
 
   test-workflows:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     strategy:
       matrix:
         python-version: ["3.12"]
@@ -910,6 +953,7 @@ jobs:
 
   test-embedder:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     strategy:
       matrix:
         python-version: ["3.12"]
@@ -941,6 +985,7 @@ jobs:
 
   test-knowledge-1:
     runs-on: ubuntu-latest
+    timeout-minutes: 30 # Green runs regularly reach ~21 min
     strategy:
       matrix:
         python-version: ["3.12"]
@@ -980,6 +1025,7 @@ jobs:
 
   test-knowledge-2:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     strategy:
       matrix:
         python-version: ["3.12"]
@@ -1016,6 +1062,7 @@ jobs:
   # Run A2A tests (isolated due to dependency conflicts)
   test-a2a:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     strategy:
       matrix:
         python-version: ["3.12"]
@@ -1050,6 +1097,7 @@ jobs:
 
   test-clean:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     strategy:
       matrix:
         python-version: ["3.12"]
@@ -1072,7 +1120,7 @@ jobs:
           VIRTUAL_ENV=.venv uv venv --python 3.12
           VIRTUAL_ENV=.venv uv pip install agno
           VIRTUAL_ENV=.venv uv pip install -r ./libs/agno/requirements.txt
-          VIRTUAL_ENV=.venv uv pip install openai chromadb sqlalchemy pytest pytest-asyncio pytest-cov pytest-mock
+          VIRTUAL_ENV=.venv uv pip install openai chromadb sqlalchemy pytest pytest-asyncio pytest-cov pytest-mock pytest-rerunfailures pytest-timeout
       - name: Run Basic Clean Test
         working-directory: .
         env:
@@ -1083,6 +1131,7 @@ jobs:
 
   test-agent-os:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     strategy:
       matrix:
         python-version: ["3.12"]
@@ -1115,6 +1164,7 @@ jobs:
 
   test-clean-os:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     strategy:
       matrix:
         python-version: ["3.12"]
@@ -1137,7 +1187,7 @@ jobs:
           VIRTUAL_ENV=.venv uv venv --python 3.12
           VIRTUAL_ENV=.venv uv pip install agno
           VIRTUAL_ENV=.venv uv pip install -r ./libs/agno/requirements.txt
-          VIRTUAL_ENV=.venv uv pip install openai chromadb sqlalchemy fastapi pytest pytest-asyncio pytest-cov pytest-mock
+          VIRTUAL_ENV=.venv uv pip install openai chromadb sqlalchemy fastapi pytest pytest-asyncio pytest-cov pytest-mock pytest-rerunfailures pytest-timeout
       - name: Run Basic Clean Test
         working-directory: .
         env:
@@ -1149,6 +1199,7 @@ jobs:
   # Run remaining integration tests
   test-remaining:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     strategy:
       matrix:
         python-version: ["3.12"]
@@ -1180,6 +1231,7 @@ jobs:
 
   test-dev-setup:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     strategy:
       matrix:
         python-version: ["3.12"]
@@ -1210,10 +1262,11 @@ jobs:
         run: |
           source .venv/bin/activate
           python -c "import agno; print(f'✓ agno version: {agno.__version__}')" || exit 1
-      - name: Verify agno_infra installation
+      - name: Verify agnoctl installation
         run: |
           source .venv/bin/activate
-          uv pip show agno-infra || exit 1
+          uv pip show agnoctl || exit 1
+          agno --version || exit 1
       - name: List installed packages
         run: |
           source .venv/bin/activate
@@ -1222,6 +1275,7 @@ jobs:
   # Run AgentOS System Tests (multi-container Docker setup)
   test-agentos-system:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     strategy:
       matrix:
         python-version: ["3.12"]
@@ -1264,10 +1318,12 @@ jobs:
             GATEWAY_HEALTH=$(docker inspect --format='{{.State.Health.Status}}' system-test-gateway 2>/dev/null || echo "not_found")
             REMOTE_HEALTH=$(docker inspect --format='{{.State.Health.Status}}' system-test-remote 2>/dev/null || echo "not_found")
             POSTGRES_HEALTH=$(docker inspect --format='{{.State.Health.Status}}' system-test-postgres 2>/dev/null || echo "not_found")
+            A2A_HEALTH=$(docker inspect --format='{{.State.Health.Status}}' system-test-agno-a2a 2>/dev/null || echo "not_found")
+            ADK_HEALTH=$(docker inspect --format='{{.State.Health.Status}}' system-test-adk 2>/dev/null || echo "not_found")
 
-            echo "  Postgres: $POSTGRES_HEALTH, Remote: $REMOTE_HEALTH, Gateway: $GATEWAY_HEALTH"
+            echo "  Postgres: $POSTGRES_HEALTH, Remote: $REMOTE_HEALTH, Gateway: $GATEWAY_HEALTH, A2A: $A2A_HEALTH, ADK: $ADK_HEALTH"
 
-            if [ "$GATEWAY_HEALTH" = "healthy" ] && [ "$REMOTE_HEALTH" = "healthy" ] && [ "$POSTGRES_HEALTH" = "healthy" ]; then
+            if [ "$GATEWAY_HEALTH" = "healthy" ] && [ "$REMOTE_HEALTH" = "healthy" ] && [ "$POSTGRES_HEALTH" = "healthy" ] && [ "$A2A_HEALTH" = "healthy" ] && [ "$ADK_HEALTH" = "healthy" ]; then
               echo "All services are healthy!"
               break
             fi

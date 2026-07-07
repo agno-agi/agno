@@ -8,12 +8,28 @@ Examples for `mcp_demo` in AgentOS.
 - `mcp_tools_advanced_example.py` — Example AgentOS app where the agent has MCPTools.
 - `mcp_tools_example.py` — Example AgentOS app where the agent has MCPTools.
 - `mcp_tools_existing_lifespan.py` — Example AgentOS app where the agent has MCPTools.
-- `test_client.py` — First run the AgentOS with enable_mcp=True.
+- `test_client.py` — First run the AgentOS with `enable_mcp_server=True` (`enable_mcp_example.py`), then run this client against it.
+
+## The MCP tool surface
+
+`enable_mcp_server=True` serves 8 built-in tools at `/mcp` — an operator surface for LLM
+frontends (Claude, ChatGPT, Claude Code, Cursor), not a database console:
+
+| Tool | Tag | What it does |
+|------|-----|--------------|
+| `get_agentos_config` | `core` | Discover agents/teams/workflows (ids + descriptions) and database ids. Call first. |
+| `run_agent` / `run_team` / `run_workflow` | `core` | Run a component. Results are trimmed for the consuming model: answer text + media blocks + `run_id`/`session_id`/`status` (set `MCPServerConfig(result_mode="full")` for the complete run object). Long runs report MCP progress. |
+| `continue_run` | `core` | Resume a PAUSED (human-in-the-loop) run by passing back its resolved requirements. |
+| `cancel_run` | `core` | Request cancellation of a run by `run_id`. |
+| `get_sessions` | `session` | List past conversations (read-only). |
+| `get_session_runs` | `session` | Read a conversation's history (read-only, auto-detects session type). |
+
+Session writes and memory CRUD live on the REST surface; anything else can be exposed as a
+custom tool.
 
 ## Customizing the MCP server
 
-By default `enable_mcp_server=True` registers ~19 built-in tools (config, run_agent/team/workflow,
-session CRUD, memory CRUD). Pass `mcp_config=MCPServerConfig(...)` to register your own tools, scope
+Pass `mcp_config=MCPServerConfig(...)` to register your own tools, scope
 the built-ins, gate the server, and protect it — all with data, no middleware classes to write:
 
 ```python
@@ -27,7 +43,7 @@ agent_os = AgentOS(
         tools=[my_tool],            # custom tools (plain callables or Agno @tool / Function)
         enable_builtin_tools=False,  # ship ONLY your tools; or scope with:
         # include_tags={"core"},     # keep only tools tagged "core"
-        # exclude_tags={"memory"},   # drop the "memory" tools
+        # exclude_tags={"session"},  # drop the read-only session tools
         authorize=lambda user_id: user_id in OWNER_IDS,  # 401 non-owners before the model runs
         allowed_hosts=["my-app.example.com"],            # DNS-rebinding protection (localhost is automatic)
         # middleware=[Middleware(MyMiddleware)],          # escape hatch for anything else
@@ -35,9 +51,9 @@ agent_os = AgentOS(
 )
 ```
 
-Built-in tools are tagged `core` (config + run_*), `session`, and `memory`. With no `mcp_config`,
-all built-ins are registered (unchanged behavior). Custom tools share the same `/mcp` mount,
-lifespan, and JWT middleware as the built-ins.
+Built-in tools are tagged `core` (config + run/continue/cancel) and `session` (the read-only
+session tools). With no `mcp_config`, all built-ins are registered. Custom tools share the same
+`/mcp` mount, lifespan, and JWT middleware as the built-ins.
 
 **Identity in custom tools.** Declare a `user_id` parameter on a custom tool and AgentOS fills it
 with the authenticated caller's id (the JWT subject), hidden from the client-facing schema so it
