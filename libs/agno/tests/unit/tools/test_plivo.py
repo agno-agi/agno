@@ -19,8 +19,8 @@ class TestPlivoTools:
         mock_rest_client.assert_called_once_with(auth_id="test-auth-id", auth_token="test-auth-token")
         assert tool.client == mock_client
         assert tool.name == "plivo"
-        registered = {t.__name__ for t in [tool.send_sms, tool.get_call_details, tool.list_messages]}
-        assert {"send_sms", "get_call_details", "list_messages"} == registered
+        registered = {t.__name__ for t in [tool.send_sms, tool.make_call, tool.get_call_details, tool.list_messages]}
+        assert {"send_sms", "make_call", "get_call_details", "list_messages"} == registered
 
     def test_validate_phone_number(self):
         """E.164 validation accepts valid numbers and rejects malformed ones"""
@@ -70,6 +70,51 @@ class TestPlivoTools:
 
         mock_client.messages.create.assert_called_once_with(src="PLIVO", dst="+14155551234", text="hello")
         assert "abc-123" in result
+
+    @patch("plivo.RestClient")
+    def test_make_call_success(self, mock_rest_client):
+        """make_call maps to Plivo's from_/to_/answer_url/answer_method and returns the request UUID"""
+        mock_client = Mock()
+        mock_response = Mock()
+        mock_response.request_uuid = "req-9"
+        mock_client.calls.create.return_value = mock_response
+        mock_rest_client.return_value = mock_client
+
+        tool = PlivoTools(auth_id="id", auth_token="token")
+        result = tool.make_call(
+            to="+14155551234", from_="+14155550000", answer_url="https://example.com/answer.xml", answer_method="GET"
+        )
+
+        mock_client.calls.create.assert_called_once_with(
+            from_="+14155550000", to_="+14155551234", answer_url="https://example.com/answer.xml", answer_method="GET"
+        )
+        assert "req-9" in result
+
+    @patch("plivo.RestClient")
+    def test_make_call_rejects_non_e164(self, mock_rest_client):
+        """make_call fails closed on a non-E.164 recipient and never calls the API"""
+        mock_client = Mock()
+        mock_rest_client.return_value = mock_client
+
+        tool = PlivoTools(auth_id="id", auth_token="token")
+        result = tool.make_call(to="14155551234", from_="+14155550000", answer_url="https://example.com/answer.xml")
+
+        assert "E.164" in result
+        mock_client.calls.create.assert_not_called()
+
+    @patch("plivo.RestClient")
+    def test_make_call_rejects_bad_answer_method(self, mock_rest_client):
+        """make_call rejects an answer_method other than GET/POST"""
+        mock_client = Mock()
+        mock_rest_client.return_value = mock_client
+
+        tool = PlivoTools(auth_id="id", auth_token="token")
+        result = tool.make_call(
+            to="+14155551234", from_="+14155550000", answer_url="https://example.com/answer.xml", answer_method="DELETE"
+        )
+
+        assert "GET or POST" in result
+        mock_client.calls.create.assert_not_called()
 
     @patch("plivo.RestClient")
     def test_list_messages_clamps_limit_to_plivo_max(self, mock_rest_client):

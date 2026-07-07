@@ -37,6 +37,7 @@ agent = Agent(
     instructions=[
         """You can help users by:
         - Sending SMS messages
+        - Placing phone calls
         - Checking message history
         - getting call details
         """
@@ -45,6 +46,7 @@ agent = Agent(
     tools=[
         PlivoTools(
             enable_send_sms=True,
+            enable_make_call=True,
             enable_get_call_details=True,
             enable_list_messages=True,
         )
@@ -67,6 +69,7 @@ sms_agent = Agent(
     tools=[
         PlivoTools(
             enable_send_sms=True,
+            enable_make_call=False,
             enable_get_call_details=False,
             enable_list_messages=False,
         )

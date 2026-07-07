@@ -19,6 +19,7 @@ class PlivoTools(Toolkit):
         auth_token: Optional[str] = None,
         debug: bool = False,
         enable_send_sms: bool = True,
+        enable_make_call: bool = True,
         enable_get_call_details: bool = True,
         enable_list_messages: bool = True,
         all: bool = False,
@@ -34,6 +35,7 @@ class PlivoTools(Toolkit):
             auth_token: Plivo Auth Token
             debug: Enable debug logging
             enable_send_sms: Register the send_sms tool
+            enable_make_call: Register the make_call tool
             enable_get_call_details: Register the get_call_details tool
             enable_list_messages: Register the list_messages tool
             all: Register all tools regardless of the individual enable_* flags
@@ -57,6 +59,8 @@ class PlivoTools(Toolkit):
         tools: List[Any] = []
         if all or enable_send_sms:
             tools.append(self.send_sms)
+        if all or enable_make_call:
+            tools.append(self.make_call)
         if all or enable_get_call_details:
             tools.append(self.get_call_details)
         if all or enable_list_messages:
@@ -96,6 +100,38 @@ class PlivoTools(Toolkit):
         except PlivoRestError as e:
             logger.exception(f"Failed to send SMS to {to}")
             return f"Error sending message: {str(e)}"
+
+    def make_call(self, to: str, from_: str, answer_url: str, answer_method: str = "POST") -> str:
+        """
+        Place an outbound call using Plivo.
+
+        Args:
+            to: Recipient phone number (E.164 format)
+            from_: Caller ID — a Plivo voice-enabled number
+            answer_url: URL Plivo requests when the call is answered; must return Plivo XML
+            answer_method: HTTP method Plivo uses for the answer URL, GET or POST (default POST)
+
+        Returns:
+            str: Call request UUID if successful, error message if failed
+        """
+        try:
+            if not self.validate_phone_number(to):
+                return "Error: 'to' number must be in E.164 format (e.g., +1234567890)"
+            if not from_ or len(from_.strip()) == 0:
+                return "Error: Caller ID (from_) cannot be empty"
+            if not answer_url or len(answer_url.strip()) == 0:
+                return "Error: answer_url cannot be empty"
+            method = answer_method.upper()
+            if method not in ("GET", "POST"):
+                return "Error: answer_method must be GET or POST"
+
+            response = self.client.calls.create(from_=from_, to_=to, answer_url=answer_url, answer_method=method)
+            request_uuid = getattr(response, "request_uuid", None) or "unknown"
+            log_info(f"Call placed. request_uuid: {request_uuid}, to: {to}")
+            return f"Call placed successfully. request_uuid: {request_uuid}"
+        except PlivoRestError as e:
+            logger.exception(f"Failed to place call to {to}")
+            return f"Error placing call: {str(e)}"
 
     def get_call_details(self, call_uuid: str) -> Dict[str, Any]:
         """
