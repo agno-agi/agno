@@ -75,6 +75,7 @@ class ValkeyDB(VectorDb):
         distance: Distance = Distance.cosine,
         vector_algorithm: str = "HNSW",
         reranker: Optional[Reranker] = None,
+        client_name: str = "agno_vectordb_client",
         id: Optional[str] = None,
         name: Optional[str] = None,
         description: Optional[str] = None,
@@ -99,6 +100,8 @@ class ValkeyDB(VectorDb):
             distance (Distance): Distance metric for vector comparisons.
             vector_algorithm (str): Vector indexing algorithm ("HNSW" or "FLAT").
             reranker (Optional[Reranker]): Reranker instance.
+            client_name (str): Name sent via CLIENT SETNAME for connection identification.
+                Defaults to "agno_vectordb_client".
             id (Optional[str]): Optional custom ID. If not provided, an id will be generated.
             name (Optional[str]): Optional name for the vector database.
             description (Optional[str]): Optional description for the vector database.
@@ -116,6 +119,7 @@ class ValkeyDB(VectorDb):
         self.database_id = database_id
         self.index_name: str = index_name
         self.prefix: str = f"{index_name}:"
+        self.client_name: str = client_name
 
         # Embedder for embedding the document contents
         if embedder is None:
@@ -147,21 +151,57 @@ class ValkeyDB(VectorDb):
     def _get_client(self) -> GlideClient:
         """Get or create the GlideClient."""
         if self._glide_client is None or not self._client_initialized:
-            credentials = (
-                ServerCredentials(username=self.username, password=self.password or "")
-                if (self.username or self.password)
-                else None
-            )
+            if self.username and not self.password:
+                raise ValueError(
+                    "A password is required when username is provided. "
+                    "Valkey does not support username-only authentication."
+                )
+            credentials = ServerCredentials(username=self.username, password=self.password) if self.password else None
             config = GlideClientConfiguration(
                 addresses=[NodeAddress(host=self.host, port=self.port)],
                 database_id=self.database_id,
                 credentials=credentials,
                 use_tls=self.use_tls,
-                client_name="agno_vectordb_client",
+                client_name=self.client_name,
             )
             self._glide_client = GlideClient.create(config)
             self._client_initialized = True
         return self._glide_client
+
+    @staticmethod
+    def _sanitize_tag_value(value: str) -> str:
+        """Sanitize a string for use in a Valkey TAG filter query.
+
+        TAG syntax breaks on special characters; replace them with underscores
+        to prevent query parse errors. Mirrors the ChatDev ValkeyMemory pattern.
+        """
+        for ch in ",{}|<> \t\n\r":
+            value = value.replace(ch, "_")
+        return value
+
+    def _build_filter_query(self, filters: Dict[str, Any]) -> str:
+        """Convert dict filters to a valkey-search filter query prefix.
+
+        Only filters whose keys match indexed TAG fields in the schema are applied.
+        Unrecognized keys are silently ignored (they aren't indexed).
+
+        Args:
+            filters: Dict mapping field names to values (e.g. {"category": "tech"}).
+
+        Returns:
+            A query prefix like "(@category:{tech} @source:{arxiv})" or "*" if no
+            recognized filters are present.
+        """
+        indexed_tag_fields = {"id", "name", "content_hash", "content_id", "status", "category", "tag", "source", "mode"}
+        parts = []
+        for key, value in filters.items():
+            if key in indexed_tag_fields and value is not None:
+                sanitized = self._sanitize_tag_value(str(value))
+                if sanitized:
+                    parts.append(f"@{key}:{{{sanitized}}}")
+        if not parts:
+            return "*"
+        return "(" + " ".join(parts) + ")"
 
     def _get_distance_metric(self) -> DistanceMetricType:
         """Map agno Distance to valkey-glide DistanceMetricType."""
@@ -406,12 +446,15 @@ class ValkeyDB(VectorDb):
         if filters and isinstance(filters, List):
             log_warning("Filter Expressions are not supported in Valkey. No filters will be applied.")
             filters = None
+
+        dict_filters = filters if isinstance(filters, dict) else None
+
         try:
             if self.search_type == SearchType.keyword:
-                return self.keyword_search(query, limit)
+                return self.keyword_search(query, limit, dict_filters)
             if self.search_type == SearchType.hybrid:
                 raise ValueError("Hybrid search is currently unsupported for Valkey")
-            return self.vector_search(query, limit)
+            return self.vector_search(query, limit, dict_filters)
         except Exception as e:
             log_error(f"Error in search: {str(e)}")
             return []
@@ -422,14 +465,15 @@ class ValkeyDB(VectorDb):
         """Async version of search method."""
         return await asyncio.to_thread(self.search, query, limit, filters)
 
-    def vector_search(self, query: str, limit: int = 5) -> List[Document]:
+    def vector_search(self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None) -> List[Document]:
         """Perform vector similarity search using FT.SEARCH with KNN."""
         try:
             client = self._get_client()
             query_embedding = self.embedder.get_embedding(query)
             query_vector_bytes = _float_list_to_bytes(query_embedding)
 
-            ft_query = f"*=>[KNN {limit} @embedding $query_vector]"
+            filter_prefix = self._build_filter_query(filters) if filters else "*"
+            ft_query = f"{filter_prefix}=>[KNN {limit} @embedding $query_vector]"
             options = FtSearchOptions(
                 params={"query_vector": query_vector_bytes},
                 return_fields=[
@@ -452,7 +496,7 @@ class ValkeyDB(VectorDb):
             log_error(f"Error in vector search: {str(e)}")
             return []
 
-    def keyword_search(self, query: str, limit: int = 5) -> List[Document]:
+    def keyword_search(self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None) -> List[Document]:
         """Perform keyword search using FT.SEARCH full-text query on TEXT fields.
 
         Note:
@@ -462,7 +506,11 @@ class ValkeyDB(VectorDb):
         """
         try:
             client = self._get_client()
-            ft_query = f"@content:{query}"
+            if filters:
+                filter_prefix = self._build_filter_query(filters)
+                ft_query = f"{filter_prefix} @content:{query}"
+            else:
+                ft_query = f"@content:{query}"
             options = FtSearchOptions(
                 return_fields=[
                     ReturnField("id"),

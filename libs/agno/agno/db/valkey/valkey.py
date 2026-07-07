@@ -18,7 +18,6 @@ from agno.db.valkey.utils import (
     apply_sorting,
     calculate_date_metrics,
     create_index_entries,
-    deserialize_cultural_knowledge_from_db,
     deserialize_data,
     fetch_all_sessions_data,
     generate_index_key,
@@ -26,7 +25,6 @@ from agno.db.valkey.utils import (
     get_all_keys_for_table,
     get_dates_to_calculate_metrics_for,
     remove_index_entries,
-    serialize_cultural_knowledge_for_db,
     serialize_data,
 )
 from agno.session import AgentSession, Session, TeamSession, WorkflowSession
@@ -63,12 +61,13 @@ class ValkeyDb(BaseDb):
         use_tls: bool = False,
         db_prefix: str = "agno",
         expire: Optional[int] = None,
+        client_name: str = "agno_db_client",
         session_table: Optional[str] = None,
         memory_table: Optional[str] = None,
         metrics_table: Optional[str] = None,
         eval_table: Optional[str] = None,
         knowledge_table: Optional[str] = None,
-        culture_table: Optional[str] = None,
+        learnings_table: Optional[str] = None,
         traces_table: Optional[str] = None,
         spans_table: Optional[str] = None,
     ):
@@ -94,12 +93,14 @@ class ValkeyDb(BaseDb):
             use_tls (bool): Whether to use TLS for the connection. Defaults to False.
             db_prefix (str): Prefix for all Valkey keys
             expire (Optional[int]): TTL for Valkey keys in seconds
+            client_name (str): Name sent via CLIENT SETNAME for connection identification.
+                Defaults to "agno_db_client".
             session_table (Optional[str]): Name of the table to store sessions
             memory_table (Optional[str]): Name of the table to store memories
             metrics_table (Optional[str]): Name of the table to store metrics
             eval_table (Optional[str]): Name of the table to store evaluation runs
             knowledge_table (Optional[str]): Name of the table to store knowledge documents
-            culture_table (Optional[str]): Name of the table to store cultural knowledge
+            learnings_table (Optional[str]): Name of the table to store learnings
             traces_table (Optional[str]): Name of the table to store traces
             spans_table (Optional[str]): Name of the table to store spans
         """
@@ -115,7 +116,7 @@ class ValkeyDb(BaseDb):
             metrics_table=metrics_table,
             eval_table=eval_table,
             knowledge_table=knowledge_table,
-            culture_table=culture_table,
+            learnings_table=learnings_table,
             traces_table=traces_table,
             spans_table=spans_table,
         )
@@ -126,15 +127,18 @@ class ValkeyDb(BaseDb):
         if valkey_client is not None:
             self.valkey_client = valkey_client
         else:
-            credentials = (
-                ServerCredentials(password=password or "", username=username) if (username or password) else None
-            )
+            if username and not password:
+                raise ValueError(
+                    "A password is required when username is provided. "
+                    "Valkey does not support username-only authentication."
+                )
+            credentials = ServerCredentials(password=password, username=username) if password else None
             config = GlideClientConfiguration(
                 addresses=[NodeAddress(host=host, port=port)],
                 database_id=database_id,
                 credentials=credentials,
                 use_tls=use_tls,
-                client_name="agno_db_client",
+                client_name=client_name,
             )
             self.valkey_client = GlideClient.create(config)
 
@@ -155,7 +159,13 @@ class ValkeyDb(BaseDb):
         return None
 
     def table_exists(self, table_name: str) -> bool:
-        """Valkey implementation, always returns True."""
+        """Check if a table exists.
+
+        Valkey is schemaless — there is no concept of creating or dropping tables.
+        Keys are created on write and removed on delete. This always returns True
+        to satisfy the BaseDb interface contract (callers use it to gate
+        create-table logic that does not apply to Valkey).
+        """
         return True
 
     def _get_table_name(self, table_type: str) -> str:
@@ -166,7 +176,7 @@ class ValkeyDb(BaseDb):
             "metrics": self.metrics_table_name,
             "evals": self.eval_table_name,
             "knowledge": self.knowledge_table_name,
-            "culture": self.culture_table_name,
+            "learnings": self.learnings_table_name,
             "traces": self.trace_table_name,
             "spans": self.span_table_name,
         }
@@ -1882,70 +1892,19 @@ class ValkeyDb(BaseDb):
             raise
 
     # -- Cultural Knowledge methods --
+    # NOTE: Cultural knowledge support is deprecated and being removed from Agno.
+    # These methods raise NotImplementedError to satisfy the BaseDb interface.
+
     def clear_cultural_knowledge(self) -> None:
-        """Delete all cultural knowledge from the database.
-
-        Raises:
-            Exception: If an error occurs during deletion.
-        """
-        try:
-            keys = get_all_keys_for_table(valkey_client=self.valkey_client, prefix=self.db_prefix, table_type="culture")
-
-            if keys:
-                self.valkey_client.delete(keys)  # type: ignore[arg-type]
-
-        except Exception as e:
-            log_error(f"Exception deleting all cultural knowledge: {str(e)}")
-            raise e
+        raise NotImplementedError("Cultural knowledge is deprecated. Use learnings instead.")
 
     def delete_cultural_knowledge(self, id: str) -> None:
-        """Delete cultural knowledge by ID.
-
-        Args:
-            id (str): The ID of the cultural knowledge to delete.
-
-        Raises:
-            Exception: If an error occurs during deletion.
-        """
-        try:
-            if self._delete_record("culture", id, index_fields=["name", "agent_id", "team_id"]):
-                log_debug(f"Successfully deleted cultural knowledge id: {id}")
-            else:
-                log_debug(f"No cultural knowledge found with id: {id}")
-
-        except Exception as e:
-            log_error(f"Error deleting cultural knowledge: {str(e)}")
-            raise e
+        raise NotImplementedError("Cultural knowledge is deprecated. Use learnings instead.")
 
     def get_cultural_knowledge(
         self, id: str, deserialize: Optional[bool] = True
     ) -> Optional[Union[CulturalKnowledge, Dict[str, Any]]]:
-        """Get cultural knowledge by ID.
-
-        Args:
-            id (str): The ID of the cultural knowledge to retrieve.
-            deserialize (Optional[bool]): Whether to deserialize to CulturalKnowledge object. Defaults to True.
-
-        Returns:
-            Optional[Union[CulturalKnowledge, Dict[str, Any]]]: The cultural knowledge if found, None otherwise.
-
-        Raises:
-            Exception: If an error occurs during retrieval.
-        """
-        try:
-            cultural_knowledge = self._get_record("culture", id)
-
-            if cultural_knowledge is None:
-                return None
-
-            if not deserialize:
-                return cultural_knowledge
-
-            return deserialize_cultural_knowledge_from_db(cultural_knowledge)
-
-        except Exception as e:
-            log_error(f"Error getting cultural knowledge: {str(e)}")
-            raise e
+        raise NotImplementedError("Cultural knowledge is deprecated. Use learnings instead.")
 
     def get_all_cultural_knowledge(
         self,
@@ -1958,100 +1917,12 @@ class ValkeyDb(BaseDb):
         sort_order: Optional[str] = None,
         deserialize: Optional[bool] = True,
     ) -> Union[List[CulturalKnowledge], Tuple[List[Dict[str, Any]], int]]:
-        """Get all cultural knowledge with filtering and pagination.
-
-        Args:
-            agent_id (Optional[str]): Filter by agent ID.
-            team_id (Optional[str]): Filter by team ID.
-            name (Optional[str]): Filter by name (case-insensitive partial match).
-            limit (Optional[int]): Maximum number of results to return.
-            page (Optional[int]): Page number for pagination.
-            sort_by (Optional[str]): Field to sort by.
-            sort_order (Optional[str]): Sort order ('asc' or 'desc').
-            deserialize (Optional[bool]): Whether to deserialize to CulturalKnowledge objects. Defaults to True.
-
-        Returns:
-            Union[List[CulturalKnowledge], Tuple[List[Dict[str, Any]], int]]:
-                - When deserialize=True: List of CulturalKnowledge objects
-                - When deserialize=False: Tuple with list of dictionaries and total count
-
-        Raises:
-            Exception: If an error occurs during retrieval.
-        """
-        try:
-            all_cultural_knowledge = self._get_all_records("culture")
-
-            # Apply filters
-            filtered_items = []
-            for item in all_cultural_knowledge:
-                if agent_id is not None and item.get("agent_id") != agent_id:
-                    continue
-                if team_id is not None and item.get("team_id") != team_id:
-                    continue
-                if name is not None and name.lower() not in item.get("name", "").lower():
-                    continue
-
-                filtered_items.append(item)
-
-            sorted_items = apply_sorting(records=filtered_items, sort_by=sort_by, sort_order=sort_order)
-            paginated_items = apply_pagination(records=sorted_items, limit=limit, page=page)
-
-            if not deserialize:
-                return paginated_items, len(filtered_items)
-
-            return [deserialize_cultural_knowledge_from_db(item) for item in paginated_items]
-
-        except Exception as e:
-            log_error(f"Error getting all cultural knowledge: {str(e)}")
-            raise e
+        raise NotImplementedError("Cultural knowledge is deprecated. Use learnings instead.")
 
     def upsert_cultural_knowledge(
         self, cultural_knowledge: CulturalKnowledge, deserialize: Optional[bool] = True
     ) -> Optional[Union[CulturalKnowledge, Dict[str, Any]]]:
-        """Upsert cultural knowledge in Valkey.
-
-        Args:
-            cultural_knowledge (CulturalKnowledge): The cultural knowledge to upsert.
-            deserialize (Optional[bool]): Whether to deserialize the result. Defaults to True.
-
-        Returns:
-            Optional[Union[CulturalKnowledge, Dict[str, Any]]]: The upserted cultural knowledge.
-
-        Raises:
-            Exception: If an error occurs during upsert.
-        """
-        try:
-            # Serialize content, categories, and notes into a dict for DB storage
-            content_dict = serialize_cultural_knowledge_for_db(cultural_knowledge)
-            item_id = cultural_knowledge.id or str(uuid4())
-
-            # Create the item dict with serialized content
-            data = {
-                "id": item_id,
-                "name": cultural_knowledge.name,
-                "summary": cultural_knowledge.summary,
-                "content": content_dict if content_dict else None,
-                "metadata": cultural_knowledge.metadata,
-                "input": cultural_knowledge.input,
-                "created_at": cultural_knowledge.created_at,
-                "updated_at": int(time.time()),
-                "agent_id": cultural_knowledge.agent_id,
-                "team_id": cultural_knowledge.team_id,
-            }
-
-            success = self._store_record("culture", item_id, data, index_fields=["name", "agent_id", "team_id"])
-
-            if not success:
-                return None
-
-            if not deserialize:
-                return data
-
-            return deserialize_cultural_knowledge_from_db(data)
-
-        except Exception as e:
-            log_error(f"Error upserting cultural knowledge: {str(e)}")
-            raise e
+        raise NotImplementedError("Cultural knowledge is deprecated. Use learnings instead.")
 
     # --- Traces ---
     def upsert_trace(self, trace: "Trace") -> None:

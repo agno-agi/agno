@@ -1,4 +1,9 @@
-"""Example showing how to use AgentOS with Valkey as the database"""
+"""Example showing how to use AgentOS with Valkey as the database
+
+Prerequisites:
+    Start a Valkey instance locally with Docker:
+        docker run --name my-valkey -p 6379:6379 -d valkey/valkey
+"""
 
 from agno.agent import Agent
 from agno.db.valkey import ValkeyDb
