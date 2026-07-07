@@ -4,6 +4,7 @@ Examples for persistent memory and learning behavior.
 
 ## Files
 - `learning_machine.py` - Demonstrates LearningMachine-based learning.
+- `long_term_memory_cross_session.py` - Persist user facts across separate sessions with `user_id`.
 - `memory_manager.py` - Use MemoryManager for persistent memory across sessions.
 
 ## Prerequisites
