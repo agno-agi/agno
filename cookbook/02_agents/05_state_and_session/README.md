@@ -2,6 +2,8 @@
 
 Examples for session state management, chat history, and session persistence.
 
+> **Tool failures:** See [TOOL_FAILURE_AND_STATE.md](./TOOL_FAILURE_AND_STATE.md) for how errors affect session state and memory.
+
 ## Files
 - `agentic_session_state.py` - Agent-managed session state updates.
 - `chat_history.py` - Access and manage chat history.

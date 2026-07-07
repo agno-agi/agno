@@ -2,6 +2,8 @@
 
 Examples for callable tool factories, tool choice, and tool call limits.
 
+> **Tool failures:** See [../05_state_and_session/TOOL_FAILURE_AND_STATE.md](../05_state_and_session/TOOL_FAILURE_AND_STATE.md) for persistence behavior when a tool errors.
+
 ## Files
 - `01_callable_tools.py` - Vary the toolset per user role using callable factories.
 - `02_session_state_tools.py` - Use session_state directly as a parameter with caching disabled.
