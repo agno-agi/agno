@@ -52,6 +52,7 @@ class BaseDb(ABC):
         schedule_runs_table: Optional[str] = None,
         approvals_table: Optional[str] = None,
         auth_tokens_table: Optional[str] = None,
+        service_accounts_table: Optional[str] = None,
         id: Optional[str] = None,
     ):
         self.id = id or str(uuid4())
@@ -72,6 +73,7 @@ class BaseDb(ABC):
         self.schedule_runs_table_name = schedule_runs_table or "agno_schedule_runs"
         self.approvals_table_name = approvals_table or "agno_approvals"
         self.auth_tokens_table_name = auth_tokens_table or "agno_auth_tokens"
+        self.service_accounts_table_name = service_accounts_table or "agno_service_accounts"
 
     def to_dict(self) -> Dict[str, Any]:
         """
@@ -96,6 +98,7 @@ class BaseDb(ABC):
             "schedule_runs_table": self.schedule_runs_table_name,
             "approvals_table": self.approvals_table_name,
             "auth_tokens_table": self.auth_tokens_table_name,
+            "service_accounts_table": self.service_accounts_table_name,
         }
 
     @classmethod
@@ -121,6 +124,7 @@ class BaseDb(ABC):
             schedule_runs_table=data.get("schedule_runs_table"),
             approvals_table=data.get("approvals_table"),
             auth_tokens_table=data.get("auth_tokens_table"),
+            service_accounts_table=data.get("service_accounts_table"),
             id=data.get("id"),
         )
 
@@ -1228,6 +1232,57 @@ class BaseDb(ABC):
         """Delete stored OAuth token for a provider/user/service combination. Returns True if deleted."""
         raise NotImplementedError
 
+    # --- Service Accounts (Optional) ---
+    # These methods are optional. Override in subclasses to enable service account persistence.
+
+    def create_service_account(self, account_data: Dict[str, Any]) -> Dict[str, Any]:
+        """Create a service account. Raises on failure (including duplicate active name)."""
+        raise NotImplementedError
+
+    def get_service_account(self, service_account_id: str) -> Optional[Dict[str, Any]]:
+        """Get a service account by ID."""
+        raise NotImplementedError
+
+    def get_service_account_by_token_hash(self, token_hash: str) -> Optional[Dict[str, Any]]:
+        """Get a service account by its token hash."""
+        raise NotImplementedError
+
+    def get_service_account_by_name(self, name: str, include_revoked: bool = False) -> Optional[Dict[str, Any]]:
+        """Get a service account by name. By default only considers active (non-revoked) accounts."""
+        raise NotImplementedError
+
+    def get_service_accounts(
+        self,
+        include_revoked: bool = True,
+        limit: int = 20,
+        page: int = 1,
+        sort_by: str = "created_at",
+        sort_order: str = "desc",
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        """List service accounts.
+
+        Returns:
+            Tuple of (service_accounts, total_count)
+        """
+        raise NotImplementedError
+
+    def update_service_account(
+        self, service_account_id: str, return_record: bool = True, **kwargs: Any
+    ) -> Optional[Dict[str, Any]]:
+        """Update a service account by ID (e.g. set revoked_at or last_used_at).
+
+        Only SERVICE_ACCOUNT_MUTABLE_COLUMNS may be updated; any other column, an
+        empty update, or resetting revoked_at to None raises ValueError.
+
+        With return_record=False the post-update re-fetch is skipped and None is
+        returned on success too — for callers that discard the row (last_used touches).
+        """
+        raise NotImplementedError
+
+    def delete_service_account(self, service_account_id: str) -> bool:
+        """Hard-delete a service account by ID. Returns True if deleted."""
+        raise NotImplementedError
+
 
 class AsyncBaseDb(ABC):
     """Base abstract class for all our async database implementations."""
@@ -1249,6 +1304,7 @@ class AsyncBaseDb(ABC):
         schedule_runs_table: Optional[str] = None,
         approvals_table: Optional[str] = None,
         auth_tokens_table: Optional[str] = None,
+        service_accounts_table: Optional[str] = None,
     ):
         self.id = id or str(uuid4())
         self.session_table_name = session_table or "agno_sessions"
@@ -1265,6 +1321,7 @@ class AsyncBaseDb(ABC):
         self.schedule_runs_table_name = schedule_runs_table or "agno_schedule_runs"
         self.approvals_table_name = approvals_table or "agno_approvals"
         self.auth_tokens_table_name = auth_tokens_table or "agno_auth_tokens"
+        self.service_accounts_table_name = service_accounts_table or "agno_service_accounts"
 
     async def _create_all_tables(self) -> None:
         """Create all tables for this database. Override in subclasses."""
@@ -2067,4 +2124,52 @@ class AsyncBaseDb(ABC):
 
     async def delete_auth_token(self, provider: str, user_id: Optional[str], service: str) -> bool:
         """Delete stored OAuth token for a provider/user/service combination. Returns True if deleted."""
+        raise NotImplementedError
+
+    # --- Service Accounts (Optional) ---
+    # These methods are optional. Override in subclasses to enable service account persistence.
+
+    async def create_service_account(self, account_data: Dict[str, Any]) -> Dict[str, Any]:
+        """Create a service account. Raises on failure (including duplicate active name)."""
+        raise NotImplementedError
+
+    async def get_service_account(self, service_account_id: str) -> Optional[Dict[str, Any]]:
+        """Get a service account by ID."""
+        raise NotImplementedError
+
+    async def get_service_account_by_token_hash(self, token_hash: str) -> Optional[Dict[str, Any]]:
+        """Get a service account by its token hash."""
+        raise NotImplementedError
+
+    async def get_service_account_by_name(self, name: str, include_revoked: bool = False) -> Optional[Dict[str, Any]]:
+        """Get a service account by name. By default only considers active (non-revoked) accounts."""
+        raise NotImplementedError
+
+    async def get_service_accounts(
+        self,
+        include_revoked: bool = True,
+        limit: int = 20,
+        page: int = 1,
+        sort_by: str = "created_at",
+        sort_order: str = "desc",
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        """List service accounts.
+
+        Returns:
+            Tuple of (service_accounts, total_count)
+        """
+        raise NotImplementedError
+
+    async def update_service_account(
+        self, service_account_id: str, return_record: bool = True, **kwargs: Any
+    ) -> Optional[Dict[str, Any]]:
+        """Update a service account by ID (e.g. set revoked_at or last_used_at).
+
+        Only SERVICE_ACCOUNT_MUTABLE_COLUMNS may be updated; any other column, an
+        empty update, or resetting revoked_at to None raises ValueError.
+        """
+        raise NotImplementedError
+
+    async def delete_service_account(self, service_account_id: str) -> bool:
+        """Hard-delete a service account by ID. Returns True if deleted."""
         raise NotImplementedError

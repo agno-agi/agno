@@ -42,3 +42,12 @@ class A2A(BaseInterface):
         self.router = attach_routes(router=self.router, agents=self.agents, teams=self.teams, workflows=self.workflows)
 
         return self.router
+
+    def get_scope_mappings(self) -> dict:
+        from agno.os.scopes import get_a2a_scope_mappings
+
+        # Pass the prefix verbatim — the router mounts self.prefix as-is, so the scope-map
+        # keys must be built from the same value. A fallback here (e.g. `or "/a2a"`) would
+        # diverge for A2A(prefix=""): routes mounted at the root, scope map keyed under
+        # /a2a, every route unmapped -> default-allow.
+        return get_a2a_scope_mappings(self.prefix)

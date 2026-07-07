@@ -2,7 +2,7 @@ import json
 from base64 import b64encode
 from datetime import datetime, timedelta
 from os import getenv
-from typing import Any, List, Optional
+from typing import Any, Dict, List, Optional
 
 import requests
 
@@ -74,7 +74,7 @@ class ZoomTools(Toolkit):
             auth_string = b64encode(f"{self.client_id}:{self.client_secret}".encode()).decode()
             headers["Authorization"] = f"Basic {auth_string}"
 
-            data = {
+            data: Dict[str, Any] = {
                 "grant_type": "account_credentials",
                 "account_id": self.account_id,
             }
@@ -118,7 +118,7 @@ class ZoomTools(Toolkit):
 
         url = "https://api.zoom.us/v2/users/me/meetings"
         headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
-        data = {
+        data: Dict[str, Any] = {
             "topic": topic,
             "type": 2,
             "start_time": start_time,

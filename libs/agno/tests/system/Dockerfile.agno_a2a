@@ -15,7 +15,7 @@ COPY . /app/agno
 
 # Install agno from local source
 WORKDIR /app/agno
-RUN pip install --no-cache-dir .
+RUN pip install --no-cache-dir ".[os]"
 
 # Install additional dependencies for the server
 RUN pip install --no-cache-dir \
