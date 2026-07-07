@@ -5,6 +5,7 @@ Examples for persistent memory and learning behavior.
 ## Files
 - `learning_machine.py` - Demonstrates LearningMachine-based learning.
 - `memory_manager.py` - Use MemoryManager for persistent memory across sessions.
+- `memory_recall_before_tool_call.py` - Recall user memories before calling a domain tool.
 
 ## Prerequisites
 - Load environment variables with `direnv allow` (including `OPENAI_API_KEY`).
