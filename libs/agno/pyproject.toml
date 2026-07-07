@@ -24,10 +24,8 @@ classifiers = [
 ]
 
 dependencies = [
-  # Floor at the latest *published* agnoctl: resolvers install the newest
-  # anyway, and a floor referencing an unpublished version breaks every
-  # from-source install in the merge-to-publish window of a release.
-  "agnoctl>=0.1.0a5",
+  # Lockstep floor: the agnoctl version released alongside this agno version.
+  "agnoctl>=0.1.1",
   "docstring-parser",
   # Prevent the request-smuggling CVE in h11 < 0.16
   "h11>=0.16.0",
