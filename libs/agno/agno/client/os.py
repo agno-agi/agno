@@ -91,6 +91,10 @@ class AgentOSClient:
         self.base_url = base_url.rstrip("/")
         self.timeout = timeout
 
+    @staticmethod
+    def _json_dumps_media(media: Sequence[Any]) -> str:
+        return json.dumps([item.to_dict() if hasattr(item, "to_dict") else item.model_dump() for item in media])
+
     def _request(
         self,
         method: str,
@@ -576,13 +580,13 @@ class AgentOSClient:
         if user_id is not None:
             data["user_id"] = user_id
         if images:
-            data["images"] = json.dumps([img.model_dump() for img in images])
+            data["images"] = self._json_dumps_media(images)
         if audio:
-            data["audio"] = json.dumps([a.model_dump() for a in audio])
+            data["audio"] = self._json_dumps_media(audio)
         if videos:
-            data["videos"] = json.dumps([v.model_dump() for v in videos])
+            data["videos"] = self._json_dumps_media(videos)
         if files:
-            data["files"] = json.dumps([f.model_dump() for f in files])
+            data["files"] = self._json_dumps_media(files)
 
         # Add kwargs to data, serializing dicts as JSON
         for key, value in kwargs.items():
@@ -636,13 +640,13 @@ class AgentOSClient:
         if user_id is not None:
             data["user_id"] = user_id
         if images:
-            data["images"] = json.dumps([img.model_dump() for img in images])
+            data["images"] = self._json_dumps_media(images)
         if audio:
-            data["audio"] = json.dumps([a.model_dump() for a in audio])
+            data["audio"] = self._json_dumps_media(audio)
         if videos:
-            data["videos"] = json.dumps([v.model_dump() for v in videos])
+            data["videos"] = self._json_dumps_media(videos)
         if files:
-            data["files"] = json.dumps([f.model_dump() for f in files])
+            data["files"] = self._json_dumps_media(files)
 
         for key, value in kwargs.items():
             if isinstance(value, dict):
