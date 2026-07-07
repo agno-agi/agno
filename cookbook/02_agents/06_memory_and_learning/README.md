@@ -3,6 +3,7 @@
 Examples for persistent memory and learning behavior.
 
 ## Files
+- `compliance_agent_persistent_notes.py` - Policy-review agent that stores audit notes in memory.
 - `learning_machine.py` - Demonstrates LearningMachine-based learning.
 - `memory_manager.py` - Use MemoryManager for persistent memory across sessions.
 
