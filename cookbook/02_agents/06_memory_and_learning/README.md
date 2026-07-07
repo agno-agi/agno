@@ -5,6 +5,7 @@ Examples for persistent memory and learning behavior.
 ## Files
 - `learning_machine.py` - Demonstrates LearningMachine-based learning.
 - `memory_manager.py` - Use MemoryManager for persistent memory across sessions.
+- `summarize_conversation_to_memory.py` - Turn a multi-turn chat into concise user memories.
 
 ## Prerequisites
 - Load environment variables with `direnv allow` (including `OPENAI_API_KEY`).
