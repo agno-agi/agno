@@ -8,6 +8,7 @@ distinguishes the auth modes by status code and 401 detail wording.
 
 import os
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import httpx
@@ -28,6 +29,11 @@ DEFAULT_URLS = [
 
 URL_ENV_VAR = "AGENTOS_URL"
 
+# Project env files scanned for AGENTOS_URL when it is not already in the process
+# environment, so `agno connect` targets a deployed OS whose URL the deploy scripts
+# persisted (to .env.production) without needing --url. Preferred order: production first.
+ENV_FILES = (".env.production", ".env")
+
 
 @dataclass
 class OSInfo:
@@ -37,7 +43,8 @@ class OSInfo:
     mcp_path: Optional[str]
     auth_mode: str  # "none" | "security_key" | "jwt" | "unknown"
     discovered_via: str  # "info" | "probe"
-    url_source: str = "default"  # "flag" | "env" | "default"
+    url_source: str = "default"  # "flag" | "env" | "env-file" | "default"
+    url_source_file: Optional[str] = None  # env file AGENTOS_URL came from, when url_source == "env-file"
 
     @property
     def mcp_url(self) -> str:
@@ -56,16 +63,57 @@ class OSInfo:
             "auth_mode": self.auth_mode,
             "discovered_via": self.discovered_via,
             "url_source": self.url_source,
+            "url_source_file": self.url_source_file,
         }
 
 
-def _candidate_urls(url: Optional[str]) -> "tuple[List[str], str]":
+def _read_env_value(path: Path, key: str) -> Optional[str]:
+    """Read a single ``KEY=value`` from a .env-style file. No dotenv dependency: agnoctl
+    parses only what it needs and never loads the file into the process environment.
+    Tolerates an ``export `` prefix, surrounding quotes, blank lines, and ``#`` comments;
+    the last uncommented assignment wins. Returns None if absent or unreadable."""
+    try:
+        text = path.read_text()
+    except OSError:
+        return None
+    found: Optional[str] = None
+    for raw in text.splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("export "):
+            line = line[len("export ") :].lstrip()
+        name, sep, value = line.partition("=")
+        if not sep or name.strip() != key:
+            continue
+        value = value.strip()
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in ("'", '"'):
+            value = value[1:-1]
+        if value:
+            found = value  # keep scanning: a later assignment overrides an earlier one
+    return found
+
+
+def _agentos_url_from_env_files() -> "tuple[Optional[str], Optional[str]]":
+    """AGENTOS_URL from a project env file (.env.production preferred, then .env), read
+    from the current working directory. Returns (url, filename) or (None, None)."""
+    for name in ENV_FILES:
+        value = _read_env_value(Path.cwd() / name, URL_ENV_VAR)
+        if value:
+            return value.rstrip("/"), name
+    return None, None
+
+
+def _candidate_urls(url: Optional[str]) -> "tuple[List[str], str, Optional[str]]":
     if url:
-        return [url.rstrip("/")], "flag"
+        return [url.rstrip("/")], "flag", None
     env_url = os.environ.get(URL_ENV_VAR)
     if env_url:
-        return [env_url.rstrip("/")], "env"
-    return list(DEFAULT_URLS), "default"
+        return [env_url.rstrip("/")], "env", None
+    file_url, file_name = _agentos_url_from_env_files()
+    if file_url:
+        return [file_url], "env-file", file_name
+    return list(DEFAULT_URLS), "default", None
 
 
 def _probe_mcp(base_url: str) -> bool:
@@ -88,7 +136,7 @@ def _probe_mcp(base_url: str) -> bool:
 
 def discover(url: Optional[str] = None) -> OSInfo:
     """Find a running AgentOS and return what the CLI needs to know about it."""
-    candidates, url_source = _candidate_urls(url)
+    candidates, url_source, url_source_file = _candidate_urls(url)
     for candidate in candidates:
         with AgentOSAPI(candidate) as api:
             if api.health() is None:
@@ -106,6 +154,7 @@ def discover(url: Optional[str] = None) -> OSInfo:
                     auth_mode=auth_mode,
                     discovered_via="info",
                     url_source=url_source,
+                    url_source_file=url_source_file,
                 )
 
             mcp_enabled = _probe_mcp(candidate)
@@ -117,12 +166,15 @@ def discover(url: Optional[str] = None) -> OSInfo:
                 auth_mode=api.probe_auth_mode(),
                 discovered_via="probe",
                 url_source=url_source,
+                url_source_file=url_source_file,
             )
 
     tried = ", ".join(candidates)
     raise CLIError(
         "No running AgentOS found (tried: " + tried + ").",
-        hint="Start your AgentOS (agent_os.serve()) or pass --url / set " + URL_ENV_VAR + ".",
+        hint="Start your AgentOS (agent_os.serve()), pass --url, or set "
+        + URL_ENV_VAR
+        + " (in your shell or a .env.production / .env file).",
     )
 
 

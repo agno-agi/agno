@@ -280,7 +280,12 @@ def _connect(
         )
     if not json_mode:
         version = " (agno " + os_info.version + ")" if os_info.version else ""
-        source = " (from AGENTOS_URL)" if os_info.url_source == "env" else ""
+        if os_info.url_source == "env":
+            source = " (from AGENTOS_URL)"
+        elif os_info.url_source == "env-file":
+            source = " (from AGENTOS_URL in " + (os_info.url_source_file or "env file") + ")"
+        else:
+            source = ""
         print_info("AgentOS at " + os_info.base_url + version + source + ", MCP at " + os_info.mcp_url)
 
     adapters = build_adapters(project=project)
