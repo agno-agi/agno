@@ -3,7 +3,7 @@
 import httpx
 import pytest
 
-from agnoctl.discovery import _read_env_value, discover
+from agnoctl.discovery import _agentos_url_from_env_files, _read_env_value, discover
 from agnoctl.errors import CLIError
 from tests.conftest import FakeAgentOS, install_fake
 
@@ -139,3 +139,63 @@ def test_read_env_value_ignores_comments_and_missing(tmp_path):
     path.write_text("# AGENTOS_URL=http://commented\nOTHER=x\n")
     assert _read_env_value(path, "AGENTOS_URL") is None
     assert _read_env_value(tmp_path / "does-not-exist", "AGENTOS_URL") is None
+
+
+def test_read_env_value_strips_inline_comment(tmp_path):
+    """An unquoted value ends at a whitespace-preceded '#' (as a deploy note might append)."""
+    path = tmp_path / ".env.production"
+    path.write_text("AGENTOS_URL=http://host:9000  # deployed by up.sh\n")
+    assert _read_env_value(path, "AGENTOS_URL") == "http://host:9000"
+
+
+def test_read_env_value_keeps_url_fragment(tmp_path):
+    """A '#' with no leading whitespace is a literal (URL fragment), not a comment."""
+    path = tmp_path / ".env"
+    path.write_text("AGENTOS_URL=http://host:9000/path#frag\n")
+    assert _read_env_value(path, "AGENTOS_URL") == "http://host:9000/path#frag"
+
+
+def test_read_env_value_quoted_value_ignores_trailing_comment(tmp_path):
+    """A quoted value keeps only its inner text; a trailing inline comment is dropped."""
+    path = tmp_path / ".env"
+    path.write_text('AGENTOS_URL="http://host:9000"  # prod\n')
+    assert _read_env_value(path, "AGENTOS_URL") == "http://host:9000"
+
+
+def test_read_env_value_handles_utf8_bom(tmp_path):
+    """A BOM-prefixed file (some Windows editors add one) still resolves the key."""
+    path = tmp_path / ".env.production"
+    path.write_text("AGENTOS_URL=http://host:9000\n", encoding="utf-8-sig")
+    assert _read_env_value(path, "AGENTOS_URL") == "http://host:9000"
+
+
+def test_read_env_value_non_utf8_returns_none(tmp_path):
+    """A non-UTF-8 file is skipped (None), not a crash."""
+    path = tmp_path / ".env.production"
+    path.write_bytes(b"AGENTOS_URL=http://host\xff\xfe\n")
+    assert _read_env_value(path, "AGENTOS_URL") is None
+
+
+def test_read_env_value_empty_assignment_clears_earlier(tmp_path):
+    """The last assignment wins, so a trailing empty AGENTOS_URL= clears an earlier value."""
+    path = tmp_path / ".env.production"
+    path.write_text("AGENTOS_URL=http://old:9000\nAGENTOS_URL=\n")
+    assert _read_env_value(path, "AGENTOS_URL") is None
+
+
+def test_env_file_slash_only_value_falls_through(monkeypatch, tmp_path):
+    """A slash-only .env.production value normalizes to empty, so .env is still consulted."""
+    (tmp_path / ".env.production").write_text("AGENTOS_URL=/\n")
+    (tmp_path / ".env").write_text("AGENTOS_URL=http://realhost:9000\n")
+    monkeypatch.chdir(tmp_path)
+    assert _agentos_url_from_env_files() == ("http://realhost:9000", ".env")
+
+
+def test_discover_invalid_env_file_url_raises_clean_error(monkeypatch, tmp_path):
+    """A malformed env-file URL (e.g. an un-expanded ${PORT}) fails as a CLIError, not a traceback."""
+    (tmp_path / ".env.production").write_text("AGENTOS_URL=http://host:${PORT}\n")
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("AGENTOS_URL", raising=False)
+    with pytest.raises(CLIError) as exc_info:
+        discover(None)
+    assert "Invalid AgentOS URL" in exc_info.value.message

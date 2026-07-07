@@ -1,6 +1,7 @@
 """Test fixtures: an in-memory fake AgentOS served through httpx.MockTransport."""
 
 import json
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import httpx
@@ -204,10 +205,15 @@ class FakeAgentOS:
 
 
 @pytest.fixture
-def fake_os(monkeypatch: pytest.MonkeyPatch) -> FakeAgentOS:
-    """A security-key-mode fake AgentOS wired into every CLI HTTP client."""
+def fake_os(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> FakeAgentOS:
+    """A security-key-mode fake AgentOS wired into every CLI HTTP client.
+
+    Also chdir into an empty tmp dir so discovery never resolves a stray project
+    .env / .env.production from the developer's checkout; a test exercising env-file
+    resolution writes the file into this directory (its cwd)."""
     fake = FakeAgentOS()
     install_fake(monkeypatch, fake)
+    monkeypatch.chdir(tmp_path)
     return fake
 
 
@@ -215,6 +221,8 @@ def install_fake(monkeypatch: pytest.MonkeyPatch, fake: FakeAgentOS) -> None:
     import agnoctl.http as http_module
 
     monkeypatch.setattr(http_module, "_transport_override", fake.transport())
-    # Keep host-machine credentials and URL overrides out of tests.
+    # Keep host-machine credentials and URL overrides out of tests. Discovery also reads a
+    # cwd .env / .env.production; the fake_os fixture chdirs to an isolated dir, and direct
+    # install_fake callers pass --url or set AGENTOS_URL / chdir themselves.
     for var in ("AGNO_ADMIN_TOKEN", "OS_SECURITY_KEY", "AGENTOS_URL"):
         monkeypatch.delenv(var, raising=False)

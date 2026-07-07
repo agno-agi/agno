@@ -66,6 +66,10 @@ class OSInfo:
             "url_source_file": self.url_source_file,
         }
 
+    def source_note(self) -> str:
+        """Provenance suffix like ' (from AGENTOS_URL in .env.production)' for messages."""
+        return _source_note(self.url_source, self.url_source_file)
+
 
 def _read_env_value(path: Path, key: str) -> Optional[str]:
     """Read a single ``KEY=value`` from a .env-style file. No dotenv dependency: agnoctl
@@ -73,34 +77,55 @@ def _read_env_value(path: Path, key: str) -> Optional[str]:
     Tolerates an ``export `` prefix, surrounding quotes, blank lines, and ``#`` comments;
     the last uncommented assignment wins. Returns None if absent or unreadable."""
     try:
-        text = path.read_text()
-    except OSError:
+        # utf-8-sig transparently drops a UTF-8 BOM (some Windows editors add one); catching
+        # UnicodeDecodeError keeps a binary/other-encoding file from crashing discovery.
+        text = path.read_text(encoding="utf-8-sig")
+    except (OSError, UnicodeDecodeError):
         return None
     found: Optional[str] = None
     for raw in text.splitlines():
         line = raw.strip()
         if not line or line.startswith("#"):
             continue
-        if line.startswith("export "):
-            line = line[len("export ") :].lstrip()
+        if line.startswith("export ") or line.startswith("export\t"):
+            line = line[len("export") :].lstrip()
         name, sep, value = line.partition("=")
         if not sep or name.strip() != key:
             continue
         value = value.strip()
-        if len(value) >= 2 and value[0] == value[-1] and value[0] in ("'", '"'):
-            value = value[1:-1]
-        if value:
-            found = value  # keep scanning: a later assignment overrides an earlier one
+        if value[:1] in ("'", '"'):
+            # Quoted value: take what's inside the matching quote and ignore any trailing
+            # inline comment. An unterminated quote is left as-is (a malformed line).
+            end = value.find(value[0], 1)
+            if end != -1:
+                value = value[1:end]
+        else:
+            # Unquoted value: an inline comment starts at the first '#' preceded by
+            # whitespace ("host  # note"); a '#' with no leading space is a literal (a URL
+            # fragment) and is kept.
+            for i in range(1, len(value)):
+                if value[i] == "#" and value[i - 1] in " \t":
+                    value = value[:i].rstrip()
+                    break
+        # The last assignment wins, including an empty one that clears an earlier value.
+        found = value or None
     return found
 
 
 def _agentos_url_from_env_files() -> "tuple[Optional[str], Optional[str]]":
     """AGENTOS_URL from a project env file (.env.production preferred, then .env), read
     from the current working directory. Returns (url, filename) or (None, None)."""
+    try:
+        cwd = Path.cwd()
+    except OSError:
+        # The working directory was deleted out from under us; treat as "no env file".
+        return None, None
     for name in ENV_FILES:
-        value = _read_env_value(Path.cwd() / name, URL_ENV_VAR)
+        value = _read_env_value(cwd / name, URL_ENV_VAR)
         if value:
-            return value.rstrip("/"), name
+            url = value.rstrip("/")
+            if url:  # a slash-only value ("/") normalizes to "" -- skip it and try the next file
+                return url, name
     return None, None
 
 
@@ -114,6 +139,15 @@ def _candidate_urls(url: Optional[str]) -> "tuple[List[str], str, Optional[str]]
     if file_url:
         return [file_url], "env-file", file_name
     return list(DEFAULT_URLS), "default", None
+
+
+def _source_note(url_source: str, url_source_file: Optional[str]) -> str:
+    """A short '(from AGENTOS_URL ...)' provenance suffix for user-facing messages."""
+    if url_source == "env-file" and url_source_file:
+        return " (from AGENTOS_URL in " + url_source_file + ")"
+    if url_source == "env":
+        return " (from AGENTOS_URL)"
+    return ""
 
 
 def _probe_mcp(base_url: str) -> bool:
@@ -137,8 +171,18 @@ def _probe_mcp(base_url: str) -> bool:
 def discover(url: Optional[str] = None) -> OSInfo:
     """Find a running AgentOS and return what the CLI needs to know about it."""
     candidates, url_source, url_source_file = _candidate_urls(url)
+    source_note = _source_note(url_source, url_source_file)
     for candidate in candidates:
-        with AgentOSAPI(candidate) as api:
+        try:
+            api = AgentOSAPI(candidate)
+        except httpx.InvalidURL as e:
+            # A user-supplied URL (flag/env/env-file) that httpx cannot parse -- e.g. an
+            # un-expanded "${PORT}" or a typo'd port. Fail clearly, not with a traceback.
+            raise CLIError(
+                "Invalid AgentOS URL: " + candidate + source_note + ".",
+                hint="Fix the URL" + (" in " + url_source_file if url_source_file else "") + " or pass --url.",
+            ) from e
+        with api:
             if api.health() is None:
                 continue
             info = api.info() or {}
@@ -170,11 +214,21 @@ def discover(url: Optional[str] = None) -> OSInfo:
             )
 
     tried = ", ".join(candidates)
+    if url_source == "env-file":
+        hint = (
+            "The URL came from AGENTOS_URL in "
+            + (url_source_file or "an env file")
+            + " in this directory -- fix or remove it, pass --url, or start your AgentOS (agent_os.serve())."
+        )
+    else:
+        hint = (
+            "Start your AgentOS (agent_os.serve()), pass --url, or set "
+            + URL_ENV_VAR
+            + " (in your shell or a .env.production / .env file)."
+        )
     raise CLIError(
-        "No running AgentOS found (tried: " + tried + ").",
-        hint="Start your AgentOS (agent_os.serve()), pass --url, or set "
-        + URL_ENV_VAR
-        + " (in your shell or a .env.production / .env file).",
+        "No running AgentOS found (tried: " + tried + source_note + ").",
+        hint=hint,
     )
 
 
