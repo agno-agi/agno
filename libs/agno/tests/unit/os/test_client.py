@@ -12,11 +12,13 @@ Tests cover:
 8. Run operations
 """
 
+import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from agno.client import AgentOSClient
+from agno.media import Image
 
 
 def test_init_with_base_url():
@@ -549,6 +551,31 @@ async def test_run_agent():
 
 
 @pytest.mark.asyncio
+async def test_run_agent_serializes_image_content_as_base64():
+    """Verify run_agent can send in-memory image bytes as form JSON."""
+    client = AgentOSClient(base_url="http://localhost:7777")
+    mock_data = {
+        "run_id": "run-123",
+        "agent_id": "agent-1",
+        "content": "done",
+        "created_at": 1234567890,
+    }
+    with patch.object(client, "_apost", new_callable=AsyncMock) as mock_post:
+        mock_post.return_value = mock_data
+
+        await client.run_agent(
+            agent_id="agent-1",
+            message="Describe this",
+            images=[Image(content=b"raw-image", mime_type="image/png")],
+        )
+
+        data = mock_post.call_args.args[1]
+        images_payload = json.loads(data["images"])
+        assert images_payload[0]["content"] == "cmF3LWltYWdl"
+        assert images_payload[0]["mime_type"] == "image/png"
+
+
+@pytest.mark.asyncio
 async def test_run_team():
     """Verify run_team executes a team run."""
     client = AgentOSClient(base_url="http://localhost:7777")
@@ -657,6 +684,33 @@ async def test_run_agent_stream_returns_typed_events():
         assert isinstance(events[1], RunContentEvent)
         assert events[1].content == "Hello"
         assert isinstance(events[2], RunCompletedEvent)
+
+
+@pytest.mark.asyncio
+async def test_run_agent_stream_serializes_image_content_as_base64():
+    """Verify streaming agent runs can send in-memory image bytes as form JSON."""
+    client = AgentOSClient(base_url="http://localhost:7777")
+
+    async def async_generator():
+        yield 'data: {"event": "RunCompleted", "run_id": "run-123", "agent_id": "agent-1", "created_at": 1234567890}'
+
+    with patch.object(client, "_astream_post_form_data") as mock_stream:
+        mock_stream.return_value = async_generator()
+
+        events = [
+            event
+            async for event in client.run_agent_stream(
+                "agent-123",
+                "Describe this",
+                images=[Image(content=b"raw-image", mime_type="image/png")],
+            )
+        ]
+
+        data = mock_stream.call_args.args[1]
+        images_payload = json.loads(data["images"])
+        assert len(events) == 1
+        assert images_payload[0]["content"] == "cmF3LWltYWdl"
+        assert images_payload[0]["mime_type"] == "image/png"
 
 
 @pytest.mark.asyncio

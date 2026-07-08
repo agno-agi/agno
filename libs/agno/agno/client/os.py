@@ -69,6 +69,11 @@ from agno.run.workflow import WorkflowRunOutput, WorkflowRunOutputEvent, workflo
 from agno.utils.http import get_default_async_client, get_default_sync_client
 
 
+def _serialize_media_for_form(media: Sequence[Any]) -> str:
+    """Serialize media objects for form fields using their JSON-safe representation."""
+    return json.dumps([item.to_dict() if hasattr(item, "to_dict") else item.model_dump() for item in media])
+
+
 class AgentOSClient:
     """Client for interacting with AgentOS API endpoints.
 
@@ -576,13 +581,13 @@ class AgentOSClient:
         if user_id is not None:
             data["user_id"] = user_id
         if images:
-            data["images"] = json.dumps([img.model_dump() for img in images])
+            data["images"] = _serialize_media_for_form(images)
         if audio:
-            data["audio"] = json.dumps([a.model_dump() for a in audio])
+            data["audio"] = _serialize_media_for_form(audio)
         if videos:
-            data["videos"] = json.dumps([v.model_dump() for v in videos])
+            data["videos"] = _serialize_media_for_form(videos)
         if files:
-            data["files"] = json.dumps([f.model_dump() for f in files])
+            data["files"] = _serialize_media_for_form(files)
 
         # Add kwargs to data, serializing dicts as JSON
         for key, value in kwargs.items():
@@ -636,13 +641,13 @@ class AgentOSClient:
         if user_id is not None:
             data["user_id"] = user_id
         if images:
-            data["images"] = json.dumps([img.model_dump() for img in images])
+            data["images"] = _serialize_media_for_form(images)
         if audio:
-            data["audio"] = json.dumps([a.model_dump() for a in audio])
+            data["audio"] = _serialize_media_for_form(audio)
         if videos:
-            data["videos"] = json.dumps([v.model_dump() for v in videos])
+            data["videos"] = _serialize_media_for_form(videos)
         if files:
-            data["files"] = json.dumps([f.model_dump() for f in files])
+            data["files"] = _serialize_media_for_form(files)
 
         for key, value in kwargs.items():
             if isinstance(value, dict):
