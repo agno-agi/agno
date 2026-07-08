@@ -149,7 +149,7 @@ jobs:
             paths: "libs/agno/tests/unit/os libs/agno/tests/unit/models libs/agno/tests/unit/team libs/agno/tests/unit/knowledge libs/agno/tests/unit/reader libs/agno/tests/unit/skills libs/agno/tests/unit/eval"
           - shard: 3
             name: "infra-utils"
-            paths: "libs/agno/tests/unit/vectordb libs/agno/tests/unit/utils libs/agno/tests/unit/workflow libs/agno/tests/unit/db libs/agno/tests/unit/scheduler libs/agno/tests/unit/registry libs/agno/tests/unit/reasoning libs/agno/tests/unit/telemetry libs/agno/tests/unit/learn libs/agno/tests/unit/integrations libs/agno/tests/unit/app libs/agno/tests/unit/remote libs/agno/tests/unit/guardrails libs/agno/tests/unit/compression libs/agno/tests/unit/agents libs/agno/tests/unit/a2a libs/agno/tests/unit/test_*.py"
+            paths: "libs/agno/tests/unit/vectordb libs/agno/tests/unit/utils libs/agno/tests/unit/workflow libs/agno/tests/unit/db libs/agno/tests/unit/scheduler libs/agno/tests/unit/registry libs/agno/tests/unit/reasoning libs/agno/tests/unit/telemetry libs/agno/tests/unit/learn libs/agno/tests/unit/integrations libs/agno/tests/unit/app libs/agno/tests/unit/remote libs/agno/tests/unit/guardrails libs/agno/tests/unit/compression libs/agno/tests/unit/agents libs/agno/tests/unit/a2a libs/agno/tests/unit/test_fallback.py libs/agno/tests/unit/test_filter_converter.py libs/agno/tests/unit/test_filters.py libs/agno/tests/unit/test_learning_machine.py libs/agno/tests/unit/test_learning_message_filtering.py libs/agno/tests/unit/test_model_type.py libs/agno/tests/unit/test_trace_search_api.py"
       fail-fast: true # Stop all matrix jobs if one fails
 
     name: tests (${{ matrix.name }})
