@@ -301,6 +301,58 @@ def test_clean_page_numbers_untrustable(p_nr_format):
     assert not clean_content[0].endswith(p_nr_format["end"].format(page_nr=2))
 
 
+def test_clean_page_numbers_does_not_strip_single_page_leading_digit():
+    clean_content, recognized_shift = _clean_page_numbers(
+        ["2 Fast facts"],
+        page_start_numbering_format="",
+        page_end_numbering_format="",
+    )
+
+    assert clean_content == ["2 Fast facts"]
+    assert recognized_shift is None
+
+
+def _create_pdf_with_text(text: str) -> BytesIO:
+    escaped = text.replace("\\", "\\\\").replace("(", "\\(").replace(")", "\\)")
+    stream = f"BT /F1 24 Tf 72 720 Td ({escaped}) Tj ET\n".encode()
+    objects = [
+        b"<< /Type /Catalog /Pages 2 0 R >>",
+        b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+        b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] "
+        b"/Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>",
+        b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+        b"<< /Length " + str(len(stream)).encode() + b" >>\nstream\n" + stream + b"endstream",
+    ]
+    pdf = bytearray(b"%PDF-1.4\n")
+    offsets = [0]
+    for index, obj in enumerate(objects, start=1):
+        offsets.append(len(pdf))
+        pdf.extend(f"{index} 0 obj\n".encode())
+        pdf.extend(obj)
+        pdf.extend(b"\nendobj\n")
+
+    xref_offset = len(pdf)
+    pdf.extend(f"xref\n0 {len(objects) + 1}\n".encode())
+    pdf.extend(b"0000000000 65535 f \n")
+    for offset in offsets[1:]:
+        pdf.extend(f"{offset:010d} 00000 n \n".encode())
+    pdf.extend(f"trailer\n<< /Size {len(objects) + 1} /Root 1 0 R >>\nstartxref\n{xref_offset}\n%%EOF\n".encode())
+
+    buffer = BytesIO(bytes(pdf))
+    buffer.name = "leading_digit.pdf"
+    return buffer
+
+
+def test_pdf_reader_preserves_single_page_leading_digit():
+    reader = PDFReader(chunk=False)
+
+    documents = reader.read(_create_pdf_with_text("2 Fast facts"))
+
+    assert len(documents) == 1
+    assert "2 Fast facts" in documents[0].content
+    assert documents[0].meta_data["page"] == 1
+
+
 def _create_encrypted_pdf_with_empty_password() -> BytesIO:
     from pypdf import PdfWriter
 

@@ -136,14 +136,19 @@ def _clean_page_numbers(
             return int(match.group(1) or match.group(2))
         return None
 
-    page_numbers = [find_page_number(content) for content in page_content_list]
-    if all(x is None or x > 5 for x in page_numbers):
-        # This approach won't work reliably for higher page numbers.
-        page_content_list = [
+    def add_extra_content() -> List[str]:
+        return [
             f"\n{page_content_list[i]}\n{extra_content[i]}" if extra_content else page_content_list[i]
             for i in range(len(page_content_list))
         ]
-        return page_content_list, None
+
+    page_numbers = [find_page_number(content) for content in page_content_list]
+    if sum(page_number is not None for page_number in page_numbers) < 2:
+        return add_extra_content(), None
+
+    if all(x is None or x > 5 for x in page_numbers):
+        # This approach won't work reliably for higher page numbers.
+        return add_extra_content(), None
 
     # Possible range shifts to detect page numbering
     range_shifts = [-2, -1, 0, 1, 2]
