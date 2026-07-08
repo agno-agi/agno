@@ -174,6 +174,99 @@ def test_update_team_session(sqlite_db_real: SqliteDb, sample_team_session: Team
     assert result.team_data["foo"] == "bar"
 
 
+def test_upsert_agent_session_without_timestamps_sets_defaults(sqlite_db_real: SqliteDb):
+    """Ensure minimal AgentSession rows receive database-safe timestamps"""
+    result = sqlite_db_real.upsert_session(AgentSession(session_id="minimal_agent_session", agent_id="agent"))
+
+    assert result is not None
+    assert isinstance(result, AgentSession)
+    assert result.created_at is not None
+    assert result.updated_at == result.created_at
+
+
+def test_upsert_team_session_without_timestamps_sets_defaults(sqlite_db_real: SqliteDb):
+    """Ensure minimal TeamSession rows receive database-safe timestamps"""
+    result = sqlite_db_real.upsert_session(TeamSession(session_id="minimal_team_session", team_id="team"))
+
+    assert result is not None
+    assert isinstance(result, TeamSession)
+    assert result.created_at is not None
+    assert result.updated_at == result.created_at
+
+
+def test_upsert_session_preserves_explicit_updated_at(sqlite_db_real: SqliteDb):
+    """Ensure insert uses the session updated_at value when provided"""
+    result = sqlite_db_real.upsert_session(
+        AgentSession(session_id="explicit_timestamps", agent_id="agent", created_at=100, updated_at=200)
+    )
+
+    assert result is not None
+    assert isinstance(result, AgentSession)
+    assert result.created_at == 100
+    assert result.updated_at == 200
+
+
+def test_upsert_sessions_without_timestamps_sets_defaults(sqlite_db_real: SqliteDb):
+    """Ensure bulk upsert fills timestamps for minimal AgentSession and TeamSession rows"""
+    results = sqlite_db_real.upsert_sessions(
+        [
+            AgentSession(session_id="bulk_minimal_agent_session", agent_id="agent"),
+            TeamSession(session_id="bulk_minimal_team_session", team_id="team"),
+        ]
+    )
+
+    assert len(results) == 2
+    results_by_id = {result.session_id: result for result in results}
+    agent_result = results_by_id["bulk_minimal_agent_session"]
+    team_result = results_by_id["bulk_minimal_team_session"]
+
+    assert isinstance(agent_result, AgentSession)
+    assert agent_result.created_at is not None
+    assert agent_result.updated_at == agent_result.created_at
+    assert isinstance(team_result, TeamSession)
+    assert team_result.created_at is not None
+    assert team_result.updated_at == team_result.created_at
+
+
+@pytest.mark.asyncio
+async def test_async_upsert_session_without_timestamps_sets_defaults(async_shared_db):
+    """Ensure async upsert fills timestamps for minimal AgentSession and TeamSession rows"""
+    agent_result = await async_shared_db.upsert_session(
+        AgentSession(session_id="async_minimal_agent", agent_id="agent")
+    )
+    team_result = await async_shared_db.upsert_session(TeamSession(session_id="async_minimal_team", team_id="team"))
+
+    assert isinstance(agent_result, AgentSession)
+    assert agent_result.created_at is not None
+    assert agent_result.updated_at == agent_result.created_at
+    assert isinstance(team_result, TeamSession)
+    assert team_result.created_at is not None
+    assert team_result.updated_at == team_result.created_at
+
+
+@pytest.mark.asyncio
+async def test_async_upsert_sessions_without_timestamps_sets_defaults(async_shared_db):
+    """Ensure async bulk upsert fills timestamps for minimal AgentSession and TeamSession rows"""
+    results = await async_shared_db.upsert_sessions(
+        [
+            AgentSession(session_id="async_bulk_minimal_agent", agent_id="agent"),
+            TeamSession(session_id="async_bulk_minimal_team", team_id="team"),
+        ]
+    )
+
+    assert len(results) == 2
+    results_by_id = {result.session_id: result for result in results}
+    agent_result = results_by_id["async_bulk_minimal_agent"]
+    team_result = results_by_id["async_bulk_minimal_team"]
+
+    assert isinstance(agent_result, AgentSession)
+    assert agent_result.created_at is not None
+    assert agent_result.updated_at == agent_result.created_at
+    assert isinstance(team_result, TeamSession)
+    assert team_result.created_at is not None
+    assert team_result.updated_at == team_result.created_at
+
+
 def test_upserting_without_deserialization(sqlite_db_real: SqliteDb, sample_agent_session: AgentSession):
     """Ensure the upsert method works as expected when upserting a session without deserialization"""
     result = sqlite_db_real.upsert_session(sample_agent_session, deserialize=False)

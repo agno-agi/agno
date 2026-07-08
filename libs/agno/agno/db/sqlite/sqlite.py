@@ -28,6 +28,7 @@ from agno.db.sqlite.utils import (
     get_dates_to_calculate_metrics_for,
     is_table_available,
     is_valid_table,
+    normalize_session_timestamps,
     serialize_cultural_knowledge_for_db,
 )
 from agno.db.utils import (
@@ -972,6 +973,7 @@ class SqliteDb(BaseDb):
                 return None
 
             serialized_session = serialize_session_json_fields(session.to_dict())
+            created_at, updated_at = normalize_session_timestamps(serialized_session)
 
             if isinstance(session, AgentSession):
                 with self.Session() as sess, sess.begin():
@@ -985,8 +987,8 @@ class SqliteDb(BaseDb):
                         metadata=serialized_session.get("metadata"),
                         runs=serialized_session.get("runs"),
                         summary=serialized_session.get("summary"),
-                        created_at=serialized_session.get("created_at"),
-                        updated_at=serialized_session.get("created_at"),
+                        created_at=created_at,
+                        updated_at=updated_at,
                     )
                     stmt = stmt.on_conflict_do_update(
                         index_elements=["session_id"],
@@ -1020,8 +1022,8 @@ class SqliteDb(BaseDb):
                         user_id=serialized_session.get("user_id"),
                         runs=serialized_session.get("runs"),
                         summary=serialized_session.get("summary"),
-                        created_at=serialized_session.get("created_at"),
-                        updated_at=serialized_session.get("created_at"),
+                        created_at=created_at,
+                        updated_at=updated_at,
                         team_data=serialized_session.get("team_data"),
                         session_data=serialized_session.get("session_data"),
                         metadata=serialized_session.get("metadata"),
@@ -1059,8 +1061,8 @@ class SqliteDb(BaseDb):
                         user_id=serialized_session.get("user_id"),
                         runs=serialized_session.get("runs"),
                         summary=serialized_session.get("summary"),
-                        created_at=serialized_session.get("created_at") or int(time.time()),
-                        updated_at=serialized_session.get("updated_at") or int(time.time()),
+                        created_at=created_at,
+                        updated_at=updated_at,
                         workflow_data=serialized_session.get("workflow_data"),
                         session_data=serialized_session.get("session_data"),
                         metadata=serialized_session.get("metadata"),
@@ -1148,8 +1150,9 @@ class SqliteDb(BaseDb):
                     agent_data = []
                     for session in agent_sessions:
                         serialized_session = serialize_session_json_fields(session.to_dict())
-                        # Use preserved updated_at if flag is set and value exists, otherwise use current time
-                        updated_at = serialized_session.get("updated_at") if preserve_updated_at else int(time.time())
+                        created_at, updated_at = normalize_session_timestamps(
+                            serialized_session, preserve_updated_at=preserve_updated_at
+                        )
                         agent_data.append(
                             {
                                 "session_id": serialized_session.get("session_id"),
@@ -1161,7 +1164,7 @@ class SqliteDb(BaseDb):
                                 "metadata": serialized_session.get("metadata"),
                                 "runs": serialized_session.get("runs"),
                                 "summary": serialized_session.get("summary"),
-                                "created_at": serialized_session.get("created_at"),
+                                "created_at": created_at,
                                 "updated_at": updated_at,
                             }
                         )
@@ -1203,8 +1206,9 @@ class SqliteDb(BaseDb):
                     team_data = []
                     for session in team_sessions:
                         serialized_session = serialize_session_json_fields(session.to_dict())
-                        # Use preserved updated_at if flag is set and value exists, otherwise use current time
-                        updated_at = serialized_session.get("updated_at") if preserve_updated_at else int(time.time())
+                        created_at, updated_at = normalize_session_timestamps(
+                            serialized_session, preserve_updated_at=preserve_updated_at
+                        )
                         team_data.append(
                             {
                                 "session_id": serialized_session.get("session_id"),
@@ -1213,7 +1217,7 @@ class SqliteDb(BaseDb):
                                 "user_id": serialized_session.get("user_id"),
                                 "runs": serialized_session.get("runs"),
                                 "summary": serialized_session.get("summary"),
-                                "created_at": serialized_session.get("created_at"),
+                                "created_at": created_at,
                                 "updated_at": updated_at,
                                 "team_data": serialized_session.get("team_data"),
                                 "session_data": serialized_session.get("session_data"),
@@ -1258,8 +1262,9 @@ class SqliteDb(BaseDb):
                     workflow_data = []
                     for session in workflow_sessions:
                         serialized_session = serialize_session_json_fields(session.to_dict())
-                        # Use preserved updated_at if flag is set and value exists, otherwise use current time
-                        updated_at = serialized_session.get("updated_at") if preserve_updated_at else int(time.time())
+                        created_at, updated_at = normalize_session_timestamps(
+                            serialized_session, preserve_updated_at=preserve_updated_at
+                        )
                         workflow_data.append(
                             {
                                 "session_id": serialized_session.get("session_id"),
@@ -1268,7 +1273,7 @@ class SqliteDb(BaseDb):
                                 "user_id": serialized_session.get("user_id"),
                                 "runs": serialized_session.get("runs"),
                                 "summary": serialized_session.get("summary"),
-                                "created_at": serialized_session.get("created_at"),
+                                "created_at": created_at,
                                 "updated_at": updated_at,
                                 "workflow_data": serialized_session.get("workflow_data"),
                                 "session_data": serialized_session.get("session_data"),

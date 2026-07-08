@@ -1,7 +1,7 @@
 import json
 import time
 from datetime import date, datetime, timedelta, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 from uuid import uuid4
 
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
@@ -58,6 +58,19 @@ def apply_sorting(stmt, table: Table, sort_by: Optional[str] = None, sort_order:
         return stmt.order_by(sort_column.asc())
     else:
         return stmt.order_by(sort_column.desc())
+
+
+def normalize_session_timestamps(
+    serialized_session: Dict[str, Any], preserve_updated_at: bool = True
+) -> Tuple[int, int]:
+    current_time = int(time.time())
+    created_at = serialized_session.get("created_at") or current_time
+    updated_at = serialized_session.get("updated_at") if preserve_updated_at else None
+
+    if updated_at is None:
+        updated_at = created_at if preserve_updated_at else current_time
+
+    return created_at, updated_at
 
 
 def is_table_available(session: Session, table_name: str, db_schema: Optional[str] = None) -> bool:
