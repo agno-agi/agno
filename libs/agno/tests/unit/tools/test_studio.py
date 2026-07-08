@@ -16,7 +16,9 @@ from agno.models.openai import OpenAIResponses
 from agno.registry import Registry
 from agno.tools.calculator import CalculatorTools
 from agno.tools.duckduckgo import DuckDuckGoTools
-from agno.tools.studio import StudioTools
+from agno.tools.function import Function
+from agno.tools.studio import StudioTool, StudioTools
+from agno.tools.toolkit import Toolkit
 
 # ----------------------------------------------------------------------
 # Fixtures
@@ -59,13 +61,9 @@ def _loads(s: str) -> Dict[str, Any]:
 
 class TestStudioToolAlias:
     def test_singular_alias_resolves_to_canonical_class(self):
-        from agno.tools.studio import StudioTool
-
         assert StudioTool is StudioTools
 
     def test_alias_constructs_a_working_toolkit(self, registry, db):
-        from agno.tools.studio import StudioTool
-
         tool = StudioTool(registry=registry, db=db)
         assert isinstance(tool, StudioTools)
         assert "create_agent" in tool.functions
@@ -326,6 +324,180 @@ class TestCreateAgent:
         out = _loads(await studio.acreate_agent(name="async-agent", instructions="i", model_id="gpt-5.4"))
         assert out["status"] == "created"
         assert db.get_component("async-agent") is not None
+
+
+class TestToolNameResolution:
+    """Multiple MCP servers in one registry must stay independently addressable."""
+
+    @pytest.fixture
+    def mcp_registry(self, db):
+        pytest.importorskip("mcp")
+        from agno.tools.mcp import MCPTools
+
+        docs = MCPTools(url="https://docs.example.com/mcp")
+        search = MCPTools(url="https://search.example.com/mcp")
+        registry = Registry(
+            name="MCP Registry",
+            tools=[docs, search],
+            models=[OpenAIResponses(id="gpt-5.5")],
+            dbs=[db],
+        )
+        return registry, docs, search
+
+    def test_two_mcp_toolkits_are_independently_listable(self, mcp_registry, db):
+        registry, docs, search = mcp_registry
+        studio = StudioTool(registry=registry, db=db)
+
+        result = _loads(studio.list_tools())
+        names = [t["name"] for t in result["tools"]]
+        assert len(names) == len(set(names))
+        assert docs.name in names and search.name in names
+
+    def test_two_mcp_toolkits_survive_add_tool_dedup(self, mcp_registry):
+        registry, docs, search = mcp_registry
+        fresh = Registry()
+        fresh.add_tool(docs)
+        fresh.add_tool(search)
+        assert docs in fresh.tools and search in fresh.tools
+
+    def test_create_agent_selects_the_right_mcp_toolkit_by_name(self, mcp_registry, db):
+        registry, docs, search = mcp_registry
+        studio = StudioTool(registry=registry, db=db)
+
+        assert studio._find_tool(docs.name) is docs
+        assert studio._find_tool(search.name) is search
+
+        # Simulate a connected toolkit: create_agent refuses toolkits with no
+        # functions, since they would persist as an empty tool set.
+        search.functions["web_search"] = Function(
+            name="web_search",
+            parameters={"type": "object", "properties": {"query": {"type": "string"}}, "required": ["query"]},
+            skip_entrypoint_processing=True,
+        )
+
+        out = _loads(
+            studio.create_agent(name="web-search-agent", instructions="Search the web.", tool_names=[search.name])
+        )
+        assert out["status"] == "created"
+        assert out["tools"] == [search.name]
+
+    def test_ambiguous_tool_name_errors_instead_of_first_matching(self, db):
+        def alpha():
+            pass
+
+        def beta():
+            pass
+
+        registry = Registry(
+            name="Ambiguous Registry",
+            tools=[Toolkit(name="dup", tools=[alpha]), Toolkit(name="dup", tools=[beta])],
+            models=[OpenAIResponses(id="gpt-5.5")],
+            dbs=[db],
+        )
+        studio = StudioTool(registry=registry, db=db)
+
+        with pytest.raises(ValueError, match="ambiguous"):
+            studio._find_tool("dup")
+
+        out = _loads(studio.create_agent(name="x", instructions="i", tool_names=["dup"]))
+        assert "error" in out
+        assert "ambiguous" in out["error"]
+
+
+class TestMCPToolkitPersistence:
+    """Registry MCP toolkits must persist their functions and survive rehydration.
+
+    Uses stub toolkits with the connected-MCP shape: functions registered on
+    the toolkit at connect time, with a fixed schema and
+    skip_entrypoint_processing=True.
+    """
+
+    @staticmethod
+    def _connect(toolkit: Toolkit) -> Function:
+        """Simulate MCPTools.connect(): register a fixed-schema function."""
+
+        async def call_proxy(**kwargs) -> str:
+            return "docs result"
+
+        func = Function(
+            name="search_docs",
+            description="Search the docs.",
+            parameters={"type": "object", "properties": {"query": {"type": "string"}}, "required": ["query"]},
+            entrypoint=call_proxy,
+            skip_entrypoint_processing=True,
+        )
+        toolkit.functions[func.name] = func
+        return func
+
+    def _registry(self, db, toolkit: Toolkit) -> Registry:
+        return Registry(
+            name="MCP Persistence Registry",
+            tools=[toolkit],
+            models=[OpenAIResponses(id="gpt-5.5")],
+            dbs=[db],
+        )
+
+    def test_create_agent_refuses_unconnected_toolkit(self, db):
+        toolkit = Toolkit(name="agno_docs")  # no functions: never connected
+        studio = StudioTool(registry=self._registry(db, toolkit), db=db)
+
+        out = _loads(studio.create_agent(name="docs-agent", instructions="i", tool_names=["agno_docs"]))
+
+        assert "error" in out
+        assert "agno_docs" in out["error"]
+        assert db.get_component("docs-agent") is None
+
+    def test_edit_agent_refuses_unconnected_toolkit(self, db):
+        toolkit = Toolkit(name="agno_docs")
+        studio = StudioTool(registry=self._registry(db, toolkit), db=db)
+        studio.create_agent(name="docs-agent", instructions="i")
+
+        out = _loads(studio.edit_agent(agent_id="docs-agent", tool_names=["agno_docs"]))
+
+        assert "error" in out
+        assert "agno_docs" in out["error"]
+
+    def test_create_agent_persists_connected_toolkit_functions(self, db):
+        toolkit = Toolkit(name="agno_docs")
+        self._connect(toolkit)
+        studio = StudioTool(registry=self._registry(db, toolkit), db=db)
+
+        out = _loads(studio.create_agent(name="docs-agent", instructions="i", tool_names=["agno_docs"]))
+        assert out["status"] == "created"
+
+        config = db.get_config("docs-agent")["config"]
+        persisted_tools = config.get("tools")
+        assert persisted_tools, "connected toolkit functions must be persisted"
+        assert [t["name"] for t in persisted_tools] == ["search_docs"]
+        assert persisted_tools[0]["parameters"]["required"] == ["query"]
+
+    def test_rehydrated_agent_resolves_mcp_tools_after_late_connect(self, db):
+        """Simulate a restart: persist with a connected toolkit, then rehydrate
+        against a fresh registry whose toolkit connects only after the
+        entrypoint lookup cache was first built."""
+        toolkit = Toolkit(name="agno_docs")
+        self._connect(toolkit)
+        studio = StudioTool(registry=self._registry(db, toolkit), db=db)
+        studio.create_agent(name="docs-agent", instructions="i", tool_names=["agno_docs"])
+
+        # Fresh process: new registry, toolkit not yet connected
+        fresh_toolkit = Toolkit(name="agno_docs")
+        fresh_registry = self._registry(db, fresh_toolkit)
+
+        # Prime the lookup cache before "connect", as startup code paths may
+        assert fresh_registry._entrypoint_lookup == {}
+
+        # The AgentOS lifespan connects the toolkit
+        func = self._connect(fresh_toolkit)
+
+        config = db.get_config("docs-agent")["config"]
+        agent = Agent.from_dict(config, registry=fresh_registry)
+
+        assert agent.tools, "rehydrated agent must keep its MCP tools"
+        rehydrated = {t.name: t for t in agent.tools if isinstance(t, Function)}
+        assert "search_docs" in rehydrated
+        assert rehydrated["search_docs"].entrypoint is func.entrypoint
+        assert rehydrated["search_docs"].skip_entrypoint_processing is True
 
 
 class TestCreateTeam:

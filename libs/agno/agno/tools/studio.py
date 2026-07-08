@@ -283,17 +283,37 @@ class StudioTools(Toolkit):
         return self.registry.get_db(db_id)
 
     def _find_tool(self, name: str) -> Optional[Any]:
-        """Match by Toolkit.name, Function.name, callable __name__, or toolkit function key."""
+        """Match by Toolkit.name, Function.name, callable __name__, or toolkit function key.
+
+        Top-level name matches take precedence over functions found inside a
+        toolkit. When a name matches more than one distinct registry entry
+        (e.g. two toolkits sharing a name), a ValueError is raised instead of
+        silently returning the first match -- resolving to whichever entry was
+        registered first would wire the agent to the wrong tool.
+        """
+        matches: List[Any] = []
+        function_matches: List[Any] = []
         for tool in self.registry.tools:
-            if isinstance(tool, Toolkit) and tool.name == name:
-                return tool
-            if isinstance(tool, Function) and tool.name == name:
-                return tool
-            if callable(tool) and getattr(tool, "__name__", None) == name:
-                return tool
-            if isinstance(tool, Toolkit) and name in tool.functions:
-                return tool.functions[name]
-        return None
+            if isinstance(tool, Toolkit):
+                if tool.name == name:
+                    matches.append(tool)
+                elif name in tool.functions:
+                    function_matches.append(tool.functions[name])
+            elif isinstance(tool, Function):
+                if tool.name == name:
+                    matches.append(tool)
+            elif callable(tool) and getattr(tool, "__name__", None) == name:
+                matches.append(tool)
+
+        candidates = matches or function_matches
+        if not candidates:
+            return None
+        if len(candidates) > 1:
+            raise ValueError(
+                f"Tool name '{name}' is ambiguous: it matches {len(candidates)} registry entries. "
+                "Give each tool a distinct name (e.g. MCPTools(name=...)) so it can be selected unambiguously."
+            )
+        return candidates[0]
 
     def _resolve_tools(self, names: Optional[List[str]]) -> List[Any]:
         if not names:
@@ -308,6 +328,17 @@ class StudioTools(Toolkit):
                 resolved.append(found)
         if missing:
             raise ValueError(f"Tools not found in registry: {missing}")
+        # Persisting a component serializes each toolkit's functions; a toolkit
+        # with none (e.g. an MCP toolkit that never connected) would be silently
+        # dropped from the config, permanently. Refuse instead.
+        empty_toolkits = [t.name for t in resolved if isinstance(t, Toolkit) and not t.functions]
+        if empty_toolkits:
+            raise ValueError(
+                f"Toolkits have no functions and cannot be persisted: {empty_toolkits}. "
+                "An MCP toolkit has no functions until it is connected. Connect it before "
+                "creating or editing components with it (AgentOS connects MCP tools found in "
+                "the registry and on agents/teams/workflows at startup)."
+            )
         return resolved
 
     def _normalize_tool_names(self, names: List[str]) -> List[str]:

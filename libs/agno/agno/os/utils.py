@@ -1,5 +1,6 @@
 import json
 from datetime import datetime, timezone
+from os import getenv
 from typing import Any, Callable, Dict, List, Optional, Sequence, Set, Type, Union
 
 from fastapi import FastAPI, HTTPException, Request, UploadFile
@@ -310,8 +311,13 @@ async def get_db(
             status_code=400, detail="The db_id query parameter is required when using multiple databases"
         )
 
+    # Raise if no database is registered (an empty dict, or ids mapped to empty lists)
+    all_dbs = [db for db_list in dbs.values() for db in db_list]
+    if not all_dbs:
+        raise HTTPException(status_code=400, detail="No database is configured on this AgentOS")
+
     # Return the first (and only) database
-    return next(db for dbs in dbs.values() for db in dbs)
+    return all_dbs[0]
 
 
 def _generate_knowledge_id(name: str, db_id: str, table_name: str) -> str:
@@ -1188,11 +1194,21 @@ def resolve_ws_jwt_config(app: FastAPI) -> Dict[str, Any]:
     if not user_middleware:
         return blank
 
-    from agno.os.middleware.jwt import JWTMiddleware, JWTValidator
+    from agno.os.middleware.jwt import JWTMiddleware, JWTValidator, jwt_kwargs_have_key_source
 
     for entry in user_middleware:
         if getattr(entry, "cls", None) is JWTMiddleware:
             kwargs = getattr(entry, "kwargs", {}) or {}
+            # AgentOS installs this same middleware class as the general auth layer
+            # for security-key / service-account-only deployments, with no JWT key
+            # source. Those entries are not JWT-intended: skip them so the WS
+            # endpoint falls through to the PAT and security-key auth paths instead
+            # of demanding JWTs nobody can mint. Env-configured keys still count --
+            # JWTValidator reads JWT_VERIFICATION_KEY / JWT_JWKS_FILE itself.
+            if not jwt_kwargs_have_key_source(kwargs) and not (
+                getenv("JWT_VERIFICATION_KEY") or getenv("JWT_JWKS_FILE")
+            ):
+                continue
             # Mirror JWTMiddleware.__init__ deprecated secret_key handling:
             # append to verification_keys so manual setups using secret_key
             # still get a working WebSocket validator.
@@ -1389,6 +1405,26 @@ def collect_mcp_tools_from_team(team: Team, mcp_tools: List[Any]) -> None:
             elif isinstance(member, Team):
                 # Recursively check nested team
                 collect_mcp_tools_from_team(member, mcp_tools)
+
+
+def collect_mcp_tools_from_registry(registry: Optional[Registry], mcp_tools: List[Any]) -> None:
+    """Collect MCP tools declared directly on the registry.
+
+    Registry tools are not attached to any agent, team or workflow, so the
+    other collectors never see them. They still must be connected in the
+    AgentOS lifespan: components created from registry tools (e.g. via
+    StudioTool) serialize a toolkit's functions at persist time, and an
+    unconnected MCP toolkit has none -- its tools would be silently dropped.
+    """
+    if registry is None or not registry.tools:
+        return
+    for tool in registry.tools:
+        # Alternate method of using isinstance(tool, (MCPTools, MultiMCPTools)) to avoid imports
+        if hasattr(type(tool), "__mro__") and any(
+            c.__name__ in ["MCPTools", "MultiMCPTools"] for c in type(tool).__mro__
+        ):
+            if tool not in mcp_tools:
+                mcp_tools.append(tool)
 
 
 def collect_mcp_tools_from_workflow(workflow: Workflow, mcp_tools: List[Any]) -> None:

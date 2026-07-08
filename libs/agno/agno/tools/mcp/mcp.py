@@ -11,7 +11,7 @@ from agno.tools import Toolkit
 from agno.tools.function import Function
 from agno.tools.mcp.params import SSEClientParams, StreamableHTTPClientParams
 from agno.utils.log import log_debug, log_error, log_info, log_warning
-from agno.utils.mcp import get_entrypoint_for_tool, prepare_command
+from agno.utils.mcp import get_default_toolkit_name, get_entrypoint_for_tool, prepare_command
 
 if TYPE_CHECKING:
     from agno.agent import Agent
@@ -42,6 +42,7 @@ class MCPTools(Toolkit):
         self,
         command: Optional[str] = None,
         *,
+        name: Optional[str] = None,
         url: Optional[str] = None,
         env: Optional[dict[str, str]] = None,
         transport: Optional[Literal["stdio", "sse", "streamable-http"]] = None,
@@ -60,6 +61,10 @@ class MCPTools(Toolkit):
         Initialize the MCP toolkit.
 
         Args:
+            name: The toolkit name. Defaults to a stable name derived from the connection
+                parameters (URL or command), so multiple MCP toolkits in one registry stay
+                distinguishable and selectable by name. Falls back to "MCPTools" when only
+                a session is provided.
             session: An initialized MCP ClientSession connected to an MCP server
             server_params: Parameters for creating a new session
             command: The command to run to start the server. Should be used in conjunction with env.
@@ -83,7 +88,10 @@ class MCPTools(Toolkit):
         stop_after_tool_call_tools = kwargs.pop("stop_after_tool_call_tools", None)
         show_result_tools = kwargs.pop("show_result_tools", None)
 
-        super().__init__(name="MCPTools", **kwargs)
+        super().__init__(
+            name=name or get_default_toolkit_name(url=url, command=command, server_params=server_params),
+            **kwargs,
+        )
 
         if url is not None:
             if transport is None:
