@@ -11,6 +11,7 @@ import asyncio
 import contextlib
 import json
 from copy import copy
+from inspect import isawaitable
 from typing import (
     Any,
     AsyncIterator,
@@ -113,6 +114,12 @@ async def _acascading_cancel_run(run_id: str) -> bool:
     from agno.team._run import acancel_run as _team_acancel_run
 
     return await _team_acancel_run(run_id)
+
+
+async def _await_if_needed(value: Any) -> Any:
+    if isawaitable(value):
+        return await value
+    return value
 
 
 def _get_update_user_memory_function(team: "Team", user_id: Optional[str] = None, async_mode: bool = False) -> Function:
@@ -833,6 +840,7 @@ def _get_delegate_task_function(
                     run_id=member_run_id,
                     yield_run_output=True,
                 )
+                member_agent_run_response_stream = await _await_if_needed(member_agent_run_response_stream)
                 draining_after_cancel = False
                 async for member_agent_run_response_event in member_agent_run_response_stream:
                     # Do NOT break out of the loop, AsyncIterator need to exit properly
@@ -1177,6 +1185,7 @@ def _get_delegate_task_function(
                     run_id=member_run_id,
                     yield_run_output=True,
                 )
+                member_stream = await _await_if_needed(member_stream)
                 member_agent_run_response = None
                 try:
                     try:
