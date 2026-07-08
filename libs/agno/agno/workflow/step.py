@@ -25,6 +25,9 @@ from agno.run.agent import (
     RunCompletedEvent as AgentRunCompletedEvent,
 )
 from agno.run.agent import (
+    RunErrorEvent as AgentRunErrorEvent,
+)
+from agno.run.agent import (
     RunContentEvent,
     RunOutput,
 )
@@ -35,6 +38,9 @@ from agno.run.team import (
 )
 from agno.run.team import (
     RunCompletedEvent as TeamRunCompletedEvent,
+)
+from agno.run.team import (
+    RunErrorEvent as TeamRunErrorEvent,
 )
 from agno.run.team import (
     RunContentEvent as TeamRunContentEvent,
@@ -75,15 +81,32 @@ if TYPE_CHECKING:
 _EXECUTOR_TERMINAL_EVENT_TYPES = (
     AgentRunCancelledEvent,
     AgentRunCompletedEvent,
+    AgentRunErrorEvent,
     TeamRunCancelledEvent,
     TeamRunCompletedEvent,
+    TeamRunErrorEvent,
 )
+
+_EXECUTOR_ERROR_EVENT_TYPES = (AgentRunErrorEvent, TeamRunErrorEvent)
 
 # Maximum nesting depth for nested workflow execution to prevent circular references or stack overflow.
 _MAX_NESTED_WORKFLOW_DEPTH = 10
 # Use ContextVar instead of threading.local so depth is isolated per coroutine/task,
 # not per thread. This prevents concurrent async workflows from interfering with each other.
 _nested_workflow_depth: contextvars.ContextVar[int] = contextvars.ContextVar("_nested_workflow_depth", default=0)
+
+
+def _executor_error_message(event: Any) -> str:
+    content = getattr(event, "content", None)
+    if content:
+        return str(content)
+
+    error_type = getattr(event, "error_type", None)
+    if error_type:
+        return str(error_type)
+
+    return "Executor stream ended with an error event"
+
 
 StepExecutor = Callable[
     [StepInput],
@@ -1260,20 +1283,28 @@ class Step:
                         )
 
                         active_executor_run_response = None
+                        executor_error_event = None
                         for event in response_stream:
                             if isinstance(event, RunOutput) or isinstance(event, TeamRunOutput):
                                 active_executor_run_response = event
                                 continue
+                            if isinstance(event, _EXECUTOR_ERROR_EVENT_TYPES):
+                                executor_error_event = event
                             # Only yield executor events if stream_executor_events is True
                             if stream_executor_events or isinstance(event, _EXECUTOR_TERMINAL_EVENT_TYPES):
                                 enriched_event = self._enrich_event_with_context(
                                     event, workflow_run_response, step_index
                                 )
                                 yield enriched_event  # type: ignore[misc]
+                            if executor_error_event is not None:
+                                break
 
                         # Update workflow session state
                         if run_context is None and session_state is not None:
                             merge_dictionaries(session_state, session_state_copy)
+
+                        if active_executor_run_response is None and executor_error_event is not None:
+                            raise RuntimeError(_executor_error_message(executor_error_event))
 
                         if store_executor_outputs and workflow_run_response is not None:
                             self._store_executor_response(workflow_run_response, active_executor_run_response)  # type: ignore
@@ -1908,20 +1939,28 @@ class Step:
                         )
 
                         active_executor_run_response = None
+                        executor_error_event = None
                         async for event in response_stream:
                             if isinstance(event, RunOutput) or isinstance(event, TeamRunOutput):
                                 active_executor_run_response = event
                                 break
+                            if isinstance(event, _EXECUTOR_ERROR_EVENT_TYPES):
+                                executor_error_event = event
                             # Only yield executor events if stream_executor_events is True
                             if stream_executor_events or isinstance(event, _EXECUTOR_TERMINAL_EVENT_TYPES):
                                 enriched_event = self._enrich_event_with_context(
                                     event, workflow_run_response, step_index
                                 )
                                 yield enriched_event  # type: ignore[misc]
+                            if executor_error_event is not None:
+                                break
 
                         # Update workflow session state
                         if run_context is None and session_state is not None:
                             merge_dictionaries(session_state, session_state_copy)
+
+                        if active_executor_run_response is None and executor_error_event is not None:
+                            raise RuntimeError(_executor_error_message(executor_error_event))
 
                         if store_executor_outputs and workflow_run_response is not None:
                             self._store_executor_response(workflow_run_response, active_executor_run_response)  # type: ignore
