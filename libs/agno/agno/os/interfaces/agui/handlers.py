@@ -29,8 +29,10 @@ from agno.os.interfaces.agui.state import StreamState
 from agno.os.interfaces.agui.utils import to_json_str
 from agno.reasoning.step import ReasoningStep
 from agno.run.agent import RunContentEvent, RunEvent
+from agno.run.agent import RunPausedEvent as AgentRunPausedEvent
 from agno.run.base import BaseRunOutputEvent
 from agno.run.team import RunContentEvent as TeamRunContentEvent
+from agno.run.team import RunPausedEvent as TeamRunPausedEvent
 from agno.run.team import TeamRunEvent
 from agno.utils.message import get_text_from_message
 
@@ -334,9 +336,6 @@ def on_run_completed(chunk: BaseRunOutputEvent, state: StreamState) -> List[Base
         state.close_text_message()
 
     # Emit external execution tools for paused runs (Agent or Team)
-    from agno.run.agent import RunPausedEvent as AgentRunPausedEvent
-    from agno.run.team import RunPausedEvent as TeamRunPausedEvent
-
     if isinstance(chunk, (AgentRunPausedEvent, TeamRunPausedEvent)):
         external_tools = chunk.tools_awaiting_external_execution
         if external_tools:
