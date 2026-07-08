@@ -205,7 +205,3 @@ def merge_tool_results_into_requirements(
                 req.external_execution_result = req.tool_execution.result
 
     return stored_requirements
-
-
-def build_tool_results_map(tool_messages: List[AGUIToolMessage]) -> Dict[str, str]:
-    return {tm.tool_call_id: tm.content for tm in tool_messages}

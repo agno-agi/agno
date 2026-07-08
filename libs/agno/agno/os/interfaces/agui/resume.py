@@ -16,8 +16,7 @@ async def resume_paused_run(
     # Remote entities don't support client_tools resume (no aget_session)
     if not getattr(entity, "db", None):
         raise ValueError(
-            "Frontend tool resume requires a database. "
-            "Set db=SqliteDb(...) or db=PgDb(...) on your Agent/Team."
+            "Frontend tool resume requires a database. Set db=SqliteDb(...) or db=PgDb(...) on your Agent/Team."
         )
 
     from agno.run.base import RunStatus

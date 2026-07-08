@@ -1,10 +1,14 @@
 import ast
 import json
+from typing import Optional
 
 
-def to_json_str(value: str) -> str:
+def to_json_str(value: Optional[str]) -> str:
     # Tool results arrive as strings but may be Python repr format ("{'key': 'value'}")
     # because base.py uses str(dict). Frontend needs valid JSON for JSON.parse().
+
+    if value is None:
+        return "null"
 
     # 1. Already valid JSON — pass through unchanged
     try:
