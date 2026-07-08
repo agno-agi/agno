@@ -258,6 +258,23 @@ def test_get_table_sessions(postgres_db):
     assert hasattr(postgres_db, "session_table")
 
 
+def test_get_table_sessions_returns_cached_table(postgres_db):
+    """Test repeated session table lookups reuse the cached Table object."""
+    mock_table = Mock(spec=Table)
+
+    with patch.object(postgres_db, "_get_or_create_table", return_value=mock_table) as mock_get_or_create:
+        first = postgres_db._get_table("sessions", create_table_if_not_found=True)
+        second = postgres_db._get_table("sessions", create_table_if_not_found=True)
+
+    assert first is mock_table
+    assert second is mock_table
+    mock_get_or_create.assert_called_once_with(
+        table_name=postgres_db.session_table_name,
+        table_type="sessions",
+        create_table_if_not_found=True,
+    )
+
+
 def test_get_table_memories(postgres_db):
     """Test getting memories table"""
     mock_table = Mock(spec=Table)

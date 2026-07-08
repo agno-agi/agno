@@ -2,6 +2,7 @@ from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 from sqlalchemy.ext.asyncio import AsyncEngine
+from sqlalchemy.schema import Table
 
 from agno.db.postgres.async_postgres import AsyncPostgresDb
 
@@ -64,3 +65,21 @@ async def test_get_or_create_table_creates_when_not_available_and_create_flag_se
 
     assert result == mock_table
     async_postgres_db._create_table.assert_called_once_with(table_name="test_table", table_type="sessions")
+
+
+@pytest.mark.asyncio
+async def test_get_table_sessions_returns_cached_table(async_postgres_db):
+    """Test repeated async session table lookups reuse the cached Table object."""
+    mock_table = Mock(spec=Table)
+    async_postgres_db._get_or_create_table = AsyncMock(return_value=mock_table)
+
+    first = await async_postgres_db._get_table("sessions", create_table_if_not_found=True)
+    second = await async_postgres_db._get_table("sessions", create_table_if_not_found=True)
+
+    assert first is mock_table
+    assert second is mock_table
+    async_postgres_db._get_or_create_table.assert_awaited_once_with(
+        table_name=async_postgres_db.session_table_name,
+        table_type="sessions",
+        create_table_if_not_found=True,
+    )
