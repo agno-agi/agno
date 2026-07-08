@@ -29,8 +29,10 @@ from agno.os.interfaces.agui.state import StreamState
 from agno.os.interfaces.agui.utils import to_json_str
 from agno.reasoning.step import ReasoningStep
 from agno.run.agent import RunContentEvent, RunEvent
+from agno.run.agent import RunPausedEvent as AgentRunPausedEvent
 from agno.run.base import BaseRunOutputEvent
 from agno.run.team import RunContentEvent as TeamRunContentEvent
+from agno.run.team import RunPausedEvent as TeamRunPausedEvent
 from agno.run.team import TeamRunEvent
 from agno.utils.message import get_text_from_message
 
@@ -337,9 +339,6 @@ def on_run_completed(chunk: BaseRunOutputEvent, state: StreamState) -> List[Base
     # mode per tool, so these partitions never overlap. Confirmation/user_input are Agent-only
     # (Team's RunPausedEvent exposes only external-execution tools); a Team paused run still
     # emits its external-execution tools.
-    from agno.run.agent import RunPausedEvent as AgentRunPausedEvent
-    from agno.run.team import RunPausedEvent as TeamRunPausedEvent
-
     if isinstance(chunk, (AgentRunPausedEvent, TeamRunPausedEvent)):
         if isinstance(chunk, AgentRunPausedEvent):
             paused_tools = (

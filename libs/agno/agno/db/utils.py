@@ -36,6 +36,7 @@ DB_TABLE_NAME_KEYS: frozenset = frozenset(
         "schedule_runs_table",
         "approvals_table",
         "auth_tokens_table",
+        "service_accounts_table",
     }
 )
 

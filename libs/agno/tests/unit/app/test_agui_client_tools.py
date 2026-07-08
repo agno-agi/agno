@@ -4,7 +4,6 @@ from ag_ui.core.types import ToolMessage, UserMessage
 from agno.models.response import ToolExecution
 from agno.os.interfaces.agui.input import (
     agui_tools_to_external_functions,
-    build_tool_results_map,
     extract_tool_messages,
     merge_tool_results_into_requirements,
 )
@@ -346,23 +345,3 @@ def test_merge_tool_results_empty_inputs():
     ]
     result = merge_tool_results_into_requirements(stored, [])
     assert result[0].tool_execution.result is None
-
-
-# build_tool_results_map tests
-
-
-def test_build_tool_results_map_basic():
-    """Test building a simple results map."""
-    tool_messages = [
-        ToolMessage(id="t1", tool_call_id="call_1", content="result_1"),
-        ToolMessage(id="t2", tool_call_id="call_2", content="result_2"),
-    ]
-
-    result = build_tool_results_map(tool_messages)
-
-    assert result == {"call_1": "result_1", "call_2": "result_2"}
-
-
-def test_build_tool_results_map_empty():
-    """Test with empty input."""
-    assert build_tool_results_map([]) == {}

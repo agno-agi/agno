@@ -8,11 +8,11 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 # the valid values for ``MCPServerConfig.include_tags`` / ``exclude_tags`` without reading
 # ``agno/os/mcp.py``. Keep in sync with the ``tags={...}`` argument on each
 # ``@register_builtin_tool(...)`` in that module.
-MCP_BUILTIN_TAGS: frozenset = frozenset({"core", "session", "memory"})
+MCP_BUILTIN_TAGS: frozenset = frozenset({"core", "session"})
 
 # Type alias for ``include_tags`` / ``exclude_tags`` -- gives IDE autocomplete on the
 # string values while keeping the API stringly-typed (callers still pass ``{"core"}``).
-MCPBuiltinTag = Literal["core", "session", "memory"]
+MCPBuiltinTag = Literal["core", "session"]
 
 
 class MCPServerConfig(BaseModel):
@@ -25,9 +25,13 @@ class MCPServerConfig(BaseModel):
 
     The built-in tools are tagged so they can be scoped as a group. See
     ``MCP_BUILTIN_TAGS`` for the canonical set; current values:
-      - ``"core"``    -> ``get_agentos_config``, ``run_agent``, ``run_team``, ``run_workflow``
-      - ``"session"`` -> session CRUD tools
-      - ``"memory"``  -> memory CRUD tools
+      - ``"core"``    -> ``get_agentos_config``, ``run_agent``, ``run_team``, ``run_workflow``,
+        ``continue_run``, ``cancel_run``
+      - ``"session"`` -> read-only session tools (``get_sessions``, ``get_session_runs``)
+
+    The surface is deliberately small (8 tools): it is an operator surface for LLM
+    frontends, not a database console. Session writes and memory CRUD live on the REST
+    surface; anything else can be registered as a custom tool via ``tools``.
     """
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
@@ -42,17 +46,27 @@ class MCPServerConfig(BaseModel):
     # FastMCP ``Context`` parameter, which FastMCP injects natively.
     tools: Optional[List[Any]] = None
 
-    # Master switch for the ~19 built-in tools. Set to False to ship ONLY your own tools.
+    # Master switch for the 8 built-in tools. Set to False to ship ONLY your own tools.
     enable_builtin_tools: bool = True
 
     # Finer scoping over the built-ins via their tags (see ``MCP_BUILTIN_TAGS``).
     # When ``include_tags`` is set, only built-ins carrying one of those tags are registered.
     # ``exclude_tags`` is then subtracted. Both are ignored when ``enable_builtin_tools`` is False.
     # Typed as ``MCPBuiltinTag`` (a ``Literal``) so the IDE autocompletes the values and pydantic
-    # rejects typos at construction with a message like "Input should be 'core', 'session' or
-    # 'memory'" -- otherwise an unknown tag would silently produce an empty server.
+    # rejects typos at construction with a message like "Input should be 'core' or 'session'"
+    # -- otherwise an unknown tag would silently produce an empty server.
     include_tags: Optional[Set[MCPBuiltinTag]] = None
     exclude_tags: Optional[Set[MCPBuiltinTag]] = None
+
+    # How run_agent / run_team / run_workflow serialize their results.
+    #   "trimmed" (default) -> answer text + generated media as MCP content blocks;
+    #     structuredContent carries only run_id / session_id / status (+ unresolved
+    #     requirements when paused). MCP tool results land directly in the consuming
+    #     model's context window, so the transcript, system prompt, and metrics are
+    #     deliberately not included.
+    #   "full" -> structuredContent is the run's complete ``to_dict()`` (media base64-
+    #     encoded), for programmatic MCP clients that want the whole run.
+    result_mode: Literal["trimmed", "full"] = "trimmed"
 
     # Per-call gate for the MCP server. Given the authenticated caller's user_id, return True
     # to allow the request and False to reject it with 401 -- before any tool or model runs.

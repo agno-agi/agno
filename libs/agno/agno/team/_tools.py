@@ -97,14 +97,10 @@ async def _check_and_refresh_mcp_tools(team: "Team") -> None:
                         is_alive = await tool.is_alive()  # type: ignore
                         if not is_alive:
                             await tool.connect(force=True)  # type: ignore
-                    except (RuntimeError, BaseException) as e:
-                        log_warning(f"Failed to check if MCP tool is alive: {str(e)}")
-                        continue
-
-                    try:
-                        await tool.build_tools()  # type: ignore
-                    except (RuntimeError, BaseException) as e:
-                        log_warning(f"Failed to build tools for {tool}: {str(e)}")
+                        else:
+                            await tool.build_tools()  # type: ignore
+                    except Exception as e:
+                        log_warning(f"Failed to refresh MCP tool {tool}: {str(e)}")
                         continue
 
 

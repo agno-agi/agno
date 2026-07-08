@@ -263,7 +263,3 @@ def ensure_requirements_resolved(requirements: List[RunRequirement]) -> None:
             + (f" ({names})" if names else "")
             + ". The frontend must answer all paused tools before resuming."
         )
-
-
-def build_tool_results_map(tool_messages: List[AGUIToolMessage]) -> Dict[str, str]:
-    return {tm.tool_call_id: tm.content for tm in tool_messages}
