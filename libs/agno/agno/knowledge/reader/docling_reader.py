@@ -20,6 +20,8 @@ except ImportError:
     raise ImportError("The `docling` package is not installed. Please install it via `pip install docling`.")
 
 
+VTT_OUTPUT_FORMAT = getattr(OutputFormat, "VTT", "vtt")
+
 # Mapping of string values to OutputFormat enum
 OUTPUT_FORMAT_MAP = {
     "markdown": OutputFormat.MARKDOWN,
@@ -29,7 +31,7 @@ OUTPUT_FORMAT_MAP = {
     "html": OutputFormat.HTML,
     "html_split_page": OutputFormat.HTML_SPLIT_PAGE,
     "doctags": OutputFormat.DOCTAGS,
-    "vtt": OutputFormat.VTT,
+    "vtt": VTT_OUTPUT_FORMAT,
 }
 
 
@@ -205,6 +207,13 @@ class DoclingReader(Reader):
                 doc_name = name or Path(url_path).stem
                 log_debug(f"Reading from URL: {file}")
                 source = file
+            elif isinstance(file, str):
+                file_path = Path(file)
+                if not file_path.exists():
+                    raise FileNotFoundError(f"Could not find file: {file_path}")
+                log_debug(f"Reading: {file_path}")
+                doc_name = name or file_path.stem
+                source = file_path
             elif isinstance(file, BytesIO):
                 # Handle BytesIO objects
                 log_debug(f"Reading uploaded file: {getattr(file, 'name', 'BytesIO')}")
@@ -234,7 +243,7 @@ class DoclingReader(Reader):
                 doc_content = result.document.export_to_html(split_page_view=True)
             elif self.output_format == OutputFormat.DOCTAGS:
                 doc_content = result.document.export_to_doctags()
-            elif self.output_format == OutputFormat.VTT:
+            elif self.output_format == VTT_OUTPUT_FORMAT:
                 doc_content = result.document.export_to_vtt()
                 if doc_content.strip() == "WEBVTT":
                     log_debug(f"VTT export contains only headers for: {doc_name}")

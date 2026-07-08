@@ -48,6 +48,44 @@ def test_read_file(mock_converter):
         mock_converter.convert.assert_called_once()
 
 
+def test_read_file_str_path(tmp_path, mock_converter):
+    """Test reading a local file path string with DoclingReader"""
+    file_path = tmp_path / "test.pdf"
+    file_path.write_bytes(b"%PDF-1.4\n")
+
+    reader = DoclingReader(converter=mock_converter)
+    documents = reader.read(str(file_path))
+
+    assert len(documents) == 1
+    assert documents[0].name == "test"
+    mock_converter.convert.assert_called_once_with(file_path)
+
+
+@pytest.mark.asyncio
+async def test_async_read_file_str_path(tmp_path, mock_converter):
+    """Test async reading a local file path string with DoclingReader"""
+    file_path = tmp_path / "test.pdf"
+    file_path.write_bytes(b"%PDF-1.4\n")
+
+    reader = DoclingReader(converter=mock_converter)
+    documents = await reader.async_read(str(file_path))
+
+    assert len(documents) == 1
+    assert documents[0].name == "test"
+    mock_converter.convert.assert_called_once_with(file_path)
+
+
+def test_invalid_file_str_path(tmp_path, mock_converter):
+    """Test reading a non-existent local file path string"""
+    file_path = tmp_path / "missing.pdf"
+
+    reader = DoclingReader(converter=mock_converter)
+    with pytest.raises(FileNotFoundError, match="Could not find file"):
+        reader.read(str(file_path))
+
+    mock_converter.convert.assert_not_called()
+
+
 def test_markdown_output(mock_converter):
     """Test markdown output format"""
     with (
