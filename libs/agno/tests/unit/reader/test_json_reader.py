@@ -51,6 +51,23 @@ def test_read_json_list():
     assert [json.loads(doc.content) for doc in documents] == test_data
 
 
+def test_default_reader_does_not_chunk_large_json_objects(tmp_path):
+    test_data = [
+        {"id": 1, "text": "alpha " * 1200},
+        {"id": 2, "text": "beta " * 1200},
+    ]
+    json_path = tmp_path / "large.json"
+    json_path.write_text(json.dumps(test_data), encoding="utf-8")
+
+    reader = JSONReader()
+    documents = reader.read(json_path)
+
+    assert reader.chunk is False
+    assert len(documents) == 2
+    assert [json.loads(document.content)["id"] for document in documents] == [1, 2]
+    assert all("chunk" not in document.meta_data for document in documents)
+
+
 def test_chunking():
     # Test document chunking functionality
     test_data = {"key": "value"}
