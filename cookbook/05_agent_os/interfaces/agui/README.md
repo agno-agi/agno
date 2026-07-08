@@ -17,7 +17,6 @@ Examples for `interfaces/agui` in AgentOS.
 - `state_events.py` — Outbound state synchronization via STATE_SNAPSHOT + STATE_DELTA events.
 - `structured_output.py` — Structured output schema.
 - `team_state_events.py` — Team state synchronization.
-- `team_with_client_tools.py` — Team with frontend-defined client tools.
 - `tool_based_generative_ui.py` — Generative UI using tool-based approach.
 
 ## Prerequisites
