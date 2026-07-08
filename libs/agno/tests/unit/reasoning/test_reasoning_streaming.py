@@ -4,13 +4,16 @@ These tests verify that reasoning_content_delta events are properly emitted
 during streaming reasoning, without requiring actual API calls.
 """
 
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
 
 from agno.models.message import Message
+from agno.models.response import ModelResponse, ModelResponseEvent
 from agno.reasoning.step import ReasoningStep, ReasoningSteps
-from agno.run.agent import RunEvent
+from agno.run.agent import RunEvent, RunOutput
+from agno.run.messages import RunMessages
 
 # ============================================================================
 # Test RunEvent enum has required events
@@ -223,6 +226,98 @@ def test_reasoning_event_string_values():
     assert RunEvent.reasoning_started.value == "ReasoningStarted"
     assert RunEvent.reasoning_content_delta.value == "ReasoningContentDelta"
     assert RunEvent.reasoning_completed.value == "ReasoningCompleted"
+
+
+def test_model_response_reasoning_content_emits_native_delta_event():
+    """Streaming model reasoning chunks should enter the native reasoning event pipeline."""
+    from agno.agent._response import handle_model_response_chunk
+
+    agent = SimpleNamespace(id="agent-id", name="Agent", events_to_skip=[], store_events=False)
+    session = SimpleNamespace(session_id="session-id")
+    run_response = RunOutput(run_id="run-id", agent_id="agent-id", agent_name="Agent", session_id="session-id")
+    model_response = ModelResponse()
+    reasoning_state = {"reasoning_started": False, "reasoning_time_taken": 0.0}
+
+    events = list(
+        handle_model_response_chunk(
+            agent=agent,
+            session=session,  # type: ignore[arg-type]
+            run_response=run_response,
+            model_response=model_response,
+            model_response_event=ModelResponse(
+                event=ModelResponseEvent.assistant_response.value,
+                reasoning_content="The user ",
+            ),
+            reasoning_state=reasoning_state,
+            stream_events=True,
+        )
+    )
+
+    assert [event.event for event in events[:2]] == [
+        RunEvent.reasoning_started.value,
+        RunEvent.reasoning_content_delta.value,
+    ]
+    assert events[1].reasoning_content == "The user "  # type: ignore[attr-defined]
+    assert run_response.reasoning_content == "The user "
+    assert reasoning_state["reasoning_started"] is True
+
+
+@patch("agno.agent._response.call_model_stream_with_fallback")
+def test_model_response_stream_completes_native_reasoning_content(mock_call_model_stream):
+    """Native reasoning content from the model stream should get a completed event."""
+    from agno.agent._response import handle_model_response_stream
+
+    agent = SimpleNamespace(
+        id="agent-id",
+        name="Agent",
+        model=SimpleNamespace(id="compatible-reasoner", provider="OpenAILike"),
+        fallback_config=None,
+        parse_response=False,
+        parser_model=None,
+        tool_choice=None,
+        tool_call_limit=None,
+        send_media_to_model=True,
+        compress_tool_results=False,
+        compression_manager=None,
+        checkpoint=None,
+        events_to_skip=[],
+        store_events=False,
+    )
+    session = SimpleNamespace(session_id="session-id")
+    run_response = RunOutput(run_id="run-id", agent_id="agent-id", agent_name="Agent", session_id="session-id")
+    run_messages = RunMessages(messages=[Message(role="user", content="Hi")])
+    mock_call_model_stream.return_value = iter(
+        [
+            ModelResponse(
+                event=ModelResponseEvent.assistant_response.value,
+                reasoning_content="Thinking ",
+            ),
+            ModelResponse(
+                event=ModelResponseEvent.assistant_response.value,
+                content="Hello",
+            ),
+        ]
+    )
+
+    events = list(
+        handle_model_response_stream(
+            agent=agent,  # type: ignore[arg-type]
+            session=session,  # type: ignore[arg-type]
+            run_response=run_response,
+            run_messages=run_messages,
+            stream_events=True,
+        )
+    )
+
+    assert [event.event for event in events] == [
+        RunEvent.reasoning_started.value,
+        RunEvent.reasoning_content_delta.value,
+        RunEvent.run_content.value,
+        RunEvent.reasoning_completed.value,
+    ]
+    assert events[-1].content == "Thinking "  # type: ignore[attr-defined]
+    assert run_response.reasoning_content == "Thinking "
+    assert run_response.content == "Hello"
 
 
 # ============================================================================
