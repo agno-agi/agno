@@ -62,7 +62,7 @@ class CSVReader(Reader):
         return [ContentType.CSV]
 
     def read(
-        self, file: Union[Path, IO[Any]], delimiter: str = ",", quotechar: str = '"', name: Optional[str] = None
+        self, file: Union[Path, str, IO[Any]], delimiter: str = ",", quotechar: str = '"', name: Optional[str] = None
     ) -> List[Document]:
         """Read a CSV file and return a list of documents.
 
@@ -79,12 +79,13 @@ class CSVReader(Reader):
             FileNotFoundError: If the file path doesn't exist.
         """
         try:
-            if isinstance(file, Path):
-                if not file.exists():
-                    raise FileNotFoundError(f"Could not find file: {file}")
-                log_debug(f"Reading: {file}")
-                csv_name = name or file.stem
-                file_content: Union[io.TextIOWrapper, io.StringIO] = file.open(
+            if isinstance(file, (Path, str)):
+                file_path = Path(file)
+                if not file_path.exists():
+                    raise FileNotFoundError(f"Could not find file: {file_path}")
+                log_debug(f"Reading: {file_path}")
+                csv_name = name or file_path.stem
+                file_content: Union[io.TextIOWrapper, io.StringIO] = file_path.open(
                     newline="", mode="r", encoding=self.encoding or "utf-8"
                 )
             else:
@@ -126,7 +127,7 @@ class CSVReader(Reader):
 
     async def async_read(
         self,
-        file: Union[Path, IO[Any]],
+        file: Union[Path, str, IO[Any]],
         delimiter: str = ",",
         quotechar: str = '"',
         page_size: int = 1000,
@@ -148,14 +149,17 @@ class CSVReader(Reader):
             FileNotFoundError: If the file path doesn't exist.
         """
         try:
-            if isinstance(file, Path):
-                if not file.exists():
-                    raise FileNotFoundError(f"Could not find file: {file}")
-                log_debug(f"Reading async: {file}")
-                async with aiofiles.open(file, mode="r", encoding=self.encoding or "utf-8", newline="") as file_content:
+            if isinstance(file, (Path, str)):
+                file_path = Path(file)
+                if not file_path.exists():
+                    raise FileNotFoundError(f"Could not find file: {file_path}")
+                log_debug(f"Reading async: {file_path}")
+                async with aiofiles.open(
+                    file_path, mode="r", encoding=self.encoding or "utf-8", newline=""
+                ) as file_content:
                     content = await file_content.read()
                     file_content_io = io.StringIO(content)
-                csv_name = name or file.stem
+                csv_name = name or file_path.stem
             else:
                 log_debug(f"Reading retrieved file async: {getattr(file, 'name', 'BytesIO')}")
                 file.seek(0)
