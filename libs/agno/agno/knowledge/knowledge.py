@@ -2242,25 +2242,24 @@ class Knowledge(RemoteKnowledge):
             hash_parts.append(str(content.path))
         elif content.url:
             hash_parts.append(content.url)
-        elif content.file_data and content.file_data.content:
-            # For file_data, always add filename, type, size, or content for uniqueness
+        elif content.file_data and content.file_data.content is not None:
+            # For file_data, combine metadata with a content digest for uniqueness.
             if content.file_data.filename:
                 hash_parts.append(content.file_data.filename)
-            elif content.file_data.type:
+            if content.file_data.type:
                 hash_parts.append(content.file_data.type)
-            elif content.file_data.size is not None:
+            if content.file_data.size is not None:
                 hash_parts.append(str(content.file_data.size))
-            else:
-                # Fallback: use the content for uniqueness
-                # Include type information to distinguish str vs bytes
-                content_type = "str" if isinstance(content.file_data.content, str) else "bytes"
-                content_bytes = (
-                    content.file_data.content.encode()
-                    if isinstance(content.file_data.content, str)
-                    else content.file_data.content
-                )
-                content_hash = hashlib.sha256(content_bytes).hexdigest()[:16]  # Use first 16 chars
-                hash_parts.append(f"{content_type}:{content_hash}")
+
+            # Include type information to distinguish str vs bytes with the same bytes.
+            content_type = "str" if isinstance(content.file_data.content, str) else "bytes"
+            content_bytes = (
+                content.file_data.content.encode()
+                if isinstance(content.file_data.content, str)
+                else content.file_data.content
+            )
+            content_hash = hashlib.sha256(content_bytes).hexdigest()[:16]
+            hash_parts.append(f"{content_type}:{content_hash}")
         elif content.topics and len(content.topics) > 0:
             topic = content.topics[0]
             reader = type(content.reader).__name__ if content.reader else "unknown"
