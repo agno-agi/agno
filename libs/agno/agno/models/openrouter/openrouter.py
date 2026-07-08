@@ -12,6 +12,44 @@ from agno.models.response import ModelResponse
 from agno.run.agent import RunOutput
 
 
+def _merge_streamed_reasoning_details(reasoning_details: List[Any]) -> List[Any]:
+    """Reconstruct complete reasoning detail blocks from streamed fragments.
+
+    OpenRouter streams one reasoning block as multiple fragments sharing the
+    same ``index`` (text arrives in pieces; the signature may arrive in a
+    final text-less fragment). Replaying those fragments verbatim corrupts
+    Anthropic signed thinking blocks, whose signature validates the complete
+    text. Fragments with the same type and index are merged into a single
+    block: ``text`` fields are concatenated, the last non-null ``signature``
+    wins, and other fields keep their first non-null value. Entries without
+    an integer ``index`` (e.g. blocks from non-streaming responses) pass
+    through unchanged.
+    """
+    merged: Dict[Any, Dict[str, Any]] = {}
+    result: List[Any] = []
+    for entry in reasoning_details:
+        if not isinstance(entry, dict) or not isinstance(entry.get("index"), int):
+            result.append(entry)
+            continue
+        key = (entry.get("type"), entry["index"])
+        existing = merged.get(key)
+        if existing is None:
+            fragment = dict(entry)
+            merged[key] = fragment
+            result.append(fragment)
+            continue
+        for field, value in entry.items():
+            if value is None:
+                continue
+            if field == "text":
+                existing["text"] = (existing.get("text") or "") + value
+            elif field == "signature":
+                existing["signature"] = value
+            elif existing.get(field) is None:
+                existing[field] = value
+    return result
+
+
 @dataclass
 class OpenRouter(OpenAILike):
     """
@@ -95,7 +133,9 @@ class OpenRouter(OpenAILike):
 
         if message.role == "assistant" and message.provider_data:
             if message.provider_data.get("reasoning_details"):
-                message_dict["reasoning_details"] = message.provider_data["reasoning_details"]
+                message_dict["reasoning_details"] = _merge_streamed_reasoning_details(
+                    message.provider_data["reasoning_details"]
+                )
 
         return message_dict
 
