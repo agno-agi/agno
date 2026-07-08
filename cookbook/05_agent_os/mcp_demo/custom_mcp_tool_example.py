@@ -2,7 +2,7 @@
 AgentOS app that exposes ONE custom MCP tool routed through an agent, with the
 built-in MCP tools disabled and the server gated to its owner.
 
-This is the "one tool" shape: instead of the ~19 built-in AgentOS tools, the MCP
+This is the "one tool" shape: instead of the 8 built-in AgentOS tools, the MCP
 server at /mcp exposes a single purpose-built tool that routes the caller's
 question through a dedicated agent. Useful when you want to expose an AgentOS
 agent as a single, well-scoped, owner-only MCP tool for another product to call.
@@ -73,7 +73,7 @@ agent_os = AgentOS(
     enable_mcp_server=True,
     mcp_config=MCPServerConfig(
         tools=[ask_workspace],  # register our custom tool
-        enable_builtin_tools=False,  # ship ONLY our tool (disable the ~19 built-ins)
+        enable_builtin_tools=False,  # ship ONLY our tool (disable the 8 built-ins)
         # owner-only: 401 before the model runs
         authorize=lambda user_id: user_id in OWNER_IDS,
         # DNS-rebinding protection; localhost is allowed out of the box, add your deploy host

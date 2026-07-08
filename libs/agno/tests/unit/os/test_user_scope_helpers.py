@@ -126,6 +126,47 @@ class TestGetScopedUserId:
         assert get_scoped_user_id(request) is None
 
 
+class TestServiceAccountSelfScoping:
+    """D1: service-account (``sa:``) principals always self-scope to the data they
+    created, even when ``user_isolation`` is off, unless the token carries admin.
+    This keeps a default PAT from reading every user's history while leaving an
+    admin-minted debugging escape hatch."""
+
+    def test_sa_self_scopes_when_isolation_off(self):
+        request = _make_request(
+            user_id="sa:bot",
+            scopes=["sessions:read", "agents:run"],
+            user_isolation_enabled=False,
+        )
+        assert get_scoped_user_id(request) == "sa:bot"
+
+    def test_sa_self_scopes_when_isolation_on(self):
+        request = _make_request(user_id="sa:bot", scopes=["sessions:read"], user_isolation_enabled=True)
+        assert get_scoped_user_id(request) == "sa:bot"
+
+    def test_sa_with_admin_reads_across_users(self):
+        request = _make_request(
+            user_id="sa:bot",
+            scopes=["agent_os:admin"],
+            user_isolation_enabled=False,
+        )
+        assert get_scoped_user_id(request) is None
+
+    def test_sa_with_admin_reads_across_users_isolation_on(self):
+        # The admin escape hatch must also work with user_isolation enabled, not only off.
+        request = _make_request(
+            user_id="sa:bot",
+            scopes=["agent_os:admin"],
+            user_isolation_enabled=True,
+        )
+        assert get_scoped_user_id(request) is None
+
+    def test_human_user_still_unscoped_when_isolation_off(self):
+        """The self-scoping is scoped to sa: principals — humans keep legacy behaviour."""
+        request = _make_request(user_id="alice", scopes=["sessions:read"], user_isolation_enabled=False)
+        assert get_scoped_user_id(request) is None
+
+
 # ---------------------------------------------------------------------------
 # apply_scope_to_kwargs
 # ---------------------------------------------------------------------------
