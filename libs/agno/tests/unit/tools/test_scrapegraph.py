@@ -1,10 +1,48 @@
 import json
 import os
+import sys
+import types
 from unittest.mock import Mock, patch
 
 import pytest
 
-pytest.importorskip("scrapegraph_py")
+
+class FakeFetchConfig:
+    def __init__(self, **kwargs):
+        for key, value in kwargs.items():
+            setattr(self, key, value)
+
+
+class FakeFormatConfig:
+    def __init__(self, **kwargs):
+        for key, value in kwargs.items():
+            setattr(self, key, value)
+
+
+class FakeHtmlFormatConfig(FakeFormatConfig):
+    type = "html"
+
+
+class FakeJsonFormatConfig(FakeFormatConfig):
+    type = "json"
+
+
+class FakeMarkdownFormatConfig(FakeFormatConfig):
+    type = "markdown"
+
+
+class FakeScrapeGraphAI:
+    def __init__(self, api_key):
+        self.api_key = api_key
+
+
+fake_scrapegraph_py = types.ModuleType("scrapegraph_py")
+fake_scrapegraph_py.FetchConfig = FakeFetchConfig
+fake_scrapegraph_py.HtmlFormatConfig = FakeHtmlFormatConfig
+fake_scrapegraph_py.JsonFormatConfig = FakeJsonFormatConfig
+fake_scrapegraph_py.MarkdownFormatConfig = FakeMarkdownFormatConfig
+fake_scrapegraph_py.ScrapeGraphAI = FakeScrapeGraphAI
+sys.modules["scrapegraph_py"] = fake_scrapegraph_py
 
 from agno.tools.scrapegraph import ScrapeGraphTools  # noqa: E402
 
@@ -192,6 +230,51 @@ def test_toolkit_level_headers_applied_to_every_call(mock_scrapegraph):
         tools.scrape("https://x.com")
         _, scrape_kwargs = mock_scrapegraph.scrape.call_args
         assert scrape_kwargs["fetch_config"].headers == {"User-Agent": "custom-ua"}
+
+
+def test_sensitive_headers_are_not_forwarded_without_allowed_host(mock_scrapegraph):
+    """Sensitive headers should not be reused on arbitrary tool-call URLs."""
+    with patch.dict("os.environ", {"SGAI_API_KEY": TEST_API_KEY}):
+        tools = ScrapeGraphTools(
+            headers={
+                "Authorization": "Bearer site-secret",
+                "Cookie": "sid=secret",
+                "User-Agent": "custom-ua",
+            }
+        )
+        tools.client = mock_scrapegraph
+
+        data = Mock()
+        data.json_data = {"ok": True}
+        data.raw = None
+        mock_scrapegraph.extract.return_value = _api_result(data)
+
+        tools.smartscraper("https://untrusted.example/page", "extract")
+
+        _, kwargs = mock_scrapegraph.extract.call_args
+        assert kwargs["fetch_config"].headers == {"User-Agent": "custom-ua"}
+
+
+def test_sensitive_headers_are_forwarded_to_allowed_host(mock_scrapegraph):
+    """Sensitive headers may be sent when the URL host is explicitly allowed."""
+    headers = {
+        "Authorization": "Bearer site-secret",
+        "Cookie": "sid=secret",
+        "User-Agent": "custom-ua",
+    }
+    with patch.dict("os.environ", {"SGAI_API_KEY": TEST_API_KEY}):
+        tools = ScrapeGraphTools(headers=headers, allowed_hosts=["docs.example.com"])
+        tools.client = mock_scrapegraph
+
+        data = Mock()
+        data.json_data = {"ok": True}
+        data.raw = None
+        mock_scrapegraph.extract.return_value = _api_result(data)
+
+        tools.smartscraper("https://docs.example.com/page", "extract")
+
+        _, kwargs = mock_scrapegraph.extract.call_args
+        assert kwargs["fetch_config"].headers == headers
 
 
 def test_scrape_error(scrapegraph_tools, mock_scrapegraph):

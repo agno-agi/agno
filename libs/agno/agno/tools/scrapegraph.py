@@ -19,6 +19,7 @@ import time
 from os import getenv
 from typing import Any, Dict, List, Optional
 
+from agno.knowledge.reader.utils.url_validation import is_host_allowed, validate_allowed_hosts
 from agno.tools import Toolkit
 from agno.utils.log import log_debug, log_error
 
@@ -34,6 +35,15 @@ except ImportError:
     raise ImportError("`scrapegraph-py` not installed. Please install using `pip install scrapegraph-py`")
 
 
+SENSITIVE_FETCH_HEADERS = {
+    "authorization",
+    "cookie",
+    "proxy-authorization",
+    "x-api-key",
+    "x-auth-token",
+}
+
+
 class ScrapeGraphTools(Toolkit):
     def __init__(
         self,
@@ -45,6 +55,7 @@ class ScrapeGraphTools(Toolkit):
         enable_scrape: bool = False,
         render_heavy_js: bool = False,
         headers: Optional[Dict[str, str]] = None,
+        allowed_hosts: Optional[List[str]] = None,
         crawl_poll_interval: int = 3,
         crawl_max_wait: int = 180,
         all: bool = False,
@@ -60,7 +71,8 @@ class ScrapeGraphTools(Toolkit):
             enable_crawl (bool): Enable multi-page crawl with structured extraction. Defaults to False.
             enable_scrape (bool): Enable raw HTML scraping. Defaults to False.
             render_heavy_js (bool): Request JavaScript rendering on every call. Defaults to False.
-            headers (Optional[Dict[str, str]]): Custom HTTP headers to send with every outbound fetch (e.g. User-Agent, Cookie, Authorization). Applied to every tool call when set. Defaults to None.
+            headers (Optional[Dict[str, str]]): Custom HTTP headers to send with outbound fetches. Sensitive headers such as Cookie and Authorization are only sent to allowed_hosts when configured. Defaults to None.
+            allowed_hosts (Optional[List[str]]): Hostnames allowed to receive sensitive headers. Defaults to None.
             crawl_poll_interval (int): Seconds between crawl status polls. Defaults to 3. Raise this for very large crawls.
             crawl_max_wait (int): Max seconds to wait for a crawl to complete. Defaults to 180. Raise this if your crawls legitimately take longer.
             all (bool): Enable all tools. Defaults to False.
@@ -72,6 +84,7 @@ class ScrapeGraphTools(Toolkit):
         self.client: ScrapeGraphAI = ScrapeGraphAI(api_key=self.api_key)
         self.render_heavy_js: bool = render_heavy_js
         self.headers: Optional[Dict[str, str]] = headers
+        self.allowed_hosts: Optional[List[str]] = validate_allowed_hosts(allowed_hosts)
         self.crawl_poll_interval: int = crawl_poll_interval
         self.crawl_max_wait: int = crawl_max_wait
 
@@ -89,12 +102,24 @@ class ScrapeGraphTools(Toolkit):
 
         super().__init__(name="scrapegraph_tools", tools=tools, **kwargs)
 
-    def _fetch_config(self) -> Optional[FetchConfig]:
+    def _headers_for_url(self, url: Optional[str] = None) -> Optional[Dict[str, str]]:
+        if not self.headers:
+            return None
+        if url is not None and self.allowed_hosts is not None and is_host_allowed(url, self.allowed_hosts):
+            return self.headers
+
+        safe_headers = {
+            name: value for name, value in self.headers.items() if name.lower() not in SENSITIVE_FETCH_HEADERS
+        }
+        return safe_headers or None
+
+    def _fetch_config(self, url: Optional[str] = None) -> Optional[FetchConfig]:
         config_kwargs: Dict[str, Any] = {}
         if self.render_heavy_js:
             config_kwargs["mode"] = "js"
-        if self.headers:
-            config_kwargs["headers"] = self.headers
+        headers = self._headers_for_url(url)
+        if headers:
+            config_kwargs["headers"] = headers
         return FetchConfig(**config_kwargs) if config_kwargs else None
 
     def smartscraper(self, url: str, prompt: str) -> str:
@@ -109,7 +134,7 @@ class ScrapeGraphTools(Toolkit):
         """
         try:
             log_debug(f"ScrapeGraph smartscraper request for URL: {url}")
-            response = self.client.extract(prompt=prompt, url=url, fetch_config=self._fetch_config())
+            response = self.client.extract(prompt=prompt, url=url, fetch_config=self._fetch_config(url))
             if response.status != "success" or response.data is None:
                 return f"Error extracting from {url}: {response.error or 'unknown error'}"
             payload = response.data.json_data if response.data.json_data is not None else response.data.raw
@@ -131,7 +156,7 @@ class ScrapeGraphTools(Toolkit):
             response = self.client.scrape(
                 url,
                 formats=[MarkdownFormatConfig()],
-                fetch_config=self._fetch_config(),
+                fetch_config=self._fetch_config(url),
             )
             if response.status != "success" or response.data is None:
                 return f"Error converting {url} to markdown: {response.error or 'unknown error'}"
@@ -189,7 +214,7 @@ class ScrapeGraphTools(Toolkit):
                 formats=[JsonFormatConfig(prompt=prompt, schema=schema)],
                 max_depth=max_depth,
                 max_pages=max_pages,
-                fetch_config=self._fetch_config(),
+                fetch_config=self._fetch_config(url),
             )
             if start_response.status != "success" or start_response.data is None:
                 return f"Error starting crawl of {url}: {start_response.error or 'unknown error'}"
@@ -224,7 +249,7 @@ class ScrapeGraphTools(Toolkit):
             response = self.client.scrape(
                 url,
                 formats=[HtmlFormatConfig()],
-                fetch_config=self._fetch_config(),
+                fetch_config=self._fetch_config(url),
             )
             if response.status != "success" or response.data is None:
                 return f"Error scraping {url}: {response.error or 'unknown error'}"
