@@ -1,7 +1,7 @@
 import json
 from datetime import datetime, timezone
 from os import getenv
-from typing import Any, Callable, Dict, List, Optional, Sequence, Set, Type, Union
+from typing import Any, Callable, Dict, List, Optional, Sequence, Set, Tuple, Type, Union
 
 from fastapi import FastAPI, HTTPException, Request, UploadFile
 from fastapi.routing import APIRoute, APIRouter
@@ -108,6 +108,31 @@ async def get_request_kwargs(request: Request, endpoint_func: Callable) -> Dict[
         except json.JSONDecodeError as e:
             kwargs.pop("metadata")
             log_warning(f"Invalid metadata parameter couldn't be loaded: {metadata}: {str(e)}")
+
+    # Handle media parameters. AgnoClient (e.g. remote agent/team members) sends them as
+    # JSON strings of media dicts with base64-encoded content, the format produced by
+    # Image/Audio/Video/File.to_dict(). Documents arrive as "input_files" (the "files"
+    # form field is reserved for multipart uploads) but are stored under the "files"
+    # kwarg, the parameter name the run methods expect.
+    from agno.utils.media import reconstruct_audio_list, reconstruct_files, reconstruct_images, reconstruct_videos
+
+    media_params: Dict[str, Tuple[str, Callable]] = {
+        "images": ("images", reconstruct_images),
+        "audio": ("audio", reconstruct_audio_list),
+        "videos": ("videos", reconstruct_videos),
+        "input_files": ("files", reconstruct_files),
+    }
+    for form_key, (kwarg_key, reconstructor) in media_params.items():
+        media_value = kwargs.get(form_key)
+        if not media_value or not isinstance(media_value, str):
+            continue
+        kwargs.pop(form_key)
+        try:
+            reconstructed_media = reconstructor(json.loads(media_value))
+            if reconstructed_media:
+                kwargs[kwarg_key] = reconstructed_media
+        except json.JSONDecodeError as e:
+            log_warning(f"Invalid {form_key} parameter couldn't be loaded: {str(e)}")
 
     if knowledge_filters := kwargs.get("knowledge_filters"):
         try:
