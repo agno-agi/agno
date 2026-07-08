@@ -17,6 +17,7 @@ from agnoctl.clients import CLIENT_ALIASES, build_adapters
 from agnoctl.clients.base import ClientAdapter
 from agnoctl.commands._common import (
     _is_loopback_host,
+    ensure_env_file_url_trusted,
     handle_cli_error,
     parse_expires,
     require_secure_url,
@@ -200,7 +201,9 @@ def _mint(
 
 
 def connect(
-    url: Optional[str] = typer.Option(None, "--url", help="AgentOS base URL (default: autodiscover on localhost)."),
+    url: Optional[str] = typer.Option(
+        None, "--url", help="AgentOS base URL. Default: AGENTOS_URL, then .env.production/.env, then localhost."
+    ),
     clients: Optional[str] = typer.Option(
         None,
         "--clients",
@@ -229,7 +232,10 @@ def connect(
         False, "--skip-existing", help="Never touch existing accounts or config entries."
     ),
     allow_http: bool = typer.Option(
-        False, "--allow-http", help="Permit sending credentials over plaintext HTTP to a non-loopback host."
+        False, "--allow-http", help="Permit sending credentials over plaintext HTTP to a remote host."
+    ),
+    yes: bool = typer.Option(
+        False, "--yes", "-y", help="Trust a remote AGENTOS_URL from a .env file without prompting."
     ),
     json_output: bool = typer.Option(False, "--json", help="Emit a single JSON document for machine consumption."),
 ) -> None:
@@ -247,6 +253,7 @@ def connect(
             rotate=rotate,
             skip_existing=skip_existing,
             allow_http=allow_http,
+            assume_yes=yes,
             json_mode=json_output,
         )
     except CLIError as e:
@@ -265,12 +272,18 @@ def _connect(
     rotate: bool,
     skip_existing: bool,
     allow_http: bool,
+    assume_yes: bool,
     json_mode: bool,
 ) -> None:
     validate_server_name(server_name)
     expires_in_days, never_expires = parse_expires(expires)
 
     os_info = discover(url)
+    # Before anything sensitive (minting, config writes), confirm an off-machine URL that
+    # came from an ambient .env file -- it could be redirecting us from an untrusted dir.
+    ensure_env_file_url_trusted(
+        os_info.base_url, os_info.url_source, os_info.url_source_file, assume_yes=assume_yes, json_mode=json_mode
+    )
     if not os_info.mcp_enabled:
         raise CLIError(
             "Found an AgentOS at "
@@ -280,7 +293,7 @@ def _connect(
         )
     if not json_mode:
         version = " (agno " + os_info.version + ")" if os_info.version else ""
-        source = " (from AGENTOS_URL)" if os_info.url_source == "env" else ""
+        source = os_info.source_note()
         print_info("AgentOS at " + os_info.base_url + version + source + ", MCP at " + os_info.mcp_url)
 
     adapters = build_adapters(project=project)

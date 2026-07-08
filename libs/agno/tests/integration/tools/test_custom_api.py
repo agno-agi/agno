@@ -9,13 +9,18 @@ from agno.tools.api import CustomApiTools
 
 def _skip_if_upstream_down(data: dict) -> None:
     # dog.ceo is a live third-party service; a 5xx from it (Cloudflare 520s are
-    # common) or a transport-level failure (SSL/connection errors yield an
-    # "error" dict with no status_code) says nothing about our code, so it
-    # must not red the build.
+    # common), a transport-level failure (SSL/connection errors yield an
+    # "error" dict with no status_code), or a non-JSON error page (outages
+    # serve an HTML 404 in place of the API's JSON envelope) says nothing
+    # about our code, so it must not red the build. A non-200 with the JSON
+    # envelope still fails: that is dog.ceo answering that we asked for a
+    # route it does not have.
     if "status_code" not in data:
         pytest.skip(f"dog.ceo unreachable: {data.get('error', 'no response')}")
     if data["status_code"] >= 500:
         pytest.skip(f"dog.ceo unavailable (HTTP {data['status_code']})")
+    if data["status_code"] != 200 and "text" in data["data"]:
+        pytest.skip(f"dog.ceo unavailable (HTTP {data['status_code']}, non-JSON body)")
 
 
 def test_integration_dog_api():

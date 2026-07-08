@@ -7,6 +7,7 @@ from typing import List, Optional
 import typer
 
 from agnoctl.commands._common import (
+    ensure_env_file_url_trusted,
     handle_cli_error,
     parse_expires,
     require_secure_url,
@@ -20,10 +21,15 @@ from agnoctl.http import AgentOSAPI
 
 tokens_app = typer.Typer(name="tokens", help="Mint, list, and revoke AgentOS service-account tokens.")
 
-UrlOption = typer.Option(None, "--url", help="AgentOS base URL (default: autodiscover on localhost).")
+UrlOption = typer.Option(
+    None, "--url", help="AgentOS base URL. Default: AGENTOS_URL, then .env.production/.env, then localhost."
+)
 JsonOption = typer.Option(False, "--json", help="Emit a single JSON document for machine consumption.")
 AllowHttpOption = typer.Option(
-    False, "--allow-http", help="Permit sending credentials over plaintext HTTP to a non-loopback host."
+    False, "--allow-http", help="Permit sending credentials over plaintext HTTP to a remote host."
+)
+TrustEnvFileOption = typer.Option(
+    False, "--yes", "-y", help="Trust a remote AGENTOS_URL from a .env file without prompting."
 )
 
 
@@ -33,12 +39,19 @@ def _timestamp(value: Optional[int]) -> str:
     return datetime.fromtimestamp(value, tz=timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
 
 
-def _api_for(url: Optional[str], json_mode: bool, allow_http: bool, sensitive: bool = False) -> AgentOSAPI:
+def _api_for(
+    url: Optional[str], json_mode: bool, allow_http: bool, sensitive: bool = False, assume_yes: bool = False
+) -> AgentOSAPI:
     os_info = discover(url)
+    # A remote URL pulled from an ambient .env file could be redirecting this
+    # credential-bearing call; confirm it (or refuse in automation) before going further.
+    ensure_env_file_url_trusted(
+        os_info.base_url, os_info.url_source, os_info.url_source_file, assume_yes=assume_yes, json_mode=json_mode
+    )
     # Surface which OS we resolved before we mint or attach a credential: on a shared host
     # autodiscovery could land on a port-squatter, and the operator should see the target.
     if url is None and not json_mode:
-        print_info("Using AgentOS at " + os_info.base_url)
+        print_info("Using AgentOS at " + os_info.base_url + os_info.source_note())
     admin_token = resolve_admin_token(os_info.auth_mode, json_mode)
     # Refuse to put a bearer credential (admin token) or receive a freshly minted PAT over
     # plaintext HTTP unless the target is loopback or the operator opted in with --allow-http.
@@ -62,13 +75,14 @@ def create(
     url: Optional[str] = UrlOption,
     json_output: bool = JsonOption,
     allow_http: bool = AllowHttpOption,
+    yes: bool = TrustEnvFileOption,
 ) -> None:
     """Mint a service-account token. The plaintext is shown exactly once."""
     try:
         expires_in_days, never_expires = parse_expires(expires)
         # The plaintext PAT rides back in the create response, so this call is sensitive
         # even when the OS itself requires no admin credential to reach it.
-        with _api_for(url, json_output, allow_http, sensitive=True) as api:
+        with _api_for(url, json_output, allow_http, sensitive=True, assume_yes=yes) as api:
             try:
                 account = api.create_service_account(
                     name=name,
@@ -103,10 +117,11 @@ def list_(
     url: Optional[str] = UrlOption,
     json_output: bool = JsonOption,
     allow_http: bool = AllowHttpOption,
+    yes: bool = TrustEnvFileOption,
 ) -> None:
     """List service accounts (metadata and display prefixes only, never tokens)."""
     try:
-        with _api_for(url, json_output, allow_http) as api:
+        with _api_for(url, json_output, allow_http, assume_yes=yes) as api:
             accounts = api.list_service_accounts()
     except CLIError as e:
         raise handle_cli_error(e, json_output)
@@ -143,11 +158,13 @@ def revoke(
     url: Optional[str] = UrlOption,
     json_output: bool = JsonOption,
     allow_http: bool = AllowHttpOption,
-    yes: bool = typer.Option(False, "--yes", "-y", help="Skip the interactive confirmation prompt."),
+    yes: bool = typer.Option(
+        False, "--yes", "-y", help="Skip confirmation prompts (revoking, and trusting a remote .env-file URL)."
+    ),
 ) -> None:
     """Revoke a service account. Takes effect on the account's next request."""
     try:
-        with _api_for(url, json_output, allow_http) as api:
+        with _api_for(url, json_output, allow_http, assume_yes=yes) as api:
             account = api.find_service_account(name)
             if account is None:
                 raise CLIError("No service account named '" + name + "' found.")

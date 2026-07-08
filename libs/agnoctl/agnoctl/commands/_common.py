@@ -73,6 +73,40 @@ def require_secure_url(url: str, *, allow_http: bool, what: str = "a credential"
     )
 
 
+def ensure_env_file_url_trusted(
+    base_url: str,
+    url_source: str,
+    url_source_file: Optional[str],
+    *,
+    assume_yes: bool,
+    json_mode: bool,
+) -> None:
+    """Guard the ambient-env-file redirect before a credential or config write.
+
+    An AGENTOS_URL read from a .env / .env.production in the current directory is trusted
+    automatically only when it points at this machine (localhost / 127.x / ::1). A URL that
+    points at a remote host could have been planted by an untrusted directory to redirect the
+    admin credential or rewrite MCP client configs, so require an explicit go-ahead: prompt
+    interactively (default no), and refuse outright in automation (--json or no TTY) unless
+    --yes was passed. An explicit --url or an exported AGENTOS_URL env var is not an ambient
+    file and is trusted as before.
+    """
+    if url_source != "env-file":
+        return
+    if _is_loopback_host(urlsplit(base_url).hostname):
+        return
+    if assume_yes:
+        return
+    source = url_source_file or "an env file"
+    if json_mode or not stdin_is_interactive():
+        raise CLIError(
+            "AGENTOS_URL in " + source + " points to a remote host (" + base_url + ").",
+            hint="Pass --url to target it explicitly, or --yes to trust the env file.",
+        )
+    if not typer.confirm("Trust AGENTOS_URL=" + base_url + " (from " + source + ")?", default=False):
+        raise CLIError("Aborted: did not trust the env-file URL " + base_url + ".")
+
+
 def resolve_admin_token(auth_mode: str, json_mode: bool) -> Optional[str]:
     """Resolve the admin credential used to call the service-accounts API.
 

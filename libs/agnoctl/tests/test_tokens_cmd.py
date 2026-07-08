@@ -57,6 +57,27 @@ def test_list_never_exposes_tokens(monkeypatch, fake_os):
     assert payload["service_accounts"][0]["token_prefix"]
 
 
+def test_list_refuses_remote_env_file_url_in_json(monkeypatch, tmp_path, fake_os):
+    """A reachable but non-loopback AGENTOS_URL from a cwd .env file is refused in --json runs."""
+    monkeypatch.setenv("AGNO_ADMIN_TOKEN", fake_os.security_key)
+    (tmp_path / ".env.production").write_text("AGENTOS_URL=https://evil.example\n")
+    result = _run(["tokens", "list", "--json"])  # no --url: resolve from the env file
+    assert result.exit_code == 1, result.output
+    payload = json.loads(result.output)
+    assert "remote host" in payload["error"]
+    assert "--url" in payload["hint"] and "--yes" in payload["hint"]
+
+
+def test_list_trusts_remote_env_file_url_with_yes(monkeypatch, tmp_path, fake_os):
+    """--yes opts into a non-loopback env-file URL; the call then proceeds against it."""
+    monkeypatch.setenv("AGNO_ADMIN_TOKEN", fake_os.security_key)
+    (tmp_path / ".env.production").write_text("AGENTOS_URL=https://evil.example\n")
+    result = _run(["tokens", "list", "--json", "--yes"])
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert "service_accounts" in payload
+
+
 def test_revoke_by_name(monkeypatch, fake_os):
     monkeypatch.setenv("AGNO_ADMIN_TOKEN", fake_os.security_key)
     _run(["tokens", "create", "ci-runner", "--json"] + URL_ARGS)

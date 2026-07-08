@@ -1082,7 +1082,8 @@ jobs:
         run: |
           VIRTUAL_ENV=.venv uv venv --python 3.12
           VIRTUAL_ENV=.venv uv pip install -r ./libs/agno/requirements.txt
-          VIRTUAL_ENV=.venv uv pip install -e ./libs/agno[dev,os,integration-tests,openai]
+          # One resolve for both editables: the local agnoctl satisfies agno's floor
+          VIRTUAL_ENV=.venv uv pip install -e ./libs/agnoctl -e ./libs/agno[dev,os,integration-tests,openai]
           # TODO: a2a-sdk v1.0+ has breaking changes, update agno for it
           VIRTUAL_ENV=.venv uv pip install "a2a-sdk>=0.3.0,<1.0"
       - name: Run A2A integration tests
@@ -1187,7 +1188,7 @@ jobs:
           VIRTUAL_ENV=.venv uv venv --python 3.12
           VIRTUAL_ENV=.venv uv pip install agno
           VIRTUAL_ENV=.venv uv pip install -r ./libs/agno/requirements.txt
-          VIRTUAL_ENV=.venv uv pip install openai chromadb sqlalchemy fastapi pytest pytest-asyncio pytest-cov pytest-mock pytest-rerunfailures pytest-timeout
+          VIRTUAL_ENV=.venv uv pip install openai chromadb sqlalchemy fastapi python-multipart pytest pytest-asyncio pytest-cov pytest-mock pytest-rerunfailures pytest-timeout
       - name: Run Basic Clean Test
         working-directory: .
         env:
