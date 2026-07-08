@@ -310,6 +310,23 @@ class OpenAIChat(Model):
         """
         return cls(**data)
 
+    @staticmethod
+    def _format_tool_calls(tool_calls: Optional[List[Dict[str, Any]]]) -> Optional[List[Dict[str, Any]]]:
+        if tool_calls is None:
+            return None
+
+        formatted_tool_calls: List[Dict[str, Any]] = []
+        for tool_call in tool_calls:
+            formatted_tool_call = dict(tool_call)
+            function = formatted_tool_call.get("function")
+            if isinstance(function, dict):
+                formatted_function = dict(function)
+                if "arguments" not in formatted_function or formatted_function["arguments"] in (None, ""):
+                    formatted_function["arguments"] = "{}"
+                formatted_tool_call["function"] = formatted_function
+            formatted_tool_calls.append(formatted_tool_call)
+        return formatted_tool_calls
+
     def _format_message(self, message: Message, compress_tool_results: bool = False) -> Dict[str, Any]:
         """
         Format a message into the format expected by OpenAI.
@@ -328,7 +345,7 @@ class OpenAIChat(Model):
             "content": tool_result,
             "name": message.name,
             "tool_call_id": message.tool_call_id,
-            "tool_calls": message.tool_calls,
+            "tool_calls": self._format_tool_calls(message.tool_calls),
         }
         message_dict = {k: v for k, v in message_dict.items() if v is not None}
 

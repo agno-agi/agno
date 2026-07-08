@@ -1,5 +1,6 @@
 from typing import Optional
 
+from agno.models.message import Message
 from agno.models.openai.chat import OpenAIChat
 
 
@@ -69,6 +70,48 @@ def test_parse_tool_calls_multiple_tools_independent():
     assert result[0]["function"]["name"] == "tool_a"
     assert result[1]["function"]["name"] == "tool_b"
     assert result[0] is not result[1]
+
+
+def test_format_message_normalizes_empty_tool_call_arguments():
+    """Assistant history must send zero-argument tool calls as a valid JSON object."""
+    model = OpenAIChat(id="gpt-4o")
+    message = Message(
+        role="assistant",
+        content=None,
+        tool_calls=[
+            {
+                "id": "call_1",
+                "type": "function",
+                "function": {"name": "api_schema_inspect", "arguments": ""},
+            }
+        ],
+    )
+
+    formatted = model._format_message(message)
+
+    assert formatted["tool_calls"][0]["function"]["arguments"] == "{}"
+    assert message.tool_calls[0]["function"]["arguments"] == ""
+
+
+def test_format_message_normalizes_missing_tool_call_arguments():
+    """Missing arguments are equivalent to zero arguments for OpenAI-compatible APIs."""
+    model = OpenAIChat(id="gpt-4o")
+    message = Message(
+        role="assistant",
+        content=None,
+        tool_calls=[
+            {
+                "id": "call_1",
+                "type": "function",
+                "function": {"name": "api_schema_inspect"},
+            }
+        ],
+    )
+
+    formatted = model._format_message(message)
+
+    assert formatted["tool_calls"][0]["function"]["arguments"] == "{}"
+    assert "arguments" not in message.tool_calls[0]["function"]
 
 
 # ---------------------------------------------------------------------------
