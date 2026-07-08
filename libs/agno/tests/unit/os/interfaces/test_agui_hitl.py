@@ -18,8 +18,8 @@ pytest.importorskip("ag_ui", reason="ag_ui not installed")
 from ag_ui.core.types import Tool as AGUITool
 from ag_ui.core.types import ToolMessage as AGUIToolMessage
 
-from agno.agent.agent import Agent
 from agno.agent._tools import parse_tools
+from agno.agent.agent import Agent
 from agno.models.response import ToolExecution, UserInputField
 from agno.os.interfaces.agui.handlers import on_run_completed
 from agno.os.interfaces.agui.input import (
@@ -35,6 +35,7 @@ from agno.os.interfaces.agui.stream import (
 from agno.run import RunContext
 from agno.run.agent import RunPausedEvent
 from agno.run.requirement import RunRequirement
+from agno.run.team import RunPausedEvent as TeamRunPausedEvent
 from agno.tools import tool
 from agno.tools.function import UserFeedbackOption, UserFeedbackQuestion
 
@@ -49,6 +50,16 @@ def _paused(tool: ToolExecution) -> RunPausedEvent:
 
 def _tm(tool_call_id: str, content: str) -> AGUIToolMessage:
     return AGUIToolMessage(id="m-" + tool_call_id, role="tool", content=content, tool_call_id=tool_call_id)
+
+
+def _team_paused(*, requirements=None, tools=None) -> TeamRunPausedEvent:
+    return TeamRunPausedEvent(requirements=requirements, tools=tools)
+
+
+def _member_req(te: ToolExecution, member_id: str = "m1") -> RunRequirement:
+    req = RunRequirement(te)
+    req.member_agent_id = member_id
+    return req
 
 
 class TestPauseEmission:
@@ -296,3 +307,56 @@ class TestUnresolvedGuard:
             [_tm("a", json.dumps({"accepted": True})), _tm("b", json.dumps({"accepted": False}))],
         )
         ensure_requirements_resolved([req_a, req_b])  # both resolved -> no raise
+
+
+class TestTeamPauseEmission:
+    """A Team paused run carries member pauses (all types) in active_requirements with member_agent_id,
+    and the team leader's external tools in .tools. on_run_completed must surface both as TOOL_CALL_*
+    (deduped by tool_call_id), not just external_execution."""
+
+    def test_team_member_confirmation_emits_tool_call(self):
+        req = _member_req(ToolExecution(tool_call_id="m-confirm", tool_name="send_email", requires_confirmation=True))
+        assert "m-confirm" in _tool_call_start_ids(on_run_completed(_team_paused(requirements=[req]), StreamState()))
+
+    def test_team_member_user_input_emits_tool_call(self):
+        req = _member_req(
+            ToolExecution(
+                tool_call_id="m-input",
+                tool_name="ask",
+                requires_user_input=True,
+                user_input_schema=[UserInputField(name="city", field_type=str)],
+            )
+        )
+        assert "m-input" in _tool_call_start_ids(on_run_completed(_team_paused(requirements=[req]), StreamState()))
+
+    def test_team_member_user_feedback_emits_tool_call(self):
+        req = _member_req(
+            ToolExecution(
+                tool_call_id="m-feedback",
+                tool_name="ask_user",
+                requires_user_input=True,
+                user_feedback_schema=[UserFeedbackQuestion(question="Pick", options=[UserFeedbackOption(label="a")])],
+            )
+        )
+        assert "m-feedback" in _tool_call_start_ids(on_run_completed(_team_paused(requirements=[req]), StreamState()))
+
+    def test_team_leader_external_still_emits(self):
+        """Regression guard: leader external tools live in .tools; the seam switch must not drop them."""
+        tool = ToolExecution(tool_call_id="leader-ext", tool_name="run_browser_tool", external_execution_required=True)
+        assert "leader-ext" in _tool_call_start_ids(on_run_completed(_team_paused(tools=[tool]), StreamState()))
+
+    def test_team_pause_dedups_by_tool_call_id(self):
+        """A leader external tool sits in BOTH .tools and active_requirements; it must emit exactly once."""
+        tool = ToolExecution(tool_call_id="dup-ext", tool_name="run_browser_tool", external_execution_required=True)
+        ids = _tool_call_start_ids(
+            on_run_completed(_team_paused(requirements=[RunRequirement(tool)], tools=[tool]), StreamState())
+        )
+        assert ids.count("dup-ext") == 1
+
+    def test_team_member_requirement_resolves_via_existing_merge(self):
+        """A member (member_agent_id) confirmation resolves through the EXISTING
+        merge_tool_results_into_requirements - input.py is entity-agnostic, so team HITL needs no resolution change."""
+        req = _member_req(ToolExecution(tool_call_id="m-res", tool_name="send_email", requires_confirmation=True))
+        merge_tool_results_into_requirements([req], [_tm("m-res", json.dumps({"accepted": True}))])
+        assert req.tool_execution.confirmed is True
+        assert req.is_resolved()
