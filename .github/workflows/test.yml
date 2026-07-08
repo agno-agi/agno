@@ -140,15 +140,26 @@ jobs:
     if: github.event_name != 'push' || !github.event.pull_request
     strategy:
       matrix:
-        python-version: ["3.12"]
+        include:
+          - shard: 1
+            name: "tools-agent"
+            paths: "libs/agno/tests/unit/tools libs/agno/tests/unit/agent libs/agno/tests/unit/context libs/agno/tests/unit/run libs/agno/tests/unit/memory"
+          - shard: 2
+            name: "os-models-team"
+            paths: "libs/agno/tests/unit/os libs/agno/tests/unit/models libs/agno/tests/unit/team libs/agno/tests/unit/knowledge libs/agno/tests/unit/reader libs/agno/tests/unit/skills libs/agno/tests/unit/eval"
+          - shard: 3
+            name: "infra-utils"
+            paths: "libs/agno/tests/unit/vectordb libs/agno/tests/unit/utils libs/agno/tests/unit/workflow libs/agno/tests/unit/db libs/agno/tests/unit/scheduler libs/agno/tests/unit/registry libs/agno/tests/unit/reasoning libs/agno/tests/unit/telemetry libs/agno/tests/unit/learn libs/agno/tests/unit/integrations libs/agno/tests/unit/app libs/agno/tests/unit/remote libs/agno/tests/unit/guardrails libs/agno/tests/unit/compression libs/agno/tests/unit/agents libs/agno/tests/unit/a2a libs/agno/tests/unit/test_*.py"
       fail-fast: true # Stop all matrix jobs if one fails
+
+    name: tests (${{ matrix.name }})
 
     steps:
       - uses: actions/checkout@v3
-      - name: Set up Python ${{ matrix.python-version }}
+      - name: Set up Python 3.12
         uses: actions/setup-python@v4
         with:
-          python-version: ${{ matrix.python-version }}
+          python-version: "3.12"
       - name: Install uv
         run: |
           set -e
@@ -159,12 +170,10 @@ jobs:
         run: |
           set -e
           ./scripts/test_setup.sh
-      - name: Run tests for Agno
+      - name: Run tests (shard ${{ matrix.shard }})
         working-directory: .
         env:
           AGNO_TELEMETRY: false
         run: |
           source .venv/bin/activate
-          uv pip install pytest-cov
-          python -m pytest --cov=agno --cov-report=json:coverage-agno.json ./libs/agno/tests/unit --ignore=libs/agno/tests/unit/models/litellm --ignore=libs/agno/tests/unit/tools/test_crawl4ai.py --ignore=libs/agno/tests/unit/tools/test_scrapegraph.py
-          echo "AGNO_COVERAGE=$(python -c 'import json; print(json.load(open("coverage-agno.json"))["totals"]["percent_covered_display"])')" >> $GITHUB_ENV
+          python -m pytest ${{ matrix.paths }} --ignore=libs/agno/tests/unit/models/litellm --ignore=libs/agno/tests/unit/tools/test_crawl4ai.py --ignore=libs/agno/tests/unit/tools/test_scrapegraph.py
