@@ -99,10 +99,7 @@ def attach_routes(
 
     @router.post("/agui", name="run_agent")
     async def run_agent_agui(request: Request, run_input: RunAgentInput):
-        # Pin run identity to the authenticated principal (same contract as A2A / REST).
-        # forwardedProps.user_id is honoured for attribution only when the caller is
-        # anonymous, and may never claim a reserved principal. Resolved here — before
-        # streaming starts — so a rejection is a proper 403, not a mid-stream error event.
+        # Resolve identity before streaming so rejection is a proper 403
         client_user_id = run_input.forwarded_props.get("user_id") if run_input.forwarded_props else None
         user_id = resolve_run_user_id(request, client_user_id)
 
