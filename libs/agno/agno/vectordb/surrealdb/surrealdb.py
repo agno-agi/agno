@@ -25,6 +25,8 @@ class SurrealDb(VectorDb):
     # SQL Query Constants
     CREATE_TABLE_QUERY: Final[str] = """
         DEFINE TABLE IF NOT EXISTS {collection} SCHEMAFUL;
+        DEFINE FIELD IF NOT EXISTS name ON {collection} TYPE option<string>;
+        DEFINE FIELD IF NOT EXISTS content_id ON {collection} TYPE option<string>;
         DEFINE FIELD IF NOT EXISTS content ON {collection} TYPE string;
         DEFINE FIELD IF NOT EXISTS embedding ON {collection} TYPE array<float>;
         DEFINE FIELD IF NOT EXISTS meta_data ON {collection} TYPE object FLEXIBLE;
@@ -33,7 +35,7 @@ class SurrealDb(VectorDb):
 
     NAME_EXISTS_QUERY: Final[str] = """
         SELECT * FROM {collection}
-        WHERE meta_data.name = $name
+        WHERE name = $name
         LIMIT 1
     """
 
@@ -56,7 +58,7 @@ class SurrealDb(VectorDb):
 
     DELETE_BY_NAME_QUERY: Final[str] = """
         DELETE FROM {collection}
-        WHERE meta_data.name = $name
+        WHERE name = $name
     """
 
     DELETE_BY_METADATA_QUERY: Final[str] = """
@@ -72,13 +74,18 @@ class SurrealDb(VectorDb):
     UPSERT_QUERY: Final[str] = """
         UPSERT {thing}
         SET content = $content,
+            name = $name,
+            content_id = $content_id,
             embedding = $embedding,
             meta_data = $meta_data
     """
 
     SEARCH_QUERY: Final[str] = """
         SELECT
+            name,
+            content_id,
             content,
+            embedding,
             meta_data,
             vector::distance::knn() as distance
         FROM {collection}
@@ -201,6 +208,22 @@ class SurrealDb(VectorDb):
         conditions = [f"meta_data.{key} = ${key}" for key in filters]
         return "AND " + " AND ".join(conditions)
 
+    @staticmethod
+    def _build_document_payload(
+        doc: Document, content_hash: str, filters: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, Any]:
+        meta_data: Dict[str, Any] = dict(doc.meta_data) if isinstance(doc.meta_data, dict) else {}
+        meta_data["content_hash"] = content_hash
+        if filters:
+            meta_data.update(filters)
+        return {
+            "content": doc.content,
+            "name": doc.name,
+            "content_id": doc.content_id,
+            "embedding": doc.embedding,
+            "meta_data": meta_data,
+        }
+
     # Synchronous methods
     def create(self) -> None:
         """Create the vector collection and index."""
@@ -270,11 +293,7 @@ class SurrealDb(VectorDb):
         """
         for doc in documents:
             doc.embed(embedder=self.embedder)
-            meta_data: Dict[str, Any] = doc.meta_data if isinstance(doc.meta_data, dict) else {}
-            meta_data["content_hash"] = content_hash
-            data: Dict[str, Any] = {"content": doc.content, "embedding": doc.embedding, "meta_data": meta_data}
-            if filters:
-                data["meta_data"].update(filters)
+            data = self._build_document_payload(doc=doc, content_hash=content_hash, filters=filters)
             self.client.create(self.collection, data)
 
     def upsert(self, content_hash: str, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
@@ -288,11 +307,7 @@ class SurrealDb(VectorDb):
         """
         for doc in documents:
             doc.embed(embedder=self.embedder)
-            meta_data: Dict[str, Any] = doc.meta_data if isinstance(doc.meta_data, dict) else {}
-            meta_data["content_hash"] = content_hash
-            data: Dict[str, Any] = {"content": doc.content, "embedding": doc.embedding, "meta_data": meta_data}
-            if filters:
-                data["meta_data"].update(filters)
+            data = self._build_document_payload(doc=doc, content_hash=content_hash, filters=filters)
             thing = f"{self.collection}:{doc.id}" if doc.id else self.collection
             self.client.query(self.UPSERT_QUERY.format(thing=thing), data)  # type: ignore[arg-type]
 
@@ -339,6 +354,8 @@ class SurrealDb(VectorDb):
             if isinstance(item, dict):
                 doc = Document(
                     content=item.get("content", ""),
+                    name=item.get("name"),
+                    content_id=item.get("content_id"),
                     embedding=item.get("embedding", []),
                     meta_data=item.get("meta_data", {}),
                     embedder=self.embedder,
@@ -496,11 +513,7 @@ class SurrealDb(VectorDb):
         """
         for doc in documents:
             doc.embed(embedder=self.embedder)
-            meta_data: Dict[str, Any] = doc.meta_data if isinstance(doc.meta_data, dict) else {}
-            meta_data["content_hash"] = content_hash
-            data: Dict[str, Any] = {"content": doc.content, "embedding": doc.embedding, "meta_data": meta_data}
-            if filters:
-                data["meta_data"].update(filters)
+            data = self._build_document_payload(doc=doc, content_hash=content_hash, filters=filters)
             log_debug(f"Inserting document asynchronously: {doc.name} ({doc.meta_data})")
             await self.async_client.create(self.collection, data)
 
@@ -517,11 +530,7 @@ class SurrealDb(VectorDb):
         """
         for doc in documents:
             doc.embed(embedder=self.embedder)
-            meta_data: Dict[str, Any] = doc.meta_data if isinstance(doc.meta_data, dict) else {}
-            meta_data["content_hash"] = content_hash
-            data: Dict[str, Any] = {"content": doc.content, "embedding": doc.embedding, "meta_data": meta_data}
-            if filters:
-                data["meta_data"].update(filters)
+            data = self._build_document_payload(doc=doc, content_hash=content_hash, filters=filters)
             log_debug(f"Upserting document asynchronously: {doc.name} ({doc.meta_data})")
             thing = f"{self.collection}:{doc.id}" if doc.id else self.collection
             await self.async_client.query(self.UPSERT_QUERY.format(thing=thing), data)  # type: ignore[arg-type]
@@ -570,6 +579,8 @@ class SurrealDb(VectorDb):
             if isinstance(item, dict):
                 doc = Document(
                     content=item.get("content", ""),
+                    name=item.get("name"),
+                    content_id=item.get("content_id"),
                     embedding=item.get("embedding", []),
                     meta_data=item.get("meta_data", {}),
                     embedder=self.embedder,

@@ -84,16 +84,19 @@ def sample_documents() -> List[Document]:
             content="Tom Kha Gai is a Thai coconut soup with chicken",
             meta_data={"cuisine": "Thai", "type": "soup"},
             name="tom_kha",
+            content_id="tom-content",
         ),
         Document(
             content="Pad Thai is a stir-fried rice noodle dish",
             meta_data={"cuisine": "Thai", "type": "noodles"},
             name="pad_thai",
+            content_id="pad-content",
         ),
         Document(
             content="Green curry is a spicy Thai curry with coconut milk",
             meta_data={"cuisine": "Thai", "type": "curry"},
             name="green_curry",
+            content_id="green-content",
         ),
     ]
 
@@ -123,6 +126,8 @@ def test_create(surrealdb_vector, mock_surrealdb_client):
         assert "DEFINE TABLE IF NOT EXISTS test_collection" in args
         assert "DEFINE INDEX IF NOT EXISTS vector_idx" in args
         assert f"DIMENSION {surrealdb_vector.dimensions}" in args
+        assert "DEFINE FIELD IF NOT EXISTS name ON test_collection" in args
+        assert "DEFINE FIELD IF NOT EXISTS content_id ON test_collection" in args
         assert "DEFINE FIELD IF NOT EXISTS meta_data ON test_collection TYPE object FLEXIBLE;" in args
 
 
@@ -145,6 +150,10 @@ def test_name_exists(surrealdb_vector, mock_surrealdb_client):
     mock_surrealdb_client.query.return_value = [{"result": [{"name": "tom_kha"}]}]
 
     assert surrealdb_vector.name_exists("tom_kha") is True
+    query, params = mock_surrealdb_client.query.call_args.args
+    assert "WHERE name = $name" in query
+    assert "meta_data.name" not in query
+    assert params == {"name": "tom_kha"}
 
     # Test when name doesn't exist
     mock_surrealdb_client.query.return_value = [{"result": []}]
@@ -165,6 +174,8 @@ def test_insert(surrealdb_vector, mock_surrealdb_client, sample_documents):
     assert "content" in args[1]
     assert "embedding" in args[1]
     assert "meta_data" in args[1]
+    assert args[1]["name"] == "tom_kha"
+    assert args[1]["content_id"] == "tom-content"
 
 
 def test_upsert(surrealdb_vector, mock_surrealdb_client, sample_documents):
@@ -177,9 +188,13 @@ def test_upsert(surrealdb_vector, mock_surrealdb_client, sample_documents):
     args, _ = mock_surrealdb_client.query.call_args_list[0]
     assert "UPSERT test_collection" in args[0]
     assert "SET content = $content" in args[0]
+    assert "name = $name" in args[0]
+    assert "content_id = $content_id" in args[0]
     assert "content" in args[1]
     assert "embedding" in args[1]
     assert "meta_data" in args[1]
+    assert args[1]["name"] == "tom_kha"
+    assert args[1]["content_id"] == "tom-content"
 
 
 def test_search(surrealdb_vector: SurrealDb, mock_surrealdb_client: MagicMock) -> None:
@@ -188,11 +203,15 @@ def test_search(surrealdb_vector: SurrealDb, mock_surrealdb_client: MagicMock) -
     # Set up mock search results
     mock_surrealdb_client.query.return_value = [
         {
+            "name": "tom_kha",
+            "content_id": "tom-content",
             "content": "Tom Kha Gai is a Thai coconut soup with chicken",
             "meta_data": {"cuisine": "Thai", "type": "soup", "name": "tom_kha"},
             "distance": 0.1,
         },
         {
+            "name": "green_curry",
+            "content_id": "green-content",
             "content": "Green curry is a spicy Thai curry with coconut milk",
             "meta_data": {"cuisine": "Thai", "type": "curry", "name": "green_curry"},
             "distance": 0.2,
@@ -204,12 +223,18 @@ def test_search(surrealdb_vector: SurrealDb, mock_surrealdb_client: MagicMock) -
 
     assert len(results) == 2
     assert results[0].content == "Tom Kha Gai is a Thai coconut soup with chicken"
+    assert results[0].name == "tom_kha"
+    assert results[0].content_id == "tom-content"
     assert results[1].content == "Green curry is a spicy Thai curry with coconut milk"
+    assert results[1].name == "green_curry"
+    assert results[1].content_id == "green-content"
 
     # Verify search query
     mock_surrealdb_client.query.assert_called_once()
     args, kwargs = mock_surrealdb_client.query.call_args
     assert "SELECT" in args[0]
+    assert "name" in args[0]
+    assert "content_id" in args[0]
     assert "FROM test_collection" in args[0]
     assert "WHERE embedding <|2, 40|>" in args[0]
     assert "LIMIT 2" in args[0]
@@ -234,6 +259,18 @@ def test_delete(surrealdb_vector, mock_surrealdb_client):
     args = mock_surrealdb_client.query.call_args[0][0]
     assert "DELETE test_collection" in args
     assert result is True
+
+
+def test_delete_by_name_uses_top_level_name(surrealdb_vector, mock_surrealdb_client):
+    """delete_by_name should match the top-level name field persisted on insert."""
+    mock_surrealdb_client.query.return_value = [{"result": [{"name": "tom_kha"}]}]
+
+    assert surrealdb_vector.delete_by_name("tom_kha") is True
+
+    query, params = mock_surrealdb_client.query.call_args.args
+    assert "WHERE name = $name" in query
+    assert "meta_data.name" not in query
+    assert params == {"name": "tom_kha"}
 
 
 def test_extract_result(surrealdb_vector):
@@ -291,6 +328,8 @@ async def test_async_insert(async_surrealdb_vector, mock_async_surrealdb_client,
     assert "content" in args[1]
     assert "embedding" in args[1]
     assert "meta_data" in args[1]
+    assert args[1]["name"] == "tom_kha"
+    assert args[1]["content_id"] == "tom-content"
 
 
 @pytest.mark.asyncio
@@ -305,9 +344,13 @@ async def test_async_upsert(async_surrealdb_vector, mock_async_surrealdb_client,
     args, kwargs = mock_async_surrealdb_client.query.await_args_list[0]
     assert "UPSERT test_collection" in args[0]
     assert "SET content = $content" in args[0]
+    assert "name = $name" in args[0]
+    assert "content_id = $content_id" in args[0]
     assert "content" in args[1]
     assert "embedding" in args[1]
     assert "meta_data" in args[1]
+    assert args[1]["name"] == "tom_kha"
+    assert args[1]["content_id"] == "tom-content"
 
 
 @pytest.mark.asyncio
@@ -316,11 +359,15 @@ async def test_async_search(async_surrealdb_vector: SurrealDb, mock_async_surrea
     # Set up mock search results
     mock_async_surrealdb_client.query.return_value = [
         {
+            "name": "tom_kha",
+            "content_id": "tom-content",
             "content": "Tom Kha Gai is a Thai coconut soup with chicken",
             "meta_data": {"cuisine": "Thai", "type": "soup", "name": "tom_kha"},
             "distance": 0.1,
         },
         {
+            "name": "green_curry",
+            "content_id": "green-content",
             "content": "Green curry is a spicy Thai curry with coconut milk",
             "meta_data": {"cuisine": "Thai", "type": "curry", "name": "green_curry"},
             "distance": 0.2,
@@ -331,12 +378,18 @@ async def test_async_search(async_surrealdb_vector: SurrealDb, mock_async_surrea
     results = await async_surrealdb_vector.async_search("Thai food", limit=2)
     assert len(results) == 2
     assert results[0].content == "Tom Kha Gai is a Thai coconut soup with chicken"
+    assert results[0].name == "tom_kha"
+    assert results[0].content_id == "tom-content"
     assert results[1].content == "Green curry is a spicy Thai curry with coconut milk"
+    assert results[1].name == "green_curry"
+    assert results[1].content_id == "green-content"
 
     # Verify search query
     mock_async_surrealdb_client.query.assert_awaited_once()
     args, kwargs = mock_async_surrealdb_client.query.await_args
     assert "SELECT" in args[0]
+    assert "name" in args[0]
+    assert "content_id" in args[0]
     assert "FROM test_collection" in args[0]
     assert "WHERE embedding <|2, 40|>" in args[0]
     assert "LIMIT 2" in args[0]
