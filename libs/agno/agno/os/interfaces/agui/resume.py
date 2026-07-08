@@ -1,9 +1,39 @@
-from typing import Union
+from typing import List, Union
+
+from ag_ui.core.types import ToolMessage as AGUIToolMessage
 
 from agno.agent import Agent
-from agno.os.interfaces.agui.input import merge_tool_results_into_requirements
-from agno.run.base import RunContext
+from agno.run.base import RunContext, RunStatus
+from agno.run.requirement import RunRequirement
+from agno.session.agent import AgentSession
+from agno.session.team import TeamSession
 from agno.team.team import Team
+
+
+def apply_tool_results_to_requirements(
+    requirements: List[RunRequirement],
+    tool_messages: List[AGUIToolMessage],
+) -> List[RunRequirement]:
+    # Frontend executed the tools; ToolMessages carry the results the paused run is waiting on
+    results_map = {tm.tool_call_id: (tm.content, getattr(tm, "error", None)) for tm in tool_messages}
+
+    for req in requirements:
+        if not req.tool_execution or not req.tool_execution.tool_call_id:
+            continue
+        tool_call_id = req.tool_execution.tool_call_id
+        if tool_call_id not in results_map:
+            continue
+
+        content, error = results_map[tool_call_id]
+        if error:
+            # Use SDK method then mark as error
+            req.set_external_execution_result(str(error))
+            if req.tool_execution:
+                req.tool_execution.tool_call_error = True
+        else:
+            req.set_external_execution_result(content)
+
+    return requirements
 
 
 async def resume_paused_run(
@@ -18,10 +48,6 @@ async def resume_paused_run(
         raise ValueError(
             "Frontend tool resume requires a database. Set db=SqliteDb(...) or db=PgDb(...) on your Agent/Team."
         )
-
-    from agno.run.base import RunStatus
-    from agno.session.agent import AgentSession
-    from agno.session.team import TeamSession
 
     session = await entity.aget_session(session_id=session_id)
     if not session:
@@ -40,8 +66,8 @@ async def resume_paused_run(
     if not paused_run.requirements:
         raise ValueError(f"Run {paused_run.run_id} has no requirements to resume")
 
-    # Merge tool results into stored requirements
-    requirements = merge_tool_results_into_requirements(paused_run.requirements, tool_messages)
+    # Apply tool results from frontend into stored requirements
+    requirements = apply_tool_results_to_requirements(paused_run.requirements, tool_messages)
 
     # Resume the run using the original paused run's ID
     paused_run_id = paused_run.run_id or run_context.run_id

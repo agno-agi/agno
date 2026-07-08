@@ -10,7 +10,6 @@ from ag_ui.core.types import ToolMessage as AGUIToolMessage
 from pydantic import BaseModel
 
 from agno.media import Audio, File, Image, Video
-from agno.run.requirement import RunRequirement
 from agno.tools.function import Function
 from agno.utils.log import log_warning
 
@@ -183,25 +182,3 @@ def agui_tools_to_external_functions(agui_tools: Optional[List[AGUITool]]) -> Li
         )
         for tool in agui_tools
     ]
-
-
-def merge_tool_results_into_requirements(
-    stored_requirements: List[RunRequirement],
-    tool_messages: List[AGUIToolMessage],
-) -> List[RunRequirement]:
-    # Fill in tool results from ToolMessages into stored requirements
-    results_map = {tm.tool_call_id: (tm.content, getattr(tm, "error", None)) for tm in tool_messages}
-
-    for req in stored_requirements:
-        if req.tool_execution and req.tool_execution.tool_call_id:
-            tool_call_id = req.tool_execution.tool_call_id
-            if tool_call_id in results_map:
-                content, error = results_map[tool_call_id]
-                if error:
-                    req.tool_execution.tool_call_error = True
-                    req.tool_execution.result = error
-                else:
-                    req.tool_execution.result = content
-                req.external_execution_result = req.tool_execution.result
-
-    return stored_requirements
