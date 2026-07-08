@@ -31,11 +31,21 @@ async def resume_paused_run(
     if not isinstance(session, (AgentSession, TeamSession)):
         raise ValueError(f"Session {session_id} is not a valid session type")
 
-    # Find the paused run (AG-UI sends new run_id on resume, so we find by status)
-    paused_run = next(
-        (r for r in (session.runs or []) if r.status == RunStatus.paused),
-        None,
-    )
+    # Find the paused run (AG-UI sends new run_id on resume, so we find by status). A Team's session
+    # also holds paused member RunOutputs (agent_id, no team_id); resume the top-level TeamRunOutput,
+    # never a member run (whose missing team_id crashes core on continue). Agent path is unchanged.
+    from agno.run.team import TeamRunOutput
+
+    if isinstance(entity, Team):
+        paused_run = next(
+            (r for r in (session.runs or []) if r.status == RunStatus.paused and isinstance(r, TeamRunOutput)),
+            None,
+        )
+    else:
+        paused_run = next(
+            (r for r in (session.runs or []) if r.status == RunStatus.paused),
+            None,
+        )
     if not paused_run:
         raise ValueError(f"No paused run found in session {session_id}")
 
