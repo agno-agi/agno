@@ -168,7 +168,7 @@ def extract_tool_messages(messages: List[AGUIMessage]) -> List[AGUIToolMessage]:
     return list(reversed(tool_msgs))
 
 
-def agui_tools_to_external_functions(agui_tools: Optional[List[AGUITool]]) -> List[Function]:
+def parse_client_tools(agui_tools: Optional[List[AGUITool]]) -> List[Function]:
     # Frontend tools run in the browser; external_execution=True pauses the run
     if not agui_tools:
         return []

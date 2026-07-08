@@ -22,7 +22,7 @@ from fastapi.responses import StreamingResponse
 
 from agno.agent import Agent, RemoteAgent
 from agno.os.interfaces.agui.input import (
-    agui_tools_to_external_functions,
+    parse_client_tools,
     extract_context,
     extract_media,
     extract_tool_messages,
@@ -59,7 +59,7 @@ async def run_entity(
         tool_messages = extract_tool_messages(messages)
 
         # 2. Convert frontend tool definitions to Agno Functions
-        client_tools = agui_tools_to_external_functions(run_input.tools) or None
+        client_tools = parse_client_tools(run_input.tools) or None
 
         yield RunStartedEvent(type=EventType.RUN_STARTED, thread_id=run_input.thread_id, run_id=run_id)
 

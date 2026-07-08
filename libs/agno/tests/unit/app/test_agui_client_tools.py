@@ -3,8 +3,8 @@ from ag_ui.core.types import ToolMessage, UserMessage
 
 from agno.models.response import ToolExecution
 from agno.os.interfaces.agui.input import (
-    agui_tools_to_external_functions,
     extract_tool_messages,
+    parse_client_tools,
 )
 from agno.os.interfaces.agui.resume import apply_tool_results_to_requirements
 from agno.os.interfaces.agui.utils import to_json_str
@@ -90,15 +90,15 @@ def test_extract_tool_messages_empty_content():
     assert result[0].content == ""
 
 
-# agui_tools_to_external_functions tests
+# parse_client_tools tests
 
 
-def test_agui_tools_to_external_functions_empty():
-    assert agui_tools_to_external_functions(None) == []
-    assert agui_tools_to_external_functions([]) == []
+def test_parse_client_tools_empty():
+    assert parse_client_tools(None) == []
+    assert parse_client_tools([]) == []
 
 
-def test_agui_tools_to_external_functions_converts():
+def test_parse_client_tools_converts():
     agui_tools = [
         AGUITool(
             name="change_background",
@@ -111,7 +111,7 @@ def test_agui_tools_to_external_functions_converts():
         ),
     ]
 
-    result = agui_tools_to_external_functions(agui_tools)
+    result = parse_client_tools(agui_tools)
 
     assert len(result) == 2
     assert all(isinstance(f, Function) for f in result)
@@ -132,7 +132,7 @@ def test_agui_tools_all_have_external_execution():
         AGUITool(name="tool_2", description="Second"),
         AGUITool(name="tool_3", description="Third"),
     ]
-    result = agui_tools_to_external_functions(agui_tools)
+    result = parse_client_tools(agui_tools)
 
     for func in result:
         assert func.external_execution is True
@@ -142,7 +142,7 @@ def test_agui_tools_all_have_external_execution():
 def test_agui_tools_no_entrypoint():
     # Frontend tools execute in browser, not server - no entrypoint
     agui_tools = [AGUITool(name="browser_tool", description="Runs in browser")]
-    result = agui_tools_to_external_functions(agui_tools)
+    result = parse_client_tools(agui_tools)
 
     assert result[0].entrypoint is None
 
@@ -150,7 +150,7 @@ def test_agui_tools_no_entrypoint():
 def test_agui_tools_empty_description():
     # AGUITool requires description, test with empty string
     agui_tools = [AGUITool(name="no_desc", description="")]
-    result = agui_tools_to_external_functions(agui_tools)
+    result = parse_client_tools(agui_tools)
 
     assert result[0].name == "no_desc"
     assert result[0].description == ""
@@ -171,7 +171,7 @@ def test_agui_tools_preserves_complex_schema():
         "required": ["name"],
     }
     agui_tools = [AGUITool(name="complex", description="Complex tool", parameters=complex_params)]
-    result = agui_tools_to_external_functions(agui_tools)
+    result = parse_client_tools(agui_tools)
 
     assert result[0].parameters == complex_params
 
@@ -182,7 +182,7 @@ def test_agui_tools_preserves_order():
         AGUITool(name="beta", description="Second"),
         AGUITool(name="gamma", description="Third"),
     ]
-    result = agui_tools_to_external_functions(agui_tools)
+    result = parse_client_tools(agui_tools)
 
     assert [f.name for f in result] == ["alpha", "beta", "gamma"]
 
