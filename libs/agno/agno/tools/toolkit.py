@@ -277,6 +277,16 @@ class Toolkit:
                     return bound
 
             bound_method = make_bound_method(original_func, self)
+            # Expose the original signature (minus self) and annotations on the wrapper.
+            # FunctionCall._build_entrypoint_args inspects the entrypoint's signature to
+            # inject run_context/agent/team/etc.; without this it sees (*args, **kwargs)
+            # and skips the injection.
+            bound_method.__signature__ = sig.replace(  # type: ignore[attr-defined]
+                parameters=[param for param_name, param in sig.parameters.items() if param_name != "self"]
+            )
+            bound_method.__annotations__ = {
+                k: v for k, v in getattr(original_func, "__annotations__", {}).items() if k != "self"
+            }
         else:
             # Function doesn't expect self (e.g., static method or already bound)
             bound_method = original_func
