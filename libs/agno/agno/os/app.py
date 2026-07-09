@@ -1411,6 +1411,14 @@ class AgentOS:
         # added by the user-scoped-DB work stay dormant.
         fastapi_app.state.user_isolation_enabled = user_isolation
 
+        # Seed the pluggable AuthorizationProvider that the REST route gate, per-resource
+        # gate, WebSocket gates, and MCP tool gate all resolve through. When nothing is
+        # configured we leave app.state.authorization_provider unset and the resolver
+        # falls back to the default ScopeAuthorizationProvider — so behaviour is exactly
+        # v2.7's scope RBAC. A role_store or a custom provider is enforced at the SAME
+        # four points instead.
+        self._seed_authorization_provider(fastapi_app)
+
         # Only interfaces that verify the authenticity of their own inbound requests
         # (Slack HMAC, Telegram/WhatsApp webhook secrets -- see
         # BaseInterface.authenticates_own_requests) are excluded from the central auth
@@ -1475,6 +1483,49 @@ class AgentOS:
             middleware_kwargs["scope_mappings"] = interface_mappings
 
         fastapi_app.add_middleware(AuthMiddleware, **middleware_kwargs)
+
+    def _seed_authorization_provider(self, fastapi_app: FastAPI) -> None:
+        """Seed ``app.state.authorization_provider`` (and ``authz_audit``) from the
+        AuthorizationConfig, so the four choke points resolve the right enforcer.
+
+        Precedence, matching AuthorizationConfig's ``role_store`` XOR
+        ``authorization_provider`` validator:
+
+        - ``role_store`` set: adopt the OS db into the store (``attach_db``) so managed
+          roles persist alongside agent data, then use the store's provider. A managed
+          store MUST have a DB — an in-memory store can't stay consistent across the
+          replicas an AgentOS deployment runs — so if it ends up unbound (no store db
+          and no SQL-capable OS db to adopt) we fail fast rather than silently enforce
+          an empty policy.
+        - ``authorization_provider`` set: use it directly.
+        - neither: leave the state unset; the resolver defaults to
+          ScopeAuthorizationProvider (v2.7 behaviour).
+        """
+        config = self.authorization_config
+        if config is None:
+            return
+
+        role_store = getattr(config, "role_store", None)
+        provider = getattr(config, "authorization_provider", None)
+
+        if role_store is not None:
+            # Adopt the OS db so a store created without one persists to it (no-op if the
+            # store already has its own db or the OS db isn't SQL-capable).
+            role_store.attach_db(self.db)
+            if not role_store.is_bound:
+                raise ValueError(
+                    "AuthorizationConfig(role_store=...) needs a SQL database: managed roles must be "
+                    "persisted (an in-memory store can't stay consistent across replicas). Give the "
+                    "store a db (ManagedRoleStore(db_url=...) / db=...) or pass a SQL-capable db to "
+                    "AgentOS(db=...) for it to adopt."
+                )
+            fastapi_app.state.authorization_provider = role_store.provider
+        elif provider is not None:
+            fastapi_app.state.authorization_provider = provider
+
+        audit = getattr(config, "audit", None)
+        if audit is not None:
+            fastapi_app.state.authz_audit = audit
 
     def get_routes(self) -> List[Any]:
         """Retrieve all routes from the FastAPI app.

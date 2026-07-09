@@ -8,8 +8,8 @@ from fastapi import Depends, HTTPException, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from starlette.concurrency import run_in_threadpool
 
+from agno.os.authz.provider import AuthorizationContext, AuthorizationProvider
 from agno.os.scopes import (
-    get_accessible_resource_ids,
     get_default_scope_mappings,
     has_required_scopes,
 )
@@ -19,6 +19,66 @@ from agno.os.settings import AgnoAPISettings
 
 # Create a global HTTPBearer instance
 security = HTTPBearer(auto_error=False)
+
+
+@lru_cache(maxsize=1)
+def _default_authorization_provider() -> AuthorizationProvider:
+    """The default scope-based provider, cached so the fast path (no custom provider
+    configured) reuses one stateless instance rather than allocating per request.
+
+    Deferred import keeps this module free of the concrete provider at import time
+    and avoids a cycle (scope_provider imports scopes, which is fine, but keeping it
+    lazy mirrors the rest of the authz seam)."""
+    from agno.os.authz.scope_provider import ScopeAuthorizationProvider
+
+    return ScopeAuthorizationProvider()
+
+
+def resolve_authorization_provider(app_or_request: Any) -> AuthorizationProvider:
+    """Resolve the AuthorizationProvider enforcing this AgentOS instance.
+
+    Returns ``app.state.authorization_provider`` when AgentOS seeded one (a custom
+    provider or a managed-role store's provider), otherwise the cached default
+    :class:`ScopeAuthorizationProvider`. Accepts either a FastAPI ``app`` or a
+    ``Request``/``WebSocket`` (from which ``.app`` is read), so all four choke
+    points can call it with whatever object they hold.
+
+    Because the default reproduces the exact scope math the pipeline used before
+    the seam existed, resolving here is behaviour-preserving whenever no provider
+    is configured.
+    """
+    app = getattr(app_or_request, "app", app_or_request)
+    provider = getattr(getattr(app, "state", None), "authorization_provider", None)
+    if provider is not None:
+        return provider
+    return _default_authorization_provider()
+
+
+def _authorization_context(
+    request: Request,
+    *,
+    resource_type: Optional[str] = None,
+    resource_id: Optional[str] = None,
+    action: Optional[str] = None,
+) -> AuthorizationContext:
+    """Build an :class:`AuthorizationContext` from the per-request auth state.
+
+    Reads exactly the fields the JWT middleware attaches (``user_id``, ``scopes``,
+    ``claims``, ``admin_scope``); the scope-based default provider uses the scope
+    fields and produces the same decision the pre-seam scope math did, while a
+    managed-role / custom provider keys off ``principal_id`` + ``claims`` instead.
+    """
+    admin_scope_raw = getattr(request.state, "admin_scope", None)
+    admin_scope = admin_scope_raw if isinstance(admin_scope_raw, str) else None
+    return AuthorizationContext(
+        principal_id=getattr(request.state, "user_id", None),
+        scopes=list(getattr(request.state, "scopes", None) or []),
+        claims=getattr(request.state, "claims", None) or {},
+        resource_type=resource_type,
+        resource_id=resource_id,
+        action=action,
+        admin_scope=admin_scope,
+    )
 
 
 @lru_cache(maxsize=1)
@@ -250,6 +310,11 @@ def get_authentication_dependency(settings: AgnoAPISettings):
             request.state.authenticated = True
             request.state.user_id = "__scheduler__"
             request.state.scopes = list(INTERNAL_SERVICE_SCOPES)
+            # Mark as a trusted internal caller AFTER the constant-time token match so a
+            # provider-backed per-resource gate short-circuits (the scheduler principal
+            # has no role/subject in a managed store). Unforgeable: request.state is
+            # server-only — no client input maps onto this attribute.
+            request.state.is_internal_service = True
             return True
 
         # Verify the token against security key
@@ -357,29 +422,17 @@ def get_accessible_resources(request: Request, resource_type: str) -> Set[str]:
         {'*'}
     """
     # Check if accessible_resource_ids is already cached in request state (set by JWT middleware)
-    # This happens when user doesn't have global scope but has specific resource scopes
+    # This happens when user doesn't have global scope but has specific resource scopes.
+    # The cache is populated by the route gate (which now runs through the same provider),
+    # so honouring it keeps the listing decision consistent with the gate that let the
+    # request in — for both the default scope provider and a custom one.
     cached_ids = getattr(request.state, "accessible_resource_ids", None)
     if cached_ids is not None:
         return cached_ids
 
-    # Get user's scopes from request state (set by JWT middleware)
-    user_scopes = getattr(request.state, "scopes", [])
-
-    # Honour any custom admin_scope configured on JWTMiddleware (set on
-    # request.state by the middleware). Without this, list endpoints reject
-    # custom-admin tokens with 403 even though check_resource_access would
-    # accept them.
-    admin_scope_raw = getattr(request.state, "admin_scope", None)
-    admin_scope = admin_scope_raw if isinstance(admin_scope_raw, str) else None
-
-    # Get accessible resource IDs
-    accessible_ids = get_accessible_resource_ids(
-        user_scopes=user_scopes,
-        resource_type=resource_type,
-        admin_scope=admin_scope,
-    )
-
-    return accessible_ids
+    provider = resolve_authorization_provider(request)
+    ctx = _authorization_context(request, resource_type=resource_type)
+    return provider.accessible_resource_ids(ctx)
 
 
 def filter_resources_by_access(request: Request, resources: List, resource_type: str) -> List:
@@ -411,14 +464,20 @@ def filter_resources_by_access(request: Request, resources: List, resource_type:
         >>> filter_resources_by_access(request, agents, "agents")
         [Agent(id="agent-1"), Agent(id="agent-2"), Agent(id="agent-3")]
     """
-    accessible_ids = get_accessible_resources(request, resource_type)
+    # When the route gate cached an accessible-id set on request.state (the caller
+    # holds only per-resource scopes on a GET listing), honour it directly so the
+    # listing matches the gate decision — same behaviour as before the seam.
+    cached_ids = getattr(request.state, "accessible_resource_ids", None)
+    if cached_ids is not None:
+        if "*" in cached_ids:
+            return resources
+        return [r for r in resources if getattr(r, "id", None) in cached_ids]
 
-    # Wildcard access - return all resources
-    if "*" in accessible_ids:
-        return resources
-
-    # Filter to only accessible resources
-    return [r for r in resources if r.id in accessible_ids]
+    # Otherwise delegate to the provider, which may filter more richly than a plain
+    # id-set membership test (e.g. deny-overrides for managed roles).
+    provider = resolve_authorization_provider(request)
+    ctx = _authorization_context(request, resource_type=resource_type)
+    return provider.filter_accessible(ctx, resources)
 
 
 def check_resource_access(request: Request, resource_id: str, resource_type: str, action: str = "read") -> bool:
@@ -447,25 +506,25 @@ def check_resource_access(request: Request, resource_id: str, resource_type: str
         >>> check_resource_access(request, "my-agent", "agents", "run")
         False
     """
-    user_scopes = getattr(request.state, "scopes", [])
-    # Honour the configured admin scope (set by JWTMiddleware on request.state)
-    # so custom-admin tokens are recognised here too. Non-string values (e.g.
-    # MagicMock attributes in tests) are ignored.
-    admin_scope_raw = getattr(request.state, "admin_scope", None)
-    admin_scope = admin_scope_raw if isinstance(admin_scope_raw, str) else None
-    accessible_ids = get_accessible_resource_ids(
-        user_scopes=user_scopes,
-        resource_type=resource_type,
-        action=action,
-        admin_scope=admin_scope,
-    )
-
-    # Wildcard access grants all permissions
-    if "*" in accessible_ids:
+    # Internal service credentials (the scheduler executor's token, or a validated
+    # security key) are trusted first-party callers with no role/subject in a managed
+    # store, so a provider-backed per-resource gate would 403 them. The route gate has
+    # already enforced their INTERNAL_SERVICE_SCOPES, so short-circuit here.
+    # is_internal_service is set ONLY by the middleware's internal-token branch (and the
+    # security-key dependency) AFTER a constant-time token match; it lives on
+    # request.state, which is server-populated per request and cannot be set by a client
+    # (no header/body maps onto it), so it is unforgeable.
+    if getattr(request.state, "is_internal_service", False):
         return True
 
-    # Check if user has access to this specific resource
-    return resource_id in accessible_ids
+    provider = resolve_authorization_provider(request)
+    ctx = _authorization_context(
+        request,
+        resource_type=resource_type,
+        resource_id=resource_id,
+        action=action,
+    )
+    return provider.check(ctx)
 
 
 def require_resource_access(resource_type: str, action: str, resource_id_param: str):

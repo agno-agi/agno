@@ -6,7 +6,7 @@ import json
 import re
 from enum import Enum
 from os import getenv
-from typing import TYPE_CHECKING, Any, Dict, Iterable, List, Optional, Union
+from typing import TYPE_CHECKING, Any, Dict, Iterable, List, Optional, Set, Union
 
 from fastapi import Request, Response
 from fastapi.responses import JSONResponse
@@ -15,9 +15,10 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from agno.os.auth import INTERNAL_SERVICE_SCOPES, build_insufficient_permissions_detail
 from agno.os.scopes import (
     AgentOSScope,
-    check_route_scopes,
+    RouteScopeCheck,
     get_default_scope_mappings,
     get_required_scopes_for_route,
+    get_resource_context_from_path,
     has_required_scopes,
 )
 from agno.os.service_accounts import SERVICE_ACCOUNT_PRINCIPAL_PREFIX, authenticate_service_account_request
@@ -86,6 +87,20 @@ def resolve_expected_audience(
     if not verify_audience:
         return None
     return audience or os_id
+
+
+def _route_action(required_scopes: List[str]) -> Optional[str]:
+    """The single action a route requires (``read`` / ``run`` / ``write`` / ...),
+    or None when the route's required scopes span more than one action.
+
+    Only used to populate ``AuthorizationContext.action`` for providers that decide
+    per-resource (managed roles). The default scope provider's ``authorize_route``
+    ignores ``ctx.action`` and matches against ``required_scopes`` directly, so this
+    can never change the default decision. A resource route in the shipped mappings
+    requires exactly one scope, hence one action; returning None for the ambiguous
+    case makes ``EngineAuthorizationProvider`` fall back to AND-ing every scope."""
+    actions = {s.rsplit(":", 1)[1] for s in required_scopes if ":" in s}
+    return next(iter(actions)) if len(actions) == 1 else None
 
 
 class TokenSource(str, Enum):
@@ -799,6 +814,148 @@ class AuthMiddleware(BaseHTTPMiddleware):
         """
         return get_required_scopes_for_route(self.scope_mappings, method, path)
 
+    def _authorize_route(
+        self,
+        request: Request,
+        scopes: List[str],
+        mappings: Dict[str, List[str]],
+        method: str,
+        path: str,
+    ) -> "RouteScopeCheck":
+        """Route-level authorization decision, delegated to the configured provider.
+
+        This is the choke point that used to call ``check_route_scopes`` directly. It
+        preserves that function's structure exactly — the route→scope lookup, the
+        resource-context extraction, and the GET-listing filtered-access escape hatch —
+        but routes the two actual *decisions* (allow? and which resource ids for a
+        listing?) through the resolved :class:`AuthorizationProvider`.
+
+        With no provider configured the resolver returns
+        :class:`ScopeAuthorizationProvider`, whose ``authorize_route`` /
+        ``accessible_resource_ids`` are thin wrappers over ``has_required_scopes`` /
+        ``get_accessible_resource_ids`` — the very functions ``check_route_scopes``
+        called — so the result is byte-identical to v2.7. A managed-role / custom
+        provider enforces its own model at the same point instead.
+        """
+        from agno.os.auth import resolve_authorization_provider
+        from agno.os.authz.provider import AuthorizationContext
+
+        required_scopes = get_required_scopes_for_route(mappings, method, path)
+        if not required_scopes:
+            return RouteScopeCheck(allowed=True, required_scopes=required_scopes)
+
+        resource_type, resource_id = get_resource_context_from_path(path)
+
+        provider = resolve_authorization_provider(request)
+        ctx = AuthorizationContext(
+            principal_id=getattr(request.state, "user_id", None),
+            scopes=scopes,
+            claims=getattr(request.state, "claims", None) or {},
+            resource_type=resource_type,
+            resource_id=resource_id,
+            action=_route_action(required_scopes),
+            admin_scope=self.admin_scope,
+        )
+        allowed = provider.authorize_route(ctx, required_scopes)
+
+        accessible_resource_ids: Optional[Set[str]] = None
+        first_required = required_scopes[0]
+        required_family = first_required.split(":", 1)[0] if ":" in first_required else None
+        if not allowed and method == "GET" and not resource_id and resource_type and required_family == resource_type:
+            # GET-listing escape hatch, identical to check_route_scopes: a caller
+            # without the collection-wide grant is still allowed through, but the
+            # endpoint is told which ids to expose (possibly none) so it returns a
+            # filtered list instead of a 403. The action comes from the required scope
+            # so the provider only surfaces ids the caller is authorised for under it.
+            required_action: Optional[str] = None
+            if ":" in first_required:
+                required_action = first_required.rsplit(":", 1)[1]
+            listing_ctx = AuthorizationContext(
+                principal_id=ctx.principal_id,
+                scopes=scopes,
+                claims=ctx.claims,
+                resource_type=resource_type,
+                resource_id=None,
+                action=required_action,
+                admin_scope=self.admin_scope,
+            )
+            accessible_resource_ids = provider.accessible_resource_ids(listing_ctx)
+            allowed = True
+
+        return RouteScopeCheck(
+            allowed=allowed,
+            required_scopes=required_scopes,
+            accessible_resource_ids=accessible_resource_ids,
+        )
+
+    def _record_decision(
+        self,
+        request: Request,
+        *,
+        allowed: bool,
+        method: str,
+        path: str,
+        principal: Optional[str],
+        required_scopes: List[str],
+        scopes: List[str],
+        reason: Optional[str] = None,
+    ) -> None:
+        """Record one authorization decision to the audit sink, if one is configured
+        on ``app.state.authz_audit`` (seeded from ``AuthorizationConfig(audit=...)``).
+
+        Captures the principal, route, required scopes, the caller's scopes, and a
+        NON-secret token reference (see :meth:`_token_reference`). Never the token
+        itself, and never raises into the request path — audit must not turn a served
+        request into a 500. No-op when no decision sink is configured, so the default
+        (no audit) path is untouched.
+        """
+        state = getattr(getattr(request, "app", None), "state", None)
+        sink = getattr(state, "authz_audit", None) if state is not None else None
+        if sink is None:
+            return
+        try:
+            import time
+
+            from agno.os.authz.audit import AuditEvent
+
+            claims = getattr(request.state, "claims", None)
+            token = self._extract_token(request)
+            token_ref = self._token_reference(token, claims)
+            metadata: Dict[str, Any] = {"required": required_scopes, "token": token_ref, "scopes": scopes}
+            if reason:
+                metadata["reason"] = reason
+            sink.record(
+                AuditEvent(
+                    action="access.allowed" if allowed else "access.denied",
+                    actor=principal,
+                    target=f"{method} {path}",
+                    timestamp=int(time.time()),
+                    metadata=metadata,
+                )
+            )
+        except Exception as e:  # pragma: no cover - audit must never break requests
+            log_debug(f"decision audit failed: {e}")
+
+    @staticmethod
+    def _token_reference(token: Optional[str], claims: Optional[dict]) -> Optional[str]:
+        """A non-secret reference to the presented token, for the decision trail.
+
+        Prefer the token's ``jti`` (RFC 7519 JWT ID): an opaque identifier the issuer
+        already minted, so it correlates to the issuer's own logs and any revocation
+        list. When the token has no ``jti``, fall back to a short SHA-256 of the raw
+        token so two distinct tokens are still distinguishable — without ever storing
+        the credential itself.
+        """
+        if claims:
+            jti = claims.get("jti")
+            if jti:
+                return str(jti)
+        if token:
+            import hashlib
+
+            return hashlib.sha256(token.encode()).hexdigest()[:12]
+        return None
+
     def _check_scopes(
         self,
         request: Request,
@@ -820,7 +977,7 @@ class AuthMiddleware(BaseHTTPMiddleware):
             An error response when access is denied, None when access is allowed.
         """
         mappings = scope_mappings if scope_mappings is not None else self.scope_mappings
-        result = check_route_scopes(scopes, mappings, method, path, admin_scope=self.admin_scope)
+        result = self._authorize_route(request, scopes, mappings, method, path)
 
         request.state.required_scopes = result.required_scopes
         if result.accessible_resource_ids is not None:
@@ -829,6 +986,21 @@ class AuthMiddleware(BaseHTTPMiddleware):
                 log_debug(f"Caller has specific resource scopes. Accessible IDs: {result.accessible_resource_ids}")
             else:
                 log_debug("Caller has no matching resource scopes. Will return empty list.")
+
+        # Decision audit: record the allow/deny with a non-secret token reference, if a
+        # sink is configured. Emitted for EVERY authenticated request that reaches this
+        # gate (including allow-by-default routes with no required scopes) so the trail
+        # is complete. No-op when no decision sink is set, so the default path is untouched.
+        self._record_decision(
+            request,
+            allowed=result.allowed,
+            method=method,
+            path=path,
+            principal=getattr(request.state, "user_id", None),
+            required_scopes=result.required_scopes,
+            scopes=scopes,
+            reason=None if result.required_scopes else "no_scopes_required",
+        )
 
         if not result.allowed:
             log_warning(
@@ -988,6 +1160,12 @@ class AuthMiddleware(BaseHTTPMiddleware):
             request.state.session_id = None
             internal_scopes = list(INTERNAL_SERVICE_SCOPES)
             request.state.scopes = internal_scopes
+            # Trusted internal caller: mark AFTER the constant-time hmac match above so the
+            # provider-backed per-resource gate (check_resource_access) short-circuits — the
+            # scheduler principal has no role/subject in a managed store. The route gate below
+            # still enforces INTERNAL_SERVICE_SCOPES. Unforgeable: request.state is server-only,
+            # no client input maps onto this attribute.
+            request.state.is_internal_service = True
             request.state.authorization_enabled = self.authorization or False
             request.state.admin_scope = self.admin_scope
             request.state.user_isolation_enabled = self.user_isolation
