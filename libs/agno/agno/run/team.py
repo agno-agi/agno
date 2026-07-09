@@ -328,6 +328,10 @@ class RunPausedEvent(BaseTeamRunEvent):
             return []
         return [req for req in self.requirements if not req.is_resolved()]
 
+    @property
+    def tools_awaiting_external_execution(self):
+        return [t for t in self.tools if t.external_execution_required] if self.tools else []
+
 
 @dataclass
 class RunContinuedEvent(BaseTeamRunEvent):

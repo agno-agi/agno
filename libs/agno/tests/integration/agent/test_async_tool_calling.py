@@ -153,7 +153,7 @@ async def test_mixed_async_functions_and_generators():
     assert "Slow generator result: test" in response.content
 
 
-@pytest.mark.flaky(max_runs=3)
+@pytest.mark.flaky(reruns=2)
 @pytest.mark.asyncio
 async def test_error_handling_in_async_generators():
     """Test error handling in concurrent async generators"""
