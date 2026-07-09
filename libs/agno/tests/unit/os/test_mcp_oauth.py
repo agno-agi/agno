@@ -627,7 +627,7 @@ async def test_subless_jwt_bridges_to_none_user_id():
     assert captured["user_id"] is None
 
 
-@pytest.mark.parametrize("reserved_sub", ["sa:deploy", "oauth:evil", "__scheduler__"])
+@pytest.mark.parametrize("reserved_sub", ["sa:deploy", "__oauth__:evil", "__scheduler__"])
 async def test_jwt_claiming_reserved_principal_rejected(reserved_sub):
     """Parity with the parent middleware: a JWT must not impersonate any server-assigned
     principal (service account, MCP-OAuth client, or the scheduler)."""
@@ -931,23 +931,23 @@ async def test_identity_bridge_leaves_unauthenticated_requests_untouched():
 
 async def test_identity_bridge_rejects_external_token_claiming_reserved_principal():
     """An external (Tier-2) provider token whose sub falls in a server-reserved namespace
-    (sa:/oauth:/__scheduler__) must NOT be honored -- the bridge leaves the identity unset
-    so the fail-closed gates deny it, rather than letting it impersonate the principal."""
+    (sa:/__oauth__:/__scheduler__) must NOT be honored -- the bridge leaves the identity
+    unset so the fail-closed gates deny it, rather than letting it impersonate the principal."""
     from agno.os.mcp_auth import INTERNAL_ISSUER_CLAIM
 
-    for reserved in ("sa:admin", "oauth:evil", "__scheduler__"):
+    for reserved in ("sa:admin", "__oauth__:evil", "__scheduler__"):
         token = AccessToken(token="t", client_id="ext", scopes=["agents:run"], claims={"sub": reserved})
         state = await _bridged_state(token)
         assert "user_id" not in state, f"{reserved} should not be bridged"
         assert "authenticated" not in state
 
     # But a first-party built-in-AS token (marked with the internal-issuer claim) is trusted
-    # to carry its own oauth: principal.
+    # to carry its own __oauth__: principal.
     trusted = AccessToken(
-        token="t", client_id="c", scopes=["agents:run"], claims={"sub": "oauth:c", INTERNAL_ISSUER_CLAIM: True}
+        token="t", client_id="c", scopes=["agents:run"], claims={"sub": "__oauth__:c", INTERNAL_ISSUER_CLAIM: True}
     )
     state = await _bridged_state(trusted)
-    assert state["user_id"] == "oauth:c"
+    assert state["user_id"] == "__oauth__:c"
     assert state["authenticated"] is True
 
 

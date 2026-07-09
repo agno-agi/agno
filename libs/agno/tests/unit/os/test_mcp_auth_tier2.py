@@ -179,17 +179,17 @@ async def test_tier2_token_cannot_forge_trust_markers():
 
 
 async def test_tier2_token_asserting_reserved_principal_is_rejected():
-    """An external token claiming a reserved sub (oauth:/sa:/__scheduler__) is rejected at
-    verify -- it never gets a session. A cryptographically-valid external token is not 401'd
-    by fastmcp, so if the bridge merely declined to stamp the reserved identity the request
-    would still reach the tools unauthenticated (custom tools running with user_id=None,
-    skipping the authorize() allowlist). Refusing it at verify closes that path."""
+    """An external token claiming a reserved sub (__oauth__:/sa:/__scheduler__) is rejected
+    at verify -- it never gets a session. A cryptographically-valid external token is not
+    401'd by fastmcp, so if the bridge merely declined to stamp the reserved identity the
+    request would still reach the tools unauthenticated (custom tools running with
+    user_id=None, skipping the authorize() allowlist). Refusing it at verify closes that path."""
     captured: dict = {}
     tokens = {
         "impersonator": {
             "client_id": "external-user@example.com",
             "scopes": ["agents:run"],
-            "sub": "oauth:victim",
+            "sub": "__oauth__:victim",
             "agno_mcp_internal_issuer": True,
         }
     }

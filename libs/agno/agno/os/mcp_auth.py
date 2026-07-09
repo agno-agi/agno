@@ -49,7 +49,7 @@ SERVICE_ACCOUNT_CLAIM = "agno_service_account"
 AUTHORIZATION_ENABLED_CLAIM = "agno_authorization_enabled"
 
 # Marks a token minted by a trusted first-party agno source (the built-in AS) so the
-# identity bridge permits it to carry a server-assigned reserved principal (``oauth:``).
+# identity bridge permits it to carry a server-assigned reserved principal (``__oauth__:``).
 # An external Tier-2 provider's token never carries it, so a reserved ``sub`` from such a
 # token is rejected rather than honored (impersonation guard).
 INTERNAL_ISSUER_CLAIM = "agno_mcp_internal_issuer"
@@ -181,7 +181,7 @@ class MCPIdentityBridgeMiddleware:
                 service_account_name = claims.get(SERVICE_ACCOUNT_CLAIM)
                 # A token must not claim a server-reserved principal (sa:/oauth:/scheduler)
                 # unless it comes from a trusted first-party source that owns that
-                # namespace: the PAT verifier (sa:) or the built-in AS (oauth:). An
+                # namespace: the PAT verifier (sa:) or the built-in AS (__oauth__:). An
                 # external Tier-2 provider's token carrying such a sub is an impersonation
                 # attempt -- leave the identity unset so the fail-closed tool gates deny.
                 trusted_internal = service_account_name is not None or bool(claims.get(INTERNAL_ISSUER_CLAIM))

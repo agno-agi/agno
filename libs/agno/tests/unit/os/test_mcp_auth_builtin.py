@@ -740,6 +740,25 @@ def test_short_secret_rejected(tmp_path):
         AgentOSBuiltinAuth(url="http://localhost", db=_db(tmp_path), secret="short")
 
 
+def test_db_without_oauth_store_methods_rejected():
+    """A SQLAlchemy-backed db that exposes a sync db_engine but does NOT implement the
+    BaseDb OAuth store methods (MySQLDb, SingleStoreDb, ...) must be rejected at
+    construction -- otherwise it passes the engine checks and only 500s with
+    NotImplementedError on the first /register."""
+    from sqlalchemy import create_engine
+
+    from agno.db.base import BaseDb
+
+    class _StoreLessDb:
+        # Sync engine (passes the engine + not-async checks), but the OAuth store method
+        # is BaseDb's inherited NotImplementedError stub (not overridden).
+        db_engine = create_engine("sqlite://")
+        create_mcp_oauth_client = BaseDb.create_mcp_oauth_client
+
+    with pytest.raises(ValueError, match="does not implement the built-in MCP OAuth store"):
+        AgentOSBuiltinAuth(url="http://localhost", secret=_SECRET, db=_StoreLessDb())
+
+
 def test_weak_signing_key_rejected(tmp_path):
     """A low-entropy AGENTOS_MCP_SIGNING_KEY is offline-brute-forceable (derive_jwt_key
     treats it as high-entropy material), so a sub-32-char value is refused at construction."""
@@ -953,11 +972,11 @@ async def test_signing_key_rotation_overlap(tmp_path):
 
 
 def test_oauth_principal_is_reserved():
-    """A deployment JWT must not be able to claim an oauth: principal the built-in AS
+    """A deployment JWT must not be able to claim an __oauth__: principal the built-in AS
     assigns to its connected clients."""
     from agno.os.middleware.jwt import is_reserved_principal
 
-    assert is_reserved_principal("oauth:claude-ai") is True
+    assert is_reserved_principal("__oauth__:claude-ai") is True
     assert is_reserved_principal("sa:bot") is True
     assert is_reserved_principal("regular-user") is False
 

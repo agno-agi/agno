@@ -126,9 +126,10 @@ CONSENT_PATH = "/mcp-auth/consent"
 _CSRF_COOKIE = "agno_mcp_consent"
 
 # user_id namespace for OAuth-connected clients; distinct from sa:<name> and JWT subs.
-_PRINCIPAL_PREFIX = "oauth:"
-
+# Single source of truth in middleware.jwt so this minting and the reserved-principal
+# guard can never drift (a drift would let a human JWT impersonate a connected client).
 from agno.os.mcp_auth import INTERNAL_ISSUER_CLAIM  # noqa: E402
+from agno.os.middleware.jwt import MCP_OAUTH_PRINCIPAL_PREFIX as _PRINCIPAL_PREFIX  # noqa: E402
 
 
 def _hash(value: str) -> str:
@@ -381,6 +382,19 @@ class AgentOSBuiltinAuth(OAuthProvider):
             log_warning(
                 "AgentOSBuiltinAuth is running on SQLite -- fine for development, but production "
                 "deployments should use PostgresDb (restart-safe and shared across replicas)."
+            )
+        # A sync db_engine is necessary but not sufficient: other SQLAlchemy backends
+        # (MySQLDb, SingleStoreDb, ...) expose one but do NOT override the BaseDb OAuth
+        # store methods, so they would pass the checks above and then 500 with
+        # NotImplementedError on the first /register. Confirm the store is actually
+        # implemented (only PostgresDb / SqliteDb do today) and fail fast here instead.
+        from agno.db.base import BaseDb
+
+        if getattr(type(db), "create_mcp_oauth_client", None) is BaseDb.create_mcp_oauth_client:
+            raise ValueError(
+                f"{type(db).__name__} does not implement the built-in MCP OAuth store (the "
+                "BaseDb.*_mcp_oauth_* methods). It is currently provided only by PostgresDb and SqliteDb; "
+                "use one of those for AgentOSBuiltinAuth."
             )
 
     def _require_db(self) -> Any:
@@ -1080,7 +1094,7 @@ button {{ padding: .5rem 1.25rem; border-radius: 6px; border: 0; cursor: pointer
             scopes=scopes,
             expires_at=payload.get("exp"),
             # INTERNAL_ISSUER_CLAIM marks this as a first-party token so the identity
-            # bridge trusts its server-assigned ``oauth:`` principal (an external Tier-2
+            # bridge trusts its server-assigned ``__oauth__:`` principal (an external Tier-2
             # token claiming that namespace is rejected).
             claims={
                 **payload,

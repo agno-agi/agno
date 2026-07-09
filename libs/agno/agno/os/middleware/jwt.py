@@ -39,17 +39,25 @@ INTERNAL_SCHEDULER_USER_ID = "__scheduler__"
 _AUTH_COMPLETE_ATTR = "_agno_auth_complete"
 
 
+# The built-in MCP OAuth server mints request identities as ``__oauth__:<client_id>``.
+# A double-underscore sentinel (like ``__scheduler__``), not a bare ``oauth:`` prefix, so
+# it can never collide with a real IdP subject -- ``oauth:`` could match a hand-namespaced
+# customer sub and 401 it. Single source of truth: the built-in AS mints with this exact
+# constant (agno.os.mcp_auth_builtin imports it), so the minting and the reserved-guard
+# below cannot drift.
+MCP_OAUTH_PRINCIPAL_PREFIX = "__oauth__:"
+
 # Server-assigned identity namespaces a human JWT must never claim as its subject.
 # Service accounts live in ``sa:``, the scheduler is ``__scheduler__``, and the built-in
-# MCP OAuth server assigns ``oauth:`` to its connected clients.
-RESERVED_PRINCIPAL_PREFIXES = (SERVICE_ACCOUNT_PRINCIPAL_PREFIX, "oauth:")
+# MCP OAuth server assigns ``__oauth__:`` to its connected clients.
+RESERVED_PRINCIPAL_PREFIXES = (SERVICE_ACCOUNT_PRINCIPAL_PREFIX, MCP_OAUTH_PRINCIPAL_PREFIX)
 
 
 def is_reserved_principal(user_id: Any) -> bool:
     """Whether a JWT subject is trying to claim a system-reserved identity.
 
     Service-account principals live in the ``sa:`` namespace, the scheduler runs as
-    ``__scheduler__``, and MCP-OAuth clients live in ``oauth:``; all are first-party
+    ``__scheduler__``, and MCP-OAuth clients live in ``__oauth__:``; all are first-party
     identities the server assigns, never something a human JWT should present. Copying
     such a ``sub`` into ``request.state.user_id`` would let any JWT holder impersonate
     that principal in run attribution, session-ownership checks, and audit trails.

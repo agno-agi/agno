@@ -1179,9 +1179,10 @@ class AgentOS:
             self._add_auth_middleware(fastapi_app, security_key=effective_key)
 
         # Under mcp_auth, the OAuth flow routes must be reachable without an agno bearer.
-        # AgentOS exempts them on the AuthMiddleware it installs itself, but a JWT/auth
-        # middleware installed MANUALLY on a base_app carries its own exclusions that agno
-        # cannot amend. Fail fast (with the exact paths) rather than 401 connector discovery.
+        # AgentOS exempts them on the AuthMiddleware it installs itself, but an agno
+        # JWTMiddleware installed MANUALLY on a base_app carries its own exclusions that
+        # agno cannot amend. Fail fast (with the exact paths) rather than 401 connector
+        # discovery. (Only agno's own AuthMiddleware is inspected; see the method docstring.)
         self._check_mcp_auth_middleware_composition(fastapi_app)
 
         # Add trailing slash normalization middleware
@@ -1244,14 +1245,21 @@ class AgentOS:
         return mcp_auth_route_paths(provider)
 
     def _check_mcp_auth_middleware_composition(self, app: FastAPI) -> None:
-        """Reject an mcp_auth deployment whose OAuth routes a manual auth middleware blocks.
+        """Reject an mcp_auth deployment whose OAuth routes a manual agno auth middleware blocks.
 
-        A JWT/auth middleware installed via ``app.add_middleware(JWTMiddleware, ...)`` on a
-        ``base_app`` carries its own ``excluded_route_paths``, which AgentOS cannot amend.
-        If it does not exempt the OAuth routes, connector discovery / DCR / the ``/mcp``
-        challenge 401 before FastMCP runs -- and silently, so it reads as a token problem.
-        The AuthMiddleware AgentOS installs itself already carries the exemptions (so it is
-        skipped here); this catches only a manual one that would break the flow.
+        An agno ``JWTMiddleware`` (an alias of ``AuthMiddleware``) installed via
+        ``app.add_middleware(JWTMiddleware, ...)`` on a ``base_app`` carries its own
+        ``excluded_route_paths``, which AgentOS cannot amend. If it does not exempt the
+        OAuth routes, connector discovery / DCR / the ``/mcp`` challenge 401 before FastMCP
+        runs -- and silently, so it reads as a token problem. The AuthMiddleware AgentOS
+        installs itself already carries the exemptions (so it is skipped here).
+
+        Only agno's own ``AuthMiddleware`` is inspected. A THIRD-PARTY auth middleware
+        (authlib, fastapi-users, a hand-rolled ``BaseHTTPMiddleware`` doing bearer
+        validation) is not detected here -- AgentOS can't introspect an arbitrary
+        middleware's exemptions -- so if you install one on a ``base_app`` you must exempt
+        ``os.mcp_auth_exempt_paths()`` from it yourself. It fails closed either way (a 401
+        at discovery, never an open endpoint).
         """
         exempt_paths = self.mcp_auth_exempt_paths()
         if not exempt_paths:
@@ -1272,7 +1280,7 @@ class AgentOS:
             if exempt.issubset(set(kwargs.get("excluded_route_paths") or [])):
                 continue  # this middleware already exempts the OAuth routes
             raise ValueError(
-                "AgentOS(mcp_auth=...) with a manually-installed JWT/auth middleware requires the OAuth "
+                "AgentOS(mcp_auth=...) with a manually-installed agno JWTMiddleware requires the OAuth "
                 "flow routes to be exempted from it, or connector discovery (claude.ai / ChatGPT) is blocked "
                 "with a 401 before it runs. Add these to your middleware's excluded_route_paths: "
                 f"{sorted(exempt)} (get them from os.mcp_auth_exempt_paths() or "
