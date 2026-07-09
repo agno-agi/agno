@@ -3,18 +3,18 @@
 Examples for `mcp_demo` in AgentOS.
 
 ## Files
-- `enable_mcp_example.py` — Example AgentOS app with MCP enabled.
+- `mcp_server_example.py` — Example AgentOS app with MCP enabled.
 - `custom_mcp_tool_example.py` — Expose ONE custom MCP tool routed through an agent, with the built-in tools disabled (uses `MCPServerConfig`).
 - `oauth_builtin_example.py` — Add OAuth so claude.ai / ChatGPT can connect by pasting the `/mcp` URL, using the built-in authorization server (`AgentOSBuiltinAuth.from_env()`).
 - `oauth_authkit_example.py` — Same, but with an external authorization server (WorkOS AuthKit) for production / multi-user.
 - `mcp_tools_advanced_example.py` — Example AgentOS app where the agent has MCPTools.
 - `mcp_tools_example.py` — Example AgentOS app where the agent has MCPTools.
 - `mcp_tools_existing_lifespan.py` — Example AgentOS app where the agent has MCPTools.
-- `test_client.py` — First run the AgentOS with `enable_mcp_server=True` (`enable_mcp_example.py`), then run this client against it.
+- `test_client.py` — First run the AgentOS with `mcp_server=True` (`mcp_server_example.py`), then run this client against it.
 
 ## The MCP tool surface
 
-`enable_mcp_server=True` serves 8 built-in tools at `/mcp` — an operator surface for LLM
+`mcp_server=True` serves 8 built-in tools at `/mcp` — an operator surface for LLM
 frontends (Claude, ChatGPT, Claude Code, Cursor), not a database console:
 
 | Tool | Tag | What it does |
@@ -31,7 +31,7 @@ custom tool.
 
 ## Customizing the MCP server
 
-Pass `mcp_config=MCPServerConfig(...)` to register your own tools, scope
+Pass `mcp_server=MCPServerConfig(...)` to register your own tools, scope
 the built-ins, gate the server, and protect it — all with data, no middleware classes to write:
 
 ```python
@@ -40,8 +40,7 @@ from agno.os.config import MCPServerConfig
 
 agent_os = AgentOS(
     agents=[my_agent],
-    enable_mcp_server=True,
-    mcp_config=MCPServerConfig(
+    mcp_server=MCPServerConfig(
         tools=[my_tool],            # custom tools (plain callables or Agno @tool / Function)
         enable_builtin_tools=False,  # ship ONLY your tools; or scope with:
         # include_tags={"core"},     # keep only tools tagged "core"
@@ -54,7 +53,7 @@ agent_os = AgentOS(
 ```
 
 Built-in tools are tagged `core` (config + run/continue/cancel) and `session` (the read-only
-session tools). With no `mcp_config`, all built-ins are registered. Custom tools share the same
+session tools). With plain `mcp_server=True`, all built-ins are registered. Custom tools share the same
 `/mcp` mount, lifespan, and JWT middleware as the built-ins.
 
 **Identity in custom tools.** Declare a `user_id` parameter on a custom tool and AgentOS fills it
@@ -98,7 +97,7 @@ mcp_auth = AgentOSBuiltinAuth(
     secret=os.environ["MCP_CONNECT_SECRET"],
     signing_key_material=os.environ.get("AGENTOS_MCP_SIGNING_KEY"),  # optional; env-pins the token key
 )
-agent_os = AgentOS(agents=[my_agent], db=postgres_db, enable_mcp_server=True, mcp_auth=mcp_auth)
+agent_os = AgentOS(agents=[my_agent], db=postgres_db, mcp_server=True, mcp_auth=mcp_auth)
 ```
 
 ```bash
@@ -120,7 +119,7 @@ documented default (free to 1M MAU):
 from fastmcp.server.auth.providers.workos import AuthKitProvider
 
 agent_os = AgentOS(
-    agents=[my_agent], db=postgres_db, enable_mcp_server=True,
+    agents=[my_agent], db=postgres_db, mcp_server=True,
     mcp_auth=AuthKitProvider(authkit_domain=AUTHKIT_DOMAIN, base_url=PUBLIC_BASE_URL),
 )
 ```
@@ -146,7 +145,7 @@ from agno.os.mcp_auth import mcp_auth_route_paths
 provider = AgentOSBuiltinAuth.from_env()
 base.add_middleware(JWTMiddleware, verification_keys=[...],
                     excluded_route_paths=[*my_public_routes, *mcp_auth_route_paths(provider)])
-agent_os = AgentOS(base_app=base, db=db, enable_mcp_server=True, mcp_auth=provider)
+agent_os = AgentOS(base_app=base, db=db, mcp_server=True, mcp_auth=provider)
 ```
 
 AgentOS raises at `get_app()` (listing the exact paths) if a manual auth middleware would block

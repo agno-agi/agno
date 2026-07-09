@@ -64,7 +64,7 @@ class TestInfoEndpointMcpDiscovery:
 
     def test_mcp_enabled_reports_path(self):
         pytest.importorskip("fastmcp")
-        client = _build_client(enable_mcp_server=True)
+        client = _build_client(mcp_server=True)
         body = client.get("/info").json()
         assert body["mcp"] == {"enabled": True, "path": "/mcp", "oauth": None}
 

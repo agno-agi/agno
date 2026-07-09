@@ -165,7 +165,7 @@ def test_connect_mcp_disabled(monkeypatch, fake_clients):
     result = _connect()
     assert result.exit_code == 1
     payload = json.loads(result.output)
-    assert "enable_mcp_server=True" in payload["error"]
+    assert "mcp_server=True" in payload["error"]
 
 
 def test_connect_warns_when_mcp_unauthenticated(monkeypatch, fake_clients):

@@ -29,7 +29,7 @@ deployment test.
 
 ---
 
-### enable_mcp_example.py
+### mcp_server_example.py
 
 **Status:** PASS (2026-07-04, v2.7 8-tool surface)
 

@@ -78,10 +78,9 @@ def _os(provider, db=None, security_key=None) -> AgentOS:
     return AgentOS(
         agents=[_agent()],
         db=db,
-        enable_mcp_server=True,
         mcp_auth=provider,
         settings=AgnoAPISettings(os_security_key=security_key),
-        mcp_config=MCPServerConfig(tools=[_ok_tool], enable_builtin_tools=False),
+        mcp_server=MCPServerConfig(tools=[_ok_tool], enable_builtin_tools=False),
     )
 
 

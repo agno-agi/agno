@@ -279,7 +279,7 @@ def get_info_router(os: "AgentOS") -> APIRouter:
         response_model=InfoResponse,
     )
     async def get_info(request: Request) -> InfoResponse:
-        mcp_enabled = bool(os.enable_mcp_server)
+        mcp_enabled = bool(os.mcp_server)
         mcp_oauth = None
         if mcp_enabled and getattr(os, "mcp_auth", None) is not None:
             from agno.os.mcp_auth import describe_mcp_auth

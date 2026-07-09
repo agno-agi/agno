@@ -91,9 +91,8 @@ def _os(provider, db=None, **config_kwargs) -> AgentOS:
     return AgentOS(
         agents=[_agent()],
         db=db,
-        enable_mcp_server=True,
         mcp_auth=provider,
-        mcp_config=MCPServerConfig(tools=[_ok_tool], enable_builtin_tools=False, **config_kwargs),
+        mcp_server=MCPServerConfig(tools=[_ok_tool], enable_builtin_tools=False, **config_kwargs),
     )
 
 
