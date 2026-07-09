@@ -4207,6 +4207,10 @@ def arun_dispatch(  # type: ignore
         metadata_provided=metadata_provided,
     )
 
+    # Expose the current turn's input to the callable tools factory so it can
+    # select tools by relevance (#8603). run_input is established above.
+    run_context.input_content = run_input.input_content
+
     # Configure the model for runs
     response_format: Optional[Union[Dict, Type[BaseModel]]] = (
         get_response_format(team, run_context=run_context) if team.parser_model is None else None
