@@ -628,9 +628,12 @@ class TestResolveDbInConfig:
 
         assert out["db"]["session_table"] == "custom_sessions"
         assert out["db"]["memory_table"] == "custom_memories"
-        # Connection metadata is filled in from the resolved db.
+        # Connection metadata is filled in from the resolved db, but the
+        # connection SECRET (db_file / db_url) is stripped — the db is resolved
+        # by id, so secrets must not round-trip into the stored config (#8706).
         assert out["db"]["type"] == "sqlite"
-        assert out["db"]["db_file"] == os_db.db_file
+        assert "db_file" not in out["db"]
+        assert "db_url" not in out["db"]
         # Fields the caller didn't override inherit os_db's values.
         assert out["db"]["knowledge_table"] == os_db.knowledge_table_name
 
@@ -654,10 +657,12 @@ class TestResolveDbInConfig:
         out = _resolve_db_in_config(dict(payload), os_db, None)
 
         resolved_db_dict = out["db"]
-        # Connection fields MUST come from os_db, never from the caller.
+        # Connection fields MUST come from os_db, never from the caller. The
+        # connection SECRETS are stripped entirely (#8706), so the caller's
+        # db_url / db_file values are rejected outright rather than echoed back.
         assert resolved_db_dict["type"] == "sqlite"
-        assert resolved_db_dict["db_file"] == os_db.db_file
-        assert resolved_db_dict.get("db_url") == os_db.db_url
+        assert "db_file" not in resolved_db_dict
+        assert "db_url" not in resolved_db_dict
         assert resolved_db_dict["id"] == os_db.id
         # The only caller-provided field that is allowed through is the
         # whitelisted table-name override.
