@@ -1048,6 +1048,8 @@ def build_mcp_server(
         session_type: Optional[Literal["agent", "team", "workflow"]] = None,
         user_id: Optional[str] = None,
         db_id: Optional[str] = None,
+        limit: Optional[int] = None,
+        offset: int = 0,
     ) -> List[Dict[str, Any]]:
         _require_tool_scopes("GET", f"/sessions/{session_id}/runs")
         user_id = _scoped_read_user_id(user_id)
@@ -1062,6 +1064,20 @@ def build_mcp_server(
                 db_id=db_id,
                 headers=_forwarded_auth_headers(),
             )
+            # Remote returns the full list; apply pagination client-side (#8805).
+            if limit is not None:
+                runs = runs[offset : offset + limit]
+        elif limit is not None:
+            # Paginated mode (#8805): fetch only the requested page from the session.
+            page, _total = await session_service.get_session_runs_page(
+                db,
+                session_id=session_id,
+                session_type=session_type_enum,
+                user_id=user_id,
+                limit=limit,
+                offset=offset,
+            )
+            runs = page
         else:
             # SessionNotFoundError propagates as the tool error verbatim ("Session {id} not found").
             runs = await session_service.get_session_runs(

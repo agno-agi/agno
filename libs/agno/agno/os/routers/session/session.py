@@ -3,7 +3,7 @@ import time
 from typing import Any, Dict, List, Optional, Union, cast
 from uuid import uuid4
 
-from fastapi import APIRouter, Body, Depends, HTTPException, Path, Query, Request
+from fastapi import APIRouter, Body, Depends, HTTPException, Path, Query, Request, Response
 
 from agno.db.base import AsyncBaseDb, BaseDb, SessionType
 from agno.db.utils import deserialize_session_by_type, resolve_session_type
@@ -34,6 +34,7 @@ from agno.os.schema import (
 )
 from agno.os.services.sessions import SessionNotFoundError, get_sessions_page
 from agno.os.services.sessions import get_session_runs as get_session_runs_from_service
+from agno.os.services.sessions import get_session_runs_page as get_session_runs_page_from_service
 from agno.os.settings import AgnoAPISettings
 from agno.remote.base import RemoteDb
 from agno.session import AgentSession, Session, TeamSession, WorkflowSession
@@ -578,6 +579,7 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
     )
     async def get_session_runs(
         request: Request,
+        response: Response,
         session_id: str = Path(description="Session ID to get runs from"),
         session_type: Optional[SessionType] = Query(
             default=None,
@@ -593,6 +595,8 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
             default=None,
             description="Filter runs created before this Unix timestamp (epoch time in seconds)",
         ),
+        limit: Optional[int] = Query(default=None, description="Maximum number of runs to return (paginated).", ge=1),
+        offset: int = Query(default=0, description="Number of runs to skip (paginated).", ge=0),
         db_id: Optional[str] = Query(default=None, description="Database ID to query runs from"),
         table: Optional[str] = Query(default=None, description="Table to query runs from"),
     ) -> List[Union[RunSchema, TeamRunSchema, WorkflowRunSchema]]:
@@ -616,6 +620,25 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
         # filtering, per-run classification, and sync-db threadpool offload all
         # live in the service so the two surfaces cannot drift.
         try:
+            if limit is not None:
+                # Paginated mode (#8805): return a single page plus total/has-more
+                # metadata via response headers, keeping the JSON body a flat list
+                # for backward compatibility.
+                page, total = await get_session_runs_page_from_service(
+                    db,
+                    session_id=session_id,
+                    session_type=session_type,
+                    user_id=effective_user_id,
+                    created_after=created_after,
+                    created_before=created_before,
+                    limit=limit,
+                    offset=offset,
+                )
+                response.headers["X-Total-Count"] = str(total)
+                response.headers["X-Has-More"] = "true" if offset + limit < total else "false"
+                response.headers["X-Limit"] = str(limit)
+                response.headers["X-Offset"] = str(offset)
+                return page
             return await get_session_runs_from_service(
                 db,
                 session_id=session_id,

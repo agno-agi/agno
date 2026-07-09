@@ -167,17 +167,65 @@ async def get_session_runs(
         db, session_id=session_id, session_type=session_type, user_id=user_id
     )
 
-    runs = session.get("runs") or []
+    filtered = _filter_session_runs(session.get("runs") or [], created_after, created_before)
+    classified = (classify_session_run(run, resolved_type) for run in filtered)
+    return [run_schema for run_schema in classified if run_schema is not None]
+
+
+async def get_session_runs_page(
+    db: Union[BaseDb, AsyncBaseDb],
+    *,
+    session_id: str,
+    session_type: Optional[SessionType] = None,
+    user_id: Optional[str] = None,
+    created_after: Optional[int] = None,
+    created_before: Optional[int] = None,
+    limit: Optional[int] = None,
+    offset: int = 0,
+) -> Tuple[List[AnyRunSchema], int]:
+    """A single page of a session's runs plus the filtered total count (#8805).
+
+    Pagination is applied AFTER timestamp filtering, so ``total`` reflects the
+    number of runs matching the filter (not the raw session length). ``limit``
+    defaults to None (return all filtered runs, matching ``get_session_runs``);
+    callers that pass a limit get offset/limit paging for long transcripts
+    without loading every run into the response.
+
+    Returns ``(page, total)`` where ``total`` is the filtered run count. Raises
+    :class:`SessionNotFoundError` when the session does not exist.
+    """
+    session, resolved_type = await _get_session_dict(
+        db, session_id=session_id, session_type=session_type, user_id=user_id
+    )
+
+    filtered = _filter_session_runs(session.get("runs") or [], created_after, created_before)
+    total = len(filtered)
+    if limit is not None:
+        page_runs = filtered[offset : offset + limit]
+    else:
+        page_runs = filtered[offset:] if offset else filtered
+
+    classified = (classify_session_run(run, resolved_type) for run in page_runs)
+    page = [run_schema for run_schema in classified if run_schema is not None]
+    return page, total
+
+
+def _filter_session_runs(
+    runs: List[Dict[str, Any]],
+    created_after: Optional[int],
+    created_before: Optional[int],
+) -> List[Dict[str, Any]]:
+    """Apply the created_at timestamp bounds to a list of raw run dicts.
+
+    `is not None` (not truthiness): a bound of 0 is a real epoch timestamp, and
+    a run whose created_at is 0 must still be filtered rather than silently kept.
+    """
     filtered: List[Dict[str, Any]] = []
     for run in runs:
         created_at = run.get("created_at")
-        # `is not None` (not truthiness): a bound of 0 is a real epoch timestamp, and a run
-        # whose created_at is 0 must still be filtered rather than silently kept.
         if created_after is not None and created_at is not None and created_at < created_after:
             continue
         if created_before is not None and created_at is not None and created_at > created_before:
             continue
         filtered.append(run)
-
-    classified = (classify_session_run(run, resolved_type) for run in filtered)
-    return [run_schema for run_schema in classified if run_schema is not None]
+    return filtered
