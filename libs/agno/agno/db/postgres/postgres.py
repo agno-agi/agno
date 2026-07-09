@@ -25,6 +25,10 @@ from agno.db.schemas.culture import CulturalKnowledge
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
 from agno.db.schemas.memory import UserMemory
+from agno.db.schemas.service_accounts import (
+    resolve_service_account_sort_column,
+    validate_service_account_update,
+)
 from agno.db.utils import deserialize_session, deserialize_sessions, json_serializer
 from agno.run.base import RunStatus
 from agno.session import AgentSession, Session, TeamSession, WorkflowSession
@@ -80,6 +84,7 @@ class PostgresDb(BaseDb):
         schedule_runs_table: Optional[str] = None,
         approvals_table: Optional[str] = None,
         auth_tokens_table: Optional[str] = None,
+        service_accounts_table: Optional[str] = None,
         id: Optional[str] = None,
         create_schema: bool = True,
     ):
@@ -157,6 +162,7 @@ class PostgresDb(BaseDb):
             schedule_runs_table=schedule_runs_table,
             approvals_table=approvals_table,
             auth_tokens_table=auth_tokens_table,
+            service_accounts_table=service_accounts_table,
         )
 
         self.db_schema: str = db_schema if db_schema is not None else "ai"
@@ -199,6 +205,7 @@ class PostgresDb(BaseDb):
             schedules_table=data.get("schedules_table"),
             schedule_runs_table=data.get("schedule_runs_table"),
             approvals_table=data.get("approvals_table"),
+            service_accounts_table=data.get("service_accounts_table"),
             id=data.get("id"),
         )
 
@@ -240,6 +247,7 @@ class PostgresDb(BaseDb):
             (self.schedules_table_name, "schedules"),
             (self.schedule_runs_table_name, "schedule_runs"),
             (self.approvals_table_name, "approvals"),
+            (self.service_accounts_table_name, "service_accounts"),
         ]
 
         for table_name, table_type in tables_to_create:
@@ -272,6 +280,7 @@ class PostgresDb(BaseDb):
             schema_primary_key = table_schema.pop("__primary_key__", None)
             schema_foreign_keys = table_schema.pop("__foreign_keys__", [])
             schema_composite_indexes = table_schema.pop("__composite_indexes__", [])
+            schema_partial_unique_indexes = table_schema.pop("_partial_unique_indexes", [])
 
             # Build columns
             for col_name, col_config in table_schema.items():
@@ -368,6 +377,21 @@ class PostgresDb(BaseDb):
                 idx_name = f"idx_{table_name}_{'_'.join(idx_config['columns'])}"
                 idx_cols = [table.c[c] for c in idx_config["columns"]]
                 Index(idx_name, *idx_cols)
+
+            # Partial unique indexes
+            for idx_config in schema_partial_unique_indexes:
+                idx_columns = idx_config["columns"]
+                missing = [c for c in idx_columns if c not in table.c]
+                if missing:
+                    raise ValueError(f"Partial unique index references missing columns in {table_name}: {missing}")
+
+                idx_name = f"{table_name}_{idx_config['name']}"
+                Index(
+                    idx_name,
+                    *[table.c[c] for c in idx_columns],
+                    unique=True,
+                    postgresql_where=text(idx_config["where"]),
+                )
 
             # Create schema if requested
             if self.create_schema:
@@ -590,6 +614,14 @@ class PostgresDb(BaseDb):
                 create_table_if_not_found=create_table_if_not_found,
             )
             return self.auth_tokens_table
+
+        if table_type == "service_accounts":
+            self.service_accounts_table = self._get_or_create_table(
+                table_name=self.service_accounts_table_name,
+                table_type="service_accounts",
+                create_table_if_not_found=create_table_if_not_found,
+            )
+            return self.service_accounts_table
 
         raise ValueError(f"Unknown table type: {table_type}")
 
@@ -5216,4 +5248,135 @@ class PostgresDb(BaseDb):
                 return result.rowcount > 0
         except Exception as e:
             log_debug(f"Error deleting auth token: {e}")
+            return False
+
+    # -- Service Accounts methods --
+
+    def create_service_account(self, account_data: Dict[str, Any]) -> Dict[str, Any]:
+        try:
+            table = self._get_table(table_type="service_accounts", create_table_if_not_found=True)
+            if table is None:
+                raise RuntimeError("Failed to get or create service accounts table")
+            with self.Session() as sess, sess.begin():
+                sess.execute(table.insert().values(**account_data))
+            return account_data
+        except Exception as e:
+            log_error(f"Error creating service account: {str(e)}")
+            raise
+
+    def get_service_account(self, service_account_id: str) -> Optional[Dict[str, Any]]:
+        try:
+            table = self._get_table(table_type="service_accounts")
+            if table is None:
+                return None
+            with self.Session() as sess:
+                result = sess.execute(select(table).where(table.c.id == service_account_id)).fetchone()
+                return dict(result._mapping) if result else None
+        except Exception as e:
+            log_debug(f"Error getting service account: {e}")
+            return None
+
+    def get_service_account_by_token_hash(self, token_hash: str) -> Optional[Dict[str, Any]]:
+        """Get a service account by token hash.
+
+        Re-raises on database errors (instead of returning None) so callers can
+        distinguish an unknown token from an unavailable database.
+        """
+        table = self._get_table(table_type="service_accounts")
+        if table is None:
+            # _get_table swallows connectivity errors and returns None, which is
+            # indistinguishable from "table not created yet". Probe the connection so
+            # a real outage propagates (fail closed) instead of reading as an unknown
+            # token; a genuinely absent table returns None.
+            with self.Session() as sess:
+                sess.execute(text("SELECT 1"))
+            return None
+        try:
+            with self.Session() as sess:
+                result = sess.execute(select(table).where(table.c.token_hash == token_hash)).fetchone()
+                return dict(result._mapping) if result else None
+        except Exception as e:
+            log_error(f"Error getting service account by token hash: {e}")
+            raise
+
+    def get_service_account_by_name(self, name: str, include_revoked: bool = False) -> Optional[Dict[str, Any]]:
+        try:
+            table = self._get_table(table_type="service_accounts")
+            if table is None:
+                return None
+            with self.Session() as sess:
+                stmt = select(table).where(table.c.name == name)
+                if not include_revoked:
+                    stmt = stmt.where(table.c.revoked_at.is_(None))
+                stmt = stmt.order_by(table.c.created_at.desc())
+                result = sess.execute(stmt).fetchone()
+                return dict(result._mapping) if result else None
+        except Exception as e:
+            log_debug(f"Error getting service account by name: {e}")
+            return None
+
+    def get_service_accounts(
+        self,
+        include_revoked: bool = True,
+        limit: int = 20,
+        page: int = 1,
+        sort_by: str = "created_at",
+        sort_order: str = "desc",
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        try:
+            table = self._get_table(table_type="service_accounts")
+            if table is None:
+                return [], 0
+            with self.Session() as sess:
+                # Build base query with filters
+                base_query = select(table)
+                if not include_revoked:
+                    base_query = base_query.where(table.c.revoked_at.is_(None))
+
+                # Get total count
+                count_stmt = select(func.count()).select_from(base_query.alias())
+                total_count = sess.execute(count_stmt).scalar() or 0
+
+                # Calculate offset from page
+                offset = (page - 1) * limit
+
+                # Validate sorting parameters
+                sort_col = table.c[resolve_service_account_sort_column(sort_by)]
+                order_by = sort_col.asc() if sort_order == "asc" else sort_col.desc()
+
+                # Get paginated results
+                stmt = base_query.order_by(order_by).limit(limit).offset(offset)
+                results = sess.execute(stmt).fetchall()
+                return [dict(row._mapping) for row in results], total_count
+        except Exception as e:
+            log_debug(f"Error listing service accounts: {e}")
+            return [], 0
+
+    def update_service_account(
+        self, service_account_id: str, return_record: bool = True, **kwargs: Any
+    ) -> Optional[Dict[str, Any]]:
+        validate_service_account_update(kwargs)
+        try:
+            table = self._get_table(table_type="service_accounts")
+            if table is None:
+                return None
+            with self.Session() as sess, sess.begin():
+                sess.execute(table.update().where(table.c.id == service_account_id).values(**kwargs))
+            if not return_record:
+                return None
+            return self.get_service_account(service_account_id)
+        except Exception as e:
+            log_debug(f"Error updating service account: {e}")
+            return None
+
+    def delete_service_account(self, service_account_id: str) -> bool:
+        try:
+            table = self._get_table(table_type="service_accounts")
+            if table is None:
+                return False
+            with self.Session() as sess, sess.begin():
+                result = sess.execute(table.delete().where(table.c.id == service_account_id))
+                return result.rowcount > 0
+        except Exception as e:
+            log_debug(f"Error deleting service account: {e}")
             return False

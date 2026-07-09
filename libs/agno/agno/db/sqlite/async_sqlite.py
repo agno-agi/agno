@@ -16,6 +16,10 @@ from agno.db.schemas.culture import CulturalKnowledge
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
 from agno.db.schemas.memory import UserMemory
+from agno.db.schemas.service_accounts import (
+    resolve_service_account_sort_column,
+    validate_service_account_update,
+)
 from agno.db.sqlite.schemas import get_table_schema_definition
 from agno.db.sqlite.utils import (
     abulk_upsert_metrics,
@@ -68,6 +72,7 @@ class AsyncSqliteDb(AsyncBaseDb):
         schedule_runs_table: Optional[str] = None,
         approvals_table: Optional[str] = None,
         auth_tokens_table: Optional[str] = None,
+        service_accounts_table: Optional[str] = None,
         id: Optional[str] = None,
     ):
         """
@@ -120,6 +125,7 @@ class AsyncSqliteDb(AsyncBaseDb):
             schedule_runs_table=schedule_runs_table,
             approvals_table=approvals_table,
             auth_tokens_table=auth_tokens_table,
+            service_accounts_table=service_accounts_table,
         )
 
         _engine: Optional[AsyncEngine] = db_engine
@@ -181,6 +187,7 @@ class AsyncSqliteDb(AsyncBaseDb):
             (self.schedules_table_name, "schedules"),
             (self.schedule_runs_table_name, "schedule_runs"),
             (self.approvals_table_name, "approvals"),
+            (self.service_accounts_table_name, "service_accounts"),
         ]
 
         for table_name, table_type in tables_to_create:
@@ -212,6 +219,7 @@ class AsyncSqliteDb(AsyncBaseDb):
             unique_constraints: List[str] = []
             schema_unique_constraints = table_schema.pop("_unique_constraints", [])
             schema_composite_indexes = table_schema.pop("__composite_indexes__", [])
+            schema_partial_unique_indexes = table_schema.pop("_partial_unique_indexes", [])
 
             # Get the columns, indexes, and unique constraints from the table schema
             for col_name, col_config in table_schema.items():
@@ -255,6 +263,24 @@ class AsyncSqliteDb(AsyncBaseDb):
             for idx_config in schema_composite_indexes:
                 idx_name = f"idx_{table_name}_{'_'.join(idx_config['columns'])}"
                 table.append_constraint(Index(idx_name, *idx_config["columns"]))
+
+            # Partial unique indexes (unique only for rows matching the where clause).
+            # Fail loudly on missing columns like every other backend: silently
+            # skipping would drop a uniqueness guarantee (e.g. unique active
+            # service-account names) on this backend only.
+            for idx_config in schema_partial_unique_indexes:
+                missing_columns = [col for col in idx_config["columns"] if col not in table.c]
+                if missing_columns:
+                    raise ValueError(
+                        f"Partial unique index references missing columns in {table_name}: {missing_columns}"
+                    )
+                idx_name = f"{table_name}_{idx_config['name']}"
+                Index(
+                    idx_name,
+                    *[table.c[col] for col in idx_config["columns"]],
+                    unique=True,
+                    sqlite_where=text(idx_config["where"]),
+                )
 
             # Create table
             table_created = False
@@ -411,6 +437,14 @@ class AsyncSqliteDb(AsyncBaseDb):
                 create_table_if_not_found=create_table_if_not_found,
             )
             return self.auth_tokens_table
+
+        elif table_type == "service_accounts":
+            self.service_accounts_table = await self._get_or_create_table(
+                table_name=self.service_accounts_table_name,
+                table_type="service_accounts",
+                create_table_if_not_found=create_table_if_not_found,
+            )
+            return self.service_accounts_table
 
         else:
             raise ValueError(f"Unknown table type: '{table_type}'")
@@ -4041,4 +4075,143 @@ class AsyncSqliteDb(AsyncBaseDb):
                     return result.rowcount > 0  # type: ignore[attr-defined]
         except Exception as e:
             log_debug(f"Error deleting auth token: {e}")
+            return False
+
+    # -- Service Accounts methods --
+
+    async def create_service_account(self, account_data: Dict[str, Any]) -> Dict[str, Any]:
+        try:
+            table = await self._get_table(table_type="service_accounts", create_table_if_not_found=True)
+            if table is None:
+                raise RuntimeError("Failed to get or create service_accounts table")
+            async with self.async_session_factory() as sess:
+                async with sess.begin():
+                    await sess.execute(table.insert().values(**account_data))
+            return account_data
+        except Exception as e:
+            log_error(f"Error creating service account: {str(e)}")
+            raise
+
+    async def get_service_account(self, service_account_id: str) -> Optional[Dict[str, Any]]:
+        try:
+            table = await self._get_table(table_type="service_accounts")
+            if table is None:
+                return None
+            async with self.async_session_factory() as sess:
+                result = await sess.execute(select(table).where(table.c.id == service_account_id))
+                row = result.fetchone()
+                return dict(row._mapping) if row else None
+        except Exception as e:
+            log_debug(f"Error getting service account: {e}")
+            return None
+
+    async def get_service_account_by_token_hash(self, token_hash: str) -> Optional[Dict[str, Any]]:
+        """Get the service account matching the given token hash.
+
+        Re-raises on database errors (instead of returning None) so callers can
+        distinguish an unknown token from an unavailable database.
+        """
+        table = await self._get_table(table_type="service_accounts")
+        if table is None:
+            # _get_table swallows connectivity errors and returns None, which is
+            # indistinguishable from "table not created yet". Probe the connection so
+            # a real outage propagates (fail closed) instead of reading as an unknown
+            # token; a genuinely absent table returns None. Kept OUTSIDE the try below so
+            # the structure matches the sync and postgres backends (all four fail closed).
+            async with self.async_session_factory() as sess:
+                await sess.execute(text("SELECT 1"))
+            return None
+        try:
+            async with self.async_session_factory() as sess:
+                result = await sess.execute(select(table).where(table.c.token_hash == token_hash))
+                row = result.fetchone()
+                return dict(row._mapping) if row else None
+        except Exception as e:
+            log_error(f"Error getting service account by token hash: {str(e)}")
+            raise
+
+    async def get_service_account_by_name(self, name: str, include_revoked: bool = False) -> Optional[Dict[str, Any]]:
+        try:
+            table = await self._get_table(table_type="service_accounts")
+            if table is None:
+                return None
+            async with self.async_session_factory() as sess:
+                stmt = select(table).where(table.c.name == name)
+                if not include_revoked:
+                    stmt = stmt.where(table.c.revoked_at.is_(None))
+                stmt = stmt.order_by(table.c.created_at.desc())
+                result = await sess.execute(stmt)
+                row = result.fetchone()
+                return dict(row._mapping) if row else None
+        except Exception as e:
+            log_debug(f"Error getting service account by name: {e}")
+            return None
+
+    async def get_service_accounts(
+        self,
+        include_revoked: bool = True,
+        limit: int = 20,
+        page: int = 1,
+        sort_by: str = "created_at",
+        sort_order: str = "desc",
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        try:
+            table = await self._get_table(table_type="service_accounts")
+            if table is None:
+                return [], 0
+            async with self.async_session_factory() as sess:
+                # Build base query with filters
+                base_query = select(table)
+                if not include_revoked:
+                    base_query = base_query.where(table.c.revoked_at.is_(None))
+
+                # Get total count
+                count_stmt = select(func.count()).select_from(base_query.alias())
+                count_result = await sess.execute(count_stmt)
+                total_count = count_result.scalar() or 0
+
+                # Calculate offset from page
+                offset = (page - 1) * limit
+
+                # Apply sorting
+                sort_column = table.c[resolve_service_account_sort_column(sort_by)]
+                order_by = sort_column.asc() if sort_order == "asc" else sort_column.desc()
+
+                # Get paginated results
+                stmt = base_query.order_by(order_by).limit(limit).offset(offset)
+                result = await sess.execute(stmt)
+                return [dict(row._mapping) for row in result.fetchall()], total_count
+        except Exception as e:
+            log_debug(f"Error listing service accounts: {e}")
+            return [], 0
+
+    async def update_service_account(
+        self, service_account_id: str, return_record: bool = True, **kwargs: Any
+    ) -> Optional[Dict[str, Any]]:
+        validate_service_account_update(kwargs)
+        try:
+            table = await self._get_table(table_type="service_accounts")
+            if table is None:
+                return None
+            async with self.async_session_factory() as sess:
+                async with sess.begin():
+                    await sess.execute(table.update().where(table.c.id == service_account_id).values(**kwargs))
+            if not return_record:
+                return None
+            return await self.get_service_account(service_account_id)
+        except Exception as e:
+            log_debug(f"Error updating service account: {e}")
+            return None
+
+    async def delete_service_account(self, service_account_id: str) -> bool:
+        try:
+            table = await self._get_table(table_type="service_accounts")
+            if table is None:
+                return False
+            async with self.async_session_factory() as sess:
+                async with sess.begin():
+                    result = await sess.execute(table.delete().where(table.c.id == service_account_id))
+                    return result.rowcount > 0  # type: ignore[attr-defined]
+        except Exception as e:
+            log_debug(f"Error deleting service account: {e}")
             return False
