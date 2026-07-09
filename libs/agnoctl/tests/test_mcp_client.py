@@ -67,3 +67,30 @@ def test_verify_never_raises_on_malformed_result(monkeypatch):
     result = verify_mcp(MCP_URL, token="anything")
     assert result.ok is True
     assert result.tools == []
+
+
+def test_verify_expect_oauth_challenge_accepts_401_with_www_authenticate(monkeypatch):
+    fake = FakeAgentOS(auth_mode="none", oauth=True)
+    install_fake(monkeypatch, fake)
+    result = verify_mcp("http://localhost:7777/mcp", token=None, expect_oauth_challenge=True)
+    assert result.ok is True
+    assert result.oauth_challenge is True
+    assert result.status_code == 401
+    assert result.tools == []
+
+
+def test_verify_expect_oauth_challenge_rejects_bare_401(monkeypatch):
+    """A 401 without a WWW-Authenticate header means clients cannot discover the AS:
+    that is a broken OAuth setup, not a healthy one."""
+    fake = FakeAgentOS(auth_mode="security_key")
+    install_fake(monkeypatch, fake)
+    result = verify_mcp("http://localhost:7777/mcp", token=None, expect_oauth_challenge=True)
+    assert result.ok is False
+    assert "no WWW-Authenticate" in (result.error or "")
+
+
+def test_verify_401_without_expectation_still_fails(monkeypatch):
+    fake = FakeAgentOS(auth_mode="none", oauth=True)
+    install_fake(monkeypatch, fake)
+    result = verify_mcp("http://localhost:7777/mcp", token=None)
+    assert result.ok is False

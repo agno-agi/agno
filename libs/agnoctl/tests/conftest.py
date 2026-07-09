@@ -2,16 +2,28 @@
 
 import json
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 
 import httpx
 import pytest
+
+DEFAULT_OAUTH = {
+    "authorization_servers": ["http://localhost:7777/mcp/auth"],
+    "resource": "http://localhost:7777/mcp",
+}
 
 
 class FakeAgentOS:
     """Simulates the AgentOS endpoints the CLI touches.
 
-    auth_mode: "none" | "security_key" | "jwt"
+    auth_mode: the REST/WS plane only, "none" | "security_key" | "jwt" -- like the real
+        server, it says nothing about /mcp. "none" means the REST plane is OPEN: reads
+        and deletes answer any caller, while the server's anonymous-mint gate refuses
+        every POST /service-accounts (minted PATs must never come from anonymous calls).
+    oauth: the /info mcp.oauth block -- a dict, or True for a default authorization
+        server. When set, /mcp is OAuth-protected: unauthenticated requests get 401 +
+        a WWW-Authenticate challenge like fastmcp's middleware, and minted PATs still
+        pass (the server composes them via MultiAuth).
     info_discovery: serve the mcp/auth_mode fields on /info (newer servers)
     mcp_requires_token: enforce tokens on /mcp (False models servers predating enforcement)
     """
@@ -25,7 +37,11 @@ class FakeAgentOS:
         mcp_requires_token: bool = True,
         sse_responses: bool = False,
         agno_version: str = "2.7.0",
+        name: Optional[str] = None,
+        os_id: Optional[str] = None,
+        oauth: Union[bool, Dict[str, Any], None] = None,
     ):
+        assert auth_mode in ("none", "security_key", "jwt"), "auth_mode is the REST plane; use oauth= for MCP OAuth"
         self.auth_mode = auth_mode
         self.security_key = security_key
         self.mcp_enabled = mcp_enabled
@@ -33,6 +49,9 @@ class FakeAgentOS:
         self.mcp_requires_token = mcp_requires_token
         self.sse_responses = sse_responses
         self.agno_version = agno_version
+        self.name = name
+        self.os_id = os_id
+        self.oauth: Optional[Dict[str, Any]] = dict(DEFAULT_OAUTH) if oauth is True else (oauth or None)
 
         self.accounts: Dict[str, Dict[str, Any]] = {}  # name -> account dict (with plaintext token)
         self.create_calls = 0
@@ -57,6 +76,34 @@ class FakeAgentOS:
         if self.auth_mode == "none":
             return True
         return self._bearer(request) == self.security_key
+
+    def _account_for_bearer(self, request: httpx.Request) -> Optional[Dict[str, Any]]:
+        token = self._bearer(request)
+        for account in self.accounts.values():
+            if account["token"] == token and not account.get("revoked_at"):
+                return account
+        return None
+
+    def seed_account(self, name: str, scopes: List[str]) -> str:
+        """Insert a service account directly (as if minted in an earlier, protected era)
+        and return its plaintext token -- for scenarios where minting is impossible now
+        (open REST plane) but a durable credential survives."""
+        token = "agno_pat_" + (name.replace("-", "") + str(self._next_id) + "y" * 40)[:43]
+        self.accounts[name] = {
+            "id": "sa-" + str(self._next_id),
+            "name": name,
+            "principal": "sa:" + name,
+            "token_prefix": token[:16],
+            "scopes": scopes,
+            "created_at": 1780000000,
+            "expires_at": 1790000000,
+            "last_used_at": None,
+            "revoked_at": None,
+            "created_by": None,
+            "token": token,
+        }
+        self._next_id += 1
+        return token
 
     def _account_response(self, account: Dict[str, Any], include_token: bool = False) -> Dict[str, Any]:
         payload = {k: v for k, v in account.items() if k != "token"}
@@ -97,8 +144,16 @@ class FakeAgentOS:
         if path == "/info":
             payload: Dict[str, Any] = {"agno_version": self.agno_version, "agents": 1, "teams": 0, "workflows": 0}
             if self.info_discovery:
-                payload["mcp"] = {"enabled": self.mcp_enabled, "path": "/mcp" if self.mcp_enabled else None}
+                payload["mcp"] = {
+                    "enabled": self.mcp_enabled,
+                    "path": "/mcp" if self.mcp_enabled else None,
+                    "oauth": self.oauth,
+                }
                 payload["auth_mode"] = self.auth_mode
+                if self.name is not None:
+                    payload["name"] = self.name
+                if self.os_id is not None:
+                    payload["os_id"] = self.os_id
             return httpx.Response(200, json=payload)
 
         if path == "/config":
@@ -112,7 +167,19 @@ class FakeAgentOS:
             return httpx.Response(401, json={"detail": detail})
 
         if path == "/service-accounts" and method == "POST":
-            if not self._is_admin(request):
+            # An open REST plane ("none") installs no auth middleware, so anonymous
+            # mints are refused -- but like the real server, a VERIFIED service-account
+            # bearer still authenticates by prefix, and one holding admin or
+            # service_accounts:write may mint.
+            if self.auth_mode == "none":
+                minter = self._account_for_bearer(request)
+                if minter is None:
+                    return httpx.Response(
+                        401, json={"detail": "JWT authentication is required to mint a service account."}
+                    )
+                if not set(minter.get("scopes") or []) & {"admin", "service_accounts:write"}:
+                    return httpx.Response(403, json={"detail": "Missing required scope: service_accounts:write"})
+            elif not self._is_admin(request):
                 return httpx.Response(401, json={"detail": "Invalid authentication token"})
             body = json.loads(request.content)
             name = body["name"]
@@ -168,7 +235,20 @@ class FakeAgentOS:
         if path == "/mcp":
             if not self.mcp_enabled:
                 return httpx.Response(404, json={"detail": "Not Found"})
-            if self.mcp_requires_token and self.auth_mode != "none":
+            if self.oauth is not None:
+                # OAuth-protected /mcp: fastmcp's middleware guards it regardless of the
+                # REST plane -- 401 + the RFC 9728 challenge for anything but a minted
+                # PAT (which the real server accepts via MultiAuth).
+                if self._bearer(request) not in self.active_tokens():
+                    return httpx.Response(
+                        401,
+                        json={"detail": "Unauthorized"},
+                        headers={
+                            "WWW-Authenticate": "Bearer resource_metadata="
+                            '"http://localhost:7777/.well-known/oauth-protected-resource/mcp"'
+                        },
+                    )
+            elif self.mcp_requires_token and self.auth_mode != "none":
                 token = self._bearer(request)
                 if token != self.security_key and token not in self.active_tokens():
                     return httpx.Response(401, json={"detail": "Invalid authentication token"})
@@ -215,6 +295,44 @@ def fake_os(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> FakeAgentOS:
     install_fake(monkeypatch, fake)
     monkeypatch.chdir(tmp_path)
     return fake
+
+
+@pytest.fixture
+def fake_clients(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """Claude Code, Codex, and Cursor 'installed' under a tmp home, wired into every
+    command that builds adapters -- so no test can ever touch the developer's real
+    client configs."""
+    from agnoctl.clients.claude_code import ClaudeCodeAdapter
+    from agnoctl.clients.codex import CodexAdapter
+    from agnoctl.clients.cursor import CursorAdapter
+
+    (tmp_path / ".claude.json").write_text("{}")
+    (tmp_path / ".codex").mkdir()
+    (tmp_path / ".cursor").mkdir()
+
+    def build(home=None, cwd=None, project=False):
+        return {
+            "claude-code": ClaudeCodeAdapter(home=tmp_path, cwd=tmp_path, which=lambda name: None),
+            "codex": CodexAdapter(home=tmp_path),
+            "cursor": CursorAdapter(home=tmp_path, cwd=tmp_path, project=project),
+        }
+
+    import agnoctl.commands.connect as connect_module
+    import agnoctl.commands.disconnect as disconnect_module
+    import agnoctl.commands.status as status_module
+
+    monkeypatch.setattr(connect_module, "build_adapters", build)
+    monkeypatch.setattr(disconnect_module, "build_adapters", build)
+    monkeypatch.setattr(status_module, "build_adapters", build)
+    return tmp_path
+
+
+def all_output(result) -> str:
+    """A CliRunner result's stdout plus stderr, whichever way this click version captures them."""
+    try:
+        return result.output + result.stderr
+    except (ValueError, AttributeError):
+        return result.output
 
 
 def install_fake(monkeypatch: pytest.MonkeyPatch, fake: FakeAgentOS) -> None:

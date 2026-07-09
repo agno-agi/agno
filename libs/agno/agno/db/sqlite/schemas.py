@@ -2,6 +2,8 @@
 
 from typing import Any
 
+from agno.db.schemas.mcp_oauth import MCP_OAUTH_TABLE_SCHEMAS
+
 try:
     from sqlalchemy.types import JSON, BigInteger, Boolean, Date, String
 except ImportError:
@@ -369,6 +371,7 @@ def get_table_schema_definition(
         "approvals": APPROVAL_TABLE_SCHEMA,
         "auth_tokens": AUTH_TOKEN_TABLE_SCHEMA,
         "service_accounts": SERVICE_ACCOUNT_TABLE_SCHEMA,
+        **MCP_OAUTH_TABLE_SCHEMAS,
     }
     schema = schemas.get(table_type, {})
 

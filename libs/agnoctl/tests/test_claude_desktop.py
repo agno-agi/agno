@@ -182,7 +182,7 @@ def test_connect_configures_claude_desktop_end_to_end(monkeypatch, fake_os, tmp_
     assert payload["results"][0]["status"] == "connected"
     assert payload["results"][0]["verify"]["ok"] is True
 
-    entry = json.loads(cfg.read_text())["mcpServers"]["agno"]
+    entry = json.loads(cfg.read_text())["mcpServers"]["agentos"]
     assert entry["env"]["AGNO_AUTH_HEADER"].startswith("Bearer agno_pat_")
     # The minted token never leaks into the JSON report.
     assert fake_os.accounts["claude-desktop"]["token"] not in result.output

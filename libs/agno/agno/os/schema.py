@@ -263,23 +263,41 @@ class WorkflowSummaryResponse(BaseModel):
         )
 
 
+class McpOAuthInfo(BaseModel):
+    """OAuth discovery details for an MCP endpoint protected by ``AgentOS(mcp_auth=...)``."""
+
+    authorization_servers: Optional[List[str]] = Field(
+        None, description="Issuer URL(s) of the authorization server(s) protecting the MCP endpoint"
+    )
+    resource: Optional[str] = Field(None, description="RFC 9728 resource URL advertised for the MCP endpoint")
+
+
 class McpInfo(BaseModel):
     """MCP server availability for the /info endpoint."""
 
     enabled: bool = Field(False, description="Whether the MCP server is enabled on this OS instance")
     path: Optional[str] = Field(None, description="Path where the MCP server is mounted, null when disabled")
+    oauth: Optional[McpOAuthInfo] = Field(
+        None, description="OAuth discovery details when the MCP endpoint is OAuth-protected, null otherwise"
+    )
 
 
 class InfoResponse(BaseModel):
     """Response schema for the /info endpoint returning lightweight OS metadata."""
 
+    os_id: str = Field(..., description="Unique identifier for the OS instance")
+    name: Optional[str] = Field(None, description="Name of the OS instance")
     agno_version: str = Field(..., description="Version of the agno framework")
     agent_count: int = Field(0, description="Number of agents registered in the OS")
     team_count: int = Field(0, description="Number of teams registered in the OS")
     workflow_count: int = Field(0, description="Number of workflows registered in the OS")
     mcp: McpInfo = Field(default_factory=McpInfo, description="MCP server availability for this OS instance")
     auth_mode: Literal["none", "security_key", "jwt"] = Field(
-        "none", description="Authentication mode effectively enforced by this OS instance"
+        "none",
+        description=(
+            "Authentication mode enforced on the REST/WS plane of this OS instance. MCP OAuth, "
+            "when enabled, is described separately under `mcp.oauth`."
+        ),
     )
 
 

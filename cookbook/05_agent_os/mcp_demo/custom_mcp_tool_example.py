@@ -70,8 +70,7 @@ async def ask_workspace(question: str, user_id: str) -> str:
 agent_os = AgentOS(
     description="AgentOS exposing a single owner-only custom MCP tool",
     agents=[workspace_agent],
-    enable_mcp_server=True,
-    mcp_config=MCPServerConfig(
+    mcp_server=MCPServerConfig(
         tools=[ask_workspace],  # register our custom tool
         enable_builtin_tools=False,  # ship ONLY our tool (disable the 8 built-ins)
         # owner-only: 401 before the model runs
