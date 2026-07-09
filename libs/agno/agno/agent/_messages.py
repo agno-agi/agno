@@ -98,6 +98,58 @@ def format_message_with_state_variables(
         return message
 
 
+def _resolve_agent_prompt_field(
+    agent: "Agent",
+    field_name: str,
+    value: Any,
+    session_state: Optional[Dict[str, Any]] = None,
+    run_context: Optional[RunContext] = None,
+) -> Optional[str]:
+    if value is None:
+        return None
+    if callable(value):
+        resolved_value = execute_instructions(
+            agent=agent,
+            instructions=value,
+            session_state=session_state,
+            run_context=run_context,
+        )
+        if resolved_value is None:
+            return None
+        if not isinstance(resolved_value, str):
+            raise Exception(f"{field_name} must resolve to a string")
+        return resolved_value
+    if isinstance(value, str):
+        return value
+    return str(value)
+
+
+async def _aresolve_agent_prompt_field(
+    agent: "Agent",
+    field_name: str,
+    value: Any,
+    session_state: Optional[Dict[str, Any]] = None,
+    run_context: Optional[RunContext] = None,
+) -> Optional[str]:
+    if value is None:
+        return None
+    if callable(value):
+        resolved_value = await aexecute_instructions(
+            agent=agent,
+            instructions=value,
+            session_state=session_state,
+            run_context=run_context,
+        )
+        if resolved_value is None:
+            return None
+        if not isinstance(resolved_value, str):
+            raise Exception(f"{field_name} must resolve to a string")
+        return resolved_value
+    if isinstance(value, str):
+        return value
+    return str(value)
+
+
 # ---------------------------------------------------------------------------
 # System message
 # ---------------------------------------------------------------------------
@@ -157,6 +209,41 @@ def get_system_message(
 
     if agent.model is None:
         raise Exception("model not set")
+    resolved_name = _resolve_agent_prompt_field(
+        agent=agent,
+        field_name="name",
+        value=agent.name,
+        session_state=session_state,
+        run_context=run_context,
+    )
+    resolved_description = _resolve_agent_prompt_field(
+        agent=agent,
+        field_name="description",
+        value=agent.description,
+        session_state=session_state,
+        run_context=run_context,
+    )
+    resolved_role = _resolve_agent_prompt_field(
+        agent=agent,
+        field_name="role",
+        value=agent.role,
+        session_state=session_state,
+        run_context=run_context,
+    )
+    resolved_expected_output = _resolve_agent_prompt_field(
+        agent=agent,
+        field_name="expected_output",
+        value=agent.expected_output,
+        session_state=session_state,
+        run_context=run_context,
+    )
+    resolved_additional_context = _resolve_agent_prompt_field(
+        agent=agent,
+        field_name="additional_context",
+        value=agent.additional_context,
+        session_state=session_state,
+        run_context=run_context,
+    )
 
     # 3. Build and return the default system message for the Agent.
     # 3.1 Build the list of instructions for the system message
@@ -226,17 +313,17 @@ def get_system_message(
                 additional_information.append(f"Your approximate location is: {location_str}.")
 
     # 3.2.4 Add agent name if provided
-    if agent.name is not None and agent.add_name_to_context:
-        additional_information.append(f"Your name is: {agent.name}.")
+    if resolved_name is not None and agent.add_name_to_context:
+        additional_information.append(f"Your name is: {resolved_name}.")
 
     # 3.3 Build the default system message for the Agent.
     system_message_content: str = ""
     # 3.3.1 First add the Agent description if provided
-    if agent.description is not None:
-        system_message_content += f"{agent.description}\n"
+    if resolved_description is not None:
+        system_message_content += f"{resolved_description}\n"
     # 3.3.2 Then add the Agent role if provided
-    if agent.role is not None:
-        system_message_content += f"\n<your_role>\n{agent.role}\n</your_role>\n\n"
+    if resolved_role is not None:
+        system_message_content += f"\n<your_role>\n{resolved_role}\n</your_role>\n\n"
     # 3.3.3 Then add instructions for the Agent
     if len(instructions) > 0:
         if agent.use_instruction_tags:
@@ -273,11 +360,11 @@ def get_system_message(
         )
 
     # 3.3.7 Then add the expected output
-    if agent.expected_output is not None:
-        system_message_content += f"<expected_output>\n{agent.expected_output.strip()}\n</expected_output>\n\n"
+    if resolved_expected_output is not None:
+        system_message_content += f"<expected_output>\n{resolved_expected_output.strip()}\n</expected_output>\n\n"
     # 3.3.8 Then add additional context
-    if agent.additional_context is not None:
-        system_message_content += f"{agent.additional_context}\n"
+    if resolved_additional_context is not None:
+        system_message_content += f"{resolved_additional_context}\n"
     # 3.3.8.1 Then add skills to the system prompt
     if agent.skills is not None:
         skills_snippet = agent.skills.get_system_prompt_snippet()
@@ -505,6 +592,41 @@ async def aget_system_message(
 
     if agent.model is None:
         raise Exception("model not set")
+    resolved_name = await _aresolve_agent_prompt_field(
+        agent=agent,
+        field_name="name",
+        value=agent.name,
+        session_state=session_state,
+        run_context=run_context,
+    )
+    resolved_description = await _aresolve_agent_prompt_field(
+        agent=agent,
+        field_name="description",
+        value=agent.description,
+        session_state=session_state,
+        run_context=run_context,
+    )
+    resolved_role = await _aresolve_agent_prompt_field(
+        agent=agent,
+        field_name="role",
+        value=agent.role,
+        session_state=session_state,
+        run_context=run_context,
+    )
+    resolved_expected_output = await _aresolve_agent_prompt_field(
+        agent=agent,
+        field_name="expected_output",
+        value=agent.expected_output,
+        session_state=session_state,
+        run_context=run_context,
+    )
+    resolved_additional_context = await _aresolve_agent_prompt_field(
+        agent=agent,
+        field_name="additional_context",
+        value=agent.additional_context,
+        session_state=session_state,
+        run_context=run_context,
+    )
 
     # 3. Build and return the default system message for the Agent.
     # 3.1 Build the list of instructions for the system message
@@ -574,17 +696,17 @@ async def aget_system_message(
                 additional_information.append(f"Your approximate location is: {location_str}.")
 
     # 3.2.4 Add agent name if provided
-    if agent.name is not None and agent.add_name_to_context:
-        additional_information.append(f"Your name is: {agent.name}.")
+    if resolved_name is not None and agent.add_name_to_context:
+        additional_information.append(f"Your name is: {resolved_name}.")
 
     # 3.3 Build the default system message for the Agent.
     system_message_content: str = ""
     # 3.3.1 First add the Agent description if provided
-    if agent.description is not None:
-        system_message_content += f"{agent.description}\n"
+    if resolved_description is not None:
+        system_message_content += f"{resolved_description}\n"
     # 3.3.2 Then add the Agent role if provided
-    if agent.role is not None:
-        system_message_content += f"\n<your_role>\n{agent.role}\n</your_role>\n\n"
+    if resolved_role is not None:
+        system_message_content += f"\n<your_role>\n{resolved_role}\n</your_role>\n\n"
     # 3.3.3 Then add instructions for the Agent
     if len(instructions) > 0:
         if agent.use_instruction_tags:
@@ -621,11 +743,11 @@ async def aget_system_message(
         )
 
     # 3.3.7 Then add the expected output
-    if agent.expected_output is not None:
-        system_message_content += f"<expected_output>\n{agent.expected_output.strip()}\n</expected_output>\n\n"
+    if resolved_expected_output is not None:
+        system_message_content += f"<expected_output>\n{resolved_expected_output.strip()}\n</expected_output>\n\n"
     # 3.3.8 Then add additional context
-    if agent.additional_context is not None:
-        system_message_content += f"{agent.additional_context}\n"
+    if resolved_additional_context is not None:
+        system_message_content += f"{resolved_additional_context}\n"
     # 3.3.8.1 Then add skills to the system prompt
     if agent.skills is not None:
         skills_snippet = agent.skills.get_system_prompt_snippet()
