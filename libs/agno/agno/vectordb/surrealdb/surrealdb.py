@@ -17,6 +17,7 @@ from agno.knowledge.embedder import Embedder
 from agno.utils.log import log_debug, log_error, log_warning
 from agno.vectordb.base import VectorDb
 from agno.vectordb.distance import Distance
+from agno.vectordb.filter_validation import validate_metadata_key, validate_metadata_keys
 
 
 class SurrealDb(VectorDb):
@@ -198,6 +199,9 @@ class SurrealDb(VectorDb):
         """
         if not filters:
             return ""
+        # Validate keys before interpolating into SurrealQL (see #8823).
+        for key in filters:
+            validate_metadata_key(key)
         conditions = [f"meta_data.{key} = ${key}" for key in filters]
         return "AND " + " AND ".join(conditions)
 
@@ -415,6 +419,8 @@ class SurrealDb(VectorDb):
 
         """
         log_debug(f"Deleting documents by metadata: {metadata}")
+        # Validate keys before interpolating into SurrealQL (see #8823).
+        validate_metadata_keys(metadata)
         conditions = [f"meta_data.{key} = ${key}" for key in metadata.keys()]
         conditions_str = " AND ".join(conditions)
         query = self.DELETE_BY_METADATA_QUERY.format(collection=self.collection, conditions=conditions_str)
