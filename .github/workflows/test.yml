@@ -176,16 +176,17 @@ jobs:
         working-directory: .
         env:
           AGNO_TELEMETRY: false
+          COVERAGE_FILE: .coverage.${{ matrix.name }}
         run: |
           source .venv/bin/activate
           python -m pytest --cov=agno ${{ matrix.paths }} ${{ matrix.extra_ignores }} --ignore=libs/agno/tests/unit/models/litellm --ignore=libs/agno/tests/unit/tools/test_crawl4ai.py --ignore=libs/agno/tests/unit/tools/test_scrapegraph.py
-          mv .coverage .coverage.${{ matrix.name }}
       - name: Upload coverage artifact
         uses: actions/upload-artifact@v4
         with:
           name: coverage-${{ matrix.name }}
           path: .coverage.${{ matrix.name }}
           retention-days: 1
+          include-hidden-files: true
 
   coverage-report:
     runs-on: ubuntu-latest
