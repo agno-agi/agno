@@ -4,7 +4,7 @@ MCP client example: an agent that operates an AgentOS through its MCP server.
 First run the AgentOS with the MCP server enabled:
 
 ```bash
-.venvs/demo/bin/python cookbook/05_agent_os/mcp_demo/enable_mcp_example.py
+.venvs/demo/bin/python cookbook/05_agent_os/mcp_demo/mcp_server_example.py
 ```
 
 Then run this client in a second terminal. It connects to the AgentOS MCP server

@@ -6,12 +6,21 @@ they work; in JSON mode only emit_json touches stdout, so output stays parseable
 """
 
 import json
+from pathlib import Path
 from typing import Any, Dict
 
 from rich.console import Console
 
 console = Console()
 err_console = Console(stderr=True)
+
+
+def shorten_home(text: str) -> str:
+    """Display-only: the home-directory prefix reads better as ~. Never used in JSON."""
+    home = str(Path.home())
+    if home and home != "/" and home in text:
+        return text.replace(home, "~")
+    return text
 
 
 def print_heading(msg: str) -> None:

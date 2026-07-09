@@ -236,6 +236,19 @@ class AgentOSAPI:
                 return
             page += 1
 
+    def check_admin_credential(self) -> None:
+        """One cheap authed call, so a bad admin credential fails fast and legibly.
+
+        _request already turns a 401/403 into the rejected-credential APIError with the
+        where-to-get-a-token hint; any other non-200 is surfaced the same way.
+        """
+        response = self._request("GET", "/service-accounts", params={"page": 1, "limit": 1})
+        if response.status_code != 200:
+            raise APIError(
+                "Could not verify the admin credential: " + _error_detail(response),
+                status_code=response.status_code,
+            )
+
     def find_service_account(self, name: str) -> Optional[ServiceAccount]:
         # Active accounts only, one page at a time, stopping at the first match --
         # token rotation grows the revoked history monotonically, so downloading the
@@ -286,6 +299,27 @@ class AgentOSAPI:
             raise APIError(
                 "The AgentOS rejected the admin credential (" + _error_detail(response) + ").",
                 status_code=response.status_code,
-                hint="Set AGNO_ADMIN_TOKEN (or OS_SECURITY_KEY) to a credential with admin access.",
+                hint=(
+                    "Generate a short-lived admin token in the AgentOS UI (Settings -> OS & Security), "
+                    "or set AGNO_ADMIN_TOKEN (or OS_SECURITY_KEY) to a credential with admin access."
+                ),
             )
         return response
+
+
+def service_accounts_open(base_url: str, timeout: float = DEFAULT_TIMEOUT) -> bool:
+    """Whether the service-accounts API answers without any credential.
+
+    True means no auth middleware guards the REST plane -- an OS whose only auth is an
+    ``mcp_auth`` provider on /mcp. Such a server refuses anonymous mints (durable
+    credentials must never come from anonymous callers) and can authenticate only a
+    verified service-account bearer; any other credential "passes" its open reads right
+    up until the mint fails. Unreachable or odd answers count as not-open, so callers
+    fall through to the normal credential flow and its errors.
+    """
+    try:
+        with build_client(base_url=base_url.rstrip("/"), timeout=timeout) as client:
+            response = client.get("/service-accounts", params={"page": 1, "limit": 1})
+    except httpx.HTTPError:
+        return False
+    return response.status_code == 200

@@ -4,9 +4,11 @@ import pytest
 
 from agnoctl.commands._common import (
     _is_loopback_host,
+    derive_server_name,
     ensure_env_file_url_trusted,
     require_secure_url,
     validate_project_name,
+    validate_server_name,
 )
 from agnoctl.errors import CLIError
 
@@ -105,6 +107,46 @@ def test_env_file_gate_prompts_interactively(monkeypatch):
     ensure_env_file_url_trusted(
         "https://prod.example.com", "env-file", ".env.production", assume_yes=False, json_mode=False
     )  # must not raise
+
+
+def test_env_file_gate_interactive_default_is_trust(monkeypatch):
+    """Enter on the interactive prompt trusts the URL (the env-file URL is almost always
+    the one the operator's own deploy just wrote); automation above stays fail-closed."""
+    import agnoctl.commands._common as common
+
+    monkeypatch.setattr(common, "stdin_is_interactive", lambda: True)
+    captured = {}
+
+    def confirm(prompt, default=None):
+        captured["default"] = default
+        return default  # answer with the default, i.e. a bare Enter
+
+    monkeypatch.setattr(common.typer, "confirm", confirm)
+    ensure_env_file_url_trusted(
+        "https://prod.example.com", "env-file", ".env.production", assume_yes=False, json_mode=False
+    )  # must not raise: Enter accepts
+    assert captured["default"] is True
+
+
+# -- derive_server_name ----------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("os_name", "expected"),
+    [
+        ("AgentOS", "agentos"),
+        ("Customer Support", "customer-support"),
+        ("acme.prod v2", "acme-prod-v2"),
+        ("  weird -- name  ", "weird-name"),
+        ("!!!", "agentos"),
+        ("", "agentos"),
+        (None, "agentos"),
+    ],
+)
+def test_derive_server_name(os_name, expected):
+    derived = derive_server_name(os_name)
+    assert derived == expected
+    validate_server_name(derived)  # every derived name must pass the entry-name gate
 
 
 # -- validate_project_name -------------------------------------------------------------

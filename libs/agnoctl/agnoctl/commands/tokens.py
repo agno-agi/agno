@@ -10,6 +10,7 @@ from agnoctl.commands._common import (
     ensure_env_file_url_trusted,
     handle_cli_error,
     parse_expires,
+    require_mint_capable,
     require_secure_url,
     resolve_admin_token,
     stdin_is_interactive,
@@ -40,7 +41,12 @@ def _timestamp(value: Optional[int]) -> str:
 
 
 def _api_for(
-    url: Optional[str], json_mode: bool, allow_http: bool, sensitive: bool = False, assume_yes: bool = False
+    url: Optional[str],
+    json_mode: bool,
+    allow_http: bool,
+    sensitive: bool = False,
+    assume_yes: bool = False,
+    mint: bool = False,
 ) -> AgentOSAPI:
     os_info = discover(url)
     # A remote URL pulled from an ambient .env file could be redirecting this
@@ -52,6 +58,10 @@ def _api_for(
     # autodiscovery could land on a port-squatter, and the operator should see the target.
     if url is None and not json_mode:
         print_info("Using AgentOS at " + os_info.base_url + os_info.source_note())
+    # Before any credential is resolved (or prompted for): an OS whose only auth is the
+    # OAuth provider on /mcp refuses every mint, so no credential can help.
+    if mint:
+        require_mint_capable(os_info.base_url, os_info.auth_mode)
     admin_token = resolve_admin_token(os_info.auth_mode, json_mode)
     # Refuse to put a bearer credential (admin token) or receive a freshly minted PAT over
     # plaintext HTTP unless the target is loopback or the operator opted in with --allow-http.
@@ -82,7 +92,7 @@ def create(
         expires_in_days, never_expires = parse_expires(expires)
         # The plaintext PAT rides back in the create response, so this call is sensitive
         # even when the OS itself requires no admin credential to reach it.
-        with _api_for(url, json_output, allow_http, sensitive=True, assume_yes=yes) as api:
+        with _api_for(url, json_output, allow_http, sensitive=True, assume_yes=yes, mint=True) as api:
             try:
                 account = api.create_service_account(
                     name=name,

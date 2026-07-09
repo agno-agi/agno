@@ -12,6 +12,11 @@ class CLIError(Exception):
         self.exit_code = exit_code
         self.hint = hint
 
+    @property
+    def full_message(self) -> str:
+        """Message and hint as one line, for per-client result rows in reports."""
+        return self.message + ((" " + self.hint) if self.hint else "")
+
 
 class APIError(CLIError):
     """An AgentOS API call failed."""
