@@ -88,6 +88,8 @@ if TYPE_CHECKING:
     # runtime here would break `import agno.os` when the extra is not installed.
     from fastmcp.server.auth import AuthProvider
 
+    from agno.os.authz.provider import AuthorizationProvider
+
 
 @asynccontextmanager
 async def mcp_lifespan(_, mcp_tools):
@@ -1508,6 +1510,7 @@ class AgentOS:
         role_store = getattr(config, "role_store", None)
         provider = getattr(config, "authorization_provider", None)
 
+        resolved_provider: Optional[AuthorizationProvider] = None
         if role_store is not None:
             # Adopt the OS db so a store created without one persists to it (no-op if the
             # store already has its own db or the OS db isn't SQL-capable).
@@ -1519,9 +1522,20 @@ class AgentOS:
                     "store a db (ManagedRoleStore(db_url=...) / db=...) or pass a SQL-capable db to "
                     "AgentOS(db=...) for it to adopt."
                 )
-            fastapi_app.state.authorization_provider = role_store.provider
+            resolved_provider = role_store.provider
         elif provider is not None:
-            fastapi_app.state.authorization_provider = provider
+            resolved_provider = provider
+
+        if resolved_provider is not None:
+            fastapi_app.state.authorization_provider = resolved_provider
+            # The MCP tools are a mounted sub-app: the tool gate resolves the provider
+            # from the in-flight request's ``.app``, which is this sub-app (request.state
+            # crosses the mount boundary, request.app does not). Without mirroring the
+            # provider here the gate falls back to the default ScopeAuthorizationProvider,
+            # silently degrading a managed-role / custom provider to scope-only over MCP.
+            # Mirror it so all four choke points enforce the same provider.
+            if self._mcp_app is not None and hasattr(self._mcp_app, "state"):
+                self._mcp_app.state.authorization_provider = resolved_provider
 
         audit = getattr(config, "audit", None)
         if audit is not None:
