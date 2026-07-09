@@ -173,6 +173,7 @@ users, or plug in your own policy -- use these. Each one is runnable
 | `custom_authorization_provider.py` | Write your **own** `AuthorizationProvider` (here: pricing tiers) and plug it into the same enforcement points. |
 | `idp_workos_auth0.py` | Map **roles from your IdP** (WorkOS/Auth0/Okta) claims onto AgentOS permissions, verified against a JWKS. |
 | `manage_users_and_roles.py` | Serves the **`/authz` admin API** so a frontend can create roles, add users, and disable people live -- running the token-scope plane and the managed-role plane **at the same time**. Ships with `console.html`, a zero-setup test client: run the server, then open the file in a browser and paste the printed admin token. |
+| `fga_relationship_based.py` | **Relationship-based** access (ReBAC) via OpenFGA: decide on "is this user the *owner* of that resource / in the same tenant?" rather than on scopes or roles. Needs a running OpenFGA (`pip install "agno[fga]"`). |
 
 ## Quick Start
 
