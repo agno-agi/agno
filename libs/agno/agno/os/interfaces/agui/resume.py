@@ -4,6 +4,7 @@ from ag_ui.core.types import ToolMessage as AGUIToolMessage
 
 from agno.agent import Agent
 from agno.os.interfaces.agui.input import ensure_requirements_resolved, merge_tool_results_into_requirements
+from agno.run.agent import RunOutput
 from agno.run.base import RunContext, RunStatus
 from agno.run.requirement import RunRequirement
 from agno.run.team import TeamRunOutput
@@ -69,6 +70,7 @@ async def resume_paused_run(
     # (e.g. one the user abandoned), and the incoming results identify which run is being resumed.
     # For Teams, resume the top-level TeamRunOutput, not member runs (whose missing team_id crashes core).
     incoming_tool_call_ids = {tm.tool_call_id for tm in tool_messages}
+    paused_run: Union[RunOutput, TeamRunOutput, None] = None
 
     def matches_tool_messages(run) -> bool:
         return any(
