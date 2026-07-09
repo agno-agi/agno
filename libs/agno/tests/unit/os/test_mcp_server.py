@@ -1131,6 +1131,20 @@ def test_mcp_server_wins_over_enable_mcp_server_alias():
     assert os.mcp_server is True
 
 
+def test_explicit_mcp_server_false_cannot_override_enable_mcp_server_true():
+    """Documented edge: mcp_server=False is indistinguishable from the default, so an
+    explicit False cannot suppress an enable_mcp_server=True alias -- the alias still
+    enables the server."""
+    with pytest.warns(DeprecationWarning, match="enable_mcp_server") as rec:
+        os = AgentOS(agents=[_agent()], mcp_server=False, enable_mcp_server=True)
+    assert os.mcp_server is True
+    # The single-alias deprecation warning fires (not the both-provided variant), because
+    # False is treated as the default sentinel and there is no way to distinguish it.
+    messages = [str(w.message) for w in rec.list]
+    assert any("enable_mcp_server=...) is deprecated" in m for m in messages)
+    assert not any("Both mcp_server and enable_mcp_server are provided" in m for m in messages)
+
+
 def test_mcp_server_config_wins_over_enable_mcp_server_false():
     with pytest.warns(DeprecationWarning, match="enable_mcp_server"):
         os = AgentOS(
