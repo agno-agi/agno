@@ -1,10 +1,11 @@
+from unittest.mock import AsyncMock, MagicMock
+
 import pytest
-from unittest.mock import MagicMock, AsyncMock
 
 from agno.models.response import ToolExecution
-from agno.os.interfaces.agui.resume import resume_paused_run, apply_tool_results_to_requirements
-from agno.run.base import RunContext, RunStatus
+from agno.os.interfaces.agui.resume import apply_tool_results_to_requirements, resume_paused_run
 from agno.run.agent import RunOutput
+from agno.run.base import RunContext, RunStatus
 from agno.run.requirement import RunRequirement
 from agno.session.agent import AgentSession
 
@@ -78,7 +79,7 @@ class TestResumePausedRunErrorPaths:
         session.runs = [RunOutput(run_id="completed-run", status=RunStatus.completed)]
         entity.aget_session = AsyncMock(return_value=session)
 
-        with pytest.raises(ValueError, match="No paused run found"):
+        with pytest.raises(ValueError, match="No paused run matching"):
             await resume_paused_run(
                 entity=entity,
                 session_id="test-session",
@@ -89,6 +90,7 @@ class TestResumePausedRunErrorPaths:
 
     @pytest.mark.asyncio
     async def test_raises_when_paused_run_has_no_requirements(self):
+        """Paused run with no requirements won't match any tool_call_ids."""
         entity = MagicMock()
         entity.db = MagicMock()
         session = AgentSession(session_id="test-session")
@@ -96,7 +98,8 @@ class TestResumePausedRunErrorPaths:
         session.runs = [paused_run]
         entity.aget_session = AsyncMock(return_value=session)
 
-        with pytest.raises(ValueError, match="has no requirements"):
+        # Run has no requirements, so no tool_call_ids to match
+        with pytest.raises(ValueError, match="No paused run matching"):
             await resume_paused_run(
                 entity=entity,
                 session_id="test-session",
