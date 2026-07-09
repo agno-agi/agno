@@ -172,6 +172,7 @@ users, or plug in your own policy -- use these. Each one is runnable
 | `managed_roles_audit.py` | The **audit trail**: a change trail (who changed which role) plus a decision trail (every allow/deny). |
 | `custom_authorization_provider.py` | Write your **own** `AuthorizationProvider` (here: pricing tiers) and plug it into the same enforcement points. |
 | `idp_workos_auth0.py` | Map **roles from your IdP** (WorkOS/Auth0/Okta) claims onto AgentOS permissions, verified against a JWKS. |
+| `manage_users_and_roles.py` | Serves the **`/authz` admin API** so a frontend can create roles, add users, and disable people live -- running the token-scope plane and the managed-role plane **at the same time**. Ships with `console.html`, a zero-setup test client: run the server, then open the file in a browser and paste the printed admin token. |
 
 ## Quick Start
 
