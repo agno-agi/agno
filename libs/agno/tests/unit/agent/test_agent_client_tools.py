@@ -1,10 +1,10 @@
 import pytest
 
+from agno.agent._tools import aget_tools, get_tools
 from agno.agent.agent import Agent
-from agno.agent._tools import get_tools, aget_tools
 from agno.models.base import Function
-from agno.run.base import RunContext
 from agno.run.agent import RunOutput
+from agno.run.base import RunContext
 from agno.session.agent import AgentSession
 
 
@@ -94,6 +94,7 @@ class TestAgentClientToolsSync:
         assert render_tool.external_execution is True
         assert render_tool.external_execution_silent is True
 
+
 class TestAgentClientToolsAsync:
     @pytest.mark.asyncio
     async def test_client_tools_appended_async(self):
@@ -123,6 +124,7 @@ class TestAgentClientToolsAsync:
 
         tool_names = {t.name for t in tools if isinstance(t, Function)}
         assert "render_chart" not in tool_names
+
 
 class TestClientToolsIsolation:
     def test_client_tools_do_not_mutate_agent_tools(self):
