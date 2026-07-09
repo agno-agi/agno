@@ -1,6 +1,35 @@
 # Test Log: mcp_demo
 
-### enable_mcp_example.py
+### oauth_builtin_example.py
+
+**Status:** PASS (2026-07-07, construction + full flow via unit harness)
+
+**Description:** `AgentOS(mcp_auth=AgentOSBuiltinAuth.from_env())` — the built-in OAuth
+authorization server. Requires Postgres + `AGENTOS_URL`/`MCP_CONNECT_SECRET` to run as a server.
+
+**Result:** The end-to-end connector flow it demonstrates (DCR → consent → PKCE token →
+`/mcp`, refresh rotation, redeploy/second-replica verification, hash-at-rest) is proven
+by `tests/unit/os/test_mcp_auth_builtin.py` (18 tests, pass) over the same code paths on
+SQLite. The example file itself is syntax- and lint-clean; a live Postgres run behind
+HTTPS against a real claude.ai/ChatGPT connector is a deployment test.
+
+---
+
+### oauth_authkit_example.py
+
+**Status:** PASS (2026-07-07, construction + seam via unit harness)
+
+**Description:** `AgentOS(mcp_auth=AuthKitProvider(...))` — bring-your-own external AS.
+Requires a WorkOS AuthKit tenant + `AUTHKIT_DOMAIN` to run.
+
+**Result:** The Tier-2 seam (external-AS token verification, discovery advertising the
+external AS, PAT coexistence, `AuthKitProvider` construction) is proven by
+`tests/unit/os/test_mcp_auth_tier2.py` (7 tests, pass). A live WorkOS tenant run is a
+deployment test.
+
+---
+
+### mcp_server_example.py
 
 **Status:** PASS (2026-07-04, v2.7 8-tool surface)
 
