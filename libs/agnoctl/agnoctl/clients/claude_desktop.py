@@ -19,6 +19,7 @@ verifies the AgentOS endpoint itself, not that Claude can spawn npx, so a missin
 surfaced as a note rather than a failure.
 """
 
+import json
 import os
 import re
 import shutil
@@ -29,9 +30,13 @@ from typing import Any, Callable, Dict, List, Optional
 from agnoctl.clients.base import (
     ClientAdapter,
     ExistingEntry,
+    RemoveResult,
+    UrlMatcher,
     WriteResult,
+    atomic_write_text,
     bearer_header,
     read_json_lenient,
+    read_json_strict,
     servers_table,
     token_from_authorization,
     write_servers_entry,
@@ -124,6 +129,34 @@ class ClaudeDesktopAdapter(ClientAdapter):
         if config is None:
             return None
         return _entry_from_config(servers_table(config).get(server_name), str(self.config_path))
+
+    def list_entries(self) -> Dict[str, ExistingEntry]:
+        config = read_json_lenient(self.config_path)
+        if config is None:
+            return {}
+        entries: Dict[str, ExistingEntry] = {}
+        for name, raw in servers_table(config).items():
+            entry = _entry_from_config(raw, str(self.config_path))
+            if entry:
+                entries[name] = entry
+        return entries
+
+    def remove(self, server_name: str, matches: Optional[UrlMatcher] = None) -> RemoveResult:
+        # Not remove_servers_entry: a Claude Desktop entry is an mcp-remote bridge whose
+        # URL lives inside args, so the URL guard needs _entry_from_config to extract it.
+        if not self.config_path.exists():
+            return RemoveResult(removed=False)
+        config = read_json_strict(self.config_path)
+        servers = config.get("mcpServers")
+        if not isinstance(servers, dict) or server_name not in servers:
+            return RemoveResult(removed=False)
+        if matches is not None:
+            entry = _entry_from_config(servers.get(server_name), str(self.config_path))
+            if entry is None or not matches(entry.url):
+                return RemoveResult(removed=False)
+        del servers[server_name]
+        atomic_write_text(self.config_path, json.dumps(config, indent=2) + "\n", secure=False)
+        return RemoveResult(removed=True, location=str(self.config_path))
 
     def write(self, server_name: str, url: str, token: Optional[str]) -> WriteResult:
         args: List[str] = ["-y", "mcp-remote", url]

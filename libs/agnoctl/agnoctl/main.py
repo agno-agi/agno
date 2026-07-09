@@ -7,6 +7,7 @@ from rich.text import Text
 from agnoctl import __version__
 from agnoctl.commands.connect import connect
 from agnoctl.commands.create import create
+from agnoctl.commands.disconnect import disconnect
 from agnoctl.commands.lifecycle import down, restart, up
 from agnoctl.commands.status import status
 from agnoctl.commands.tokens import tokens_app
@@ -21,6 +22,7 @@ app = typer.Typer(
 )
 
 app.command(name="connect")(connect)
+app.command(name="disconnect")(disconnect)
 app.command(name="create")(create)
 app.command(name="status")(status)
 app.add_typer(tokens_app, name="tokens")
@@ -45,6 +47,7 @@ _GROUPS: List[Tuple[str, List[Tuple[str, str]]]] = [
         [
             ("agno create <name>", "Create a new AgentOS"),
             ("agno connect", "Connect your AI apps to your AgentOS using MCP"),
+            ("agno disconnect", "Disconnect your AI apps from your AgentOS"),
         ],
     ),
     (

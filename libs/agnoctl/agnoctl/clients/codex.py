@@ -18,6 +18,8 @@ from typing import Any, Dict, List, Optional
 from agnoctl.clients.base import (
     ClientAdapter,
     ExistingEntry,
+    RemoveResult,
+    UrlMatcher,
     WriteResult,
     atomic_write_text,
     bearer_header,
@@ -90,24 +92,30 @@ class CodexAdapter(ClientAdapter):
     def detect(self) -> bool:
         return (self.home / ".codex").is_dir()
 
-    def read_existing(self, server_name: str) -> Optional[ExistingEntry]:
+    def list_entries(self) -> Dict[str, ExistingEntry]:
         parsed = self._parse_config()
-        if parsed is None:
-            return None
-        entry = (parsed.get("mcp_servers") or {}).get(server_name)
-        if not isinstance(entry, dict):
-            return None
-        url = entry.get("url")
-        if not isinstance(url, str) or not url:
-            return None
-        headers = entry.get("http_headers")
-        if not isinstance(headers, dict):
-            headers = {}
-        return ExistingEntry(
-            url=url,
-            token=token_from_authorization(_ci_get(headers, "Authorization")),
-            location=str(self.config_path),
-        )
+        servers = (parsed or {}).get("mcp_servers")
+        if not isinstance(servers, dict):
+            return {}
+        entries: Dict[str, ExistingEntry] = {}
+        for name, entry in servers.items():
+            if not isinstance(entry, dict):
+                continue
+            url = entry.get("url")
+            if not isinstance(url, str) or not url:
+                continue
+            headers = entry.get("http_headers")
+            if not isinstance(headers, dict):
+                headers = {}
+            entries[name] = ExistingEntry(
+                url=url,
+                token=token_from_authorization(_ci_get(headers, "Authorization")),
+                location=str(self.config_path),
+            )
+        return entries
+
+    def read_existing(self, server_name: str) -> Optional[ExistingEntry]:
+        return self.list_entries().get(server_name)
 
     def write(self, server_name: str, url: str, token: Optional[str]) -> WriteResult:
         block_lines = ["[mcp_servers." + server_name + "]", "url = " + _toml_string(url)]
@@ -117,33 +125,64 @@ class CodexAdapter(ClientAdapter):
             )
         block = "\n".join(block_lines) + "\n"
 
-        existing_text = self.config_path.read_text() if self.config_path.exists() else ""
-        if existing_text:
-            try:
-                tomllib.loads(existing_text)
-            except tomllib.TOMLDecodeError as e:
-                raise CLIError(
-                    "Refusing to modify "
-                    + str(self.config_path)
-                    + ": the existing TOML does not parse ("
-                    + str(e)
-                    + ").",
-                    hint="Fix or move the file, then re-run.",
-                )
+        existing_text, _ = self._read_strict()
         new_text = self._replace_section(existing_text, server_name, block)
-
-        try:
-            tomllib.loads(new_text)
-        except tomllib.TOMLDecodeError as e:
-            raise CLIError(
-                "Refusing to write " + str(self.config_path) + ": the resulting TOML would be invalid (" + str(e) + ")."
-            )
+        self._validate_result(new_text)
 
         self.config_path.parent.mkdir(parents=True, exist_ok=True)
         atomic_write_text(self.config_path, new_text, secure=bool(token))
         return WriteResult(method="file", location=str(self.config_path))
 
+    def remove(self, server_name: str, matches: Optional[UrlMatcher] = None) -> RemoveResult:
+        """Drop the [mcp_servers.<name>] table via the same section-replace the write
+        path uses (with an empty block). _replace_section does not report whether it
+        found anything, so existence is checked on the parsed config first."""
+        text, parsed = self._read_strict()
+        servers = parsed.get("mcp_servers")
+        if not isinstance(servers, dict) or server_name not in servers:
+            return RemoveResult(removed=False)
+        if matches is not None:
+            entry = servers.get(server_name)
+            url = entry.get("url") if isinstance(entry, dict) else None
+            if not isinstance(url, str) or not matches(url):
+                return RemoveResult(removed=False)
+
+        new_text = self._replace_section(text, server_name, "")
+        remaining = self._validate_result(new_text)
+        # The line scanner only handles the layouts write() produces ([mcp_servers.<name>]
+        # tables and inline entries). A hand-written dotted-key spelling parses to the same
+        # entry but survives the scan; reporting "removed" for it would be a lie.
+        if server_name in (remaining.get("mcp_servers") or {}):
+            raise CLIError(
+                "Could not remove '" + server_name + "' from " + str(self.config_path) + ": unsupported TOML layout.",
+                hint="Remove the entry from the file manually.",
+            )
+        atomic_write_text(self.config_path, new_text, secure=False)
+        return RemoveResult(removed=True, location=str(self.config_path))
+
     # -- Internals -----------------------------------------------------------------
+
+    def _read_strict(self) -> "tuple[str, Dict[str, Any]]":
+        """The config file's text and parse; a file that does not parse refuses loudly
+        (shared by the write and remove paths so their refusal behavior cannot drift)."""
+        if not self.config_path.exists():
+            return "", {}
+        text = self.config_path.read_text()
+        try:
+            return text, tomllib.loads(text)
+        except tomllib.TOMLDecodeError as e:
+            raise CLIError(
+                "Refusing to modify " + str(self.config_path) + ": the existing TOML does not parse (" + str(e) + ").",
+                hint="Fix or move the file, then re-run.",
+            )
+
+    def _validate_result(self, new_text: str) -> Dict[str, Any]:
+        try:
+            return tomllib.loads(new_text)
+        except tomllib.TOMLDecodeError as e:
+            raise CLIError(
+                "Refusing to write " + str(self.config_path) + ": the resulting TOML would be invalid (" + str(e) + ")."
+            )
 
     def _parse_config(self) -> Optional[Dict[str, Any]]:
         if not self.config_path.exists():

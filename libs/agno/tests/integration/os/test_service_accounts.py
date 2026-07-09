@@ -435,7 +435,7 @@ class TestServiceAccountsOverMCP:
         agent_os = AgentOS(
             agents=[test_agent],
             db=sqlite_db,
-            enable_mcp_server=True,
+            mcp_server=True,
             settings=AgnoAPISettings(os_security_key="root-security-key"),
         )
         # Context manager so the MCP session manager lifespan runs. base_url sets the
@@ -445,7 +445,7 @@ class TestServiceAccountsOverMCP:
 
     @pytest.fixture
     def mcp_open_client(self, test_agent, sqlite_db):
-        agent_os = AgentOS(agents=[test_agent], db=sqlite_db, enable_mcp_server=True)
+        agent_os = AgentOS(agents=[test_agent], db=sqlite_db, mcp_server=True)
         with TestClient(agent_os.get_app(), base_url="http://localhost") as client:
             yield client
 

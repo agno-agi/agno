@@ -95,7 +95,7 @@ async def _call_run_agent(os: AgentOS, **kwargs):
 async def test_trimmed_result_carries_answer_and_ids_only():
     agent = _agent()
     _stub_arun_stream(agent, _full_run_output())
-    os = AgentOS(agents=[agent], enable_mcp_server=True)
+    os = AgentOS(agents=[agent], mcp_server=True)
 
     result = await _call_run_agent(os)
 
@@ -110,7 +110,7 @@ async def test_trimmed_result_carries_answer_and_ids_only():
 async def test_trimmed_result_does_not_leak_transcript_or_system_prompt():
     agent = _agent()
     _stub_arun_stream(agent, _full_run_output())
-    os = AgentOS(agents=[agent], enable_mcp_server=True)
+    os = AgentOS(agents=[agent], mcp_server=True)
 
     result = await _call_run_agent(os)
 
@@ -125,7 +125,7 @@ async def test_binary_media_becomes_image_content_block():
     run_output.images = [Image(content=_PNG_BYTES, mime_type="image/png")]
     agent = _agent()
     _stub_arun_stream(agent, run_output)
-    os = AgentOS(agents=[agent], enable_mcp_server=True)
+    os = AgentOS(agents=[agent], mcp_server=True)
 
     result = await _call_run_agent(os)
 
@@ -144,7 +144,7 @@ async def test_paused_run_reports_requirements():
     )
     agent = _agent()
     _stub_arun_stream(agent, run_output)
-    os = AgentOS(agents=[agent], enable_mcp_server=True)
+    os = AgentOS(agents=[agent], mcp_server=True)
 
     result = await _call_run_agent(os)
 
@@ -162,8 +162,7 @@ async def test_full_mode_ships_complete_run_output():
     _stub_arun_stream(agent, _full_run_output())
     os = AgentOS(
         agents=[agent],
-        enable_mcp_server=True,
-        mcp_config=MCPServerConfig(result_mode="full"),
+        mcp_server=MCPServerConfig(result_mode="full"),
     )
 
     result = await _call_run_agent(os)
@@ -182,8 +181,7 @@ async def test_full_mode_survives_binary_media():
     _stub_arun_stream(agent, run_output)
     os = AgentOS(
         agents=[agent],
-        enable_mcp_server=True,
-        mcp_config=MCPServerConfig(result_mode="full"),
+        mcp_server=MCPServerConfig(result_mode="full"),
     )
 
     result = await _call_run_agent(os)
@@ -201,7 +199,7 @@ async def test_tool_call_events_are_forwarded_as_progress():
         tool=ToolExecution(tool_name="duckduckgo_search"),
     )
     _stub_arun_stream(agent, started_event, _full_run_output())
-    os = AgentOS(agents=[agent], enable_mcp_server=True)
+    os = AgentOS(agents=[agent], mcp_server=True)
 
     messages = []
 
@@ -232,7 +230,7 @@ async def test_workflow_result_built_from_completed_event():
         ),
     )
     _stub_arun_stream(workflow, completed)
-    os = AgentOS(workflows=[workflow], enable_mcp_server=True)
+    os = AgentOS(workflows=[workflow], mcp_server=True)
 
     async with Client(build_mcp_server(os)) as client:
         result = await client.call_tool("run_workflow", {"workflow_id": "demo-wf", "message": "go"})
@@ -247,7 +245,7 @@ async def test_run_finishing_without_output_raises_tool_error():
     """A stream that ends without a final output surfaces as a tool error, not a hang."""
     agent = _agent()
     _stub_arun_stream(agent)  # yields nothing
-    os = AgentOS(agents=[agent], enable_mcp_server=True)
+    os = AgentOS(agents=[agent], mcp_server=True)
 
     result = await _call_run_agent(os, raise_on_error=False)
     assert result.is_error
@@ -260,7 +258,7 @@ async def test_failed_run_surfaces_real_error_message():
     """The streaming error path yields only a RunErrorEvent; its message must reach the client."""
     agent = _agent()
     _stub_arun_stream(agent, RunErrorEvent(content="Incorrect API key provided"))
-    os = AgentOS(agents=[agent], enable_mcp_server=True)
+    os = AgentOS(agents=[agent], mcp_server=True)
 
     result = await _call_run_agent(os, raise_on_error=False)
 
@@ -283,7 +281,7 @@ async def test_paused_workflow_recovered_from_persisted_run():
         return paused
 
     workflow.aget_run_output = fake_aget_run_output  # type: ignore[method-assign]
-    os = AgentOS(workflows=[workflow], enable_mcp_server=True)
+    os = AgentOS(workflows=[workflow], mcp_server=True)
 
     async with Client(build_mcp_server(os)) as client:
         result = await client.call_tool("run_workflow", {"workflow_id": "demo-wf", "message": "go"})
@@ -304,7 +302,7 @@ async def test_nested_workflow_error_does_not_abort_outer_run():
         WorkflowErrorEvent(run_id="wf-nested", error="nested boom", nested_depth=1),
         WorkflowCompletedEvent(run_id="wf-outer", session_id="wf-sess", content="recovered", run_output=outer_output),
     )
-    os = AgentOS(workflows=[workflow], enable_mcp_server=True)
+    os = AgentOS(workflows=[workflow], mcp_server=True)
 
     async with Client(build_mcp_server(os)) as client:
         result = await client.call_tool("run_workflow", {"workflow_id": "demo-wf", "message": "go"})
@@ -330,7 +328,7 @@ async def test_workflow_progress_is_strictly_increasing():
         ),
     ]
     _stub_arun_stream(workflow, *events)
-    os = AgentOS(workflows=[workflow], enable_mcp_server=True)
+    os = AgentOS(workflows=[workflow], mcp_server=True)
 
     values = []
 
