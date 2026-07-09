@@ -1,8 +1,7 @@
 """Integration tests for @tool-decorated Toolkit methods with framework-injected parameters.
 
-A Toolkit method decorated with @tool (e.g. to set a custom tool name) that declares a run_context parameter.
-decorated with @tool (e.g. to set a custom tool name) that declares a run_context
-parameter failed at call time with a pydantic "Missing required argument" error,
+A Toolkit method decorated with @tool (e.g. to set a custom tool name) that declares a
+run_context parameter failed at call time with a pydantic "Missing required argument" error,
 because the bound wrapper created during registration hid the original signature
 from FunctionCall._build_entrypoint_args.
 """
