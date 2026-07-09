@@ -1,6 +1,6 @@
 """Schemas related to the AgentOS configuration"""
 
-from typing import Any, Callable, Dict, Generic, List, Literal, Optional, Set, TypeVar
+from typing import Any, Callable, Dict, Generic, List, Literal, Optional, Set, TypeVar, Union
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -137,8 +137,10 @@ class AuthorizationConfig(BaseModel):
     # (JWT/PAT scopes, no external dependency). Supply an AuthorizationProvider to
     # swap in a richer model (managed roles, ReBAC/ABAC, OpenFGA, ...) enforced at
     # the same points as scopes — the REST route gate, per-resource gate, WS gates,
-    # and MCP tool gate all resolve through it.
-    authorization_provider: Optional[AuthorizationProvider] = None
+    # and MCP tool gate all resolve through it. Pass a LIST of them to run several
+    # authz planes at once (e.g. token scopes for operators + a managed role store
+    # for end users) — a request is allowed if any of them allows it.
+    authorization_provider: Optional[Union[AuthorizationProvider, List[AuthorizationProvider]]] = None
     # Managed-roles shortcut: pass a ManagedRoleStore and AgentOS uses its provider
     # (mutually exclusive with authorization_provider). If the store has no DB, AgentOS
     # binds the OS database to it so roles persist alongside agent data.
