@@ -40,32 +40,13 @@ from agno.team import Team
 from agno.workflow import Workflow
 
 
-@pytest.fixture(autouse=True)
-def _a2a_resolve_shared_instance(monkeypatch):
-    """Resolve A2A components to the shared fixture instance the tests patch.
-
-    The A2A router now resolves with ``create_fresh=True`` (per-request isolation), which
-    deep-copies the component and would discard the ``.arun`` / ``.acancel_run`` patches
-    these tests set on the shared instance. Force ``create_fresh=False`` so the patched
-    instance is what runs; request isolation itself is covered by unit tests.
-    """
-    import agno.os.interfaces.a2a.router as a2a_router
-
-    def _force_shared(real):
-        def wrapper(*args, **kwargs):
-            kwargs["create_fresh"] = False
-            return real(*args, **kwargs)
-
-        return wrapper
-
-    for fn_name in ("get_agent_by_id", "get_team_by_id", "get_workflow_by_id"):
-        monkeypatch.setattr(a2a_router, fn_name, _force_shared(getattr(a2a_router, fn_name)))
-
-
 @pytest.fixture
 def test_agent():
     """Create a test agent for A2A."""
-    return Agent(name="test-a2a-agent", instructions="You are a helpful assistant.")
+    agent = Agent(name="test-a2a-agent", instructions="You are a helpful assistant.")
+    # Return same instance from deep_copy so arun patches work
+    agent.deep_copy = lambda **kwargs: agent
+    return agent
 
 
 @pytest.fixture
@@ -614,7 +595,10 @@ def test_team():
     """Create a test team for A2A."""
     agent1 = Agent(name="agent1", instructions="You are agent 1.")
     agent2 = Agent(name="agent2", instructions="You are agent 2.")
-    return Team(name="test-a2a-team", members=[agent1, agent2], instructions="You are a helpful team.")
+    team = Team(name="test-a2a-team", members=[agent1, agent2], instructions="You are a helpful team.")
+    # Return same instance from deep_copy so arun patches work
+    team.deep_copy = lambda **kwargs: team
+    return team
 
 
 @pytest.fixture
@@ -1120,6 +1104,8 @@ def test_workflow():
         return f"Workflow echo: {input}"
 
     workflow = Workflow(name="test-a2a-workflow", steps=[echo_step])
+    # Return same instance from deep_copy so arun patches work
+    workflow.deep_copy = lambda **kwargs: workflow
     return workflow
 
 
