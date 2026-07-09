@@ -6,6 +6,7 @@ Demonstrates reasoning agent.
 """
 
 from agno.agent.agent import Agent
+from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIResponses
 from agno.os import AgentOS
 from agno.os.interfaces.agui import AGUI
@@ -18,6 +19,7 @@ from agno.tools.websearch import WebSearchTools
 chat_agent = Agent(
     name="Assistant",
     model=OpenAIResponses(id="o4-mini"),
+    db=SqliteDb(db_file="/tmp/agui_reasoning_agent.db"),
     instructions="You are a helpful AI assistant.",
     add_datetime_to_context=True,
     add_history_to_context=True,
