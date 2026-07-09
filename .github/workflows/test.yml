@@ -149,7 +149,9 @@ jobs:
             paths: "libs/agno/tests/unit/os libs/agno/tests/unit/models libs/agno/tests/unit/team libs/agno/tests/unit/knowledge libs/agno/tests/unit/reader libs/agno/tests/unit/skills libs/agno/tests/unit/eval"
           - shard: 3
             name: "infra-utils"
-            paths: "libs/agno/tests/unit/vectordb libs/agno/tests/unit/utils libs/agno/tests/unit/workflow libs/agno/tests/unit/db libs/agno/tests/unit/scheduler libs/agno/tests/unit/registry libs/agno/tests/unit/reasoning libs/agno/tests/unit/telemetry libs/agno/tests/unit/learn libs/agno/tests/unit/integrations libs/agno/tests/unit/app libs/agno/tests/unit/remote libs/agno/tests/unit/guardrails libs/agno/tests/unit/compression libs/agno/tests/unit/agents libs/agno/tests/unit/a2a libs/agno/tests/unit/test_fallback.py libs/agno/tests/unit/test_filter_converter.py libs/agno/tests/unit/test_filters.py libs/agno/tests/unit/test_learning_machine.py libs/agno/tests/unit/test_learning_message_filtering.py libs/agno/tests/unit/test_model_type.py libs/agno/tests/unit/test_trace_search_api.py"
+            # Catch-all: runs all unit tests except shard 1+2 directories
+            paths: "libs/agno/tests/unit"
+            extra_ignores: "--ignore=libs/agno/tests/unit/tools --ignore=libs/agno/tests/unit/agent --ignore=libs/agno/tests/unit/context --ignore=libs/agno/tests/unit/run --ignore=libs/agno/tests/unit/memory --ignore=libs/agno/tests/unit/os --ignore=libs/agno/tests/unit/models --ignore=libs/agno/tests/unit/team --ignore=libs/agno/tests/unit/knowledge --ignore=libs/agno/tests/unit/reader --ignore=libs/agno/tests/unit/skills --ignore=libs/agno/tests/unit/eval"
       fail-fast: true # Stop all matrix jobs if one fails
 
     name: tests (${{ matrix.name }})
@@ -176,4 +178,35 @@ jobs:
           AGNO_TELEMETRY: false
         run: |
           source .venv/bin/activate
-          python -m pytest ${{ matrix.paths }} --ignore=libs/agno/tests/unit/models/litellm --ignore=libs/agno/tests/unit/tools/test_crawl4ai.py --ignore=libs/agno/tests/unit/tools/test_scrapegraph.py
+          python -m pytest --cov=agno ${{ matrix.paths }} ${{ matrix.extra_ignores }} --ignore=libs/agno/tests/unit/models/litellm --ignore=libs/agno/tests/unit/tools/test_crawl4ai.py --ignore=libs/agno/tests/unit/tools/test_scrapegraph.py
+          mv .coverage .coverage.${{ matrix.name }}
+      - name: Upload coverage artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-${{ matrix.name }}
+          path: .coverage.${{ matrix.name }}
+          retention-days: 1
+
+  coverage-report:
+    runs-on: ubuntu-latest
+    needs: tests
+    if: github.event_name != 'push' || !github.event.pull_request
+    steps:
+      - uses: actions/checkout@v3
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.12"
+      - name: Download all coverage artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: coverage-*
+          merge-multiple: true
+      - name: Combine coverage reports
+        run: |
+          pip install coverage
+          coverage combine
+          coverage json -o coverage-agno.json
+          AGNO_COVERAGE=$(python -c 'import json; print(json.load(open("coverage-agno.json"))["totals"]["percent_covered_display"])')
+          echo "AGNO_COVERAGE=$AGNO_COVERAGE" >> $GITHUB_ENV
+          echo "Combined coverage: $AGNO_COVERAGE"
