@@ -261,8 +261,9 @@ def _require_tool_scopes(method: str, path: str) -> None:
     """
     from fastmcp.server.dependencies import get_http_request
 
-    from agno.os.auth import build_insufficient_permissions_detail
-    from agno.os.scopes import check_route_scopes
+    from agno.os.auth import build_insufficient_permissions_detail, resolve_authorization_provider
+    from agno.os.authz.provider import AuthorizationContext
+    from agno.os.scopes import get_required_scopes_for_route, get_resource_context_from_path
 
     try:
         request = get_http_request()
@@ -283,16 +284,39 @@ def _require_tool_scopes(method: str, path: str) -> None:
             raise Exception(_MISSING_BRIDGE_DETAIL)
         return
 
+    required_scopes = get_required_scopes_for_route(_tool_scope_mappings(), method, path)
+    if not required_scopes:
+        return
+
     admin_scope_raw = getattr(state, "admin_scope", None)
     admin_scope = admin_scope_raw if isinstance(admin_scope_raw, str) else None
-    scope_check = check_route_scopes(
-        list(getattr(state, "scopes", None) or []),
-        _tool_scope_mappings(),
-        method,
-        path,
+
+    # Derive the resource context from the SYNTHETIC REST path the tool maps onto
+    # (e.g. "/agents/<id>/runs" -> agents/<id>), preserving v2.7's per-resource
+    # subtlety: the provider decides on the specific resource, not just the family.
+    resource_type, resource_id = get_resource_context_from_path(path)
+    actions = {s.rsplit(":", 1)[1] for s in required_scopes if ":" in s}
+    action = next(iter(actions)) if len(actions) == 1 else None
+
+    # Resolve the provider from the in-flight request's app.state — with none configured
+    # this is the default ScopeAuthorizationProvider, whose authorize_route delegates to
+    # has_required_scopes, so the tool gate stays byte-identical to v2.7's
+    # check_route_scopes. (The MCP tools have no GET-listing escape hatch: an
+    # unauthorised call is a hard denial, matching the prior behaviour.)
+    provider = resolve_authorization_provider(request)
+    ctx = AuthorizationContext(
+        principal_id=getattr(state, "user_id", None),
+        scopes=list(getattr(state, "scopes", None) or []),
+        claims=getattr(state, "claims", None) or {},
+        resource_type=resource_type,
+        resource_id=resource_id,
+        action=action,
         admin_scope=admin_scope,
     )
-    if not scope_check.allowed:
+    # The provider decides — default ScopeAuthorizationProvider is byte-identical to
+    # v2.7's check_route_scopes; a managed-role/custom provider enforces its own model
+    # on the OAuth-authenticated caller here too.
+    if not provider.authorize_route(ctx, required_scopes):
         # Under mcp_auth, a scope denial is most often an external-AS misconfiguration
         # (the token carries non-agno scopes), which the client-facing 403 can't point at.
         # Log the presented-vs-required scopes and the AS-config hint so the deployer can
@@ -302,11 +326,11 @@ def _require_tool_scopes(method: str, path: str) -> None:
 
             log_warning(
                 f"MCP tool scope check failed for {method} {path}: caller presented "
-                f"{list(getattr(state, 'scopes', None) or [])}, required {scope_check.required_scopes}. "
+                f"{list(getattr(state, 'scopes', None) or [])}, required {required_scopes}. "
                 "If this is a Tier-2 (external authorization server) deployment, configure your AS to emit "
                 "agno-format scopes in the token 'scope' claim."
             )
-        raise Exception(build_insufficient_permissions_detail(scope_check.required_scopes))
+        raise Exception(build_insufficient_permissions_detail(required_scopes))
 
 
 async def _enforce_run_continuation_allowed(db: Any, run_id: str) -> None:
