@@ -1553,7 +1553,19 @@ class AgentOS:
                 )
             resolved_provider = role_store.provider
         elif provider is not None:
-            resolved_provider = provider
+            # A list/tuple of providers means "run several authz planes at once"
+            # (e.g. token scopes for operators + a managed role store for end users):
+            # compose them with an OR — a request is allowed if any plane allows it.
+            if isinstance(provider, str):
+                raise ValueError(
+                    "authorization_provider must be an AuthorizationProvider (or a list of them), not a string."
+                )
+            if isinstance(provider, (list, tuple)):
+                from agno.os.authz._composite import CompositeAuthorizationProvider
+
+                resolved_provider = CompositeAuthorizationProvider(list(provider))
+            else:
+                resolved_provider = provider
 
         if resolved_provider is not None:
             fastapi_app.state.authorization_provider = resolved_provider

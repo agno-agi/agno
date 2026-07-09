@@ -12,7 +12,7 @@ import jwt
 import pytest
 from fastapi.testclient import TestClient
 
-from agno.os.authz.audit import AuditEvent, AuditSink  # noqa: E402
+from agno.os.authz.audit import AuditEvent, AuditSink, DbAuditSink  # noqa: E402
 from agno.os.authz.user_store import ManagedUserStore  # noqa: E402
 
 SECRET = "managed-users-secret-at-least-256-bits-long-padding-xxxxxx"
@@ -111,6 +111,7 @@ pytest.importorskip("sqlalchemy")  # managed roles persist/enforce via the nativ
 from agno.agent import Agent  # noqa: E402
 from agno.db.in_memory import InMemoryDb  # noqa: E402
 from agno.os import AgentOS  # noqa: E402
+from agno.os.authz.role_router import get_roles_router  # noqa: E402
 from agno.os.authz.role_store import ManagedRoleStore  # noqa: E402
 from agno.os.config import AuthorizationConfig  # noqa: E402
 
@@ -142,6 +143,72 @@ def _os(role_store, user_store, **cfg):
             **cfg,
         ),
     )
+
+
+def test_users_api_crud_and_role_merge():
+    roles = ManagedRoleStore(db_url=_db_url())
+    roles.set_role_scopes("admin", ["agent_os:admin"])
+    roles.set_role_scopes("viewer", ["agents:*:read"])
+    roles.assign("alice", "admin")
+    users = ManagedUserStore()
+
+    app = _os(roles, users).get_app()
+    app.include_router(get_roles_router(roles, user_store=users))
+    client = TestClient(app)
+
+    # create a user
+    r = client.post("/authz/users", headers=_auth("alice"), json={"id": "bob", "email": "bob@co"})
+    assert r.status_code == 200, r.text
+    assert r.json()["id"] == "bob" and r.json()["role"] is None and r.json()["status"] == "active"
+
+    # give bob a role; the user view merges it in (singular: one role per user)
+    roles.assign("bob", "viewer")
+    got = client.get("/authz/users/bob", headers=_auth("alice")).json()
+    assert got["email"] == "bob@co" and got["role"] == "viewer"
+
+    # list is paginated ({data, meta}) and includes bob with his role
+    listed = client.get("/authz/users", headers=_auth("alice")).json()["data"]
+    assert any(u["id"] == "bob" and u["role"] == "viewer" for u in listed)
+
+    # fuzzy search filters by id/email/name, case-insensitive, before pagination
+    found = client.get("/authz/users?search=BOB", headers=_auth("alice")).json()
+    assert [u["id"] for u in found["data"]] == ["bob"] and found["meta"]["total_count"] == 1
+    assert [u["id"] for u in client.get("/authz/users?search=bob@co", headers=_auth("alice")).json()["data"]] == ["bob"]
+    nothing = client.get("/authz/users?search=zzz-no-match", headers=_auth("alice")).json()
+    assert nothing["data"] == [] and nothing["meta"]["total_count"] == 0
+
+    # sorting: any USER_SORT_FIELDS member, asc/desc; unknown field is a 422
+    client.post("/authz/users", headers=_auth("alice"), json={"id": "ann", "email": "ann@co"})
+    by_id = client.get("/authz/users?sort_by=id&sort_order=asc", headers=_auth("alice")).json()["data"]
+    assert [u["id"] for u in by_id] == sorted(u["id"] for u in by_id)
+    assert client.get("/authz/users?sort_by=evil", headers=_auth("alice")).status_code == 422
+
+    # update + delete; PATCH {"disabled": ...} is the revocation kill-switch
+    client.patch("/authz/users/bob", headers=_auth("alice"), json={"name": "Bob"})
+    assert client.get("/authz/users/bob", headers=_auth("alice")).json()["name"] == "Bob"
+    disabled = client.patch("/authz/users/bob", headers=_auth("alice"), json={"disabled": True}).json()
+    assert disabled["status"] == "disabled" and disabled["disabled"] is True
+    assert users.is_disabled("bob") is True
+    enabled = client.patch("/authz/users/bob", headers=_auth("alice"), json={"disabled": False}).json()
+    assert enabled["status"] == "active" and users.is_disabled("bob") is False
+    assert client.delete("/authz/users/bob", headers=_auth("alice")).json()["deleted"] is True
+    assert client.get("/authz/users/bob", headers=_auth("alice")).status_code == 404
+
+
+def test_users_api_is_admin_only():
+    roles = ManagedRoleStore(db_url=_db_url())
+    roles.set_role_scopes("admin", ["agent_os:admin"])
+    roles.set_role_scopes("viewer", ["agents:*:read"])
+    roles.assign("alice", "admin")
+    roles.assign("bob", "viewer")
+    users = ManagedUserStore()
+
+    app = _os(roles, users).get_app()
+    app.include_router(get_roles_router(roles, user_store=users))
+    client = TestClient(app)
+
+    assert client.get("/authz/users", headers=_auth("bob")).status_code == 403  # non-admin
+    assert client.get("/authz/users").status_code == 401  # anonymous
 
 
 def test_disabled_user_is_denied_even_with_valid_token():
@@ -215,6 +282,30 @@ def test_auto_provision_from_claims_at_the_gate():
     assert r.status_code == 200
     provisioned = users.get("carol")
     assert provisioned is not None and provisioned["email"] == "carol@co" and provisioned["name"] == "Carol"
+
+
+def test_stores_share_one_agno_db(tmp_path):
+    """Passing the same agno db to the role/user/audit stores reuses its engine,
+    so everything lives in one database (no second db_url to keep in sync)."""
+    import sqlalchemy as sa
+
+    from agno.db.sqlite import SqliteDb
+
+    shared = SqliteDb(db_file=str(tmp_path / "shared.db"))
+    r = ManagedRoleStore(db=shared)
+    u = ManagedUserStore(db=shared)
+    a = DbAuditSink(db=shared)  # noqa: F841 (constructed for table creation)
+
+    r.set_role_scopes("viewer", ["agents:*:read"])
+    r.assign("bob", "viewer")
+    u.upsert("bob", email="bob@co")
+
+    # all authz tables live in the single shared engine (native policy + grouping,
+    # users, and both audit trails)
+    tables = set(sa.inspect(shared.db_engine).get_table_names())
+    assert {"authz_policy", "authz_grouping", "authz_users", "authz_audit", "authz_decisions"} <= tables
+    assert r.roles_of("bob") == ["viewer"]
+    assert u.get("bob")["email"] == "bob@co"
 
 
 def test_db_takes_precedence_and_bad_db_errors():
