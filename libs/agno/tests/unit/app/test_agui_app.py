@@ -199,6 +199,7 @@ async def test_stream_with_tool_call_blocking():
         tool_call.tool_call_id = "tool_1"
         tool_call.tool_name = "search"
         tool_call.tool_args = {"query": "test"}
+        tool_call.result = None
         tool_start_response.tool = tool_call
         yield tool_start_response
 
