@@ -75,8 +75,10 @@ class OSInfo:
     mcp_path: Optional[str]
     auth_mode: str  # REST/WS plane only: "none" | "security_key" | "jwt" | "unknown"; MCP OAuth is signaled by `oauth`
     discovered_via: str  # "info" | "probe"
-    url_source: str = "default"  # "flag" | "env" | "env-file" | "default"
-    url_source_file: Optional[str] = None  # env file AGENTOS_URL came from, when url_source == "env-file"
+    url_source: str = "default"  # "flag" | "env" | "env-file" | "client-config" | "default"
+    # Provenance detail: the env file AGENTOS_URL came from ("env-file"), or the client
+    # display names whose configs point at this OS ("client-config").
+    url_source_file: Optional[str] = None
     name: Optional[str] = None  # AgentOS(name=...), served on /info by agno >= 2.8; None on older servers
     os_id: Optional[str] = None
     oauth: Optional[McpOAuth] = None  # set when the MCP endpoint is OAuth-protected
@@ -238,6 +240,8 @@ def _source_note(url_source: str, url_source_file: Optional[str]) -> str:
         return " (from AGENTOS_URL in " + url_source_file + ")"
     if url_source == "env":
         return " (from AGENTOS_URL)"
+    if url_source == "client-config" and url_source_file:
+        return " (configured in " + url_source_file + ")"
     return ""
 
 
@@ -356,15 +360,27 @@ def discover(url: Optional[str] = None) -> OSInfo:
     raise _no_os_error(sources)
 
 
-def discover_all(url: Optional[str] = None) -> List[OSInfo]:
+def discover_all(
+    url: Optional[str] = None,
+    extra_sources: Optional["List[tuple[str, str, Optional[str]]]"] = None,
+) -> List[OSInfo]:
     """Every running AgentOS among the candidate sources, in priority order.
 
     Unlike discover(), an ambient env-file URL does not short-circuit the localhost
     defaults: all candidates are probed and every live one is returned, so an
-    interactive caller can offer a choice. Raises the same "no running AgentOS"
-    CLIError when none answer.
+    interactive caller can offer a choice. ``extra_sources`` are additional
+    (url, source, note) candidates -- e.g. OSes the client configs already point at --
+    probed after the standard ones and deduped against them; they are ignored when an
+    explicit --url or exported AGENTOS_URL names a deliberate single target. Raises
+    the same "no running AgentOS" CLIError when none answer.
     """
-    sources = _candidate_sources(url)
+    sources = list(_candidate_sources(url))
+    if extra_sources and sources[0][1] not in ("flag", "env"):
+        seen = {_dedup_key(candidate) for candidate, _, _ in sources}
+        for candidate, url_source, url_source_file in extra_sources:
+            if _dedup_key(candidate) not in seen:
+                seen.add(_dedup_key(candidate))
+                sources.append((candidate.rstrip("/"), url_source, url_source_file))
     found: List[OSInfo] = []
     for candidate, url_source, url_source_file in sources:
         os_info = _probe_candidate(candidate, url_source, url_source_file)

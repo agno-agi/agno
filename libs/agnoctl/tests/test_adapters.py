@@ -779,3 +779,33 @@ def test_list_entries_across_scopes_and_clients(tmp_path: Path):
     desktop = ClaudeDesktopAdapter(home=tmp_path, config_path=cfg, which=lambda name: None)
     desktop.write("agentos", URL, TOKEN)
     assert desktop.list_entries()["agentos"].url == URL
+
+
+def test_base_url_of_entry_variants():
+    from agnoctl.clients import _base_url_of_entry
+
+    assert _base_url_of_entry("https://host/mcp") == "https://host"
+    assert _base_url_of_entry("https://host:8443/team1/mcp") == "https://host:8443/team1"
+    assert _base_url_of_entry("http://host/mcp/") == "http://host"
+    assert _base_url_of_entry("https://host/other") is None
+    assert _base_url_of_entry("not-a-url") is None
+
+
+def test_configured_sources_collects_and_labels(tmp_path):
+    import json as _json
+
+    from agnoctl.clients import configured_sources
+    from agnoctl.clients.codex import CodexAdapter
+    from agnoctl.clients.cursor import CursorAdapter
+
+    (tmp_path / ".cursor").mkdir()
+    (tmp_path / ".cursor" / "mcp.json").write_text(
+        _json.dumps({"mcpServers": {"prod": {"url": "https://prod.example.com/mcp"}, "x": {"url": "https://h/api"}}})
+    )
+    (tmp_path / ".codex").mkdir()
+    (tmp_path / ".codex" / "config.toml").write_text('[mcp_servers.prod]\nurl = "https://prod.example.com/mcp"\n')
+
+    sources = configured_sources(
+        {"cursor": CursorAdapter(home=tmp_path, cwd=tmp_path), "codex": CodexAdapter(home=tmp_path)}
+    )
+    assert sources == [("https://prod.example.com", "client-config", "Cursor, Codex")]
