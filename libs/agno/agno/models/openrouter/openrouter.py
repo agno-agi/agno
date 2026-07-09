@@ -11,6 +11,59 @@ from agno.models.openai.like import OpenAILike
 from agno.models.response import ModelResponse
 from agno.run.agent import RunOutput
 
+# Fields that carry reasoning text. Streamed fragments split a single reasoning
+# block across many chunks (text in pieces, signature in a final text-less
+# fragment); these text fields must be concatenated when merging by index.
+_REASONING_TEXT_FIELDS = ("text", "data")
+
+
+def _merge_reasoning_details(reasoning_details: Optional[List[Any]]) -> List[Any]:
+    """Reconstruct one complete reasoning detail object per ``index``.
+
+    OpenRouter streams one reasoning block across multiple chunks sharing the
+    same ``index`` — text arrives in pieces and the signature (Anthropic) or
+    encrypted payload (Gemini) can arrive in a final text-less fragment. The
+    streaming accumulator appends each fragment to a list, so the stored
+    ``reasoning_details`` would otherwise be separate partial fragments. Replaying
+    those verbatim corrupts Anthropic's signed thinking blocks and fails the next
+    request with ``Invalid signature in thinking block`` (agno-agi/agno#8794).
+
+    Fragments sharing an ``index`` are merged into a single block: text/data
+    fields are concatenated in arrival order, all other structural fields
+    (``type``, ``format``, ``id``, ``signature``, ...) are carried through. Entries
+    without an ``index`` or that are not dicts are passed through unchanged. Other
+    provider-data lists (e.g. ``server_tool_blocks``) are never touched.
+    """
+    if not reasoning_details:
+        return []
+
+    grouped: Dict[Any, Dict[str, Any]] = {}
+    order: List[Any] = []
+    passthrough: List[Any] = []
+
+    for fragment in reasoning_details:
+        if not isinstance(fragment, dict) or "index" not in fragment:
+            passthrough.append(fragment)
+            continue
+
+        idx = fragment["index"]
+        if idx not in grouped:
+            grouped[idx] = {}
+            order.append(idx)
+        target = grouped[idx]
+        for key, value in fragment.items():
+            if value is None:
+                continue
+            if key in _REASONING_TEXT_FIELDS and isinstance(value, str):
+                target[key] = target.get(key, "") + value
+            else:
+                target[key] = value
+
+    # Merge order: grouped blocks (in first-seen index order) then passthrough.
+    merged: List[Any] = [grouped[idx] for idx in order]
+    merged.extend(passthrough)
+    return merged
+
 
 @dataclass
 class OpenRouter(OpenAILike):
@@ -95,7 +148,10 @@ class OpenRouter(OpenAILike):
 
         if message.role == "assistant" and message.provider_data:
             if message.provider_data.get("reasoning_details"):
-                message_dict["reasoning_details"] = message.provider_data["reasoning_details"]
+                # Reconstruct complete reasoning detail blocks per index before
+                # replay. Streaming accumulates fragments into a list; replaying
+                # them verbatim corrupts Anthropic's signed thinking blocks (#8794).
+                message_dict["reasoning_details"] = _merge_reasoning_details(message.provider_data["reasoning_details"])
 
         return message_dict
 
