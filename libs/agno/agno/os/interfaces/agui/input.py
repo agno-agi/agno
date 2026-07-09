@@ -1,8 +1,10 @@
+from __future__ import annotations
+
 import base64
 import json
 import urllib.request
 from dataclasses import asdict, is_dataclass
-from typing import Any, Dict, List, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
 
 from ag_ui.core.types import Message as AGUIMessage
 from ag_ui.core.types import Tool as AGUITool
@@ -12,6 +14,9 @@ from pydantic import BaseModel
 from agno.media import Audio, File, Image, Video
 from agno.tools.function import Function
 from agno.utils.log import log_warning
+
+if TYPE_CHECKING:
+    from agno.run.requirement import RunRequirement
 
 
 def extract_user_input(messages: List[AGUIMessage]) -> str:
@@ -182,3 +187,84 @@ def parse_client_tools(agui_tools: Optional[List[AGUITool]]) -> List[Function]:
         )
         for tool in agui_tools
     ]
+
+
+def _parse_payload(content: Any) -> Dict[str, Any]:
+    """Tolerantly parse a ToolMessage.content JSON string into a dict (empty dict on failure)."""
+    if isinstance(content, dict):
+        return content
+    try:
+        data = json.loads(content)
+    except (json.JSONDecodeError, TypeError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def merge_tool_results_into_requirements(
+    stored_requirements: "List[RunRequirement]",
+    tool_messages: List[AGUIToolMessage],
+) -> "List[RunRequirement]":
+    """Resolve each paused requirement from its matching inbound ToolMessage, BY pause_type.
+
+    ToolMessage.content is a developer-defined JSON string (AG-UI defines no HITL payload
+    schema), so the frontend registration MUST emit exactly what this parses. Matching is by
+    tool_call_id; the branch is chosen by the STORED requirement's pause_type, never the payload:
+      - confirmation:       {"accepted": <bool>}   (optional "note")
+      - user_input:         {"values": {<field>: <value>, ...}}   (required; a non-dict "values" raises)
+      - user_feedback:      {"selections": {<question>: [<labels>]}}
+      - external_execution: the raw result string, passed through unchanged
+
+    Crucially, confirmation/user_input set confirmed/answered (NOT result) so agno runs the
+    backend tool on resume. Only external_execution sets result - setting a result on a
+    confirmation would make agno's dispatch reject the tool instead of running it.
+    """
+    results_map = {tm.tool_call_id: (tm.content, getattr(tm, "error", None)) for tm in tool_messages}
+    for req in stored_requirements:
+        te = req.tool_execution
+        if not te or not te.tool_call_id or te.tool_call_id not in results_map:
+            continue
+        content, error = results_map[te.tool_call_id]
+        data = _parse_payload(content)
+        pause_type = req.pause_type
+        # Each pause_type resolves via its own core method. An unknown pause_type falls through
+        # unresolved and ensure_requirements_resolved raises on it (fail-loud, never a silent skip).
+        if pause_type == "external_execution":
+            if error:
+                te.tool_call_error = True
+            req.set_external_execution_result(error if error else content)
+        elif pause_type == "confirmation":
+            if error or data.get("accepted") is not True:
+                req.reject(note=data.get("note") or error)
+            else:
+                req.confirm()
+        elif pause_type == "user_input":
+            values = data.get("values")
+            if not isinstance(values, dict):
+                raise ValueError("user_input resume expects a {'values': {...}} object")
+            req.provide_user_input(values)
+        elif pause_type == "user_feedback":
+            selections = data.get("selections")
+            if not isinstance(selections, dict) or not all(isinstance(v, list) for v in selections.values()):
+                raise ValueError("user_feedback resume expects {'selections': {<question>: [<labels>]}}")
+            req.provide_user_feedback(selections)
+    return stored_requirements
+
+
+def ensure_requirements_resolved(requirements: "List[RunRequirement]") -> None:
+    """Raise if any paused requirement is left unresolved (a partial multi-tool answer).
+
+    On a multi-tool pause the frontend may answer only some tools; merge_tool_results_into_requirements
+    skips the unanswered ones, leaving them unresolved. Passing a partial set to acontinue_run would let
+    those unanswered confirmation tools reach dispatch and be silently rejected. Fail loudly
+    instead - the frontend must answer every paused tool in one resume.
+    """
+    unresolved = [r for r in requirements if not r.is_resolved()]
+    if unresolved:
+        names = ", ".join(
+            r.tool_execution.tool_name for r in unresolved if r.tool_execution and r.tool_execution.tool_name
+        )
+        raise ValueError(
+            f"Partial resume: {len(unresolved)} of {len(requirements)} paused tool(s) unanswered"
+            + (f" ({names})" if names else "")
+            + ". The frontend must answer all paused tools before resuming."
+        )
