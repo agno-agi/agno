@@ -15,7 +15,7 @@ from urllib.parse import urlsplit
 
 import typer
 
-from agnoctl.clients import build_adapters, display_name
+from agnoctl.clients import build_adapters, configured_sources, display_name
 from agnoctl.commands._common import (
     ensure_env_file_url_trusted,
     handle_cli_error,
@@ -31,7 +31,7 @@ from agnoctl.commands.connect import (
     _split_chat_apps,
     exit_code_for,
 )
-from agnoctl.console import emit_json, print_error, print_info, print_success, print_warning
+from agnoctl.console import emit_json, print_error, print_info, print_success, print_warning, shorten_home
 from agnoctl.discovery import OSInfo, _candidate_sources, discover, discover_all
 from agnoctl.errors import CLIError
 from agnoctl.http import AgentOSAPI
@@ -126,7 +126,11 @@ def _disconnect(
     if revoke or server_name is None:
         interactive = not json_mode and stdin_is_interactive()
         try:
-            os_info = _select_os(discover_all(url), verb="disconnect") if interactive else discover(url)
+            os_info = (
+                _select_os(discover_all(url, extra_sources=configured_sources(build_adapters())), verb="disconnect")
+                if interactive
+                else discover(url)
+            )
         except CLIError:
             if revoke:
                 raise
@@ -273,7 +277,9 @@ def _report(
         label = display_name(r["client"])
         if r["status"] == "removed":
             names = ", ".join(r.get("removed") or [])
-            print_success("  removed        " + label + " ('" + names + "')  ->  " + str(r.get("location", "")))
+            print_success(
+                "  removed        " + label + " ('" + names + "')  ->  " + shorten_home(str(r.get("location", "")))
+            )
         elif r["status"] == "not-found":
             print_info("  not found      " + label + "  (no matching entry)")
         elif r["status"] == "manual":

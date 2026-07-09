@@ -1012,3 +1012,29 @@ def test_connect_oauth_report_consolidates_next_steps(monkeypatch, fake_clients)
     assert "Also reachable from the hosted chat apps" in out
     # The compact aside replaces the two full manual blocks for auto-surfaced apps.
     assert "action needed" not in out
+
+
+def test_connect_menu_offers_client_config_os(monkeypatch, tmp_path, fake_clients):
+    """A previously connected OS lives only in the client configs (there is no other
+    memory of it); the interactive picker offers it next to the local default with
+    provenance, and picking the remote still runs the trust gate."""
+    from tests.test_discovery import _install_hosts
+
+    monkeypatch.chdir(tmp_path)
+    _make_interactive(monkeypatch)
+    (fake_clients / ".cursor" / "mcp.json").write_text(
+        json.dumps({"mcpServers": {"prod-os": {"url": "http://prodhost:9000/mcp"}}})
+    )
+    _install_hosts(
+        monkeypatch,
+        {"localhost:7777": FakeAgentOS(), "prodhost:9000": FakeAgentOS(name="Prod OS", auth_mode="none", oauth=True)},
+    )
+
+    result = runner.invoke(app, ["connect", "--clients", "cursor"], input="2\n\n")
+    assert result.exit_code == 0, _all_output(result)
+    out = _all_output(result)
+    assert "Which one do you want to connect?" in out
+    assert "configured in Cursor" in out
+    assert "from your Cursor MCP config" in out
+    # The existing tokenless entry for the OAuth-protected prod OS verifies in place.
+    assert "already ok" in out

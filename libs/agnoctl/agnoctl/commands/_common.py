@@ -106,31 +106,38 @@ def ensure_env_file_url_trusted(
     assume_yes: bool,
     json_mode: bool,
 ) -> None:
-    """Guard the ambient-env-file redirect before a credential or config write.
+    """Guard the ambient-URL redirect before a credential or config write.
 
-    An AGENTOS_URL read from a .env / .env.production in the current directory is trusted
-    automatically only when it points at this machine (localhost / 127.x / ::1). A URL that
-    points at a remote host could have been planted by an untrusted directory to redirect the
-    admin credential or rewrite MCP client configs, so require an explicit go-ahead: prompt
-    interactively (default yes -- the operator eyeballs the URL, and it is almost always the
-    one their own deploy just wrote), and refuse outright in automation (--json or no TTY)
-    unless --yes was passed, since a headless run has no one looking at the URL. An explicit
-    --url or an exported AGENTOS_URL env var is not an ambient file and is trusted as before.
+    An AGENTOS_URL read from a .env / .env.production in the current directory -- or an
+    MCP entry harvested from a client config -- is trusted automatically only when it
+    points at this machine (localhost / 127.x / ::1). A URL that points at a remote
+    host could have been planted (an untrusted directory's env file or project-scoped
+    MCP config) to redirect the admin credential or rewrite MCP client configs, so
+    require an explicit go-ahead: prompt interactively (default yes -- the operator
+    eyeballs the URL, and it is almost always one their own deploy or an earlier
+    connect wrote), and refuse outright in automation (--json or no TTY) unless --yes
+    was passed, since a headless run has no one looking at the URL. An explicit --url
+    or an exported AGENTOS_URL env var is deliberate and trusted as before.
     """
-    if url_source != "env-file":
+    if url_source not in ("env-file", "client-config"):
         return
     if _is_loopback_host(urlsplit(base_url).hostname):
         return
     if assume_yes:
         return
-    source = url_source_file or "an env file"
+    if url_source == "client-config":
+        source = "your " + (url_source_file or "client") + " MCP config"
+        described = base_url + " (from " + source + ")"
+    else:
+        source = url_source_file or "an env file"
+        described = "AGENTOS_URL=" + base_url + " (from " + source + ")"
     if json_mode or not stdin_is_interactive():
         raise CLIError(
-            "AGENTOS_URL in " + source + " points to a remote host (" + base_url + ").",
-            hint="Pass --url to target it explicitly, or --yes to trust the env file.",
+            "The URL in " + source + " points to a remote host (" + base_url + ").",
+            hint="Pass --url to target it explicitly, or --yes to trust it.",
         )
-    if not typer.confirm("Trust AGENTOS_URL=" + base_url + " (from " + source + ")?", default=True):
-        raise CLIError("Aborted: did not trust the env-file URL " + base_url + ".")
+    if not typer.confirm("Trust " + described + "?", default=True):
+        raise CLIError("Aborted: did not trust the URL " + base_url + ".")
 
 
 # Where a human gets an admin credential when none is in the environment. The UI path

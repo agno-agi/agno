@@ -339,3 +339,28 @@ def test_discover_oauth_absent_on_older_servers(monkeypatch, tmp_path, fake_os):
     info = discover("http://localhost:7777")
     assert info.oauth is None
     assert info.oauth_enabled is False
+
+
+def test_discover_all_includes_client_config_sources(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    _install_hosts(monkeypatch, {"localhost:7777": FakeAgentOS(), "prodhost:8443": FakeAgentOS(name="Prod OS")})
+    found = discover_all(None, extra_sources=[("https://prodhost:8443", "client-config", "Claude Code, Cursor")])
+    assert [i.base_url for i in found] == ["http://localhost:7777", "https://prodhost:8443"]
+    assert found[1].url_source == "client-config"
+    assert found[1].source_note() == " (configured in Claude Code, Cursor)"
+
+
+def test_discover_all_explicit_url_ignores_client_config_sources(monkeypatch, tmp_path):
+    """--url names a deliberate single target; config-derived candidates never widen it."""
+    monkeypatch.chdir(tmp_path)
+    _install_hosts(monkeypatch, {"flaghost:9000": FakeAgentOS(), "prodhost:8443": FakeAgentOS()})
+    found = discover_all("http://flaghost:9000", extra_sources=[("https://prodhost:8443", "client-config", "Cursor")])
+    assert [i.base_url for i in found] == ["http://flaghost:9000"]
+
+
+def test_discover_all_dedupes_client_config_against_defaults(monkeypatch, tmp_path):
+    """A config entry for the local default (via a loopback alias) adds no candidate."""
+    monkeypatch.chdir(tmp_path)
+    _install_hosts(monkeypatch, {"localhost:7777": FakeAgentOS()})
+    found = discover_all(None, extra_sources=[("http://127.0.0.1:7777", "client-config", "Cursor")])
+    assert len(found) == 1

@@ -14,7 +14,7 @@ from urllib.parse import urlsplit
 import typer
 from rich.status import Status
 
-from agnoctl.clients import CLIENT_ALIASES, build_adapters, display_name
+from agnoctl.clients import CLIENT_ALIASES, build_adapters, configured_sources, display_name
 from agnoctl.clients.base import ClientAdapter
 from agnoctl.commands._common import (
     ADMIN_TOKEN_ENV,
@@ -32,7 +32,7 @@ from agnoctl.commands._common import (
     stdin_is_interactive,
     validate_server_name,
 )
-from agnoctl.console import console, emit_json, print_error, print_info, print_success, print_warning
+from agnoctl.console import console, emit_json, print_error, print_info, print_success, print_warning, shorten_home
 from agnoctl.discovery import (
     MCP_ENABLE_INSTRUCTIONS,
     OSInfo,
@@ -360,7 +360,10 @@ def _connect(
     # deterministic and a dead env-file OS is a hard failure, never a silent retarget.
     interactive = not json_mode and stdin_is_interactive()
     if interactive:
-        candidates = discover_all(url)
+        # The client configs are the durable record of previously connected OSes, so
+        # the picker offers those too (e.g. a deployed OS connected last week vs the
+        # local one running now). Non-interactive runs never see these candidates.
+        candidates = discover_all(url, extra_sources=configured_sources(build_adapters(project=project)))
         os_info = _select_os(candidates, verb="connect")
         if url is None and not any(c.url_source == "env-file" for c in candidates):
             file_url, file_name = _agentos_url_from_env_files()
@@ -894,13 +897,13 @@ def _report(
         if r["status"] == "connected":
             tools = (r.get("verify") or {}).get("tools")
             suffix = " (" + str(tools) + " tools)" if tools else ""
-            print_success("  connected      " + label + suffix + "  ->  " + str(r.get("location", "")))
+            print_success("  connected      " + label + suffix + "  ->  " + shorten_home(str(r.get("location", ""))))
         elif r["status"] == "needs-login":
             # The sign-in step lives in the "To finish" section below, next to the
             # restart step, so the row stays a one-line statement of what happened.
-            print_warning("  sign in        " + label + "  ->  " + str(r.get("location", "")))
+            print_warning("  sign in        " + label + "  ->  " + shorten_home(str(r.get("location", ""))))
         elif r["status"] == "already-connected":
-            print_success("  already ok     " + label + "  ->  " + str(r.get("location", "")))
+            print_success("  already ok     " + label + "  ->  " + shorten_home(str(r.get("location", ""))))
         elif r["status"] == "skipped":
             print_warning("  skipped        " + label + "  (" + str(r.get("error") or "") + ")")
         elif r["status"] == "manual":
