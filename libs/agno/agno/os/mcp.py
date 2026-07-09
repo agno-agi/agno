@@ -293,6 +293,19 @@ def _require_tool_scopes(method: str, path: str) -> None:
         admin_scope=admin_scope,
     )
     if not scope_check.allowed:
+        # Under mcp_auth, a scope denial is most often an external-AS misconfiguration
+        # (the token carries non-agno scopes), which the client-facing 403 can't point at.
+        # Log the presented-vs-required scopes and the AS-config hint so the deployer can
+        # trace it to their authorization server. Behavior (the raised 403) is unchanged.
+        if _mcp_auth_enabled(request):
+            from agno.utils.log import log_warning
+
+            log_warning(
+                f"MCP tool scope check failed for {method} {path}: caller presented "
+                f"{list(getattr(state, 'scopes', None) or [])}, required {scope_check.required_scopes}. "
+                "If this is a Tier-2 (external authorization server) deployment, configure your AS to emit "
+                "agno-format scopes in the token 'scope' claim."
+            )
         raise Exception(build_insufficient_permissions_detail(scope_check.required_scopes))
 
 
