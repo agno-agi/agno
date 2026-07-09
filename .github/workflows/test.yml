@@ -143,12 +143,15 @@ jobs:
         include:
           - shard: 1
             name: "tools-agent"
+            python-version: "3.12"
             paths: "libs/agno/tests/unit/tools libs/agno/tests/unit/agent libs/agno/tests/unit/context libs/agno/tests/unit/run libs/agno/tests/unit/memory"
           - shard: 2
             name: "os-models-team"
+            python-version: "3.12"
             paths: "libs/agno/tests/unit/os libs/agno/tests/unit/models libs/agno/tests/unit/team libs/agno/tests/unit/knowledge libs/agno/tests/unit/reader libs/agno/tests/unit/skills libs/agno/tests/unit/eval"
           - shard: 3
             name: "infra-utils"
+            python-version: "3.12"
             # Catch-all: runs all unit tests except shard 1+2 directories
             paths: "libs/agno/tests/unit"
             extra_ignores: "--ignore=libs/agno/tests/unit/tools --ignore=libs/agno/tests/unit/agent --ignore=libs/agno/tests/unit/context --ignore=libs/agno/tests/unit/run --ignore=libs/agno/tests/unit/memory --ignore=libs/agno/tests/unit/os --ignore=libs/agno/tests/unit/models --ignore=libs/agno/tests/unit/team --ignore=libs/agno/tests/unit/knowledge --ignore=libs/agno/tests/unit/reader --ignore=libs/agno/tests/unit/skills --ignore=libs/agno/tests/unit/eval"
@@ -158,10 +161,10 @@ jobs:
 
     steps:
       - uses: actions/checkout@v3
-      - name: Set up Python 3.12
+      - name: Set up Python ${{ matrix.python-version }}
         uses: actions/setup-python@v4
         with:
-          python-version: "3.12"
+          python-version: ${{ matrix.python-version }}
       - name: Install uv
         run: |
           set -e
