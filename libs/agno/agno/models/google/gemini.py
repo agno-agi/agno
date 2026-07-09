@@ -7,7 +7,7 @@ from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from os import getenv
 from pathlib import Path
-from typing import Any, Dict, Iterator, List, Optional, Type, Union
+from typing import Any, Dict, Iterator, List, Optional, Type, Union, cast
 from uuid import uuid4
 
 from pydantic import BaseModel
@@ -853,10 +853,12 @@ class Gemini(Model):
                             # Case 1: Video is a file_types.File object (Recommended)
                             # Add it as a File object
                             if video.content is not None and isinstance(video.content, GeminiFile):
+                                # The content annotation says bytes, but uploaded videos carry a File
+                                gemini_video = cast(GeminiFile, video.content)
                                 # Google recommends that if using a single video, place the text prompt after the video.
-                                if video.content.uri and video.content.mime_type:
+                                if gemini_video.uri and gemini_video.mime_type:
                                     message_parts.insert(
-                                        0, Part.from_uri(file_uri=video.content.uri, mime_type=video.content.mime_type)
+                                        0, Part.from_uri(file_uri=gemini_video.uri, mime_type=gemini_video.mime_type)
                                     )
                             else:
                                 video_file = self._format_video_for_message(video)
@@ -871,13 +873,15 @@ class Gemini(Model):
                     try:
                         for audio_snippet in message.audio:
                             if audio_snippet.content is not None and isinstance(audio_snippet.content, GeminiFile):
+                                # The content annotation says bytes, but uploaded audio carries a File
+                                gemini_audio = cast(GeminiFile, audio_snippet.content)
                                 # Google recommends that if using a single audio file, place the text prompt after the audio file.
-                                if audio_snippet.content.uri and audio_snippet.content.mime_type:
+                                if gemini_audio.uri and gemini_audio.mime_type:
                                     message_parts.insert(
                                         0,
                                         Part.from_uri(
-                                            file_uri=audio_snippet.content.uri,
-                                            mime_type=audio_snippet.content.mime_type,
+                                            file_uri=gemini_audio.uri,
+                                            mime_type=gemini_audio.mime_type,
                                         ),
                                     )
                             else:

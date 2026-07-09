@@ -8,12 +8,25 @@ from uuid import uuid4
 if TYPE_CHECKING:
     from agno.tracing.schemas import Span, Trace
 
+from agno.db import mcp_oauth_store
 from agno.db.base import BaseDb, ComponentType, SessionType
 from agno.db.migrations.manager import MigrationManager
 from agno.db.schemas.culture import CulturalKnowledge
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
+from agno.db.schemas.mcp_oauth import (
+    MCP_OAUTH_CLIENTS,
+    MCP_OAUTH_CODES,
+    MCP_OAUTH_KEYS,
+    MCP_OAUTH_REFRESH_TOKENS,
+    MCP_OAUTH_TABLE_NAME_ATTRS,
+    MCP_OAUTH_TRANSACTIONS,
+)
 from agno.db.schemas.memory import UserMemory
+from agno.db.schemas.service_accounts import (
+    resolve_service_account_sort_column,
+    validate_service_account_update,
+)
 from agno.db.sqlite.schemas import get_table_schema_definition
 from agno.db.sqlite.utils import (
     apply_sorting,
@@ -70,6 +83,12 @@ class SqliteDb(BaseDb):
         schedule_runs_table: Optional[str] = None,
         approvals_table: Optional[str] = None,
         auth_tokens_table: Optional[str] = None,
+        service_accounts_table: Optional[str] = None,
+        mcp_oauth_clients_table: Optional[str] = None,
+        mcp_oauth_transactions_table: Optional[str] = None,
+        mcp_oauth_codes_table: Optional[str] = None,
+        mcp_oauth_refresh_tokens_table: Optional[str] = None,
+        mcp_oauth_keys_table: Optional[str] = None,
         id: Optional[str] = None,
     ):
         """
@@ -100,6 +119,11 @@ class SqliteDb(BaseDb):
             learnings_table (Optional[str]): Name of the table to store learning records.
             schedules_table (Optional[str]): Name of the table to store cron schedules.
             schedule_runs_table (Optional[str]): Name of the table to store schedule run history.
+            mcp_oauth_clients_table (Optional[str]): Name of the table to store MCP OAuth client registrations.
+            mcp_oauth_transactions_table (Optional[str]): Name of the table to store MCP OAuth transactions.
+            mcp_oauth_codes_table (Optional[str]): Name of the table to store MCP OAuth authorization codes.
+            mcp_oauth_refresh_tokens_table (Optional[str]): Name of the table to store MCP OAuth refresh tokens.
+            mcp_oauth_keys_table (Optional[str]): Name of the table to store MCP OAuth signing keys.
             id (Optional[str]): ID of the database.
 
         Raises:
@@ -128,6 +152,12 @@ class SqliteDb(BaseDb):
             schedule_runs_table=schedule_runs_table,
             approvals_table=approvals_table,
             auth_tokens_table=auth_tokens_table,
+            service_accounts_table=service_accounts_table,
+            mcp_oauth_clients_table=mcp_oauth_clients_table,
+            mcp_oauth_transactions_table=mcp_oauth_transactions_table,
+            mcp_oauth_codes_table=mcp_oauth_codes_table,
+            mcp_oauth_refresh_tokens_table=mcp_oauth_refresh_tokens_table,
+            mcp_oauth_keys_table=mcp_oauth_keys_table,
         )
 
         _engine: Optional[Engine] = db_engine
@@ -187,6 +217,7 @@ class SqliteDb(BaseDb):
             schedules_table=data.get("schedules_table"),
             schedule_runs_table=data.get("schedule_runs_table"),
             approvals_table=data.get("approvals_table"),
+            service_accounts_table=data.get("service_accounts_table"),
             id=data.get("id"),
         )
 
@@ -228,6 +259,7 @@ class SqliteDb(BaseDb):
             (self.schedules_table_name, "schedules"),
             (self.schedule_runs_table_name, "schedule_runs"),
             (self.approvals_table_name, "approvals"),
+            (self.service_accounts_table_name, "service_accounts"),
         ]
 
         for table_name, table_type in tables_to_create:
@@ -268,6 +300,7 @@ class SqliteDb(BaseDb):
             schema_primary_key = table_schema.pop("__primary_key__", None)
             schema_foreign_keys = table_schema.pop("__foreign_keys__", [])
             schema_composite_indexes = table_schema.pop("__composite_indexes__", [])
+            schema_partial_unique_indexes = table_schema.pop("_partial_unique_indexes", [])
 
             # Build columns
             for col_name, col_config in table_schema.items():
@@ -363,6 +396,15 @@ class SqliteDb(BaseDb):
                 idx_name = f"idx_{table_name}_{'_'.join(idx_config['columns'])}"
                 idx_cols = [table.c[c] for c in idx_config["columns"]]
                 Index(idx_name, *idx_cols)
+
+            # Partial unique indexes
+            for idx_config in schema_partial_unique_indexes:
+                idx_name = f"{table_name}_{idx_config['name']}"
+                missing = [c for c in idx_config["columns"] if c not in table.c]
+                if missing:
+                    raise ValueError(f"Partial unique index references missing columns in {table_name}: {missing}")
+                idx_cols = [table.c[c] for c in idx_config["columns"]]
+                Index(idx_name, *idx_cols, unique=True, sqlite_where=text(idx_config["where"]))
 
             # Create table
             table_created = False
@@ -588,6 +630,21 @@ class SqliteDb(BaseDb):
                 create_table_if_not_found=create_table_if_not_found,
             )
             return self.auth_tokens_table
+
+        elif table_type == "service_accounts":
+            self.service_accounts_table = self._get_or_create_table(
+                table_name=self.service_accounts_table_name,
+                table_type="service_accounts",
+                create_table_if_not_found=create_table_if_not_found,
+            )
+            return self.service_accounts_table
+
+        elif table_type in MCP_OAUTH_TABLE_NAME_ATTRS:
+            return self._get_or_create_table(
+                table_name=getattr(self, MCP_OAUTH_TABLE_NAME_ATTRS[table_type]),
+                table_type=table_type,
+                create_table_if_not_found=create_table_if_not_found,
+            )
 
         else:
             raise ValueError(f"Unknown table type: '{table_type}'")
@@ -5005,6 +5062,105 @@ class SqliteDb(BaseDb):
             log_debug(f"Error updating approval run_status: {e}")
             return 0
 
+    # --- Built-in MCP OAuth server store ---
+    # Thin delegations to agno.db.mcp_oauth_store (shared with PostgresDb); each fetches the
+    # table via the normal schema-aware _get_table path, so the store is created on first
+    # use like every other agno table.
+
+    def get_mcp_oauth_client(self, client_id: str) -> Optional[str]:
+        table = self._get_table(table_type=MCP_OAUTH_CLIENTS, create_table_if_not_found=True)
+        return mcp_oauth_store.get_client(self.db_engine, table, client_id)
+
+    def create_mcp_oauth_client(
+        self, *, client_id: str, client_metadata: str, now: int, unconsumed_ttl: int, max_clients: int
+    ) -> bool:
+        table = self._get_table(table_type=MCP_OAUTH_CLIENTS, create_table_if_not_found=True)
+        return mcp_oauth_store.create_client(
+            self.db_engine,
+            table,
+            client_id=client_id,
+            client_metadata=client_metadata,
+            now=now,
+            unconsumed_ttl=unconsumed_ttl,
+            max_clients=max_clients,
+        )
+
+    def mark_mcp_oauth_client_consumed(self, client_id: str, now: int) -> None:
+        table = self._get_table(table_type=MCP_OAUTH_CLIENTS, create_table_if_not_found=True)
+        mcp_oauth_store.mark_client_consumed(self.db_engine, table, client_id, now)
+
+    def store_mcp_oauth_transaction(
+        self, *, txn_id: str, client_id: str, params: str, expires_at: int, now: int, max_pending: int
+    ) -> None:
+        table = self._get_table(table_type=MCP_OAUTH_TRANSACTIONS, create_table_if_not_found=True)
+        mcp_oauth_store.store_transaction(
+            self.db_engine,
+            table,
+            txn_id=txn_id,
+            client_id=client_id,
+            params=params,
+            expires_at=expires_at,
+            now=now,
+            max_pending=max_pending,
+        )
+
+    def get_mcp_oauth_transaction(self, txn_id: str) -> Optional[tuple]:
+        table = self._get_table(table_type=MCP_OAUTH_TRANSACTIONS, create_table_if_not_found=True)
+        return mcp_oauth_store.get_transaction(self.db_engine, table, txn_id)
+
+    def consume_mcp_oauth_transaction(self, txn_id: str, now: int) -> Optional[tuple]:
+        table = self._get_table(table_type=MCP_OAUTH_TRANSACTIONS, create_table_if_not_found=True)
+        return mcp_oauth_store.consume_transaction(self.db_engine, table, txn_id, now)
+
+    def store_mcp_oauth_code(self, *, code_hash: str, payload: str, expires_at: int, now: int) -> None:
+        table = self._get_table(table_type=MCP_OAUTH_CODES, create_table_if_not_found=True)
+        mcp_oauth_store.store_code(
+            self.db_engine, table, code_hash=code_hash, payload=payload, expires_at=expires_at, now=now
+        )
+
+    def get_mcp_oauth_code(self, code_hash: str) -> Optional[tuple]:
+        table = self._get_table(table_type=MCP_OAUTH_CODES, create_table_if_not_found=True)
+        return mcp_oauth_store.get_code(self.db_engine, table, code_hash)
+
+    def delete_mcp_oauth_code(self, code_hash: str) -> bool:
+        table = self._get_table(table_type=MCP_OAUTH_CODES, create_table_if_not_found=True)
+        return mcp_oauth_store.delete_code(self.db_engine, table, code_hash)
+
+    def store_mcp_oauth_refresh(
+        self, *, token_hash: str, client_id: str, scopes: str, expires_at: int, now: int, family_id: str
+    ) -> None:
+        table = self._get_table(table_type=MCP_OAUTH_REFRESH_TOKENS, create_table_if_not_found=True)
+        mcp_oauth_store.store_refresh(
+            self.db_engine,
+            table,
+            token_hash=token_hash,
+            client_id=client_id,
+            scopes=scopes,
+            expires_at=expires_at,
+            now=now,
+            family_id=family_id,
+        )
+
+    def get_mcp_oauth_refresh(self, token_hash: str) -> Optional[tuple]:
+        table = self._get_table(table_type=MCP_OAUTH_REFRESH_TOKENS, create_table_if_not_found=True)
+        return mcp_oauth_store.get_refresh(self.db_engine, table, token_hash)
+
+    def delete_mcp_oauth_refresh(self, token_hash: str) -> bool:
+        table = self._get_table(table_type=MCP_OAUTH_REFRESH_TOKENS, create_table_if_not_found=True)
+        return mcp_oauth_store.delete_refresh(self.db_engine, table, token_hash)
+
+    def delete_mcp_oauth_refresh_family(self, family_id: str) -> int:
+        table = self._get_table(table_type=MCP_OAUTH_REFRESH_TOKENS, create_table_if_not_found=True)
+        return mcp_oauth_store.delete_refresh_family(self.db_engine, table, family_id)
+
+    def get_mcp_oauth_keys(self) -> List[tuple]:
+        table = self._get_table(table_type=MCP_OAUTH_KEYS, create_table_if_not_found=True)
+        return mcp_oauth_store.get_keys(self.db_engine, table)
+
+    def insert_mcp_oauth_key(self, *, kid: str, secret: str, created_at: int) -> bool:
+        table = self._get_table(table_type=MCP_OAUTH_KEYS, create_table_if_not_found=True)
+        return mcp_oauth_store.insert_key(self.db_engine, table, kid=kid, secret=secret, created_at=created_at)
+
     # --- Auth Tokens ---
 
     def get_auth_token(self, provider: str, user_id: Optional[str], service: str) -> Optional[Dict[str, Any]]:
@@ -5074,4 +5230,134 @@ class SqliteDb(BaseDb):
                 return result.rowcount > 0
         except Exception as e:
             log_debug(f"Error deleting auth token: {e}")
+            return False
+
+    # -- Service Accounts methods --
+
+    def create_service_account(self, account_data: Dict[str, Any]) -> Dict[str, Any]:
+        try:
+            table = self._get_table(table_type="service_accounts", create_table_if_not_found=True)
+            if table is None:
+                raise RuntimeError("Failed to get or create service accounts table")
+            with self.Session() as sess, sess.begin():
+                sess.execute(table.insert().values(**account_data))
+            return account_data
+        except Exception as e:
+            log_error(f"Error creating service account: {str(e)}")
+            raise
+
+    def get_service_account(self, service_account_id: str) -> Optional[Dict[str, Any]]:
+        try:
+            table = self._get_table(table_type="service_accounts")
+            if table is None:
+                return None
+            with self.Session() as sess:
+                result = sess.execute(select(table).where(table.c.id == service_account_id)).fetchone()
+                return dict(result._mapping) if result else None
+        except Exception as e:
+            log_debug(f"Error getting service account: {e}")
+            return None
+
+    def get_service_account_by_token_hash(self, token_hash: str) -> Optional[Dict[str, Any]]:
+        """Get a service account by its token hash.
+
+        Re-raises on DB error so callers can distinguish "unknown token" (None) from "db unavailable" (exception).
+        """
+        table = self._get_table(table_type="service_accounts")
+        if table is None:
+            # _get_table swallows connectivity errors and returns None, which is
+            # indistinguishable from "table not created yet". Probe the connection so
+            # a real outage propagates (fail closed) instead of reading as an unknown
+            # token; a genuinely absent table returns None.
+            with self.Session() as sess:
+                sess.execute(text("SELECT 1"))
+            return None
+        try:
+            with self.Session() as sess:
+                result = sess.execute(select(table).where(table.c.token_hash == token_hash)).fetchone()
+                return dict(result._mapping) if result else None
+        except Exception as e:
+            log_error(f"Error getting service account by token hash: {e}")
+            raise
+
+    def get_service_account_by_name(self, name: str, include_revoked: bool = False) -> Optional[Dict[str, Any]]:
+        try:
+            table = self._get_table(table_type="service_accounts")
+            if table is None:
+                return None
+            with self.Session() as sess:
+                stmt = select(table).where(table.c.name == name)
+                if not include_revoked:
+                    stmt = stmt.where(table.c.revoked_at.is_(None))
+                stmt = stmt.order_by(table.c.created_at.desc())
+                result = sess.execute(stmt).fetchone()
+                return dict(result._mapping) if result else None
+        except Exception as e:
+            log_debug(f"Error getting service account by name: {e}")
+            return None
+
+    def get_service_accounts(
+        self,
+        include_revoked: bool = True,
+        limit: int = 20,
+        page: int = 1,
+        sort_by: str = "created_at",
+        sort_order: str = "desc",
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        try:
+            table = self._get_table(table_type="service_accounts")
+            if table is None:
+                return [], 0
+            with self.Session() as sess:
+                # Build base query with filters
+                base_query = select(table)
+                if not include_revoked:
+                    base_query = base_query.where(table.c.revoked_at.is_(None))
+
+                # Get total count
+                count_stmt = select(func.count()).select_from(base_query.alias())
+                total_count = sess.execute(count_stmt).scalar() or 0
+
+                # Calculate offset from page
+                offset = (page - 1) * limit
+
+                # Apply sorting
+                sort_column = table.c[resolve_service_account_sort_column(sort_by)]
+                order_by = sort_column.asc() if sort_order == "asc" else sort_column.desc()
+
+                # Get paginated results
+                stmt = base_query.order_by(order_by).limit(limit).offset(offset)
+                results = sess.execute(stmt).fetchall()
+                return [dict(row._mapping) for row in results], total_count
+        except Exception as e:
+            log_debug(f"Error listing service accounts: {e}")
+            return [], 0
+
+    def update_service_account(
+        self, service_account_id: str, return_record: bool = True, **kwargs: Any
+    ) -> Optional[Dict[str, Any]]:
+        validate_service_account_update(kwargs)
+        try:
+            table = self._get_table(table_type="service_accounts")
+            if table is None:
+                return None
+            with self.Session() as sess, sess.begin():
+                sess.execute(table.update().where(table.c.id == service_account_id).values(**kwargs))
+            if not return_record:
+                return None
+            return self.get_service_account(service_account_id)
+        except Exception as e:
+            log_debug(f"Error updating service account: {e}")
+            return None
+
+    def delete_service_account(self, service_account_id: str) -> bool:
+        try:
+            table = self._get_table(table_type="service_accounts")
+            if table is None:
+                return False
+            with self.Session() as sess, sess.begin():
+                result = sess.execute(table.delete().where(table.c.id == service_account_id))
+                return result.rowcount > 0
+        except Exception as e:
+            log_debug(f"Error deleting service account: {e}")
             return False

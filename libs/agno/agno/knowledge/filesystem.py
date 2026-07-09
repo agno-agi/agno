@@ -11,7 +11,6 @@ Implements the KnowledgeProtocol and provides three tools:
 
 from dataclasses import dataclass, field
 from os import walk as os_walk
-from os.path import isabs as path_isabs
 from pathlib import Path
 from re import IGNORECASE
 from re import compile as re_compile
@@ -19,8 +18,10 @@ from re import error as re_error
 from re import escape as re_escape
 from typing import Any, List, Optional
 
+from agno.exceptions import PathSecurityError
 from agno.knowledge.document import Document
 from agno.utils.log import log_debug, log_warning
+from agno.utils.path_safety import safe_join_relative_path
 
 
 @dataclass
@@ -133,11 +134,11 @@ class FileSystemKnowledge:
 
     def _get_file(self, query: str) -> List[Document]:
         """Get the contents of a specific file."""
-        # Handle both relative and absolute paths
-        if path_isabs(query):
-            file_path = Path(query)
-        else:
-            file_path = self.base_path / query
+        # Resolve within base_dir and reject path traversal
+        try:
+            file_path = safe_join_relative_path(self.base_path, query)
+        except PathSecurityError:
+            return []
 
         if not file_path.exists():
             log_warning(f"File not found: {query}")
@@ -147,26 +148,22 @@ class FileSystemKnowledge:
             log_warning(f"Path is not a file: {query}")
             return []
 
-        try:
-            content = file_path.read_text(encoding="utf-8", errors="replace")
-            rel_path = file_path.relative_to(self.base_path) if file_path.is_relative_to(self.base_path) else file_path
+        content = file_path.read_text(encoding="utf-8", errors="replace")
+        rel_path = file_path.relative_to(self.base_path) if file_path.is_relative_to(self.base_path) else file_path
 
-            return [
-                Document(
-                    name=rel_path.as_posix(),
-                    content=content,
-                    meta_data={
-                        "type": "file_content",
-                        "absolute_path": str(file_path),
-                        "extension": file_path.suffix,
-                        "size": len(content),
-                        "lines": content.count("\n") + 1,
-                    },
-                )
-            ]
-        except Exception as e:
-            log_warning(f"Error reading file {query}: {str(e)}")
-            return []
+        return [
+            Document(
+                name=rel_path.as_posix(),
+                content=content,
+                meta_data={
+                    "type": "file_content",
+                    "absolute_path": str(file_path),
+                    "extension": file_path.suffix,
+                    "size": len(content),
+                    "lines": content.count("\n") + 1,
+                },
+            )
+        ]
 
     def _grep(self, query: str, max_results: Optional[int] = None) -> List[Document]:
         """Search for a pattern within file contents."""
@@ -371,7 +368,11 @@ class FileSystemKnowledge:
             Returns:
                 The full file contents.
             """
-            docs = self._get_file(path)
+            try:
+                docs = self._get_file(path)
+            except Exception as e:
+                log_warning(f"Error reading file {path}: {str(e)}")
+                return f"Error reading file {path}: {e}"
 
             if not docs:
                 return f"File not found: {path}"

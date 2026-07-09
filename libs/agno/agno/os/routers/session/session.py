@@ -6,7 +6,7 @@ from uuid import uuid4
 from fastapi import APIRouter, Body, Depends, HTTPException, Path, Query, Request
 
 from agno.db.base import AsyncBaseDb, BaseDb, SessionType
-from agno.db.utils import deserialize_session_by_type, detect_session_type, resolve_session_type
+from agno.db.utils import deserialize_session_by_type, resolve_session_type
 from agno.os.auth import get_auth_token_from_request, get_authentication_dependency
 from agno.os.middleware.user_scope import (
     enforce_owner_on_entity,
@@ -32,6 +32,8 @@ from agno.os.schema import (
     WorkflowRunSchema,
     WorkflowSessionDetailSchema,
 )
+from agno.os.services.sessions import SessionNotFoundError, get_sessions_page
+from agno.os.services.sessions import get_session_runs as get_session_runs_from_service
 from agno.os.settings import AgnoAPISettings
 from agno.remote.base import RemoteDb
 from agno.session import AgentSession, Session, TeamSession, WorkflowSession
@@ -140,31 +142,19 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
                 headers=headers,
             )
 
-        if isinstance(db, AsyncBaseDb):
-            db = cast(AsyncBaseDb, db)
-            sessions, total_count = await db.get_sessions(
-                session_type=session_type,
-                component_id=component_id,
-                user_id=effective_user_id,
-                session_name=session_name,
-                limit=limit,
-                page=page,
-                sort_by=sort_by,
-                sort_order=sort_order,
-                deserialize=False,
-            )
-        else:
-            sessions, total_count = db.get_sessions(  # type: ignore
-                session_type=session_type,
-                component_id=component_id,
-                user_id=effective_user_id,
-                session_name=session_name,
-                limit=limit,
-                page=page,
-                sort_by=sort_by,
-                sort_order=sort_order,
-                deserialize=False,
-            )
+        # Shared with the MCP get_sessions tool: sync-db threadpool offload lives in the
+        # service so neither surface blocks its event loop and the two cannot drift.
+        sessions, total_count = await get_sessions_page(
+            db,
+            session_type=session_type,
+            component_id=component_id,
+            user_id=effective_user_id,
+            session_name=session_name,
+            limit=limit,
+            page=page,
+            sort_by=sort_by,
+            sort_order=sort_order,
+        )
 
         return PaginatedResponse(
             data=[SessionSchema.from_dict(session) for session in sessions],  # type: ignore
@@ -622,78 +612,20 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
                 headers=headers,
             )
 
-        start_timestamp = created_after
-        end_timestamp = created_before
-
-        if isinstance(db, AsyncBaseDb):
-            db = cast(AsyncBaseDb, db)
-            session = await db.get_session(
+        # Shared with the MCP get_session_runs tool: auto-detection, timestamp
+        # filtering, per-run classification, and sync-db threadpool offload all
+        # live in the service so the two surfaces cannot drift.
+        try:
+            return await get_session_runs_from_service(
+                db,
                 session_id=session_id,
                 session_type=session_type,
                 user_id=effective_user_id,
-                deserialize=False,
+                created_after=created_after,
+                created_before=created_before,
             )
-        else:
-            session = db.get_session(
-                session_id=session_id,
-                session_type=session_type,
-                user_id=effective_user_id,
-                deserialize=False,
-            )
-
-        if not session:
+        except SessionNotFoundError:
             raise HTTPException(status_code=404, detail=f"Session with ID {session_id} not found")
-
-        if session_type is None:
-            detected = detect_session_type(session if isinstance(session, dict) else {})
-            session_type = SessionType(detected)
-
-        runs = session.get("runs")  # type: ignore
-        if not runs:
-            return []
-
-        # Filter runs by timestamp if specified
-        # TODO: Move this filtering into the DB layer
-        filtered_runs = []
-        for run in runs:
-            if start_timestamp or end_timestamp:
-                run_created_at = run.get("created_at")
-                if run_created_at:
-                    # created_at is stored as epoch int
-                    if start_timestamp and run_created_at < start_timestamp:
-                        continue
-                    if end_timestamp and run_created_at > end_timestamp:
-                        continue
-
-            filtered_runs.append(run)
-
-        if not filtered_runs:
-            return []
-
-        run_responses: List[Union[RunSchema, TeamRunSchema, WorkflowRunSchema]] = []
-
-        if session_type == SessionType.AGENT:
-            return [RunSchema.from_dict(run) for run in filtered_runs]
-
-        elif session_type == SessionType.TEAM:
-            for run in filtered_runs:
-                if run.get("agent_id") is not None:
-                    run_responses.append(RunSchema.from_dict(run))
-                elif run.get("team_id") is not None:
-                    run_responses.append(TeamRunSchema.from_dict(run))
-            return run_responses
-
-        elif session_type == SessionType.WORKFLOW:
-            for run in filtered_runs:
-                if run.get("workflow_id") is not None:
-                    run_responses.append(WorkflowRunSchema.from_dict(run))
-                elif run.get("team_id") is not None:
-                    run_responses.append(TeamRunSchema.from_dict(run))
-                else:
-                    run_responses.append(RunSchema.from_dict(run))
-            return run_responses
-        else:
-            raise HTTPException(status_code=400, detail=f"Invalid session type: {session_type}")
 
     @router.get(
         "/sessions/{session_id}/runs/{run_id}",

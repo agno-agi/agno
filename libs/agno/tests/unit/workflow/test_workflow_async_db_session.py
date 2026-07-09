@@ -22,6 +22,9 @@ def workflow_with_async_postgres_db() -> Workflow:
 
 
 def _assert_raises_without_unawaited_warning(callable_to_test):
+    # Flush coroutines abandoned by earlier tests first: the collect inside the
+    # capture window would otherwise surface their warnings and blame this test.
+    gc.collect()
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always", RuntimeWarning)
         with pytest.raises(ValueError, match="Cannot use sync .* with an async database"):

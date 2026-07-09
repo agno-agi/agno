@@ -36,6 +36,12 @@ DB_TABLE_NAME_KEYS: frozenset = frozenset(
         "schedule_runs_table",
         "approvals_table",
         "auth_tokens_table",
+        "service_accounts_table",
+        "mcp_oauth_clients_table",
+        "mcp_oauth_codes_table",
+        "mcp_oauth_refresh_tokens_table",
+        "mcp_oauth_transactions_table",
+        "mcp_oauth_keys_table",
     }
 )
 

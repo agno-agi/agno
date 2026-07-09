@@ -10,12 +10,14 @@ RUN apt-get update && apt-get install -y \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy the entire agno library
-COPY . /app/agno
+# Copy the agno and agnoctl libraries (build context is libs/)
+COPY agnoctl /app/agnoctl
+COPY agno /app/agno
 
-# Install agno from local source
+# Install agno from local source; the local agnoctl in the same resolve
+# satisfies agno's agnoctl floor without touching PyPI
 WORKDIR /app/agno
-RUN pip install --no-cache-dir .
+RUN pip install --no-cache-dir /app/agnoctl ".[os]"
 
 # Install additional dependencies for the server
 RUN pip install --no-cache-dir \
@@ -43,7 +45,7 @@ RUN pip install --no-cache-dir \
 
 # Copy the gateway server script
 WORKDIR /app
-COPY tests/system/gateway_server.py /app/gateway_server.py
+COPY agno/tests/system/gateway_server.py /app/gateway_server.py
 
 # Expose the gateway port
 EXPOSE 7001
