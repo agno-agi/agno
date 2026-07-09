@@ -165,11 +165,11 @@ jobs:
         uses: actions/setup-python@v4
         with:
           python-version: ${{ matrix.python-version }}
-      - name: Install uv
-        run: |
-          set -e
-          curl -LsSf https://astral.sh/uv/install.sh | sh
-          echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+      - name: Set up uv with cache
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+          cache-dependency-glob: "libs/agno/pyproject.toml"
       - name: Run test setup
         working-directory: .
         run: |
@@ -182,7 +182,8 @@ jobs:
           COVERAGE_FILE: .coverage.${{ matrix.name }}
         run: |
           source .venv/bin/activate
-          python -m pytest --cov=agno ${{ matrix.paths }} ${{ matrix.extra_ignores }} --ignore=libs/agno/tests/unit/models/litellm --ignore=libs/agno/tests/unit/tools/test_crawl4ai.py --ignore=libs/agno/tests/unit/tools/test_scrapegraph.py
+          uv pip install pytest-xdist --quiet
+          python -m pytest -n auto --dist loadgroup --cov=agno ${{ matrix.paths }} ${{ matrix.extra_ignores }} --ignore=libs/agno/tests/unit/models/litellm --ignore=libs/agno/tests/unit/tools/test_crawl4ai.py --ignore=libs/agno/tests/unit/tools/test_scrapegraph.py
       - name: Upload coverage artifact
         uses: actions/upload-artifact@v4
         with:
