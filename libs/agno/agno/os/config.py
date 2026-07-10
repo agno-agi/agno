@@ -147,6 +147,23 @@ class AuthorizationConfig(BaseModel):
     # (allow/deny) alongside the change trail, so you get an access audit, not just a
     # change audit. Pass the same sink you give ManagedRoleStore to unify both.
     audit: Optional[AuditSink] = None
+    # Optional ManagedUserStore — the credential-less user directory for the no-IdP
+    # case. When set, AgentOS denies a disabled user at the enforcement point
+    # (revocation that outlives a valid token) and can auto-provision a directory row
+    # from token claims. Identity is still asserted by the JWT; this never stores
+    # credentials.
+    user_store: Optional[Any] = None
+    # Just-in-time provisioning: when True, the first valid token from a subject not
+    # yet in the directory creates a row from the token claims below.
+    auto_provision_users: bool = False
+    user_email_claim: str = "email"
+    user_name_claim: str = "name"
+    # How to treat a user-directory read that errors (e.g. the directory DB is
+    # unreachable) while checking the disabled flag. Default False = fail OPEN (let
+    # the request through; availability over the kill-switch). Set True to fail CLOSED
+    # (reject with 503) so a directory outage can't silently re-enable every
+    # disabled/compromised account.
+    directory_error_fail_closed: bool = False
     # Opt-in per-user data isolation. When True, AgentOS:
     #   - threads the JWT sub as ``user_id`` on every user-scoped DB read
     #     (sessions, memory, traces) for non-admin callers
