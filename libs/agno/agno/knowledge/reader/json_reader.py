@@ -15,7 +15,7 @@ from agno.utils.log import log_debug, log_error
 class JSONReader(Reader):
     """Reader for JSON files"""
 
-    def __init__(self, chunk: bool = False, chunking_strategy: Optional[ChunkingStrategy] = None, **kwargs):
+    def __init__(self, chunk: bool = True, chunking_strategy: Optional[ChunkingStrategy] = None, **kwargs):
         if chunking_strategy is None:
             chunk_size = kwargs.get("chunk_size", 5000)
             chunking_strategy = FixedSizeChunking(chunk_size=chunk_size)
