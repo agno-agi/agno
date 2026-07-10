@@ -103,8 +103,8 @@ GMAIL_QUERY_INSTRUCTIONS = textwrap.dedent("""\
     You have access to Gmail tools for reading, composing, and organizing emails.
 
     ## Pagination
-    List methods return `next_page_token` in the response when more results exist.
-    Pass this value as the `next_page_token` parameter to fetch the next page.
+    List methods return `nextPageToken` in the response when more results exist.
+    Pass this value as the `page_token` parameter to fetch the next page.
 
     ## Gmail Query Syntax
     Use these operators in search and context query parameters:
@@ -393,27 +393,27 @@ class GmailTools(GoogleToolkit):
         return "\n\n".join(formatted_emails)
 
     @authenticate
-    def get_latest_emails(self, count: int = 10, next_page_token: Optional[str] = None) -> str:
+    def get_latest_emails(self, count: int = 10, page_token: Optional[str] = None) -> str:
         """
         Get the latest X emails from the user's inbox.
 
         Args:
             count (int): Number of latest emails to retrieve
-            next_page_token (Optional[str]): Token for pagination.
+            page_token (Optional[str]): Token from a previous response to fetch the next page.
 
         Returns:
-            str: JSON with emails array and next_page_token if more results exist.
+            str: JSON with emails array and nextPageToken if more results exist.
         """
         try:
             effective_count = min(count, self.max_results)
             list_kwargs: Dict[str, Any] = {"userId": "me", "maxResults": effective_count}
-            if next_page_token:
-                list_kwargs["pageToken"] = next_page_token
+            if page_token:
+                list_kwargs["pageToken"] = page_token
             results = self.service.users().messages().list(**list_kwargs).execute()  # type: ignore
             emails = self._get_message_details(results.get("messages", []))
             response: Dict[str, Any] = {"emails": emails, "count": len(emails)}
             if results.get("nextPageToken"):
-                response["next_page_token"] = results["nextPageToken"]
+                response["nextPageToken"] = results["nextPageToken"]
             return json.dumps(response)
         except HttpError as error:
             return json.dumps({"error": f"Error retrieving latest emails: {error}"})
@@ -421,29 +421,29 @@ class GmailTools(GoogleToolkit):
             return json.dumps({"error": f"Unexpected error: {type(error).__name__}: {error}"})
 
     @authenticate
-    def get_emails_from_user(self, user: str = "", count: int = 10, next_page_token: Optional[str] = None) -> str:
+    def get_emails_from_user(self, user: str = "", count: int = 10, page_token: Optional[str] = None) -> str:
         """
         Get X number of emails from a specific user (name or email).
 
         Args:
             user (str): Name or email address of the sender
             count (int): Maximum number of emails to retrieve
-            next_page_token (Optional[str]): Token for pagination.
+            page_token (Optional[str]): Token from a previous response to fetch the next page.
 
         Returns:
-            str: JSON with emails array and next_page_token if more results exist.
+            str: JSON with emails array and nextPageToken if more results exist.
         """
         try:
             effective_count = min(count, self.max_results)
             query = f"from:{user}" if "@" in user else f"from:{user}*"
             list_kwargs: Dict[str, Any] = {"userId": "me", "q": query, "maxResults": effective_count}
-            if next_page_token:
-                list_kwargs["pageToken"] = next_page_token
+            if page_token:
+                list_kwargs["pageToken"] = page_token
             results = self.service.users().messages().list(**list_kwargs).execute()  # type: ignore
             emails = self._get_message_details(results.get("messages", []))
             response: Dict[str, Any] = {"emails": emails, "count": len(emails)}
             if results.get("nextPageToken"):
-                response["next_page_token"] = results["nextPageToken"]
+                response["nextPageToken"] = results["nextPageToken"]
             return json.dumps(response)
         except HttpError as error:
             return json.dumps({"error": f"Error retrieving emails from {user}: {error}"})
@@ -451,27 +451,27 @@ class GmailTools(GoogleToolkit):
             return json.dumps({"error": f"Unexpected error: {type(error).__name__}: {error}"})
 
     @authenticate
-    def get_unread_emails(self, count: int = 10, next_page_token: Optional[str] = None) -> str:
+    def get_unread_emails(self, count: int = 10, page_token: Optional[str] = None) -> str:
         """
         Get the X number of latest unread emails from the user's inbox.
 
         Args:
             count (int): Maximum number of unread emails to retrieve
-            next_page_token (Optional[str]): Token for pagination.
+            page_token (Optional[str]): Token from a previous response to fetch the next page.
 
         Returns:
-            str: JSON with emails array and next_page_token if more results exist.
+            str: JSON with emails array and nextPageToken if more results exist.
         """
         try:
             effective_count = min(count, self.max_results)
             list_kwargs: Dict[str, Any] = {"userId": "me", "q": "is:unread", "maxResults": effective_count}
-            if next_page_token:
-                list_kwargs["pageToken"] = next_page_token
+            if page_token:
+                list_kwargs["pageToken"] = page_token
             results = self.service.users().messages().list(**list_kwargs).execute()  # type: ignore
             emails = self._get_message_details(results.get("messages", []))
             response: Dict[str, Any] = {"emails": emails, "count": len(emails)}
             if results.get("nextPageToken"):
-                response["next_page_token"] = results["nextPageToken"]
+                response["nextPageToken"] = results["nextPageToken"]
             return json.dumps(response)
         except HttpError as error:
             return json.dumps({"error": f"Error retrieving unread emails: {error}"})
@@ -500,27 +500,27 @@ class GmailTools(GoogleToolkit):
             return f"Unexpected error retrieving emails from thread {thread_id}: {type(error).__name__}: {error}"
 
     @authenticate
-    def get_starred_emails(self, count: int = 10, next_page_token: Optional[str] = None) -> str:
+    def get_starred_emails(self, count: int = 10, page_token: Optional[str] = None) -> str:
         """
         Get X number of starred emails from the user's inbox.
 
         Args:
             count (int): Maximum number of starred emails to retrieve
-            next_page_token (Optional[str]): Token for pagination.
+            page_token (Optional[str]): Token from a previous response to fetch the next page.
 
         Returns:
-            str: JSON with emails array and next_page_token if more results exist.
+            str: JSON with emails array and nextPageToken if more results exist.
         """
         try:
             effective_count = min(count, self.max_results)
             list_kwargs: Dict[str, Any] = {"userId": "me", "q": "is:starred", "maxResults": effective_count}
-            if next_page_token:
-                list_kwargs["pageToken"] = next_page_token
+            if page_token:
+                list_kwargs["pageToken"] = page_token
             results = self.service.users().messages().list(**list_kwargs).execute()  # type: ignore
             emails = self._get_message_details(results.get("messages", []))
             response: Dict[str, Any] = {"emails": emails, "count": len(emails)}
             if results.get("nextPageToken"):
-                response["next_page_token"] = results["nextPageToken"]
+                response["nextPageToken"] = results["nextPageToken"]
             return json.dumps(response)
         except HttpError as error:
             return json.dumps({"error": f"Error retrieving starred emails: {error}"})
@@ -528,28 +528,28 @@ class GmailTools(GoogleToolkit):
             return json.dumps({"error": f"Unexpected error: {type(error).__name__}: {error}"})
 
     @authenticate
-    def get_emails_by_context(self, context: str = "", count: int = 10, next_page_token: Optional[str] = None) -> str:
+    def get_emails_by_context(self, context: str = "", count: int = 10, page_token: Optional[str] = None) -> str:
         """
         Get X number of emails matching a specific context or search term.
 
         Args:
             context (str): Search term or context to match in emails
             count (int): Maximum number of emails to retrieve
-            next_page_token (Optional[str]): Token for pagination.
+            page_token (Optional[str]): Token from a previous response to fetch the next page.
 
         Returns:
-            str: JSON with emails array and next_page_token if more results exist.
+            str: JSON with emails array and nextPageToken if more results exist.
         """
         try:
             effective_count = min(count, self.max_results)
             list_kwargs: Dict[str, Any] = {"userId": "me", "q": context, "maxResults": effective_count}
-            if next_page_token:
-                list_kwargs["pageToken"] = next_page_token
+            if page_token:
+                list_kwargs["pageToken"] = page_token
             results = self.service.users().messages().list(**list_kwargs).execute()  # type: ignore
             emails = self._get_message_details(results.get("messages", []))
             response: Dict[str, Any] = {"emails": emails, "count": len(emails)}
             if results.get("nextPageToken"):
-                response["next_page_token"] = results["nextPageToken"]
+                response["nextPageToken"] = results["nextPageToken"]
             return json.dumps(response)
         except HttpError as error:
             return json.dumps({"error": f"Error retrieving emails by context '{context}': {error}"})
@@ -562,7 +562,7 @@ class GmailTools(GoogleToolkit):
         start_date: str = "",
         range_in_days: Optional[int] = None,
         num_emails: Optional[int] = 10,
-        next_page_token: Optional[str] = None,
+        page_token: Optional[str] = None,
     ) -> str:
         """Get emails from a date or date range.
 
@@ -570,10 +570,10 @@ class GmailTools(GoogleToolkit):
             start_date (str): Start date in YYYY/MM/DD format (e.g. "2026/03/01").
             range_in_days (Optional[int]): Number of days to include in the range (default: None, meaning all emails after start_date).
             num_emails (Optional[int]): Maximum number of emails to retrieve (default: 10).
-            next_page_token (Optional[str]): Token for pagination.
+            page_token (Optional[str]): Token from a previous response to fetch the next page.
 
         Returns:
-            str: JSON with emails array and next_page_token if more results exist.
+            str: JSON with emails array and nextPageToken if more results exist.
         """
         try:
             start_date_dt = datetime.strptime(start_date, "%Y/%m/%d")
@@ -585,13 +585,13 @@ class GmailTools(GoogleToolkit):
 
             effective_count = min(num_emails or 10, self.max_results)
             list_kwargs: Dict[str, Any] = {"userId": "me", "q": query, "maxResults": effective_count}
-            if next_page_token:
-                list_kwargs["pageToken"] = next_page_token
+            if page_token:
+                list_kwargs["pageToken"] = page_token
             results = self.service.users().messages().list(**list_kwargs).execute()  # type: ignore
             emails = self._get_message_details(results.get("messages", []))
             response: Dict[str, Any] = {"emails": emails, "count": len(emails)}
             if results.get("nextPageToken"):
-                response["next_page_token"] = results["nextPageToken"]
+                response["nextPageToken"] = results["nextPageToken"]
             return json.dumps(response)
         except HttpError as error:
             return json.dumps({"error": f"Error retrieving emails by date: {error}"})
@@ -788,7 +788,7 @@ class GmailTools(GoogleToolkit):
             return f"Error sending reply: {type(error).__name__}: {error}"
 
     @authenticate
-    def search_emails(self, query: str = "", count: int = 10, next_page_token: Optional[str] = None) -> str:
+    def search_emails(self, query: str = "", count: int = 10, page_token: Optional[str] = None) -> str:
         """
         Get X number of emails based on a given natural text query.
         Searches in to, from, cc, subject and email body contents.
@@ -796,21 +796,21 @@ class GmailTools(GoogleToolkit):
         Args:
             query (str): Natural language query to search for
             count (int): Number of emails to retrieve
-            next_page_token (Optional[str]): Token for pagination.
+            page_token (Optional[str]): Token from a previous response to fetch the next page.
 
         Returns:
-            str: JSON with emails array and next_page_token if more results exist.
+            str: JSON with emails array and nextPageToken if more results exist.
         """
         try:
             effective_count = min(count, self.max_results)
             list_kwargs: Dict[str, Any] = {"userId": "me", "q": query, "maxResults": effective_count}
-            if next_page_token:
-                list_kwargs["pageToken"] = next_page_token
+            if page_token:
+                list_kwargs["pageToken"] = page_token
             results = self.service.users().messages().list(**list_kwargs).execute()  # type: ignore
             emails = self._get_message_details(results.get("messages", []))
             response: Dict[str, Any] = {"emails": emails, "count": len(emails)}
             if results.get("nextPageToken"):
-                response["next_page_token"] = results["nextPageToken"]
+                response["nextPageToken"] = results["nextPageToken"]
             return json.dumps(response)
         except HttpError as error:
             return json.dumps({"error": f"Error retrieving emails with query '{query}': {error}"})
@@ -1464,7 +1464,7 @@ class GmailTools(GoogleToolkit):
             return json.dumps({"error": f"Unexpected error: {type(e).__name__}: {e}"})
 
     @authenticate
-    def search_threads(self, query: str = "", count: int = 10, next_page_token: Optional[str] = None) -> str:
+    def search_threads(self, query: str = "", count: int = 10, page_token: Optional[str] = None) -> str:
         """Search Gmail threads using Gmail query syntax. Returns thread IDs and snippets, not full message content.
 
         Args:
@@ -1479,8 +1479,8 @@ class GmailTools(GoogleToolkit):
             service = self.service
             effective_count = min(count, self.max_results, 500)
             list_kwargs: Dict[str, Any] = {"userId": "me", "q": query, "maxResults": effective_count}
-            if next_page_token:
-                list_kwargs["pageToken"] = next_page_token
+            if page_token:
+                list_kwargs["pageToken"] = page_token
             results = service.users().threads().list(**list_kwargs).execute()  # type: ignore
             threads = results.get("threads", [])
             response: Dict[str, Any] = {
@@ -1488,7 +1488,7 @@ class GmailTools(GoogleToolkit):
                 "resultSizeEstimate": results.get("resultSizeEstimate", len(threads)),
             }
             if results.get("nextPageToken"):
-                response["next_page_token"] = results["nextPageToken"]
+                response["nextPageToken"] = results["nextPageToken"]
             return json.dumps(response)
         except HttpError as e:
             log_error(f"Thread search failed: {str(e)}")
@@ -1585,7 +1585,7 @@ class GmailTools(GoogleToolkit):
             return json.dumps({"error": f"Unexpected error: {type(e).__name__}: {e}"})
 
     @authenticate
-    def list_drafts(self, count: int = 10, next_page_token: Optional[str] = None) -> str:
+    def list_drafts(self, count: int = 10, page_token: Optional[str] = None) -> str:
         """List draft emails in the mailbox.
 
         Args:
@@ -1599,8 +1599,8 @@ class GmailTools(GoogleToolkit):
             service = self.service
             effective_count = min(count, self.max_results, 500)
             list_kwargs: Dict[str, Any] = {"userId": "me", "maxResults": effective_count}
-            if next_page_token:
-                list_kwargs["pageToken"] = next_page_token
+            if page_token:
+                list_kwargs["pageToken"] = page_token
             results = service.users().drafts().list(**list_kwargs).execute()  # type: ignore
             drafts = results.get("drafts", [])
             response: Dict[str, Any] = {
@@ -1608,7 +1608,7 @@ class GmailTools(GoogleToolkit):
                 "resultSizeEstimate": results.get("resultSizeEstimate", len(drafts)),
             }
             if results.get("nextPageToken"):
-                response["next_page_token"] = results["nextPageToken"]
+                response["nextPageToken"] = results["nextPageToken"]
             return json.dumps(response)
         except HttpError as e:
             log_error(f"Failed to list drafts: {str(e)}")

@@ -29,19 +29,19 @@ class TestGmailPagination:
         call_kwargs = gmail_tools._service.users().messages().list.call_args[1]
         assert call_kwargs["maxResults"] == 5
 
-    def test_next_page_token_passed_to_api(self, gmail_tools):
-        """next_page_token is forwarded to API as pageToken."""
+    def test_page_token_passed_to_api(self, gmail_tools):
+        """page_token is forwarded to API as pageToken."""
         gmail_tools._service.users.return_value.messages.return_value.list.return_value.execute.return_value = {
             "messages": []
         }
 
-        gmail_tools.get_latest_emails(count=5, next_page_token="abc123")
+        gmail_tools.get_latest_emails(count=5, page_token="abc123")
 
         call_kwargs = gmail_tools._service.users().messages().list.call_args[1]
         assert call_kwargs["pageToken"] == "abc123"
 
-    def test_next_page_token_returned_in_response(self, gmail_tools):
-        """next_page_token from API is included in response."""
+    def test_page_token_returned_in_response(self, gmail_tools):
+        """page_token from API is included in response."""
         gmail_tools._service.users.return_value.messages.return_value.list.return_value.execute.return_value = {
             "messages": [],
             "nextPageToken": "next_page_xyz",
@@ -50,11 +50,11 @@ class TestGmailPagination:
         result = gmail_tools.get_latest_emails(count=5)
         parsed = json.loads(result)
 
-        assert "next_page_token" in parsed
-        assert parsed["next_page_token"] == "next_page_xyz"
+        assert "nextPageToken" in parsed
+        assert parsed["nextPageToken"] == "next_page_xyz"
 
     def test_no_token_when_no_more_pages(self, gmail_tools):
-        """next_page_token is absent when API doesn't return one."""
+        """page_token is absent when API doesn't return one."""
         gmail_tools._service.users.return_value.messages.return_value.list.return_value.execute.return_value = {
             "messages": []
         }
@@ -62,7 +62,7 @@ class TestGmailPagination:
         result = gmail_tools.get_latest_emails(count=5)
         parsed = json.loads(result)
 
-        assert "next_page_token" not in parsed
+        assert "nextPageToken" not in parsed
 
     def test_search_threads_pagination(self, gmail_tools):
         """search_threads supports pagination."""
@@ -71,10 +71,10 @@ class TestGmailPagination:
             "nextPageToken": "thread_next",
         }
 
-        result = gmail_tools.search_threads(query="is:unread", next_page_token="prev_token")
+        result = gmail_tools.search_threads(query="is:unread", page_token="prev_token")
         parsed = json.loads(result)
 
-        assert parsed["next_page_token"] == "thread_next"
+        assert parsed["nextPageToken"] == "thread_next"
         call_kwargs = gmail_tools._service.users().threads().list.call_args[1]
         assert call_kwargs["pageToken"] == "prev_token"
 
@@ -85,9 +85,9 @@ class TestGmailPagination:
             "nextPageToken": "draft_next",
         }
 
-        result = gmail_tools.list_drafts(count=5, next_page_token="prev_token")
+        result = gmail_tools.list_drafts(count=5, page_token="prev_token")
         parsed = json.loads(result)
 
-        assert parsed["next_page_token"] == "draft_next"
+        assert parsed["nextPageToken"] == "draft_next"
         call_kwargs = gmail_tools._service.users().drafts().list.call_args[1]
         assert call_kwargs["pageToken"] == "prev_token"
