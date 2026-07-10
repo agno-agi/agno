@@ -1,6 +1,7 @@
 import json
 from datetime import datetime, timezone
-from typing import Any, Callable, Dict, List, Optional, Sequence, Set, Type, Union
+from os import getenv
+from typing import Any, Callable, Dict, List, Optional, Sequence, Set, Tuple, Type, Union
 
 from fastapi import FastAPI, HTTPException, Request, UploadFile
 from fastapi.routing import APIRoute, APIRouter
@@ -107,6 +108,31 @@ async def get_request_kwargs(request: Request, endpoint_func: Callable) -> Dict[
         except json.JSONDecodeError as e:
             kwargs.pop("metadata")
             log_warning(f"Invalid metadata parameter couldn't be loaded: {metadata}: {str(e)}")
+
+    # Handle media parameters. AgnoClient (e.g. remote agent/team members) sends them as
+    # JSON strings of media dicts with base64-encoded content, the format produced by
+    # Image/Audio/Video/File.to_dict(). Documents arrive as "input_files" (the "files"
+    # form field is reserved for multipart uploads) but are stored under the "files"
+    # kwarg, the parameter name the run methods expect.
+    from agno.utils.media import reconstruct_audio_list, reconstruct_files, reconstruct_images, reconstruct_videos
+
+    media_params: Dict[str, Tuple[str, Callable]] = {
+        "images": ("images", reconstruct_images),
+        "audio": ("audio", reconstruct_audio_list),
+        "videos": ("videos", reconstruct_videos),
+        "input_files": ("files", reconstruct_files),
+    }
+    for form_key, (kwarg_key, reconstructor) in media_params.items():
+        media_value = kwargs.get(form_key)
+        if not media_value or not isinstance(media_value, str):
+            continue
+        kwargs.pop(form_key)
+        try:
+            reconstructed_media = reconstructor(json.loads(media_value))
+            if reconstructed_media:
+                kwargs[kwarg_key] = reconstructed_media
+        except json.JSONDecodeError as e:
+            log_warning(f"Invalid {form_key} parameter couldn't be loaded: {str(e)}")
 
     if knowledge_filters := kwargs.get("knowledge_filters"):
         try:
@@ -310,8 +336,13 @@ async def get_db(
             status_code=400, detail="The db_id query parameter is required when using multiple databases"
         )
 
+    # Raise if no database is registered (an empty dict, or ids mapped to empty lists)
+    all_dbs = [db for db_list in dbs.values() for db in db_list]
+    if not all_dbs:
+        raise HTTPException(status_code=400, detail="No database is configured on this AgentOS")
+
     # Return the first (and only) database
-    return next(db for dbs in dbs.values() for db in dbs)
+    return all_dbs[0]
 
 
 def _generate_knowledge_id(name: str, db_id: str, table_name: str) -> str:
@@ -1188,11 +1219,21 @@ def resolve_ws_jwt_config(app: FastAPI) -> Dict[str, Any]:
     if not user_middleware:
         return blank
 
-    from agno.os.middleware.jwt import JWTMiddleware, JWTValidator
+    from agno.os.middleware.jwt import JWTMiddleware, JWTValidator, jwt_kwargs_have_key_source
 
     for entry in user_middleware:
         if getattr(entry, "cls", None) is JWTMiddleware:
             kwargs = getattr(entry, "kwargs", {}) or {}
+            # AgentOS installs this same middleware class as the general auth layer
+            # for security-key / service-account-only deployments, with no JWT key
+            # source. Those entries are not JWT-intended: skip them so the WS
+            # endpoint falls through to the PAT and security-key auth paths instead
+            # of demanding JWTs nobody can mint. Env-configured keys still count --
+            # JWTValidator reads JWT_VERIFICATION_KEY / JWT_JWKS_FILE itself.
+            if not jwt_kwargs_have_key_source(kwargs) and not (
+                getenv("JWT_VERIFICATION_KEY") or getenv("JWT_JWKS_FILE")
+            ):
+                continue
             # Mirror JWTMiddleware.__init__ deprecated secret_key handling:
             # append to verification_keys so manual setups using secret_key
             # still get a working WebSocket validator.

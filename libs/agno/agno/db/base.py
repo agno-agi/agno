@@ -52,6 +52,12 @@ class BaseDb(ABC):
         schedule_runs_table: Optional[str] = None,
         approvals_table: Optional[str] = None,
         auth_tokens_table: Optional[str] = None,
+        service_accounts_table: Optional[str] = None,
+        mcp_oauth_clients_table: Optional[str] = None,
+        mcp_oauth_transactions_table: Optional[str] = None,
+        mcp_oauth_codes_table: Optional[str] = None,
+        mcp_oauth_refresh_tokens_table: Optional[str] = None,
+        mcp_oauth_keys_table: Optional[str] = None,
         id: Optional[str] = None,
     ):
         self.id = id or str(uuid4())
@@ -72,6 +78,13 @@ class BaseDb(ABC):
         self.schedule_runs_table_name = schedule_runs_table or "agno_schedule_runs"
         self.approvals_table_name = approvals_table or "agno_approvals"
         self.auth_tokens_table_name = auth_tokens_table or "agno_auth_tokens"
+        self.service_accounts_table_name = service_accounts_table or "agno_service_accounts"
+        # Built-in MCP OAuth authorization server store (see agno.os.mcp_auth_builtin).
+        self.mcp_oauth_clients_table_name = mcp_oauth_clients_table or "agno_mcp_oauth_clients"
+        self.mcp_oauth_transactions_table_name = mcp_oauth_transactions_table or "agno_mcp_oauth_transactions"
+        self.mcp_oauth_codes_table_name = mcp_oauth_codes_table or "agno_mcp_oauth_codes"
+        self.mcp_oauth_refresh_tokens_table_name = mcp_oauth_refresh_tokens_table or "agno_mcp_oauth_refresh_tokens"
+        self.mcp_oauth_keys_table_name = mcp_oauth_keys_table or "agno_mcp_oauth_keys"
 
     def to_dict(self) -> Dict[str, Any]:
         """
@@ -96,6 +109,12 @@ class BaseDb(ABC):
             "schedule_runs_table": self.schedule_runs_table_name,
             "approvals_table": self.approvals_table_name,
             "auth_tokens_table": self.auth_tokens_table_name,
+            "service_accounts_table": self.service_accounts_table_name,
+            "mcp_oauth_clients_table": self.mcp_oauth_clients_table_name,
+            "mcp_oauth_transactions_table": self.mcp_oauth_transactions_table_name,
+            "mcp_oauth_codes_table": self.mcp_oauth_codes_table_name,
+            "mcp_oauth_refresh_tokens_table": self.mcp_oauth_refresh_tokens_table_name,
+            "mcp_oauth_keys_table": self.mcp_oauth_keys_table_name,
         }
 
     @classmethod
@@ -121,6 +140,12 @@ class BaseDb(ABC):
             schedule_runs_table=data.get("schedule_runs_table"),
             approvals_table=data.get("approvals_table"),
             auth_tokens_table=data.get("auth_tokens_table"),
+            service_accounts_table=data.get("service_accounts_table"),
+            mcp_oauth_clients_table=data.get("mcp_oauth_clients_table"),
+            mcp_oauth_transactions_table=data.get("mcp_oauth_transactions_table"),
+            mcp_oauth_codes_table=data.get("mcp_oauth_codes_table"),
+            mcp_oauth_refresh_tokens_table=data.get("mcp_oauth_refresh_tokens_table"),
+            mcp_oauth_keys_table=data.get("mcp_oauth_keys_table"),
             id=data.get("id"),
         )
 
@@ -1228,6 +1253,132 @@ class BaseDb(ABC):
         """Delete stored OAuth token for a provider/user/service combination. Returns True if deleted."""
         raise NotImplementedError
 
+    # --- Built-in MCP OAuth server store (Optional) ---
+    # Backs AgentOSBuiltinAuth (agno.os.mcp_auth_builtin): the OAuth 2.1 authorization
+    # server the AgentOS MCP endpoint runs when a deployer opts in. Implemented by the sync
+    # SQLAlchemy backends (PostgresDb / SqliteDb); every other backend inherits these
+    # NotImplementedError stubs, and AgentOSBuiltinAuth rejects a db that lacks them at
+    # construction. The provider SHA-256-hashes codes/refresh tokens and JSON-serializes
+    # payloads before calling these, so only opaque strings reach the store.
+
+    def get_mcp_oauth_client(self, client_id: str) -> Optional[str]:
+        """The stored client_metadata JSON for a DCR client, or None."""
+        raise NotImplementedError
+
+    def create_mcp_oauth_client(
+        self, *, client_id: str, client_metadata: str, now: int, unconsumed_ttl: int, max_clients: int
+    ) -> bool:
+        """Register a public client. Returns False when the unconsumed-registration cap is
+        reached (nothing inserted), True after insert."""
+        raise NotImplementedError
+
+    def mark_mcp_oauth_client_consumed(self, client_id: str, now: int) -> None:
+        """Stamp consumed_at so the client is exempt from the unconsumed-registration cap."""
+        raise NotImplementedError
+
+    def store_mcp_oauth_transaction(
+        self, *, txn_id: str, client_id: str, params: str, expires_at: int, now: int, max_pending: int
+    ) -> None:
+        """Insert a pending authorization, sweeping expired rows and evicting the oldest to keep the table bounded."""
+        raise NotImplementedError
+
+    def get_mcp_oauth_transaction(self, txn_id: str) -> Optional[tuple]:
+        """The (params, expires_at) for a pending authorization, or None."""
+        raise NotImplementedError
+
+    def consume_mcp_oauth_transaction(self, txn_id: str, now: int) -> Optional[tuple]:
+        """Atomically claim a live transaction: returns (params, expires_at) on exactly one replica, else None."""
+        raise NotImplementedError
+
+    def store_mcp_oauth_code(self, *, code_hash: str, payload: str, expires_at: int, now: int) -> None:
+        """Insert a hashed authorization code, sweeping expired rows first."""
+        raise NotImplementedError
+
+    def get_mcp_oauth_code(self, code_hash: str) -> Optional[tuple]:
+        """The (payload, expires_at) for a hashed authorization code, or None."""
+        raise NotImplementedError
+
+    def delete_mcp_oauth_code(self, code_hash: str) -> bool:
+        """Delete a hashed code atomically. Returns True iff exactly one row was removed (single-use guarantee)."""
+        raise NotImplementedError
+
+    def store_mcp_oauth_refresh(
+        self, *, token_hash: str, client_id: str, scopes: str, expires_at: int, now: int, family_id: str
+    ) -> None:
+        """Insert a hashed refresh token (tagged with its rotation family), sweeping expired rows first."""
+        raise NotImplementedError
+
+    def get_mcp_oauth_refresh(self, token_hash: str) -> Optional[tuple]:
+        """The (client_id, scopes, expires_at) for a hashed refresh token, or None."""
+        raise NotImplementedError
+
+    def delete_mcp_oauth_refresh(self, token_hash: str) -> bool:
+        """Delete a hashed refresh token atomically. Returns True iff exactly one row was removed (rotation-on-use)."""
+        raise NotImplementedError
+
+    def delete_mcp_oauth_refresh_family(self, family_id: str) -> int:
+        """Delete every refresh token in a rotation family (reuse-detection revocation). Returns the count removed."""
+        raise NotImplementedError
+
+    def get_mcp_oauth_keys(self) -> List[tuple]:
+        """All (kid, secret) signing keys, newest first."""
+        raise NotImplementedError
+
+    def insert_mcp_oauth_key(self, *, kid: str, secret: str, created_at: int) -> bool:
+        """Insert a signing key. Returns False on a uniqueness conflict (lost the cold-start race), True on success."""
+        raise NotImplementedError
+
+    # --- Service Accounts (Optional) ---
+    # These methods are optional. Override in subclasses to enable service account persistence.
+
+    def create_service_account(self, account_data: Dict[str, Any]) -> Dict[str, Any]:
+        """Create a service account. Raises on failure (including duplicate active name)."""
+        raise NotImplementedError
+
+    def get_service_account(self, service_account_id: str) -> Optional[Dict[str, Any]]:
+        """Get a service account by ID."""
+        raise NotImplementedError
+
+    def get_service_account_by_token_hash(self, token_hash: str) -> Optional[Dict[str, Any]]:
+        """Get a service account by its token hash."""
+        raise NotImplementedError
+
+    def get_service_account_by_name(self, name: str, include_revoked: bool = False) -> Optional[Dict[str, Any]]:
+        """Get a service account by name. By default only considers active (non-revoked) accounts."""
+        raise NotImplementedError
+
+    def get_service_accounts(
+        self,
+        include_revoked: bool = True,
+        limit: int = 20,
+        page: int = 1,
+        sort_by: str = "created_at",
+        sort_order: str = "desc",
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        """List service accounts.
+
+        Returns:
+            Tuple of (service_accounts, total_count)
+        """
+        raise NotImplementedError
+
+    def update_service_account(
+        self, service_account_id: str, return_record: bool = True, **kwargs: Any
+    ) -> Optional[Dict[str, Any]]:
+        """Update a service account by ID (e.g. set revoked_at or last_used_at).
+
+        Only SERVICE_ACCOUNT_MUTABLE_COLUMNS may be updated; any other column, an
+        empty update, or resetting revoked_at to None raises ValueError.
+
+        With return_record=False the post-update re-fetch is skipped and None is
+        returned on success too — for callers that discard the row (last_used touches).
+        """
+        raise NotImplementedError
+
+    def delete_service_account(self, service_account_id: str) -> bool:
+        """Hard-delete a service account by ID. Returns True if deleted."""
+        raise NotImplementedError
+
 
 class AsyncBaseDb(ABC):
     """Base abstract class for all our async database implementations."""
@@ -1249,6 +1400,7 @@ class AsyncBaseDb(ABC):
         schedule_runs_table: Optional[str] = None,
         approvals_table: Optional[str] = None,
         auth_tokens_table: Optional[str] = None,
+        service_accounts_table: Optional[str] = None,
     ):
         self.id = id or str(uuid4())
         self.session_table_name = session_table or "agno_sessions"
@@ -1265,6 +1417,7 @@ class AsyncBaseDb(ABC):
         self.schedule_runs_table_name = schedule_runs_table or "agno_schedule_runs"
         self.approvals_table_name = approvals_table or "agno_approvals"
         self.auth_tokens_table_name = auth_tokens_table or "agno_auth_tokens"
+        self.service_accounts_table_name = service_accounts_table or "agno_service_accounts"
 
     async def _create_all_tables(self) -> None:
         """Create all tables for this database. Override in subclasses."""
@@ -2067,4 +2220,52 @@ class AsyncBaseDb(ABC):
 
     async def delete_auth_token(self, provider: str, user_id: Optional[str], service: str) -> bool:
         """Delete stored OAuth token for a provider/user/service combination. Returns True if deleted."""
+        raise NotImplementedError
+
+    # --- Service Accounts (Optional) ---
+    # These methods are optional. Override in subclasses to enable service account persistence.
+
+    async def create_service_account(self, account_data: Dict[str, Any]) -> Dict[str, Any]:
+        """Create a service account. Raises on failure (including duplicate active name)."""
+        raise NotImplementedError
+
+    async def get_service_account(self, service_account_id: str) -> Optional[Dict[str, Any]]:
+        """Get a service account by ID."""
+        raise NotImplementedError
+
+    async def get_service_account_by_token_hash(self, token_hash: str) -> Optional[Dict[str, Any]]:
+        """Get a service account by its token hash."""
+        raise NotImplementedError
+
+    async def get_service_account_by_name(self, name: str, include_revoked: bool = False) -> Optional[Dict[str, Any]]:
+        """Get a service account by name. By default only considers active (non-revoked) accounts."""
+        raise NotImplementedError
+
+    async def get_service_accounts(
+        self,
+        include_revoked: bool = True,
+        limit: int = 20,
+        page: int = 1,
+        sort_by: str = "created_at",
+        sort_order: str = "desc",
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        """List service accounts.
+
+        Returns:
+            Tuple of (service_accounts, total_count)
+        """
+        raise NotImplementedError
+
+    async def update_service_account(
+        self, service_account_id: str, return_record: bool = True, **kwargs: Any
+    ) -> Optional[Dict[str, Any]]:
+        """Update a service account by ID (e.g. set revoked_at or last_used_at).
+
+        Only SERVICE_ACCOUNT_MUTABLE_COLUMNS may be updated; any other column, an
+        empty update, or resetting revoked_at to None raises ValueError.
+        """
+        raise NotImplementedError
+
+    async def delete_service_account(self, service_account_id: str) -> bool:
+        """Hard-delete a service account by ID. Returns True if deleted."""
         raise NotImplementedError
