@@ -25,7 +25,7 @@ from agno.os.interfaces.agui.handlers import on_run_completed
 from agno.os.interfaces.agui.input import parse_client_tools
 from agno.os.interfaces.agui.resume import (
     ensure_requirements_resolved,
-    merge_tool_results_into_requirements,
+    resolve_requirements_from_tool_messages,
 )
 from agno.os.interfaces.agui.state import StreamState
 from agno.os.interfaces.agui.stream import (
@@ -114,14 +114,14 @@ class TestPauseEmission:
 class TestPauseResolution:
     def test_confirmation_accepted_confirms_and_leaves_result_none(self):
         req = RunRequirement(ToolExecution(tool_call_id="tc1", tool_name="x", requires_confirmation=True))
-        merge_tool_results_into_requirements([req], [_tm("tc1", json.dumps({"accepted": True}))])
+        resolve_requirements_from_tool_messages([req], [_tm("tc1", json.dumps({"accepted": True}))])
         assert req.tool_execution.confirmed is True
         assert req.tool_execution.result is None  # MUST stay None or dispatch silently rejects it
         assert req.is_resolved()
 
     def test_confirmation_rejected_sets_confirmed_false(self):
         req = RunRequirement(ToolExecution(tool_call_id="tc1", tool_name="x", requires_confirmation=True))
-        merge_tool_results_into_requirements([req], [_tm("tc1", json.dumps({"accepted": False}))])
+        resolve_requirements_from_tool_messages([req], [_tm("tc1", json.dumps({"accepted": False}))])
         assert req.tool_execution.confirmed is False
 
     def test_user_input_provides_values_and_keeps_flag(self):
@@ -131,7 +131,7 @@ class TestPauseResolution:
             requires_user_input=True,
             user_input_schema=[UserInputField(name="city", field_type=str)],
         )
-        merge_tool_results_into_requirements(
+        resolve_requirements_from_tool_messages(
             [RunRequirement(te)], [_tm("tc2", json.dumps({"values": {"city": "Paris"}}))]
         )
         assert te.user_input_schema[0].value == "Paris"
@@ -148,8 +148,8 @@ class TestPauseResolution:
             requires_user_input=True,
             user_input_schema=[UserInputField(name="city", field_type=str)],
         )
-        with pytest.raises(ValueError, match="user_input resume expects"):
-            merge_tool_results_into_requirements([RunRequirement(te)], [_tm("tc-bad", json.dumps({"city": "Paris"}))])
+        with pytest.raises(ValueError, match="user_input expects"):
+            resolve_requirements_from_tool_messages([RunRequirement(te)], [_tm("tc-bad", json.dumps({"city": "Paris"}))])
 
     def test_user_input_empty_values_is_accepted_not_raised(self):
         """An explicit empty {"values": {}} is a valid dict (user filled nothing): accepted gracefully
@@ -162,14 +162,14 @@ class TestPauseResolution:
             user_input_schema=[UserInputField(name="city", field_type=str)],
         )
         req = RunRequirement(te)
-        merge_tool_results_into_requirements([req], [_tm("tc-empty", json.dumps({"values": {}}))])
+        resolve_requirements_from_tool_messages([req], [_tm("tc-empty", json.dumps({"values": {}}))])
         assert te.user_input_schema[0].value is None
         assert req.is_resolved() is False
 
     def test_external_execution_sets_result(self):
         te = ToolExecution(tool_call_id="tc3", tool_name="run", external_execution_required=True)
         req = RunRequirement(te)
-        merge_tool_results_into_requirements([req], [_tm("tc3", "browser output")])
+        resolve_requirements_from_tool_messages([req], [_tm("tc3", "browser output")])
         assert req.external_execution_result == "browser output"
 
     def test_user_feedback_provides_selections_and_answers(self):
@@ -185,7 +185,7 @@ class TestPauseResolution:
             ],
         )
         req = RunRequirement(te)
-        merge_tool_results_into_requirements(
+        resolve_requirements_from_tool_messages(
             [req], [_tm("tc-fb", json.dumps({"selections": {"Pick a color": ["red"]}}))]
         )
         assert te.user_feedback_schema[0].selected_options == ["red"]
@@ -201,8 +201,8 @@ class TestPauseResolution:
             requires_user_input=True,
             user_feedback_schema=[UserFeedbackQuestion(question="Pick", options=[UserFeedbackOption(label="red")])],
         )
-        with pytest.raises(ValueError, match="user_feedback resume expects"):
-            merge_tool_results_into_requirements(
+        with pytest.raises(ValueError, match="user_feedback expects"):
+            resolve_requirements_from_tool_messages(
                 [RunRequirement(te)], [_tm("tc-fb-bad", json.dumps({"Pick": ["red"]}))]
             )
 
@@ -217,7 +217,7 @@ class TestPauseResolution:
             user_feedback_schema=[UserFeedbackQuestion(question="Pick", options=[UserFeedbackOption(label="red")])],
         )
         req = RunRequirement(te)
-        merge_tool_results_into_requirements([req], [_tm("tc-fb-empty", json.dumps({"selections": {}}))])
+        resolve_requirements_from_tool_messages([req], [_tm("tc-fb-empty", json.dumps({"selections": {}}))])
         assert te.user_feedback_schema[0].selected_options is None
         assert req.is_resolved() is False
 
@@ -294,7 +294,7 @@ class TestUnresolvedGuard:
 
     def test_partial_answer_leaves_one_unresolved_and_guard_raises(self):
         req_a, req_b = self._two_confirmations()
-        merge_tool_results_into_requirements([req_a, req_b], [_tm("a", json.dumps({"accepted": True}))])
+        resolve_requirements_from_tool_messages([req_a, req_b], [_tm("a", json.dumps({"accepted": True}))])
         assert req_a.is_resolved() is True
         assert req_b.is_resolved() is False  # unanswered tool stays paused, not silently rejected
         with pytest.raises(ValueError, match="Partial resume"):
@@ -302,7 +302,7 @@ class TestUnresolvedGuard:
 
     def test_fully_answered_set_passes_the_guard(self):
         req_a, req_b = self._two_confirmations()
-        merge_tool_results_into_requirements(
+        resolve_requirements_from_tool_messages(
             [req_a, req_b],
             [_tm("a", json.dumps({"accepted": True})), _tm("b", json.dumps({"accepted": False}))],
         )
@@ -355,8 +355,8 @@ class TestTeamPauseEmission:
 
     def test_team_member_requirement_resolves_via_existing_merge(self):
         """A member (member_agent_id) confirmation resolves through the EXISTING
-        merge_tool_results_into_requirements - input.py is entity-agnostic, so team HITL needs no resolution change."""
+        resolve_requirements_from_tool_messages - input.py is entity-agnostic, so team HITL needs no resolution change."""
         req = _member_req(ToolExecution(tool_call_id="m-res", tool_name="send_email", requires_confirmation=True))
-        merge_tool_results_into_requirements([req], [_tm("m-res", json.dumps({"accepted": True}))])
+        resolve_requirements_from_tool_messages([req], [_tm("m-res", json.dumps({"accepted": True}))])
         assert req.tool_execution.confirmed is True
         assert req.is_resolved()

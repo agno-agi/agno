@@ -4,7 +4,7 @@ import pytest
 
 from agno.agent import Agent
 from agno.models.response import ToolExecution
-from agno.os.interfaces.agui.resume import merge_tool_results_into_requirements, resume_paused_run
+from agno.os.interfaces.agui.resume import resolve_requirements_from_tool_messages, resume_paused_run
 from agno.run.agent import RunOutput
 from agno.run.base import RunContext, RunStatus
 from agno.run.requirement import RunRequirement
@@ -176,7 +176,7 @@ class TestApplyToolResultsEdgeCases:
         ]
         tool_messages = [FakeToolMessage("call_1", "result")]
 
-        result = merge_tool_results_into_requirements(requirements, tool_messages)
+        result = resolve_requirements_from_tool_messages(requirements, tool_messages)
 
         assert result[0].tool_execution is None
         assert result[1].tool_execution.result == "result"
@@ -200,7 +200,7 @@ class TestApplyToolResultsEdgeCases:
         ]
         tool_messages = [FakeToolMessage("call_1", "result")]
 
-        result = merge_tool_results_into_requirements(requirements, tool_messages)
+        result = resolve_requirements_from_tool_messages(requirements, tool_messages)
 
         assert result[0].tool_execution.result is None
         assert result[1].tool_execution.result == "result"

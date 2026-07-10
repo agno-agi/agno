@@ -76,6 +76,18 @@ def resolve_requirements_from_tool_messages(
     return requirements
 
 
+def ensure_requirements_resolved(requirements: List[RunRequirement]) -> None:
+    """Guard: raise if any requirement is still unresolved after merging tool messages.
+
+    A partial resume (some tools answered, some not) must fail loud here rather than
+    reach dispatch where unanswered confirmation tools are silently rejected.
+    """
+    unresolved = [r for r in requirements if not r.is_resolved()]
+    if unresolved:
+        ids = [r.tool_execution.tool_call_id for r in unresolved if r.tool_execution]
+        raise ValueError(f"Partial resume: requirements {ids} still unresolved")
+
+
 def _find_paused_run(
     session: Union[AgentSession, TeamSession],
     tool_messages: List[AGUIToolMessage],
