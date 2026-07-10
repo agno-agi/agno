@@ -26,8 +26,11 @@ Setup:
      npx -y mcp-remote https://mcp.transform.unstructured.io
    Complete the OAuth flow in the tab that opens. The token caches under
    `~/.mcp-auth/`, so subsequent runs are headless.
-3. Drop a PDF at the path in TRANSFORM_SAMPLE_PDF (default: /tmp/sample.pdf
-   on macOS/Linux; use `%TEMP%\\sample.pdf` on Windows) before running.
+3. Drop a PDF at TRANSFORM_SAMPLE_PDF (default:
+   `<tempfile.gettempdir()>/sample.pdf`, which resolves to `/tmp` on
+   Linux, `$TMPDIR` on macOS, and `%TEMP%` on Windows). If unsure of the
+   exact path, run once without setting TRANSFORM_SAMPLE_PDF and the
+   guard will print it.
 
 Environment variables:
 - ANTHROPIC_API_KEY: Required for the default Claude model.
@@ -101,8 +104,8 @@ async def run_agent(task: str) -> None:
                 instead.
 
                 Standard flow for a local file:
-                  1. request_file_upload_url → returns signed URL + file_ref.
-                  2. upload_file(local_path, signed_url) → PUT the bytes.
+                  1. request_file_upload_url -> returns signed URL + file_ref.
+                  2. upload_file(local_path, signed_url) -> PUT the bytes.
                   3. transform_files with stage config. The chunk stage
                      requires a 'strategy' argument, for example
                      {"chunk": {"strategy": "chunk_by_title"}}.
