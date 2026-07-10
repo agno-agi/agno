@@ -182,6 +182,8 @@ def _patch_missing_attrs(glide_mod):
 
 _ensure_glide_sync_stub()
 
+from agno.db.filter_converter import TRACE_COLUMNS  # noqa: E402
+from agno.db.valkey.utils import matches_filter_expr  # noqa: E402
 from agno.db.valkey.valkey import ValkeyDb  # noqa: E402
 
 
@@ -258,6 +260,42 @@ def _make_trace_data(trace_id: str, **overrides: Any) -> Dict[str, Any]:
         "end_time": overrides.get("end_time", "2026-01-01T00:00:01Z"),
         "created_at": overrides.get("created_at", "2026-01-01T00:00:00Z"),
     }
+
+
+# -- Filter expression tests --
+
+
+class TestFilterExpr:
+    def test_matches_filter_expr_normalizes_datetime_equality_and_in_filters(self):
+        trace_data = _make_trace_data("t1", created_at="2026-01-01T00:00:00+00:00")
+
+        assert matches_filter_expr(
+            trace_data,
+            {"op": "EQ", "key": "created_at", "value": "2026-01-01T00:00:00Z"},
+            TRACE_COLUMNS,
+        )
+        assert matches_filter_expr(
+            trace_data,
+            {"op": "IN", "key": "created_at", "values": ["2026-01-01T00:00:00Z"]},
+            TRACE_COLUMNS,
+        )
+
+    def test_matches_filter_expr_neq_does_not_match_missing_values(self):
+        trace_data = _make_trace_data("t1", team_id=None)
+
+        assert not matches_filter_expr(
+            trace_data,
+            {"op": "NEQ", "key": "team_id", "value": "team-1"},
+            TRACE_COLUMNS,
+        )
+
+    def test_matches_filter_expr_rejects_excessive_nesting(self):
+        filter_expr = {"op": "EQ", "key": "status", "value": "OK"}
+        for _ in range(12):
+            filter_expr = {"op": "NOT", "condition": filter_expr}
+
+        with pytest.raises(ValueError, match="exceeds maximum nesting depth"):
+            matches_filter_expr(_make_trace_data("t1"), filter_expr, TRACE_COLUMNS)
 
 
 # -- Session CRUD tests --
@@ -399,6 +437,20 @@ class TestTrace:
         traces, count = valkey_db.get_traces()
         assert traces == []
         assert count == 0
+
+    def test_get_traces_applies_filter_expr(self, valkey_db, mock_client):
+        trace_1 = _make_trace_data("t1", created_at="2026-01-01T00:00:00+00:00")
+        trace_2 = _make_trace_data("t2", created_at="2026-01-02T00:00:00+00:00")
+        mock_client.scan.return_value = ("0", [b"test:traces:t1", b"test:traces:t2"])
+        mock_client.exec.return_value = [_serialize(trace_1), _serialize(trace_2)]
+        mock_client.smembers.return_value = set()
+
+        traces, count = valkey_db.get_traces(
+            filter_expr={"op": "EQ", "key": "created_at", "value": "2026-01-01T00:00:00Z"}
+        )
+
+        assert count == 1
+        assert [trace.trace_id for trace in traces] == ["t1"]
 
 
 # -- Knowledge tests --

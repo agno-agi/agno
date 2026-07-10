@@ -3,7 +3,7 @@
 import json
 import time
 from datetime import date, datetime, timedelta, timezone
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union, cast
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Set, Union, cast
 from uuid import UUID
 
 from agno.db.schemas.culture import CulturalKnowledge
@@ -186,6 +186,121 @@ def apply_filters(records: List[Dict[str, Any]], conditions: Dict[str, Any]) -> 
             filtered_records.append(record)
 
     return filtered_records
+
+
+def _normalize_filter_value(key: str, value: Any) -> Any:
+    """Normalize filter values to match the shared DB filter converters."""
+    from agno.db.filter_converter import DATETIME_COLUMNS
+
+    if key not in DATETIME_COLUMNS:
+        return value
+
+    from agno.utils.dttm import parse_datetime_utc
+
+    try:
+        return parse_datetime_utc(value)
+    except (TypeError, ValueError):
+        return value
+
+
+def matches_filter_expr(
+    record: Dict[str, Any], filter_dict: Dict[str, Any], allowed_columns: Set[str], _depth: int = 0
+) -> bool:
+    """Evaluate a serialized FilterExpr dict against a single in-memory record.
+
+    Mirrors the semantics of ``agno.db.filter_converter.filter_expr_to_sqlalchemy``, but
+    operates directly on a Python dict instead of building a SQL predicate, since Valkey
+    records are plain dicts loaded from JSON rather than SQL table rows.
+
+    Args:
+        record: The record to test (e.g. a deserialized trace dict).
+        filter_dict: Serialized FilterExpr (from ``to_dict()`` or a JSON API body).
+        allowed_columns: Whitelist of field names; unknown fields raise ValueError.
+
+    Returns:
+        True if the record satisfies the filter expression.
+
+    Raises:
+        ValueError: If filter_dict has invalid structure, unknown operator, or references
+            a field not in allowed_columns.
+    """
+    from agno.db.filter_converter import MAX_FILTER_DEPTH
+
+    if _depth > MAX_FILTER_DEPTH:
+        raise ValueError(f"Filter expression exceeds maximum nesting depth of {MAX_FILTER_DEPTH}")
+
+    if not isinstance(filter_dict, dict) or "op" not in filter_dict:
+        raise ValueError(f"Invalid filter: must be a dict with 'op' key. Got: {filter_dict}")
+
+    op = filter_dict["op"]
+
+    if op in ("EQ", "NEQ", "GT", "GTE", "LT", "LTE", "CONTAINS", "STARTSWITH"):
+        key = filter_dict.get("key")
+        value = filter_dict.get("value")
+        if key is None or value is None:
+            raise ValueError(f"{op} filter requires 'key' and 'value' fields. Got: {filter_dict}")
+        if key not in allowed_columns:
+            raise ValueError(f"Invalid filter field: '{key}'. Allowed: {sorted(allowed_columns)}")
+
+        record_value = record.get(key)
+        if record_value is None:
+            return False
+
+        record_value = _normalize_filter_value(key, record_value)
+        value = _normalize_filter_value(key, value)
+
+        if op == "EQ":
+            return record_value == value
+        elif op == "NEQ":
+            return record_value != value
+        elif op == "CONTAINS":
+            return record_value is not None and str(value).lower() in str(record_value).lower()
+        elif op == "STARTSWITH":
+            return record_value is not None and str(record_value).lower().startswith(str(value).lower())
+
+        if op == "GT":
+            return record_value > value
+        elif op == "GTE":
+            return record_value >= value
+        elif op == "LT":
+            return record_value < value
+        else:  # LTE
+            return record_value <= value
+
+    elif op == "IN":
+        key = filter_dict.get("key")
+        values = filter_dict.get("values")
+        if key is None or values is None:
+            raise ValueError(f"IN filter requires 'key' and 'values' fields. Got: {filter_dict}")
+        if key not in allowed_columns:
+            raise ValueError(f"Invalid filter field: '{key}'. Allowed: {sorted(allowed_columns)}")
+        record_value = record.get(key)
+        if record_value is None:
+            return False
+        record_value = _normalize_filter_value(key, record_value)
+        values = [_normalize_filter_value(key, value) for value in values]
+        return record_value in values
+
+    elif op == "AND":
+        conditions = filter_dict.get("conditions")
+        if not conditions:
+            raise ValueError(f"AND filter requires 'conditions' field. Got: {filter_dict}")
+        return all(matches_filter_expr(record, c, allowed_columns, _depth + 1) for c in conditions)
+
+    elif op == "OR":
+        conditions = filter_dict.get("conditions")
+        if not conditions:
+            raise ValueError(f"OR filter requires 'conditions' field. Got: {filter_dict}")
+        return any(matches_filter_expr(record, c, allowed_columns, _depth + 1) for c in conditions)
+
+    elif op == "NOT":
+        condition = filter_dict.get("condition")
+        if not condition:
+            raise ValueError(f"NOT filter requires 'condition' field. Got: {filter_dict}")
+        return not matches_filter_expr(record, condition, allowed_columns, _depth + 1)
+
+    else:
+        raise ValueError(f"Unknown filter operator: {op}")
 
 
 def create_index_entries(

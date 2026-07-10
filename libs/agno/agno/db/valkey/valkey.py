@@ -24,6 +24,7 @@ from agno.db.valkey.utils import (
     generate_valkey_key,
     get_all_keys_for_table,
     get_dates_to_calculate_metrics_for,
+    matches_filter_expr,
     remove_index_entries,
     serialize_data,
 )
@@ -2156,6 +2157,7 @@ class ValkeyDb(BaseDb):
         end_time: Optional[datetime] = None,
         limit: Optional[int] = 20,
         page: Optional[int] = 1,
+        filter_expr: Optional[Dict[str, Any]] = None,
     ) -> tuple[List, int]:
         """Get traces matching the provided filters.
 
@@ -2171,11 +2173,15 @@ class ValkeyDb(BaseDb):
             end_time: Filter traces ending before this datetime.
             limit: Maximum number of traces to return per page.
             page: Page number (1-indexed).
+            filter_expr: Advanced filter expression dict (from FilterExpr.to_dict()).
+                Supports composable queries with AND/OR/NOT logic and operators
+                like EQ, NEQ, GT, GTE, LT, LTE, IN, CONTAINS, STARTSWITH.
 
         Returns:
             tuple[List[Trace], int]: Tuple of (list of matching traces, total count).
         """
         try:
+            from agno.db.filter_converter import TRACE_COLUMNS
             from agno.tracing.schemas import Trace as TraceSchema
 
             log_debug(
@@ -2210,6 +2216,8 @@ class ValkeyDb(BaseDb):
                     trace_end = trace.get("end_time", "")
                     if trace_end and trace_end > end_time.isoformat():
                         continue
+                if filter_expr and not matches_filter_expr(trace, filter_expr, TRACE_COLUMNS):
+                    continue
 
                 filtered_traces.append(trace)
 
@@ -2229,6 +2237,9 @@ class ValkeyDb(BaseDb):
 
             return traces, total_count
 
+        except ValueError:
+            # Re-raise for a proper 400 response at the API layer (invalid filter_expr)
+            raise
         except Exception as e:
             log_error(f"Error getting traces: {str(e)}")
             return [], 0
@@ -2243,6 +2254,7 @@ class ValkeyDb(BaseDb):
         end_time: Optional[datetime] = None,
         limit: Optional[int] = 20,
         page: Optional[int] = 1,
+        filter_expr: Optional[Dict[str, Any]] = None,
     ) -> tuple[List[Dict[str, Any]], int]:
         """Get trace statistics grouped by session.
 
@@ -2255,6 +2267,7 @@ class ValkeyDb(BaseDb):
             end_time: Filter sessions with traces created before this datetime.
             limit: Maximum number of sessions to return per page.
             page: Page number (1-indexed).
+            filter_expr: Advanced filter expression dict (from FilterExpr.to_dict()).
 
         Returns:
             tuple[List[Dict], int]: Tuple of (list of session stats dicts, total count).
@@ -2262,6 +2275,8 @@ class ValkeyDb(BaseDb):
                 first_trace_at, last_trace_at.
         """
         try:
+            from agno.db.filter_converter import TRACE_COLUMNS
+
             log_debug(
                 f"get_trace_stats called with filters: user_id={user_id}, agent_id={agent_id}, "
                 f"workflow_id={workflow_id}, team_id={team_id}, "
@@ -2291,6 +2306,8 @@ class ValkeyDb(BaseDb):
                 if start_time and created_at < start_time.isoformat():
                     continue
                 if end_time and created_at > end_time.isoformat():
+                    continue
+                if filter_expr and not matches_filter_expr(trace, filter_expr, TRACE_COLUMNS):
                     continue
 
                 if trace_session_id not in session_stats:
@@ -2329,6 +2346,9 @@ class ValkeyDb(BaseDb):
 
             return paginated_stats, total_count
 
+        except ValueError:
+            # Re-raise for a proper 400 response at the API layer (invalid filter_expr)
+            raise
         except Exception as e:
             log_error(f"Error getting trace stats: {str(e)}")
             return [], 0

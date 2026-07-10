@@ -280,3 +280,13 @@ def test_update_metadata_writes_to_hash(valkey_db):
     for call in client.hset.call_args_list:
         metadata_arg = call.args[1]
         assert metadata_arg["status"] == "updated"
+
+
+def test_filter_query_escapes_tag_values_without_changing_stored_metadata(valkey_db):
+    db = valkey_db[0]
+    doc = Document(content="Doc A", meta_data={"category": "north america"}, name="doc_a")
+
+    parsed_doc = db._parse_hash(doc)
+
+    assert parsed_doc["category"] == "north america"
+    assert db._build_filter_query({"category": "north america"}) == r"(@category:{north\ america})"

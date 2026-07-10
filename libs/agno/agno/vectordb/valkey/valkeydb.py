@@ -170,14 +170,18 @@ class ValkeyDB(VectorDb):
 
     @staticmethod
     def _sanitize_tag_value(value: str) -> str:
-        """Sanitize a string for use in a Valkey TAG filter query.
+        """Escape a string for use in a Valkey TAG filter query.
 
-        TAG syntax breaks on special characters; replace them with underscores
-        to prevent query parse errors. Mirrors the ChatDev ValkeyMemory pattern.
+        TAG syntax treats punctuation and whitespace as query syntax. Escape
+        those characters so the query matches the original stored HASH value.
         """
-        for ch in ",{}|<> \t\n\r":
-            value = value.replace(ch, "_")
-        return value
+        escaped = []
+        for ch in value:
+            if ch in " ,{}|<>\\\t\n\r":
+                escaped.append(f"\\{ch}")
+            else:
+                escaped.append(ch)
+        return "".join(escaped)
 
     def _build_filter_query(self, filters: Dict[str, Any]) -> str:
         """Convert dict filters to a valkey-search filter query prefix.
