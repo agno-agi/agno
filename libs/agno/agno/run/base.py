@@ -9,7 +9,7 @@ from agno.media import Audio, File, Image, Video
 from agno.models.message import Citations, Message, MessageReferences
 from agno.models.metrics import RunMetrics
 from agno.reasoning.step import ReasoningStep
-from agno.utils.log import log_error
+from agno.utils.log import log_error, log_warning
 
 
 @dataclass
@@ -198,6 +198,17 @@ class BaseRunOutputEvent:
         except Exception as e:
             log_error(f"Failed to convert response event to json: {str(e)}")
             raise
+
+        try:
+            from opentelemetry import trace
+
+            span_context = trace.get_current_span().get_span_context()
+            if span_context.is_valid:
+                _dict["trace_id"] = format(span_context.trace_id, "x")
+        except Exception as e:
+            log_warning(
+                f"OpenTelemetry is not installed. Trace ID will not be included in JSON output. Error: {str(e)}"
+            )
 
         if indent is None:
             return json.dumps(_dict, separators=separators, default=json_serializer, ensure_ascii=False)
