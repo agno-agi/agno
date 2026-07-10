@@ -2,6 +2,7 @@ import asyncio
 import collections.abc
 import json
 from abc import ABC, abstractmethod
+from copy import deepcopy
 from dataclasses import dataclass, field
 from hashlib import md5
 from pathlib import Path
@@ -2347,7 +2348,10 @@ class Model(ABC):
 
             # The function requires user input (HITL)
             if fc.function.requires_user_input:
-                user_input_schema = fc.function.user_input_schema
+                # Copy the schema: the Function object is shared between parallel
+                # calls to the same tool, so writing values on it directly would
+                # leak one call's values into every other call's requirement.
+                user_input_schema = deepcopy(fc.function.user_input_schema)
                 if fc.arguments and user_input_schema:
                     for name, value in fc.arguments.items():
                         for user_input_field in user_input_schema:
@@ -2544,7 +2548,10 @@ class Model(ABC):
                 )
             # If the function requires user input, we yield a message to the user
             if fc.function.requires_user_input and not skip_pause_check:
-                user_input_schema = fc.function.user_input_schema
+                # Copy the schema: the Function object is shared between parallel
+                # calls to the same tool, so writing values on it directly would
+                # leak one call's values into every other call's requirement.
+                user_input_schema = deepcopy(fc.function.user_input_schema)
                 if fc.arguments and user_input_schema:
                     for name, value in fc.arguments.items():
                         for user_input_field in user_input_schema:
