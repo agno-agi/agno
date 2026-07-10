@@ -54,7 +54,7 @@ def _resolve_by_identity(monkeypatch):
 async def test_annotations_mark_reads_and_destructive_tools():
     """Clients use readOnlyHint/destructiveHint for permission UX; reads and the one
     destructive tool must be distinguishable."""
-    os = AgentOS(agents=[_agent()], enable_mcp_server=True)
+    os = AgentOS(agents=[_agent()], mcp_server=True)
     async with Client(build_mcp_server(os)) as client:
         tools = {t.name: t for t in await client.list_tools()}
 
@@ -67,7 +67,7 @@ async def test_annotations_mark_reads_and_destructive_tools():
 
 async def test_config_payload_is_compact():
     """get_agentos_config is a discovery payload: ids and summaries, not the full config."""
-    os = AgentOS(agents=[_agent()], enable_mcp_server=True)
+    os = AgentOS(agents=[_agent()], mcp_server=True)
     os.get_app()  # populates db discovery (os.dbs), as at serve time
     async with Client(build_mcp_server(os)) as client:
         result = await client.call_tool("get_agentos_config", {})
@@ -83,7 +83,7 @@ async def test_config_payload_is_compact():
 
 
 async def test_continue_run_requires_exactly_one_component():
-    os = AgentOS(agents=[_agent()], enable_mcp_server=True)
+    os = AgentOS(agents=[_agent()], mcp_server=True)
     async with Client(build_mcp_server(os)) as client:
         result = await client.call_tool("continue_run", {"run_id": "r1"}, raise_on_error=False)
         assert result.is_error
@@ -105,7 +105,7 @@ async def test_continue_run_threads_identity_and_parses_requirements(monkeypatch
         return RunOutput(run_id=run_id, session_id=session_id, content="resumed", status=RunStatus.completed)
 
     agent.acontinue_run = fake_acontinue_run  # type: ignore[method-assign]
-    os = AgentOS(agents=[agent], enable_mcp_server=True)
+    os = AgentOS(agents=[agent], mcp_server=True)
 
     requirement_dict = {"tool_execution": {"tool_name": "send_email"}, "confirmation": True}
     async with Client(build_mcp_server(os)) as client:
@@ -138,7 +138,7 @@ async def test_continue_run_dispatches_workflow_step_requirements():
         return WorkflowRunOutput(run_id=run_id, session_id=session_id, content="wf resumed")
 
     workflow.acontinue_run = fake_acontinue_run  # type: ignore[method-assign]
-    os = AgentOS(workflows=[workflow], enable_mcp_server=True)
+    os = AgentOS(workflows=[workflow], mcp_server=True)
 
     step_requirement = {"step_id": "s1", "step_name": "approve", "step_type": "Step", "requires_confirmation": True}
     async with Client(build_mcp_server(os)) as client:
@@ -153,7 +153,7 @@ async def test_continue_run_dispatches_workflow_step_requirements():
 
 
 async def test_cancel_run_requires_exactly_one_component():
-    os = AgentOS(agents=[_agent()], enable_mcp_server=True)
+    os = AgentOS(agents=[_agent()], mcp_server=True)
     async with Client(build_mcp_server(os)) as client:
         result = await client.call_tool("cancel_run", {"run_id": "r1"}, raise_on_error=False)
     assert result.is_error
@@ -168,7 +168,7 @@ async def test_cancel_run_requests_cancellation_on_the_named_component():
         return True
 
     agent.acancel_run = fake_acancel_run  # type: ignore[method-assign]
-    os = AgentOS(agents=[agent], enable_mcp_server=True)
+    os = AgentOS(agents=[agent], mcp_server=True)
     async with Client(build_mcp_server(os)) as client:
         result = await client.call_tool("cancel_run", {"run_id": "run-x", "agent_id": "demo-agent"})
     assert captured["run_id"] == "run-x"
@@ -181,7 +181,7 @@ async def test_continue_run_rejects_remote_component():
     from agno.agent.remote import RemoteAgent
 
     remote = RemoteAgent(base_url="http://example.invalid", agent_id="remote-agent")
-    os = AgentOS(agents=[remote], enable_mcp_server=True)
+    os = AgentOS(agents=[remote], mcp_server=True)
     async with Client(build_mcp_server(os)) as client:
         result = await client.call_tool(
             "continue_run",
@@ -207,7 +207,7 @@ async def test_lifecycle_ownership_gate_blocks_other_users(monkeypatch):
 
     agent.acancel_run = fake_acancel_run  # type: ignore[method-assign]
     agent.aget_session = fake_aget_session  # type: ignore[method-assign]
-    os = AgentOS(agents=[agent], enable_mcp_server=True)
+    os = AgentOS(agents=[agent], mcp_server=True)
     async with Client(build_mcp_server(os)) as client:
         result = await client.call_tool(
             "cancel_run",
@@ -385,7 +385,7 @@ async def test_service_lists_sessions_via_threadpool():
 def test_resync_reuses_started_mcp_app_and_mount():
     """resync() must not replace the MCP app (a fresh one's lifespan never runs) and
     must not accumulate duplicate mounts."""
-    os = AgentOS(agents=[_agent()], enable_mcp_server=True)
+    os = AgentOS(agents=[_agent()], mcp_server=True)
     app = os.get_app()
     mcp_app_before = os._mcp_app
     assert mcp_app_before is not None
@@ -398,7 +398,7 @@ def test_resync_reuses_started_mcp_app_and_mount():
 
 
 def test_home_route_works_with_mcp_enabled():
-    os = AgentOS(agents=[_agent()], enable_mcp_server=True)
+    os = AgentOS(agents=[_agent()], mcp_server=True)
     app = os.get_app()
     client = TestClient(app)
     response = client.get("/")
@@ -408,7 +408,7 @@ def test_home_route_works_with_mcp_enabled():
 
 def test_get_app_idempotent_with_base_app():
     base_app = FastAPI()
-    os = AgentOS(agents=[_agent()], enable_mcp_server=True, base_app=base_app)
+    os = AgentOS(agents=[_agent()], mcp_server=True, base_app=base_app)
     first = os.get_app()
     route_count = len(first.router.routes)
     mcp_app_first = os._mcp_app
@@ -454,7 +454,7 @@ def _patch_request(monkeypatch, request):
 async def test_scope_gate_blocks_underscoped_pat_on_run_agent(monkeypatch):
     """A sessions:read-only PAT must get the same 403-equivalent on MCP as on REST."""
     _patch_request(monkeypatch, _pat_request(["sessions:read"]))
-    os = AgentOS(agents=[_agent()], enable_mcp_server=True)
+    os = AgentOS(agents=[_agent()], mcp_server=True)
     async with Client(build_mcp_server(os)) as client:
         result = await client.call_tool("run_agent", {"agent_id": "demo-agent", "message": "hi"}, raise_on_error=False)
     assert result.is_error
@@ -465,7 +465,7 @@ async def test_scope_gate_blocks_underscoped_pat_on_run_agent(monkeypatch):
 async def test_scope_gate_allows_matching_scope_through(monkeypatch):
     """With agents:run the gate passes and the tool proceeds to component lookup."""
     _patch_request(monkeypatch, _pat_request(["agents:run"]))
-    os = AgentOS(agents=[_agent()], enable_mcp_server=True)
+    os = AgentOS(agents=[_agent()], mcp_server=True)
     async with Client(build_mcp_server(os)) as client:
         result = await client.call_tool("run_agent", {"agent_id": "ghost", "message": "hi"}, raise_on_error=False)
     assert result.is_error
@@ -476,7 +476,7 @@ async def test_scope_gate_allows_matching_scope_through(monkeypatch):
 async def test_scope_gate_honours_per_resource_scopes(monkeypatch):
     """agents:<id>:run grants that agent only, mirroring REST per-resource scopes."""
     _patch_request(monkeypatch, _pat_request(["agents:ghost:run"]))
-    os = AgentOS(agents=[_agent()], enable_mcp_server=True)
+    os = AgentOS(agents=[_agent()], mcp_server=True)
     async with Client(build_mcp_server(os)) as client:
         allowed = await client.call_tool("run_agent", {"agent_id": "ghost", "message": "hi"}, raise_on_error=False)
         blocked = await client.call_tool("run_agent", {"agent_id": "demo-agent", "message": "hi"}, raise_on_error=False)
@@ -487,7 +487,7 @@ async def test_scope_gate_honours_per_resource_scopes(monkeypatch):
 async def test_scope_gate_covers_session_and_config_tools(monkeypatch):
     """get_sessions needs sessions:read; get_agentos_config needs config:read."""
     _patch_request(monkeypatch, _pat_request(["agents:run"]))
-    os = AgentOS(agents=[_agent()], enable_mcp_server=True)
+    os = AgentOS(agents=[_agent()], mcp_server=True)
     async with Client(build_mcp_server(os)) as client:
         sessions_result = await client.call_tool("get_sessions", {}, raise_on_error=False)
         config_result = await client.call_tool("get_agentos_config", {}, raise_on_error=False)
@@ -500,7 +500,7 @@ async def test_scope_gate_default_scopes_cover_the_golden_path(monkeypatch):
     from agno.os.service_accounts import DEFAULT_SERVICE_ACCOUNT_SCOPES
 
     _patch_request(monkeypatch, _pat_request(DEFAULT_SERVICE_ACCOUNT_SCOPES))
-    os = AgentOS(agents=[_agent()], enable_mcp_server=True)
+    os = AgentOS(agents=[_agent()], mcp_server=True)
     os.get_app()
     async with Client(build_mcp_server(os)) as client:
         config_result = await client.call_tool("get_agentos_config", {}, raise_on_error=False)
@@ -511,7 +511,7 @@ async def test_scope_gate_default_scopes_cover_the_golden_path(monkeypatch):
 
 async def test_scope_gate_admin_scope_bypasses(monkeypatch):
     _patch_request(monkeypatch, _pat_request(["admin"], admin_scope="admin"))
-    os = AgentOS(agents=[_agent()], enable_mcp_server=True)
+    os = AgentOS(agents=[_agent()], mcp_server=True)
     async with Client(build_mcp_server(os)) as client:
         result = await client.call_tool("run_agent", {"agent_id": "ghost", "message": "hi"}, raise_on_error=False)
     assert "Agent ghost not found" in str(result.content)
@@ -520,7 +520,7 @@ async def test_scope_gate_admin_scope_bypasses(monkeypatch):
 async def test_scope_gate_skips_anonymous_and_security_key_callers(monkeypatch):
     """Callers without ACL-bearing identities (open / security-key humans) pass, as on REST."""
     _patch_request(monkeypatch, _request_with_state(authenticated=True))
-    os = AgentOS(agents=[_agent()], enable_mcp_server=True)
+    os = AgentOS(agents=[_agent()], mcp_server=True)
     async with Client(build_mcp_server(os)) as client:
         result = await client.call_tool("run_agent", {"agent_id": "ghost", "message": "hi"}, raise_on_error=False)
     assert "Agent ghost not found" in str(result.content)
@@ -533,7 +533,7 @@ async def test_empty_include_tags_registers_no_builtin_tools():
     """An explicitly empty include_tags set means no built-in tools, not all of them."""
     from agno.os.config import MCPServerConfig
 
-    os = AgentOS(agents=[_agent()], enable_mcp_server=True, mcp_config=MCPServerConfig(include_tags=set()))
+    os = AgentOS(agents=[_agent()], mcp_server=MCPServerConfig(include_tags=set()))
     async with Client(build_mcp_server(os)) as client:
         tools = await client.list_tools()
     assert tools == []
@@ -563,7 +563,7 @@ async def test_get_session_runs_run_id_returns_full_detail(monkeypatch):
     monkeypatch.setattr(mcp_mod, "get_db", fake_get_db)
     monkeypatch.setattr(mcp_mod.session_service, "get_session_runs", fake_get_session_runs)
 
-    os = AgentOS(agents=[_agent()], enable_mcp_server=True)
+    os = AgentOS(agents=[_agent()], mcp_server=True)
     os.get_app()  # populates os.dbs, as at serve time
     async with Client(build_mcp_server(os)) as client:
         trimmed = await client.call_tool("get_session_runs", {"session_id": "s1"})

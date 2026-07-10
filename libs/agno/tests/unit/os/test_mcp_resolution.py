@@ -38,7 +38,7 @@ async def test_resolve_run_component_returns_a_fresh_copy_each_call():
     """create_fresh: every run resolves a distinct deep_copy, never the shared singleton,
     so concurrent MCP runs cannot contaminate each other's state."""
     agent = Agent(id="a1", name="A1")
-    os = AgentOS(agents=[agent], enable_mcp_server=True)
+    os = AgentOS(agents=[agent], mcp_server=True)
 
     first = await mcp_mod._resolve_run_component(os, "agents", "a1", user_id=None, session_id=None)
     second = await mcp_mod._resolve_run_component(os, "agents", "a1", user_id=None, session_id=None)
@@ -60,7 +60,7 @@ async def test_resolve_run_component_reads_the_db_registry(monkeypatch, tmp_path
     os = AgentOS(
         agents=[Agent(id="in-memory", name="In Memory")],
         db=SqliteDb(db_file=str(tmp_path / "res.db")),
-        enable_mcp_server=True,
+        mcp_server=True,
     )
 
     resolved = await mcp_mod._resolve_run_component(os, "agents", "db-only", user_id=None, session_id=None)
@@ -68,7 +68,7 @@ async def test_resolve_run_component_reads_the_db_registry(monkeypatch, tmp_path
 
 
 async def test_resolve_run_component_reports_missing_id():
-    os = AgentOS(agents=[Agent(id="a1", name="A1")], enable_mcp_server=True)
+    os = AgentOS(agents=[Agent(id="a1", name="A1")], mcp_server=True)
     with pytest.raises(Exception, match="Agent ghost not found"):
         await mcp_mod._resolve_run_component(os, "agents", "ghost", user_id=None, session_id=None)
 
@@ -87,7 +87,7 @@ async def test_config_lists_db_registry_components(monkeypatch, tmp_path):
     os = AgentOS(
         agents=[Agent(id="mem-agent", name="Mem Agent")],
         db=SqliteDb(db_file=str(tmp_path / "cfg.db")),
-        enable_mcp_server=True,
+        mcp_server=True,
     )
 
     os.get_app()  # populate os.dbs (databases discovery), as at serve time
@@ -103,7 +103,7 @@ async def test_config_filters_roster_to_accessible_resources(monkeypatch):
     tool -- the roster is filtered exactly as the REST list routes filter it."""
     os = AgentOS(
         agents=[Agent(id="mine", name="Mine"), Agent(id="theirs", name="Theirs")],
-        enable_mcp_server=True,
+        mcp_server=True,
     )
     _patch_request(
         monkeypatch,
@@ -127,7 +127,7 @@ async def test_config_unfiltered_without_authorization(monkeypatch):
     only kicks in when scopes are actually enforced."""
     os = AgentOS(
         agents=[Agent(id="a", name="A"), Agent(id="b", name="B")],
-        enable_mcp_server=True,
+        mcp_server=True,
     )
     _patch_request(monkeypatch, authenticated=True)
 

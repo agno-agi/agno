@@ -159,12 +159,16 @@ def get_effective_auth_mode(
     authorization: bool = False,
     app: Any = None,
 ) -> Literal["none", "security_key", "jwt"]:
-    """Return the authentication mode effectively enforced by the OS.
+    """Return the REST/WS authentication mode effectively enforced by the OS.
 
-    Mirrors the precedence used by ``get_authentication_dependency``:
-    JWT (via authorization=True on AgentOS, JWT environment variables, or a manually
-    installed ``JWTMiddleware``) takes precedence over the security key, which takes
-    precedence over no auth.
+    This describes the REST/WS plane only. ``mcp_auth`` is deliberately NOT consulted:
+    it protects the MCP endpoint alone (its own OAuth surface is described separately
+    under ``/info``'s ``mcp.oauth`` block), so folding it in here would mislabel a
+    deployment -- reporting "oauth" while REST is actually open, or masking a real "jwt"
+    REST posture. Consumers read this to pick REST/WS credentials, so it must reflect the
+    REST plane. The precedence mirrors ``get_authentication_dependency``: JWT (via
+    authorization=True on AgentOS, JWT environment variables, or a manually installed
+    ``JWTMiddleware``) over the security key over no auth.
 
     Args:
         settings: The API settings containing the security key and authorization flag
@@ -173,8 +177,8 @@ def get_effective_auth_mode(
             is inspected so a manually-installed ``JWTMiddleware`` is detected.
 
     Returns:
-        "jwt" when JWT authorization is effectively active, "security_key" when
-        only the OS security key is enforced, "none" when authentication is disabled.
+        "jwt" when JWT authorization is effectively active, "security_key" when only the
+        OS security key is enforced, "none" when REST authentication is disabled.
     """
     if (
         authorization

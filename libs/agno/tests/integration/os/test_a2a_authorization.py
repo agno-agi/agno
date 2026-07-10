@@ -55,25 +55,12 @@ def _message_body():
     }
 
 
-@pytest.fixture(autouse=True)
-def _resolve_shared_instance(monkeypatch):
-    """Force ``create_fresh=False`` so ``.arun`` patches on the shared instance are what run."""
-    import agno.os.interfaces.a2a.router as a2a_router
-
-    def _force_shared(real):
-        def wrapper(*args, **kwargs):
-            kwargs["create_fresh"] = False
-            return real(*args, **kwargs)
-
-        return wrapper
-
-    for fn_name in ("get_agent_by_id", "get_team_by_id", "get_workflow_by_id"):
-        monkeypatch.setattr(a2a_router, fn_name, _force_shared(getattr(a2a_router, fn_name)))
-
-
 @pytest.fixture
 def agent():
-    return Agent(id=AGENT_ID, name="Authz Agent", db=InMemoryDb())
+    agent = Agent(id=AGENT_ID, name="Authz Agent", db=InMemoryDb())
+    # Return same instance from deep_copy so arun patches work
+    agent.deep_copy = lambda **kwargs: agent
+    return agent
 
 
 @pytest.fixture
@@ -104,6 +91,10 @@ def multi_entity_authz_client():
     agent = Agent(id=AGENT_ID, name="Authz Agent", db=InMemoryDb())
     team = Team(id="authz-team", name="Authz Team", members=[agent], db=InMemoryDb())
     workflow = Workflow(id="authz-wf", name="Authz WF", steps=[Step(name="s", agent=agent)], db=InMemoryDb())
+    # Return same instance from deep_copy so arun patches work
+    agent.deep_copy = lambda **kwargs: agent
+    team.deep_copy = lambda **kwargs: team
+    workflow.deep_copy = lambda **kwargs: workflow
     agent_os = AgentOS(
         id="a2a-multi-os",
         agents=[agent],
@@ -184,8 +175,7 @@ class TestA2AAuthorization:
         assert resp.status_code == 403, resp.text
 
     def test_message_send_allowed_with_run_scope(self, agent, authz_client):
-        # A run-scoped token clears authorization (does not 401/403); the run itself
-        # is patched so no model call is made.
+        # A run-scoped token clears authorization and the agent actually runs
         with patch.object(agent, "arun", new_callable=AsyncMock) as mock_arun:
             mock_arun.return_value = RunOutput(run_id="r", session_id="ctx", agent_id=AGENT_ID, content="ok")
             resp = authz_client.post(
@@ -193,7 +183,8 @@ class TestA2AAuthorization:
                 json=_message_body(),
                 headers={"Authorization": f"Bearer {_token(['agents:run'])}"},
             )
-        assert resp.status_code not in (401, 403), resp.text
+            assert resp.status_code == 200
+            mock_arun.assert_called_once()
 
 
 # --------------------------------------------------------------------------- B2
@@ -254,15 +245,21 @@ class TestA2AIdentity:
 def test_every_a2a_route_has_a_scope_mapping():
     """Regression guard for the root cause of B1: the unmapped-route default is *allow*,
     so any A2A route added without a scope-map entry would silently ship ungated.
+
+    A2A scope mappings live in the interface (A2A.get_scope_mappings()), not in the
+    central get_default_scope_mappings(). This test verifies that the A2A interface
+    declares scope mappings for all its routes.
     """
-    from agno.os.scopes import get_default_scope_mappings, get_required_scopes_for_route
+    from agno.os.interfaces.a2a.scopes import get_a2a_scope_mappings
+    from agno.os.scopes import get_required_scopes_for_route
 
     agent = Agent(id=AGENT_ID, name="Authz Agent", db=InMemoryDb())
     team = Team(id="authz-team", name="Authz Team", members=[agent], db=InMemoryDb())
     workflow = Workflow(id="authz-wf", name="Authz WF", steps=[Step(name="s", agent=agent)], db=InMemoryDb())
     agent_os = AgentOS(id="a2a-guard-os", agents=[agent], teams=[team], workflows=[workflow], a2a_interface=True)
 
-    mappings = get_default_scope_mappings()
+    # A2A interface scope mappings for the default /a2a prefix
+    mappings = get_a2a_scope_mappings("/a2a")
     unmapped = []
     for route in agent_os.get_routes():
         path = getattr(route, "path", "")
@@ -300,7 +297,8 @@ class TestA2ACustomPrefix:
                 json=_message_body(),
                 headers={"Authorization": f"Bearer {_token(['agents:run'])}"},
             )
-        assert resp.status_code not in (401, 403), resp.text
+            assert resp.status_code == 200
+            mock_arun.assert_called_once()
 
 
 class TestA2ARootPrefix:
@@ -337,7 +335,8 @@ class TestA2ARootPrefix:
                 json=_message_body(),
                 headers={"Authorization": f"Bearer {_token(['agents:run'])}"},
             )
-        assert resp.status_code not in (401, 403), resp.text
+            assert resp.status_code == 200
+            mock_arun.assert_called_once()
 
 
 # ------------------------------------------- deprecated dynamic-dispatch family gate
@@ -378,7 +377,8 @@ class TestA2ADeprecatedDispatchFamilyScope:
                 json=_message_body(),
                 headers={"X-Agent-ID": team.id, "Authorization": f"Bearer {_token(['agents:run', 'teams:run'])}"},
             )
-        assert resp.status_code not in (401, 403), resp.text
+            assert resp.status_code == 200
+            mock_arun.assert_called_once()
 
 
 # ----------------------------------------------------------- tasks:get read scoping

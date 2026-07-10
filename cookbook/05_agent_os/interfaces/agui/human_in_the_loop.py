@@ -13,6 +13,7 @@ The frontend renders a step selector UI where user can toggle steps and confirm/
 from typing import List
 
 from agno.agent.agent import Agent
+from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIResponses
 from agno.tools import tool
 from pydantic import BaseModel, Field
@@ -41,6 +42,7 @@ def generate_task_steps(steps: List[TaskStep]) -> str:
 hitl_agent = Agent(
     name="human_in_the_loop",
     model=OpenAIResponses(id="gpt-5.5"),
+    db=SqliteDb(db_file="/tmp/agui_human_in_the_loop.db"),
     tools=[generate_task_steps],
     instructions="""You help users plan tasks that require confirmation.
 

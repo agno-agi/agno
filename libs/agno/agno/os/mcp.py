@@ -227,6 +227,23 @@ def _tool_scope_mappings() -> Dict[str, List[str]]:
     return get_default_scope_mappings()
 
 
+def _mcp_auth_enabled(request: Any) -> bool:
+    """Whether this request is served by an ``mcp_auth``-protected MCP app.
+
+    ``get_mcp_server`` stamps the flag on the sub-app's state; the mounted app is the
+    innermost Starlette app, so ``request.app`` resolves to it inside the tools.
+    """
+    app = getattr(request, "app", None)
+    return bool(getattr(getattr(app, "state", None), "agno_mcp_auth_enabled", False))
+
+
+_MISSING_BRIDGE_DETAIL = (
+    "Authorization context missing: the request was authenticated by the mcp_auth provider "
+    "but the identity bridge did not populate request.state. Denying rather than skipping "
+    "enforcement."
+)
+
+
 def _require_tool_scopes(method: str, path: str) -> None:
     """Enforce the caller's scopes against the REST route this tool call is equivalent to.
 
@@ -255,6 +272,15 @@ def _require_tool_scopes(method: str, path: str) -> None:
     state = request.state
     is_service_account = getattr(state, "service_account_name", None) is not None
     if not is_service_account and not getattr(state, "authorization_enabled", False):
+        # Under mcp_auth, a verified request whose identity bridge did NOT run (an
+        # ordering regression) has no ``authenticated`` marker -- fail closed rather than
+        # silently disabling enforcement. But a request the bridge DID authenticate whose
+        # token simply carries no RBAC (an RBAC-off agno JWT, or an external Tier-2 token
+        # whose AS is the authority) is a legitimate unenforced caller and skips agno
+        # scope enforcement, exactly as on a non-mcp_auth deployment. Without mcp_auth the
+        # skip is the intended open/security-key behavior.
+        if _mcp_auth_enabled(request) and not getattr(state, "authenticated", False):
+            raise Exception(_MISSING_BRIDGE_DETAIL)
         return
 
     admin_scope_raw = getattr(state, "admin_scope", None)
@@ -267,6 +293,19 @@ def _require_tool_scopes(method: str, path: str) -> None:
         admin_scope=admin_scope,
     )
     if not scope_check.allowed:
+        # Under mcp_auth, a scope denial is most often an external-AS misconfiguration
+        # (the token carries non-agno scopes), which the client-facing 403 can't point at.
+        # Log the presented-vs-required scopes and the AS-config hint so the deployer can
+        # trace it to their authorization server. Behavior (the raised 403) is unchanged.
+        if _mcp_auth_enabled(request):
+            from agno.utils.log import log_warning
+
+            log_warning(
+                f"MCP tool scope check failed for {method} {path}: caller presented "
+                f"{list(getattr(state, 'scopes', None) or [])}, required {scope_check.required_scopes}. "
+                "If this is a Tier-2 (external authorization server) deployment, configure your AS to emit "
+                "agno-format scopes in the token 'scope' claim."
+            )
         raise Exception(build_insufficient_permissions_detail(scope_check.required_scopes))
 
 
@@ -290,6 +329,16 @@ async def _enforce_run_continuation_allowed(db: Any, run_id: str) -> None:
         return
 
     state = request.state
+    if (
+        _mcp_auth_enabled(request)
+        and not getattr(state, "authenticated", False)
+        and getattr(state, "service_account_name", None) is None
+        and not getattr(state, "authorization_enabled", False)
+    ):
+        # Same fail-closed rule as _require_tool_scopes: a provider-verified request whose
+        # identity bridge did not run (no ``authenticated`` marker) must not bypass the
+        # approval gate. A bridged RBAC-off caller is legitimate and proceeds.
+        raise Exception(_MISSING_BRIDGE_DETAIL)
     reason = await run_continuation_blocked_reason(
         db,
         run_id,
@@ -654,8 +703,11 @@ def build_mcp_server(
     """
     mcp_config: "Optional[MCPServerConfig]" = getattr(os, "mcp_config", None)
 
-    # Create an MCP server
-    mcp = FastMCP(os.name or "AgentOS")
+    # Create an MCP server. With AgentOS(mcp_auth=...) set, the resolved fastmcp provider
+    # owns authentication for the HTTP transport: http_app() serves its discovery/OAuth
+    # routes inside this app and wraps the MCP path in the SDK's challenge middleware.
+    # The in-memory client path used in tests ignores it.
+    mcp = FastMCP(os.name or "AgentOS", auth=os._get_mcp_auth_provider())
 
     # Decorator used to register the built-in tools. Honors ``mcp_config`` scoping;
     # behaves exactly like ``mcp.tool`` when no config (or default config) is provided.
@@ -1031,26 +1083,71 @@ def build_mcp_server(
     return mcp
 
 
-def _add_authorize_middleware(mcp_app: StarletteWithLifespan, authorize: Callable[[Optional[str]], bool]) -> None:
+class _MCPAuthorizeMiddleware:
     """Gate the MCP server with a per-call ``authorize(user_id) -> bool`` predicate.
 
-    Runs after the JWT middleware (so ``request.state.user_id`` is the verified subject) and
-    returns 401 before any tool or model runs when the predicate rejects the caller.
-    """
-    from starlette.middleware.base import BaseHTTPMiddleware
-    from starlette.responses import JSONResponse
+    Runs after the identity is attached to ``request.state`` (by the parent auth
+    middleware, or by the identity bridge under ``mcp_auth``) and returns 401 before
+    any tool or model runs when the predicate rejects the caller.
 
-    class _MCPAuthorizeMiddleware(BaseHTTPMiddleware):
-        async def dispatch(self, request, call_next):  # type: ignore[no-untyped-def]
-            user_id = getattr(getattr(request, "state", None), "user_id", None)
-            if not authorize(user_id):
-                return JSONResponse(
+    ``only_path`` scopes the gate to the MCP endpoint itself: under ``mcp_auth`` the
+    sub-app also serves the provider's OAuth flow endpoints (/authorize, /token,
+    /register), which are unauthenticated by design and must not be gated.
+
+    ``defer_unauthenticated`` (set under ``mcp_auth``) passes unauthenticated requests
+    through so the SDK's RequireAuthMiddleware at the route answers them with the
+    RFC 9728 challenge (401 + WWW-Authenticate) -- a plain 401 from this gate would
+    break connector discovery. The gate then adjudicates only verified callers.
+    """
+
+    def __init__(
+        self,
+        app: Any,
+        authorize: Callable[[Optional[str]], bool],
+        only_path: Optional[str] = None,
+        defer_unauthenticated: bool = False,
+    ) -> None:
+        self.app = app
+        self.authorize = authorize
+        self.only_path = only_path
+        self.defer_unauthenticated = defer_unauthenticated
+
+    async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
+        if scope["type"] == "http" and (self.only_path is None or scope.get("path") == self.only_path):
+            state = scope.get("state") or {}
+            if self.defer_unauthenticated and not state.get("authenticated"):
+                await self.app(scope, receive, send)
+                return
+            user_id = state.get("user_id")
+            if not self.authorize(user_id):
+                from starlette.responses import JSONResponse
+
+                response = JSONResponse(
                     {"error": "unauthorized", "detail": "Not authorized for the MCP server."},
                     status_code=401,
                 )
-            return await call_next(request)
+                await response(scope, receive, send)
+                return
+        await self.app(scope, receive, send)
 
-    mcp_app.add_middleware(_MCPAuthorizeMiddleware)
+
+def _add_authorize_middleware(mcp_app: StarletteWithLifespan, authorize: Callable[[Optional[str]], bool]) -> None:
+    mcp_app.add_middleware(_MCPAuthorizeMiddleware, authorize=authorize)
+
+
+def _identity_bridge_kwargs(os: "AgentOS") -> Dict[str, Any]:
+    """The identity bridge's settings, mirroring the parent AuthMiddleware.
+
+    Same admin scope (per-tool admin bypass) and user-isolation flag (session pinning
+    via get_scoped_user_id) as the parent would stamp, so behavior is identical whether
+    the identity came from the parent middleware or from ``mcp_auth``.
+    """
+    from agno.os.scopes import AgentOSScope
+
+    config = getattr(os, "authorization_config", None)
+    admin_scope = getattr(config, "admin_scope", None) if config is not None else None
+    user_isolation = bool(getattr(config, "user_isolation", False)) if config is not None else False
+    return {"admin_scope": admin_scope or AgentOSScope.ADMIN.value, "user_isolation": user_isolation}
 
 
 # Localhost defaults so a desktop / local MCP server is protected with zero extra config.
@@ -1117,17 +1214,21 @@ def _add_transport_security_middleware(
 def _mcp_server_is_open(os: "AgentOS") -> bool:
     """True when /mcp serves anonymous callers: no auth is effectively enforced.
 
-    Delegates to :func:`get_effective_auth_mode` -- the same detection the auth layer and
-    ``/info`` use -- so this agrees with them on every mode: ``AgentOS(authorization=True)``,
-    JWT env vars, a manually installed ``JWTMiddleware`` on a ``base_app``, and the security
-    key all count as authenticated. Only when it returns "none" does /mcp answer requests
-    carrying no bearer token (a service-account verifier alone does NOT close that path --
-    PATs are checked only when presented). That anonymous case is the one a rebound web page
-    could drive, so it is the case that needs default transport security. Authenticated
-    deployments rely on the bearer token instead, so their deployed hostname is not gated.
+    ``mcp_auth`` protects /mcp on its own (its RequireAuthMiddleware challenges every
+    unauthenticated request), so a deployment with it set is never open regardless of the
+    REST posture -- checked here directly rather than via ``get_effective_auth_mode``,
+    which now reports the REST/WS plane only. Otherwise this defers to that shared
+    detection: ``AgentOS(authorization=True)``, JWT env vars, a manually installed
+    ``JWTMiddleware`` on a ``base_app``, and the security key all count as authenticated.
+    Only the fully-anonymous case (no mcp_auth and REST mode "none") answers requests
+    carrying no bearer token -- the case a rebound web page could drive, so the one that
+    needs default transport security. A service-account verifier alone does NOT close that
+    path (PATs are checked only when presented).
     """
     from agno.os.auth import get_effective_auth_mode
 
+    if getattr(os, "mcp_auth", None) is not None:
+        return False
     return (
         get_effective_auth_mode(
             getattr(os, "settings", None),
@@ -1147,14 +1248,18 @@ def get_mcp_server(
     the optional ``authorize`` gate, any app-provided middleware, and the built-in
     DNS-rebinding protection from ``mcp_config``.
 
-    Authentication is NOT layered here: the parent app's single ``AuthMiddleware``
-    (agno/os/app.py::_add_auth_middleware) runs before Starlette dispatches to this
-    mount, so it already verified the token and attached the identity to
-    request.state. Per-tool scope enforcement lives in the tools themselves
+    Authentication: with ``mcp_auth`` unset, it is NOT layered here -- the parent app's
+    single ``AuthMiddleware`` (agno/os/app.py::_add_auth_middleware) runs before
+    Starlette dispatches to this mount, so it already verified the token and attached
+    the identity to request.state. With ``mcp_auth`` set, the fastmcp provider owns
+    authentication for this app instead: its middleware verifies tokens here, the
+    identity bridge maps them onto request.state, and the parent middleware exempts
+    the MCP surface. Per-tool scope enforcement lives in the tools themselves
     (``_require_tool_scopes``).
     """
     mcp = build_mcp_server(os)
     mcp_config: "Optional[MCPServerConfig]" = getattr(os, "mcp_config", None)
+    mcp_auth = os._get_mcp_auth_provider()
 
     # Use http_app for Streamable HTTP transport (modern MCP standard).
     # fastmcp >= 3.4.3 adds a Host/Origin guard with localhost-only defaults, which 421s
@@ -1165,14 +1270,39 @@ def get_mcp_server(
     http_app_kwargs: Dict[str, Any] = {"path": "/mcp"}
     if "host_origin_protection" in inspect.signature(mcp.http_app).parameters:
         http_app_kwargs["host_origin_protection"] = False
+    if mcp_auth is not None:
+        # Constructor middleware runs INSIDE fastmcp's authentication middleware (the
+        # app's middleware list is auth first, then these) -- the only placement where
+        # the bridge sees the verified token and the authorize gate sees the bridged
+        # user_id. add_middleware would prepend OUTSIDE authentication instead.
+        from starlette.middleware import Middleware as StarletteMiddleware
+
+        from agno.os.mcp_auth import MCPIdentityBridgeMiddleware
+
+        inner_middleware: List[Any] = [StarletteMiddleware(MCPIdentityBridgeMiddleware, **_identity_bridge_kwargs(os))]
+        if mcp_config is not None and mcp_config.authorize is not None:
+            inner_middleware.append(
+                StarletteMiddleware(
+                    _MCPAuthorizeMiddleware,
+                    authorize=mcp_config.authorize,
+                    only_path="/mcp",
+                    defer_unauthenticated=True,
+                )
+            )
+        http_app_kwargs["middleware"] = inner_middleware
     mcp_app = mcp.http_app(**http_app_kwargs)
+    if mcp_auth is not None:
+        # Arms the fail-closed check in the tool gates (_mcp_auth_enabled): a
+        # provider-verified request with no bridged identity is denied, not skipped.
+        mcp_app.state.agno_mcp_auth_enabled = True
 
     # Middleware runs in reverse registration order (last added is outermost / runs first).
     # Target running order: transport security -> app middleware -> authorize gate -> tool.
     # Auth already ran on the parent app, so the gate sees the verified identity.
 
-    # Innermost: per-call authorize gate.
-    if mcp_config is not None and mcp_config.authorize is not None:
+    # Innermost: per-call authorize gate. Under mcp_auth it is registered inside the
+    # sub-app's constructor middleware above (after token verification) instead.
+    if mcp_auth is None and mcp_config is not None and mcp_config.authorize is not None:
         # The gate reads request.state.user_id, populated by the parent AuthMiddleware.
         # Without any auth configured that attribute is never set, so the gate sees
         # user_id=None on every call -- an ``authorize=lambda u: u in OWNER_IDS`` gate
