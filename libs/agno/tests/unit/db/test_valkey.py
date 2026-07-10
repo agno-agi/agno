@@ -208,7 +208,6 @@ def valkey_db(mock_client):
         metrics_table="metrics",
         eval_table="evals",
         knowledge_table="knowledge",
-        culture_table="culture",
         traces_table="traces",
         spans_table="spans",
     )

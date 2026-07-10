@@ -15,9 +15,9 @@ def valkey_db() -> ValkeyDb:
         metrics_table="test_metrics",
         eval_table="test_evals",
         knowledge_table="test_knowledge",
-        culture_table="test_culture",
         traces_table="test_traces",
         spans_table="test_spans",
+        learnings_table="test_learnings",
     )
     return db
 
