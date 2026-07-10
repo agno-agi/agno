@@ -1,9 +1,8 @@
-from typing import List, Union
+from typing import Any, Dict, List, Optional, Union
 
 from ag_ui.core.types import ToolMessage as AGUIToolMessage
 
 from agno.agent import Agent
-from agno.os.interfaces.agui.input import ensure_requirements_resolved, merge_tool_results_into_requirements
 from agno.run.agent import RunOutput
 from agno.run.base import RunContext, RunStatus
 from agno.run.requirement import RunRequirement
@@ -11,33 +10,61 @@ from agno.run.team import TeamRunOutput
 from agno.session.agent import AgentSession
 from agno.session.team import TeamSession
 from agno.team.team import Team
+from agno.utils.string import parse_response_dict_str
 
 
-def apply_tool_results_to_requirements(
+def _resolve_confirmation(req: RunRequirement, data: Dict[str, Any], error: Optional[str]) -> None:
+    if error or data.get("accepted") is not True:
+        req.reject(note=data.get("note") or error)
+    else:
+        req.confirm()
+
+
+def _resolve_user_input(req: RunRequirement, data: Dict[str, Any], error: Optional[str]) -> None:
+    values = data.get("values")
+    if not isinstance(values, dict):
+        raise ValueError("user_input expects {'values': {...}}")
+    req.provide_user_input(values)
+
+
+def _resolve_user_feedback(req: RunRequirement, data: Dict[str, Any], error: Optional[str]) -> None:
+    selections = data.get("selections")
+    if not isinstance(selections, dict) or not all(isinstance(v, list) for v in selections.values()):
+        raise ValueError("user_feedback expects {'selections': {question: [labels]}}")
+    req.provide_user_feedback(selections)
+
+
+def _resolve_external_execution(req: RunRequirement, data: Dict[str, Any], error: Optional[str], content: str) -> None:
+    if error and req.tool_execution:
+        req.tool_execution.tool_call_error = True
+    req.set_external_execution_result(error if error else content)
+
+
+def merge_tool_results_into_requirements(
     requirements: List[RunRequirement],
     tool_messages: List[AGUIToolMessage],
 ) -> List[RunRequirement]:
-    """Apply frontend tool results to requirements awaiting external execution.
-
-    This is the simple path for external_execution tools only (client_tools). For HITL tools
-    (confirmation, user_input, user_feedback), use merge_tool_results_into_requirements instead.
-    """
+    """Match ToolMessages to requirements by tool_call_id and resolve each by pause_type."""
     results_map = {tm.tool_call_id: (tm.content, getattr(tm, "error", None)) for tm in tool_messages}
 
     for req in requirements:
-        # set_external_execution_result raises ValueError for requirements not awaiting
-        # external execution (already resolved, or HITL confirmation/input types)
-        if not req.needs_external_execution or not req.tool_execution:
+        if req.is_resolved():
+            continue
+        te = req.tool_execution
+        if not te or not te.tool_call_id or te.tool_call_id not in results_map:
             continue
 
-        tool_call_id = req.tool_execution.tool_call_id
-        if tool_call_id and tool_call_id in results_map:
-            content, error = results_map[tool_call_id]
-            if error:
-                req.set_external_execution_result(str(error))
-                req.tool_execution.tool_call_error = True
-            else:
-                req.set_external_execution_result(content)
+        content, error = results_map[te.tool_call_id]
+        data = parse_response_dict_str(content) or {}
+
+        if req.pause_type == "confirmation":
+            _resolve_confirmation(req, data, error)
+        elif req.pause_type == "user_input":
+            _resolve_user_input(req, data, error)
+        elif req.pause_type == "user_feedback":
+            _resolve_user_feedback(req, data, error)
+        elif req.pause_type == "external_execution":
+            _resolve_external_execution(req, data, error, content)
 
     return requirements
 
@@ -98,9 +125,8 @@ async def resume_paused_run(
     if not paused_run.requirements:
         raise ValueError(f"Run {paused_run.run_id} has no requirements to resume")
 
-    # Merge tool results by pause_type; refuse partial multi-tool answers
+    # Merge tool results by pause_type
     requirements = merge_tool_results_into_requirements(paused_run.requirements, tool_messages)
-    ensure_requirements_resolved(requirements)
 
     # Continue under the original run_id, not the new one AG-UI generated for this resume request
     paused_run_id = paused_run.run_id or run_context.run_id

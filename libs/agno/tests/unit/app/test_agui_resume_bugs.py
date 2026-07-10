@@ -1,7 +1,7 @@
 """
 Reproduce bugs reported in PR #8565 review:
 1. resume_paused_run picks oldest paused run, not newest
-2. apply_tool_results_to_requirements crashes on non-external-execution requirements
+2. merge_tool_results_into_requirements crashes on non-external-execution requirements
 """
 
 from unittest.mock import AsyncMock, MagicMock
@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from agno.models.response import ToolExecution
-from agno.os.interfaces.agui.resume import apply_tool_results_to_requirements, resume_paused_run
+from agno.os.interfaces.agui.resume import merge_tool_results_into_requirements, resume_paused_run
 from agno.run.agent import RunOutput
 from agno.run.base import RunContext, RunStatus
 from agno.run.requirement import RunRequirement
@@ -58,7 +58,9 @@ class TestBug1_OldestPausedRunPicked:
     @pytest.mark.asyncio
     async def test_multiple_paused_runs_picks_wrong_one(self):
         """BUG REPRODUCTION: Multiple paused runs, newest should be picked."""
-        entity = MagicMock()
+        from agno.agent import Agent
+
+        entity = MagicMock(spec=Agent)
         entity.db = MagicMock()
 
         # Session has TWO paused runs - old one first, new one second
@@ -99,7 +101,7 @@ class TestBug1_OldestPausedRunPicked:
 
 class TestBug2_CrashOnNonExternalRequirement:
     """
-    Bug: apply_tool_results_to_requirements crashes if a matched requirement
+    Bug: merge_tool_results_into_requirements crashes if a matched requirement
     isn't awaiting external execution.
 
     Scenario:
@@ -131,7 +133,7 @@ class TestBug2_CrashOnNonExternalRequirement:
         # BUG: This should NOT crash, but currently it will
         # because set_external_execution_result raises on resolved requirements
         try:
-            apply_tool_results_to_requirements([req], tool_messages)
+            merge_tool_results_into_requirements([req], tool_messages)
             # If we get here without crash, bug is fixed or doesn't exist
         except ValueError as e:
             pytest.fail(
@@ -156,7 +158,7 @@ class TestBug2_CrashOnNonExternalRequirement:
         tool_messages = [FakeToolMessage("call_external", "some result")]
 
         # This should not crash and should not modify the requirement
-        result = apply_tool_results_to_requirements([req], tool_messages)
+        result = merge_tool_results_into_requirements([req], tool_messages)
 
         assert result[0].tool_execution.result is None
 
@@ -192,7 +194,7 @@ class TestBug2_Variant_MixedRequirements:
         # The confirmation req matches by tool_call_id but shouldn't be updated
         # BUG: if we try to set_external_execution_result on it, it will crash
         try:
-            result = apply_tool_results_to_requirements([external_req, confirmation_req], tool_messages)
+            result = merge_tool_results_into_requirements([external_req, confirmation_req], tool_messages)
             # External should be updated
             assert result[0].tool_execution.result == "Background changed"
             # Confirmation should be untouched

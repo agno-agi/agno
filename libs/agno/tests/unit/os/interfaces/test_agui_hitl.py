@@ -22,8 +22,8 @@ from agno.agent._tools import parse_tools
 from agno.agent.agent import Agent
 from agno.models.response import ToolExecution, UserInputField
 from agno.os.interfaces.agui.handlers import on_run_completed
-from agno.os.interfaces.agui.input import (
-    parse_client_tools,
+from agno.os.interfaces.agui.input import parse_client_tools
+from agno.os.interfaces.agui.resume import (
     ensure_requirements_resolved,
     merge_tool_results_into_requirements,
 )
