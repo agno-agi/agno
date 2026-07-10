@@ -36,6 +36,10 @@ This example shows how to use the MCP agent to perform sequential thinking.
 
 This example shows how to create an agent that uses MCP and Gemini 2.5 Pro to search for Airbnb listings.
 
+9. Structured Content Agent (`structured_content.py`)
+
+This example connects to the hosted DeepWiki MCP server (public, no API key) to answer questions about GitHub repositories. It shows how a tool's `structuredContent` is preserved on `ToolResult.metadata["structured_content"]` and read back through a tool hook.
+
 
 ## Getting Started
 
@@ -61,6 +65,7 @@ export OPENAI_API_KEY="your_openai_api_key"
 python filesystem.py
 python github.py
 python bgpt.py
+python structured_content.py
 ```
 
 ## How It Works

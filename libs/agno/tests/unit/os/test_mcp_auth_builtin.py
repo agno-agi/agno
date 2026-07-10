@@ -916,7 +916,9 @@ async def test_refresh_survives_access_token_expiry_across_replicas(tmp_path):
     async with _http_client(_os(_provider(db, access_token_ttl=1), db=db)) as client:
         tokens, client_id = await _full_flow(client)
 
-    await asyncio.sleep(1.2)  # let the access token expire
+    # Wait out the 1s TTL with margin. exp is int(mint) + ttl, so a token can carry up to a
+    # full second of life, and the sleep (monotonic) can drift from expiry (wall clock) on CI.
+    await asyncio.sleep(1.8)
 
     replica = _os(_provider(db, access_token_ttl=1), db=db)
     async with _http_client(replica) as client:
