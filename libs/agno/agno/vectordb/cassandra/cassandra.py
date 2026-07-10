@@ -38,6 +38,11 @@ class Cassandra(VectorDb):
 
         self.table_name: str = table_name
         self.embedder: Embedder = embedder
+        self.dimensions: Optional[int] = self.embedder.dimensions
+
+        if self.dimensions is None:
+            raise ValueError("Embedder.dimensions must be set.")
+
         self.session = session
         self.keyspace: str = keyspace
         self.initialize_table()
@@ -46,7 +51,7 @@ class Cassandra(VectorDb):
         self.table = AgnoMetadataVectorCassandraTable(
             session=self.session,
             keyspace=self.keyspace,
-            vector_dimension=1024,
+            vector_dimension=self.dimensions,
             table=self.table_name,
             primary_key_type="TEXT",
         )

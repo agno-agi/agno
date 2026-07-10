@@ -80,6 +80,37 @@ def test_initialization(mock_session):
         Cassandra(table_name="test_vectors", keyspace="test_vectordb", session=None)
 
 
+def test_table_uses_embedder_dimensions(mock_session):
+    """vector_dimension must come from the embedder, not a hardcoded value."""
+    embedder = MagicMock()
+    embedder.dimensions = 768
+
+    with patch.object(AgnoMetadataVectorCassandraTable, "__new__", return_value=MagicMock()) as mock_new:
+        db = Cassandra(
+            table_name="test_vectors",
+            keyspace="test_vectordb",
+            embedder=embedder,
+            session=mock_session,
+        )
+
+    assert db.dimensions == 768
+    assert mock_new.call_args.kwargs["vector_dimension"] == 768
+
+
+def test_missing_embedder_dimensions_raises(mock_session):
+    """A None embedder dimension must fail loudly instead of silently mis-sizing the table."""
+    embedder = MagicMock()
+    embedder.dimensions = None
+
+    with pytest.raises(ValueError):
+        Cassandra(
+            table_name="test_vectors",
+            keyspace="test_vectordb",
+            embedder=embedder,
+            session=mock_session,
+        )
+
+
 def test_insert_and_search(vector_db, mock_table):
     """Test document insertion and search functionality."""
     docs = create_test_documents(1)
