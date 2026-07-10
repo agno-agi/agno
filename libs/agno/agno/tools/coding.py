@@ -6,8 +6,10 @@ from pathlib import Path
 from textwrap import dedent
 from typing import Any, List, Optional, Union
 
+from agno.exceptions import PathSecurityError
 from agno.tools import Toolkit
 from agno.utils.log import log_error, log_info, logger
+from agno.utils.path_safety import safe_join_relative_path
 
 
 @functools.lru_cache(maxsize=None)
@@ -681,9 +683,11 @@ class CodingTools(Toolkit):
             for match in resolved_path.glob(pattern):
                 try:
                     rel_path = match.relative_to(self.base_dir)
+                    if self.restrict_to_base_dir:
+                        safe_join_relative_path(self.base_dir, rel_path.as_posix())
                     suffix = "/" if match.is_dir() else ""
                     matches.append(rel_path.as_posix() + suffix)
-                except ValueError:
+                except (ValueError, PathSecurityError):
                     continue  # Skip paths outside base_dir
 
                 if len(matches) >= limit:
@@ -731,6 +735,11 @@ class CodingTools(Toolkit):
 
             entries = []
             for entry in sorted(resolved_path.iterdir(), key=lambda p: p.name.lower()):
+                if self.restrict_to_base_dir:
+                    try:
+                        safe_join_relative_path(self.base_dir, entry.relative_to(self.base_dir).as_posix())
+                    except (ValueError, PathSecurityError):
+                        continue
                 suffix = "/" if entry.is_dir() else ""
                 entries.append(entry.name + suffix)
                 if len(entries) >= limit:

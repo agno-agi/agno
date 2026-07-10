@@ -1613,11 +1613,7 @@ class Knowledge(RemoteKnowledge):
             await self._aupdate_content(content)
             return
 
-        # 6. Chunk documents if needed
-        if reader and not reader.chunk:
-            read_documents = await reader.chunk_documents_async(read_documents)
-
-        # 7. Group documents by source URL for multi-page readers (like WebsiteReader)
+        # 6. Group documents by source URL for multi-page readers (like WebsiteReader)
         docs_by_source: Dict[str, List[Document]] = {}
         for doc in read_documents:
             source_url = doc.meta_data.get("url", content.url) if doc.meta_data else content.url
@@ -1772,11 +1768,7 @@ class Knowledge(RemoteKnowledge):
             self._update_content(content)
             return
 
-        # 6. Chunk documents if needed (sync version)
-        if reader:
-            read_documents = self._chunk_documents_sync(reader, read_documents)
-
-        # 7. Group documents by source URL for multi-page readers (like WebsiteReader)
+        # 6. Group documents by source URL for multi-page readers (like WebsiteReader)
         docs_by_source: Dict[str, List[Document]] = {}
         for doc in read_documents:
             source_url = doc.meta_data.get("url", content.url) if doc.meta_data else content.url
