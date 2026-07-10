@@ -285,3 +285,27 @@ def test_json_reader_default_chunk_size():
     assert reader.chunk_size == 5000
     assert reader.chunking_strategy.chunk_size == 5000
     assert isinstance(reader.chunking_strategy, FixedSizeChunking)
+
+
+def test_json_reader_defaults_to_no_chunking():
+    """JSONReader should default to chunk=False."""
+    reader = JSONReader()
+    assert reader.chunk is False
+
+
+def test_large_objects_are_not_split_into_invalid_fragments():
+    """A JSON file with 2 large objects (each exceeding the chunk_size threshold)
+    should yield exactly 2 documents, each containing valid JSON."""
+    # Each object is larger than the default 5000-char chunk size.
+    big_value = "x" * 6000
+    test_data = [{"id": 1, "data": big_value}, {"id": 2, "data": big_value}]
+    json_bytes = BytesIO(json.dumps(test_data).encode())
+    json_bytes.name = "big.json"
+
+    reader = JSONReader()
+    documents = reader.read(json_bytes)
+
+    assert len(documents) == 2
+    parsed = [json.loads(doc.content) for doc in documents]
+    assert parsed == test_data
+    assert all("chunk" not in doc.meta_data for doc in documents)
