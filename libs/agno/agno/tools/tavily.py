@@ -29,6 +29,15 @@ class TavilyTools(Toolkit):
         extract_timeout: Optional[int] = None,
         extract_format: Literal["markdown", "text"] = "markdown",
         format: Literal["json", "markdown"] = "markdown",
+        topic: Optional[Literal["general", "news", "finance"]] = None,
+        time_range: Optional[Literal["day", "week", "month", "year", "d", "w", "m", "y"]] = None,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+        include_domains: Optional[List[str]] = None,
+        exclude_domains: Optional[List[str]] = None,
+        country: Optional[str] = None,
+        auto_parameters: bool = False,
+        chunks_per_source: Optional[int] = None,
         **kwargs,
     ):
         """Initialize TavilyTools with search and extract capabilities.
@@ -49,6 +58,15 @@ class TavilyTools(Toolkit):
             extract_timeout: Timeout in seconds for extraction requests. Defaults to None.
             extract_format: Output format for extracted content - markdown or text. Defaults to "markdown".
             format: Output format for search results - json or markdown. Defaults to "markdown".
+            topic: Search category - general, news, or finance. Defaults to None (Tavily default).
+            time_range: Time window for results - day, week, month, year (or d/w/m/y). Defaults to None.
+            start_date: Only include results published after this date (YYYY-MM-DD). Defaults to None.
+            end_date: Only include results published before this date (YYYY-MM-DD). Defaults to None.
+            include_domains: Restrict results to these domains. Defaults to None.
+            exclude_domains: Exclude these domains from results. Defaults to None.
+            country: Boost results from this country (e.g. "united states"). Defaults to None.
+            auto_parameters: Let Tavily auto-tune search parameters for the query; explicitly set parameters (including the always-sent search_depth and include_answer) take precedence. Defaults to False.
+            chunks_per_source: Number of content chunks per source (1-3), advanced search only. Defaults to None.
             **kwargs: Additional arguments passed to Toolkit.
         """
         self.api_key = api_key or getenv("TAVILY_API_KEY")
@@ -66,6 +84,15 @@ class TavilyTools(Toolkit):
         self.extract_timeout: Optional[int] = extract_timeout
         self.extract_format: Literal["markdown", "text"] = extract_format
         self.format: Literal["json", "markdown"] = format
+        self.topic: Optional[Literal["general", "news", "finance"]] = topic
+        self.time_range: Optional[Literal["day", "week", "month", "year", "d", "w", "m", "y"]] = time_range
+        self.start_date: Optional[str] = start_date
+        self.end_date: Optional[str] = end_date
+        self.include_domains: Optional[List[str]] = include_domains
+        self.exclude_domains: Optional[List[str]] = exclude_domains
+        self.country: Optional[str] = country
+        self.auto_parameters: bool = auto_parameters
+        self.chunks_per_source: Optional[int] = chunks_per_source
 
         tools: List[Any] = []
 
@@ -92,9 +119,26 @@ class TavilyTools(Toolkit):
             str: JSON string of results related to the query.
         """
 
-        response = self.client.search(
-            query=query, search_depth=self.search_depth, include_answer=self.include_answer, max_results=max_results
-        )
+        search_params: Dict[str, Any] = {
+            "query": query,
+            "search_depth": self.search_depth,
+            "include_answer": self.include_answer,
+            "max_results": max_results,
+            "topic": self.topic,
+            "time_range": self.time_range,
+            "start_date": self.start_date,
+            "end_date": self.end_date,
+            "include_domains": self.include_domains,
+            "exclude_domains": self.exclude_domains,
+            "country": self.country,
+            "chunks_per_source": self.chunks_per_source,
+        }
+        if self.auto_parameters:
+            search_params["auto_parameters"] = True
+        # Only send parameters that are set
+        search_params = {k: v for k, v in search_params.items() if v is not None}
+
+        response = self.client.search(**search_params)
 
         clean_response: Dict[str, Any] = {"query": query}
         if "answer" in response:
