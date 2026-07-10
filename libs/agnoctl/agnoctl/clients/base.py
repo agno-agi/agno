@@ -13,9 +13,13 @@ import tempfile
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Callable, Dict, Optional
 
 from agnoctl.errors import CLIError
+
+# Predicate over an entry's URL: remove()/pop_server_entry() only touch entries whose
+# URL satisfies it, so a same-named entry pointing at a different AgentOS is never lost.
+UrlMatcher = Callable[[str], bool]
 
 
 @dataclass
@@ -34,6 +38,14 @@ class WriteResult:
     method: str  # "cli" (client's own CLI did the write) | "file" (we edited the config file)
     location: str
     note: Optional[str] = None  # caveat worth surfacing to the user (e.g. VCS-shared file)
+
+
+@dataclass
+class RemoveResult:
+    """Whether (and where) a config entry was removed."""
+
+    removed: bool
+    location: Optional[str] = None  # where the entry was found; None when it was not
 
 
 def servers_table(config: object) -> dict:
@@ -151,6 +163,42 @@ def write_servers_entry(
     atomic_write_text(path, json.dumps(config, indent=2) + "\n", secure=secure)
 
 
+def pop_server_entry(config: Dict[str, Any], server_name: str, matches: Optional[UrlMatcher] = None) -> bool:
+    """Delete one entry from a parsed config's ``mcpServers`` table; True when deleted.
+
+    With ``matches``, the entry is only deleted when its URL satisfies the predicate --
+    the guard that keeps a same-named entry pointing at a different AgentOS intact.
+    """
+    servers = config.get("mcpServers")
+    if not isinstance(servers, dict) or server_name not in servers:
+        return False
+    if matches is not None:
+        entry = servers[server_name]
+        url = entry.get("url") if isinstance(entry, dict) else None
+        if not isinstance(url, str) or not matches(url):
+            return False
+    del servers[server_name]
+    return True
+
+
+def remove_servers_entry(path: Path, server_name: str, matches: Optional[UrlMatcher] = None) -> bool:
+    """Delete one ``mcpServers`` entry from a JSON config file; True when it was there.
+
+    Mirror of write_servers_entry: same strict parse and atomic replace, and a missing
+    file or absent key means no write at all. The rewrite keeps the file's other content
+    untouched, and never at looser permissions than it already had (mode is preserved
+    by atomic_write_text's non-secure path; remaining entries may still carry tokens,
+    but a file that holds them was already written 0600 by the write path).
+    """
+    if not path.exists():
+        return False
+    config = read_json_strict(path)
+    if not pop_server_entry(config, server_name, matches):
+        return False
+    atomic_write_text(path, json.dumps(config, indent=2) + "\n", secure=False)
+    return True
+
+
 class ClientAdapter(ABC):
     key: str
 
@@ -161,6 +209,22 @@ class ClientAdapter(ABC):
     @abstractmethod
     def read_existing(self, server_name: str) -> Optional[ExistingEntry]:
         """Return the existing MCP entry for server_name, if any."""
+
+    @abstractmethod
+    def list_entries(self) -> Dict[str, ExistingEntry]:
+        """Every MCP entry this client resolves, keyed by name (resolution precedence
+        applied on name collisions). Lets a caller find entries by URL when the name
+        is not known -- e.g. disconnect locating what connect wrote for a given OS."""
+
+    @abstractmethod
+    def remove(self, server_name: str, matches: Optional[UrlMatcher] = None) -> RemoveResult:
+        """Delete the MCP entry for server_name from every scope this adapter manages,
+        so no shadowed entry in a lower-precedence scope takes over after a restart.
+
+        Offline by design: config edits only, no OS or credentials involved. With
+        ``matches``, each scope's entry is deleted only when its URL satisfies the
+        predicate. A missing entry is a clean no-op (removed=False), never an error.
+        """
 
     @abstractmethod
     def write(self, server_name: str, url: str, token: Optional[str]) -> WriteResult:

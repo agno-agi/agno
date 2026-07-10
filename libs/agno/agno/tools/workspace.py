@@ -29,9 +29,11 @@ from fnmatch import fnmatch
 from pathlib import Path
 from typing import Dict, List, Optional, Set, Tuple, Union
 
+from agno.exceptions import PathSecurityError
 from agno.tools import Toolkit
 from agno.tools._local_file_utils import DEFAULT_EXCLUDE_PATTERNS, path_matches_exclude
 from agno.utils.log import log_debug, log_error, log_info, log_warning
+from agno.utils.path_safety import safe_join_relative_path
 
 TEXT_EXTENSIONS = {
     # Markup and data
@@ -504,15 +506,33 @@ class Workspace(Toolkit):
                         visible_dirs = list(dirnames)
                     for name in filenames + visible_dirs:
                         full = Path(dirpath) / name
+                        try:
+                            safe_join_relative_path(self.root, full.relative_to(self.root).as_posix())
+                        except PathSecurityError:
+                            continue
                         if self._is_excluded(full):
                             continue
                         if pattern and not fnmatch(name, pattern):
                             continue
                         entries.append(full)
             elif pattern:
-                entries = [p for p in d.glob(pattern) if not self._is_excluded(p)]
+                entries = []
+                for p in d.glob(pattern):
+                    try:
+                        safe_join_relative_path(self.root, p.relative_to(self.root).as_posix())
+                    except PathSecurityError:
+                        continue
+                    if not self._is_excluded(p):
+                        entries.append(p)
             else:
-                entries = [p for p in d.iterdir() if not self._is_excluded(p)]
+                entries = []
+                for p in d.iterdir():
+                    try:
+                        safe_join_relative_path(self.root, p.relative_to(self.root).as_posix())
+                    except PathSecurityError:
+                        continue
+                    if not self._is_excluded(p):
+                        entries.append(p)
 
             files = []
             for p in sorted(entries):
@@ -578,6 +598,10 @@ class Workspace(Toolkit):
                         walk_done = True
                         break
                     file_path = Path(dirpath) / filename
+                    try:
+                        safe_join_relative_path(self.root, file_path.relative_to(self.root).as_posix())
+                    except PathSecurityError:
+                        continue
                     if self._is_excluded(file_path):
                         continue
                     if file_path.suffix.lower() not in TEXT_EXTENSIONS:

@@ -1,6 +1,5 @@
 """Helpers shared by CLI commands."""
 
-import ipaddress
 import os
 import sys
 from typing import Optional, Tuple
@@ -8,12 +7,52 @@ from urllib.parse import urlsplit
 
 import typer
 
+from agnoctl.discovery import _is_loopback_host
 from agnoctl.errors import CLIError
 
 ADMIN_TOKEN_ENV = "AGNO_ADMIN_TOKEN"
 SECURITY_KEY_ENV = "OS_SECURITY_KEY"
 
+# Service-account tokens are dispatched by this prefix on the server, in every auth
+# mode -- including an OS with no REST authentication at all, where a verified PAT is
+# the ONLY credential that can authenticate (and mint, when its scopes allow).
+PAT_PREFIX = "agno_pat_"
+
+
+def env_admin_credential() -> Optional[str]:
+    """The admin credential from the environment, if the operator exported one."""
+    return os.environ.get(ADMIN_TOKEN_ENV) or os.environ.get(SECURITY_KEY_ENV)
+
+
 _SERVER_NAME_ALLOWED = set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-")
+
+# MCP entry name when the AgentOS serves no usable name (servers predating the /info
+# name field, or a name that slugs to nothing). agnoctl 0.1.x named every entry
+# LEGACY_SERVER_NAME; connect recognizes those entries and renames them in place.
+DEFAULT_SERVER_NAME = "agentos"
+LEGACY_SERVER_NAME = "agno"
+
+
+def derive_server_name(os_name: Optional[str]) -> str:
+    """The MCP entry name derived from an AgentOS instance name.
+
+    Client configs should read "customer-support" (the OS's identity), not a framework
+    constant. Slugified to the validate_server_name charset: lowercased, spaces and dots
+    become "-", anything else outside the charset is dropped, runs collapse.
+    """
+    if not os_name:
+        return DEFAULT_SERVER_NAME
+    chars = []
+    for ch in os_name.lower():
+        if ch in " .":
+            chars.append("-")
+        elif ch in _SERVER_NAME_ALLOWED:
+            chars.append(ch)
+    slug = "".join(chars)
+    while "--" in slug:
+        slug = slug.replace("--", "-")
+    slug = slug.strip("-")
+    return slug or DEFAULT_SERVER_NAME
 
 
 def validate_server_name(server_name: str) -> None:
@@ -36,20 +75,6 @@ def validate_project_name(name: str) -> None:
             "Invalid project name: " + name,
             hint="Use a single directory name of letters, digits, '-' and '_' only (no '/', '..' or absolute paths).",
         )
-
-
-def _is_loopback_host(host: Optional[str]) -> bool:
-    """True for hosts that never leave the machine: localhost, 127.0.0.0/8, ::1, and the
-    unspecified addresses (0.0.0.0, ::) that dev servers bind to."""
-    if not host:
-        return False
-    if host.lower() == "localhost":
-        return True
-    try:
-        ip = ipaddress.ip_address(host)
-    except ValueError:
-        return False
-    return ip.is_loopback or ip.is_unspecified
 
 
 def require_secure_url(url: str, *, allow_http: bool, what: str = "a credential") -> None:
@@ -81,30 +106,89 @@ def ensure_env_file_url_trusted(
     assume_yes: bool,
     json_mode: bool,
 ) -> None:
-    """Guard the ambient-env-file redirect before a credential or config write.
+    """Guard the ambient-URL redirect before a credential or config write.
 
-    An AGENTOS_URL read from a .env / .env.production in the current directory is trusted
-    automatically only when it points at this machine (localhost / 127.x / ::1). A URL that
-    points at a remote host could have been planted by an untrusted directory to redirect the
-    admin credential or rewrite MCP client configs, so require an explicit go-ahead: prompt
-    interactively (default no), and refuse outright in automation (--json or no TTY) unless
-    --yes was passed. An explicit --url or an exported AGENTOS_URL env var is not an ambient
-    file and is trusted as before.
+    An AGENTOS_URL read from a .env / .env.production in the current directory -- or an
+    MCP entry harvested from a client config -- is trusted automatically only when it
+    points at this machine (localhost / 127.x / ::1). A URL that points at a remote
+    host could have been planted (an untrusted directory's env file or project-scoped
+    MCP config) to redirect the admin credential or rewrite MCP client configs, so
+    require an explicit go-ahead: prompt interactively (default yes -- the operator
+    eyeballs the URL, and it is almost always one their own deploy or an earlier
+    connect wrote), and refuse outright in automation (--json or no TTY) unless --yes
+    was passed, since a headless run has no one looking at the URL. An explicit --url
+    or an exported AGENTOS_URL env var is deliberate and trusted as before.
     """
-    if url_source != "env-file":
+    if url_source not in ("env-file", "client-config"):
         return
     if _is_loopback_host(urlsplit(base_url).hostname):
         return
     if assume_yes:
         return
-    source = url_source_file or "an env file"
+    if url_source == "client-config":
+        source = "your " + (url_source_file or "client") + " MCP config"
+        described = base_url + " (from " + source + ")"
+    else:
+        source = url_source_file or "an env file"
+        described = "AGENTOS_URL=" + base_url + " (from " + source + ")"
     if json_mode or not stdin_is_interactive():
         raise CLIError(
-            "AGENTOS_URL in " + source + " points to a remote host (" + base_url + ").",
-            hint="Pass --url to target it explicitly, or --yes to trust the env file.",
+            "The URL in " + source + " points to a remote host (" + base_url + ").",
+            hint="Pass --url to target it explicitly, or --yes to trust it.",
         )
-    if not typer.confirm("Trust AGENTOS_URL=" + base_url + " (from " + source + ")?", default=False):
-        raise CLIError("Aborted: did not trust the env-file URL " + base_url + ".")
+    if not typer.confirm("Trust " + described + "?", default=True):
+        raise CLIError("Aborted: did not trust the URL " + base_url + ".")
+
+
+# Where a human gets an admin credential when none is in the environment. The UI path
+# ships with the AgentOS control plane; on a JWT-mode OS it is the only sanctioned source.
+ADMIN_TOKEN_SOURCES = (
+    "Generate a short-lived admin token in the AgentOS UI (Settings -> OS & Security), or set "
+    + ADMIN_TOKEN_ENV
+    + " (or "
+    + SECURITY_KEY_ENV
+    + ")."
+)
+
+
+def require_mint_capable(base_url: str, auth_mode: str, or_else: Optional[str] = None) -> None:
+    """Fail fast when this AgentOS cannot mint tokens for THIS run.
+
+    auth_mode describes the REST plane; "none" means the server itself has no key, no
+    JWT config -- nothing that could authenticate a caller except a service-account
+    bearer, which it dispatches by prefix in every mode. So on "none":
+
+    - an exported ``agno_pat_`` credential may mint (the server scope-checks it);
+    - any other exported credential can never authenticate a mint -- say so instead of
+      letting the open plane "accept" it on reads and reject it at the mint;
+    - with no credential at all, an open service-accounts API means the anonymous mint
+      is refused outright. The unauthenticated probe confirms the plane really is open
+      before failing; when it is guarded (a proxy or a manually installed auth layer
+      that /info knows nothing about), fall through to the caller's flow instead.
+    """
+    if auth_mode not in ("none",):
+        return
+    token = env_admin_credential()
+    if token and token.startswith(PAT_PREFIX):
+        return
+    hint = "Set " + SECURITY_KEY_ENV + " (or configure JWT auth) on the server to enable minting."
+    if or_else:
+        hint += " " + or_else
+    if token:
+        raise CLIError(
+            "This AgentOS has no REST authentication configured, so only a service-account token "
+            "(" + PAT_PREFIX + "...) can authenticate a mint -- the exported admin credential cannot.",
+            hint="Export a previously minted token via " + ADMIN_TOKEN_ENV + ". " + hint,
+        )
+    from agnoctl.http import service_accounts_open
+
+    if not service_accounts_open(base_url):
+        return
+    raise CLIError(
+        "This AgentOS cannot mint tokens: its REST API has no authentication configured, "
+        "and the server refuses anonymous minting.",
+        hint=hint,
+    )
 
 
 def resolve_admin_token(auth_mode: str, json_mode: bool) -> Optional[str]:
@@ -112,18 +196,24 @@ def resolve_admin_token(auth_mode: str, json_mode: bool) -> Optional[str]:
 
     Order: AGNO_ADMIN_TOKEN env, OS_SECURITY_KEY env, interactive prompt. Prompting is
     disabled in --json mode and when stdin is not a TTY, so agent-driven runs fail with
-    a clear instruction instead of hanging.
+    a clear instruction instead of hanging. On auth_mode "none" an EXPORTED credential
+    is still honored -- a service-account bearer authenticates by prefix even on an
+    open REST plane, and a guard /info cannot see (proxy, custom middleware) may want
+    it -- but nothing is ever prompted for on a server that claims to need nothing.
     """
     if auth_mode == "none":
-        return None
-    token = os.environ.get(ADMIN_TOKEN_ENV) or os.environ.get(SECURITY_KEY_ENV)
+        return env_admin_credential()
+    token = env_admin_credential()
     if token:
         return token
     if json_mode or not sys.stdin.isatty():
         raise CLIError(
             "This AgentOS requires an admin credential to mint tokens (auth mode: " + auth_mode + ").",
-            hint="Set " + ADMIN_TOKEN_ENV + " (or " + SECURITY_KEY_ENV + ") and re-run.",
+            hint=ADMIN_TOKEN_SOURCES,
         )
+    from agnoctl.console import print_info
+
+    print_info(ADMIN_TOKEN_SOURCES)
     return typer.prompt("Admin credential for this AgentOS", hide_input=True)
 
 

@@ -20,7 +20,7 @@ from agno.os.auth import (
     verify_websocket_service_account,
 )
 from agno.os.managers import websocket_manager
-from agno.os.middleware.jwt import JWTValidator, is_reserved_principal
+from agno.os.middleware.jwt import JWTValidator, is_reserved_principal, resolve_expected_audience
 from agno.os.middleware.user_scope import (
     INSUFFICIENT_PERMISSIONS_WS_RECONNECT,
     WORKFLOW_ID_REQUIRED_RECONNECT,
@@ -279,14 +279,28 @@ def get_info_router(os: "AgentOS") -> APIRouter:
         response_model=InfoResponse,
     )
     async def get_info(request: Request) -> InfoResponse:
-        mcp_enabled = bool(os.enable_mcp_server)
+        mcp_enabled = bool(os.mcp_server)
+        mcp_oauth = None
+        if mcp_enabled and getattr(os, "mcp_auth", None) is not None:
+            from agno.os.mcp_auth import describe_mcp_auth
+            from agno.os.schema import McpOAuthInfo
+
+            provider = os._get_mcp_auth_provider()
+            if provider is not None:
+                mcp_oauth = McpOAuthInfo(**describe_mcp_auth(provider))
         return InfoResponse(
+            os_id=os.id or "Unnamed OS",
+            name=os.name,
             agno_version=agno_version,
             agent_count=len(os.agents or []),
             team_count=len(os.teams or []),
             workflow_count=len(os.workflows or []),
-            mcp=McpInfo(enabled=mcp_enabled, path="/mcp" if mcp_enabled else None),
-            auth_mode=get_effective_auth_mode(settings=os.settings, authorization=os.authorization, app=request.app),
+            mcp=McpInfo(enabled=mcp_enabled, path="/mcp" if mcp_enabled else None, oauth=mcp_oauth),
+            auth_mode=get_effective_auth_mode(
+                settings=os.settings,
+                authorization=os.authorization,
+                app=request.app,
+            ),
         )
 
     return router
@@ -416,9 +430,11 @@ def get_websocket_router(
                         # configured audience so verify_audience=True applies to
                         # WebSocket tokens, not just HTTP requests.
                         try:
-                            expected_audience = None
-                            if ws_verify_audience:
-                                expected_audience = ws_audience or getattr(websocket.app.state, "agent_os_id", None)
+                            expected_audience = resolve_expected_audience(
+                                verify_audience=ws_verify_audience,
+                                audience=ws_audience,
+                                os_id=getattr(websocket.app.state, "agent_os_id", None),
+                            )
                             payload = jwt_validator.validate_token(token, expected_audience)
                             claims = jwt_validator.extract_claims(payload)
 

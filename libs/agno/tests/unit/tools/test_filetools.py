@@ -1,6 +1,9 @@
 import json
+import sys
 import tempfile
 from pathlib import Path
+
+import pytest
 
 from agno.tools.file import FileTools
 
@@ -94,6 +97,22 @@ def test_search_files_returns_relative_paths():
         assert "subdir/file3.txt" in data["files"]
 
 
+def test_search_files_does_not_return_traversal_matches_outside_base():
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        root = Path(tmp_dir)
+        base_dir = root / "base"
+        outside_dir = root / "outside"
+        base_dir.mkdir()
+        outside_dir.mkdir()
+        (outside_dir / "secret.txt").write_text("outside secret")
+        file_tools = FileTools(base_dir=base_dir)
+
+        result = json.loads(file_tools.search_files(pattern="../outside/*.txt"))
+
+        assert result["matches_found"] == 0
+        assert result["files"] == []
+
+
 def test_save_and_delete_file():
     with tempfile.TemporaryDirectory() as tmpdirname:
         f = FileTools(base_dir=Path(tmpdirname), enable_delete_file=True)
@@ -164,6 +183,52 @@ def test_search_content_finds_matches():
         file_names = [m["file"] for m in data["files"]]
         assert "hello.txt" in file_names
         assert "other.py" in file_names
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX symlinks require admin on Windows")
+def test_search_content_skips_symlink_targets_outside_base():
+    """Test that search_content skips symlink targets outside base_dir."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        root = Path(tmp_dir)
+        base_dir = root / "base"
+        outside_dir = root / "outside"
+        base_dir.mkdir()
+        outside_dir.mkdir()
+        secret = outside_dir / "secret.txt"
+        secret.write_text("outside needle")
+        try:
+            (base_dir / "linked-secret.txt").symlink_to(secret)
+        except OSError:
+            pytest.skip("Symlink creation not permitted on this platform")
+        file_tools = FileTools(base_dir=base_dir)
+
+        result = json.loads(file_tools.search_content(query="needle"))
+
+        assert result["matches_found"] == 0
+        assert result["files"] == []
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX symlinks require admin on Windows")
+def test_list_files_skips_symlink_targets_outside_base():
+    """Test that list_files skips symlink targets outside base_dir."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        root = Path(tmp_dir)
+        base_dir = root / "base"
+        outside_dir = root / "outside"
+        base_dir.mkdir()
+        outside_dir.mkdir()
+        (outside_dir / "secret.txt").write_text("outside secret")
+        (base_dir / "inside.txt").write_text("inside content")
+        try:
+            (base_dir / "linked-secret.txt").symlink_to(outside_dir / "secret.txt")
+        except OSError:
+            pytest.skip("Symlink creation not permitted on this platform")
+        file_tools = FileTools(base_dir=base_dir)
+
+        files = json.loads(file_tools.list_files())
+
+        assert "inside.txt" in files
+        assert "linked-secret.txt" not in files
 
 
 def test_search_content_directory_scoping():

@@ -53,6 +53,11 @@ class BaseDb(ABC):
         approvals_table: Optional[str] = None,
         auth_tokens_table: Optional[str] = None,
         service_accounts_table: Optional[str] = None,
+        mcp_oauth_clients_table: Optional[str] = None,
+        mcp_oauth_transactions_table: Optional[str] = None,
+        mcp_oauth_codes_table: Optional[str] = None,
+        mcp_oauth_refresh_tokens_table: Optional[str] = None,
+        mcp_oauth_keys_table: Optional[str] = None,
         id: Optional[str] = None,
     ):
         self.id = id or str(uuid4())
@@ -74,6 +79,12 @@ class BaseDb(ABC):
         self.approvals_table_name = approvals_table or "agno_approvals"
         self.auth_tokens_table_name = auth_tokens_table or "agno_auth_tokens"
         self.service_accounts_table_name = service_accounts_table or "agno_service_accounts"
+        # Built-in MCP OAuth authorization server store (see agno.os.mcp_auth_builtin).
+        self.mcp_oauth_clients_table_name = mcp_oauth_clients_table or "agno_mcp_oauth_clients"
+        self.mcp_oauth_transactions_table_name = mcp_oauth_transactions_table or "agno_mcp_oauth_transactions"
+        self.mcp_oauth_codes_table_name = mcp_oauth_codes_table or "agno_mcp_oauth_codes"
+        self.mcp_oauth_refresh_tokens_table_name = mcp_oauth_refresh_tokens_table or "agno_mcp_oauth_refresh_tokens"
+        self.mcp_oauth_keys_table_name = mcp_oauth_keys_table or "agno_mcp_oauth_keys"
 
     def to_dict(self) -> Dict[str, Any]:
         """
@@ -99,6 +110,11 @@ class BaseDb(ABC):
             "approvals_table": self.approvals_table_name,
             "auth_tokens_table": self.auth_tokens_table_name,
             "service_accounts_table": self.service_accounts_table_name,
+            "mcp_oauth_clients_table": self.mcp_oauth_clients_table_name,
+            "mcp_oauth_transactions_table": self.mcp_oauth_transactions_table_name,
+            "mcp_oauth_codes_table": self.mcp_oauth_codes_table_name,
+            "mcp_oauth_refresh_tokens_table": self.mcp_oauth_refresh_tokens_table_name,
+            "mcp_oauth_keys_table": self.mcp_oauth_keys_table_name,
         }
 
     @classmethod
@@ -125,6 +141,11 @@ class BaseDb(ABC):
             approvals_table=data.get("approvals_table"),
             auth_tokens_table=data.get("auth_tokens_table"),
             service_accounts_table=data.get("service_accounts_table"),
+            mcp_oauth_clients_table=data.get("mcp_oauth_clients_table"),
+            mcp_oauth_transactions_table=data.get("mcp_oauth_transactions_table"),
+            mcp_oauth_codes_table=data.get("mcp_oauth_codes_table"),
+            mcp_oauth_refresh_tokens_table=data.get("mcp_oauth_refresh_tokens_table"),
+            mcp_oauth_keys_table=data.get("mcp_oauth_keys_table"),
             id=data.get("id"),
         )
 
@@ -1230,6 +1251,81 @@ class BaseDb(ABC):
 
     def delete_auth_token(self, provider: str, user_id: Optional[str], service: str) -> bool:
         """Delete stored OAuth token for a provider/user/service combination. Returns True if deleted."""
+        raise NotImplementedError
+
+    # --- Built-in MCP OAuth server store (Optional) ---
+    # Backs AgentOSBuiltinAuth (agno.os.mcp_auth_builtin): the OAuth 2.1 authorization
+    # server the AgentOS MCP endpoint runs when a deployer opts in. Implemented by the sync
+    # SQLAlchemy backends (PostgresDb / SqliteDb); every other backend inherits these
+    # NotImplementedError stubs, and AgentOSBuiltinAuth rejects a db that lacks them at
+    # construction. The provider SHA-256-hashes codes/refresh tokens and JSON-serializes
+    # payloads before calling these, so only opaque strings reach the store.
+
+    def get_mcp_oauth_client(self, client_id: str) -> Optional[str]:
+        """The stored client_metadata JSON for a DCR client, or None."""
+        raise NotImplementedError
+
+    def create_mcp_oauth_client(
+        self, *, client_id: str, client_metadata: str, now: int, unconsumed_ttl: int, max_clients: int
+    ) -> bool:
+        """Register a public client. Returns False when the unconsumed-registration cap is
+        reached (nothing inserted), True after insert."""
+        raise NotImplementedError
+
+    def mark_mcp_oauth_client_consumed(self, client_id: str, now: int) -> None:
+        """Stamp consumed_at so the client is exempt from the unconsumed-registration cap."""
+        raise NotImplementedError
+
+    def store_mcp_oauth_transaction(
+        self, *, txn_id: str, client_id: str, params: str, expires_at: int, now: int, max_pending: int
+    ) -> None:
+        """Insert a pending authorization, sweeping expired rows and evicting the oldest to keep the table bounded."""
+        raise NotImplementedError
+
+    def get_mcp_oauth_transaction(self, txn_id: str) -> Optional[tuple]:
+        """The (params, expires_at) for a pending authorization, or None."""
+        raise NotImplementedError
+
+    def consume_mcp_oauth_transaction(self, txn_id: str, now: int) -> Optional[tuple]:
+        """Atomically claim a live transaction: returns (params, expires_at) on exactly one replica, else None."""
+        raise NotImplementedError
+
+    def store_mcp_oauth_code(self, *, code_hash: str, payload: str, expires_at: int, now: int) -> None:
+        """Insert a hashed authorization code, sweeping expired rows first."""
+        raise NotImplementedError
+
+    def get_mcp_oauth_code(self, code_hash: str) -> Optional[tuple]:
+        """The (payload, expires_at) for a hashed authorization code, or None."""
+        raise NotImplementedError
+
+    def delete_mcp_oauth_code(self, code_hash: str) -> bool:
+        """Delete a hashed code atomically. Returns True iff exactly one row was removed (single-use guarantee)."""
+        raise NotImplementedError
+
+    def store_mcp_oauth_refresh(
+        self, *, token_hash: str, client_id: str, scopes: str, expires_at: int, now: int, family_id: str
+    ) -> None:
+        """Insert a hashed refresh token (tagged with its rotation family), sweeping expired rows first."""
+        raise NotImplementedError
+
+    def get_mcp_oauth_refresh(self, token_hash: str) -> Optional[tuple]:
+        """The (client_id, scopes, expires_at) for a hashed refresh token, or None."""
+        raise NotImplementedError
+
+    def delete_mcp_oauth_refresh(self, token_hash: str) -> bool:
+        """Delete a hashed refresh token atomically. Returns True iff exactly one row was removed (rotation-on-use)."""
+        raise NotImplementedError
+
+    def delete_mcp_oauth_refresh_family(self, family_id: str) -> int:
+        """Delete every refresh token in a rotation family (reuse-detection revocation). Returns the count removed."""
+        raise NotImplementedError
+
+    def get_mcp_oauth_keys(self) -> List[tuple]:
+        """All (kid, secret) signing keys, newest first."""
+        raise NotImplementedError
+
+    def insert_mcp_oauth_key(self, *, kid: str, secret: str, created_at: int) -> bool:
+        """Insert a signing key. Returns False on a uniqueness conflict (lost the cold-start race), True on success."""
         raise NotImplementedError
 
     # --- Service Accounts (Optional) ---
