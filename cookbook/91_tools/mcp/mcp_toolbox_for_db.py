@@ -38,7 +38,6 @@ async def run_agent(message: str = None) -> None:
             ),
             markdown=True,
             add_history_to_messages=True,
-            debug_mode=True,
         )
 
         # Run an interactive command-line interface to interact with the agent.
@@ -83,7 +82,6 @@ async def run_agent_manual_loading(message: str) -> None:
             ),
             markdown=True,
             add_history_to_messages=True,
-            debug_mode=True,
         )
 
         await agent.acli_app(message=message, stream=True)
@@ -112,7 +110,6 @@ async def run_agent_no_ctx_manager(message: str = None) -> None:
         ),
         markdown=True,
         add_history_to_messages=True,
-        debug_mode=True,
     )
 
     await agent.acli_app(message=message, stream=True)

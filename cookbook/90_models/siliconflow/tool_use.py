@@ -16,7 +16,6 @@ agent = Agent(
     model=Siliconflow(id="openai/gpt-oss-120b"),
     tools=[WebSearchTools()],
     markdown=True,
-    debug_mode=True,
 )
 
 agent.print_response("What happing in America?")
