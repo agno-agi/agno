@@ -67,6 +67,18 @@ def _extract_team_response_chunk_content(response: TeamRunContentEvent) -> str:
     return main_content + members_response
 
 
+def _extract_source_name(chunk: BaseRunOutputEvent) -> str:
+    # Extract agent or team name from chunk for message attribution
+    # Prefer team_name over agent_name (team events take precedence)
+    team_name = getattr(chunk, "team_name", None)
+    if team_name:
+        return team_name
+    agent_name = getattr(chunk, "agent_name", None)
+    if agent_name:
+        return agent_name
+    return ""
+
+
 def _format_reasoning_step(step: Optional[ReasoningStep], step_number: int = 0) -> str:
     """Format a ReasoningStep as text for REASONING_MESSAGE_CONTENT."""
     if step is None:
@@ -109,14 +121,34 @@ def on_run_content(chunk: BaseRunOutputEvent, state: StreamState) -> List[BaseEv
     else:
         content = ""
 
-    if not state.text_message_open:
+    source_name = _extract_source_name(chunk)
+
+    # Source-change boundary: when a different agent/team starts streaming,
+    # close the current message and start a new one with the new source's name
+    if state.text_message_open and state.source_changed(source_name):
+        events.append(TextMessageEndEvent(type=EventType.TEXT_MESSAGE_END, message_id=state.text_message_id))
+        state.close_text_message()
+        state.clear_pending_tool_calls_parent_id()
         message_id = state.open_text_message()
+        state.current_source_name = source_name
+        events.append(
+            TextMessageStartEvent(
+                type=EventType.TEXT_MESSAGE_START,
+                message_id=message_id,
+                role="assistant",
+                name=source_name if source_name else None,
+            )
+        )
+    elif not state.text_message_open:
+        message_id = state.open_text_message()
+        state.current_source_name = source_name
         state.clear_pending_tool_calls_parent_id()
         events.append(
             TextMessageStartEvent(
                 type=EventType.TEXT_MESSAGE_START,
                 message_id=message_id,
                 role="assistant",
+                name=source_name if source_name else None,
             )
         )
 
@@ -149,11 +181,13 @@ def on_tool_call_started(chunk: BaseRunOutputEvent, state: StreamState) -> List[
     # Create empty parent message if none exists (AG-UI protocol requirement)
     if not parent_message_id:
         parent_message_id = str(uuid.uuid4())
+        source_name = _extract_source_name(chunk)
         events.append(
             TextMessageStartEvent(
                 type=EventType.TEXT_MESSAGE_START,
                 message_id=parent_message_id,
                 role="assistant",
+                name=source_name if source_name else None,
             )
         )
         events.append(TextMessageEndEvent(type=EventType.TEXT_MESSAGE_END, message_id=parent_message_id))
@@ -340,11 +374,13 @@ def on_run_completed(chunk: BaseRunOutputEvent, state: StreamState) -> List[Base
         external_tools = chunk.tools_awaiting_external_execution
         if external_tools:
             assistant_message_id = str(uuid.uuid4())
+            source_name = _extract_source_name(chunk)
             events.append(
                 TextMessageStartEvent(
                     type=EventType.TEXT_MESSAGE_START,
                     message_id=assistant_message_id,
                     role="assistant",
+                    name=source_name if source_name else None,
                 )
             )
 

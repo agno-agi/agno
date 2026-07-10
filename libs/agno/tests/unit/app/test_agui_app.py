@@ -2152,3 +2152,199 @@ def test_extract_context_preserves_none_value():
     item = MagicMock(description="empty", value=None)
     result = extract_context([item])
     assert result == {"empty": None}
+
+
+# ---------------------------------------------------------------------------
+# Source tracking + source-change boundary tests (issue #6141)
+# ---------------------------------------------------------------------------
+
+
+def test_stream_state_source_changed():
+    """Test StreamState.source_changed() semantics."""
+    state = StreamState()
+    assert state.source_changed("Agent1") is False
+    state.current_source_name = "Team1"
+    assert state.source_changed("Team1") is False
+    assert state.source_changed("Agent1") is True
+    assert state.source_changed("") is False
+
+
+def test_stream_state_close_clears_source():
+    """Test that closing a message clears the current source name."""
+    state = StreamState()
+    state.open_text_message()
+    state.current_source_name = "Agent1"
+    state.close_text_message()
+    assert state.current_source_name == ""
+
+
+@pytest.mark.asyncio
+async def test_source_name_in_text_message_start():
+    """Agent chunks produce TEXT_MESSAGE_START with name field populated."""
+    from agno.run.agent import RunEvent
+
+    async def mock_stream():
+        text = RunContentEvent()
+        text.event = RunEvent.run_content
+        text.content = "hello"
+        text.agent_name = "MyAgent"
+        yield text
+        end = RunContentEvent()
+        end.event = RunEvent.run_completed
+        end.content = ""
+        yield end
+
+    events = []
+    async for event in async_stream_agno_response_as_agui_events(mock_stream(), "t1", "r1"):
+        events.append(event)
+
+    starts = [e for e in events if e.type == EventType.TEXT_MESSAGE_START]
+    assert len(starts) == 1
+    assert getattr(starts[0], "name", None) == "MyAgent"
+
+
+@pytest.mark.asyncio
+async def test_team_name_takes_precedence_over_agent_name():
+    """When both agent_name and team_name are present, team_name wins."""
+    from agno.run.agent import RunEvent
+
+    async def mock_stream():
+        text = RunContentEvent()
+        text.event = RunEvent.run_content
+        text.content = "hello"
+        text.agent_name = "SomeAgent"
+        text.team_name = "MyTeam"
+        yield text
+        end = RunContentEvent()
+        end.event = RunEvent.run_completed
+        end.content = ""
+        yield end
+
+    events = []
+    async for event in async_stream_agno_response_as_agui_events(mock_stream(), "t1", "r1"):
+        events.append(event)
+
+    starts = [e for e in events if e.type == EventType.TEXT_MESSAGE_START]
+    assert len(starts) == 1
+    assert getattr(starts[0], "name", None) == "MyTeam"
+
+
+@pytest.mark.asyncio
+async def test_no_name_when_source_absent():
+    """Chunks without agent_name or team_name produce no name on the start event."""
+    from agno.run.agent import RunEvent
+
+    async def mock_stream():
+        text = RunContentEvent()
+        text.event = RunEvent.run_content
+        text.content = "anonymous"
+        yield text
+        end = RunContentEvent()
+        end.event = RunEvent.run_completed
+        end.content = ""
+        yield end
+
+    events = []
+    async for event in async_stream_agno_response_as_agui_events(mock_stream(), "t1", "r1"):
+        events.append(event)
+
+    starts = [e for e in events if e.type == EventType.TEXT_MESSAGE_START]
+    assert len(starts) == 1
+    assert getattr(starts[0], "name", None) is None
+
+
+@pytest.mark.asyncio
+async def test_single_source_no_extra_boundary():
+    """Multiple chunks from same source produce exactly 1 START + 1 END."""
+    from agno.run.agent import RunEvent
+
+    async def mock_stream():
+        for chunk in ["hello", " world", "!"]:
+            text = RunContentEvent()
+            text.event = RunEvent.run_content
+            text.content = chunk
+            text.agent_name = "Agent1"
+            yield text
+        end = RunContentEvent()
+        end.event = RunEvent.run_completed
+        end.content = ""
+        yield end
+
+    events = []
+    async for event in async_stream_agno_response_as_agui_events(mock_stream(), "t1", "r1"):
+        events.append(event)
+
+    starts = [e for e in events if e.type == EventType.TEXT_MESSAGE_START]
+    ends = [e for e in events if e.type == EventType.TEXT_MESSAGE_END]
+    assert len(starts) == 1
+    assert len(ends) == 1
+
+
+@pytest.mark.asyncio
+async def test_source_change_emits_message_boundary():
+    """When source changes mid-stream, a TEXT_MESSAGE_END + new TEXT_MESSAGE_START
+    boundary is emitted with distinct messageIds. Regression guard for issue #6141.
+    """
+    from agno.run.agent import RunEvent
+
+    async def mock_stream():
+        team_chunk = RunContentEvent()
+        team_chunk.event = RunEvent.run_content
+        team_chunk.content = "from team"
+        team_chunk.team_name = "TeamA"
+        yield team_chunk
+
+        agent_chunk = RunContentEvent()
+        agent_chunk.event = RunEvent.run_content
+        agent_chunk.content = "from agent"
+        agent_chunk.agent_name = "AgentX"
+        yield agent_chunk
+
+        end = RunContentEvent()
+        end.event = RunEvent.run_completed
+        end.content = ""
+        yield end
+
+    events = []
+    async for event in async_stream_agno_response_as_agui_events(mock_stream(), "t1", "r1"):
+        events.append(event)
+
+    starts = [e for e in events if e.type == EventType.TEXT_MESSAGE_START]
+    ends = [e for e in events if e.type == EventType.TEXT_MESSAGE_END]
+    assert len(starts) == 2, f"Expected 2 STARTs (team + agent), got {len(starts)}"
+    assert len(ends) == 2, f"Expected 2 ENDs, got {len(ends)}"
+    assert starts[0].message_id != starts[1].message_id
+    assert getattr(starts[0], "name", None) == "TeamA"
+    assert getattr(starts[1], "name", None) == "AgentX"
+
+
+@pytest.mark.asyncio
+async def test_anonymous_after_attributed_no_spurious_boundary():
+    """Anonymous chunks following attributed ones don't trigger spurious boundaries."""
+    from agno.run.agent import RunEvent
+
+    async def mock_stream():
+        c1 = RunContentEvent()
+        c1.event = RunEvent.run_content
+        c1.content = "from agent"
+        c1.agent_name = "Agent1"
+        yield c1
+
+        c2 = RunContentEvent()
+        c2.event = RunEvent.run_content
+        c2.content = " continuation"
+        yield c2
+
+        end = RunContentEvent()
+        end.event = RunEvent.run_completed
+        end.content = ""
+        yield end
+
+    events = []
+    async for event in async_stream_agno_response_as_agui_events(mock_stream(), "t1", "r1"):
+        events.append(event)
+
+    starts = [e for e in events if e.type == EventType.TEXT_MESSAGE_START]
+    ends = [e for e in events if e.type == EventType.TEXT_MESSAGE_END]
+    assert len(starts) == 1
+    assert len(ends) == 1

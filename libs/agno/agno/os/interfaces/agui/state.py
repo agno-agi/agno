@@ -24,6 +24,7 @@ class StreamState:
     # Text message tracking
     text_message_id: str = ""
     text_message_open: bool = False
+    current_source_name: str = ""
 
     # Tool call tracking
     active_tool_call_ids: Set[str] = field(default_factory=set)
@@ -50,6 +51,14 @@ class StreamState:
     def close_text_message(self) -> None:
         # ID persists for tool call parenting — only flag changes
         self.text_message_open = False
+        self.current_source_name = ""
+
+    def source_changed(self, new_source_name: str) -> bool:
+        # Returns True only when both names are non-empty AND differ
+        # Prevents spurious boundaries from anonymous chunks
+        if not new_source_name or not self.current_source_name:
+            return False
+        return new_source_name != self.current_source_name
 
     def start_tool_call(self, tool_call_id: str) -> None:
         self.active_tool_call_ids.add(tool_call_id)
