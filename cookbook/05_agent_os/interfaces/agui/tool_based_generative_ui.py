@@ -26,6 +26,7 @@ Valid image names (from Dojo):
 from typing import List
 
 from agno.agent.agent import Agent
+from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIResponses
 from agno.tools import tool
 
@@ -61,6 +62,7 @@ def generate_haiku(
 generative_ui_agent = Agent(
     name="tool_based_generative_ui",
     model=OpenAIResponses(id="gpt-5.5"),
+    db=SqliteDb(db_file="/tmp/agui_tool_based_generative_ui.db"),
     tools=[generate_haiku],
     instructions=f"""You are a haiku poet. When asked to create a haiku:
 
