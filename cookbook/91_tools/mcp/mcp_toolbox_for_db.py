@@ -37,7 +37,6 @@ async def run_agent(message: str = None) -> None:
             """
             ),
             markdown=True,
-            show_tool_calls=True,
             add_history_to_messages=True,
             debug_mode=True,
         )
@@ -83,7 +82,6 @@ async def run_agent_manual_loading(message: str) -> None:
             """
             ),
             markdown=True,
-            show_tool_calls=True,
             add_history_to_messages=True,
             debug_mode=True,
         )
@@ -113,7 +111,6 @@ async def run_agent_no_ctx_manager(message: str = None) -> None:
             """
         ),
         markdown=True,
-        show_tool_calls=True,
         add_history_to_messages=True,
         debug_mode=True,
     )

@@ -15,7 +15,6 @@ The current version of the siliconflow-chat model's Function Calling capability 
 agent = Agent(
     model=Siliconflow(id="openai/gpt-oss-120b"),
     tools=[WebSearchTools()],
-    show_tool_calls=True,
     markdown=True,
     debug_mode=True,
 )
