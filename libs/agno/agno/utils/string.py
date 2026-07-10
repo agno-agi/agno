@@ -70,7 +70,20 @@ def _extract_json_objects(text: str) -> list[str]:
     objs: list[str] = []
     brace_depth = 0
     start_idx: Optional[int] = None
+    in_string = False
+    escape_next = False
     for idx, ch in enumerate(text):
+        if escape_next:
+            escape_next = False
+            continue
+        if ch == "\\" and in_string:
+            escape_next = True
+            continue
+        if ch == '"':
+            in_string = not in_string
+            continue
+        if in_string:
+            continue
         if ch == "{" and brace_depth == 0:
             start_idx = idx
         if ch == "{":

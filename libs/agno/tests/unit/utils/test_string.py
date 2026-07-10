@@ -2,7 +2,13 @@ from typing import List, Optional
 
 from pydantic import BaseModel
 
-from agno.utils.string import generate_id_from_name, parse_response_model_str, sanitize_postgres_string, url_safe_string
+from agno.utils.string import (
+    _extract_json_objects,
+    generate_id_from_name,
+    parse_response_model_str,
+    sanitize_postgres_string,
+    url_safe_string,
+)
 
 
 def test_url_safe_string_spaces():
@@ -142,6 +148,39 @@ def test_parse_json_with_quotes_in_values():
     assert result is not None
     assert result.name == 'test "quoted" text'
     assert result.value == 'some "quoted" value'
+
+
+def test_extract_json_objects_brace_inside_string_value():
+    """A literal '}' inside a string value must not corrupt brace-depth
+    tracking and truncate the object early (issue #8839)."""
+    content = '{"name": "a } braced value", "value": "123"}'
+    objs = _extract_json_objects(content)
+    assert objs == [content]
+
+
+def test_extract_json_objects_open_brace_inside_string_value():
+    """Same as above but with a literal '{' inside the string value."""
+    content = '{"name": "a { braced value", "value": "123"}'
+    objs = _extract_json_objects(content)
+    assert objs == [content]
+
+
+def test_extract_json_objects_escaped_quote_inside_string_value():
+    """An escaped quote inside a string must not be treated as the end of
+    the string (which would then miscount a later brace as unquoted)."""
+    content = r'{"name": "esc\"aped } quote", "value": "123"}'
+    objs = _extract_json_objects(content)
+    assert objs == [content]
+
+
+def test_parse_json_with_brace_in_value():
+    """End-to-end: a value containing a brace character should not corrupt
+    the JSON object and lose subsequent fields (issue #8839)."""
+    content = '{"name": "a } braced value", "value": "123"}'
+    result = parse_response_model_str(content, MockModel)
+    assert result is not None
+    assert result.name == "a } braced value"
+    assert result.value == "123"
 
 
 def test_parse_json_with_missing_required_field():
