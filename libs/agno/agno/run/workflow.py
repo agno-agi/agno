@@ -107,13 +107,16 @@ class BaseWorkflowRunOutputEvent(BaseRunOutputEvent):
         if saved_run_output is not None:
             object.__setattr__(self, "run_output", None)
         try:
-            _dict = {k: v for k, v in asdict(self).items() if v is not None and k != "run_output"}
+            _dict = {k: v for k, v in asdict(self).items() if v is not None and k not in ("run_output", "metrics")}
         finally:
             if saved_run_output is not None:
                 object.__setattr__(self, "run_output", saved_run_output)
 
         if hasattr(self, "content") and self.content and isinstance(self.content, BaseModel):
             _dict["content"] = self.content.model_dump(exclude_none=True)
+
+        if hasattr(self, "metrics") and self.metrics is not None:
+            _dict["metrics"] = self.metrics.to_dict()
 
         # Handle StepOutput fields that contain Message objects
         if hasattr(self, "step_results") and self.step_results is not None:
@@ -203,9 +206,20 @@ class WorkflowCompletedEvent(BaseWorkflowRunOutputEvent):
     # Store underlying agent/team runs (parallels WorkflowRunOutput.step_executor_runs)
     step_executor_runs: Optional[List[Union[RunOutput, TeamRunOutput, "WorkflowRunOutput"]]] = None
     metadata: Optional[Dict[str, Any]] = None
+    metrics: Optional[WorkflowMetrics] = None
 
     # Full workflow run output for nested workflows
     run_output: Optional["WorkflowRunOutput"] = None
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "WorkflowCompletedEvent":
+        metrics_data = data.pop("metrics", None)
+        event = super().from_dict(data)
+        if metrics_data:
+            from agno.workflow.types import WorkflowMetrics
+
+            event.metrics = WorkflowMetrics.from_dict(metrics_data)
+        return event
 
 
 @dataclass
