@@ -108,6 +108,78 @@ def test_web_search_using_tavily(tavily_tools, mock_tavily_client):
 
 
 # ============================================================================
+# ADVANCED SEARCH PARAMETER TESTS
+# ============================================================================
+
+
+def test_advanced_search_params_forwarded(mock_tavily_client):
+    """Test that configured advanced search parameters are passed to the client."""
+    with patch.dict("os.environ", {"TAVILY_API_KEY": TEST_API_KEY}):
+        tools = TavilyTools(
+            topic="news",
+            time_range="week",
+            start_date="2026-01-01",
+            end_date="2026-01-31",
+            include_domains=["arxiv.org", "github.com"],
+            exclude_domains=["reddit.com"],
+            country="united states",
+            chunks_per_source=3,
+        )
+        tools.client = mock_tavily_client
+    mock_tavily_client.search.return_value = {"results": []}
+
+    tools.web_search_using_tavily("test query")
+
+    kwargs = mock_tavily_client.search.call_args[1]
+    assert kwargs["topic"] == "news"
+    assert kwargs["time_range"] == "week"
+    assert kwargs["start_date"] == "2026-01-01"
+    assert kwargs["end_date"] == "2026-01-31"
+    assert kwargs["include_domains"] == ["arxiv.org", "github.com"]
+    assert kwargs["exclude_domains"] == ["reddit.com"]
+    assert kwargs["country"] == "united states"
+    assert kwargs["chunks_per_source"] == 3
+
+
+def test_advanced_search_params_omitted_when_unset(tavily_tools, mock_tavily_client):
+    """Test that unset advanced parameters are not sent to the client."""
+    mock_tavily_client.search.return_value = {"results": []}
+
+    tavily_tools.web_search_using_tavily("test query")
+
+    kwargs = mock_tavily_client.search.call_args[1]
+    assert set(kwargs) == {"query", "search_depth", "include_answer", "max_results"}
+    assert kwargs["query"] == "test query"
+    assert kwargs["search_depth"] == "advanced"
+    assert kwargs["include_answer"] is True
+    assert kwargs["max_results"] == 5
+
+
+def test_auto_parameters_sent_only_when_enabled(mock_tavily_client):
+    """Test that auto_parameters is forwarded only when set to True."""
+    with patch.dict("os.environ", {"TAVILY_API_KEY": TEST_API_KEY}):
+        tools = TavilyTools(auto_parameters=True)
+        tools.client = mock_tavily_client
+    mock_tavily_client.search.return_value = {"results": []}
+
+    tools.web_search_using_tavily("test query")
+
+    assert mock_tavily_client.search.call_args[1]["auto_parameters"] is True
+
+
+def test_include_answer_false_still_sent(mock_tavily_client):
+    """Test that boolean False values pass the None filter and reach the client."""
+    with patch.dict("os.environ", {"TAVILY_API_KEY": TEST_API_KEY}):
+        tools = TavilyTools(include_answer=False)
+        tools.client = mock_tavily_client
+    mock_tavily_client.search.return_value = {"results": []}
+
+    tools.web_search_using_tavily("test query")
+
+    assert mock_tavily_client.search.call_args[1]["include_answer"] is False
+
+
+# ============================================================================
 # EXTRACT TESTS (New Functionality)
 # ============================================================================
 
