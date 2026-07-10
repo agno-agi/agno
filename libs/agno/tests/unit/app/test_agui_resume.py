@@ -2,8 +2,9 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from agno.agent import Agent
 from agno.models.response import ToolExecution
-from agno.os.interfaces.agui.resume import apply_tool_results_to_requirements, resume_paused_run
+from agno.os.interfaces.agui.resume import resolve_requirements_from_tool_messages, resume_paused_run
 from agno.run.agent import RunOutput
 from agno.run.base import RunContext, RunStatus
 from agno.run.requirement import RunRequirement
@@ -44,7 +45,8 @@ def _make_session_with_paused_run() -> AgentSession:
 class TestResumePausedRunErrorPaths:
     @pytest.mark.asyncio
     async def test_raises_when_no_db(self):
-        entity = MagicMock()
+        # spec=Agent needed for isinstance() check in resume_paused_run
+        entity = MagicMock(spec=Agent)
         entity.db = None
 
         with pytest.raises(ValueError, match="requires a database"):
@@ -58,7 +60,7 @@ class TestResumePausedRunErrorPaths:
 
     @pytest.mark.asyncio
     async def test_raises_when_session_not_found(self):
-        entity = MagicMock()
+        entity = MagicMock(spec=Agent)
         entity.db = MagicMock()
         entity.aget_session = AsyncMock(return_value=None)
 
@@ -73,7 +75,7 @@ class TestResumePausedRunErrorPaths:
 
     @pytest.mark.asyncio
     async def test_raises_when_no_paused_run(self):
-        entity = MagicMock()
+        entity = MagicMock(spec=Agent)
         entity.db = MagicMock()
         session = AgentSession(session_id="test-session")
         session.runs = [RunOutput(run_id="completed-run", status=RunStatus.completed)]
@@ -91,7 +93,7 @@ class TestResumePausedRunErrorPaths:
     @pytest.mark.asyncio
     async def test_raises_when_paused_run_has_no_requirements(self):
         """Paused run with no requirements won't match any tool_call_ids."""
-        entity = MagicMock()
+        entity = MagicMock(spec=Agent)
         entity.db = MagicMock()
         session = AgentSession(session_id="test-session")
         paused_run = RunOutput(run_id="paused-run", status=RunStatus.paused, requirements=None)
@@ -112,7 +114,7 @@ class TestResumePausedRunErrorPaths:
 class TestResumePausedRunHappyPath:
     @pytest.mark.asyncio
     async def test_calls_acontinue_run_with_correct_args(self):
-        entity = MagicMock()
+        entity = MagicMock(spec=Agent)
         entity.db = MagicMock()
         entity.aget_session = AsyncMock(return_value=_make_session_with_paused_run())
         entity.acontinue_run = MagicMock(return_value=AsyncMock())
@@ -139,7 +141,7 @@ class TestResumePausedRunHappyPath:
 
     @pytest.mark.asyncio
     async def test_applies_tool_results_to_requirements(self):
-        entity = MagicMock()
+        entity = MagicMock(spec=Agent)
         entity.db = MagicMock()
         entity.aget_session = AsyncMock(return_value=_make_session_with_paused_run())
         entity.acontinue_run = MagicMock(return_value=AsyncMock())
@@ -174,7 +176,7 @@ class TestApplyToolResultsEdgeCases:
         ]
         tool_messages = [FakeToolMessage("call_1", "result")]
 
-        result = apply_tool_results_to_requirements(requirements, tool_messages)
+        result = resolve_requirements_from_tool_messages(requirements, tool_messages)
 
         assert result[0].tool_execution is None
         assert result[1].tool_execution.result == "result"
@@ -198,7 +200,7 @@ class TestApplyToolResultsEdgeCases:
         ]
         tool_messages = [FakeToolMessage("call_1", "result")]
 
-        result = apply_tool_results_to_requirements(requirements, tool_messages)
+        result = resolve_requirements_from_tool_messages(requirements, tool_messages)
 
         assert result[0].tool_execution.result is None
         assert result[1].tool_execution.result == "result"
