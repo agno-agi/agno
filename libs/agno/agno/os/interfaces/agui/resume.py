@@ -3,7 +3,6 @@ from typing import Any, Dict, List, Optional, Union
 from ag_ui.core.types import ToolMessage as AGUIToolMessage
 
 from agno.agent import Agent
-from agno.run.agent import RunOutput
 from agno.run.base import RunContext, RunStatus
 from agno.run.requirement import RunRequirement
 from agno.run.team import TeamRunOutput
@@ -13,60 +12,87 @@ from agno.team.team import Team
 from agno.utils.string import parse_response_dict_str
 
 
-def _resolve_confirmation(req: RunRequirement, data: Dict[str, Any], error: Optional[str]) -> None:
-    if error or data.get("accepted") is not True:
-        req.reject(note=data.get("note") or error)
+def _resolve_confirmation(requirement: RunRequirement, payload: Dict[str, Any], error: Optional[str]) -> None:
+    if error or payload.get("accepted") is not True:
+        requirement.reject(note=payload.get("note") or error)
     else:
-        req.confirm()
+        requirement.confirm()
 
 
-def _resolve_user_input(req: RunRequirement, data: Dict[str, Any], error: Optional[str]) -> None:
-    values = data.get("values")
+def _resolve_user_input(requirement: RunRequirement, payload: Dict[str, Any]) -> None:
+    values = payload.get("values")
     if not isinstance(values, dict):
         raise ValueError("user_input expects {'values': {...}}")
-    req.provide_user_input(values)
+    requirement.provide_user_input(values)
 
 
-def _resolve_user_feedback(req: RunRequirement, data: Dict[str, Any], error: Optional[str]) -> None:
-    selections = data.get("selections")
+def _resolve_user_feedback(requirement: RunRequirement, payload: Dict[str, Any]) -> None:
+    selections = payload.get("selections")
     if not isinstance(selections, dict) or not all(isinstance(v, list) for v in selections.values()):
         raise ValueError("user_feedback expects {'selections': {question: [labels]}}")
-    req.provide_user_feedback(selections)
+    requirement.provide_user_feedback(selections)
 
 
-def _resolve_external_execution(req: RunRequirement, data: Dict[str, Any], error: Optional[str], content: str) -> None:
-    if error and req.tool_execution:
-        req.tool_execution.tool_call_error = True
-    req.set_external_execution_result(error if error else content)
+def _resolve_external_execution(requirement: RunRequirement, content: str, error: Optional[str]) -> None:
+    if error and requirement.tool_execution:
+        requirement.tool_execution.tool_call_error = True
+    requirement.set_external_execution_result(error or content)
 
 
-def merge_tool_results_into_requirements(
+def resolve_requirements_from_tool_messages(
     requirements: List[RunRequirement],
     tool_messages: List[AGUIToolMessage],
 ) -> List[RunRequirement]:
-    """Match ToolMessages to requirements by tool_call_id and resolve each by pause_type."""
-    results_map = {tm.tool_call_id: (tm.content, getattr(tm, "error", None)) for tm in tool_messages}
+    tool_message_by_call_id = {msg.tool_call_id: msg for msg in tool_messages}
 
-    for req in requirements:
-        if req.is_resolved():
-            continue
-        te = req.tool_execution
-        if not te or not te.tool_call_id or te.tool_call_id not in results_map:
+    for requirement in requirements:
+        if requirement.is_resolved():
             continue
 
-        content, error = results_map[te.tool_call_id]
-        data = parse_response_dict_str(content) or {}
+        tool_exec = requirement.tool_execution
+        if not tool_exec or not tool_exec.tool_call_id:
+            continue
 
-        if req.pause_type == "confirmation":
-            _resolve_confirmation(req, data, error)
-        elif req.pause_type == "user_input":
-            _resolve_user_input(req, data, error)
-        elif req.pause_type == "user_feedback":
-            _resolve_user_feedback(req, data, error)
-        elif req.pause_type == "external_execution":
-            _resolve_external_execution(req, data, error, content)
+        tool_message = tool_message_by_call_id.get(tool_exec.tool_call_id)
+        if tool_message is None:
+            continue
+
+        # External execution: raw content, no JSON parsing
+        if requirement.pause_type == "external_execution":
+            _resolve_external_execution(requirement, tool_message.content, tool_message.error)
+            continue
+
+        # Structured pause types: parse JSON payload
+        parsed = parse_response_dict_str(tool_message.content)
+        payload: Dict[str, Any] = parsed if isinstance(parsed, dict) else {}
+
+        if requirement.pause_type == "confirmation":
+            _resolve_confirmation(requirement, payload, tool_message.error)
+        elif requirement.pause_type == "user_input":
+            _resolve_user_input(requirement, payload)
+        elif requirement.pause_type == "user_feedback":
+            _resolve_user_feedback(requirement, payload)
 
     return requirements
+
+
+def _find_paused_run(
+    session: Union[AgentSession, TeamSession],
+    tool_messages: List[AGUIToolMessage],
+    is_team: bool,
+):
+    incoming_call_ids = {msg.tool_call_id for msg in tool_messages}
+
+    for run in session.runs or []:
+        if is_team and not isinstance(run, TeamRunOutput):
+            continue
+        if run.status != RunStatus.paused:
+            continue
+        for req in run.requirements or []:
+            if req.tool_execution and req.tool_execution.tool_call_id in incoming_call_ids:
+                return run
+
+    return None
 
 
 async def resume_paused_run(
@@ -76,16 +102,10 @@ async def resume_paused_run(
     run_context: RunContext,
     run_kwargs: dict,
 ):
-    """Resume a paused run by applying frontend tool results and continuing."""
-    # Remote entities don't support client_tools resume (no aget_session)
     if not isinstance(entity, (Agent, Team)):
-        raise ValueError(
-            "Frontend tool resume requires a local Agent or Team. RemoteAgent/RemoteTeam are not supported."
-        )
-    if not getattr(entity, "db", None):
-        raise ValueError(
-            "Frontend tool resume requires a database. Set db=SqliteDb(...) or db=PgDb(...) on your Agent/Team."
-        )
+        raise ValueError("Frontend tool resume requires a local Agent or Team")
+    if not entity.db:
+        raise ValueError("Frontend tool resume requires a database")
 
     session = await entity.aget_session(session_id=session_id)
     if not session:
@@ -93,46 +113,19 @@ async def resume_paused_run(
     if not isinstance(session, (AgentSession, TeamSession)):
         raise ValueError(f"Session {session_id} is not a valid session type")
 
-    # Find the paused run. Match on tool_call_ids: the session may hold multiple paused runs
-    # (e.g. one the user abandoned), and the incoming results identify which run is being resumed.
-    # For Teams, resume the top-level TeamRunOutput, not member runs (whose missing team_id crashes core).
-    incoming_tool_call_ids = {tm.tool_call_id for tm in tool_messages}
-    paused_run: Union[RunOutput, TeamRunOutput, None] = None
-
-    def matches_tool_messages(run) -> bool:
-        return any(
-            req.tool_execution and req.tool_execution.tool_call_id in incoming_tool_call_ids
-            for req in (run.requirements or [])
-        )
-
-    if isinstance(entity, Team):
-        paused_run = next(
-            (
-                r
-                for r in (session.runs or [])
-                if r.status == RunStatus.paused and isinstance(r, TeamRunOutput) and matches_tool_messages(r)
-            ),
-            None,
-        )
-    else:
-        paused_run = next(
-            (r for r in (session.runs or []) if r.status == RunStatus.paused and matches_tool_messages(r)),
-            None,
-        )
+    paused_run = _find_paused_run(session, tool_messages, is_team=isinstance(entity, Team))
     if not paused_run:
         raise ValueError(f"No paused run matching the provided tool results found in session {session_id}")
-
     if not paused_run.requirements:
         raise ValueError(f"Run {paused_run.run_id} has no requirements to resume")
 
-    # Merge tool results by pause_type
-    requirements = merge_tool_results_into_requirements(paused_run.requirements, tool_messages)
+    requirements = resolve_requirements_from_tool_messages(paused_run.requirements, tool_messages)
 
-    # Continue under the original run_id, not the new one AG-UI generated for this resume request
-    paused_run_id = paused_run.run_id or run_context.run_id
-    run_context.run_id = paused_run_id
+    if paused_run.run_id:
+        run_context.run_id = paused_run.run_id
+
     return entity.acontinue_run(  # type: ignore
-        run_id=paused_run_id,
+        run_id=paused_run.run_id,
         session_id=session_id,
         requirements=requirements,
         stream=True,
