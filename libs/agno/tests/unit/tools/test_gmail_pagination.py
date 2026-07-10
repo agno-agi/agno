@@ -1,19 +1,36 @@
 """Tests for Gmail pagination support."""
 
 import json
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, Mock, patch
 
 import pytest
+from google.oauth2.credentials import Credentials
+
+from agno.tools.google.gmail import GmailTools
 
 
 @pytest.fixture
-def gmail_tools():
-    """Create GmailTools with mocked auth."""
-    with patch("agno.tools.google.gmail.authenticate", lambda func: func):
-        from agno.tools.google.gmail import GmailTools
+def mock_credentials():
+    """Mock Google OAuth2 credentials."""
+    mock_creds = Mock(spec=Credentials)
+    mock_creds.valid = True
+    mock_creds.expired = False
+    return mock_creds
 
-        tools = GmailTools(max_results=5)
-        tools._service = MagicMock()
+
+@pytest.fixture
+def mock_gmail_service():
+    """Mock Gmail API service."""
+    return MagicMock()
+
+
+@pytest.fixture
+def gmail_tools(mock_credentials, mock_gmail_service):
+    """Create GmailTools with mocked dependencies and max_results=5."""
+    with patch("googleapiclient.discovery.build") as mock_build:
+        mock_build.return_value = mock_gmail_service
+        tools = GmailTools(creds=mock_credentials, max_results=5)
+        tools._service = mock_gmail_service
         return tools
 
 

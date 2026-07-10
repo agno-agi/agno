@@ -386,7 +386,9 @@ def test_empty_message_list(gmail_tools, mock_gmail_service):
     mock_gmail_service.users().messages().list().execute.return_value = mock_messages
 
     result = gmail_tools.get_latest_emails(count=1)
-    assert "No emails found" in result
+    parsed = json.loads(result)
+    assert parsed["emails"] == []
+    assert parsed["count"] == 0
 
 
 def test_malformed_message(gmail_tools, mock_gmail_service):
