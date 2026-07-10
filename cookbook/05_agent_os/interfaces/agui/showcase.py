@@ -2,10 +2,7 @@
 AG-UI Showcase
 ==============
 
-Single server exposing all AG-UI Dojo demo endpoints.
-Run this to test AG-UI integration with the Dojo frontend at localhost:3000.
-
-Imports agents from individual files and mounts them at Dojo-compatible paths.
+Demonstrates all AG-UI demos on a single server.
 """
 
 from agent_with_media import media_agent
@@ -21,6 +18,10 @@ from reasoning_agent import chat_agent as reasoning_agent
 from shared_state import shared_state_agent
 from team_human_in_the_loop import support_team
 from tool_based_generative_ui import generative_ui_agent
+
+# ---------------------------------------------------------------------------
+# Create Example
+# ---------------------------------------------------------------------------
 
 agent_os = AgentOS(
     agents=[
@@ -44,30 +45,18 @@ agent_os = AgentOS(
         AGUI(agent=shared_state_agent, prefix="/shared_state"),
         AGUI(agent=reasoning_agent, prefix="/agentic_chat_reasoning"),
         AGUI(agent=media_agent, prefix="/agentic_chat_multimodal"),
-        # HITL patterns
         AGUI(agent=confirmation_agent, prefix="/tool_confirmation"),
         AGUI(agent=user_input_agent, prefix="/user_input"),
         AGUI(agent=backend_feedback_agent, prefix="/backend_feedback"),
-        # Team HITL
         AGUI(team=support_team, prefix="/team_human_in_the_loop"),
     ],
 )
 app = agent_os.get_app()
 
+
+# ---------------------------------------------------------------------------
+# Run Example
+# ---------------------------------------------------------------------------
+
 if __name__ == "__main__":
-    print("AG-UI Showcase Server")
-    print("Endpoints:")
-    print("  /agentic_chat — Chat, Tools, Streaming")
-    print("  /backend_tool_rendering — Agent State, Collaborating")
-    print("  /human_in_the_loop — HITL, Interactivity")
-    print("  /tool_based_generative_ui — Generative UI (action), Tools")
-    print("  /shared_state — Agent State, Collaborating")
-    print("  /agentic_chat_reasoning — Chat, Tools, Streaming, Reasoning")
-    print("  /agentic_chat_multimodal — Chat, Multimodal, Streaming")
-    print("HITL Patterns:")
-    print("  /tool_confirmation — requires_confirmation (approve/reject)")
-    print("  /user_input — requires_user_input (text field)")
-    print("  /backend_feedback — UserFeedbackTools (multiple choice)")
-    print("Team HITL:")
-    print("  /team_human_in_the_loop — Team member with requires_confirmation tool")
     agent_os.serve(app="showcase:app", reload=True, port=9001)

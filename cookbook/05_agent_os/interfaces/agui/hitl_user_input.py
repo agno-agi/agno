@@ -1,14 +1,8 @@
 """
-HITL Pattern 2: User Input Required
-====================================
+HITL User Input
+===============
 
-Minimal backend agent - tools are defined on the frontend.
-
-The frontend registers a tool via `useHumanInTheLoop` that collects user text input.
-When the agent calls it, the frontend renders a text input UI.
-
-This demonstrates the recommended pattern: frontend defines HITL behavior,
-backend just provides the agent.
+Minimal backend agent with frontend-defined tools via useHumanInTheLoop.
 """
 
 from agno.agent.agent import Agent
@@ -17,8 +11,6 @@ from agno.models.openai import OpenAIResponses
 from agno.os import AgentOS
 from agno.os.interfaces.agui import AGUI
 
-# Minimal agent - NO backend tools
-# Tools come from frontend via useHumanInTheLoop
 user_input_agent = Agent(
     name="user_input",
     model=OpenAIResponses(id="gpt-5.5"),
@@ -38,5 +30,4 @@ app = agent_os.get_app()
 
 
 if __name__ == "__main__":
-    print("HITL Pattern 2: User Input Required (Frontend Tools)")
-    agent_os.serve(app=app, host="127.0.0.1", port=9001)
+    agent_os.serve(app="hitl_user_input:app", port=9001, reload=True)

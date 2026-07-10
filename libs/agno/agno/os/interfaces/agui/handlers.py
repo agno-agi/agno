@@ -336,22 +336,24 @@ def on_run_completed(chunk: BaseRunOutputEvent, state: StreamState) -> List[Base
         events.append(TextMessageEndEvent(type=EventType.TEXT_MESSAGE_END, message_id=state.text_message_id))
         state.close_text_message()
 
-    # Emit paused tools so the frontend can render them
-    # Both AgentRunPausedEvent and TeamRunPausedEvent now have the same filter properties
+    # 1. Collect paused tools for frontend rendering
     paused_tools: List[ToolExecution] = []
-    if isinstance(chunk, (AgentRunPausedEvent, TeamRunPausedEvent)):
+    if isinstance(chunk, AgentRunPausedEvent):
         paused_tools = (
             chunk.tools_awaiting_external_execution
             + chunk.tools_requiring_confirmation
             + chunk.tools_requiring_user_input
         )
-        # For teams, also include MEMBER pauses from active_requirements.
-        # Member tools are ONLY in requirements (via _propagate_member_pause), not in .tools,
-        # so tools_requiring_* won't have them. Filter by member_agent_id to avoid leader duplicates.
-        if isinstance(chunk, TeamRunPausedEvent):
-            for req in chunk.active_requirements:
-                if req.member_agent_id and req.tool_execution:
-                    paused_tools.append(req.tool_execution)
+    elif isinstance(chunk, TeamRunPausedEvent):
+        # Leader tools from .tools, member tools from active_requirements
+        paused_tools = (
+            chunk.tools_awaiting_external_execution
+            + chunk.tools_requiring_confirmation
+            + chunk.tools_requiring_user_input
+        )
+        for req in chunk.active_requirements:
+            if req.member_agent_id and req.tool_execution:
+                paused_tools.append(req.tool_execution)
 
     if paused_tools:
             assistant_message_id = str(uuid.uuid4())

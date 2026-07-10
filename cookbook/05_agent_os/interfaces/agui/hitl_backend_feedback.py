@@ -1,14 +1,8 @@
 """
-HITL Pattern 3: Multiple Choice Feedback
-==========================================
+HITL Backend Feedback
+=====================
 
-Minimal backend agent - tools are defined on the frontend.
-
-The frontend registers a tool via `useHumanInTheLoop` that presents multiple choice.
-When the agent calls it, the frontend renders the options UI.
-
-This demonstrates the recommended pattern: frontend defines HITL behavior,
-backend just provides the agent.
+Minimal backend agent with frontend-defined tools via useHumanInTheLoop.
 """
 
 from agno.agent.agent import Agent
@@ -17,8 +11,6 @@ from agno.models.openai import OpenAIResponses
 from agno.os import AgentOS
 from agno.os.interfaces.agui import AGUI
 
-# Minimal agent - NO backend tools
-# Tools come from frontend via useHumanInTheLoop
 backend_feedback_agent = Agent(
     name="backend_feedback",
     model=OpenAIResponses(id="gpt-5.5"),
@@ -38,5 +30,4 @@ app = agent_os.get_app()
 
 
 if __name__ == "__main__":
-    print("HITL Pattern 3: Multiple Choice Feedback (Frontend Tools)")
-    agent_os.serve(app=app, host="127.0.0.1", port=9001)
+    agent_os.serve(app="hitl_backend_feedback:app", port=9001, reload=True)
