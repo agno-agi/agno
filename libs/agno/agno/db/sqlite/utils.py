@@ -1,7 +1,7 @@
 import json
 import time
 from datetime import date, datetime, timedelta, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 from uuid import uuid4
 
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
@@ -58,6 +58,33 @@ def apply_sorting(stmt, table: Table, sort_by: Optional[str] = None, sort_order:
         return stmt.order_by(sort_column.asc())
     else:
         return stmt.order_by(sort_column.desc())
+
+
+def normalize_session_timestamps(
+    serialized_session: Dict[str, Any], preserve_updated_at: bool = True
+) -> Tuple[int, int]:
+    """Return NOT NULL-safe created_at and updated_at values for a session row.
+
+    AgentSession and TeamSession leave both timestamps as None, but the sessions
+    table marks created_at as NOT NULL. Missing values fall back to a single
+    reading of the current time so created_at <= updated_at always holds. An
+    explicit value (including 0) is kept as-is. With preserve_updated_at=False,
+    updated_at is always set to the current time (used by bulk refresh writes).
+    """
+    current_time = int(time.time())
+
+    created_at = serialized_session.get("created_at")
+    if created_at is None:
+        created_at = current_time
+
+    if not preserve_updated_at:
+        return created_at, current_time
+
+    updated_at = serialized_session.get("updated_at")
+    if updated_at is None:
+        updated_at = created_at
+
+    return created_at, updated_at
 
 
 def is_table_available(session: Session, table_name: str, db_schema: Optional[str] = None) -> bool:
