@@ -2,6 +2,11 @@
 
 .DS_Store
 
+# Local scratch directories used by Claude-driven workflows (sub-agent
+# reports, working memory). Never meant to be committed.
+.review/
+.memory/
+
 # Python cache
 .mypy_cache
 *__pycache__*
