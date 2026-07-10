@@ -1541,6 +1541,16 @@ class AgentOS:
         if audit is not None:
             fastapi_app.state.authz_audit = audit
 
+        # Optional user directory (no-IdP). When present, the middleware (and the
+        # WebSocket connect path) denies disabled users and — when auto-provision is
+        # on — creates a directory row from token claims. Seed the store and the
+        # claim/policy flags the middleware reads off app.state.
+        fastapi_app.state.user_store = getattr(config, "user_store", None)
+        fastapi_app.state.user_auto_provision = getattr(config, "auto_provision_users", False)
+        fastapi_app.state.user_email_claim = getattr(config, "user_email_claim", "email")
+        fastapi_app.state.user_name_claim = getattr(config, "user_name_claim", "name")
+        fastapi_app.state.user_directory_fail_closed = getattr(config, "directory_error_fail_closed", False)
+
     def get_routes(self) -> List[Any]:
         """Retrieve all routes from the FastAPI app.
 

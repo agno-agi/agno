@@ -1249,6 +1249,47 @@ class AuthMiddleware(BaseHTTPMiddleware):
             # ownership gates stay dormant.
             request.state.user_isolation_enabled = self.user_isolation
 
+            # User directory (no-IdP): optionally auto-provision the subject from
+            # token claims, then enforce the disabled flag. This is the revocation
+            # kill-switch — a disabled user is denied even with a valid token, on
+            # EVERY route (independent of per-route scopes). Identity is still the
+            # app's to assert; we only gate it.
+            user_store = getattr(getattr(request.app, "state", None), "user_store", None)
+            if user_store is not None and user_id:
+                try:
+                    if getattr(request.app.state, "user_auto_provision", False):
+                        user_store.provision_from_claims(
+                            user_id,
+                            payload,
+                            email_claim=getattr(request.app.state, "user_email_claim", "email"),
+                            name_claim=getattr(request.app.state, "user_name_claim", "name"),
+                        )
+                    disabled = user_store.is_disabled(user_id)
+                except Exception as e:  # directory unreachable: honour the configured policy
+                    fail_closed = bool(getattr(request.app.state, "user_directory_fail_closed", False))
+                    log_warning(
+                        f"user directory check failed for {user_id!r}: {e} "
+                        f"(failing {'closed' if fail_closed else 'open'})"
+                    )
+                    if fail_closed:
+                        return self._create_error_response(
+                            503, "User directory unavailable", origin, cors_allowed_origins
+                        )
+                    disabled = False
+                if disabled:
+                    log_warning(f"Disabled user denied: {user_id} for {method} {path}")
+                    self._record_decision(
+                        request,
+                        allowed=False,
+                        method=method,
+                        path=path,
+                        principal=user_id,
+                        required_scopes=[],
+                        scopes=scopes,
+                        reason="user_disabled",
+                    )
+                    return self._create_error_response(403, "User is disabled", origin, cors_allowed_origins)
+
             # Extract dependencies claims
             dependencies = {}
             if self.dependencies_claims:
