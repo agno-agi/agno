@@ -1,8 +1,19 @@
+"""
+Neosantara Structured Output
+============================
+
+Cookbook example for `neosantara/structured_output.py`.
+"""
+
 from typing import List
 
 from agno.agent import Agent
 from agno.models.neosantara import Neosantara
 from pydantic import BaseModel, Field
+
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
 
 
 class MovieScript(BaseModel):
@@ -34,3 +45,10 @@ agent = Agent(
 
 # Print the response in the terminal
 agent.print_response("New York")
+
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+
+if __name__ == "__main__":
+    pass

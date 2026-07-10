@@ -12,6 +12,7 @@ from agno.run.base import RunStatus
 from agno.run.team import TeamRunOutput
 from agno.session.agent import AgentSession
 from agno.session.team import TeamSession
+from agno.session.workflow import WorkflowSession
 
 
 @pytest_asyncio.fixture(autouse=True)
@@ -279,3 +280,104 @@ async def test_rename_session(async_postgres_db_real: AsyncPostgresDb, sample_ag
         session_id="test_agent_session_1", session_type=SessionType.AGENT
     )
     assert retrieved.session_data["session_name"] == "New Session Name"
+
+
+# ── session_type=None integration tests ──────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_get_sessions_without_type_returns_all(
+    async_postgres_db_real: AsyncPostgresDb,
+    sample_agent_session: AgentSession,
+    sample_team_session: TeamSession,
+):
+    """get_sessions(session_type=None) returns agent, team, and workflow sessions together."""
+    workflow_session = WorkflowSession(
+        session_id="test_workflow_session_1",
+        workflow_id="test_workflow_1",
+        user_id="test_user_1",
+        session_data={"session_name": "Test Workflow Session"},
+        created_at=int(time.time()),
+        updated_at=int(time.time()),
+    )
+
+    await async_postgres_db_real.upsert_session(sample_agent_session)
+    await async_postgres_db_real.upsert_session(sample_team_session)
+    await async_postgres_db_real.upsert_session(workflow_session)
+
+    # session_type=None should return all three
+    sessions_raw, total_count = await async_postgres_db_real.get_sessions(session_type=None, deserialize=False)
+    assert total_count == 3
+    session_ids = {s["session_id"] for s in sessions_raw}
+    assert sample_agent_session.session_id in session_ids
+    assert sample_team_session.session_id in session_ids
+    assert workflow_session.session_id in session_ids
+
+    # Deserialized path should auto-detect correct types
+    sessions = await async_postgres_db_real.get_sessions(session_type=None)
+    assert len(sessions) == 3
+    types = {type(s) for s in sessions}
+    assert AgentSession in types
+    assert TeamSession in types
+    assert WorkflowSession in types
+
+
+@pytest.mark.asyncio
+async def test_get_sessions_without_type_with_component_id(
+    async_postgres_db_real: AsyncPostgresDb,
+    sample_agent_session: AgentSession,
+    sample_team_session: TeamSession,
+):
+    """get_sessions(session_type=None, component_id=X) uses OR across agent_id/team_id/workflow_id."""
+    await async_postgres_db_real.upsert_session(sample_agent_session)
+    await async_postgres_db_real.upsert_session(sample_team_session)
+
+    # Filter by agent component_id without specifying type
+    sessions_raw, total_count = await async_postgres_db_real.get_sessions(
+        session_type=None, component_id="test_agent_1", deserialize=False
+    )
+    assert total_count == 1
+    assert sessions_raw[0]["session_id"] == sample_agent_session.session_id
+
+    # Filter by nonexistent component_id
+    sessions_raw, total_count = await async_postgres_db_real.get_sessions(
+        session_type=None, component_id="nonexistent", deserialize=False
+    )
+    assert total_count == 0
+
+
+@pytest.mark.asyncio
+async def test_get_session_without_type_auto_detects(
+    async_postgres_db_real: AsyncPostgresDb,
+    sample_agent_session: AgentSession,
+    sample_team_session: TeamSession,
+):
+    """get_session(session_type=None) auto-detects the correct session type for deserialization."""
+    await async_postgres_db_real.upsert_session(sample_agent_session)
+    await async_postgres_db_real.upsert_session(sample_team_session)
+
+    result = await async_postgres_db_real.get_session(session_id=sample_agent_session.session_id, session_type=None)
+    assert result is not None
+    assert isinstance(result, AgentSession)
+
+    result = await async_postgres_db_real.get_session(session_id=sample_team_session.session_id, session_type=None)
+    assert result is not None
+    assert isinstance(result, TeamSession)
+
+
+@pytest.mark.asyncio
+async def test_rename_session_without_type(
+    async_postgres_db_real: AsyncPostgresDb,
+    sample_agent_session: AgentSession,
+):
+    """rename_session(session_type=None) works without specifying session type."""
+    await async_postgres_db_real.upsert_session(sample_agent_session)
+
+    result = await async_postgres_db_real.rename_session(
+        session_id=sample_agent_session.session_id,
+        session_type=None,
+        session_name="Renamed Session",
+    )
+    assert result is not None
+    assert isinstance(result, AgentSession)
+    assert result.session_data.get("session_name") == "Renamed Session"

@@ -20,11 +20,15 @@ from datetime import UTC, datetime, timedelta
 import jwt
 from agno.agent import Agent
 from agno.db.postgres import PostgresDb
-from agno.models.openai import OpenAIChat
+from agno.models.openai import OpenAIResponses
 from agno.os import AgentOS
 from agno.os.middleware import JWTMiddleware
 from agno.tools.websearch import WebSearchTools
 from agno.utils.cryptography import generate_rsa_keys
+
+# ---------------------------------------------------------------------------
+# Create Example
+# ---------------------------------------------------------------------------
 
 # Keys file path for persistence across reloads
 _KEYS_FILE = "/tmp/agno_rbac_demo_keys.json"
@@ -64,7 +68,7 @@ db = PostgresDb(db_url="postgresql+psycopg://ai:ai@localhost:5532/ai")
 research_agent = Agent(
     id="research-agent",
     name="Research Agent",
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIResponses(id="gpt-5.5"),
     db=db,
     tools=[WebSearchTools()],
     add_history_to_context=True,
@@ -104,6 +108,10 @@ app.add_middleware(
     scope_mappings=custom_scopes,  # Providing scope_mappings enables RBAC
     admin_scope="foo:bar",  # Admin can bypass all checks with this scope
 )
+
+# ---------------------------------------------------------------------------
+# Run Example
+# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     """

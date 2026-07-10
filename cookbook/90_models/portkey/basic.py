@@ -1,5 +1,17 @@
+"""
+Portkey Basic
+=============
+
+Cookbook example for `portkey/basic.py`.
+"""
+
 from agno.agent import Agent, RunOutput  # noqa
 from agno.models.portkey import Portkey
+import asyncio
+
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
 
 # Create model using Portkey
 model = Portkey(
@@ -13,4 +25,27 @@ agent = Agent(model=model, markdown=True)
 # print(run.content)
 
 # Print the response in the terminal
-agent.print_response("What is Portkey and why would I use it as an AI gateway?")
+
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+if __name__ == "__main__":
+    # --- Sync ---
+    agent.print_response("What is Portkey and why would I use it as an AI gateway?")
+
+    # --- Sync + Streaming ---
+    agent.print_response(
+        "What is Portkey and why would I use it as an AI gateway?", stream=True
+    )
+
+    # --- Async ---
+    asyncio.run(
+        agent.aprint_response(
+            "What is Portkey and why would I use it as an AI gateway?"
+        )
+    )
+
+    # --- Async + Streaming ---
+    asyncio.run(
+        agent.aprint_response("Share a breakfast recipe.", markdown=True, stream=True)
+    )

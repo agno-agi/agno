@@ -3,8 +3,19 @@
 from agno.agent import Agent
 from agno.models.ollama import Ollama
 
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
+
 agent = Agent(
     model=Ollama(id="gpt-oss:120b-cloud"),
 )
 
 agent.print_response("What is the capital of France?", stream=True)
+
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+
+if __name__ == "__main__":
+    pass

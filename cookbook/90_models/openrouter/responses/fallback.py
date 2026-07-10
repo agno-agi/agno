@@ -11,6 +11,10 @@ Requirements:
 from agno.agent import Agent
 from agno.models.openrouter import OpenRouterResponses
 
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
+
 agent = Agent(
     model=OpenRouterResponses(
         id="openai/gpt-oss-20b",
@@ -24,3 +28,10 @@ agent = Agent(
 )
 
 agent.print_response("Write a haiku about coding", stream=True)
+
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+
+if __name__ == "__main__":
+    pass

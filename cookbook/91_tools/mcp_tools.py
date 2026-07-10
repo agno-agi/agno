@@ -1,3 +1,10 @@
+"""
+Mcp Tools
+=============================
+
+Demonstrates mcp tools.
+"""
+
 import asyncio
 import sys
 from pathlib import Path
@@ -6,6 +13,10 @@ from agno.agent import Agent
 from agno.tools.mcp import MCPTools
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
+
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
 
 
 async def main(prompt: str) -> None:
@@ -31,6 +42,10 @@ async def main(prompt: str) -> None:
             # Run the agent
             await agent.aprint_response(prompt, stream=True)
 
+
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     prompt = (

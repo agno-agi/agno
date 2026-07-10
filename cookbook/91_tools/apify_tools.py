@@ -1,5 +1,17 @@
+"""
+Apify Tools
+=============================
+
+Demonstrates apify tools.
+"""
+
 from agno.agent import Agent
 from agno.tools.apify import ApifyTools
+
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
+
 
 # Apify Tools Demonstration Script
 """
@@ -60,6 +72,10 @@ def demonstrate_tools():
     prompt = "Analyze two profiles on Tiktok that lately added #AI (hashtag AI), extracting their statistics and recent content trends"
     agent.print_response(prompt)
 
+
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     demonstrate_tools()

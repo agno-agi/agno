@@ -18,6 +18,11 @@ Usage:
 from agno.agent import Agent
 from agno.tools.openweather import OpenWeatherTools
 
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
+
+
 # Example 1: Enable all OpenWeather functions
 agent_all = Agent(
     tools=[
@@ -58,40 +63,45 @@ agent = Agent(
 )
 
 # Example usage with all functions enabled
-print("=== Example 1: Using all OpenWeather functions ===")
-agent_all.print_response(
-    "Give me a comprehensive weather report for Tokyo including current weather, forecast, and air quality",
-    markdown=True,
-)
 
-# Example usage with specific functions only
-print(
-    "\n=== Example 2: Using specific OpenWeather functions (current weather + geocoding) ==="
-)
-agent_specific.print_response(
-    "What's the current weather in Tokyo?",
-    markdown=True,
-)
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+if __name__ == "__main__":
+    print("=== Example 1: Using all OpenWeather functions ===")
+    agent_all.print_response(
+        "Give me a comprehensive weather report for Tokyo including current weather, forecast, and air quality",
+        markdown=True,
+    )
 
-# Example usage with default configuration
-print("\n=== Example 3: Default OpenWeather agent usage ===")
-agent.print_response(
-    "What's the current weather in Tokyo?",
-    markdown=True,
-)
+    # Example usage with specific functions only
+    print(
+        "\n=== Example 2: Using specific OpenWeather functions (current weather + geocoding) ==="
+    )
+    agent_specific.print_response(
+        "What's the current weather in Tokyo?",
+        markdown=True,
+    )
 
-# Additional examples (commented out to avoid API calls)
-# agent.print_response(
-#     "Give me a 3-day weather forecast for New York City",
-#     markdown=True,
-# )
+    # Example usage with default configuration
+    print("\n=== Example 3: Default OpenWeather agent usage ===")
+    agent.print_response(
+        "What's the current weather in Tokyo?",
+        markdown=True,
+    )
 
-# agent.print_response(
-#     "What's the air quality in Beijing right now?",
-#     markdown=True,
-# )
+    # Additional examples (commented out to avoid API calls)
+    # agent.print_response(
+    #     "Give me a 3-day weather forecast for New York City",
+    #     markdown=True,
+    # )
 
-# agent.print_response(
-#     "Compare the current weather between London, Paris, and Rome",
-#     markdown=True,
-# )
+    # agent.print_response(
+    #     "What's the air quality in Beijing right now?",
+    #     markdown=True,
+    # )
+
+    # agent.print_response(
+    #     "Compare the current weather between London, Paris, and Rome",
+    #     markdown=True,
+    # )

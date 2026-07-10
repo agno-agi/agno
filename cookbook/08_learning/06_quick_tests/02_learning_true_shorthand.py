@@ -18,23 +18,23 @@ from agno.agent import Agent
 from agno.db.postgres import PostgresDb
 from agno.models.openai import OpenAIResponses
 
-# ============================================================================
-# Setup - Using the simplest possible configuration
-# ============================================================================
+# ---------------------------------------------------------------------------
+# Create Agent - Using the simplest possible configuration
+# ---------------------------------------------------------------------------
 
 db = PostgresDb(db_url="postgresql+psycopg://ai:ai@localhost:5532/ai")
 
 # This is the simplest way to enable learning - just set learning=True
 agent = Agent(
-    model=OpenAIResponses(id="gpt-5.2"),
+    model=OpenAIResponses(id="gpt-5.5"),
     db=db,
     learning=True,  # <-- The shorthand we're testing
     markdown=True,
 )
 
-# ============================================================================
-# Demo
-# ============================================================================
+# ---------------------------------------------------------------------------
+# Run Demo
+# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     user_id = "shorthand_test@example.com"
@@ -56,7 +56,7 @@ if __name__ == "__main__":
     print("VERIFICATION: LearningMachine created from learning=True")
     print("=" * 60 + "\n")
 
-    lm = agent.get_learning_machine()
+    lm = agent.learning_machine
     print(f"LearningMachine exists: {lm is not None}")
     print(
         f"UserProfileStore exists: {lm.user_profile_store is not None if lm else False}"

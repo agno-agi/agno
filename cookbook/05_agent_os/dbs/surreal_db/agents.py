@@ -1,9 +1,20 @@
+"""
+Agents
+======
+
+Demonstrates agents.
+"""
+
 from textwrap import dedent
 
 from agno.agent import Agent
 from agno.models.anthropic import Claude
 from agno.tools.mcp import MCPTools
 from db import db
+
+# ---------------------------------------------------------------------------
+# Create Example
+# ---------------------------------------------------------------------------
 
 # ************* Create Agno Assist *************
 agno_assist = Agent(
@@ -71,3 +82,10 @@ agno_assist = Agent(
     ),
 )
 # *******************************
+
+# ---------------------------------------------------------------------------
+# Run Example
+# ---------------------------------------------------------------------------
+
+if __name__ == "__main__":
+    raise SystemExit("This module is intended to be imported.")

@@ -22,14 +22,11 @@ from agno.models.google import Gemini
 from agno.vectordb.chroma import ChromaDb
 from agno.vectordb.search import SearchType
 
-# ============================================================================
-# Storage Configuration
-# ============================================================================
+# ---------------------------------------------------------------------------
+# Setup
+# ---------------------------------------------------------------------------
 agent_db = SqliteDb(db_file="tmp/agents.db")
 
-# ============================================================================
-# Knowledge Configuration
-# ============================================================================
 knowledge = Knowledge(
     name="Agno Documentation",
     vector_db=ChromaDb(
@@ -51,9 +48,9 @@ knowledge = Knowledge(
     contents_db=agent_db,
 )
 
-# ============================================================================
+# ---------------------------------------------------------------------------
 # Agent Instructions
-# ============================================================================
+# ---------------------------------------------------------------------------
 instructions = """\
 You are an expert on the Agno framework and building AI agents.
 
@@ -80,12 +77,12 @@ You are an expert on the Agno framework and building AI agents.
 - Be concise — developers want answers, not essays\
 """
 
-# ============================================================================
-# Create the Agent
-# ============================================================================
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
 agent_with_knowledge = Agent(
     name="Agent with Knowledge",
-    model=Gemini(id="gemini-3-flash-preview"),
+    model=Gemini(id="gemini-3.5-flash"),
     instructions=instructions,
     knowledge=knowledge,
     search_knowledge=True,
@@ -96,24 +93,22 @@ agent_with_knowledge = Agent(
     markdown=True,
 )
 
-# ============================================================================
-# Load Knowledge and Run the Agent
-# ============================================================================
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
 if __name__ == "__main__":
     # Load the introduction from the Agno documentation into the knowledge base
     # We're only loading 1 file to keep this example simple.
-    knowledge.insert(
-        name="Agno Introduction", url="https://docs.agno.com/introduction.md"
-    )
+    knowledge.insert(name="Agno Introduction", url="https://docs.agno.com/")
 
     agent_with_knowledge.print_response(
         "What is Agno?",
         stream=True,
     )
 
-# ============================================================================
+# ---------------------------------------------------------------------------
 # More Examples
-# ============================================================================
+# ---------------------------------------------------------------------------
 """
 Load your own knowledge:
 

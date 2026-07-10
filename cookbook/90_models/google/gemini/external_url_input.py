@@ -12,7 +12,7 @@ This works with:
 
 Supported formats: PDF, JSON, HTML, CSS, XML, images (PNG, JPEG, WebP, GIF)
 
-Note: External URL support requires Gemini 3.x models (e.g., gemini-3-flash-preview).
+Note: External URL support requires Gemini 3.x models (e.g., gemini-3.5-flash).
       Gemini 2.0 models do not support this feature.
 """
 
@@ -20,8 +20,12 @@ from agno.agent import Agent
 from agno.media import File
 from agno.models.google import Gemini
 
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
+
 agent = Agent(
-    model=Gemini(id="gemini-3-flash-preview"),
+    model=Gemini(id="gemini-3.5-flash"),
     markdown=True,
 )
 
@@ -35,3 +39,10 @@ agent.print_response(
         )
     ],
 )
+
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+
+if __name__ == "__main__":
+    pass

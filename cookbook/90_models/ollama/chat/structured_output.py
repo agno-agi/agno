@@ -1,9 +1,20 @@
+"""
+Ollama Structured Output
+========================
+
+Cookbook example for `ollama/chat/structured_output.py`.
+"""
+
 from typing import List
 
 from agno.agent import Agent, RunOutput  # noqa
 from agno.models.ollama import Ollama
 from pydantic import BaseModel, Field
 from rich.pretty import pprint  # noqa
+
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
 
 
 class MovieScript(BaseModel):
@@ -40,3 +51,10 @@ structured_output_agent = Agent(
 
 # Run the agent
 structured_output_agent.print_response("New York")
+
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+
+if __name__ == "__main__":
+    pass

@@ -1,11 +1,18 @@
+"""
+Basic
+=====
+
+Demonstrates basic.
+"""
+
 from agno.agent import Agent
 from agno.db.postgres import PostgresDb
 from agno.models.openai import OpenAIChat
 from agno.os import AgentOS
 from agno.os.config import (
     AgentOSConfig,
-    ChatConfig,
     DatabaseConfig,
+    Manifest,
     MemoryConfig,
     MemoryDomainConfig,
 )
@@ -17,7 +24,9 @@ from agno.workflow.workflow import Workflow
 db = PostgresDb(db_url="postgresql+psycopg://ai:ai@localhost:5532/ai", id="db-0001")
 db2 = PostgresDb(db_url="postgresql+psycopg://ai:ai@localhost:5532/ai2", id="db-0002")
 
-# Setup basic agents, teams and workflows
+# ---------------------------------------------------------------------------
+# Create Agent, Team, And Workflow
+# ---------------------------------------------------------------------------
 basic_agent = Agent(
     name="Marketing Agent",
     db=db,
@@ -59,15 +68,17 @@ agent_os = AgentOS(
     workflows=[basic_workflow],
     # Configuration for the AgentOS
     config=AgentOSConfig(
-        chat=ChatConfig(
-            quick_prompts={
-                "marketing-agent": [
+        manifest={
+            "marketing-agent": Manifest(
+                description="Plans, runs and reports on marketing campaigns.",
+                labels=["beta", "marketing"],
+                quick_prompts=[
                     "What can you do?",
                     "How is our latest post working?",
                     "Tell me about our active marketing campaigns",
                 ],
-            },
-        ),
+            ),
+        },
         memory=MemoryConfig(
             dbs=[
                 DatabaseConfig(
@@ -82,6 +93,10 @@ agent_os = AgentOS(
 )
 app = agent_os.get_app()
 
+
+# ---------------------------------------------------------------------------
+# Run Example
+# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     """Run your AgentOS.

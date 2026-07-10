@@ -29,27 +29,25 @@ def format_member_agent_task(
     return member_task_str
 
 
-def get_member_id(member: Union[Agent, "Team"]) -> str:
+def get_member_id(member: Union[Agent, "Team"]) -> Optional[str]:
     """
     Get the ID of a member
 
-    If the member has an agent_id or team_id, use that if it is not a valid UUID.
-    Then if the member has a name, convert that to a URL safe string.
-    Then if the member has the default UUID ID, use that.
-    Otherwise, return None.
+    Priority order:
+    1. If the member has an explicitly provided id, use it (UUID or not)
+    2. If the member has a name, convert that to a URL safe string
+    3. Otherwise, return None
     """
     from agno.team.team import Team
 
-    if isinstance(member, Agent) and member.id is not None and (not is_valid_uuid(member.id)):
-        url_safe_member_id = url_safe_string(member.id)
-    elif isinstance(member, Team) and member.id is not None and (not is_valid_uuid(member.id)):
-        url_safe_member_id = url_safe_string(member.id)
+    # First priority: Use the ID if explicitly provided
+    if isinstance(member, Agent) and member.id is not None:
+        url_safe_member_id = member.id if is_valid_uuid(member.id) else url_safe_string(member.id)
+    elif isinstance(member, Team) and member.id is not None:
+        url_safe_member_id = member.id if is_valid_uuid(member.id) else url_safe_string(member.id)
+    # Second priority: Use the name if available
     elif member.name is not None:
         url_safe_member_id = url_safe_string(member.name)
-    elif isinstance(member, Agent) and member.id is not None:
-        url_safe_member_id = member.id
-    elif isinstance(member, Team) and member.id is not None:
-        url_safe_member_id = member.id
     else:
         url_safe_member_id = None
     return url_safe_member_id

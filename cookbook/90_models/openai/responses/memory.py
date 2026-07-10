@@ -11,6 +11,10 @@ from agno.db.postgres import PostgresDb
 from agno.models.openai import OpenAIResponses
 from rich.pretty import pprint
 
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
+
 # Setup the database
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
 db = PostgresDb(db_url=db_url)
@@ -59,3 +63,10 @@ if agent.db:
 agent.print_response(
     "What have we been talking about, do you know my name?", stream=True
 )
+
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+
+if __name__ == "__main__":
+    pass

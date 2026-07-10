@@ -13,6 +13,10 @@ OpenRouter will automatically try the models defined in order until one succeeds
 from agno.agent import Agent
 from agno.models.openrouter import OpenRouter
 
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
+
 # Create an agent with dynamic models
 # If the primary model fails, OpenRouter will automatically try the models defined in order
 agent = Agent(
@@ -32,3 +36,10 @@ agent.print_response("Write a short poem about resilience and backup plans")
 
 # You can also check which model was actually used in the response
 # by examining the response metadata (if available from OpenRouter)
+
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+
+if __name__ == "__main__":
+    pass

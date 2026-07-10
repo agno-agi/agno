@@ -6,15 +6,19 @@ across multiple messages using the A2A protocol.
 
 Prerequisites:
 1. Start an AgentOS server with A2A interface:
-   python cookbook/06_agent_os/client_a2a/servers/agno_server.py
+   python cookbook/05_agent_os/client_a2a/servers/agno_server.py
 
 2. Run this script:
-   python cookbook/06_agent_os/client_a2a/03_multi_turn.py
+   python cookbook/05_agent_os/client_a2a/03_multi_turn.py
 """
 
 import asyncio
 
 from agno.client.a2a import A2AClient
+
+# ---------------------------------------------------------------------------
+# Create Example
+# ---------------------------------------------------------------------------
 
 
 async def multi_turn_conversation():
@@ -90,6 +94,10 @@ async def main():
     await multi_turn_conversation()
     await streaming_multi_turn()
 
+
+# ---------------------------------------------------------------------------
+# Run Example
+# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     asyncio.run(main())

@@ -1,5 +1,16 @@
+"""
+Ollama Reasoning Agent
+======================
+
+Cookbook example for `ollama/chat/reasoning_agent.py`.
+"""
+
 from agno.agent import Agent
 from agno.models.ollama import Ollama
+
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
 
 reasoning_agent = Agent(
     model=Ollama(id="gpt-oss:120b"),
@@ -10,3 +21,10 @@ reasoning_agent = Agent(
 reasoning_agent.print_response(
     "How many r are in the word 'strawberry'?", show_reasoning=True
 )
+
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+
+if __name__ == "__main__":
+    pass

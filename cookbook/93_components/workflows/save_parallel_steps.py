@@ -1,10 +1,9 @@
 """
-Example: Saving and Loading a Workflow with Parallel Steps
+Save Parallel Workflow Steps
+============================
 
-This example demonstrates how to:
-1. Create a workflow with Parallel steps that run concurrently
-2. Save the workflow to a database
-3. Load the workflow back and run it
+Demonstrates creating a workflow with parallel steps, saving it to the
+database, and loading it back.
 """
 
 from agno.agent import Agent
@@ -15,10 +14,16 @@ from agno.workflow.parallel import Parallel
 from agno.workflow.step import Step
 from agno.workflow.workflow import Workflow, get_workflow_by_id
 
+# ---------------------------------------------------------------------------
+# Setup
+# ---------------------------------------------------------------------------
 # Database
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
 db = PostgresDb(db_url=db_url)
 
+# ---------------------------------------------------------------------------
+# Create Agents
+# ---------------------------------------------------------------------------
 # Agents
 hackernews_researcher = Agent(
     name="HackerNews Researcher",
@@ -42,6 +47,9 @@ reviewer = Agent(
     instructions="Review and improve the written content",
 )
 
+# ---------------------------------------------------------------------------
+# Create Workflow Steps
+# ---------------------------------------------------------------------------
 # Steps
 research_hn_step = Step(
     name="ResearchHackerNews",
@@ -67,6 +75,9 @@ review_step = Step(
     agent=reviewer,
 )
 
+# ---------------------------------------------------------------------------
+# Create Workflow
+# ---------------------------------------------------------------------------
 # Workflow
 workflow = Workflow(
     name="Parallel Research Pipeline",
@@ -84,6 +95,9 @@ workflow = Workflow(
     db=db,
 )
 
+# ---------------------------------------------------------------------------
+# Run Workflow Example
+# ---------------------------------------------------------------------------
 if __name__ == "__main__":
     # Save
     print("Saving workflow...")

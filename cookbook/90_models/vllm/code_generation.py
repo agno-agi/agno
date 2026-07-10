@@ -7,6 +7,10 @@ Run vLLM model: vllm serve deepseek-ai/deepseek-coder-6.7b-instruct \
 from agno.agent import Agent
 from agno.models.vllm import VLLM
 
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
+
 agent = Agent(
     model=VLLM(id="deepseek-ai/deepseek-coder-6.7b-instruct"),
     description="You are an expert Python developer.",
@@ -16,3 +20,10 @@ agent = Agent(
 agent.print_response(
     "Write a Python function that returns the nth Fibonacci number using dynamic programming."
 )
+
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+
+if __name__ == "__main__":
+    pass

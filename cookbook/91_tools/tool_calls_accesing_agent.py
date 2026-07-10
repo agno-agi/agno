@@ -1,7 +1,18 @@
+"""
+Tool Calls Accesing Agent
+=============================
+
+Demonstrates tool calls accesing agent.
+"""
+
 import json
 
 import httpx
 from agno.agent import Agent
+
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
 
 
 def get_top_hackernews_stories(agent: Agent) -> str:
@@ -31,4 +42,9 @@ agent = Agent(
     tools=[get_top_hackernews_stories],
     markdown=True,
 )
-agent.print_response("What are the top hackernews stories?", stream=True)
+
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+if __name__ == "__main__":
+    agent.print_response("What are the top hackernews stories?", stream=True)

@@ -9,6 +9,10 @@ from agno.db.sqlite.sqlite import SqliteDb
 from agno.models.google import Gemini
 from agno.tools.websearch import WebSearchTools
 
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
+
 agent = Agent(
     model=Gemini(id="gemini-3-pro-preview"),
     db=SqliteDb(db_file="tmp/data.db"),
@@ -25,3 +29,10 @@ asyncio.run(
         "Write a 2 sentence story the biggest news highlight in our conversation."
     )
 )
+
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+
+if __name__ == "__main__":
+    pass

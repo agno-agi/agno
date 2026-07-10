@@ -1,7 +1,18 @@
+"""
+Openai Deep Research Agent
+==========================
+
+Cookbook example for `openai/responses/deep_research_agent.py`.
+"""
+
 from textwrap import dedent
 
 from agno.agent import Agent
 from agno.models.openai import OpenAIResponses
+
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
 
 agent = Agent(
     model=OpenAIResponses(id="o4-mini-deep-research", max_tool_calls=1),
@@ -28,3 +39,10 @@ agent.print_response(
     Be analytical, avoid generalities, and ensure that each section supports
     data-backed reasoning that could inform healthcare policy or financial modeling."""
 )
+
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+
+if __name__ == "__main__":
+    pass

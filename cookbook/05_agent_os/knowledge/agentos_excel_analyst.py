@@ -1,3 +1,10 @@
+"""
+Agentos Excel Analyst
+=====================
+
+Demonstrates agentos excel analyst.
+"""
+
 from pathlib import Path
 
 from agno.agent import Agent
@@ -7,6 +14,10 @@ from agno.knowledge.reader.excel_reader import ExcelReader
 from agno.models.openai import OpenAIChat
 from agno.os import AgentOS
 from agno.vectordb.pgvector import PgVector
+
+# ---------------------------------------------------------------------------
+# Create Example
+# ---------------------------------------------------------------------------
 
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
 
@@ -42,6 +53,10 @@ agent_os = AgentOS(
 )
 
 app = agent_os.get_app()
+
+# ---------------------------------------------------------------------------
+# Run Example
+# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     repo_root = Path(__file__).parent.parent.parent.parent

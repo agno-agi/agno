@@ -8,6 +8,11 @@ from agno.models.openai import OpenAIResponses
 from agno.tools.seltz import SeltzTools
 from dotenv import load_dotenv
 
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
+
+
 load_dotenv()
 
 agent = Agent(
@@ -15,6 +20,10 @@ agent = Agent(
     tools=[SeltzTools(show_results=True)],
     markdown=True,
 )
+
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     agent.print_response("Search for current AI safety reports", markdown=True)

@@ -1,7 +1,18 @@
+"""
+Xai Image Agent With Memory
+===========================
+
+Cookbook example for `xai/image_agent_with_memory.py`.
+"""
+
 from agno.agent import Agent
 from agno.media import Image
 from agno.models.xai import xAI
 from agno.tools.websearch import WebSearchTools
+
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
 
 agent = Agent(
     model=xAI(id="grok-2-vision-latest"),
@@ -21,3 +32,10 @@ agent.print_response(
 )
 
 agent.print_response("Tell me where I can get more images?")
+
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+
+if __name__ == "__main__":
+    pass

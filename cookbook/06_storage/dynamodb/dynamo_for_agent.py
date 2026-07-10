@@ -10,10 +10,14 @@ Run `uv pip install boto3` to install dependencies."""
 from agno.agent import Agent
 from agno.db import DynamoDb
 
-# Setup the DynamoDB database
+# ---------------------------------------------------------------------------
+# Setup
+# ---------------------------------------------------------------------------
 db = DynamoDb()
 
-# Setup a basic agent with the DynamoDB database
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
 agent = Agent(
     db=db,
     name="DynamoDB Agent",
@@ -21,6 +25,10 @@ agent = Agent(
     add_history_to_context=True,
 )
 
-# The Agent sessions and runs will now be stored in DynamoDB
-agent.print_response("How many people live in Canada?")
-agent.print_response("What is their national anthem called?")
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+if __name__ == "__main__":
+    # The Agent sessions and runs will now be stored in DynamoDB
+    agent.print_response("How many people live in Canada?")
+    agent.print_response("What is their national anthem called?")

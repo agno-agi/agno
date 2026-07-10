@@ -239,17 +239,17 @@ def test_basic_calculator_has_only_basic_operations(basic_calculator_tools):
 
 def test_error_logging(calculator_tools):
     """Test that errors are properly logged."""
-    with patch("agno.tools.calculator.logger.error") as mock_logger:
+    with patch("agno.tools.calculator.log_error") as mock_log_error:
         calculator_tools.divide(5, 0)
-        mock_logger.assert_called_once_with("Attempt to divide by zero")
+        mock_log_error.assert_called_once_with("Attempt to divide by zero")
 
-        mock_logger.reset_mock()
+        mock_log_error.reset_mock()
         calculator_tools.factorial(-1)
-        mock_logger.assert_called_once_with("Attempt to calculate factorial of a negative number")
+        mock_log_error.assert_called_once_with("Attempt to calculate factorial of a negative number")
 
-        mock_logger.reset_mock()
+        mock_log_error.reset_mock()
         calculator_tools.square_root(-4)
-        mock_logger.assert_called_once_with("Attempt to calculate square root of a negative number")
+        mock_log_error.assert_called_once_with("Attempt to calculate square root of a negative number")
 
 
 def test_large_numbers(calculator_tools):

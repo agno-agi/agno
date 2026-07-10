@@ -1,3 +1,10 @@
+"""
+ Agents
+=======
+
+Demonstrates  agents.
+"""
+
 from datetime import datetime
 from pathlib import Path
 from textwrap import dedent
@@ -11,6 +18,10 @@ from agno.tools.exa import ExaTools
 from agno.tools.file import FileTools
 from agno.tools.websearch import WebSearchTools
 from agno.vectordb.pgvector.pgvector import PgVector
+
+# ---------------------------------------------------------------------------
+# Create Example
+# ---------------------------------------------------------------------------
 
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
 
@@ -159,3 +170,10 @@ agno_assist = Agent(
     add_datetime_to_context=True,
     markdown=True,
 )
+
+# ---------------------------------------------------------------------------
+# Run Example
+# ---------------------------------------------------------------------------
+
+if __name__ == "__main__":
+    raise SystemExit("This module is intended to be imported.")

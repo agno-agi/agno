@@ -10,6 +10,10 @@ from agno.db.sqlite.sqlite import SqliteDb
 from agno.models.google import Gemini
 from agno.tools.websearch import WebSearchTools
 
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
+
 session_id = str(uuid4())
 
 agent = Agent(
@@ -40,3 +44,10 @@ asyncio.run(
         stream=True,
     )
 )
+
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+
+if __name__ == "__main__":
+    pass

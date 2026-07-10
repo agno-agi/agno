@@ -5,6 +5,10 @@ from agno.db.postgres import PostgresDb
 from agno.models.lmstudio import LMStudio
 from agno.tools.websearch import WebSearchTools
 
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
+
 # Setup the database
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
 db = PostgresDb(db_url=db_url)
@@ -17,3 +21,10 @@ agent = Agent(
 )
 agent.print_response("How many people live in Canada?")
 agent.print_response("What is their national anthem called?")
+
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+
+if __name__ == "__main__":
+    pass

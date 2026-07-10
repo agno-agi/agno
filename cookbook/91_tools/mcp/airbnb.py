@@ -1,4 +1,4 @@
-"""🏠 MCP Airbnb Agent - Search for Airbnb listings!
+"""MCP Airbnb Agent - Search for Airbnb listings!
 
 This example shows how to create an agent that uses MCP and Gemini 2.5 Pro to search for Airbnb listings.
 
@@ -10,6 +10,10 @@ import asyncio
 from agno.agent import Agent
 from agno.models.openai.chat import OpenAIChat
 from agno.tools.mcp import MCPTools
+
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
 
 
 async def run_mcp_agent(message: str):
@@ -30,6 +34,10 @@ async def run_mcp_agent(message: str):
     # Close the MCP connection
     await mcp_tools.close()
 
+
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     asyncio.run(run_mcp_agent("Show me listings in Barcelona, for 2 people."))

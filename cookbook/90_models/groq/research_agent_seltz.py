@@ -7,6 +7,10 @@ from agno.agent import Agent
 from agno.models.groq import Groq
 from agno.tools.seltz import SeltzTools
 
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
+
 cwd = Path(__file__).parent.resolve()
 tmp = cwd.joinpath("tmp")
 if not tmp.exists():
@@ -14,7 +18,7 @@ if not tmp.exists():
 
 agent = Agent(
     model=Groq(id="llama-3.3-70b-versatile"),
-    tools=[SeltzTools(max_documents=10, show_results=True)],
+    tools=[SeltzTools(max_results=10, show_results=True)],
     description="You are an advanced AI researcher writing a report on a topic.",
     instructions=[
         "For the provided topic, run 3 different searches.",
@@ -56,3 +60,10 @@ agent = Agent(
     save_response_to_file=str(tmp.joinpath("{message}.md")),
 )
 agent.print_response("Recent advances in AI safety", stream=True)
+
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+
+if __name__ == "__main__":
+    pass

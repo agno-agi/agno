@@ -1,3 +1,10 @@
+"""
+Workflow With Custom Function Updating Session State
+====================================================
+
+Demonstrates workflow with custom function updating session state.
+"""
+
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIChat
@@ -8,6 +15,10 @@ from agno.tools.hackernews import HackerNewsTools
 from agno.tools.websearch import WebSearchTools
 from agno.workflow.step import Step, StepInput, StepOutput
 from agno.workflow.workflow import Workflow
+
+# ---------------------------------------------------------------------------
+# Create Example
+# ---------------------------------------------------------------------------
 
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
 
@@ -210,6 +221,10 @@ agent_os = AgentOS(
     workflows=[content_creation_workflow],
 )
 app = agent_os.get_app()
+
+# ---------------------------------------------------------------------------
+# Run Example
+# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     agent_os.serve(

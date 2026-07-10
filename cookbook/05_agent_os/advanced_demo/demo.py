@@ -11,6 +11,10 @@ from agno.eval.accuracy import AccuracyEval
 from agno.models.anthropic.claude import Claude
 from agno.os import AgentOS
 
+# ---------------------------------------------------------------------------
+# Create Example
+# ---------------------------------------------------------------------------
+
 # Database connection
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
 
@@ -25,6 +29,10 @@ app = agent_os.get_app()
 # Uncomment to create a memory
 # agno_agent.print_response("I love astronomy, specifically the science behind nebulae")
 
+
+# ---------------------------------------------------------------------------
+# Run Example
+# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     # Setting up and running an eval for our agent

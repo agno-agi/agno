@@ -1,9 +1,20 @@
+"""
+Meta Image Input File
+=====================
+
+Cookbook example for `meta/llama_openai/image_input_file.py`.
+"""
+
 from pathlib import Path
 
 from agno.agent import Agent
 from agno.media import Image
 from agno.models.meta import LlamaOpenAI
 from agno.utils.media import download_image
+
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
 
 agent = Agent(
     model=LlamaOpenAI(id="Llama-4-Maverick-17B-128E-Instruct-FP8"),
@@ -22,3 +33,10 @@ agent.print_response(
     images=[Image(filepath=image_path)],
     stream=True,
 )
+
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+
+if __name__ == "__main__":
+    pass

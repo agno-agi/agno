@@ -17,6 +17,10 @@ import asyncio
 
 from agno.agent import RemoteAgent
 
+# ---------------------------------------------------------------------------
+# Create Example
+# ---------------------------------------------------------------------------
+
 
 async def remote_agno_a2a_agent_example():
     """Call a remote Agno agent exposed via A2A interface."""
@@ -95,6 +99,10 @@ async def main():
     print("\n3. Remote Agno A2A Agent Info Example:")
     await remote_agno_a2a_agent_info_example()
 
+
+# ---------------------------------------------------------------------------
+# Run Example
+# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     asyncio.run(main())

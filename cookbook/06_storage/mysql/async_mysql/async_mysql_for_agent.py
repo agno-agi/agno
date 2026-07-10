@@ -10,9 +10,15 @@ from agno.db.base import SessionType
 from agno.db.mysql import AsyncMySQLDb
 from agno.tools.websearch import WebSearchTools
 
+# ---------------------------------------------------------------------------
+# Setup
+# ---------------------------------------------------------------------------
 db_url = "mysql+asyncmy://ai:ai@localhost:3306/ai"
 db = AsyncMySQLDb(db_url=db_url)
 
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
 agent = Agent(
     db=db,
     tools=[WebSearchTools()],
@@ -21,6 +27,9 @@ agent = Agent(
 )
 
 
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
 async def main():
     """Run the agent queries in the same event loop"""
     session_id = str(uuid.uuid4())

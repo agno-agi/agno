@@ -9,9 +9,14 @@ from agno.db.json import JsonDb
 from agno.models.openai import OpenAIChat
 from agno.tools.websearch import WebSearchTools
 
-# Setup the JSON database
+# ---------------------------------------------------------------------------
+# Setup
+# ---------------------------------------------------------------------------
 db = JsonDb(db_path="tmp/json_db")
 
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
 agent = Agent(
     model=OpenAIChat(id="gpt-5.2"),
     db=db,
@@ -20,6 +25,11 @@ agent = Agent(
     add_history_to_context=True,
     num_history_runs=3,
 )
-agent.print_response("How many people live in France?")
-agent.print_response("What is their national anthem called?")
-agent.print_response("What have we been talking about?")
+
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+if __name__ == "__main__":
+    agent.print_response("How many people live in France?")
+    agent.print_response("What is their national anthem called?")
+    agent.print_response("What have we been talking about?")

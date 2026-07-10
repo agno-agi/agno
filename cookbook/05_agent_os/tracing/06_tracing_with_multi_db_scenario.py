@@ -12,6 +12,10 @@ from agno.tools.hackernews import HackerNewsTools
 from agno.tools.websearch import WebSearchTools
 from agno.tracing.setup import setup_tracing
 
+# ---------------------------------------------------------------------------
+# Create Example
+# ---------------------------------------------------------------------------
+
 # Set up databases - each agent has its own db
 db1 = SqliteDb(db_file="tmp/db1.db", id="db1")
 db2 = SqliteDb(db_file="tmp/db2.db", id="db2")
@@ -49,6 +53,10 @@ agent_os = AgentOS(
     db=tracing_db,  # Default database for the AgentOS (used for tracing)
 )
 app = agent_os.get_app()
+
+# ---------------------------------------------------------------------------
+# Run Example
+# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     agent_os.serve(app="06_tracing_with_multi_db_scenario:app", reload=True)

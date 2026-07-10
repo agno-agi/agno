@@ -354,3 +354,57 @@ class TestParallelNestedContainerSerialization:
         assert restored.steps[0].name == "steps-container"
         assert isinstance(restored.steps[0], Steps)
         assert len(restored.steps[0].steps) == 2
+
+
+# =============================================================================
+# Dataclass Field Tests
+# =============================================================================
+
+
+class TestParallelStepsField:
+    """Tests for Parallel.steps as a dataclass field with default_factory."""
+
+    def test_no_args_gives_empty_steps(self):
+        """Test that Parallel() with no args defaults to an empty steps list."""
+        parallel = Parallel()
+        assert parallel.steps == []
+        assert parallel.name is None
+        assert parallel.description is None
+
+    def test_instances_do_not_share_steps(self):
+        """Test that each Parallel instance gets its own steps list (no mutable default sharing)."""
+        p1 = Parallel()
+        p2 = Parallel()
+
+        step = Step(name="only-for-p1", executor=executor_a)
+        p1.steps.append(step)
+
+        assert len(p1.steps) == 1
+        assert len(p2.steps) == 0
+
+    def test_steps_set_via_init_args(self):
+        """Test that steps passed via *args are stored correctly."""
+        step_a = Step(name="a", executor=executor_a)
+        step_b = Step(name="b", executor=executor_b)
+        parallel = Parallel(step_a, step_b)
+
+        assert len(parallel.steps) == 2
+        assert parallel.steps[0] is step_a
+        assert parallel.steps[1] is step_b
+
+    def test_steps_field_is_dataclass_field(self):
+        """Test that steps is a recognized dataclass field."""
+        import dataclasses
+
+        fields = {f.name for f in dataclasses.fields(Parallel)}
+        assert "steps" in fields
+        assert "name" in fields
+        assert "description" in fields
+
+    def test_steps_field_default_factory(self):
+        """Test that the steps field uses a default_factory (list)."""
+        import dataclasses
+
+        steps_field = next(f for f in dataclasses.fields(Parallel) if f.name == "steps")
+        assert steps_field.default is dataclasses.MISSING
+        assert steps_field.default_factory is list

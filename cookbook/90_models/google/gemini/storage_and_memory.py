@@ -7,6 +7,10 @@ from agno.models.google import Gemini
 from agno.tools.websearch import WebSearchTools
 from agno.vectordb.pgvector import PgVector
 
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
+
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
 
 knowledge_base = PDFUrlKnowledgeBase(
@@ -34,3 +38,10 @@ agent = Agent(
     markdown=True,
 )
 agent.print_response("Whats is the latest AI news?")
+
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+
+if __name__ == "__main__":
+    pass

@@ -1,5 +1,17 @@
+"""
+Exa Tools
+=============================
+
+Demonstrates exa tools.
+"""
+
 from agno.agent import Agent
 from agno.tools.exa import ExaTools
+
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
+
 
 # Example 1: Enable all tools
 agent_all = Agent(
@@ -41,30 +53,33 @@ agent = Agent(
     markdown=True,
 )
 
-agent.print_response("Search for AAPL news", markdown=True)
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+if __name__ == "__main__":
+    agent.print_response("Search for AAPL news", markdown=True)
 
+    agent = Agent(
+        tools=[
+            ExaTools(
+                show_results=True,
+            )
+        ],
+        markdown=True,
+    )
 
-agent = Agent(
-    tools=[
-        ExaTools(
-            show_results=True,
-        )
-    ],
-    markdown=True,
-)
+    agent.print_response("Search for AAPL news", markdown=True)
 
-agent.print_response("Search for AAPL news", markdown=True)
+    agent.print_response(
+        "What is the paper at https://arxiv.org/pdf/2307.06435 about?", markdown=True
+    )
 
-agent.print_response(
-    "What is the paper at https://arxiv.org/pdf/2307.06435 about?", markdown=True
-)
+    agent.print_response(
+        "Find me similar papers to https://arxiv.org/pdf/2307.06435 and provide a summary of what they contain",
+        markdown=True,
+    )
 
-agent.print_response(
-    "Find me similar papers to https://arxiv.org/pdf/2307.06435 and provide a summary of what they contain",
-    markdown=True,
-)
-
-agent.print_response(
-    "What is the latest valuation of SpaceX?",
-    markdown=True,
-)
+    agent.print_response(
+        "What is the latest valuation of SpaceX?",
+        markdown=True,
+    )

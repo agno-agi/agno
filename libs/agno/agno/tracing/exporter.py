@@ -12,7 +12,7 @@ from opentelemetry.sdk.trace.export import SpanExporter, SpanExportResult  # typ
 from agno.db.base import AsyncBaseDb, BaseDb
 from agno.remote.base import RemoteDb
 from agno.tracing.schemas import Span, create_trace_from_spans
-from agno.utils.log import logger
+from agno.utils.log import log_debug, log_error, log_warning
 
 
 class DatabaseSpanExporter(SpanExporter):
@@ -45,7 +45,7 @@ class DatabaseSpanExporter(SpanExporter):
             SpanExportResult indicating success or failure
         """
         if self._shutdown:
-            logger.warning("DatabaseSpanExporter is shutdown, cannot export spans")
+            log_warning("DatabaseSpanExporter is shutdown, cannot export spans")
             return SpanExportResult.FAILURE
 
         if not spans:
@@ -59,7 +59,7 @@ class DatabaseSpanExporter(SpanExporter):
                     converted_span = Span.from_otel_span(span)
                     converted_spans.append(converted_span)
                 except Exception as e:
-                    logger.error(f"Failed to convert span {span.name}: {e}")
+                    log_error(f"Failed to convert span {span.name}: {str(e)}")
                     # Continue processing other spans
                     continue
 
@@ -83,7 +83,7 @@ class DatabaseSpanExporter(SpanExporter):
 
             return SpanExportResult.SUCCESS
         except Exception as e:
-            logger.error(f"Failed to export spans to database: {e}", exc_info=True)
+            log_error(f"Failed to export spans to database: {str(e)}")
             return SpanExportResult.FAILURE
 
     def _export_sync(self, spans_by_trace: Dict[str, List[Span]]) -> None:
@@ -100,7 +100,7 @@ class DatabaseSpanExporter(SpanExporter):
                 self.db.create_spans(spans)  # type: ignore
 
         except Exception as e:
-            logger.error(f"Failed to export sync traces: {e}", exc_info=True)
+            log_error(f"Failed to export sync traces: {str(e)}")
             raise
 
     def _export_async(self, spans_by_trace: Dict[str, List[Span]]) -> None:
@@ -118,7 +118,7 @@ class DatabaseSpanExporter(SpanExporter):
             try:
                 asyncio.run(self._do_async_export(spans_by_trace))
             except Exception as e:
-                logger.error(f"Failed to export async traces: {e}", exc_info=True)
+                log_error(f"Failed to export async traces: {str(e)}")
 
     async def _do_async_export(self, spans_by_trace: Dict[str, List[Span]]) -> None:
         """Actually perform the async export"""
@@ -138,13 +138,13 @@ class DatabaseSpanExporter(SpanExporter):
                     await create_spans_result
 
         except Exception as e:
-            logger.error(f"Failed to do async export: {e}", exc_info=True)
+            log_error(f"Failed to do async export: {str(e)}")
             raise
 
     def shutdown(self) -> None:
         """Shutdown the exporter"""
         self._shutdown = True
-        logger.debug("DatabaseSpanExporter shutdown")
+        log_debug("DatabaseSpanExporter shutdown")
 
     def force_flush(self, timeout_millis: int = 30000) -> bool:
         """

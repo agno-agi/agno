@@ -76,9 +76,13 @@ def test_pptx_knowledge_base_directory(setup_vector_db):
     assert setup_vector_db.exists()
     assert setup_vector_db.get_count() > 0
 
-    # Enable search on the agent
-    agent = Agent(knowledge=kb, search_knowledge=True)
-    response = agent.run("What is the presentation about?", markdown=True)
+    # Enable search on the agent with explicit instructions to use knowledge base
+    agent = Agent(
+        knowledge=kb,
+        search_knowledge=True,
+        instructions="You MUST use the search_knowledge_base tool to find information before answering. Never answer from your own knowledge.",
+    )
+    response = agent.run("Search the knowledge base and tell me what documents are available.", markdown=True)
 
     tool_calls = []
     for msg in response.messages:
@@ -102,18 +106,20 @@ async def test_pptx_knowledge_base_async_directory(setup_vector_db):
     assert await setup_vector_db.async_exists()
     assert setup_vector_db.get_count() > 0
 
-    # Enable search on the agent
-    agent = Agent(knowledge=kb, search_knowledge=True)
-    response = await agent.arun("What is the presentation about?", markdown=True)
+    # Enable search on the agent with explicit instructions to use knowledge base
+    agent = Agent(
+        knowledge=kb,
+        search_knowledge=True,
+        instructions="You MUST use the search_knowledge_base tool to find information before answering. Never answer from your own knowledge.",
+    )
+    response = await agent.arun("Search the knowledge base and tell me what documents are available.", markdown=True)
 
-    tool_calls = []
-    for msg in response.messages:
-        if msg.tool_calls:
-            tool_calls.extend(msg.tool_calls)
-
-    function_calls = [call for call in tool_calls if call.get("type") == "function"]
-    # For async operations, we use search_knowledge_base
-    assert any(call["function"]["name"] == "search_knowledge_base" for call in function_calls)
+    # Check if search_knowledge_base tool was called using response.tools
+    assert response.tools is not None, "Expected tools to be called"
+    tool_names = [tool.tool_name for tool in response.tools]
+    assert any("search_knowledge_base" in name for name in tool_names), (
+        f"Expected search_knowledge_base to be called, got: {tool_names}"
+    )
 
 
 # for the one with new knowledge filter DX- filters at initialization

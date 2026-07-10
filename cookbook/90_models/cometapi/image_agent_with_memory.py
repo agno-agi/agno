@@ -7,6 +7,10 @@ from agno.db.sqlite import SqliteDb
 from agno.media import Image
 from agno.models.cometapi import CometAPI
 
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
+
 agent = Agent(
     model=CometAPI(id="gpt-4o"),  # GPT-4o has vision capabilities
     db=SqliteDb(db_file="tmp/cometapi_image_agent.db"),
@@ -30,3 +34,10 @@ print("\n" + "=" * 50 + "\n")
 agent.print_response(
     "What was the main color of the character in the image I showed you earlier?"
 )
+
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+
+if __name__ == "__main__":
+    pass

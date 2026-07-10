@@ -115,6 +115,7 @@ def test_history():
         model=AwsBedrock(id="anthropic.claude-3-sonnet-20240229-v1:0"),
         db=SqliteDb(db_file="tmp/aws-bedrock/test_basic.db"),
         add_history_to_context=True,
+        store_history_messages=True,
         telemetry=False,
     )
     run_output = agent.run("Hello")

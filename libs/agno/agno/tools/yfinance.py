@@ -13,26 +13,58 @@ except ImportError:
 class YFinanceTools(Toolkit):
     """
     YFinanceTools is a toolkit for getting financial data from Yahoo Finance.
-    Includes all available financial data tools.
+
+    Args:
+        enable_stock_price (bool): Enable the get_current_stock_price tool. Default: True.
+        enable_company_info (bool): Enable the get_company_info tool. Default: False.
+        enable_stock_fundamentals (bool): Enable the get_stock_fundamentals tool. Default: False.
+        enable_income_statements (bool): Enable the get_income_statements tool. Default: False.
+        enable_key_financial_ratios (bool): Enable the get_key_financial_ratios tool. Default: False.
+        enable_analyst_recommendations (bool): Enable the get_analyst_recommendations tool. Default: False.
+        enable_company_news (bool): Enable the get_company_news tool. Default: False.
+        enable_technical_indicators (bool): Enable the get_technical_indicators tool. Default: False.
+        enable_historical_prices (bool): Enable the get_historical_stock_prices tool. Default: False.
+        all (bool): Enable all tools. Overrides individual flags when True. Default: False.
+        session (Optional[Any]): Optional session for yfinance requests.
     """
 
     def __init__(
         self,
+        enable_stock_price: bool = True,
+        enable_company_info: bool = False,
+        enable_stock_fundamentals: bool = False,
+        enable_income_statements: bool = False,
+        enable_key_financial_ratios: bool = False,
+        enable_analyst_recommendations: bool = False,
+        enable_company_news: bool = False,
+        enable_technical_indicators: bool = False,
+        enable_historical_prices: bool = False,
+        all: bool = False,
         session: Optional[Any] = None,
         **kwargs,
     ):
-        tools: List[Any] = [
-            self.get_current_stock_price,
-            self.get_company_info,
-            self.get_stock_fundamentals,
-            self.get_income_statements,
-            self.get_key_financial_ratios,
-            self.get_analyst_recommendations,
-            self.get_company_news,
-            self.get_technical_indicators,
-            self.get_historical_stock_prices,
-        ]
         self.session = session
+
+        tools: List[Any] = []
+        if all or enable_stock_price:
+            tools.append(self.get_current_stock_price)
+        if all or enable_company_info:
+            tools.append(self.get_company_info)
+        if all or enable_stock_fundamentals:
+            tools.append(self.get_stock_fundamentals)
+        if all or enable_income_statements:
+            tools.append(self.get_income_statements)
+        if all or enable_key_financial_ratios:
+            tools.append(self.get_key_financial_ratios)
+        if all or enable_analyst_recommendations:
+            tools.append(self.get_analyst_recommendations)
+        if all or enable_company_news:
+            tools.append(self.get_company_news)
+        if all or enable_technical_indicators:
+            tools.append(self.get_technical_indicators)
+        if all or enable_historical_prices:
+            tools.append(self.get_historical_stock_prices)
+
         super().__init__(name="yfinance_tools", tools=tools, **kwargs)
 
     def get_current_stock_price(self, symbol: str) -> str:

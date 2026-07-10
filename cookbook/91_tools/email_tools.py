@@ -1,5 +1,17 @@
+"""
+Email Tools
+=============================
+
+Demonstrates email tools.
+"""
+
 from agno.agent import Agent
 from agno.tools.email import EmailTools
+
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
+
 
 receiver_email = "<receiver_email>"
 sender_email = "<sender_email>"
@@ -33,7 +45,12 @@ agent_all = Agent(
 )
 
 # Test the agent
-agent.print_response(
-    "Send an email to the receiver with subject 'Test Email' and a friendly greeting message",
-    markdown=True,
-)
+
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+if __name__ == "__main__":
+    agent.print_response(
+        "Send an email to the receiver with subject 'Test Email' and a friendly greeting message",
+        markdown=True,
+    )

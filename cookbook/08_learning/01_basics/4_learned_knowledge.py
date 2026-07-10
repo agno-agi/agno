@@ -21,9 +21,9 @@ from agno.learn import LearnedKnowledgeConfig, LearningMachine, LearningMode
 from agno.models.openai import OpenAIResponses
 from agno.vectordb.pgvector import PgVector, SearchType
 
-# ============================================================================
-# Setup
-# ============================================================================
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
 
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
 db = PostgresDb(db_url=db_url)
@@ -40,7 +40,7 @@ knowledge = Knowledge(
 
 # AGENTIC mode: Agent gets save/search tools and decides when to use them.
 agent = Agent(
-    model=OpenAIResponses(id="gpt-5.2"),
+    model=OpenAIResponses(id="gpt-5.5"),
     db=db,
     instructions="Be concise. Search for relevant learnings before answering questions.",
     learning=LearningMachine(
@@ -52,9 +52,9 @@ agent = Agent(
     markdown=True,
 )
 
-# ============================================================================
-# Demo
-# ============================================================================
+# ---------------------------------------------------------------------------
+# Run Demo
+# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     user_id = "learner@example.com"
@@ -70,7 +70,7 @@ if __name__ == "__main__":
         session_id="session_1",
         stream=True,
     )
-    agent.get_learning_machine().learned_knowledge_store.print(query="cloud")
+    agent.learning_machine.learned_knowledge_store.print(query="cloud")
 
     # Session 2: Apply the learning (new user, new session)
     print("\n" + "=" * 60)

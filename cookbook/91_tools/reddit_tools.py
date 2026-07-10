@@ -27,6 +27,11 @@ Steps to get Reddit credentials:
 from agno.agent import Agent
 from agno.tools.reddit import RedditTools
 
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
+
+
 agent = Agent(
     instructions=[
         "Use your tools to answer questions about Reddit content and statistics",
@@ -36,4 +41,8 @@ agent = Agent(
     tools=[RedditTools()],
 )
 
-agent.print_response("What are the top 5 posts on r/SAAS this week ?", stream=True)
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+if __name__ == "__main__":
+    agent.print_response("What are the top 5 posts on r/SAAS this week ?", stream=True)

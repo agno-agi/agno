@@ -7,7 +7,7 @@ Prerequisites:
     export OPENAI_API_KEY=your_key
 
 Usage:
-    python cookbook/06_agent_os/client_a2a/servers/agno_server.py
+    python cookbook/05_agent_os/client_a2a/servers/agno_server.py
 
 The server will start at http://localhost:7003
 """
@@ -16,6 +16,10 @@ from agno.agent.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIChat
 from agno.os import AgentOS
+
+# ---------------------------------------------------------------------------
+# Create Example
+# ---------------------------------------------------------------------------
 
 db = SqliteDb(db_file="tmp/agent.db")
 chat_agent = Agent(
@@ -36,6 +40,10 @@ agent_os = AgentOS(
 )
 app = agent_os.get_app()
 
+
+# ---------------------------------------------------------------------------
+# Run Example
+# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     agent_os.serve(app="agno_server:app", reload=True, port=7003)

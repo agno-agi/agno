@@ -3,6 +3,7 @@
 import uuid
 from datetime import datetime
 from time import time
+from types import MappingProxyType
 
 from agno.db.base import SessionType
 from agno.models.message import Message
@@ -761,6 +762,38 @@ def test_from_dict_basic(shared_db):
     assert team_session.runs[0].run_id == "run1"
 
 
+def test_from_dict_empty_runs(shared_db):
+    """Test that from_dict handles an empty runs list without raising IndexError"""
+    session_id = f"test_session_{uuid.uuid4()}"
+
+    session_data = {
+        "session_id": session_id,
+        "team_id": "test_team",
+        "runs": [],
+    }
+
+    # Should not raise IndexError when indexing runs[0]
+    team_session = TeamSession.from_dict(session_data)
+
+    assert team_session is not None
+    assert team_session.session_id == session_id
+    assert team_session.runs == []
+
+
+def test_to_dict_from_dict_round_trip_empty_runs(shared_db):
+    """Round-tripping a session with no runs should not raise"""
+    session_id = f"test_session_{uuid.uuid4()}"
+
+    session = TeamSession(session_id=session_id, team_id="test_team", runs=[])
+
+    # Previously raised IndexError: list index out of range
+    restored = TeamSession.from_dict(session.to_dict())
+
+    assert restored is not None
+    assert restored.session_id == session_id
+    assert restored.runs == []
+
+
 def test_from_dict_missing_session_id(shared_db):
     """Test that from_dict returns None when session_id is missing"""
     session_data = {
@@ -790,6 +823,37 @@ def test_from_dict_with_summary(shared_db):
     team_session = TeamSession.from_dict(session_data)
 
     assert team_session is not None
+    assert team_session.summary is not None
+    assert team_session.summary.summary == "Test summary"
+    assert team_session.summary.topics == ["topic1"]
+
+
+def test_from_dict_with_immutable_mapping_and_summary():
+    """Test creating TeamSession from an immutable mapping with summary data"""
+    session_id = f"test_session_{uuid.uuid4()}"
+
+    session_data = MappingProxyType(
+        {
+            "session_id": session_id,
+            "team_id": "test_team",
+            "team_data": {"name": "team"},
+            "session_data": {"key": "value"},
+            "metadata": {"meta_key": "meta_value"},
+            "summary": {
+                "summary": "Test summary",
+                "topics": ["topic1"],
+                "updated_at": datetime.now().isoformat(),
+            },
+        }
+    )
+
+    team_session = TeamSession.from_dict(session_data)
+
+    assert team_session is not None
+    assert team_session.team_id == "test_team"
+    assert team_session.team_data == {"name": "team"}
+    assert team_session.session_data == {"key": "value"}
+    assert team_session.metadata == {"meta_key": "meta_value"}
     assert team_session.summary is not None
     assert team_session.summary.summary == "Test summary"
     assert team_session.summary.topics == ["topic1"]

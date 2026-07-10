@@ -14,10 +14,16 @@ from agno.workflow.types import WorkflowExecutionInput
 from agno.workflow.workflow import Workflow
 from pydantic import BaseModel
 
+# ---------------------------------------------------------------------------
+# Setup
+# ---------------------------------------------------------------------------
 db_url = "mysql+asyncmy://ai:ai@localhost:3306/ai"
 db = AsyncMySQLDb(db_url=db_url)
 
 
+# ---------------------------------------------------------------------------
+# Create Workflow
+# ---------------------------------------------------------------------------
 class ResearchTopic(BaseModel):
     topic: str
     key_points: List[str]
@@ -59,7 +65,6 @@ async def blog_workflow(workflow: Workflow, execution_input: WorkflowExecutionIn
     return "Failed to complete workflow"
 
 
-# Create and run the workflow
 workflow = Workflow(
     name="Blog Generator",
     steps=blog_workflow,
@@ -67,6 +72,9 @@ workflow = Workflow(
 )
 
 
+# ---------------------------------------------------------------------------
+# Run Workflow
+# ---------------------------------------------------------------------------
 async def main():
     """Run the workflow with a sample topic"""
     session_id = str(uuid.uuid4())

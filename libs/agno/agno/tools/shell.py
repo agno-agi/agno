@@ -2,7 +2,7 @@ from pathlib import Path
 from typing import List, Optional, Union
 
 from agno.tools import Toolkit
-from agno.utils.log import log_debug, log_info, logger
+from agno.utils.log import log_debug, log_info, log_warning
 
 
 class ShellTools(Toolkit):
@@ -49,5 +49,5 @@ class ShellTools(Toolkit):
                 return f"Error: {result.stderr}"
             return "\n".join(result.stdout.split("\n")[-tail:])
         except Exception as e:
-            logger.warning(f"Failed to run shell command: {e}")
+            log_warning(f"Failed to run shell command: {str(e)}")
             return f"Error: {e}"

@@ -1,6 +1,18 @@
+"""
+Twilio Tools
+=============================
+
+Demonstrates twilio tools.
+"""
+
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.tools.twilio import TwilioTools
+
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
+
 
 """
 Example showing how to use the Twilio Tools with Agno.
@@ -65,6 +77,10 @@ sms_agent = Agent(
 sender_phone_number = "+1234567890"
 receiver_phone_number = "+1234567890"
 
-agent.print_response(
-    f"Can you send an SMS saying 'Your package has arrived' to {receiver_phone_number} from {sender_phone_number}?"
-)
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+if __name__ == "__main__":
+    agent.print_response(
+        f"Can you send an SMS saying 'Your package has arrived' to {receiver_phone_number} from {sender_phone_number}?"
+    )

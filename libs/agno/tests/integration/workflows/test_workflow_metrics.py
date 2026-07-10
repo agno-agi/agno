@@ -4,8 +4,7 @@ import asyncio
 
 import pytest
 
-from agno.models.metrics import Metrics
-from agno.run.base import RunStatus
+from agno.models.metrics import RunMetrics
 from agno.run.workflow import WorkflowCompletedEvent
 from agno.workflow import Condition, Parallel, Step, StepInput, StepOutput, Workflow
 from agno.workflow.types import WorkflowMetrics
@@ -73,7 +72,7 @@ def test_workflow_duration_with_agent(shared_db, test_agent):
     if "agent_step" in response.metrics.steps:
         agent_step_metrics = response.metrics.steps["agent_step"]
         assert agent_step_metrics.metrics is not None
-        assert isinstance(agent_step_metrics.metrics, Metrics)
+        assert isinstance(agent_step_metrics.metrics, RunMetrics)
         assert agent_step_metrics.metrics.duration is not None
         assert agent_step_metrics.metrics.duration > 0
 
@@ -143,9 +142,8 @@ def test_workflow_duration_on_error(shared_db):
         ],
     )
 
-    # Run workflow - should raise error
-    with pytest.raises(ValueError, match="Intentional test error"):
-        workflow.run(input="test")
+    # Run workflow - workflow handles errors internally with retries
+    workflow.run(input="test")
 
     # Get the workflow run from database
     session = workflow.get_session()
@@ -154,8 +152,12 @@ def test_workflow_duration_on_error(shared_db):
 
     last_run = session.runs[-1]
 
-    # Verify error status
-    assert last_run.status == RunStatus.error
+    # Workflow completes but step results contain the error
+    # The step should have failed (success=False)
+    assert last_run.step_results is not None
+    assert len(last_run.step_results) > 0
+    error_step_result = last_run.step_results[-1]
+    assert error_step_result.success is False
 
     # Verify metrics exist with correct type
     assert last_run.metrics is not None
@@ -180,11 +182,20 @@ def test_workflow_duration_partial_error(shared_db, test_agent):
         ],
     )
 
-    with pytest.raises(ValueError, match="Intentional test error"):
-        workflow.run(input="test")
+    # Run workflow - workflow handles errors internally with retries
+    workflow.run(input="test")
 
     session = workflow.get_session()
     last_run = session.runs[-1]
+
+    # Workflow completes but the error step should have failed
+    assert last_run.step_results is not None
+    assert len(last_run.step_results) >= 2
+
+    # Find the error step result and verify it failed
+    error_step_results = [s for s in last_run.step_results if s.step_name == "error_step"]
+    assert len(error_step_results) > 0
+    assert error_step_results[-1].success is False
 
     # Should still have duration tracked
     assert last_run.metrics is not None

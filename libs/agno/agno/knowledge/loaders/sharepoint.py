@@ -14,8 +14,9 @@ from httpx import AsyncClient
 from agno.knowledge.content import Content, ContentStatus
 from agno.knowledge.loaders.base import BaseLoader
 from agno.knowledge.reader import Reader
-from agno.knowledge.remote_content.config import RemoteContentConfig, SharePointConfig
+from agno.knowledge.remote_content.base import BaseStorageConfig
 from agno.knowledge.remote_content.remote_content import SharePointContent
+from agno.knowledge.remote_content.sharepoint import SharePointConfig
 from agno.utils.log import log_error, log_info, log_warning
 
 
@@ -29,7 +30,7 @@ class SharePointLoader(BaseLoader):
     def _validate_sharepoint_config(
         self,
         content: Content,
-        config: Optional[RemoteContentConfig],
+        config: Optional[BaseStorageConfig],
     ) -> Optional[SharePointConfig]:
         """Validate and extract SharePoint config.
 
@@ -85,7 +86,7 @@ class SharePointLoader(BaseLoader):
             response.raise_for_status()
             return response.json().get("id")
         except httpx.HTTPStatusError as e:
-            log_error(f"Failed to get SharePoint site ID: {e.response.status_code} - {e.response.text}")
+            log_error(f"Failed to get SharePoint site ID: {e.response.status_code} - {e.response.text}: {str(e)}")
             return None
 
     async def _aget_sharepoint_site_id(
@@ -105,7 +106,7 @@ class SharePointLoader(BaseLoader):
                 response.raise_for_status()
                 return response.json().get("id")
         except httpx.HTTPStatusError as e:
-            log_error(f"Failed to get SharePoint site ID: {e.response.status_code} - {e.response.text}")
+            log_error(f"Failed to get SharePoint site ID: {e.response.status_code} - {e.response.text}: {str(e)}")
             return None
 
     def _list_sharepoint_folder_items(self, site_id: str, folder_path: str, access_token: str) -> List[dict]:
@@ -123,7 +124,7 @@ class SharePointLoader(BaseLoader):
                 items.extend(data.get("value", []))
                 url = data.get("@odata.nextLink")
         except httpx.HTTPStatusError as e:
-            log_error(f"Failed to list SharePoint folder: {e.response.status_code} - {e.response.text}")
+            log_error(f"Failed to list SharePoint folder: {e.response.status_code} - {e.response.text}: {str(e)}")
 
         return items
 
@@ -143,7 +144,7 @@ class SharePointLoader(BaseLoader):
                     items.extend(data.get("value", []))
                     url = data.get("@odata.nextLink")
         except httpx.HTTPStatusError as e:
-            log_error(f"Failed to list SharePoint folder: {e.response.status_code} - {e.response.text}")
+            log_error(f"Failed to list SharePoint folder: {e.response.status_code} - {e.response.text}: {str(e)}")
 
         return items
 
@@ -211,7 +212,7 @@ class SharePointLoader(BaseLoader):
         content: Content,
         upsert: bool,
         skip_if_exists: bool,
-        config: Optional[RemoteContentConfig] = None,
+        config: Optional[BaseStorageConfig] = None,
     ):
         """Load content from SharePoint (async).
 
@@ -272,7 +273,7 @@ class SharePointLoader(BaseLoader):
                         log_warning(f"SharePoint path {path_to_process} is neither file nor folder")
                         return
             except Exception as e:
-                log_error(f"Error checking SharePoint path {path_to_process}: {e}")
+                log_error(f"Error checking SharePoint path {path_to_process}: {str(e)}")
                 return
 
         if not files_to_process:
@@ -327,7 +328,7 @@ class SharePointLoader(BaseLoader):
         content: Content,
         upsert: bool,
         skip_if_exists: bool,
-        config: Optional[RemoteContentConfig] = None,
+        config: Optional[BaseStorageConfig] = None,
     ):
         """Load content from SharePoint (sync).
 
@@ -388,7 +389,7 @@ class SharePointLoader(BaseLoader):
                         log_warning(f"SharePoint path {path_to_process} is neither file nor folder")
                         return
             except Exception as e:
-                log_error(f"Error checking SharePoint path {path_to_process}: {e}")
+                log_error(f"Error checking SharePoint path {path_to_process}: {str(e)}")
                 return
 
         if not files_to_process:

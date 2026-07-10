@@ -20,11 +20,15 @@ from datetime import UTC, datetime, timedelta
 import jwt
 from agno.agent import Agent
 from agno.db.postgres import PostgresDb
-from agno.models.openai import OpenAIChat
+from agno.models.openai import OpenAIResponses
 from agno.os import AgentOS
 from agno.os.config import AuthorizationConfig
 from agno.tools.websearch import WebSearchTools
 from agno.utils.cryptography import generate_rsa_keys
+
+# ---------------------------------------------------------------------------
+# Create Example
+# ---------------------------------------------------------------------------
 
 # Keys file path for persistence across reloads
 _KEYS_FILE = "/tmp/agno_rbac_demo_keys.json"
@@ -64,7 +68,7 @@ db = PostgresDb(db_url="postgresql+psycopg://ai:ai@localhost:5532/ai")
 research_agent = Agent(
     id="research-agent",
     name="Research Agent",
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIResponses(id="gpt-5.5"),
     db=db,
     tools=[WebSearchTools()],
     add_history_to_context=True,
@@ -87,6 +91,10 @@ agent_os = AgentOS(
 app = agent_os.get_app()
 
 
+# ---------------------------------------------------------------------------
+# Run Example
+# ---------------------------------------------------------------------------
+
 if __name__ == "__main__":
     """
     Run your AgentOS with RBAC enabled using RS256 asymmetric keys.
@@ -103,7 +111,7 @@ if __name__ == "__main__":
     - GET /agents/{agent_id}: requires "agents:read"
     - POST /agents/{agent_id}/runs: requires "agents:run"
     - GET /sessions: requires "sessions:read"
-    - GET /memory: requires "memory:read"
+    - GET /memories: requires "memories:read"
     - etc.
     
     Scope format:

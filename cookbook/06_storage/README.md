@@ -35,20 +35,20 @@ agent = Agent(
 ## Supported Databases
 
 - [`postgres`](postgres/) - PostgreSQL relational database integration
-- [`sqllite`](sqllite/) - SQLite lightweight database integration
+- [`sqlite`](sqlite/) - SQLite lightweight database integration
 - [`mongo`](mongo/) - MongoDB document database integration
 - [`mysql`](mysql/) - MySQL relational database integration
 - [`redis`](redis/) - Redis in-memory data structure store integration
 - [`singlestore`](singlestore/) - SingleStore distributed SQL database integration
 - [`firestore`](firestore/) - Google Cloud Firestore NoSQL database integration
 - [`dynamodb`](dynamodb/) - AWS DynamoDB NoSQL database integration
-- [`json`](json/) - JSON file-based storage integration
+- [`json_db`](json_db/) - JSON file-based storage integration
 - [`gcs`](gcs/) - Google Cloud Storage JSON blob integration
 - [`in_memory`](in_memory/) - In-memory storage with optional persistence hooks
 
 ## Session Management
 
-- [`00_in_memory_session_storage.py`](00_in_memory_session_storage.py) - Basic session handling
+- [`in_memory_storage_for_agent.py`](in_memory/in_memory_storage_for_agent.py) - Basic session handling
 - [`01_persistent_session_storage.py`](01_persistent_session_storage.py) - Database persistence
 - [`02_session_summary.py`](02_session_summary.py) - Session summarization
 - [`03_chat_history.py`](03_chat_history.py) - Chat history management

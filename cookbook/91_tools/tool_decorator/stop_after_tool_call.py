@@ -1,5 +1,16 @@
+"""
+Stop After Tool Call
+=============================
+
+Demonstrates stop after tool call.
+"""
+
 from agno.agent import Agent
 from agno.tools import tool
+
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
 
 
 @tool(stop_after_tool_call=True)
@@ -14,4 +25,9 @@ agent = Agent(
     tools=[get_answer_to_life_universe_and_everything],
     markdown=True,
 )
-agent.print_response("What is the answer to life, the universe and everything?")
+
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+if __name__ == "__main__":
+    agent.print_response("What is the answer to life, the universe and everything?")

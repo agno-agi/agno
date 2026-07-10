@@ -11,10 +11,22 @@ from agno.agent import Agent
 from agno.models.ollama import OllamaResponses
 from agno.tools.duckduckgo import DuckDuckGoTools
 
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
+
 agent = Agent(
     model=OllamaResponses(id="gpt-oss:20b"),
     tools=[DuckDuckGoTools()],
     markdown=True,
 )
 
-agent.print_response("What is the latest news about AI?")
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+if __name__ == "__main__":
+    # --- Sync ---
+    agent.print_response("What is the latest news about AI?")
+
+    # --- Sync + Streaming ---
+    agent.print_response("What is the latest news about AI?", stream=True)

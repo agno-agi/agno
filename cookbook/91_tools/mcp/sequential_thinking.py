@@ -18,6 +18,10 @@ from agno.agent import Agent
 from agno.tools.mcp import MCPTools
 from agno.tools.yfinance import YFinanceTools
 
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
+
 
 async def run_agent(message: str) -> None:
     """Run the GitHub agent with the given message."""
@@ -51,6 +55,10 @@ async def run_agent(message: str) -> None:
 
 
 # Example usage
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+
 if __name__ == "__main__":
     # Pull request example
     asyncio.run(run_agent("Write a report comparing NVDA to TSLA"))

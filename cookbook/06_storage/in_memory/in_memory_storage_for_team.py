@@ -13,7 +13,15 @@ from agno.tools.hackernews import HackerNewsTools
 from agno.tools.websearch import WebSearchTools
 from pydantic import BaseModel
 
+# ---------------------------------------------------------------------------
+# Setup
+# ---------------------------------------------------------------------------
+db = InMemoryDb()
 
+
+# ---------------------------------------------------------------------------
+# Create Team
+# ---------------------------------------------------------------------------
 class Article(BaseModel):
     title: str
     summary: str
@@ -34,10 +42,6 @@ web_searcher = Agent(
     tools=[WebSearchTools()],
 )
 
-# Setup the in-memory database
-db = InMemoryDb()
-
-# Setup the team and pass the database
 hn_team = Team(
     name="HackerNews Team",
     model=OpenAIChat("gpt-4o"),
@@ -53,4 +57,8 @@ hn_team = Team(
     show_members_responses=True,
 )
 
-hn_team.print_response("Write an article about the top 2 stories on hackernews")
+# ---------------------------------------------------------------------------
+# Run Team
+# ---------------------------------------------------------------------------
+if __name__ == "__main__":
+    hn_team.print_response("Write an article about the top 2 stories on hackernews")

@@ -8,8 +8,14 @@ Requirements:
 - Run: ollama pull llama3.1:8b
 """
 
+import asyncio
+
 from agno.agent import Agent
 from agno.models.ollama import OllamaResponses
+
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
 
 agent = Agent(
     model=OllamaResponses(id="gpt-oss:20b"),
@@ -17,4 +23,16 @@ agent = Agent(
 )
 
 # Print the response in the terminal
-agent.print_response("Share a 2 sentence horror story")
+
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+if __name__ == "__main__":
+    # --- Sync ---
+    agent.print_response("Share a 2 sentence horror story")
+
+    # --- Sync + Streaming ---
+    agent.print_response("Write a short poem about the moon", stream=True)
+
+    # --- Async ---
+    asyncio.run(agent.aprint_response("Share a 2 sentence horror story"))

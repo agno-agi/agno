@@ -1,9 +1,30 @@
+"""
+File Analyst
+============
+
+An agent that downloads files shared in Slack, analyzes their content,
+and can upload results back to the channel.
+
+Key concepts:
+  - ``SlackTools`` with ``enable_download_file`` and ``enable_upload_file``
+    gives the agent access to Slack's file APIs.
+  - Works with CSV, code, text, and other file types.
+  - Uses Claude for strong document comprehension.
+
+Slack scopes: app_mentions:read, assistant:write, chat:write, im:history,
+             files:read, files:write, channels:history
+"""
+
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.models.anthropic import Claude
 from agno.os.app import AgentOS
 from agno.os.interfaces.slack import Slack
 from agno.tools.slack import SlackTools
+
+# ---------------------------------------------------------------------------
+# Create Example
+# ---------------------------------------------------------------------------
 
 agent_db = SqliteDb(session_table="agent_sessions", db_file="tmp/file_analyst.db")
 
@@ -43,6 +64,10 @@ agent_os = AgentOS(
     ],
 )
 app = agent_os.get_app()
+
+# ---------------------------------------------------------------------------
+# Run Example
+# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     agent_os.serve(app="file_analyst:app", reload=True)

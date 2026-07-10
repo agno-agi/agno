@@ -1,7 +1,18 @@
+"""
+Anthropic Financial Analyst Thinking
+====================================
+
+Cookbook example for `anthropic/financial_analyst_thinking.py`.
+"""
+
 from agno.agent import Agent
 from agno.models.anthropic import Claude
 from agno.tools.calculator import CalculatorTools
 from agno.tools.yfinance import YFinanceTools
+
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
 
 # Complex multi-step reasoning problem that demonstrates interleaved thinking
 task = (
@@ -32,3 +43,10 @@ agent = Agent(
 )
 
 agent.print_response(task, stream=True)
+
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+
+if __name__ == "__main__":
+    pass

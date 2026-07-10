@@ -17,9 +17,10 @@ from typing import (
 
 from pydantic import BaseModel
 
+from agno.db.base import AsyncBaseDb
 from agno.media import Audio, File, Image, Video
+from agno.metrics import RunMetrics, SessionMetrics
 from agno.models.message import Message
-from agno.models.metrics import Metrics
 from agno.models.response import ModelResponse
 from agno.run import RunContext
 from agno.run.agent import RunEvent, RunInput, RunOutput, RunOutputEvent
@@ -39,6 +40,11 @@ from agno.utils.log import log_debug, log_warning
 if TYPE_CHECKING:
     from agno.agent.agent import Agent
     from agno.team.team import Team
+
+
+def _has_async_db(entity: Union["Agent", "Team"]) -> bool:
+    """Return True if the entity's db is an async implementation."""
+    return entity.db is not None and isinstance(entity.db, AsyncBaseDb)
 
 
 async def await_for_open_threads(
@@ -229,6 +235,27 @@ def wait_for_thread_tasks_stream(
             learning_future.result()
         except Exception as e:
             log_warning(f"Error in learning extraction: {str(e)}")
+
+
+def collect_background_metrics(*futures_or_tasks: Any) -> List["RunMetrics"]:
+    """Collect RunMetrics returned by completed background futures/tasks.
+
+    Call this after wait_for_open_threads / await_for_open_threads (or the
+    streaming variants) to gather the isolated metrics collectors produced by
+    background memory, culture, and learning tasks.  Each argument can be a
+    ``concurrent.futures.Future``, ``asyncio.Task``, or ``None``.
+    """
+    collected: List[RunMetrics] = []
+    for f in futures_or_tasks:
+        if f is None or not f.done():
+            continue
+        try:
+            result = f.result()
+            if isinstance(result, RunMetrics):
+                collected.append(result)
+        except BaseException:
+            pass
+    return collected
 
 
 def collect_joint_images(
@@ -466,6 +493,12 @@ def scrub_media_from_run_output(run_response: Union[RunOutput, TeamRunOutput]) -
         for message in run_response.reasoning_messages:
             scrub_media_from_message(message)
 
+    # 6. Null top-level output media fields
+    run_response.images = None
+    run_response.videos = None
+    run_response.audio = None
+    run_response.files = None
+
 
 def scrub_media_from_message(message: Message) -> None:
     """Remove all media from a Message object."""
@@ -525,8 +558,37 @@ def scrub_history_messages_from_run_output(run_response: Union[RunOutput, TeamRu
         run_response.messages = [msg for msg in run_response.messages if not msg.from_history]
 
 
+def isolate_media_scrub_targets(run_response: Union[RunOutput, TeamRunOutput]) -> None:
+    """Give ``run_response`` its own shallow copies of the collections that media
+    scrubbing mutates in place (Message objects and RunInput).
+
+    ``scrub_media_from_run_output`` (store_media=False) reassigns attributes on
+    Message and RunInput objects. A shallow ``copy.copy`` of a RunOutput shares
+    those nested objects with the source, so scrubbing a *storage copy* on a
+    mid-run checkpoint would strip media off the still-running live run. Call
+    this on the storage copy before scrubbing on the in-flight (checkpoint) path.
+
+    Shallow per-element copies are enough — the scrub only reassigns attributes,
+    it does not mutate nested structures — and they avoid duplicating the media
+    payloads themselves (the copies share the payload refs until they are nulled).
+    """
+    import copy
+
+    if run_response.messages is not None:
+        run_response.messages = [copy.copy(message) for message in run_response.messages]
+    if run_response.additional_input is not None:
+        run_response.additional_input = [copy.copy(message) for message in run_response.additional_input]
+    if run_response.reasoning_messages is not None:
+        run_response.reasoning_messages = [copy.copy(message) for message in run_response.reasoning_messages]
+    if run_response.input is not None:
+        run_response.input = copy.copy(run_response.input)
+
+
 def get_run_output_util(
-    entity: Union["Agent", "Team"], run_id: str, session_id: Optional[str] = None
+    entity: Union["Agent", "Team"],
+    run_id: str,
+    session_id: Optional[str] = None,
+    user_id: Optional[str] = None,
 ) -> Optional[
     Union[
         RunOutput,
@@ -539,12 +601,13 @@ def get_run_output_util(
     Args:
         run_id (str): The run_id to load from storage.
         session_id (Optional[str]): The session_id to load from storage.
+        user_id (Optional[str]): The user_id to scope the session lookup.
     """
     if session_id is not None:
-        if entity._has_async_db():
+        if _has_async_db(entity):
             raise ValueError("Async database not supported for sync functions")
 
-        session = entity.get_session(session_id=session_id)
+        session = entity.get_session(session_id=session_id, user_id=user_id)
         if session is not None:
             run_response = session.get_run(run_id=run_id)
             if run_response is not None:
@@ -562,7 +625,10 @@ def get_run_output_util(
 
 
 async def aget_run_output_util(
-    entity: Union["Agent", "Team"], run_id: str, session_id: Optional[str] = None
+    entity: Union["Agent", "Team"],
+    run_id: str,
+    session_id: Optional[str] = None,
+    user_id: Optional[str] = None,
 ) -> Optional[Union[RunOutput, TeamRunOutput]]:
     """
     Get a RunOutput from the database.
@@ -570,9 +636,10 @@ async def aget_run_output_util(
     Args:
         run_id (str): The run_id to load from storage.
         session_id (Optional[str]): The session_id to load from storage.
+        user_id (Optional[str]): The user_id to scope the session lookup.
     """
     if session_id is not None:
-        session = await entity.aget_session(session_id=session_id)
+        session = await entity.aget_session(session_id=session_id, user_id=user_id)
         if session is not None:
             run_response = session.get_run(run_id=run_id)
             if run_response is not None:
@@ -589,6 +656,28 @@ async def aget_run_output_util(
     return None
 
 
+def _ensure_entity_id(entity: Union["Agent", "Team"]) -> None:
+    """Auto-derive ``entity.id`` from ``entity.name`` when it is not set.
+
+    Mirrors what ``arun()`` / ``initialize_*()`` do during a run. Uses
+    ``isinstance`` rather than class-name comparison so the right ``set_id``
+    is picked even for subclasses, and so mypy can narrow the argument type.
+    Imports are local because ``Agent`` / ``Team`` would cause a circular
+    import at module load time.
+    """
+    from agno.agent.agent import Agent
+    from agno.team.team import Team
+
+    if isinstance(entity, Team):
+        from agno.team._init import set_id as set_team_id
+
+        set_team_id(entity)
+    elif isinstance(entity, Agent):
+        from agno.agent._init import set_id as set_agent_id
+
+        set_agent_id(entity)
+
+
 def get_last_run_output_util(
     entity: Union["Agent", "Team"], session_id: Optional[str] = None
 ) -> Optional[Union[RunOutput, TeamRunOutput]]:
@@ -601,18 +690,23 @@ def get_last_run_output_util(
     Returns:
         RunOutput: The last run response from the database.
     """
+    from agno.agent.agent import Agent
+    from agno.team.team import Team
+
+    _ensure_entity_id(entity)
+
     if session_id is not None:
-        if entity._has_async_db():
+        if _has_async_db(entity):
             raise ValueError("Async database not supported for sync functions")
 
         session = entity.get_session(session_id=session_id)
         if session is not None and session.runs is not None and len(session.runs) > 0:
             for run_output in reversed(session.runs):
-                if entity.__class__.__name__ == "Agent":
-                    if hasattr(run_output, "agent_id") and run_output.agent_id == entity.id:
+                if isinstance(entity, Team):
+                    if getattr(run_output, "team_id", None) == entity.id:
                         return run_output  # type: ignore
-                elif entity.__class__.__name__ == "Team":
-                    if hasattr(run_output, "team_id") and run_output.team_id == entity.id:
+                elif isinstance(entity, Agent):
+                    if getattr(run_output, "agent_id", None) == entity.id:
                         return run_output  # type: ignore
         else:
             log_warning(f"No run responses found in Session {session_id}")
@@ -623,11 +717,11 @@ def get_last_run_output_util(
         and len(entity.cached_session.runs) > 0
     ):
         for run_output in reversed(entity.cached_session.runs):
-            if entity.__class__.__name__ == "Agent":
-                if hasattr(run_output, "agent_id") and run_output.agent_id == entity.id:
+            if isinstance(entity, Team):
+                if getattr(run_output, "team_id", None) == entity.id:
                     return run_output  # type: ignore
-            elif entity.__class__.__name__ == "Team":
-                if hasattr(run_output, "team_id") and run_output.team_id == entity.id:
+            elif isinstance(entity, Agent):
+                if getattr(run_output, "agent_id", None) == entity.id:
                     return run_output  # type: ignore
     return None
 
@@ -644,15 +738,20 @@ async def aget_last_run_output_util(
     Returns:
         RunOutput: The last run response from the database.
     """
+    from agno.agent.agent import Agent
+    from agno.team.team import Team
+
+    _ensure_entity_id(entity)
+
     if session_id is not None:
         session = await entity.aget_session(session_id=session_id)
         if session is not None and session.runs is not None and len(session.runs) > 0:
             for run_output in reversed(session.runs):
-                if entity.__class__.__name__ == "Agent":
-                    if hasattr(run_output, "agent_id") and run_output.agent_id == entity.id:
+                if isinstance(entity, Team):
+                    if getattr(run_output, "team_id", None) == entity.id:
                         return run_output  # type: ignore
-                elif entity.__class__.__name__ == "Team":
-                    if hasattr(run_output, "team_id") and run_output.team_id == entity.id:
+                elif isinstance(entity, Agent):
+                    if getattr(run_output, "agent_id", None) == entity.id:
                         return run_output  # type: ignore
         else:
             log_warning(f"No run responses found in Session {session_id}")
@@ -663,11 +762,11 @@ async def aget_last_run_output_util(
         and len(entity.cached_session.runs) > 0
     ):
         for run_output in reversed(entity.cached_session.runs):
-            if entity.__class__.__name__ == "Agent":
-                if hasattr(run_output, "agent_id") and run_output.agent_id == entity.id:
+            if isinstance(entity, Team):
+                if getattr(run_output, "team_id", None) == entity.id:
                     return run_output  # type: ignore
-            elif entity.__class__.__name__ == "Team":
-                if hasattr(run_output, "team_id") and run_output.team_id == entity.id:
+            elif isinstance(entity, Agent):
+                if getattr(run_output, "agent_id", None) == entity.id:
                     return run_output  # type: ignore
     return None
 
@@ -676,7 +775,7 @@ def set_session_name_util(
     entity: Union["Agent", "Team"], session_id: str, autogenerate: bool = False, session_name: Optional[str] = None
 ) -> Union[AgentSession, TeamSession, WorkflowSession]:
     """Set the session name and save to storage"""
-    if entity._has_async_db():
+    if _has_async_db(entity):
         raise ValueError("Async database not supported for sync functions")
 
     session = entity.get_session(session_id=session_id)  # type: ignore
@@ -733,7 +832,7 @@ async def aset_session_name_util(
 def get_session_name_util(entity: Union["Agent", "Team"], session_id: str) -> str:
     """Get the session name for the given session ID and user ID."""
 
-    if entity._has_async_db():
+    if _has_async_db(entity):
         raise ValueError("Async database not supported for sync functions")
 
     session = entity.get_session(session_id=session_id)  # type: ignore
@@ -752,7 +851,7 @@ async def aget_session_name_util(entity: Union["Agent", "Team"], session_id: str
 
 def get_session_state_util(entity: Union["Agent", "Team"], session_id: str) -> Dict[str, Any]:
     """Get the session state for the given session ID and user ID."""
-    if entity._has_async_db():
+    if _has_async_db(entity):
         raise ValueError("Async database not supported for sync functions")
 
     session = entity.get_session(session_id=session_id)  # type: ignore
@@ -780,7 +879,7 @@ def update_session_state_util(
     Returns:
         dict: The updated session state.
     """
-    if entity._has_async_db():
+    if _has_async_db(entity):
         raise ValueError("Async database not supported for sync functions")
 
     session = entity.get_session(session_id=session_id)  # type: ignore
@@ -824,9 +923,9 @@ async def aupdate_session_state_util(
     return session.session_data["session_state"]  # type: ignore
 
 
-def get_session_metrics_util(entity: Union["Agent", "Team"], session_id: str) -> Optional[Metrics]:
+def get_session_metrics_util(entity: Union["Agent", "Team"], session_id: str) -> Optional[SessionMetrics]:
     """Get the session metrics for the given session ID and user ID."""
-    if entity._has_async_db():
+    if _has_async_db(entity):
         raise ValueError("Async database not supported for sync functions")
 
     session = entity.get_session(session_id=session_id)  # type: ignore
@@ -834,24 +933,53 @@ def get_session_metrics_util(entity: Union["Agent", "Team"], session_id: str) ->
         raise Exception("Session not found")
 
     if session.session_data is not None:
-        if isinstance(session.session_data.get("session_metrics"), dict):
-            return Metrics(**session.session_data.get("session_metrics", {}))
-        elif isinstance(session.session_data.get("session_metrics"), Metrics):
-            return session.session_data.get("session_metrics")
+        session_metrics_from_db = session.session_data.get("session_metrics")
+        if isinstance(session_metrics_from_db, dict):
+            return SessionMetrics.from_dict(session_metrics_from_db)
+        elif isinstance(session_metrics_from_db, SessionMetrics):
+            return session_metrics_from_db
+        elif isinstance(session_metrics_from_db, RunMetrics):
+            # Legacy: convert RunMetrics to SessionMetrics
+            return SessionMetrics(
+                input_tokens=session_metrics_from_db.input_tokens,
+                output_tokens=session_metrics_from_db.output_tokens,
+                total_tokens=session_metrics_from_db.total_tokens,
+                audio_input_tokens=session_metrics_from_db.audio_input_tokens,
+                audio_output_tokens=session_metrics_from_db.audio_output_tokens,
+                audio_total_tokens=session_metrics_from_db.audio_total_tokens,
+                cache_read_tokens=session_metrics_from_db.cache_read_tokens,
+                cache_write_tokens=session_metrics_from_db.cache_write_tokens,
+                reasoning_tokens=session_metrics_from_db.reasoning_tokens,
+                cost=session_metrics_from_db.cost,
+            )
     return None
 
 
-async def aget_session_metrics_util(entity: Union["Agent", "Team"], session_id: str) -> Optional[Metrics]:
+async def aget_session_metrics_util(entity: Union["Agent", "Team"], session_id: str) -> Optional[SessionMetrics]:
     """Get the session metrics for the given session ID and user ID."""
     session = await entity.aget_session(session_id=session_id)  # type: ignore
     if session is None:
         raise Exception("Session not found")
 
     if session.session_data is not None:
-        if isinstance(session.session_data.get("session_metrics"), dict):
-            return Metrics(**session.session_data.get("session_metrics", {}))
-        elif isinstance(session.session_data.get("session_metrics"), Metrics):
-            return session.session_data.get("session_metrics")
+        session_metrics = session.session_data.get("session_metrics")
+        if isinstance(session_metrics, dict):
+            return SessionMetrics.from_dict(session_metrics)
+        elif isinstance(session_metrics, SessionMetrics):
+            return session_metrics
+        elif isinstance(session_metrics, RunMetrics):
+            return SessionMetrics(
+                input_tokens=session_metrics.input_tokens,
+                output_tokens=session_metrics.output_tokens,
+                total_tokens=session_metrics.total_tokens,
+                audio_input_tokens=session_metrics.audio_input_tokens,
+                audio_output_tokens=session_metrics.audio_output_tokens,
+                audio_total_tokens=session_metrics.audio_total_tokens,
+                cache_read_tokens=session_metrics.cache_read_tokens,
+                cache_write_tokens=session_metrics.cache_write_tokens,
+                reasoning_tokens=session_metrics.reasoning_tokens,
+                cost=session_metrics.cost,
+            )
     return None
 
 
@@ -863,7 +991,7 @@ def get_chat_history_util(entity: Union["Agent", "Team"], session_id: str) -> Li
     Returns:
         List[Message]: The chat history from the session.
     """
-    if entity._has_async_db():
+    if _has_async_db(entity):
         raise ValueError("Async database not supported for sync functions")
 
     session = entity.get_session(session_id=session_id)  # type: ignore

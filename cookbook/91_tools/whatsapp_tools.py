@@ -34,14 +34,24 @@ from agno.agent import Agent
 from agno.models.google import Gemini
 from agno.tools.whatsapp import WhatsAppTools
 
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
+
+
 agent = Agent(
     name="whatsapp",
-    model=Gemini(id="gemini-3-flash-preview"),
+    model=Gemini(id="gemini-3.5-flash"),
     tools=[WhatsAppTools()],
 )
 
 # Example: Send a template message
 # Note: Replace 'hello_world' with your actual template name
-agent.print_response(
-    "Send a template message using the 'hello_world' template in English to +1 123456789"
-)
+
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+if __name__ == "__main__":
+    agent.print_response(
+        "Send a template message using the 'hello_world' template in English to +1 123456789"
+    )

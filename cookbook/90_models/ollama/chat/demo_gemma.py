@@ -1,8 +1,19 @@
+"""
+Ollama Demo Gemma
+=================
+
+Cookbook example for `ollama/chat/demo_gemma.py`.
+"""
+
 from pathlib import Path
 
 from agno.agent import Agent
 from agno.media import Image
 from agno.models.ollama import Ollama
+
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
 
 agent = Agent(model=Ollama(id="gemma3:12b"), markdown=True)
 
@@ -12,3 +23,10 @@ agent.print_response(
     images=[Image(filepath=image_path)],
     stream=True,
 )
+
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+
+if __name__ == "__main__":
+    pass

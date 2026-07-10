@@ -5,6 +5,10 @@ from agno.knowledge.knowledge import Knowledge
 from agno.models.cerebras import CerebrasOpenAI
 from agno.vectordb.pgvector import PgVector
 
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
+
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
 
 knowledge = Knowledge(
@@ -17,3 +21,10 @@ agent = Agent(
     model=CerebrasOpenAI(id="llama-4-scout-17b-16e-instruct"), knowledge=knowledge
 )
 agent.print_response("How to make Thai curry?", markdown=True)
+
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+
+if __name__ == "__main__":
+    pass

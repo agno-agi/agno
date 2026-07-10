@@ -1,3 +1,25 @@
+"""
+Research Assistant
+==================
+
+An agent that combines Slack message search with web search to answer
+research questions. Searches internal Slack history first, then gathers
+external context from the web.
+
+Key concepts:
+  - ``SlackTools`` search supports Slack query syntax
+    (``from:@user``, ``in:#channel``, ``has:link``, ``before:/after:``).
+  - ``WebSearchTools`` provides external web search.
+  - The agent synthesizes internal and external findings into one summary.
+
+Slack scopes: app_mentions:read, assistant:write, chat:write, im:history,
+             search:read, channels:history, users:read
+
+Environment variables:
+    SLACK_TOKEN         Bot token (xoxb-) for standard Slack APIs
+    SLACK_USER_TOKEN    User token (xoxp-) required for search_messages
+"""
+
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIChat
@@ -5,6 +27,10 @@ from agno.os.app import AgentOS
 from agno.os.interfaces.slack import Slack
 from agno.tools.slack import SlackTools
 from agno.tools.websearch import WebSearchTools
+
+# ---------------------------------------------------------------------------
+# Create Example
+# ---------------------------------------------------------------------------
 
 agent_db = SqliteDb(session_table="agent_sessions", db_file="tmp/research_assistant.db")
 
@@ -47,6 +73,10 @@ agent_os = AgentOS(
     ],
 )
 app = agent_os.get_app()
+
+# ---------------------------------------------------------------------------
+# Run Example
+# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     agent_os.serve(app="research_assistant:app", reload=True)

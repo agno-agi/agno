@@ -2,6 +2,8 @@
 
 from typing import Any
 
+from agno.db.schemas.mcp_oauth import MCP_OAUTH_TABLE_SCHEMAS
+
 try:
     from sqlalchemy.dialects.postgresql import JSONB
     from sqlalchemy.types import BigInteger, Boolean, Date, Integer, String, Text
@@ -9,7 +11,7 @@ except ImportError:
     raise ImportError("`sqlalchemy` not installed. Please install it using `pip install sqlalchemy`")
 
 SESSION_TABLE_SCHEMA = {
-    "session_id": {"type": String, "nullable": False},
+    "session_id": {"type": String, "primary_key": True, "nullable": False},
     "session_type": {"type": String, "nullable": False, "index": True},
     "agent_id": {"type": String, "nullable": True},
     "team_id": {"type": String, "nullable": True},
@@ -24,12 +26,6 @@ SESSION_TABLE_SCHEMA = {
     "summary": {"type": JSONB, "nullable": True},
     "created_at": {"type": BigInteger, "nullable": False, "index": True},
     "updated_at": {"type": BigInteger, "nullable": True},
-    "_unique_constraints": [
-        {
-            "name": "uq_session_id",
-            "columns": ["session_id"],
-        },
-    ],
 }
 
 MEMORY_TABLE_SCHEMA = {
@@ -231,8 +227,128 @@ LEARNINGS_TABLE_SCHEMA = {
 }
 
 
+SCHEDULE_TABLE_SCHEMA = {
+    "id": {"type": String, "primary_key": True, "nullable": False},
+    "name": {"type": String, "nullable": False, "index": True},
+    "description": {"type": Text, "nullable": True},
+    "method": {"type": String, "nullable": False},
+    "endpoint": {"type": String, "nullable": False},
+    "payload": {"type": JSONB, "nullable": True},
+    "cron_expr": {"type": String, "nullable": False},
+    "timezone": {"type": String, "nullable": False},
+    "timeout_seconds": {"type": BigInteger, "nullable": False},
+    "max_retries": {"type": BigInteger, "nullable": False},
+    "retry_delay_seconds": {"type": BigInteger, "nullable": False},
+    "enabled": {"type": Boolean, "nullable": False, "default": True},
+    "next_run_at": {"type": BigInteger, "nullable": True, "index": True},
+    "locked_by": {"type": String, "nullable": True},
+    "locked_at": {"type": BigInteger, "nullable": True},
+    "created_at": {"type": BigInteger, "nullable": False, "index": True},
+    "updated_at": {"type": BigInteger, "nullable": True},
+    "__composite_indexes__": [
+        {"name": "enabled_next_run_at", "columns": ["enabled", "next_run_at"]},
+    ],
+}
+
+
+def _get_schedule_runs_table_schema(
+    schedules_table_name: str = "agno_schedules", db_schema: str = "agno"
+) -> dict[str, Any]:
+    """Get the schedule runs table schema with a foreign key to the schedules table."""
+    return {
+        "id": {"type": String, "primary_key": True, "nullable": False},
+        "schedule_id": {
+            "type": String,
+            "nullable": False,
+            "index": True,
+            "foreign_key": f"{db_schema}.{schedules_table_name}.id",
+            "ondelete": "CASCADE",
+        },
+        "attempt": {"type": BigInteger, "nullable": False},
+        "triggered_at": {"type": BigInteger, "nullable": True},
+        "completed_at": {"type": BigInteger, "nullable": True},
+        "status": {"type": String, "nullable": False, "index": True},
+        "status_code": {"type": BigInteger, "nullable": True},
+        "run_id": {"type": String, "nullable": True},
+        "session_id": {"type": String, "nullable": True},
+        "error": {"type": Text, "nullable": True},
+        "input": {"type": JSONB, "nullable": True},
+        "output": {"type": JSONB, "nullable": True},
+        "requirements": {"type": JSONB, "nullable": True},
+        "created_at": {"type": BigInteger, "nullable": False, "index": True},
+    }
+
+
+APPROVAL_TABLE_SCHEMA = {
+    "id": {"type": String, "primary_key": True, "nullable": False},
+    "run_id": {"type": String, "nullable": False, "index": True},
+    "session_id": {"type": String, "nullable": False, "index": True},
+    "status": {"type": String, "nullable": False, "index": True},
+    "source_type": {"type": String, "nullable": False, "index": True},
+    "approval_type": {"type": String, "nullable": True, "index": True},
+    "pause_type": {"type": String, "nullable": False, "index": True},
+    "tool_name": {"type": String, "nullable": True},
+    "tool_args": {"type": JSONB, "nullable": True},
+    "expires_at": {"type": BigInteger, "nullable": True},
+    "agent_id": {"type": String, "nullable": True, "index": True},
+    "team_id": {"type": String, "nullable": True, "index": True},
+    "workflow_id": {"type": String, "nullable": True, "index": True},
+    "user_id": {"type": String, "nullable": True, "index": True},
+    "schedule_id": {"type": String, "nullable": True, "index": True},
+    "schedule_run_id": {"type": String, "nullable": True, "index": True},
+    "source_name": {"type": String, "nullable": True},
+    "requirements": {"type": JSONB, "nullable": True},
+    "context": {"type": JSONB, "nullable": True},
+    "resolution_data": {"type": JSONB, "nullable": True},
+    "resolved_by": {"type": String, "nullable": True},
+    "resolved_at": {"type": BigInteger, "nullable": True},
+    "created_at": {"type": BigInteger, "nullable": False, "index": True},
+    "updated_at": {"type": BigInteger, "nullable": True},
+    # Run status from the associated run. Updated when run completes/errors/cancels.
+    # Values: "PAUSED", "COMPLETED", "RUNNING", "ERROR", "CANCELLED", or None.
+    "run_status": {"type": String, "nullable": True, "index": True},
+}
+
+AUTH_TOKEN_TABLE_SCHEMA = {
+    "id": {"type": String, "primary_key": True, "nullable": False},
+    "provider": {"type": String, "nullable": False, "index": True},
+    # Empty string for single-user mode
+    "user_id": {"type": String, "nullable": False, "index": True},
+    "service": {"type": String, "nullable": False, "index": True},
+    "token_data": {"type": JSONB, "nullable": False},
+    "granted_scopes": {"type": JSONB, "nullable": True},
+    "created_at": {"type": BigInteger, "nullable": False, "index": True},
+    "updated_at": {"type": BigInteger, "nullable": True},
+    "_unique_constraints": [
+        {"name": "uq_auth_token_provider_user_service", "columns": ["provider", "user_id", "service"]}
+    ],
+}
+
+SERVICE_ACCOUNT_TABLE_SCHEMA = {
+    "id": {"type": String, "primary_key": True, "nullable": False},
+    "name": {"type": String, "nullable": False},
+    # Ownership: the user this account belongs to (created_by is audit: who minted it).
+    # NULL means a workspace-level machine account with no owning user.
+    "user_id": {"type": String, "nullable": True},
+    "token_hash": {"type": String, "nullable": False, "unique": True, "index": True},
+    "token_prefix": {"type": String, "nullable": False},
+    "scopes": {"type": JSONB, "nullable": False},
+    "created_at": {"type": BigInteger, "nullable": False, "index": True},
+    "expires_at": {"type": BigInteger, "nullable": True},
+    "last_used_at": {"type": BigInteger, "nullable": True},
+    "revoked_at": {"type": BigInteger, "nullable": True},
+    "created_by": {"type": String, "nullable": True},
+    # Names are reusable after revocation (rotation keeps the same identity),
+    # so uniqueness only applies to active accounts.
+    "_partial_unique_indexes": [{"name": "uq_active_name", "columns": ["name"], "where": "revoked_at IS NULL"}],
+}
+
+
 def get_table_schema_definition(
-    table_type: str, traces_table_name: str = "agno_traces", db_schema: str = "agno"
+    table_type: str,
+    traces_table_name: str = "agno_traces",
+    db_schema: str = "agno",
+    schedules_table_name: str = "agno_schedules",
 ) -> dict[str, Any]:
     """
     Get the expected schema definition for the given table.
@@ -245,9 +361,11 @@ def get_table_schema_definition(
     Returns:
         Dict[str, Any]: Dictionary containing column definitions for the table
     """
-    # Handle spans table specially to resolve the foreign key reference
+    # Handle tables with dynamic foreign key references
     if table_type == "spans":
         return _get_span_table_schema(traces_table_name, db_schema)
+    if table_type == "schedule_runs":
+        return _get_schedule_runs_table_schema(schedules_table_name, db_schema)
 
     schemas = {
         "sessions": SESSION_TABLE_SCHEMA,
@@ -262,6 +380,11 @@ def get_table_schema_definition(
         "component_configs": COMPONENT_CONFIGS_TABLE_SCHEMA,
         "component_links": COMPONENT_LINKS_TABLE_SCHEMA,
         "learnings": LEARNINGS_TABLE_SCHEMA,
+        "schedules": SCHEDULE_TABLE_SCHEMA,
+        "approvals": APPROVAL_TABLE_SCHEMA,
+        "auth_tokens": AUTH_TOKEN_TABLE_SCHEMA,
+        "service_accounts": SERVICE_ACCOUNT_TABLE_SCHEMA,
+        **MCP_OAUTH_TABLE_SCHEMAS,
     }
 
     schema = schemas.get(table_type, {})

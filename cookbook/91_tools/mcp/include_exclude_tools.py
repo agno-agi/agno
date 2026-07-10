@@ -16,6 +16,10 @@ import asyncio
 from agno.agent import Agent
 from agno.tools.mcp import MultiMCPTools
 
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
+
 
 async def run_agent(message: str) -> None:
     """Run the GitHub agent with the given message.
@@ -41,6 +45,10 @@ async def run_agent(message: str) -> None:
 
 
 # Example usage
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+
 if __name__ == "__main__":
     asyncio.run(
         run_agent(

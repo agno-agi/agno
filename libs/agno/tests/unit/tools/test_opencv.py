@@ -201,10 +201,10 @@ class TestVideoCapture:
     @patch("os.path.getsize")
     @patch("os.unlink")
     @patch("builtins.open", create=True)
-    @patch("time.time")
+    @patch("agno.tools.opencv.time")
     def test_capture_video_no_preview_success(
         self,
-        mock_time,
+        mock_time_module,
         mock_open,
         mock_unlink,
         mock_getsize,
@@ -215,8 +215,8 @@ class TestVideoCapture:
         mock_cv2,
     ):
         """Test successful video capture without preview."""
-        # Mock time progression with extra values for logging
-        mock_time.side_effect = [0, 0, 1, 2, 3, 4, 5, 6, 6, 6, 6, 6, 6, 6, 6]
+        # Patch the time module reference in opencv so logging doesn't consume mock values
+        mock_time_module.time.side_effect = [0, 6, 6]
 
         # Mock temporary file
         mock_temp = Mock()
@@ -262,10 +262,10 @@ class TestVideoCapture:
     @patch("os.path.getsize")
     @patch("os.unlink")
     @patch("builtins.open", create=True)
-    @patch("time.time")
+    @patch("agno.tools.opencv.time")
     def test_capture_video_with_preview_success(
         self,
-        mock_time,
+        mock_time_module,
         mock_open,
         mock_unlink,
         mock_getsize,
@@ -276,8 +276,9 @@ class TestVideoCapture:
         mock_cv2,
     ):
         """Test successful video capture with preview."""
-        # Mock time progression for 3 second video (provide more values for logging calls)
-        mock_time.side_effect = [0, 0, 0.5, 1, 1.5, 2, 2.5, 3, 3, 3, 3, 3, 3, 3, 3, 3]
+        # Patch the time module reference in opencv so logging doesn't consume mock values
+        # Preview path: start_time, elapsed, duration_check, actual_duration
+        mock_time_module.time.side_effect = [0, 1, 4, 4]
 
         # Mock temporary file
         mock_temp = Mock()
@@ -341,9 +342,11 @@ class TestVideoCapture:
             patch("os.path.getsize", return_value=1000),
             patch("os.unlink"),
             patch("builtins.open", create=True) as mock_open,
-            patch("time.time", side_effect=[0, 0, 0.5, 1, 1, 1, 1]),
+            patch("agno.tools.opencv.time") as mock_time,
             patch("agno.tools.opencv.getattr") as mock_getattr,
         ):
+            mock_time.time.side_effect = [0, 2, 2]
+
             # Mock temporary file
             mock_temp = Mock()
             mock_temp.name = "/tmp/test_video.mp4"
@@ -369,7 +372,6 @@ class TestVideoCapture:
 
     def test_capture_video_codec_fallback(self, opencv_tools_no_preview, mock_agent, mock_cv2):
         """Test video capture codec fallback mechanism."""
-        pytest.xfail("Flaky due to time.time mock exhaustion; low priority")
         # Mock first codec failing, second succeeding
         mock_writer_fail = Mock()
         mock_writer_fail.isOpened.return_value = False
@@ -384,9 +386,11 @@ class TestVideoCapture:
             patch("os.path.getsize", return_value=1000),
             patch("os.unlink"),
             patch("builtins.open", create=True) as mock_open,
-            patch("time.time", side_effect=[0, 0, 0.5, 1, 1, 1, 1]),
+            patch("agno.tools.opencv.time") as mock_time,
             patch("agno.tools.opencv.getattr") as mock_getattr,
         ):
+            mock_time.time.side_effect = [0, 2, 2]
+
             # Mock temporary file
             mock_temp = Mock()
             mock_temp.name = "/tmp/test_video.mp4"
@@ -441,16 +445,16 @@ class TestVideoCapture:
         self, mock_exists, mock_tempfile, opencv_tools_no_preview, mock_agent, mock_cv2
     ):
         """Test video capture when temporary file is not created."""
-        pytest.xfail("Flaky due to time.time mock exhaustion; low priority")
         mock_temp = Mock()
         mock_temp.name = "/tmp/test_video.mp4"
         mock_tempfile.return_value.__enter__.return_value = mock_temp
         mock_exists.return_value = False  # File doesn't exist
 
         with (
-            patch("time.time", side_effect=[0, 0, 0.5, 1, 1, 1, 1]),
+            patch("agno.tools.opencv.time") as mock_time,
             patch("agno.tools.opencv.getattr") as mock_getattr,
         ):
+            mock_time.time.side_effect = [0, 2]
             mock_getattr.return_value.return_value = 123456
             result = opencv_tools_no_preview.capture_video(mock_agent, duration=1)
 
@@ -503,9 +507,11 @@ class TestResourceCleanup:
             patch("os.path.getsize", return_value=1000),
             patch("os.unlink"),
             patch("builtins.open", create=True) as mock_open,
-            patch("time.time", side_effect=[0, 0, 0.5, 1, 1, 1, 1]),
+            patch("agno.tools.opencv.time") as mock_time,
             patch("agno.tools.opencv.getattr") as mock_getattr,
         ):
+            mock_time.time.side_effect = [0, 2, 2]
+
             # Mock temporary file
             mock_temp = Mock()
             mock_temp.name = "/tmp/test_video.mp4"
@@ -556,9 +562,11 @@ class TestEdgeCases:
             patch("os.path.getsize", return_value=1000),
             patch("os.unlink"),
             patch("builtins.open", create=True) as mock_open,
-            patch("time.time", side_effect=[0, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 10, 10, 10]),
+            patch("agno.tools.opencv.time") as mock_time,
             patch("agno.tools.opencv.getattr") as mock_getattr,
         ):
+            mock_time.time.side_effect = [0, 11, 11]
+
             # Mock temporary file
             mock_temp = Mock()
             mock_temp.name = "/tmp/test_video.mp4"

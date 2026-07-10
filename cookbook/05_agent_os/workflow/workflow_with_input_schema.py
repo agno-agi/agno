@@ -1,7 +1,17 @@
+"""
+Workflow With Input Schema
+==========================
+
+Demonstrates workflow with input schema.
+"""
+
 from typing import List
 
 from agno.agent.agent import Agent
 
+# ---------------------------------------------------------------------------
+# Create Example
+# ---------------------------------------------------------------------------
 # Import the workflows
 from agno.db.sqlite import SqliteDb
 from agno.models.openai.chat import OpenAIChat
@@ -82,6 +92,10 @@ agent_os = AgentOS(
     workflows=[content_creation_workflow],
 )
 app = agent_os.get_app()
+
+# ---------------------------------------------------------------------------
+# Run Example
+# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     agent_os.serve(app="workflow_with_input_schema:app", reload=True)

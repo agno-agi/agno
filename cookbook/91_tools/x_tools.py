@@ -1,5 +1,17 @@
+"""
+X Tools
+=============================
+
+Demonstrates x tools.
+"""
+
 from agno.agent import Agent
 from agno.tools.x import XTools
+
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
+
 
 """
 To set up an X developer account and obtain the necessary keys, follow these steps:
@@ -50,27 +62,32 @@ agent = Agent(
 )
 
 # Example usage: Get your details
-agent.print_response(
-    "Can you return my x profile with my home timeline?", markdown=True
-)
 
-# # Example usage: Get information about a user
-# agent.print_response(
-#     "Can you retrieve information about this user https://x.com/AgnoAgi ",
-#     markdown=True,
-# )
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+if __name__ == "__main__":
+    agent.print_response(
+        "Can you return my x profile with my home timeline?", markdown=True
+    )
 
-# # Example usage: Reply To a Post
-# agent.print_response(
-#     "Can you reply to this [post ID] post as a general message as to how great this project is: https://x.com/AgnoAgi",
-#     markdown=True,
-# )
+    # # Example usage: Get information about a user
+    # agent.print_response(
+    #     "Can you retrieve information about this user https://x.com/AgnoAgi ",
+    #     markdown=True,
+    # )
 
-# # Example usage: Send a direct message
-# agent.print_response(
-#     "Send direct message to the user @AgnoAgi telling them I want to learn more about them and a link to their community.",
-#     markdown=True,
-# )
+    # # Example usage: Reply To a Post
+    # agent.print_response(
+    #     "Can you reply to this [post ID] post as a general message as to how great this project is: https://x.com/AgnoAgi",
+    #     markdown=True,
+    # )
 
-# # Example usage: Create a new post
-# agent.print_response("Create & post content about how 2025 is the year of the AI agent", markdown=True)
+    # # Example usage: Send a direct message
+    # agent.print_response(
+    #     "Send direct message to the user @AgnoAgi telling them I want to learn more about them and a link to their community.",
+    #     markdown=True,
+    # )
+
+    # # Example usage: Create a new post
+    # agent.print_response("Create & post content about how 2025 is the year of the AI agent", markdown=True)

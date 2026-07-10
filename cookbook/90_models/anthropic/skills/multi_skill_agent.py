@@ -16,6 +16,10 @@ from agno.models.anthropic import Claude
 from anthropic import Anthropic
 from file_download_helper import download_skill_files
 
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
+
 # Create an agent with multiple skills
 multi_skill_agent = Agent(
     name="Multi-Skill Document Creator",
@@ -35,6 +39,9 @@ multi_skill_agent = Agent(
     markdown=True,
 )
 
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     # Check for API key

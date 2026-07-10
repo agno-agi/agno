@@ -1,3 +1,10 @@
+"""
+Workflows
+=========
+
+Demonstrates workflows.
+"""
+
 from typing import List
 
 from agno.agent.agent import Agent
@@ -9,6 +16,10 @@ from agno.workflow.step import Step
 from agno.workflow.workflow import Workflow
 from db import db
 from pydantic import BaseModel, Field
+
+# ---------------------------------------------------------------------------
+# Create Example
+# ---------------------------------------------------------------------------
 
 
 # ************* Input Schema *************
@@ -25,19 +36,19 @@ class ResearchTopic(BaseModel):
 # ************* Agents *************
 wikipedia_agent = Agent(
     name="Wikipedia Agent",
-    model=Claude(id="claude-sonnet-4-0"),
+    model=Claude(id="claude-sonnet-4-5"),
     role="Extract key insights and content from Wikipedia articles",
     tools=[WikipediaTools()],
 )
 search_agent = Agent(
     name="Search Agent",
-    model=Claude(id="claude-sonnet-4-0"),
+    model=Claude(id="claude-sonnet-4-5"),
     role="Search the web for the latest news and trends using Firecrawl",
     tools=[FirecrawlTools()],
 )
 writer_agent = Agent(
     name="Writer Agent",
-    model=Claude(id="claude-sonnet-4-0"),
+    model=Claude(id="claude-sonnet-4-5"),
     instructions=[
         "Write a detailed report on the provided topic and research content",
     ],
@@ -77,3 +88,10 @@ research_workflow = Workflow(
     input_schema=ResearchTopic,
 )
 # *******************************
+
+# ---------------------------------------------------------------------------
+# Run Example
+# ---------------------------------------------------------------------------
+
+if __name__ == "__main__":
+    raise SystemExit("This module is intended to be imported.")
