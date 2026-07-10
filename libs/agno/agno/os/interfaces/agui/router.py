@@ -93,6 +93,7 @@ async def run_entity(
                 tool_messages=tool_messages,
                 run_context=run_context,
                 run_kwargs=run_kwargs,
+                user_id=user_id,
             )
         else:
             # Fresh run: new user input

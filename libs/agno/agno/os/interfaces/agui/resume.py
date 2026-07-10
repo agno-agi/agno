@@ -1,4 +1,4 @@
-from typing import List, Union
+from typing import List, Optional, Union
 
 from ag_ui.core.types import ToolMessage as AGUIToolMessage
 
@@ -41,6 +41,7 @@ async def resume_paused_run(
     tool_messages: list,
     run_context: RunContext,
     run_kwargs: dict,
+    user_id: Optional[str] = None,
 ):
     """Resume a paused run by applying frontend tool results and continuing."""
     # Remote entities don't support client_tools resume (no aget_session)
@@ -49,7 +50,9 @@ async def resume_paused_run(
             "Frontend tool resume requires a database. Set db=SqliteDb(...) or db=PgDb(...) on your Agent/Team."
         )
 
-    session = await entity.aget_session(session_id=session_id)
+    # Scope the lookup to the caller's resolved identity so a caller cannot load
+    # (and then continue) another user's session by supplying an arbitrary thread_id.
+    session = await entity.aget_session(session_id=session_id, user_id=user_id)
     if not session:
         raise ValueError(f"Session {session_id} not found")
     if not isinstance(session, (AgentSession, TeamSession)):
@@ -89,6 +92,7 @@ async def resume_paused_run(
         requirements=requirements,
         stream=True,
         stream_events=True,
+        user_id=user_id,
         run_context=run_context,
         **run_kwargs,
     )
