@@ -920,7 +920,9 @@ async def test_refresh_survives_access_token_expiry_across_replicas(tmp_path):
     # full second of life, and the sleep (monotonic) can drift from expiry (wall clock) on CI.
     await asyncio.sleep(1.8)
 
-    replica = _os(_provider(db, access_token_ttl=1), db=db)
+    # Fresh db connection (same file) simulates a real replica with its own connection pool
+    db2 = _db(tmp_path)
+    replica = _os(_provider(db2, access_token_ttl=1), db=db2)
     async with _http_client(replica) as client:
         expired = await client.post(
             "/mcp", json=_MCP_INIT_BODY, headers={**_MCP_HEADERS, "Authorization": f"Bearer {tokens['access_token']}"}

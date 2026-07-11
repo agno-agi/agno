@@ -140,37 +140,17 @@ jobs:
     if: github.event_name != 'push' || !github.event.pull_request
     strategy:
       matrix:
-        include:
-          - shard: 1
-            name: "tools"
-            python-version: "3.12"
-            paths: "libs/agno/tests/unit/tools"
-          - shard: 2
-            name: "os"
-            python-version: "3.12"
-            paths: "libs/agno/tests/unit/os libs/agno/tests/unit/context libs/agno/tests/unit/app libs/agno/tests/unit/run"
-          - shard: 3
-            name: "models-agent"
-            python-version: "3.12"
-            paths: "libs/agno/tests/unit/models libs/agno/tests/unit/agent"
-          - shard: 4
-            name: "team-knowledge"
-            python-version: "3.12"
-            paths: "libs/agno/tests/unit/team libs/agno/tests/unit/knowledge libs/agno/tests/unit/reader"
-          - shard: 5
-            name: "infra"
-            python-version: "3.12"
-            paths: "libs/agno/tests/unit/utils libs/agno/tests/unit/db libs/agno/tests/unit/workflow libs/agno/tests/unit/vectordb libs/agno/tests/unit/scheduler libs/agno/tests/unit/skills libs/agno/tests/unit/eval libs/agno/tests/unit/telemetry libs/agno/tests/unit/memory libs/agno/tests/unit/reasoning libs/agno/tests/unit/learn libs/agno/tests/unit/integrations libs/agno/tests/unit/remote libs/agno/tests/unit/registry libs/agno/tests/unit/guardrails libs/agno/tests/unit/compression libs/agno/tests/unit/agents libs/agno/tests/unit/a2a"
-      fail-fast: true # Stop all matrix jobs if one fails
+        group: [1, 2, 3, 4, 5]
+      fail-fast: true
 
-    name: tests (${{ matrix.name }})
+    name: tests (${{ matrix.group }}/5)
 
     steps:
       - uses: actions/checkout@v3
-      - name: Set up Python ${{ matrix.python-version }}
+      - name: Set up Python 3.12
         uses: actions/setup-python@v4
         with:
-          python-version: ${{ matrix.python-version }}
+          python-version: "3.12"
       - name: Set up uv with cache
         uses: astral-sh/setup-uv@v6
         with:
@@ -181,19 +161,20 @@ jobs:
         run: |
           set -e
           ./scripts/test_setup.sh
-      - name: Run tests (shard ${{ matrix.shard }})
+      - name: Run tests (group ${{ matrix.group }}/5)
         working-directory: .
         env:
           AGNO_TELEMETRY: false
-          COVERAGE_FILE: .coverage.${{ matrix.name }}
+          COVERAGE_FILE: .coverage.${{ matrix.group }}
         run: |
           source .venv/bin/activate
-          python -m pytest --cov=agno ${{ matrix.paths }} --ignore=libs/agno/tests/unit/models/litellm --ignore=libs/agno/tests/unit/tools/test_crawl4ai.py --ignore=libs/agno/tests/unit/tools/test_scrapegraph.py
+          uv pip install pytest-split --quiet
+          python -m pytest --cov=agno --splits 5 --group ${{ matrix.group }} ./libs/agno/tests/unit --ignore=libs/agno/tests/unit/models/litellm --ignore=libs/agno/tests/unit/tools/test_crawl4ai.py --ignore=libs/agno/tests/unit/tools/test_scrapegraph.py
       - name: Upload coverage artifact
         uses: actions/upload-artifact@v4
         with:
-          name: coverage-${{ matrix.name }}
-          path: .coverage.${{ matrix.name }}
+          name: coverage-${{ matrix.group }}
+          path: .coverage.${{ matrix.group }}
           retention-days: 1
           include-hidden-files: true
 
