@@ -1,3 +1,4 @@
+import logging
 from typing import Any, Dict, List, Optional
 
 import pytest
@@ -146,24 +147,29 @@ async def test_ainsert_handles_utf8_samples(text: str) -> None:
     _assert_insert_contains_text(fake_db, text)
 
 
-def test_insert_sync_replaces_invalid_surrogates() -> None:
+
+def test_insert_sync_replaces_invalid_surrogates(caplog: pytest.LogCaptureFixture) -> None:
     # Lone surrogate characters are not valid in UTF-8; they should be replaced with U+FFFD
-    bad_text = "bad\udffftext"
-    fake_db = MockVectorDb()
-    kb = Knowledge(vector_db=fake_db)
-    kb.insert(text_content=bad_text)
-    docs = fake_db.get_all_inserted_documents()
-    contents = "\n".join([getattr(d, "content", "") for d in docs])
-    # Some environments render replacement as '?' when logging/printing
-    assert "\ufffd" in contents or "�" in contents or "?" in contents
+    # Mute agno logger to prevent surrogates from reaching xdist's execnet serializer
+    with caplog.at_level(logging.CRITICAL + 1, logger="agno"):
+        bad_text = "bad\udffftext"
+        fake_db = MockVectorDb()
+        kb = Knowledge(vector_db=fake_db)
+        kb.insert(text_content=bad_text)
+        docs = fake_db.get_all_inserted_documents()
+        contents = "\n".join([getattr(d, "content", "") for d in docs])
+        # Some environments render replacement as '?' when logging/printing
+        assert "�" in contents or "?" in contents
 
 
 @pytest.mark.asyncio
-async def test_ainsert_replaces_invalid_surrogates() -> None:
-    bad_text = "\ud800orphan"
-    fake_db = MockVectorDb()
-    kb = Knowledge(vector_db=fake_db)
-    await kb.ainsert(text_content=bad_text)
-    docs = fake_db.get_all_inserted_documents()
-    contents = "\n".join([getattr(d, "content", "") for d in docs])
-    assert "\ufffd" in contents or "�" in contents or "?" in contents
+async def test_ainsert_replaces_invalid_surrogates(caplog: pytest.LogCaptureFixture) -> None:
+    # Mute agno logger to prevent surrogates from reaching xdist's execnet serializer
+    with caplog.at_level(logging.CRITICAL + 1, logger="agno"):
+        bad_text = "\ud800orphan"
+        fake_db = MockVectorDb()
+        kb = Knowledge(vector_db=fake_db)
+        await kb.ainsert(text_content=bad_text)
+        docs = fake_db.get_all_inserted_documents()
+        contents = "\n".join([getattr(d, "content", "") for d in docs])
+        assert "�" in contents or "?" in contents
