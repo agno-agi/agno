@@ -670,6 +670,14 @@ def get_team_router(
                 else:
                     raise HTTPException(status_code=400, detail="Unsupported file type")
 
+        # Merge media passed as JSON form fields (sent by AgnoClient, e.g. when this team
+        # is used as a remote member) with media from uploaded files.
+        # Popped from kwargs since they are passed explicitly to the run methods below.
+        base64_images.extend(kwargs.pop("images", None) or [])
+        base64_audios.extend(kwargs.pop("audio", None) or [])
+        base64_videos.extend(kwargs.pop("videos", None) or [])
+        document_files.extend(kwargs.pop("files", None) or [])
+
         # Extract auth token for remote teams
         auth_token = get_auth_token_from_request(request)
 
