@@ -150,3 +150,33 @@ async def test_run_entity_fresh_run_calls_arun():
         pass
 
     assert fake_entity.arun_called is True
+
+
+@pytest.mark.asyncio
+async def test_run_entity_passes_request_state_dependencies():
+    """Server-side request.state dependencies are threaded into the run (#6164)."""
+    fake_entity = CaptureKwargsEntity()
+    run_input = FakeRunInput(context=None)
+
+    async for _ in run_entity(fake_entity, run_input, dependencies={"user_id": "u-1"}):
+        pass
+
+    assert fake_entity.captured_kwargs.get("add_dependencies_to_context") is True
+    run_context = fake_entity.captured_kwargs.get("run_context")
+    assert run_context.dependencies == {"user_id": "u-1"}
+
+
+@pytest.mark.asyncio
+async def test_run_entity_request_state_deps_take_precedence_over_context():
+    """request.state deps merge with AG-UI context deps; server-side wins on key conflict."""
+    fake_entity = CaptureKwargsEntity()
+    context = [MagicMock(description="role", value="guest")]
+    run_input = FakeRunInput(context=context)
+
+    async for _ in run_entity(fake_entity, run_input, dependencies={"role": "admin", "user_id": "u-1"}):
+        pass
+
+    assert fake_entity.captured_kwargs.get("add_dependencies_to_context") is True
+    run_context = fake_entity.captured_kwargs.get("run_context")
+    # context {"role": "guest"} merged under request.state {"role": "admin", ...}; server wins.
+    assert run_context.dependencies == {"role": "admin", "user_id": "u-1"}
