@@ -56,6 +56,7 @@ def _make_agent(run_hooks_in_background: bool = True) -> MagicMock:
     agent = MagicMock()
     agent._run_hooks_in_background = run_hooks_in_background
     agent.debug_mode = False
+    agent.debug_level = 1
     agent.events_to_skip = None
     agent.store_events = False
     return agent
