@@ -142,19 +142,25 @@ jobs:
       matrix:
         include:
           - shard: 1
-            name: "tools-agent"
+            name: "tools"
             python-version: "3.12"
-            paths: "libs/agno/tests/unit/tools libs/agno/tests/unit/agent libs/agno/tests/unit/context libs/agno/tests/unit/run libs/agno/tests/unit/memory"
+            paths: "libs/agno/tests/unit/tools"
           - shard: 2
-            name: "os-models-team"
+            name: "os"
             python-version: "3.12"
-            paths: "libs/agno/tests/unit/os libs/agno/tests/unit/models libs/agno/tests/unit/team libs/agno/tests/unit/knowledge libs/agno/tests/unit/reader libs/agno/tests/unit/skills libs/agno/tests/unit/eval"
+            paths: "libs/agno/tests/unit/os libs/agno/tests/unit/context libs/agno/tests/unit/app libs/agno/tests/unit/run"
           - shard: 3
-            name: "infra-utils"
+            name: "models-agent"
             python-version: "3.12"
-            # Catch-all: runs all unit tests except shard 1+2 directories
-            paths: "libs/agno/tests/unit"
-            extra_ignores: "--ignore=libs/agno/tests/unit/tools --ignore=libs/agno/tests/unit/agent --ignore=libs/agno/tests/unit/context --ignore=libs/agno/tests/unit/run --ignore=libs/agno/tests/unit/memory --ignore=libs/agno/tests/unit/os --ignore=libs/agno/tests/unit/models --ignore=libs/agno/tests/unit/team --ignore=libs/agno/tests/unit/knowledge --ignore=libs/agno/tests/unit/reader --ignore=libs/agno/tests/unit/skills --ignore=libs/agno/tests/unit/eval"
+            paths: "libs/agno/tests/unit/models libs/agno/tests/unit/agent"
+          - shard: 4
+            name: "team-knowledge"
+            python-version: "3.12"
+            paths: "libs/agno/tests/unit/team libs/agno/tests/unit/knowledge libs/agno/tests/unit/reader"
+          - shard: 5
+            name: "infra"
+            python-version: "3.12"
+            paths: "libs/agno/tests/unit/utils libs/agno/tests/unit/db libs/agno/tests/unit/workflow libs/agno/tests/unit/vectordb libs/agno/tests/unit/scheduler libs/agno/tests/unit/skills libs/agno/tests/unit/eval libs/agno/tests/unit/telemetry libs/agno/tests/unit/memory libs/agno/tests/unit/reasoning libs/agno/tests/unit/learn libs/agno/tests/unit/integrations libs/agno/tests/unit/remote libs/agno/tests/unit/registry libs/agno/tests/unit/guardrails libs/agno/tests/unit/compression libs/agno/tests/unit/agents libs/agno/tests/unit/a2a"
       fail-fast: true # Stop all matrix jobs if one fails
 
     name: tests (${{ matrix.name }})
@@ -182,8 +188,7 @@ jobs:
           COVERAGE_FILE: .coverage.${{ matrix.name }}
         run: |
           source .venv/bin/activate
-          uv pip install pytest-xdist --quiet
-          python -m pytest -n auto --dist loadgroup --cov=agno ${{ matrix.paths }} ${{ matrix.extra_ignores }} --ignore=libs/agno/tests/unit/models/litellm --ignore=libs/agno/tests/unit/tools/test_crawl4ai.py --ignore=libs/agno/tests/unit/tools/test_scrapegraph.py
+          python -m pytest --cov=agno ${{ matrix.paths }} --ignore=libs/agno/tests/unit/models/litellm --ignore=libs/agno/tests/unit/tools/test_crawl4ai.py --ignore=libs/agno/tests/unit/tools/test_scrapegraph.py
       - name: Upload coverage artifact
         uses: actions/upload-artifact@v4
         with:
