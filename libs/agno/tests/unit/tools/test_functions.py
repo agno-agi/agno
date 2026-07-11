@@ -674,6 +674,30 @@ async def test_function_call_async_with_tool_hooks():
 
 
 @pytest.mark.asyncio
+async def test_function_call_async_awaits_coroutine_returned_by_sync_tool_hook():
+    """A sync middleware may transparently return its async next call."""
+    hook_calls = []
+
+    def tool_hook(function_name: str, function_call: Callable, arguments: Dict[str, Any]):
+        hook_calls.append(function_name)
+        return function_call(**arguments)
+
+    @tool(tool_hooks=[tool_hook])
+    async def test_func(param1: str) -> str:
+        return f"processed-{param1}"
+
+    test_func.process_entrypoint()
+    result = await FunctionCall(
+        function=test_func,
+        arguments={"param1": "value1"},
+    ).aexecute()
+
+    assert result.status == "success"
+    assert result.result == "processed-value1"
+    assert hook_calls == ["test_func"]
+
+
+@pytest.mark.asyncio
 async def test_function_call_async_with_empty_tool_hooks():
     """Async coroutine entrypoint with tool_hooks=[] executes correctly.
 
