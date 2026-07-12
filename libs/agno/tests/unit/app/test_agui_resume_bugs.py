@@ -1,7 +1,7 @@
 """
 Reproduce bugs reported in PR #8565 review:
 1. resume_paused_run picks oldest paused run, not newest
-2. apply_tool_results_to_requirements crashes on non-external-execution requirements
+2. resolve_requirements_from_tool_messages crashes on non-external-execution requirements
 """
 
 from unittest.mock import AsyncMock, MagicMock
@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from agno.models.response import ToolExecution
-from agno.os.interfaces.agui.resume import apply_tool_results_to_requirements, resume_paused_run
+from agno.os.interfaces.agui.resume import resolve_requirements_from_tool_messages, resume_paused_run
 from agno.run.agent import RunOutput
 from agno.run.base import RunContext, RunStatus
 from agno.run.requirement import RunRequirement
@@ -58,7 +58,9 @@ class TestBug1_OldestPausedRunPicked:
     @pytest.mark.asyncio
     async def test_multiple_paused_runs_picks_wrong_one(self):
         """BUG REPRODUCTION: Multiple paused runs, newest should be picked."""
-        entity = MagicMock()
+        from agno.agent import Agent
+
+        entity = MagicMock(spec=Agent)
         entity.db = MagicMock()
 
         # Session has TWO paused runs - old one first, new one second
@@ -99,7 +101,7 @@ class TestBug1_OldestPausedRunPicked:
 
 class TestBug2_CrashOnNonExternalRequirement:
     """
-    Bug: apply_tool_results_to_requirements crashes if a matched requirement
+    Bug: resolve_requirements_from_tool_messages crashes if a matched requirement
     isn't awaiting external execution.
 
     Scenario:
@@ -131,7 +133,7 @@ class TestBug2_CrashOnNonExternalRequirement:
         # BUG: This should NOT crash, but currently it will
         # because set_external_execution_result raises on resolved requirements
         try:
-            apply_tool_results_to_requirements([req], tool_messages)
+            resolve_requirements_from_tool_messages([req], tool_messages)
             # If we get here without crash, bug is fixed or doesn't exist
         except ValueError as e:
             pytest.fail(
@@ -139,35 +141,35 @@ class TestBug2_CrashOnNonExternalRequirement:
                 "Bug: should skip non-external requirements instead of crashing."
             )
 
-    def test_confirmation_requirement_not_affected(self):
-        """Confirmation requirements have different tool_call_ids, shouldn't match."""
-        # This tests that confirmation requirements don't get caught by accident
+    def test_confirmation_requirement_with_unmatched_id_unchanged(self):
+        """Confirmation requirements with non-matching tool_call_ids stay unchanged."""
         req = RunRequirement(
             tool_execution=ToolExecution(
                 tool_call_id="call_confirmation",
                 tool_name="delete_file",
                 tool_args={"path": "/tmp/foo"},
                 requires_confirmation=True,
-                external_execution_required=False,  # NOT external
             )
         )
 
         # Different tool_call_id, should not match
-        tool_messages = [FakeToolMessage("call_external", "some result")]
+        tool_messages = [FakeToolMessage("call_other", "some result")]
 
-        # This should not crash and should not modify the requirement
-        result = apply_tool_results_to_requirements([req], tool_messages)
+        result = resolve_requirements_from_tool_messages([req], tool_messages)
 
-        assert result[0].tool_execution.result is None
+        # Unmatched requirement stays unresolved
+        assert result[0].is_resolved() is False
+        assert result[0].tool_execution.confirmed is None
 
 
 class TestBug2_Variant_MixedRequirements:
     """
-    More realistic scenario: paused run has both external and non-external requirements.
+    More realistic scenario: paused run has both external and confirmation requirements.
+    Both pause types are now handled by resolve_requirements_from_tool_messages.
     """
 
-    def test_mixed_requirements_only_external_updated(self):
-        """Only external-execution requirements should receive results."""
+    def test_mixed_requirements_all_processed_correctly(self):
+        """All pause types are processed by resolve_requirements_from_tool_messages."""
         external_req = RunRequirement(
             tool_execution=ToolExecution(
                 tool_call_id="call_ext",
@@ -180,22 +182,20 @@ class TestBug2_Variant_MixedRequirements:
                 tool_call_id="call_confirm",
                 tool_name="delete_file",
                 requires_confirmation=True,
-                external_execution_required=False,
             )
         )
 
         tool_messages = [
             FakeToolMessage("call_ext", "Background changed"),
-            FakeToolMessage("call_confirm", "This shouldn't match"),
+            FakeToolMessage("call_confirm", '{"accepted": true}'),
         ]
 
-        # The confirmation req matches by tool_call_id but shouldn't be updated
-        # BUG: if we try to set_external_execution_result on it, it will crash
-        try:
-            result = apply_tool_results_to_requirements([external_req, confirmation_req], tool_messages)
-            # External should be updated
-            assert result[0].tool_execution.result == "Background changed"
-            # Confirmation should be untouched
-            assert result[1].tool_execution.result is None
-        except ValueError as e:
-            pytest.fail(f"Crashed on non-external requirement: {e}")
+        result = resolve_requirements_from_tool_messages([external_req, confirmation_req], tool_messages)
+
+        # External execution: result set directly
+        assert result[0].is_resolved()
+        assert result[0].external_execution_result == "Background changed"
+
+        # Confirmation: confirmed flag set
+        assert result[1].is_resolved()
+        assert result[1].tool_execution.confirmed is True
