@@ -12,8 +12,9 @@ Tests cover:
 - Parallel step guard for executor HITL
 """
 
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
+from agno.run.base import RunContext
 from agno.run.workflow import (
     StepExecutorPausedEvent,
     WorkflowRunEvent,
@@ -26,6 +27,49 @@ from agno.workflow.types import (
     StepRequirement,
     StepType,
 )
+from agno.workflow.workflow import Workflow
+
+
+def _create_executor_resume_case():
+    executor = MagicMock()
+    step = Step(name="executor_step", agent=executor)
+    step._store_executor_response = MagicMock()
+    step._process_step_output = MagicMock(return_value=StepOutput(content="completed"))
+
+    paused_run_response = MagicMock()
+    paused_run_response.run_id = "executor-run"
+
+    workflow_run_response = WorkflowRunOutput()
+    workflow_run_response.step_executor_runs = [paused_run_response]
+
+    step_requirement = StepRequirement(
+        step_id="executor-step",
+        step_name="executor_step",
+        step_index=0,
+        requires_executor_input=True,
+        executor_run_id="executor-run",
+    )
+    run_context = RunContext(
+        run_id="workflow-run",
+        session_id="workflow-session",
+        session_state={"counter": 1},
+    )
+
+    return (
+        Workflow(telemetry=False),
+        step,
+        executor,
+        step_requirement,
+        workflow_run_response,
+        paused_run_response,
+        run_context,
+    )
+
+
+async def _empty_async_stream():
+    for event in ():
+        yield event
+
 
 # =============================================================================
 # StepOutput.is_paused Tests
@@ -430,6 +474,97 @@ class TestWorkflowRunOutputExecutorProperties:
         result = output.steps_requiring_executor_resolution
         assert len(result) == 1
         assert result[0].step_name == "executor"
+
+
+# =============================================================================
+# Executor Resume RunContext Tests
+# =============================================================================
+
+
+class TestExecutorResumeRunContext:
+    """Tests that executor HITL resume preserves the workflow RunContext."""
+
+    def test_route_executor_requirements_forwards_run_context(self):
+        workflow, step, executor, step_req, workflow_output, paused_output, run_context = _create_executor_resume_case()
+        continued_response = MagicMock()
+        continued_response.is_paused = False
+        executor.continue_run.return_value = continued_response
+
+        workflow._route_executor_requirements(
+            step=step,
+            step_req=step_req,
+            workflow_run_response=workflow_output,
+            run_context=run_context,
+        )
+
+        executor.continue_run.assert_called_once_with(
+            run_response=paused_output,
+            run_context=run_context,
+        )
+        assert executor.continue_run.call_args.kwargs["run_context"] is run_context
+
+    def test_route_executor_requirements_stream_forwards_run_context(self):
+        workflow, step, executor, step_req, workflow_output, paused_output, run_context = _create_executor_resume_case()
+        executor.continue_run.return_value = iter(())
+
+        list(
+            workflow._route_executor_requirements_stream(
+                step=step,
+                step_req=step_req,
+                workflow_run_response=workflow_output,
+                run_context=run_context,
+            )
+        )
+
+        executor.continue_run.assert_called_once_with(
+            run_response=paused_output,
+            run_context=run_context,
+            stream=True,
+            stream_events=True,
+            yield_run_output=True,
+        )
+        assert executor.continue_run.call_args.kwargs["run_context"] is run_context
+
+    async def test_aroute_executor_requirements_forwards_run_context(self):
+        workflow, step, executor, step_req, workflow_output, paused_output, run_context = _create_executor_resume_case()
+        continued_response = MagicMock()
+        continued_response.is_paused = False
+        executor.acontinue_run = AsyncMock(return_value=continued_response)
+
+        await workflow._aroute_executor_requirements(
+            step=step,
+            step_req=step_req,
+            workflow_run_response=workflow_output,
+            run_context=run_context,
+        )
+
+        executor.acontinue_run.assert_awaited_once_with(
+            run_response=paused_output,
+            run_context=run_context,
+        )
+        assert executor.acontinue_run.call_args.kwargs["run_context"] is run_context
+
+    async def test_aroute_executor_requirements_stream_forwards_run_context(self):
+        workflow, step, executor, step_req, workflow_output, paused_output, run_context = _create_executor_resume_case()
+        executor.acontinue_run.return_value = _empty_async_stream()
+
+        events = workflow._aroute_executor_requirements_stream(
+            step=step,
+            step_req=step_req,
+            workflow_run_response=workflow_output,
+            run_context=run_context,
+        )
+        async for _ in events:
+            pass
+
+        executor.acontinue_run.assert_called_once_with(
+            run_response=paused_output,
+            run_context=run_context,
+            stream=True,
+            stream_events=True,
+            yield_run_output=True,
+        )
+        assert executor.acontinue_run.call_args.kwargs["run_context"] is run_context
 
 
 # =============================================================================
