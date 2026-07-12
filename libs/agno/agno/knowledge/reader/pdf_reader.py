@@ -267,7 +267,7 @@ class BasePDFReader(Reader):
         if pdf_password is None:
             try:
                 if doc_reader.decrypt(""):
-                    log_debug(f'Successfully decrypted PDF file "{doc_name}" with blank password')
+                    log_debug(f'Successfully decrypted PDF file "{doc_name}"')
                     return True
             except Exception:
                 pass
