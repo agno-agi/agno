@@ -363,24 +363,20 @@ def test_pdf_reader_no_password_for_encrypted_pdf_returns_empty():
 
 
 def test_pdf_reader_auto_tries_blank_password():
-    """PDFs with empty user password should work without passing password param."""
     pdf = _create_encrypted_pdf_with_empty_password()
 
     reader = PDFReader()
     docs = reader.read(pdf)
-    assert docs is not None
-    assert len(docs) >= 1
+    assert len(docs) == 1
 
 
 @pytest.mark.asyncio
 async def test_pdf_reader_async_auto_tries_blank_password():
-    """Async: PDFs with empty user password should work without passing password param."""
     pdf = _create_encrypted_pdf_with_empty_password()
 
     reader = PDFReader()
     docs = await reader.async_read(pdf)
-    assert docs is not None
-    assert len(docs) >= 1
+    assert len(docs) == 1
 
 
 @pytest.mark.asyncio
