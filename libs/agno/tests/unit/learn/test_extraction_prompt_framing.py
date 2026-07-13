@@ -3,15 +3,12 @@
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
+import pytest
+
 from agno.learn.config import UserMemoryConfig, UserProfileConfig
 from agno.learn.stores.user_memory import UserMemoryStore
 from agno.learn.stores.user_profile import UserProfileStore
 from agno.models.message import Message
-
-CONVERSATION = [
-    Message(role="user", content="My name is Alice and I am a cardiologist."),
-    Message(role="assistant", content="Nice to meet you, Alice."),
-]
 
 
 class _RecordingModel:
@@ -34,7 +31,18 @@ class _RecordingModel:
         return self._record(messages)
 
 
-def _make_profile_store():
+@pytest.fixture
+def conversation():
+    """Sample conversation for extraction tests."""
+    return [
+        Message(role="user", content="My name is Alice and I am a cardiologist."),
+        Message(role="assistant", content="Nice to meet you, Alice."),
+    ]
+
+
+@pytest.fixture
+def profile_store_and_model():
+    """UserProfileStore with recording model."""
     model = _RecordingModel()
     store = UserProfileStore(config=UserProfileConfig(model=model, db=MagicMock()))
     store.get = MagicMock(return_value=None)
@@ -46,7 +54,9 @@ def _make_profile_store():
     return store, model
 
 
-def _make_memory_store():
+@pytest.fixture
+def memory_store_and_model():
+    """UserMemoryStore with recording model."""
     model = _RecordingModel()
     store = UserMemoryStore(config=UserMemoryConfig(model=model, db=MagicMock()))
     store.get = MagicMock(return_value=[])
@@ -59,37 +69,37 @@ def _make_memory_store():
     return store, model
 
 
-def test_user_profile_frames_transcript():
-    store, model = _make_profile_store()
-    store.extract_and_save(messages=CONVERSATION, user_id="u1")
+def test_user_profile_frames_transcript_sync(profile_store_and_model, conversation):
+    store, model = profile_store_and_model
+    store.extract_and_save(messages=conversation, user_id="u1")
 
     user_message = model.captured_messages[-1]
-    assert user_message.content.startswith("Extract profile information from this conversation:")
+    assert user_message.content.startswith("Extract profile information from this conversation:\n\n")
     assert "cardiologist" in user_message.content
 
 
-async def test_user_profile_frames_transcript_async():
-    store, model = _make_profile_store()
-    await store.aextract_and_save(messages=CONVERSATION, user_id="u1")
+async def test_user_profile_frames_transcript_async(profile_store_and_model, conversation):
+    store, model = profile_store_and_model
+    await store.aextract_and_save(messages=conversation, user_id="u1")
 
     user_message = model.captured_messages[-1]
-    assert user_message.content.startswith("Extract profile information from this conversation:")
+    assert user_message.content.startswith("Extract profile information from this conversation:\n\n")
     assert "cardiologist" in user_message.content
 
 
-def test_user_memory_frames_transcript():
-    store, model = _make_memory_store()
-    store.extract_and_save(messages=CONVERSATION, user_id="u1")
+def test_user_memory_frames_transcript_sync(memory_store_and_model, conversation):
+    store, model = memory_store_and_model
+    store.extract_and_save(messages=conversation, user_id="u1")
 
     user_message = model.captured_messages[-1]
-    assert user_message.content.startswith("Extract memories from this conversation:")
+    assert user_message.content.startswith("Extract memories from this conversation:\n\n")
     assert "cardiologist" in user_message.content
 
 
-async def test_user_memory_frames_transcript_async():
-    store, model = _make_memory_store()
-    await store.aextract_and_save(messages=CONVERSATION, user_id="u1")
+async def test_user_memory_frames_transcript_async(memory_store_and_model, conversation):
+    store, model = memory_store_and_model
+    await store.aextract_and_save(messages=conversation, user_id="u1")
 
     user_message = model.captured_messages[-1]
-    assert user_message.content.startswith("Extract memories from this conversation:")
+    assert user_message.content.startswith("Extract memories from this conversation:\n\n")
     assert "cardiologist" in user_message.content
