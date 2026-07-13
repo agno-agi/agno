@@ -13,7 +13,6 @@ from agno.agent.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIResponses
 
-
 user_input_agent = Agent(
     name="user_input",
     model=OpenAIResponses(id="gpt-5.5"),

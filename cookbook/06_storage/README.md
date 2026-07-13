@@ -10,6 +10,7 @@ uv pip install psycopg2-binary  # PostgreSQL
 uv pip install pymongo         # MongoDB
 uv pip install mysql-connector-python  # MySQL
 uv pip install redis           # Redis
+uv pip install valkey-glide-sync  # Valkey
 uv pip install google-cloud-firestore  # Firestore
 uv pip install boto3           # DynamoDB
 uv pip install singlestoredb   # SingleStore
@@ -39,6 +40,7 @@ agent = Agent(
 - [`mongo`](mongo/) - MongoDB document database integration
 - [`mysql`](mysql/) - MySQL relational database integration
 - [`redis`](redis/) - Redis in-memory data structure store integration
+- [`valkey`](valkey/) - Valkey in-memory data structure store integration
 - [`singlestore`](singlestore/) - SingleStore distributed SQL database integration
 - [`firestore`](firestore/) - Google Cloud Firestore NoSQL database integration
 - [`dynamodb`](dynamodb/) - AWS DynamoDB NoSQL database integration
