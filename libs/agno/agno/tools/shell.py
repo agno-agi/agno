@@ -20,6 +20,12 @@ DEFAULT_BLACKLIST = {
 
 
 class ShellTools(Toolkit):
+    """Toolkit for executing shell commands with safety features.
+
+    Provides tools to run shell commands, navigate directories, list files, and get OS info.
+    Includes optional command blacklisting and timeout protection.
+    """
+
     def __init__(
         self,
         base_dir: Optional[Union[Path, str]] = None,
@@ -34,6 +40,21 @@ class ShellTools(Toolkit):
         all: bool = False,
         **kwargs,
     ):
+        """Initialize ShellTools.
+
+        Args:
+            base_dir: Base directory for shell operations (default: current directory).
+            enable_blacklist: Enable command blacklist for safety (default: False).
+            blacklist: Custom set of blacklisted commands (defaults to DEFAULT_BLACKLIST).
+            timeout: Command execution timeout in seconds (default: 30).
+            enable_run_shell_command: Enable the run_shell_command tool.
+            enable_change_directory: Enable the change_directory tool.
+            enable_get_current_directory: Enable the get_current_directory tool.
+            enable_list_files: Enable the list_files tool.
+            enable_get_os_info: Enable the get_os_info tool.
+            all: Enable all tools (overrides individual enable flags).
+            **kwargs: Additional arguments passed to Toolkit.
+        """
         self.base_dir: Path = Path(base_dir) if base_dir else Path.cwd()
         self.current_dir: Path = self.base_dir
         self.enable_blacklist: bool = enable_blacklist
@@ -60,6 +81,7 @@ class ShellTools(Toolkit):
         super().__init__(name="shell_tools", tools=tools, **kwargs)
 
     def _is_command_blacklisted(self, command: Union[str, List[str]]) -> bool:
+        """Check if a command is blacklisted."""
         if not self.enable_blacklist:
             return False
 

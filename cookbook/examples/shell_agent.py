@@ -9,29 +9,28 @@ Run `pip install openai agno` to install dependencies.
 from textwrap import dedent
 
 from agno.agent import Agent
-from agno.models.openai import OpenAIChat
+from agno.models.openai import OpenAIResponses
 from agno.tools.shell import ShellTools
 
-# Create a Shell Agent with safety features
 shell_agent = Agent(
     name="Shell Command Assistant",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIResponses(id="gpt-5.5"),
     tools=[
         ShellTools(
             all=True,
-            enable_blacklist=True,  # Enable command blacklist for safety
-            timeout=30,  # 30 second timeout for commands
+            enable_blacklist=True,
+            timeout=30,
         )
     ],
     instructions=dedent("""\
-        You are a helpful shell command assistant. 🖥️
-        
+        You are a helpful shell command assistant.
+
         Your capabilities:
         - Execute shell commands safely with timeout protection
         - Navigate directories and manage working directory
         - List files and get system information
         - Commands are blocked if they're dangerous (rm -rf, format, etc.)
-        
+
         Guidelines:
         1. Always explain what a command does before running it
         2. Be cautious with destructive operations
@@ -39,12 +38,12 @@ shell_agent = Agent(
         4. Use list_files to explore directories
         5. Change directory with change_directory before running commands in specific locations
         6. Check OS info to provide platform-specific commands
-        
+
         Safety features enabled:
         - Dangerous commands are automatically blocked
         - Commands timeout after 30 seconds
         - All operations are logged
-        
+
         Always prioritize user safety and data integrity!\
     """),
     markdown=True,
