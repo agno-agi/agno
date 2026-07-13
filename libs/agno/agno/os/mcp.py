@@ -1171,7 +1171,19 @@ def _identity_bridge_kwargs(os: "AgentOS") -> Dict[str, Any]:
     config = getattr(os, "authorization_config", None)
     admin_scope = getattr(config, "admin_scope", None) if config is not None else None
     user_isolation = bool(getattr(config, "user_isolation", False)) if config is not None else False
-    return {"admin_scope": admin_scope or AgentOSScope.ADMIN.value, "user_isolation": user_isolation}
+    # User directory: mcp_auth exempts /mcp from the parent AuthMiddleware, so the bridge
+    # must re-apply the disabled-user kill-switch itself. Thread the store + policy through.
+    return {
+        "admin_scope": admin_scope or AgentOSScope.ADMIN.value,
+        "user_isolation": user_isolation,
+        "user_store": getattr(config, "user_store", None) if config is not None else None,
+        "user_auto_provision": bool(getattr(config, "auto_provision_users", False)) if config is not None else False,
+        "user_email_claim": getattr(config, "user_email_claim", "email") if config is not None else "email",
+        "user_name_claim": getattr(config, "user_name_claim", "name") if config is not None else "name",
+        "user_directory_fail_closed": bool(getattr(config, "directory_error_fail_closed", False))
+        if config is not None
+        else False,
+    }
 
 
 # Localhost defaults so a desktop / local MCP server is protected with zero extra config.

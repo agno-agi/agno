@@ -173,6 +173,10 @@ sql = ["sqlalchemy"]
 sqlite = ["sqlalchemy", "aiosqlite"]
 valkey = ["valkey-glide-sync>=2.1.0"]
 
+# Managed roles + credential-less user directory (ManagedRoleStore / ManagedUserStore),
+# which persist to a SQL database. Referenced by the role_store/user_store docstrings.
+roles = ["sqlalchemy"]
+
 # Dependencies for Vector databases
 cassandra = ["cassio"]
 chromadb = ["chromadb"]
