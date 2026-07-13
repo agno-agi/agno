@@ -190,10 +190,10 @@ class TestAgentStateSnapshot:
             mock_arun.return_value = mock_stream()
             client.post("/agui", json=make_request_body("Test", state=initial_state))
 
-        # Verify agent.arun received session_state
+        # Verify agent.arun received session_state via run_context
         mock_arun.assert_called_once()
         call_kwargs = mock_arun.call_args.kwargs
-        assert call_kwargs["session_state"] == initial_state
+        assert call_kwargs["run_context"].session_state == initial_state
 
 
 class TestAgentStateDelta:
@@ -232,7 +232,7 @@ class TestAgentStateDelta:
                 agent,
                 "arun",
             ) as mock_arun,
-            patch("agno.os.interfaces.agui.router.validate_agui_state", side_effect=mock_validate),
+            patch("agno.os.interfaces.agui.router.validate_state", side_effect=mock_validate),
         ):
             mock_arun.return_value = mock_stream()
             response = client.post("/agui", json=make_request_body("Increment", state={"counter": 0}))
@@ -283,7 +283,7 @@ class TestAgentStateDelta:
                 agent,
                 "arun",
             ) as mock_arun,
-            patch("agno.os.interfaces.agui.router.validate_agui_state", side_effect=mock_validate),
+            patch("agno.os.interfaces.agui.router.validate_state", side_effect=mock_validate),
         ):
             mock_arun.return_value = mock_stream()
             response = client.post("/agui", json=make_request_body("Noop", state={"counter": 0}))
@@ -355,7 +355,7 @@ class TestAgentStateEdgeCases:
                 agent,
                 "arun",
             ) as mock_arun,
-            patch("agno.os.interfaces.agui.router.validate_agui_state", side_effect=mock_validate),
+            patch("agno.os.interfaces.agui.router.validate_state", side_effect=mock_validate),
         ):
             mock_arun.return_value = mock_stream()
             response = client.post(

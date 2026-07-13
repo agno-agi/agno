@@ -14,30 +14,21 @@
 
 ## Introduction
 
-Agno is an SDK for building agent platforms.
+Agno is a framework and runtime for building agent platforms.
 
-- Build agents using any agent framework.
-- Run them as production services with tracing, scheduling, and RBAC.
-- Manage using a single control plane.
+- Build your agent platform using the Agno SDK.
+- Run your agent platform using the AgentOS runtime.
+- Manage everything using the AgentOS control plane.
 
-Agno allows you to own your agent stack. Maintain control of your data, context, tools, permissions, memory and human-review loops. Run your platform in your cloud, and manage it using a beautiful UI.
+Agno allows you to own your agent stack. Maintain control of your data, context, tools, permissions, memory and human-review loops. Run your platform in your own cloud, and manage it using a beautiful UI.
 
 <img width="3192" height="2038" alt="demo-os" src="https://github.com/user-attachments/assets/6d21e6bc-111f-4b81-ba29-6550fead89b2" />
-
-## What you can build
-
-Agno can bring any agent to life, here are some examples:
-
-- [Coda →](https://docs.agno.com/tutorials/coda/overview) A code companion that lives in Slack and works alongside your team.
-- [Dash →](https://docs.agno.com/tutorials/dash/overview) A self-learning data agent that grounds answers in 6 layers of context.
-- [Scout →](https://docs.agno.com/tutorials/scout/overview) A context agent that navigates Slack and Google Drive to answer questions.
-- [Auto Improving Agent Platform →](https://docs.agno.com/tutorials/starter/overview) Build your own agent platform with an auto-improvement loop.
 
 ## Get started
 
 - [Read the docs](https://docs.agno.com)
 - [Build your first agent in 20 lines of code.](https://docs.agno.com/first-agent)
-- [Build an auto-improving agent platform managed entirely by claude code.](https://docs.agno.com/tutorials/starter/overview)
+- [Build your own agent platform.](https://docs.agno.com/agent-platform/overview)
 
 ## Features
 

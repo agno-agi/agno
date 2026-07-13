@@ -87,6 +87,42 @@ def test_workflow_run_events():
     assert json.loads(event.to_json(indent=None)) == expected_json_dict
 
 
+def test_workflow_completed_event_serializes_token_metrics():
+    from agno.models.metrics import RunMetrics
+    from agno.run.workflow import WorkflowCompletedEvent
+    from agno.workflow.types import StepMetrics, WorkflowMetrics
+
+    event = WorkflowCompletedEvent(
+        run_id="workflow-run",
+        metrics=WorkflowMetrics(
+            steps={
+                "research": StepMetrics(
+                    step_name="research",
+                    executor_type="agent",
+                    executor_name="Research Agent",
+                    metrics=RunMetrics(input_tokens=12, output_tokens=8, total_tokens=20),
+                )
+            },
+            duration=1.5,
+        ),
+    )
+
+    metrics = event.to_dict()["metrics"]
+
+    assert metrics["duration"] == 1.5
+    assert metrics["steps"]["research"]["metrics"] == {
+        "input_tokens": 12,
+        "output_tokens": 8,
+        "total_tokens": 20,
+    }
+
+    reconstructed = WorkflowCompletedEvent.from_dict(event.to_dict())
+
+    assert isinstance(reconstructed.metrics, WorkflowMetrics)
+    assert reconstructed.metrics.steps["research"].metrics is not None
+    assert reconstructed.metrics.steps["research"].metrics.total_tokens == 20
+
+
 def test_agent_session_state_in_run_output():
     """Test that RunOutput includes session_state field."""
     from agno.run.agent import RunOutput
@@ -142,6 +178,34 @@ def test_run_completed_event_includes_files():
     assert reconstructed.files is not None
     assert len(reconstructed.files) == 1
     assert reconstructed.files[0].filename == "report.pdf"
+
+
+def test_run_content_event_includes_image():
+    """RunContentEvent must serialize its singular `image` field in to_dict().
+
+    `image` is excluded from the asdict() call but, unlike its sibling media
+    fields (images/videos/audio/response_audio), was never re-added, so it was
+    silently dropped from to_dict()/to_json() (e.g. in AgentOS SSE streaming).
+    """
+    from agno.media import Image
+    from agno.run.agent import RunContentEvent
+
+    event = RunContentEvent(
+        content="hello",
+        image=Image(id="img-1", url="https://example.com/a.png"),
+    )
+
+    assert event.image is not None
+
+    event_dict = event.to_dict()
+    assert "image" in event_dict
+    assert event_dict["image"]["id"] == "img-1"
+    assert event_dict["image"]["url"] == "https://example.com/a.png"
+
+    reconstructed = type(event).from_dict(event_dict)
+    assert isinstance(reconstructed.image, Image)
+    assert reconstructed.image.id == "img-1"
+    assert reconstructed.image.url == "https://example.com/a.png"
 
 
 def test_agent_session_state_in_completed_event():

@@ -29,13 +29,12 @@ def mock_calendar_service():
 @pytest.fixture
 def calendar_tools(mock_credentials, mock_calendar_service):
     with (
-        patch("agno.tools.google.calendar.build") as mock_build,
+        patch("googleapiclient.discovery.build") as mock_build,
         patch("agno.tools.google.calendar.authenticate", lambda func: func),
     ):
         mock_build.return_value = mock_calendar_service
-        tools = GoogleCalendarTools()
-        tools.creds = mock_credentials
-        tools.service = mock_calendar_service
+        tools = GoogleCalendarTools(creds=mock_credentials)
+        tools._service = mock_calendar_service
         return tools
 
 
@@ -43,17 +42,17 @@ def calendar_tools(mock_credentials, mock_calendar_service):
 def calendar_tools_all(mock_credentials, mock_calendar_service):
     """Instance with ALL tools enabled including write tools."""
     with (
-        patch("agno.tools.google.calendar.build") as mock_build,
+        patch("googleapiclient.discovery.build") as mock_build,
         patch("agno.tools.google.calendar.authenticate", lambda func: func),
     ):
         mock_build.return_value = mock_calendar_service
         tools = GoogleCalendarTools(
+            creds=mock_credentials,
             quick_add_event=True,
             move_event=True,
             respond_to_event=True,
         )
-        tools.creds = mock_credentials
-        tools.service = mock_calendar_service
+        tools._service = mock_calendar_service
         return tools
 
 
@@ -142,12 +141,12 @@ class TestGoogleCalendarToolsInitialization:
             service_account_path="/path/to/key.json",
             delegated_user="user@example.com",
         )
-        assert tools.service_account_path == "/path/to/key.json"
-        assert tools.delegated_user == "user@example.com"
+        assert tools._auth.service_account_path == "/path/to/key.json"
+        assert tools._auth.delegated_user == "user@example.com"
 
     def test_init_login_hint(self):
         tools = GoogleCalendarTools(login_hint="user@example.com")
-        assert tools.login_hint == "user@example.com"
+        assert tools._auth.login_hint == "user@example.com"
 
 
 class TestBackwardCompat:
@@ -175,7 +174,7 @@ class TestBackwardCompat:
 class TestScopeValidation:
     def test_default_scopes(self):
         tools = GoogleCalendarTools()
-        assert tools.scopes == GoogleCalendarTools.DEFAULT_SCOPES
+        assert tools.scopes == GoogleCalendarTools.default_scopes
 
     def test_read_only_tools_get_default_scopes(self):
         tools = GoogleCalendarTools(
@@ -183,7 +182,7 @@ class TestScopeValidation:
             update_event=False,
             delete_event=False,
         )
-        assert tools.scopes == GoogleCalendarTools.DEFAULT_SCOPES
+        assert tools.scopes == GoogleCalendarTools.default_scopes
 
     def test_custom_scopes_write_validated(self):
         with pytest.raises(ValueError, match="required for write operations"):
@@ -246,6 +245,14 @@ class TestListEvents:
         mock_calendar_service.events().list().execute.return_value = {"items": mock_events}
         result = calendar_tools.list_events(start_date="2025-07-19T10:00:00")
         assert json.loads(result) == mock_events
+        assert mock_calendar_service.events().list.call_args.kwargs["timeMin"] == "2025-07-19T10:00:00.000000Z"
+
+    def test_list_events_with_timezone_aware_start_date(self, calendar_tools, mock_calendar_service):
+        mock_events = [{"id": "1", "summary": "Test Event"}]
+        mock_calendar_service.events().list().execute.return_value = {"items": mock_events}
+        result = calendar_tools.list_events(start_date="2026-07-01T10:00:00+02:00")
+        assert json.loads(result) == mock_events
+        assert mock_calendar_service.events().list.call_args.kwargs["timeMin"] == "2026-07-01T08:00:00.000000Z"
 
     def test_list_events_invalid_date_format(self, calendar_tools):
         result = calendar_tools.list_events(start_date="invalid-date")
@@ -329,6 +336,29 @@ class TestCreateEvent:
         )
         assert "error" in json.loads(result)
 
+    def test_create_event_timezone_aware_preserves_offset(self, calendar_tools, mock_calendar_service):
+        mock_calendar_service.events().insert().execute.return_value = {"id": "test_id"}
+        calendar_tools.create_event(
+            start_date="2026-07-01T10:00:00+02:00",
+            end_date="2026-07-01T11:00:00+02:00",
+            title="Test Event",
+            timezone="UTC",
+        )
+        body = mock_calendar_service.events().insert.call_args.kwargs["body"]
+        assert body["start"]["dateTime"] == "2026-07-01T10:00:00+02:00"
+        assert body["end"]["dateTime"] == "2026-07-01T11:00:00+02:00"
+
+    def test_create_event_naive_datetime_left_for_timezone(self, calendar_tools, mock_calendar_service):
+        mock_calendar_service.events().insert().execute.return_value = {"id": "test_id"}
+        calendar_tools.create_event(
+            start_date="2026-07-01T10:00:00",
+            end_date="2026-07-01T11:00:00",
+            title="Test Event",
+            timezone="America/New_York",
+        )
+        body = mock_calendar_service.events().insert.call_args.kwargs["body"]
+        assert body["start"] == {"dateTime": "2026-07-01T10:00:00", "timeZone": "America/New_York"}
+
 
 class TestUpdateEvent:
     def test_update_event_success(self, calendar_tools, mock_calendar_service):
@@ -362,6 +392,43 @@ class TestUpdateEvent:
             event_id="test_id", start_date="2025-07-19T14:00:00", end_date="2025-07-19T15:00:00"
         )
         assert "error" not in json.loads(result)
+
+    def test_update_event_timezone_aware_preserves_offset(self, calendar_tools, mock_calendar_service):
+        existing_event = {
+            "id": "test_id",
+            "summary": "Test Event",
+            "start": {"dateTime": "2025-07-19T10:00:00", "timeZone": "UTC"},
+            "end": {"dateTime": "2025-07-19T11:00:00", "timeZone": "UTC"},
+        }
+        mock_calendar_service.events().get().execute.return_value = existing_event
+        mock_calendar_service.events().update().execute.return_value = existing_event
+
+        calendar_tools.update_event(
+            event_id="test_id", start_date="2026-07-01T10:00:00+02:00", end_date="2026-07-01T11:00:00+02:00"
+        )
+        body = mock_calendar_service.events().update.call_args.kwargs["body"]
+        assert body["start"]["dateTime"] == "2026-07-01T10:00:00+02:00"
+        assert body["end"]["dateTime"] == "2026-07-01T11:00:00+02:00"
+
+    def test_update_event_naive_datetime_left_for_timezone(self, calendar_tools, mock_calendar_service):
+        existing_event = {
+            "id": "test_id",
+            "summary": "Test Event",
+            "start": {"dateTime": "2025-07-19T10:00:00", "timeZone": "UTC"},
+            "end": {"dateTime": "2025-07-19T11:00:00", "timeZone": "UTC"},
+        }
+        mock_calendar_service.events().get().execute.return_value = existing_event
+        mock_calendar_service.events().update().execute.return_value = existing_event
+
+        calendar_tools.update_event(
+            event_id="test_id",
+            start_date="2026-07-01T10:00:00",
+            end_date="2026-07-01T11:00:00",
+            timezone="America/New_York",
+        )
+        body = mock_calendar_service.events().update.call_args.kwargs["body"]
+        assert body["start"] == {"dateTime": "2026-07-01T10:00:00", "timeZone": "America/New_York"}
+        assert body["end"] == {"dateTime": "2026-07-01T11:00:00", "timeZone": "America/New_York"}
 
 
 class TestDeleteEvent:
