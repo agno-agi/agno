@@ -25,6 +25,7 @@ from ag_ui.core import (
     ToolCallStartEvent,
 )
 
+from agno.models.response import ToolExecution
 from agno.os.interfaces.agui.state import StreamState
 from agno.os.interfaces.agui.utils import to_json_str
 from agno.reasoning.step import ReasoningStep
@@ -335,53 +336,69 @@ def on_run_completed(chunk: BaseRunOutputEvent, state: StreamState) -> List[Base
         events.append(TextMessageEndEvent(type=EventType.TEXT_MESSAGE_END, message_id=state.text_message_id))
         state.close_text_message()
 
-    # Emit external execution tools for paused runs (Agent or Team)
-    if isinstance(chunk, (AgentRunPausedEvent, TeamRunPausedEvent)):
-        external_tools = chunk.tools_awaiting_external_execution
-        if external_tools:
-            assistant_message_id = str(uuid.uuid4())
+    # 1. Collect paused tools for frontend rendering
+    paused_tools: List[ToolExecution] = []
+    if isinstance(chunk, AgentRunPausedEvent):
+        paused_tools = (
+            chunk.tools_awaiting_external_execution
+            + chunk.tools_requiring_confirmation
+            + chunk.tools_requiring_user_input
+        )
+    elif isinstance(chunk, TeamRunPausedEvent):
+        # Leader tools from .tools, member tools from active_requirements
+        paused_tools = (
+            chunk.tools_awaiting_external_execution
+            + chunk.tools_requiring_confirmation
+            + chunk.tools_requiring_user_input
+        )
+        for req in chunk.active_requirements:
+            if req.member_agent_id and req.tool_execution:
+                paused_tools.append(req.tool_execution)
+
+    if paused_tools:
+        assistant_message_id = str(uuid.uuid4())
+        events.append(
+            TextMessageStartEvent(
+                type=EventType.TEXT_MESSAGE_START,
+                message_id=assistant_message_id,
+                role="assistant",
+            )
+        )
+
+        content = getattr(chunk, "content", None)
+        if content:
             events.append(
-                TextMessageStartEvent(
-                    type=EventType.TEXT_MESSAGE_START,
+                TextMessageContentEvent(
+                    type=EventType.TEXT_MESSAGE_CONTENT,
                     message_id=assistant_message_id,
-                    role="assistant",
+                    delta=str(content),
                 )
             )
 
-            content = getattr(chunk, "content", None)
-            if content:
-                events.append(
-                    TextMessageContentEvent(
-                        type=EventType.TEXT_MESSAGE_CONTENT,
-                        message_id=assistant_message_id,
-                        delta=str(content),
-                    )
+        events.append(TextMessageEndEvent(type=EventType.TEXT_MESSAGE_END, message_id=assistant_message_id))
+
+        for tool in paused_tools:
+            if tool.tool_call_id is None or tool.tool_name is None:
+                continue
+
+            events.append(
+                ToolCallStartEvent(
+                    type=EventType.TOOL_CALL_START,
+                    tool_call_id=tool.tool_call_id,
+                    tool_call_name=tool.tool_name,
+                    parent_message_id=assistant_message_id,
                 )
+            )
 
-            events.append(TextMessageEndEvent(type=EventType.TEXT_MESSAGE_END, message_id=assistant_message_id))
-
-            for tool in external_tools:
-                if tool.tool_call_id is None or tool.tool_name is None:
-                    continue
-
-                events.append(
-                    ToolCallStartEvent(
-                        type=EventType.TOOL_CALL_START,
-                        tool_call_id=tool.tool_call_id,
-                        tool_call_name=tool.tool_name,
-                        parent_message_id=assistant_message_id,
-                    )
+            events.append(
+                ToolCallArgsEvent(
+                    type=EventType.TOOL_CALL_ARGS,
+                    tool_call_id=tool.tool_call_id,
+                    delta=json.dumps(tool.tool_args),
                 )
+            )
 
-                events.append(
-                    ToolCallArgsEvent(
-                        type=EventType.TOOL_CALL_ARGS,
-                        tool_call_id=tool.tool_call_id,
-                        delta=json.dumps(tool.tool_args),
-                    )
-                )
-
-                events.append(ToolCallEndEvent(type=EventType.TOOL_CALL_END, tool_call_id=tool.tool_call_id))
+            events.append(ToolCallEndEvent(type=EventType.TOOL_CALL_END, tool_call_id=tool.tool_call_id))
 
     # Emit final state snapshot
     if state.run_state is not None:
