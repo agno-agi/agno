@@ -4,8 +4,8 @@ import pytest
 
 from agno.agent import Agent
 from agno.models.aimlapi import AIMLAPI
-from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.exa import ExaTools
+from agno.tools.websearch import WebSearchTools
 from agno.tools.yfinance import YFinanceTools
 
 
@@ -81,7 +81,7 @@ async def test_async_tool_use_stream():
     async for response in agent.arun(
         "What is the current price of TSLA?",
         stream=True,
-        stream_intermediate_steps=True,
+        stream_events=True,
     ):
         if response.event in ["ToolCallStarted", "ToolCallCompleted"] and hasattr(response, "tool") and response.tool:  # type: ignore
             if response.tool.tool_name:  # type: ignore
@@ -99,7 +99,7 @@ async def test_async_tool_use_stream():
 def test_multiple_tool_calls():
     agent = Agent(
         model=AIMLAPI(id="gpt-4o-mini"),
-        tools=[YFinanceTools(cache_results=True), DuckDuckGoTools(cache_results=True)],
+        tools=[YFinanceTools(cache_results=True), WebSearchTools(cache_results=True)],
         markdown=True,
         telemetry=False,
     )

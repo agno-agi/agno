@@ -7,8 +7,8 @@ from agno.utils.log import log_error, log_warning
 
 try:
     from huggingface_hub import AsyncInferenceClient, InferenceClient
-except ImportError:
-    log_error("`huggingface-hub` not installed, please run `pip install huggingface-hub`")
+except ImportError as e:
+    log_error(f"`huggingface-hub` not installed, please run `pip install huggingface-hub`: {str(e)}")
     raise
 
 
@@ -66,7 +66,7 @@ class HuggingfaceCustomEmbedder(Embedder):
             else:
                 return list(response)
         except Exception as e:
-            log_warning(f"Failed to process embeddings: {e}")
+            log_warning(f"Failed to process embeddings: {str(e)}")
             return []
 
     def get_embedding_and_usage(self, text: str) -> Tuple[List[float], Optional[Dict]]:
@@ -85,7 +85,7 @@ class HuggingfaceCustomEmbedder(Embedder):
             else:
                 return list(response)
         except Exception as e:
-            log_warning(f"Failed to process embeddings: {e}")
+            log_warning(f"Failed to process embeddings: {str(e)}")
             return []
 
     async def async_get_embedding_and_usage(self, text: str) -> Tuple[List[float], Optional[Dict]]:

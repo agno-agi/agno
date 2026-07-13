@@ -14,7 +14,7 @@ def team(shared_db):
         model=OpenAIChat(id="gpt-4o"),
         members=[],
         db=shared_db,
-        enable_user_memories=True,
+        update_memory_on_run=True,
     )
 
 
@@ -41,7 +41,7 @@ def team_with_members(shared_db):
         members=[travel_agent],
         db=shared_db,
         instructions="Route a single question to the travel agent. Don't make multiple requests.",
-        enable_user_memories=True,
+        update_memory_on_run=True,
     )
 
 
@@ -167,7 +167,7 @@ async def test_run_session_summary(team, shared_db):
     user_id = "john@example.com"
 
     # Enable session summaries
-    team.enable_user_memories = False
+    team.update_memory_on_run = False
     team.enable_session_summaries = True
 
     # Clear memory for this specific test case

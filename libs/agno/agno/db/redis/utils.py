@@ -3,13 +3,15 @@
 import json
 import time
 from datetime import date, datetime, timedelta, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 from uuid import UUID
 
+from agno.db.schemas.culture import CulturalKnowledge
+from agno.db.utils import get_sort_value
 from agno.utils.log import log_warning
 
 try:
-    from redis import Redis
+    from redis import Redis, RedisCluster
 except ImportError:
     raise ImportError("`redis` not installed. Please install it using `pip install redis`")
 
@@ -50,7 +52,7 @@ def generate_index_key(prefix: str, table_type: str, index_field: str, index_val
     return f"{prefix}:{table_type}:index:{index_field}:{index_value}"
 
 
-def get_all_keys_for_table(redis_client: Redis, prefix: str, table_type: str) -> List[str]:
+def get_all_keys_for_table(redis_client: Union[Redis, RedisCluster], prefix: str, table_type: str) -> List[str]:
     """Get all relevant keys for the given table type.
 
     Args:
@@ -79,21 +81,36 @@ def get_all_keys_for_table(redis_client: Redis, prefix: str, table_type: str) ->
 def apply_sorting(
     records: List[Dict[str, Any]], sort_by: Optional[str] = None, sort_order: Optional[str] = None
 ) -> List[Dict[str, Any]]:
-    if sort_by is None:
+    """Apply sorting to the given records list.
+
+    Args:
+        records: The list of dictionaries to sort
+        sort_by: The field to sort by
+        sort_order: The sort order ('asc' or 'desc')
+
+    Returns:
+        The sorted list
+
+    Note:
+        If sorting by "updated_at", will fallback to "created_at" in case of None.
+    """
+    if sort_by is None or not records:
         return records
 
-    def get_sort_key(record):
-        value = record.get(sort_by, 0)
-        if value is None:
-            return 0 if isinstance(records[0].get(sort_by, 0), (int, float)) else ""
-        return value
-
     try:
-        is_reverse = sort_order == "desc"
-        return sorted(records, key=get_sort_key, reverse=is_reverse)
+        is_descending = sort_order == "desc"
+
+        # Sort using the helper function that handles updated_at -> created_at fallback
+        sorted_records = sorted(
+            records,
+            key=lambda x: (get_sort_value(x, sort_by) is None, get_sort_value(x, sort_by)),
+            reverse=is_descending,
+        )
+
+        return sorted_records
 
     except Exception as e:
-        log_warning(f"Error sorting Redisrecords: {e}")
+        log_warning(f"Error sorting Redis records: {str(e)}")
         return records
 
 
@@ -129,7 +146,7 @@ def apply_filters(records: List[Dict[str, Any]], conditions: Dict[str, Any]) -> 
 
 
 def create_index_entries(
-    redis_client: Redis,
+    redis_client: Union[Redis, RedisCluster],
     prefix: str,
     table_type: str,
     record_id: str,
@@ -143,7 +160,7 @@ def create_index_entries(
 
 
 def remove_index_entries(
-    redis_client: Redis,
+    redis_client: Union[Redis, RedisCluster],
     prefix: str,
     table_type: str,
     record_id: str,
@@ -199,7 +216,7 @@ def calculate_date_metrics(date_to_process: date, sessions_data: dict) -> dict:
     all_user_ids = set()
 
     for session_type, sessions_count_key, runs_count_key in session_types:
-        sessions = sessions_data.get(session_type, [])
+        sessions = sessions_data.get(session_type, []) or []
         metrics[sessions_count_key] = len(sessions)
 
         for session in sessions:
@@ -220,7 +237,7 @@ def calculate_date_metrics(date_to_process: date, sessions_data: dict) -> dict:
 
     model_metrics = []
     for model, count in model_counts.items():
-        model_id, model_provider = model.split(":")
+        model_id, model_provider = model.rsplit(":", 1)
         model_metrics.append({"model_id": model_id, "model_provider": model_provider, "count": count})
 
     metrics["users_count"] = len(all_user_ids)
@@ -286,3 +303,60 @@ def get_dates_to_calculate_metrics_for(starting_date: date) -> list[date]:
     if days_diff <= 0:
         return []
     return [starting_date + timedelta(days=x) for x in range(days_diff)]
+
+
+# -- Cultural Knowledge util methods --
+def serialize_cultural_knowledge_for_db(cultural_knowledge: CulturalKnowledge) -> Dict[str, Any]:
+    """Serialize a CulturalKnowledge object for database storage.
+
+    Converts the model's separate content, categories, and notes fields
+    into a single dict for the database content column.
+
+    Args:
+        cultural_knowledge (CulturalKnowledge): The cultural knowledge object to serialize.
+
+    Returns:
+        Dict[str, Any]: A dictionary with the content field as a dict containing content, categories, and notes.
+    """
+    content_dict: Dict[str, Any] = {}
+    if cultural_knowledge.content is not None:
+        content_dict["content"] = cultural_knowledge.content
+    if cultural_knowledge.categories is not None:
+        content_dict["categories"] = cultural_knowledge.categories
+    if cultural_knowledge.notes is not None:
+        content_dict["notes"] = cultural_knowledge.notes
+
+    return content_dict if content_dict else {}
+
+
+def deserialize_cultural_knowledge_from_db(db_row: Dict[str, Any]) -> CulturalKnowledge:
+    """Deserialize a database row to a CulturalKnowledge object.
+
+    The database stores content as a dict containing content, categories, and notes.
+    This method extracts those fields and converts them back to the model format.
+
+    Args:
+        db_row (Dict[str, Any]): The database row as a dictionary.
+
+    Returns:
+        CulturalKnowledge: The cultural knowledge object.
+    """
+    # Extract content, categories, and notes from the content field
+    content_json = db_row.get("content", {}) or {}
+
+    return CulturalKnowledge.from_dict(
+        {
+            "id": db_row.get("id"),
+            "name": db_row.get("name"),
+            "summary": db_row.get("summary"),
+            "content": content_json.get("content"),
+            "categories": content_json.get("categories"),
+            "notes": content_json.get("notes"),
+            "metadata": db_row.get("metadata"),
+            "input": db_row.get("input"),
+            "created_at": db_row.get("created_at"),
+            "updated_at": db_row.get("updated_at"),
+            "agent_id": db_row.get("agent_id"),
+            "team_id": db_row.get("team_id"),
+        }
+    )

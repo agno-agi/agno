@@ -35,6 +35,7 @@ class MCPToolbox(MCPTools, metaclass=MCPToolsMeta):
         tool_name: Optional[str] = None,
         headers: Optional[Dict[str, Any]] = None,
         transport: Literal["stdio", "sse", "streamable-http"] = "streamable-http",
+        append_mcp_to_url: bool = True,
         **kwargs,
     ):
         """Initialize MCPToolbox with filtering capabilities.
@@ -45,16 +46,17 @@ class MCPToolbox(MCPTools, metaclass=MCPToolsMeta):
             tool_name (Optional[str], optional): Single tool name to load. Defaults to None.
             headers (Optional[Dict[str, Any]], optional): Headers for toolbox-core client requests. Defaults to None.
             transport (Literal["stdio", "sse", "streamable-http"], optional): MCP transport protocol. Defaults to "streamable-http".
+            append_mcp_to_url (bool, optional): Whether to append "/mcp" to the URL if it doesn't end with it. Defaults to True.
 
         """
-
-        # Ensure the URL ends in "/mcp" as expected
-        if not url.endswith("/mcp"):
+        if append_mcp_to_url and not url.endswith("/mcp"):
             url = url + "/mcp"
 
         super().__init__(url=url, transport=transport, **kwargs)
 
-        self.name = "toolbox_client"
+        # Keep the historical default name, but let an explicit name= win.
+        if kwargs.get("name") is None:
+            self.name = "toolbox_client"
         self.toolbox_url = url
         self.toolsets = toolsets
         self.tool_name = tool_name

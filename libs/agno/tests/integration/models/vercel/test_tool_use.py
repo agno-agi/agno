@@ -4,8 +4,8 @@ import pytest
 
 from agno.agent import Agent
 from agno.models.vercel import V0
-from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.exa import ExaTools
+from agno.tools.websearch import WebSearchTools
 from agno.tools.yfinance import YFinanceTools
 
 
@@ -37,7 +37,7 @@ def test_tool_use_stream():
     responses = []
     tool_call_seen = False
 
-    for response in agent.run("What is the current price of TSLA?", stream=True, stream_intermediate_steps=True):
+    for response in agent.run("What is the current price of TSLA?", stream=True, stream_events=True):
         responses.append(response)
 
         # Check for ToolCallStartedEvent or ToolCallCompletedEvent
@@ -83,7 +83,7 @@ async def test_async_tool_use_stream():
     responses = []
     tool_call_seen = False
 
-    async for response in agent.arun("What is the current price of TSLA?", stream=True, stream_intermediate_steps=True):
+    async for response in agent.arun("What is the current price of TSLA?", stream=True, stream_events=True):
         responses.append(response)
 
         # Check for ToolCallStartedEvent or ToolCallCompletedEvent
@@ -102,7 +102,7 @@ async def test_async_tool_use_stream():
 def test_multiple_tool_calls():
     agent = Agent(
         model=V0(id="v0-1.0-md"),
-        tools=[YFinanceTools(cache_results=True), DuckDuckGoTools(cache_results=True)],
+        tools=[YFinanceTools(cache_results=True), WebSearchTools(cache_results=True)],
         instructions=[
             "Use YFinance for stock price queries",
             "Use DuckDuckGo for news and general information",

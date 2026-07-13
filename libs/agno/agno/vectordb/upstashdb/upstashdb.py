@@ -1,5 +1,5 @@
 import asyncio
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 
 try:
     from upstash_vector import Index, Vector
@@ -9,10 +9,11 @@ except ImportError:
         "The `upstash-vector` package is not installed, please install using `pip install upstash-vector`"
     )
 
+from agno.filters import FilterExpr
 from agno.knowledge.document import Document
 from agno.knowledge.embedder import Embedder
 from agno.knowledge.reranker.base import Reranker
-from agno.utils.log import log_info, logger
+from agno.utils.log import log_error, log_info, log_warning, logger
 from agno.vectordb.base import VectorDb
 
 DEFAULT_NAMESPACE = ""
@@ -32,6 +33,8 @@ class UpstashVectorDb(VectorDb):
         embedder (Optional[Embedder], optional): The embedder to use. If None, uses Upstash hosted embedding models.
         namespace (Optional[str], optional): The namespace to use. Defaults to DEFAULT_NAMESPACE.
         reranker (Optional[Reranker], optional): The reranker to use. Defaults to None.
+        name (Optional[str], optional): The name of the vector database. Defaults to None.
+        description (Optional[str], optional): The description of the vector database. Defaults to None.
         **kwargs: Additional keyword arguments.
     """
 
@@ -45,8 +48,28 @@ class UpstashVectorDb(VectorDb):
         embedder: Optional[Embedder] = None,
         namespace: Optional[str] = DEFAULT_NAMESPACE,
         reranker: Optional[Reranker] = None,
+        name: Optional[str] = None,
+        description: Optional[str] = None,
+        id: Optional[str] = None,
         **kwargs: Any,
     ) -> None:
+        # Validate required parameters
+        if not url:
+            raise ValueError("URL must be provided.")
+        if not token:
+            raise ValueError("Token must be provided.")
+
+        # Dynamic ID generation based on unique identifiers
+        if id is None:
+            from agno.utils.string import generate_id
+
+            namespace_identifier = namespace or DEFAULT_NAMESPACE
+            seed = f"{url}#{namespace_identifier}"
+            id = generate_id(seed)
+
+        # Initialize base class with name, description, and generated ID
+        super().__init__(id=id, name=name, description=description)
+
         self._index: Optional[Index] = None
         self.url: str = url
         self.token: str = token
@@ -56,7 +79,6 @@ class UpstashVectorDb(VectorDb):
         self.namespace: str = namespace if namespace is not None else DEFAULT_NAMESPACE
         self.kwargs: Dict[str, Any] = kwargs
         self.use_upstash_embeddings: bool = embedder is None
-
         if embedder is None:
             logger.warning(
                 "You have not provided an embedder, using Upstash hosted embedding models. "
@@ -105,7 +127,7 @@ class UpstashVectorDb(VectorDb):
             self.index.info()
             return True
         except Exception as e:
-            logger.error(f"Error checking index existence: {str(e)}")
+            log_error(f"Error checking index existence: {str(e)}: {str(e)}")
             return False
 
     def create(self) -> None:
@@ -131,7 +153,7 @@ class UpstashVectorDb(VectorDb):
         if self.namespace_exists(_namespace):
             self.index.delete_namespace(_namespace)
         else:
-            logger.error(f"Namespace {_namespace} does not exist.")
+            log_error(f"Namespace {_namespace} does not exist.")
 
     def get_all_namespaces(self) -> List[str]:
         """Get all namespaces in the index.
@@ -183,8 +205,8 @@ class UpstashVectorDb(VectorDb):
                 )
 
             return response is not None and len(response) > 0
-        except Exception as e:
-            logger.error(f"Error checking if content_hash {content_hash} exists: {e}")
+        except Exception:
+            logger.exception(f"Error checking if content_hash {content_hash} exists")
             return False
 
     def name_exists(self, name: str) -> bool:
@@ -229,7 +251,7 @@ class UpstashVectorDb(VectorDb):
 
         for i, document in enumerate(documents):
             if document.id is None:
-                logger.error(f"Document ID must not be None. Skipping document: {document.content[:100]}...")
+                log_error(f"Document ID must not be None. Skipping document: {document.content[:100]}...")
                 continue
 
             logger.debug(
@@ -262,12 +284,12 @@ class UpstashVectorDb(VectorDb):
 
             if not self.use_upstash_embeddings:
                 if self.embedder is None:
-                    logger.error("Embedder is None but use_upstash_embeddings is False")
+                    log_error("Embedder is None but use_upstash_embeddings is False")
                     continue
 
                 document.embed(embedder=self.embedder)
                 if document.embedding is None:
-                    logger.error(f"Failed to generate embedding for document: {document.id}")
+                    log_error(f"Failed to generate embedding for document: {document.id}")
                     continue
 
                 vector = Vector(id=document.id, vector=document.embedding, metadata=meta_data, data=document.content)
@@ -303,7 +325,7 @@ class UpstashVectorDb(VectorDb):
         self,
         query: str,
         limit: int = 5,
-        filters: Optional[Dict[str, Any]] = None,
+        filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
         namespace: Optional[str] = None,
     ) -> List[Document]:
         """Search for documents in the index.
@@ -316,14 +338,16 @@ class UpstashVectorDb(VectorDb):
             List[Document]: List of matching documents.
         """
         _namespace = self.namespace if namespace is None else namespace
-
+        if isinstance(filters, List):
+            log_warning("Filters Expressions are not supported in UpstashDB. No filters will be applied.")
+            filters = None
         filter_str = "" if filters is None else str(filters)
 
         if not self.use_upstash_embeddings and self.embedder is not None:
             dense_embedding = self.embedder.get_embedding(query)
 
             if dense_embedding is None:
-                logger.error(f"Error getting embedding for Query: {query}")
+                log_error(f"Error getting embedding for Query: {query}")
                 return []
 
             response = self.index.query(
@@ -407,8 +431,8 @@ class UpstashVectorDb(VectorDb):
             deleted_count = getattr(response, "deleted", 0)
             logger.info(f"Deleted {deleted_count} document(s) with ID: {id}")
             return True
-        except Exception as e:
-            logger.error(f"Error deleting document by ID {id}: {e}")
+        except Exception:
+            logger.exception(f"Error deleting document by ID {id}")
             return False
 
     def delete_by_name(self, name: str) -> bool:
@@ -426,8 +450,8 @@ class UpstashVectorDb(VectorDb):
             deleted_count = getattr(response, "deleted", 0)
             logger.info(f"Deleted {deleted_count} document(s) with name: {name}")
             return True
-        except Exception as e:
-            logger.error(f"Error deleting documents by name {name}: {e}")
+        except Exception:
+            logger.exception(f"Error deleting documents by name {name}")
             return False
 
     def delete_by_metadata(self, metadata: Dict[str, Any]) -> bool:
@@ -454,8 +478,8 @@ class UpstashVectorDb(VectorDb):
             deleted_count = getattr(response, "deleted", 0)
             logger.info(f"Deleted {deleted_count} document(s) matching metadata: {metadata}")
             return True
-        except Exception as e:
-            logger.error(f"Error deleting documents by metadata {metadata}: {e}")
+        except Exception:
+            logger.exception(f"Error deleting documents by metadata {metadata}")
             return False
 
     def delete_by_content_id(self, content_id: str) -> bool:
@@ -523,8 +547,8 @@ class UpstashVectorDb(VectorDb):
                         if j < len(embeddings):
                             doc.embedding = embeddings[j]
                             doc.usage = usages[j] if j < len(usages) else None
-                    except Exception as e:
-                        logger.error(f"Error assigning batch embedding to document '{doc.name}': {e}")
+                    except Exception:
+                        logger.exception(f"Error assigning batch embedding to document '{doc.name}'")
 
             except Exception as e:
                 # Check if this is a rate limit error - don't fall back as it would make things worse
@@ -535,10 +559,10 @@ class UpstashVectorDb(VectorDb):
                 )
 
                 if is_rate_limit:
-                    logger.error(f"Rate limit detected during batch embedding. {e}")
+                    logger.exception("Rate limit detected during batch embedding.")
                     raise e
                 else:
-                    logger.warning(f"Async batch embedding failed, falling back to individual embeddings: {e}")
+                    log_warning(f"Async batch embedding failed, falling back to individual embeddings: {str(e)}")
                     # Fall back to individual embedding
                     embed_tasks = [doc.async_embed(embedder=self.embedder) for doc in documents]
                     await asyncio.gather(*embed_tasks, return_exceptions=True)
@@ -549,7 +573,7 @@ class UpstashVectorDb(VectorDb):
 
         for i, document in enumerate(documents):
             if document.id is None:
-                logger.error(f"Document ID must not be None. Skipping document: {document.content[:100]}...")
+                log_error(f"Document ID must not be None. Skipping document: {document.content[:100]}...")
                 continue
 
             logger.debug(
@@ -582,11 +606,11 @@ class UpstashVectorDb(VectorDb):
 
             if not self.use_upstash_embeddings:
                 if self.embedder is None:
-                    logger.error("Embedder is None but use_upstash_embeddings is False")
+                    log_error("Embedder is None but use_upstash_embeddings is False")
                     continue
 
                 if document.embedding is None:
-                    logger.error(f"Failed to generate embedding for document: {document.id}")
+                    log_error(f"Failed to generate embedding for document: {document.id}")
                     continue
 
                 vector = Vector(id=document.id, vector=document.embedding, metadata=meta_data, data=document.content)
@@ -602,7 +626,7 @@ class UpstashVectorDb(VectorDb):
         self.index.upsert(vectors, namespace=_namespace)
 
     async def async_search(
-        self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None
+        self, query: str, limit: int = 5, filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None
     ) -> List[Document]:
         raise NotImplementedError(f"Async not supported on {self.__class__.__name__}.")
 
@@ -618,8 +642,8 @@ class UpstashVectorDb(VectorDb):
         try:
             response = self.index.fetch(ids=[id], namespace=self.namespace)
             return len(response) > 0
-        except Exception as e:
-            logger.error(f"Error checking if ID {id} exists: {e}")
+        except Exception:
+            logger.exception(f"Error checking if ID {id} exists")
             return False
 
     def _delete_by_content_hash(self, content_hash: str) -> bool:
@@ -636,8 +660,8 @@ class UpstashVectorDb(VectorDb):
             deleted_count = getattr(response, "deleted", 0)
             logger.info(f"Deleted {deleted_count} document(s) with content_hash: {content_hash}")
             return True
-        except Exception as e:
-            logger.error(f"Error deleting documents by content_hash {content_hash}: {e}")
+        except Exception:
+            logger.exception(f"Error deleting documents by content_hash {content_hash}")
             return False
 
     def update_metadata(self, content_id: str, metadata: Dict[str, Any]) -> None:
@@ -685,6 +709,10 @@ class UpstashVectorDb(VectorDb):
 
             logger.debug(f"Updated metadata for {updated_count} documents with content_id: {content_id}")
 
-        except Exception as e:
-            logger.error(f"Error updating metadata for content_id '{content_id}': {e}")
+        except Exception:
+            logger.exception(f"Error updating metadata for content_id '{content_id}'")
             raise
+
+    def get_supported_search_types(self) -> List[str]:
+        """Get the supported search types for this vector database."""
+        return []  # UpstashVectorDb doesn't use SearchType enum
