@@ -2,60 +2,48 @@
 Human in the Loop — Dojo Demo
 ==============================
 
-HITL tool: generate_task_steps (requires_confirmation)
+Frontend-provided tool: generate_task_steps (external_execution)
 
-Dojo expects generate_task_steps that returns:
-- steps: list of {description: str, status: "enabled"|"disabled"|"executing"}
+The frontend defines this tool via useHumanInTheLoop hook. The agent calls it,
+and the frontend renders an interactive step-selector UI where the user can
+toggle steps on/off and confirm.
 
-The frontend renders a step selector UI where user can toggle steps and confirm/reject.
+Backend does NOT define the tool — it comes from the frontend in the request.
 """
 
-from typing import List
-
 from agno.agent.agent import Agent
+from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIResponses
-from agno.tools import tool
-from pydantic import BaseModel, Field
-
-
-class TaskStep(BaseModel):
-    description: str = Field(description="Description of the step")
-    status: str = Field(
-        default="enabled", description="Status: enabled, disabled, or executing"
-    )
-
-
-@tool(requires_confirmation=True)
-def generate_task_steps(steps: List[TaskStep]) -> str:
-    """Generate a list of task steps for the user to review and confirm.
-
-    The frontend will display these steps with checkboxes.
-    User can enable/disable steps before confirming execution.
-    """
-    enabled_steps = [s for s in steps if s.status == "enabled"]
-    return f"Executing {len(enabled_steps)} steps: " + ", ".join(
-        s.description for s in enabled_steps
-    )
-
 
 hitl_agent = Agent(
     name="human_in_the_loop",
     model=OpenAIResponses(id="gpt-5.5"),
-    tools=[generate_task_steps],
-    instructions="""You help users plan tasks that require confirmation.
+    db=SqliteDb(db_file="/tmp/agui_human_in_the_loop.db"),
+    instructions="""You are a task planning assistant. When asked to plan something:
 
-When asked to plan something (trip, recipe, project, etc.):
-1. Break it down into clear steps (5-10 steps typically)
-2. Use the generate_task_steps tool with a list of steps
-3. Each step should have a description and status="enabled"
+1. **IMMEDIATELY call the generate_task_steps tool** with a list of steps
+2. Generate exactly 10 clear, actionable steps
+3. Each step must be an object with:
+   - description: Brief imperative form (e.g., "Research travel options")
+   - status: Set to "enabled" initially
 
-Example: For "plan a trip to Paris", create steps like:
-- Book flights
-- Reserve hotel
-- Plan activities
-- Pack luggage
-- etc.
+Example tool call for "plan a trip to Mars":
+{
+  "steps": [
+    {"description": "Research Mars travel options", "status": "enabled"},
+    {"description": "Prepare necessary equipment", "status": "enabled"},
+    {"description": "Complete health screenings", "status": "enabled"},
+    ...
+  ]
+}
 
-The user will review and confirm which steps to execute.""",
+After calling the tool:
+- Briefly confirm: "I've created a 10-step plan for you!"
+- Don't repeat the steps (they're visible in the UI)
+- Ask the user to review and select which steps to perform
+
+When user provides feedback (after clicking "Perform Steps"):
+- Acknowledge which steps were approved
+- Provide a brief summary of next actions""",
     markdown=True,
 )
