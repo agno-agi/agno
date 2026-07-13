@@ -1,8 +1,7 @@
 """Example showing how to use AgentOS with Valkey as the database
 
-Prerequisites:
-    Start a Valkey instance locally with Docker:
-        docker run --name my-valkey -p 6379:6379 -d valkey/valkey
+Start Valkey locally with `./cookbook/scripts/run_valkey.sh`, or directly with docker:
+`docker run --name my-valkey -p 6379:6379 -d valkey/valkey-bundle`
 """
 
 from agno.agent import Agent

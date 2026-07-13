@@ -1,13 +1,19 @@
-"""Integration tests for ValkeyDb bulk operations using GLIDE Batch (pipeline)."""
+"""Integration tests for ValkeyDb bulk operations using GLIDE Batch (pipeline).
+
+Requires a running Valkey instance on localhost:6379.
+Run with: pytest libs/agno/tests/integration/db/valkey/test_bulk_operations.py -v
+"""
 
 import time as time_module
 from datetime import datetime
 
 from agno.db.base import SessionType
+from agno.db.schemas.evals import EvalRunRecord, EvalType
 from agno.db.schemas.memory import UserMemory
 from agno.db.valkey.valkey import ValkeyDb
 from agno.session.agent import AgentSession
 from agno.session.team import TeamSession
+from agno.tracing.schemas import Span
 
 # -- upsert_memories --
 
@@ -72,6 +78,61 @@ def test_upsert_memories_update(valkey_db: ValkeyDb):
         assert "Updated memory" in result.memory
         assert result.topics == ["updated"]
         assert result.agent_id == f"new_agent_{i}"
+
+
+def test_upsert_user_memory_update_preserves_created_at(valkey_db: ValkeyDb):
+    """Updating a memory keeps its original created_at (the memory manager's
+    update path re-upserts a fresh UserMemory whose created_at defaults to now)."""
+    mem_id = "ca_preserve_mem"
+    first = valkey_db.upsert_user_memory(
+        UserMemory(memory_id=mem_id, memory="original", topics=["a"], user_id="user_1")
+    )
+    original_created_at = first.created_at
+    assert original_created_at is not None
+
+    time_module.sleep(1.1)
+
+    updated = valkey_db.upsert_user_memory(
+        UserMemory(memory_id=mem_id, memory="revised", topics=["b"], user_id="user_1")
+    )
+
+    assert updated.memory == "revised"
+    assert updated.created_at == original_created_at
+    assert updated.updated_at != original_created_at
+
+
+def test_upsert_memories_update_preserves_created_at(valkey_db: ValkeyDb):
+    """Bulk upsert keeps an existing memory's created_at, matching the
+    single-record upsert_user_memory path."""
+    mem_id = "bulk_ca_preserve"
+    first = valkey_db.upsert_user_memory(
+        UserMemory(memory_id=mem_id, memory="original", topics=["a"], user_id="user_1")
+    )
+    original_created_at = first.created_at
+    assert original_created_at is not None
+
+    time_module.sleep(1.1)
+
+    results = valkey_db.upsert_memories(
+        [UserMemory(memory_id=mem_id, memory="revised", topics=["b"], user_id="user_1")]
+    )
+
+    assert results[0].memory == "revised"
+    assert results[0].created_at == original_created_at
+
+
+def test_get_user_memory_stats_tolerates_null_updated_at(valkey_db: ValkeyDb):
+    """A memory whose updated_at is None (produced by the v1->v2 migration's
+    preserve_updated_at path) must not crash the stats aggregation."""
+    valkey_db.upsert_memories(
+        [UserMemory(memory_id="null_upd_mem", memory="x", user_id="alice", updated_at=None)],
+        preserve_updated_at=True,
+    )
+
+    stats, total = valkey_db.get_user_memory_stats()
+
+    assert total >= 1
+    assert any(s["user_id"] == "alice" for s in stats)
 
 
 def test_upsert_memories_without_deserialize(valkey_db: ValkeyDb):
@@ -331,8 +392,6 @@ def test_delete_sessions_empty_list(valkey_db: ValkeyDb):
 
 def test_create_spans_bulk(valkey_db: ValkeyDb):
     """Bulk create_spans stores all spans retrievable via get_span."""
-    from agno.tracing.schemas import Span
-
     now = datetime.now()
     spans = [
         Span(
@@ -371,8 +430,6 @@ def test_create_spans_empty_list(valkey_db: ValkeyDb):
 
 def test_delete_eval_runs_bulk(valkey_db: ValkeyDb):
     """Bulk delete removes specified eval runs and cleans up index entries."""
-    from agno.db.schemas.evals import EvalRunRecord, EvalType
-
     eval_runs = [
         EvalRunRecord(
             run_id=f"eval_run_{i}",

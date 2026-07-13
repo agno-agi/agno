@@ -1,4 +1,4 @@
-"""Integration tests for ValkeyDB vector database with performance benchmarks.
+"""Integration tests for the ValkeyDB vector database.
 
 Requires a running Valkey instance on localhost:6379 with the valkey-search module.
 Run with: pytest libs/agno/tests/integration/vector_dbs/test_valkeydb.py -v -s
@@ -12,7 +12,27 @@ from agno.knowledge.document.base import Document
 from agno.knowledge.embedder.base import Embedder
 from agno.vectordb.distance import Distance
 from agno.vectordb.search import SearchType
-from agno.vectordb.valkey.valkeydb import ValkeyDB
+
+try:
+    from glide_sync import GlideClient, GlideClientConfiguration, NodeAddress
+
+    from agno.vectordb.valkey.valkeydb import ValkeyDB
+except ImportError:
+    pytest.skip("valkey-glide-sync not installed", allow_module_level=True)
+
+
+def _valkey_available() -> bool:
+    """True when a Valkey server with the valkey-search module answers on localhost:6379."""
+    try:
+        client = GlideClient.create(GlideClientConfiguration([NodeAddress("localhost", 6379)], request_timeout=1000))
+        client.custom_command(["FT._LIST"])
+        return True
+    except Exception:
+        return False
+
+
+if not _valkey_available():
+    pytest.skip("Valkey server with valkey-search not available on localhost:6379", allow_module_level=True)
 
 
 class MockEmbedder(Embedder):
@@ -80,11 +100,6 @@ def _make_docs(count: int, prefix: str = "doc") -> List[Document]:
     ]
 
 
-# ---------------------------------------------------------------------------
-# Functional tests
-# ---------------------------------------------------------------------------
-
-
 def test_create_and_exists(valkey_db: ValkeyDB):
     assert valkey_db.exists() is True
 
@@ -96,6 +111,15 @@ def test_insert_and_search(valkey_db: ValkeyDB):
     results = valkey_db.search("Content for document doc number 0", limit=3)
     assert len(results) > 0
     assert all(isinstance(d, Document) for d in results)
+
+
+def test_non_finite_embedding_rejected(valkey_db: ValkeyDB):
+    """A NaN vector is indexed but ranks out of every KNN result, so insert
+    fails loudly instead of storing a silently invisible document."""
+    doc = Document(name="nan_doc", content="Content with a broken embedding")
+    doc.embedding = [float("nan")] * valkey_db.dimensions
+    with pytest.raises(ValueError, match="non-finite"):
+        valkey_db.insert("nan_hash", [doc])
 
 
 def test_name_exists(valkey_db: ValkeyDB):
@@ -170,3 +194,23 @@ def test_drop_and_recreate(valkey_db: ValkeyDB):
     assert valkey_db.exists() is True
     # Data should be gone
     assert valkey_db.name_exists("doc_0") is False
+
+
+@pytest.mark.asyncio
+async def test_async_insert_and_search(valkey_db: ValkeyDB):
+    docs = _make_docs(3)
+    await valkey_db.async_insert("hash_async", docs)
+
+    results = await valkey_db.async_search("Content for document doc number 0", limit=3)
+    assert len(results) > 0
+    assert all(isinstance(d, Document) for d in results)
+
+
+@pytest.mark.asyncio
+async def test_async_drop_and_recreate(valkey_db: ValkeyDB):
+    assert await valkey_db.async_exists() is True
+    await valkey_db.async_drop()
+    assert await valkey_db.async_exists() is False
+
+    await valkey_db.async_create()
+    assert await valkey_db.async_exists() is True

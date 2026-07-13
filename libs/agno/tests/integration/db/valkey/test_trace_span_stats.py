@@ -2,6 +2,9 @@
 
 Verifies that _get_span_stats_for_trace uses the trace_id index set + pipeline
 instead of scanning all spans, and that the results are correct.
+
+Requires a running Valkey instance on localhost:6379.
+Run with: pytest libs/agno/tests/integration/db/valkey/test_trace_span_stats.py -v
 """
 
 import time as time_module
@@ -155,7 +158,7 @@ def test_get_trace_does_not_scan_all_spans(valkey_db: ValkeyDb):
         valkey_db.get_trace(trace_id="t_eff")
 
         # _get_all_records should NOT have been called with "spans"
-        span_calls = [c for c in mock_get_all.call_args_list if c.args[0] == "spans"]
+        span_calls = [c for c in mock_get_all.call_args_list if c.args and c.args[0] == "spans"]
         assert len(span_calls) == 0, "_get_all_records('spans') should not be called for index-based lookup"
 
 
@@ -167,7 +170,7 @@ def test_get_traces_does_not_scan_all_spans(valkey_db: ValkeyDb):
     with patch.object(valkey_db, "_get_all_records", wraps=valkey_db._get_all_records) as mock_get_all:
         valkey_db.get_traces(user_id="user_1")
 
-        span_calls = [c for c in mock_get_all.call_args_list if c.args[0] == "spans"]
+        span_calls = [c for c in mock_get_all.call_args_list if c.args and c.args[0] == "spans"]
         assert len(span_calls) == 0, "_get_all_records('spans') should not be called for index-based lookup"
 
 
@@ -188,7 +191,6 @@ def test_get_traces_only_enriches_paginated_page(valkey_db: ValkeyDb):
 
 
 # -- Timing: index path should be faster than full scan with many unrelated spans --
-# This is a test purely developed to time an optimization I did.
 
 
 def test_index_lookup_faster_than_full_scan(valkey_db: ValkeyDb):
@@ -227,8 +229,8 @@ def test_index_lookup_faster_than_full_scan(valkey_db: ValkeyDb):
     assert _total == 2
     assert _errors == 1
 
-    # Index path should be meaningfully faster with 200+ unrelated spans
-    # Using a generous 3x margin to avoid flaky CI failures
+    # The index path must not be slower than the full scan; the 3x margin
+    # only absorbs timing noise so the assertion never flakes
     assert index_elapsed < scan_elapsed * 3, (
         f"Index lookup ({index_elapsed:.4f}s) should be faster than full scan ({scan_elapsed:.4f}s)"
     )

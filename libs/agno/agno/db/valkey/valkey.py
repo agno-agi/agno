@@ -24,9 +24,10 @@ from agno.db.valkey.utils import (
     generate_valkey_key,
     get_all_keys_for_table,
     get_dates_to_calculate_metrics_for,
-    matches_filter_expr,
+    record_matches_filter_expr,
     remove_index_entries,
     serialize_data,
+    validate_filter_expr,
 )
 from agno.session import AgentSession, Session, TeamSession, WorkflowSession
 from agno.utils.log import log_debug, log_error, log_info
@@ -60,17 +61,18 @@ class ValkeyDb(BaseDb):
         username: Optional[str] = None,
         password: Optional[str] = None,
         use_tls: bool = False,
+        request_timeout: Optional[int] = None,
         db_prefix: str = "agno",
-        expire: Optional[int] = None,
         client_name: str = "agno_db_client",
+        expire: Optional[int] = None,
         session_table: Optional[str] = None,
         memory_table: Optional[str] = None,
         metrics_table: Optional[str] = None,
         eval_table: Optional[str] = None,
         knowledge_table: Optional[str] = None,
-        learnings_table: Optional[str] = None,
         traces_table: Optional[str] = None,
         spans_table: Optional[str] = None,
+        learnings_table: Optional[str] = None,
     ):
         """
         Interface for interacting with a Valkey database using valkey-glide.
@@ -89,21 +91,26 @@ class ValkeyDb(BaseDb):
             database_id (Optional[int]): Index of the logical database to connect to (e.g. 0-15).
                 If not set, the server default (database 0) is used.
             username (Optional[str]): Username for Valkey server authentication.
+                If not supplied, the server's "default" user is used.
             password (Optional[str]): Password for Valkey server authentication.
-                If not supplied, "default" will be used by the server.
+                Required when username is set.
             use_tls (bool): Whether to use TLS for the connection. Defaults to False.
+            request_timeout (Optional[int]): Duration in milliseconds to wait for a request to complete.
+                If not set, the client default (250 milliseconds) is used.
             db_prefix (str): Prefix for all Valkey keys
+            client_name (str): Connection name set via CLIENT SETNAME, visible in CLIENT LIST.
             expire (Optional[int]): TTL for Valkey keys in seconds
-            client_name (str): Name sent via CLIENT SETNAME for connection identification.
-                Defaults to "agno_db_client".
             session_table (Optional[str]): Name of the table to store sessions
             memory_table (Optional[str]): Name of the table to store memories
             metrics_table (Optional[str]): Name of the table to store metrics
             eval_table (Optional[str]): Name of the table to store evaluation runs
             knowledge_table (Optional[str]): Name of the table to store knowledge documents
-            learnings_table (Optional[str]): Name of the table to store learnings
             traces_table (Optional[str]): Name of the table to store traces
             spans_table (Optional[str]): Name of the table to store spans
+            learnings_table (Optional[str]): Name of the table to store learnings
+
+        Raises:
+            ValueError: If username is provided without a password.
         """
         if id is None:
             base_seed = f"{host}:{port}" if valkey_client is None else str(valkey_client)
@@ -117,9 +124,9 @@ class ValkeyDb(BaseDb):
             metrics_table=metrics_table,
             eval_table=eval_table,
             knowledge_table=knowledge_table,
-            learnings_table=learnings_table,
             traces_table=traces_table,
             spans_table=spans_table,
+            learnings_table=learnings_table,
         )
 
         self.db_prefix = db_prefix
@@ -129,16 +136,14 @@ class ValkeyDb(BaseDb):
             self.valkey_client = valkey_client
         else:
             if username and not password:
-                raise ValueError(
-                    "A password is required when username is provided. "
-                    "Valkey does not support username-only authentication."
-                )
+                raise ValueError("password must be provided when username is set")
             credentials = ServerCredentials(password=password, username=username) if password else None
             config = GlideClientConfiguration(
                 addresses=[NodeAddress(host=host, port=port)],
                 database_id=database_id,
                 credentials=credentials,
                 use_tls=use_tls,
+                request_timeout=request_timeout,
                 client_name=client_name,
             )
             self.valkey_client = GlideClient.create(config)
@@ -160,31 +165,37 @@ class ValkeyDb(BaseDb):
         return None
 
     def table_exists(self, table_name: str) -> bool:
-        """Check if a table exists.
-
-        Valkey is schemaless — there is no concept of creating or dropping tables.
-        Keys are created on write and removed on delete. This always returns True
-        to satisfy the BaseDb interface contract (callers use it to gate
-        create-table logic that does not apply to Valkey).
-        """
+        """Required by BaseDb. Valkey has no tables and keys are created on
+        first write, so existence checks always pass."""
         return True
 
     def _get_table_name(self, table_type: str) -> str:
         """Get the active table name for the given table type."""
-        _table_map = {
-            "sessions": self.session_table_name,
-            "memories": self.memory_table_name,
-            "metrics": self.metrics_table_name,
-            "evals": self.eval_table_name,
-            "knowledge": self.knowledge_table_name,
-            "learnings": self.learnings_table_name,
-            "traces": self.trace_table_name,
-            "spans": self.span_table_name,
-        }
-        try:
-            return _table_map[table_type]
-        except KeyError:
-            raise ValueError(f"Unknown table type: {table_type}")
+        if table_type == "sessions":
+            return self.session_table_name
+
+        elif table_type == "memories":
+            return self.memory_table_name
+
+        elif table_type == "metrics":
+            return self.metrics_table_name
+
+        elif table_type == "evals":
+            return self.eval_table_name
+
+        elif table_type == "knowledge":
+            return self.knowledge_table_name
+
+        elif table_type == "traces":
+            return self.trace_table_name
+
+        elif table_type == "spans":
+            return self.span_table_name
+
+        elif table_type == "learnings":
+            return self.learnings_table_name
+
+        raise ValueError(f"Unknown table type: {table_type}")
 
     def _store_record(
         self, table_type: str, record_id: str, data: Dict[str, Any], index_fields: Optional[List[str]] = None
@@ -319,7 +330,7 @@ class ValkeyDb(BaseDb):
 
             records = []
             for raw in results:
-                if raw is None:
+                if raw is None or isinstance(raw, RequestError):
                     continue
                 data_str: str = raw.decode("utf-8") if isinstance(raw, bytes) else str(raw) if raw else ""
                 if data_str:
@@ -415,7 +426,7 @@ class ValkeyDb(BaseDb):
 
             for i, session_id in enumerate(session_ids):
                 raw = read_results[i] if read_results else None
-                if raw is None:
+                if raw is None or isinstance(raw, RequestError):
                     continue
 
                 raw_str = raw.decode("utf-8") if isinstance(raw, bytes) else str(raw) if raw else None
@@ -794,7 +805,7 @@ class ValkeyDb(BaseDb):
             existing_map: Dict[str, Dict[str, Any]] = {}
             if read_results:
                 for i, raw in enumerate(read_results):
-                    if raw is not None:
+                    if raw is not None and not isinstance(raw, RequestError):
                         raw_str = raw.decode("utf-8") if isinstance(raw, bytes) else str(raw) if raw else None
                         if raw_str:
                             existing_map[valid_sessions[i].session_id] = deserialize_data(raw_str)
@@ -976,7 +987,7 @@ class ValkeyDb(BaseDb):
 
             for i, memory_id in enumerate(memory_ids):
                 raw = read_results[i] if read_results else None
-                if raw is None:
+                if raw is None or isinstance(raw, RequestError):
                     continue
 
                 raw_str = raw.decode("utf-8") if isinstance(raw, bytes) else str(raw) if raw else None
@@ -1112,10 +1123,10 @@ class ValkeyDb(BaseDb):
 
             filtered_memories = apply_filters(records=all_memories, conditions=conditions)
 
-            # Apply topic filter
+            # Apply topic filter ("topics" may be stored as None, so coalesce to an empty list)
             if topics is not None:
                 filtered_memories = [
-                    m for m in filtered_memories if any(topic in m.get("topics", []) for topic in topics)
+                    m for m in filtered_memories if any(topic in (m.get("topics") or []) for topic in topics)
                 ]
 
             # Apply content search
@@ -1176,7 +1187,7 @@ class ValkeyDb(BaseDb):
                     }
 
                 user_stats[memory_user_id]["total_memories"] += 1
-                updated_at = memory.get("updated_at", 0)
+                updated_at = memory.get("updated_at") or 0
                 if updated_at > user_stats[memory_user_id]["last_memory_updated_at"]:
                     user_stats[memory_user_id]["last_memory_updated_at"] = updated_at
 
@@ -1210,6 +1221,12 @@ class ValkeyDb(BaseDb):
             if memory.memory_id is None:
                 memory.memory_id = str(uuid4())
 
+            created_at = memory.created_at
+            existing_record = self._get_record("memories", memory.memory_id)
+            if existing_record:
+                # Update the existing record while preserving created_at
+                created_at = existing_record.get("created_at", memory.created_at)
+
             data = {
                 "user_id": memory.user_id,
                 "agent_id": memory.agent_id,
@@ -1219,7 +1236,7 @@ class ValkeyDb(BaseDb):
                 "topics": memory.topics,
                 "input": memory.input,
                 "feedback": memory.feedback,
-                "created_at": memory.created_at,
+                "created_at": created_at,
                 "updated_at": int(time.time()),
             }
 
@@ -1263,13 +1280,33 @@ class ValkeyDb(BaseDb):
             index_fields = ["user_id", "agent_id", "team_id", "workflow_id"]
             now = int(time.time())
 
-            # Prepare all memory data
-            prepared: List[Dict[str, Any]] = []
-            for memory in memories:
-                if memory is None:
-                    continue
+            valid_memories = [m for m in memories if m is not None]
+            for memory in valid_memories:
                 if memory.memory_id is None:
                     memory.memory_id = str(uuid4())
+
+            # Phase 1: Batch-read existing memories to preserve created_at, as the
+            # single-record upsert_user_memory path does.
+            read_pipeline = self._create_pipeline()
+            for memory in valid_memories:
+                key = generate_valkey_key(prefix=self.db_prefix, table_type="memories", key_id=str(memory.memory_id))
+                read_pipeline.get(key)
+
+            read_results = self._exec_pipeline(read_pipeline)
+            existing_map: Dict[str, Dict[str, Any]] = {}
+            if read_results:
+                for i, raw in enumerate(read_results):
+                    if raw is None or isinstance(raw, RequestError):
+                        continue
+                    raw_str = raw.decode("utf-8") if isinstance(raw, bytes) else str(raw) if raw else None
+                    if raw_str:
+                        existing_map[str(valid_memories[i].memory_id)] = deserialize_data(raw_str)
+
+            # Prepare all memory data
+            prepared: List[Dict[str, Any]] = []
+            for memory in valid_memories:
+                existing = existing_map.get(str(memory.memory_id))
+                created_at = existing.get("created_at", memory.created_at) if existing else memory.created_at
 
                 data = {
                     "user_id": memory.user_id,
@@ -1280,7 +1317,7 @@ class ValkeyDb(BaseDb):
                     "topics": memory.topics,
                     "input": memory.input,
                     "feedback": memory.feedback,
-                    "created_at": memory.created_at,
+                    "created_at": created_at,
                     "updated_at": memory.updated_at if preserve_updated_at else now,
                 }
                 prepared.append(data)
@@ -1419,7 +1456,7 @@ class ValkeyDb(BaseDb):
             log_error(f"Error getting metrics starting date: {str(e)}")
             raise e
 
-    def calculate_metrics(self) -> Optional[list[dict]]:
+    def calculate_metrics(self, user_isolation: bool = False) -> Optional[list[dict]]:
         """Calculate metrics for all dates without complete metrics.
 
         Returns:
@@ -1439,9 +1476,13 @@ class ValkeyDb(BaseDb):
                 log_info("Metrics already calculated for all relevant dates.")
                 return None
 
-            start_timestamp = int(datetime.combine(dates_to_process[0], datetime.min.time()).timestamp())
+            start_timestamp = int(
+                datetime.combine(dates_to_process[0], datetime.min.time()).replace(tzinfo=timezone.utc).timestamp()
+            )
             end_timestamp = int(
-                datetime.combine(dates_to_process[-1] + timedelta(days=1), datetime.min.time()).timestamp()
+                datetime.combine(dates_to_process[-1] + timedelta(days=1), datetime.min.time())
+                .replace(tzinfo=timezone.utc)
+                .timestamp()
             )
 
             sessions = self._get_all_sessions_for_metrics_calculation(
@@ -1463,17 +1504,20 @@ class ValkeyDb(BaseDb):
                 if not any(len(sessions) > 0 for sessions in sessions_for_date.values()):
                     continue
 
-                metrics_record = calculate_date_metrics(date_to_process, sessions_for_date)
+                # calculate_date_metrics returns a LIST: one record per
+                # distinct user_id (plus the empty-string bucket for unowned
+                # sessions). Iterate and upsert each.
+                for metrics_record in calculate_date_metrics(
+                    date_to_process, sessions_for_date, user_isolation=user_isolation
+                ):
+                    # Preserve created_at across re-runs.
+                    existing_record = self._get_record("metrics", metrics_record["id"])
+                    if existing_record:
+                        metrics_record["created_at"] = existing_record.get("created_at", metrics_record["created_at"])
 
-                # Check if a record already exists for this date and aggregation period
-                existing_record = self._get_record("metrics", metrics_record["id"])
-                if existing_record:
-                    # Update the existing record while preserving created_at
-                    metrics_record["created_at"] = existing_record.get("created_at", metrics_record["created_at"])
-
-                success = self._store_record("metrics", metrics_record["id"], metrics_record)
-                if success:
-                    results.append(metrics_record)
+                    success = self._store_record("metrics", metrics_record["id"], metrics_record)
+                    if success:
+                        results.append(metrics_record)
 
             log_debug("Updated metrics calculations")
 
@@ -1487,12 +1531,16 @@ class ValkeyDb(BaseDb):
         self,
         starting_date: Optional[date] = None,
         ending_date: Optional[date] = None,
+        user_id: Optional[str] = None,
     ) -> Tuple[List[dict], Optional[int]]:
         """Get all metrics matching the given date range.
 
         Args:
             starting_date (Optional[date]): The starting date to filter by.
             ending_date (Optional[date]): The ending date to filter by.
+            user_id (Optional[str]): When provided, returns only that user's
+                per-user bucket. When ``None``, returns ALL buckets including
+                the empty-string unowned bucket.
 
         Returns:
             Tuple[List[dict], Optional[int]]: A tuple containing the list of metrics and the latest updated_at.
@@ -1515,40 +1563,69 @@ class ValkeyDb(BaseDb):
                     filtered_metrics.append(metric)
                 all_metrics = filtered_metrics
 
+            # Filter by user_id if requested.
+            if user_id is not None:
+                all_metrics = [m for m in all_metrics if m.get("user_id") == user_id]
+
             # Get latest updated_at
             latest_updated_at = None
             if all_metrics:
                 latest_updated_at = max(metric.get("updated_at", 0) for metric in all_metrics)
 
-            return all_metrics, latest_updated_at
+            # Map the sentinel empty-string user_id back to None.
+            cleaned: List[dict] = []
+            for metric in all_metrics:
+                row = dict(metric)
+                if row.get("user_id") == "":
+                    row["user_id"] = None
+                cleaned.append(row)
+            return cleaned, latest_updated_at
 
         except Exception as e:
             log_error(f"Error getting metrics: {str(e)}")
             raise e
 
     # -- Knowledge methods --
+    # Valkey stores records as serialized dicts; we filter in Python. A row
+    # is visible if its ``user_id`` matches the caller OR is unset. When the
+    # caller passes ``user_id=None`` we skip the check entirely.
 
-    def delete_knowledge_content(self, id: str):
+    @staticmethod
+    def _knowledge_doc_is_visible(doc: Dict[str, Any], user_id: Optional[str]) -> bool:
+        if user_id is None:
+            return True
+        owner = doc.get("user_id")
+        return owner is None or owner == user_id
+
+    def delete_knowledge_content(self, id: str, user_id: Optional[str] = None):
         """Delete a knowledge row from the database.
 
         Args:
             id (str): The ID of the knowledge row to delete.
+            user_id (Optional[str]): Owner-scoping filter. When set, only
+                deletes if the row is owned by ``user_id`` OR is unowned.
 
         Raises:
             Exception: If any error occurs while deleting the knowledge content.
         """
         try:
+            if user_id is not None:
+                existing = self._get_record("knowledge", id)
+                if existing is not None and not self._knowledge_doc_is_visible(existing, user_id):
+                    log_debug(f"Skipping delete of knowledge content {id}: not owned by {user_id}")
+                    return
             self._delete_record("knowledge", id)
 
         except Exception as e:
             log_error(f"Error deleting knowledge content: {str(e)}")
             raise e
 
-    def get_knowledge_content(self, id: str) -> Optional[KnowledgeRow]:
+    def get_knowledge_content(self, id: str, user_id: Optional[str] = None) -> Optional[KnowledgeRow]:
         """Get a knowledge row from the database.
 
         Args:
             id (str): The ID of the knowledge row to get.
+            user_id (Optional[str]): Owner-scoping filter; see module note.
 
         Returns:
             Optional[KnowledgeRow]: The knowledge row, or None if it doesn't exist.
@@ -1559,6 +1636,8 @@ class ValkeyDb(BaseDb):
         try:
             document_raw = self._get_record("knowledge", id)
             if document_raw is None:
+                return None
+            if not self._knowledge_doc_is_visible(document_raw, user_id):
                 return None
 
             return KnowledgeRow.model_validate(document_raw)
@@ -1574,6 +1653,7 @@ class ValkeyDb(BaseDb):
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
         linked_to: Optional[str] = None,
+        user_id: Optional[str] = None,
     ) -> Tuple[List[KnowledgeRow], int]:
         """Get all knowledge contents from the database.
 
@@ -1583,6 +1663,7 @@ class ValkeyDb(BaseDb):
             sort_by (Optional[str]): The column to sort by.
             sort_order (Optional[str]): The order to sort by.
             linked_to (Optional[str]): Filter by linked_to value (knowledge instance name).
+            user_id (Optional[str]): Owner-scoping filter; see module note.
 
         Returns:
             Tuple[List[KnowledgeRow], int]: The knowledge contents and total count.
@@ -1598,6 +1679,10 @@ class ValkeyDb(BaseDb):
             # Apply linked_to filter if provided
             if linked_to is not None:
                 all_documents = [doc for doc in all_documents if doc.get("linked_to") == linked_to]
+
+            # Owner scoping: drop rows the caller isn't allowed to see.
+            if user_id is not None:
+                all_documents = [doc for doc in all_documents if self._knowledge_doc_is_visible(doc, user_id)]
 
             total_count = len(all_documents)
 
@@ -1720,7 +1805,7 @@ class ValkeyDb(BaseDb):
 
             for i, eval_run_id in enumerate(eval_run_ids):
                 raw = read_results[i] if read_results else None
-                if raw is None:
+                if raw is None or isinstance(raw, RequestError):
                     continue
 
                 raw_str = raw.decode("utf-8") if isinstance(raw, bytes) else str(raw) if raw else None
@@ -1893,19 +1978,18 @@ class ValkeyDb(BaseDb):
             raise
 
     # -- Cultural Knowledge methods --
-    # NOTE: Cultural knowledge support is deprecated and being removed from Agno.
     # These methods raise NotImplementedError to satisfy the BaseDb interface.
 
     def clear_cultural_knowledge(self) -> None:
-        raise NotImplementedError("Cultural knowledge is deprecated. Use learnings instead.")
+        raise NotImplementedError("Cultural knowledge is not supported for ValkeyDb")
 
     def delete_cultural_knowledge(self, id: str) -> None:
-        raise NotImplementedError("Cultural knowledge is deprecated. Use learnings instead.")
+        raise NotImplementedError("Cultural knowledge is not supported for ValkeyDb")
 
     def get_cultural_knowledge(
         self, id: str, deserialize: Optional[bool] = True
     ) -> Optional[Union[CulturalKnowledge, Dict[str, Any]]]:
-        raise NotImplementedError("Cultural knowledge is deprecated. Use learnings instead.")
+        raise NotImplementedError("Cultural knowledge is not supported for ValkeyDb")
 
     def get_all_cultural_knowledge(
         self,
@@ -1918,12 +2002,12 @@ class ValkeyDb(BaseDb):
         sort_order: Optional[str] = None,
         deserialize: Optional[bool] = True,
     ) -> Union[List[CulturalKnowledge], Tuple[List[Dict[str, Any]], int]]:
-        raise NotImplementedError("Cultural knowledge is deprecated. Use learnings instead.")
+        raise NotImplementedError("Cultural knowledge is not supported for ValkeyDb")
 
     def upsert_cultural_knowledge(
         self, cultural_knowledge: CulturalKnowledge, deserialize: Optional[bool] = True
     ) -> Optional[Union[CulturalKnowledge, Dict[str, Any]]]:
-        raise NotImplementedError("Cultural knowledge is deprecated. Use learnings instead.")
+        raise NotImplementedError("Cultural knowledge is not supported for ValkeyDb")
 
     # --- Traces ---
     def upsert_trace(self, trace: "Trace") -> None:
@@ -2059,7 +2143,7 @@ class ValkeyDb(BaseDb):
         total = 0
         errors = 0
         for raw in results:
-            if raw is None:
+            if raw is None or isinstance(raw, RequestError):
                 continue
             total += 1
             data_str: str = raw.decode("utf-8") if isinstance(raw, bytes) else str(raw) if raw else ""
@@ -2084,18 +2168,12 @@ class ValkeyDb(BaseDb):
         self,
         trace_id: Optional[str] = None,
         run_id: Optional[str] = None,
-        session_id: Optional[str] = None,
-        user_id: Optional[str] = None,
-        agent_id: Optional[str] = None,
     ):
         """Get a single trace by trace_id or other filters.
 
         Args:
             trace_id: The unique trace identifier.
             run_id: Filter by run ID (returns first match).
-            session_id: Filter by session ID (returns first match).
-            user_id: Filter by user ID (returns first match).
-            agent_id: Filter by agent ID (returns first match).
 
         Returns:
             Optional[Trace]: The trace if found, None otherwise.
@@ -2114,21 +2192,9 @@ class ValkeyDb(BaseDb):
                     return TraceSchema.from_dict(result)
                 return None
 
-            # For non-trace_id filters, scan all traces and find the first match
-            filter_field: Optional[str] = None
-            filter_value: Optional[str] = None
-            if run_id:
-                filter_field, filter_value = "run_id", run_id
-            elif session_id:
-                filter_field, filter_value = "session_id", session_id
-            elif user_id:
-                filter_field, filter_value = "user_id", user_id
-            elif agent_id:
-                filter_field, filter_value = "agent_id", agent_id
-
-            if filter_field and filter_value:
+            elif run_id:
                 all_traces = self._get_all_records("traces")
-                matching = [t for t in all_traces if t.get(filter_field) == filter_value]
+                matching = [t for t in all_traces if t.get("run_id") == run_id]
                 if matching:
                     # Sort by start_time descending and get most recent
                     matching.sort(key=lambda x: x.get("start_time", ""), reverse=True)
@@ -2137,8 +2203,9 @@ class ValkeyDb(BaseDb):
                     return TraceSchema.from_dict(result)
                 return None
 
-            log_debug("get_trace called without any filter parameters")
-            return None
+            else:
+                log_debug("get_trace called without any filter parameters")
+                return None
 
         except Exception as e:
             log_error(f"Error getting trace: {str(e)}")
@@ -2173,9 +2240,7 @@ class ValkeyDb(BaseDb):
             end_time: Filter traces ending before this datetime.
             limit: Maximum number of traces to return per page.
             page: Page number (1-indexed).
-            filter_expr: Advanced filter expression dict (from FilterExpr.to_dict()).
-                Supports composable queries with AND/OR/NOT logic and operators
-                like EQ, NEQ, GT, GTE, LT, LTE, IN, CONTAINS, STARTSWITH.
+            filter_expr: Serialized FilterExpr dict to apply on trace fields.
 
         Returns:
             tuple[List[Trace], int]: Tuple of (list of matching traces, total count).
@@ -2188,6 +2253,9 @@ class ValkeyDb(BaseDb):
                 f"get_traces called with filters: run_id={run_id}, session_id={session_id}, "
                 f"user_id={user_id}, agent_id={agent_id}, page={page}, limit={limit}"
             )
+
+            if filter_expr is not None:
+                validate_filter_expr(filter_expr, TRACE_COLUMNS)
 
             all_traces = self._get_all_records("traces")
 
@@ -2216,7 +2284,7 @@ class ValkeyDb(BaseDb):
                     trace_end = trace.get("end_time", "")
                     if trace_end and trace_end > end_time.isoformat():
                         continue
-                if filter_expr and not matches_filter_expr(trace, filter_expr, TRACE_COLUMNS):
+                if filter_expr is not None and not record_matches_filter_expr(trace, filter_expr, TRACE_COLUMNS):
                     continue
 
                 filtered_traces.append(trace)
@@ -2238,7 +2306,7 @@ class ValkeyDb(BaseDb):
             return traces, total_count
 
         except ValueError:
-            # Re-raise for a proper 400 response at the API layer (invalid filter_expr)
+            # Re-raise ValueError for proper 400 response at the API layer
             raise
         except Exception as e:
             log_error(f"Error getting traces: {str(e)}")
@@ -2267,7 +2335,7 @@ class ValkeyDb(BaseDb):
             end_time: Filter sessions with traces created before this datetime.
             limit: Maximum number of sessions to return per page.
             page: Page number (1-indexed).
-            filter_expr: Advanced filter expression dict (from FilterExpr.to_dict()).
+            filter_expr: Serialized FilterExpr dict to apply on trace fields.
 
         Returns:
             tuple[List[Dict], int]: Tuple of (list of session stats dicts, total count).
@@ -2282,6 +2350,9 @@ class ValkeyDb(BaseDb):
                 f"workflow_id={workflow_id}, team_id={team_id}, "
                 f"start_time={start_time}, end_time={end_time}, page={page}, limit={limit}"
             )
+
+            if filter_expr is not None:
+                validate_filter_expr(filter_expr, TRACE_COLUMNS)
 
             all_traces = self._get_all_records("traces")
 
@@ -2307,7 +2378,7 @@ class ValkeyDb(BaseDb):
                     continue
                 if end_time and created_at > end_time.isoformat():
                     continue
-                if filter_expr and not matches_filter_expr(trace, filter_expr, TRACE_COLUMNS):
+                if filter_expr is not None and not record_matches_filter_expr(trace, filter_expr, TRACE_COLUMNS):
                     continue
 
                 if trace_session_id not in session_stats:
@@ -2347,7 +2418,7 @@ class ValkeyDb(BaseDb):
             return paginated_stats, total_count
 
         except ValueError:
-            # Re-raise for a proper 400 response at the API layer (invalid filter_expr)
+            # Re-raise ValueError for proper 400 response at the API layer
             raise
         except Exception as e:
             log_error(f"Error getting trace stats: {str(e)}")
@@ -2461,19 +2532,61 @@ class ValkeyDb(BaseDb):
             log_error(f"Error getting spans: {str(e)}")
             return []
 
-    # -- Learning methods (stubs) --
+    # -- Learning methods --
+
+    def _learning_matches(self, record: Dict[str, Any], **filters: Optional[str]) -> bool:
+        """Check a learning record against the provided filters. None filters are skipped."""
+        return all(record.get(field) == value for field, value in filters.items() if value is not None)
+
     def get_learning(
         self,
         learning_type: str,
         user_id: Optional[str] = None,
         agent_id: Optional[str] = None,
         team_id: Optional[str] = None,
+        workflow_id: Optional[str] = None,
         session_id: Optional[str] = None,
         namespace: Optional[str] = None,
         entity_id: Optional[str] = None,
         entity_type: Optional[str] = None,
     ) -> Optional[Dict[str, Any]]:
-        raise NotImplementedError("Learning methods not yet implemented for ValkeyDb")
+        """Retrieve a learning record.
+
+        Args:
+            learning_type: Type of learning ('user_profile', 'session_context', etc.)
+            user_id: Filter by user ID.
+            agent_id: Filter by agent ID.
+            team_id: Filter by team ID.
+            workflow_id: Filter by workflow ID.
+            session_id: Filter by session ID.
+            namespace: Filter by namespace ('user', 'global', or custom).
+            entity_id: Filter by entity ID (for entity-specific learnings).
+            entity_type: Filter by entity type ('person', 'company', etc.).
+
+        Returns:
+            Dict with 'content' key containing the learning data, or None.
+        """
+        try:
+            for record in self._get_all_records("learnings"):
+                if record.get("learning_type") != learning_type:
+                    continue
+                if self._learning_matches(
+                    record,
+                    user_id=user_id,
+                    agent_id=agent_id,
+                    team_id=team_id,
+                    workflow_id=workflow_id,
+                    session_id=session_id,
+                    namespace=namespace,
+                    entity_id=entity_id,
+                    entity_type=entity_type,
+                ):
+                    return {"content": record.get("content")}
+            return None
+
+        except Exception as e:
+            log_debug(f"Error retrieving learning: {e}")
+            return None
 
     def upsert_learning(
         self,
@@ -2489,12 +2602,251 @@ class ValkeyDb(BaseDb):
         entity_type: Optional[str] = None,
         metadata: Optional[Dict[str, Any]] = None,
     ) -> None:
-        raise NotImplementedError("Learning methods not yet implemented for ValkeyDb")
+        """Insert or update a learning record.
+
+        On update only content, metadata and updated_at change; created_at and
+        the identity fields keep their stored values.
+
+        Args:
+            id: Unique identifier for the learning.
+            learning_type: Type of learning ('user_profile', 'session_context', etc.)
+            content: The learning content as a dict.
+            user_id: Associated user ID.
+            agent_id: Associated agent ID.
+            team_id: Associated team ID.
+            session_id: Associated session ID.
+            namespace: Namespace for scoping ('user', 'global', or custom).
+            entity_id: Associated entity ID (for entity-specific learnings).
+            entity_type: Entity type ('person', 'company', etc.).
+            metadata: Optional metadata.
+        """
+        try:
+            current_time = int(time.time())
+            existing = self._get_record("learnings", id)
+
+            if existing is not None:
+                data = {**existing, "content": content, "metadata": metadata, "updated_at": current_time}
+            else:
+                data = {
+                    "learning_id": id,
+                    "learning_type": learning_type,
+                    "namespace": namespace,
+                    "user_id": user_id,
+                    "agent_id": agent_id,
+                    "team_id": team_id,
+                    "session_id": session_id,
+                    "entity_id": entity_id,
+                    "entity_type": entity_type,
+                    "content": content,
+                    "metadata": metadata,
+                    "created_at": current_time,
+                    "updated_at": current_time,
+                }
+
+            self._store_record(
+                "learnings",
+                id,
+                data,
+                index_fields=[
+                    "learning_type",
+                    "namespace",
+                    "user_id",
+                    "agent_id",
+                    "team_id",
+                    "session_id",
+                    "entity_id",
+                    "entity_type",
+                ],
+            )
+            log_debug(f"Upserted learning: {id}")
+
+        except Exception as e:
+            log_debug(f"Error upserting learning: {e}")
 
     def delete_learning(self, id: str) -> bool:
-        raise NotImplementedError("Learning methods not yet implemented for ValkeyDb")
+        """Delete a learning record.
+
+        Args:
+            id: The learning ID to delete.
+
+        Returns:
+            True if deleted, False otherwise.
+        """
+        try:
+            return self._delete_record(
+                "learnings",
+                id,
+                index_fields=[
+                    "learning_type",
+                    "namespace",
+                    "user_id",
+                    "agent_id",
+                    "team_id",
+                    "session_id",
+                    "entity_id",
+                    "entity_type",
+                ],
+            )
+
+        except Exception as e:
+            log_debug(f"Error deleting learning: {e}")
+            return False
+
+    def update_learning(self, id: str, content: Dict[str, Any], metadata: Optional[Dict[str, Any]] = None) -> bool:
+        """Update an existing learning record in place. Does NOT insert.
+
+        Args:
+            id: The learning ID to update.
+            content: Replacement content.
+            metadata: Replacement metadata.
+
+        Returns:
+            True if a record was updated, False if no record with that id exists.
+        """
+        try:
+            existing = self._get_record("learnings", id)
+            if existing is None:
+                return False
+
+            data = {**existing, "content": content, "metadata": metadata, "updated_at": int(time.time())}
+            return self._store_record(
+                "learnings",
+                id,
+                data,
+                index_fields=[
+                    "learning_type",
+                    "namespace",
+                    "user_id",
+                    "agent_id",
+                    "team_id",
+                    "session_id",
+                    "entity_id",
+                    "entity_type",
+                ],
+            )
+
+        except Exception as e:
+            log_error(f"Error updating learning: {e}")
+            raise e
+
+    def delete_user_learnings(self, user_id: str, learning_type: Optional[str] = None) -> int:
+        """Delete every learning record owned by a user.
+
+        Records with no owner (user_id None) are not affected.
+
+        Args:
+            user_id: The user whose learnings should be deleted.
+            learning_type: When provided, restrict deletion to this single learning type.
+
+        Returns:
+            The number of records deleted.
+        """
+        try:
+            deleted_count = 0
+            for record in self._get_all_records("learnings"):
+                if record.get("user_id") != user_id:
+                    continue
+                if learning_type is not None and record.get("learning_type") != learning_type:
+                    continue
+                record_id = record.get("learning_id")
+                if record_id and self._delete_record(
+                    "learnings",
+                    record_id,
+                    index_fields=[
+                        "learning_type",
+                        "namespace",
+                        "user_id",
+                        "agent_id",
+                        "team_id",
+                        "session_id",
+                        "entity_id",
+                        "entity_type",
+                    ],
+                ):
+                    deleted_count += 1
+
+            return deleted_count
+
+        except Exception as e:
+            log_error(f"Error deleting user learnings: {e}")
+            raise e
 
     def get_learnings(
+        self,
+        learning_type: Optional[str] = None,
+        user_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
+        workflow_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+        namespace: Optional[str] = None,
+        entity_id: Optional[str] = None,
+        entity_type: Optional[str] = None,
+        limit: Optional[int] = None,
+    ) -> List[Dict[str, Any]]:
+        """Get multiple learning records, most recently updated first.
+
+        Args:
+            learning_type: Filter by learning type.
+            user_id: Filter by user ID.
+            agent_id: Filter by agent ID.
+            team_id: Filter by team ID.
+            workflow_id: Filter by workflow ID.
+            session_id: Filter by session ID.
+            namespace: Filter by namespace ('user', 'global', or custom).
+            entity_id: Filter by entity ID (for entity-specific learnings).
+            entity_type: Filter by entity type ('person', 'company', etc.).
+            limit: Maximum number of records to return.
+
+        Returns:
+            List of learning records.
+        """
+        try:
+            filtered_records = [
+                record
+                for record in self._get_all_records("learnings")
+                if self._learning_matches(
+                    record,
+                    learning_type=learning_type,
+                    user_id=user_id,
+                    agent_id=agent_id,
+                    team_id=team_id,
+                    workflow_id=workflow_id,
+                    session_id=session_id,
+                    namespace=namespace,
+                    entity_id=entity_id,
+                    entity_type=entity_type,
+                )
+            ]
+
+            sorted_records = apply_sorting(records=filtered_records, sort_by="updated_at", sort_order="desc")
+
+            if limit is not None:
+                sorted_records = sorted_records[:limit]
+
+            return sorted_records
+
+        except Exception as e:
+            log_debug(f"Error getting learnings: {e}")
+            return []
+
+    def get_learning_by_id(self, id: str) -> Optional[Dict[str, Any]]:
+        """Get a learning record by its ID.
+
+        Args:
+            id: The learning ID to retrieve.
+
+        Returns:
+            The learning record if found, None otherwise.
+        """
+        try:
+            return self._get_record("learnings", id)
+
+        except Exception as e:
+            log_error(f"Error getting learning by id: {e}")
+            raise e
+
+    def list_learnings(
         self,
         learning_type: Optional[str] = None,
         user_id: Optional[str] = None,
@@ -2504,6 +2856,121 @@ class ValkeyDb(BaseDb):
         namespace: Optional[str] = None,
         entity_id: Optional[str] = None,
         entity_type: Optional[str] = None,
+        include_global: bool = False,
+        limit: int = 100,
+        page: int = 1,
+        sort_by: Optional[str] = None,
+        sort_order: Optional[str] = None,
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        """Get learning records with filtering, sorting and pagination.
+
+        Args:
+            learning_type: Filter by learning type.
+            user_id: Filter by user ID.
+            agent_id: Filter by agent ID.
+            team_id: Filter by team ID.
+            session_id: Filter by session ID.
+            namespace: Filter by namespace.
+            entity_id: Filter by entity ID.
+            entity_type: Filter by entity type.
+            include_global: When filtering by user_id, also include unowned records.
+            limit: Maximum number of records to return per page.
+            page: Page number (1-indexed).
+            sort_by: Field to sort by.
+            sort_order: Sort order ('asc' or 'desc').
+
+        Returns:
+            Tuple of (list of learning records, total count).
+        """
+        try:
+            filtered_records = []
+            for record in self._get_all_records("learnings"):
+                if user_id is not None:
+                    record_user_id = record.get("user_id")
+                    if include_global:
+                        if record_user_id != user_id and record_user_id is not None:
+                            continue
+                    elif record_user_id != user_id:
+                        continue
+                if self._learning_matches(
+                    record,
+                    learning_type=learning_type,
+                    agent_id=agent_id,
+                    team_id=team_id,
+                    session_id=session_id,
+                    namespace=namespace,
+                    entity_id=entity_id,
+                    entity_type=entity_type,
+                ):
+                    filtered_records.append(record)
+
+            sorted_records = apply_sorting(
+                records=filtered_records, sort_by=sort_by or "updated_at", sort_order=sort_order or "desc"
+            )
+            paginated_records = apply_pagination(records=sorted_records, limit=limit, page=page)
+
+            return paginated_records, len(filtered_records)
+
+        except Exception as e:
+            log_error(f"Error listing learnings: {e}")
+            raise e
+
+    def get_learnings_user_stats(
+        self,
+        learning_type: Optional[str] = None,
         limit: Optional[int] = None,
-    ) -> List[Dict[str, Any]]:
-        raise NotImplementedError("Learning methods not yet implemented for ValkeyDb")
+        page: Optional[int] = None,
+        user_id: Optional[str] = None,
+        sort_by: Optional[str] = None,
+        sort_order: Optional[str] = None,
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        """Get learning statistics grouped by user.
+
+        Args:
+            learning_type: Filter by learning type.
+            limit: Maximum number of users to return per page.
+            page: Page number (1-indexed).
+            user_id: Filter by user ID.
+            sort_by: Field to sort by ('user_id' or 'last_learning_updated_at').
+            sort_order: Sort order ('asc' or 'desc').
+
+        Returns:
+            Tuple of (list of user stats dicts, total count).
+        """
+        try:
+            user_stats: Dict[str, Dict[str, Any]] = {}
+            for record in self._get_all_records("learnings"):
+                if learning_type is not None and record.get("learning_type") != learning_type:
+                    continue
+                record_user_id = record.get("user_id")
+                if user_id is not None:
+                    if record_user_id != user_id:
+                        continue
+                elif record_user_id is None:
+                    continue
+
+                updated_at = record.get("updated_at") or 0
+                stats = user_stats.get(record_user_id)
+                if stats is None or updated_at > (stats["last_learning_updated_at"] or 0):
+                    user_stats[record_user_id] = {
+                        "user_id": record_user_id,
+                        "last_learning_updated_at": updated_at,
+                    }
+
+            stats_list = list(user_stats.values())
+            reverse = sort_order != "asc"
+            if sort_by == "user_id":
+                stats_list.sort(key=lambda s: s["user_id"] or "", reverse=reverse)
+            else:
+                stats_list.sort(key=lambda s: s["last_learning_updated_at"] or 0, reverse=reverse)
+
+            total_count = len(stats_list)
+            if limit is not None:
+                start = ((page - 1) * limit) if page is not None else 0
+                stats_list = stats_list[start : start + limit]
+
+            return stats_list, total_count
+
+        except Exception as e:
+            log_error(f"Error getting learning user stats: {e}")
+            raise e

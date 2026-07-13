@@ -34,7 +34,6 @@ Specific reader, cloud storage, and vector database integrations.
 | [vector_dbs/02_local.py](./vector_dbs/02_local.py) | ChromaDB + LanceDB (local development) |
 | [vector_dbs/03_managed.py](./vector_dbs/03_managed.py) | Pinecone + PgVector (managed/production) |
 | [vector_dbs/04_pgvector.py](./vector_dbs/04_pgvector.py) | PgVector (PostgreSQL) |
-| [vector_dbs/05_valkey.py](./vector_dbs/05_valkey.py) | Valkey (ValkeySearch via GLIDE) |
 
 ## Running
 

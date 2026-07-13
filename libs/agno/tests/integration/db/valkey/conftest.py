@@ -1,6 +1,9 @@
 import pytest
 
-from agno.db.valkey.valkey import ValkeyDb
+try:
+    from agno.db.valkey.valkey import ValkeyDb
+except ImportError:
+    pytest.skip("valkey-glide-sync not installed", allow_module_level=True)
 
 
 @pytest.fixture
@@ -35,7 +38,7 @@ def cleanup_valkey(valkey_db: ValkeyDb):
         "metrics",
         "evals",
         "knowledge",
-        "culture",
+        "learnings",
         "traces",
         "spans",
     ]

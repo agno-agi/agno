@@ -90,7 +90,15 @@ def _ensure_glide_sync_stub():
             self.port = port
 
     class _GlideClientConfiguration:
-        def __init__(self, addresses=None, database_id=None, credentials=None, use_tls=False, client_name=None):
+        def __init__(
+            self,
+            addresses=None,
+            database_id=None,
+            credentials=None,
+            use_tls=False,
+            request_timeout=None,
+            client_name=None,
+        ):
             pass
 
     class _ServerCredentials:
@@ -183,7 +191,7 @@ def _patch_missing_attrs(glide_mod):
 _ensure_glide_sync_stub()
 
 from agno.db.filter_converter import TRACE_COLUMNS  # noqa: E402
-from agno.db.valkey.utils import matches_filter_expr  # noqa: E402
+from agno.db.valkey.utils import record_matches_filter_expr  # noqa: E402
 from agno.db.valkey.valkey import ValkeyDb  # noqa: E402
 
 
@@ -269,12 +277,12 @@ class TestFilterExpr:
     def test_matches_filter_expr_normalizes_datetime_equality_and_in_filters(self):
         trace_data = _make_trace_data("t1", created_at="2026-01-01T00:00:00+00:00")
 
-        assert matches_filter_expr(
+        assert record_matches_filter_expr(
             trace_data,
             {"op": "EQ", "key": "created_at", "value": "2026-01-01T00:00:00Z"},
             TRACE_COLUMNS,
         )
-        assert matches_filter_expr(
+        assert record_matches_filter_expr(
             trace_data,
             {"op": "IN", "key": "created_at", "values": ["2026-01-01T00:00:00Z"]},
             TRACE_COLUMNS,
@@ -283,9 +291,29 @@ class TestFilterExpr:
     def test_matches_filter_expr_neq_does_not_match_missing_values(self):
         trace_data = _make_trace_data("t1", team_id=None)
 
-        assert not matches_filter_expr(
+        assert not record_matches_filter_expr(
             trace_data,
             {"op": "NEQ", "key": "team_id", "value": "team-1"},
+            TRACE_COLUMNS,
+        )
+
+    def test_matches_filter_expr_not_over_missing_value_excludes_record(self):
+        # NOT(EQ team_id "tm1") on a NULL team_id is UNKNOWN in SQL, so the row is excluded;
+        # mirror that instead of treating the missing field as "not equal".
+        trace_data = _make_trace_data("t1", team_id=None)
+
+        assert not record_matches_filter_expr(
+            trace_data,
+            {"op": "NOT", "condition": {"op": "EQ", "key": "team_id", "value": "tm1"}},
+            TRACE_COLUMNS,
+        )
+
+    def test_matches_filter_expr_not_over_present_value_matches(self):
+        trace_data = _make_trace_data("t1", team_id="tm2")
+
+        assert record_matches_filter_expr(
+            trace_data,
+            {"op": "NOT", "condition": {"op": "EQ", "key": "team_id", "value": "tm1"}},
             TRACE_COLUMNS,
         )
 
@@ -295,7 +323,7 @@ class TestFilterExpr:
             filter_expr = {"op": "NOT", "condition": filter_expr}
 
         with pytest.raises(ValueError, match="exceeds maximum nesting depth"):
-            matches_filter_expr(_make_trace_data("t1"), filter_expr, TRACE_COLUMNS)
+            record_matches_filter_expr(_make_trace_data("t1"), filter_expr, TRACE_COLUMNS)
 
 
 # -- Session CRUD tests --
@@ -396,31 +424,13 @@ class TestTrace:
         result = valkey_db.get_trace(trace_id="t1")
         assert result is not None
 
-    def test_get_trace_by_session_id(self, valkey_db, mock_client):
-        trace_data = _make_trace_data("t1", session_id="s1")
+    def test_get_trace_by_run_id(self, valkey_db, mock_client):
+        trace_data = _make_trace_data("t1", run_id="r1")
         mock_client.scan.return_value = ("0", [b"test:traces:t1"])
         mock_client.exec.return_value = [_serialize(trace_data)]
         mock_client.smembers.return_value = set()
 
-        result = valkey_db.get_trace(session_id="s1")
-        assert result is not None
-
-    def test_get_trace_by_user_id(self, valkey_db, mock_client):
-        trace_data = _make_trace_data("t1", user_id="u1")
-        mock_client.scan.return_value = ("0", [b"test:traces:t1"])
-        mock_client.exec.return_value = [_serialize(trace_data)]
-        mock_client.smembers.return_value = set()
-
-        result = valkey_db.get_trace(user_id="u1")
-        assert result is not None
-
-    def test_get_trace_by_agent_id(self, valkey_db, mock_client):
-        trace_data = _make_trace_data("t1", agent_id="a1")
-        mock_client.scan.return_value = ("0", [b"test:traces:t1"])
-        mock_client.exec.return_value = [_serialize(trace_data)]
-        mock_client.smembers.return_value = set()
-
-        result = valkey_db.get_trace(agent_id="a1")
+        result = valkey_db.get_trace(run_id="r1")
         assert result is not None
 
     def test_get_trace_returns_none_when_missing(self, valkey_db, mock_client):
@@ -477,3 +487,13 @@ class TestTableExists:
         # For key-value stores, tables always "exist"
         assert valkey_db.table_exists("sessions") is True
         assert valkey_db.table_exists("nonexistent") is True
+
+
+# -- Constructor guard test --
+
+
+class TestConstructorGuards:
+    def test_username_without_password_raises(self):
+        # The guard fires before any client creation, so no connection is attempted
+        with pytest.raises(ValueError, match="password"):
+            ValkeyDb(username="user")

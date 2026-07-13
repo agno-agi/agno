@@ -6,14 +6,13 @@ from datetime import date, datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Set, Union, cast
 from uuid import UUID
 
-from agno.db.schemas.culture import CulturalKnowledge
+from agno.db.filter_converter import DATETIME_COLUMNS, MAX_FILTER_DEPTH, _normalize_datetime_value
 from agno.db.utils import get_sort_value
 from agno.utils.log import log_warning
 
 try:
-    from glide_sync import ClusterScanCursor, GlideClient, GlideClusterClient
+    from glide_sync import ClusterScanCursor, GlideClusterClient
 
-    ValkeyClient: type = GlideClient
     ValkeyClusterClient: type = GlideClusterClient
 except ImportError:
     raise ImportError("`valkey-glide-sync` not installed. Please install it using `pip install valkey-glide-sync`")
@@ -65,7 +64,7 @@ def get_all_keys_for_table(valkey_client: "AnyValkeyClient", prefix: str, table_
     """Get all relevant keys for the given table type.
 
     Args:
-        valkey_client: The Valkey GLIDE client.
+        valkey_client (GlideClient): The Valkey GLIDE client.
         prefix (str): The prefix for the keys.
         table_type (str): The table type.
 
@@ -188,44 +187,53 @@ def apply_filters(records: List[Dict[str, Any]], conditions: Dict[str, Any]) -> 
     return filtered_records
 
 
-def _normalize_filter_value(key: str, value: Any) -> Any:
-    """Normalize filter values to match the shared DB filter converters."""
-    from agno.db.filter_converter import DATETIME_COLUMNS
-
-    if key not in DATETIME_COLUMNS:
-        return value
-
-    from agno.utils.dttm import parse_datetime_utc
-
-    try:
-        return parse_datetime_utc(value)
-    except (TypeError, ValueError):
-        return value
+# -- FilterExpr matching --
 
 
-def matches_filter_expr(
-    record: Dict[str, Any], filter_dict: Dict[str, Any], allowed_columns: Set[str], _depth: int = 0
+def record_matches_filter_expr(
+    record: Dict[str, Any],
+    filter_dict: Dict[str, Any],
+    allowed_keys: Optional[Set[str]] = None,
+    _depth: int = 0,
 ) -> bool:
-    """Evaluate a serialized FilterExpr dict against a single in-memory record.
+    """Evaluate a serialized FilterExpr dict against a record dict.
 
-    Mirrors the semantics of ``agno.db.filter_converter.filter_expr_to_sqlalchemy``, but
-    operates directly on a Python dict instead of building a SQL predicate, since Valkey
-    records are plain dicts loaded from JSON rather than SQL table rows.
+    Python-side counterpart of filter_expr_to_sqlalchemy for records fetched
+    from Valkey, with matching semantics: None record values never match a
+    single-field operator (SQL NULL behavior), CONTAINS/STARTSWITH are
+    case-insensitive, and datetime filter values are normalized to UTC.
 
     Args:
-        record: The record to test (e.g. a deserialized trace dict).
-        filter_dict: Serialized FilterExpr (from ``to_dict()`` or a JSON API body).
-        allowed_columns: Whitelist of field names; unknown fields raise ValueError.
+        record: The record to evaluate.
+        filter_dict: Serialized FilterExpr (from to_dict() or JSON body).
+        allowed_keys: Set of allowed field names for validation.
+            If provided, raises ValueError for unknown fields.
+        _depth: Internal parameter tracking recursion depth. Do not pass manually.
 
     Returns:
-        True if the record satisfies the filter expression.
+        bool: True if the record matches the filter expression.
 
     Raises:
-        ValueError: If filter_dict has invalid structure, unknown operator, or references
-            a field not in allowed_columns.
+        ValueError: If filter_dict has invalid structure, unknown operator,
+            references a field not in allowed_keys, or exceeds max recursion depth.
     """
-    from agno.db.filter_converter import MAX_FILTER_DEPTH
+    # A record matches only when the expression evaluates to True; a comparison against a
+    # missing field is UNKNOWN (None) and, like SQL's WHERE clause, is not a match.
+    return _eval_filter_expr(record, filter_dict, allowed_keys, _depth) is True
 
+
+def _eval_filter_expr(
+    record: Dict[str, Any],
+    filter_dict: Dict[str, Any],
+    allowed_keys: Optional[Set[str]],
+    _depth: int,
+) -> Optional[bool]:
+    """Evaluate a FilterExpr dict with SQL three-valued logic.
+
+    Returns True/False, or None for UNKNOWN when a single-field operator is applied to a
+    missing (None) record value. AND/OR/NOT propagate UNKNOWN the way SQL does, so that a
+    NOT over a missing field stays UNKNOWN (excluded) instead of flipping to a match.
+    """
     if _depth > MAX_FILTER_DEPTH:
         raise ValueError(f"Filter expression exceeds maximum nesting depth of {MAX_FILTER_DEPTH}")
 
@@ -237,70 +245,96 @@ def matches_filter_expr(
     if op in ("EQ", "NEQ", "GT", "GTE", "LT", "LTE", "CONTAINS", "STARTSWITH"):
         key = filter_dict.get("key")
         value = filter_dict.get("value")
+
         if key is None or value is None:
             raise ValueError(f"{op} filter requires 'key' and 'value' fields. Got: {filter_dict}")
-        if key not in allowed_columns:
-            raise ValueError(f"Invalid filter field: '{key}'. Allowed: {sorted(allowed_columns)}")
+
+        if allowed_keys and key not in allowed_keys:
+            raise ValueError(f"Invalid filter field: '{key}'. Allowed: {sorted(allowed_keys)}")
+
+        if key in DATETIME_COLUMNS:
+            value = _normalize_datetime_value(value)
 
         record_value = record.get(key)
         if record_value is None:
+            return None
+
+        try:
+            if op == "EQ":
+                return record_value == value
+            elif op == "NEQ":
+                return record_value != value
+            elif op == "GT":
+                return record_value > value
+            elif op == "GTE":
+                return record_value >= value
+            elif op == "LT":
+                return record_value < value
+            elif op == "LTE":
+                return record_value <= value
+            elif op == "CONTAINS":
+                return str(value).lower() in str(record_value).lower()
+            elif op == "STARTSWITH":
+                return str(record_value).lower().startswith(str(value).lower())
+        except TypeError:
             return False
-
-        record_value = _normalize_filter_value(key, record_value)
-        value = _normalize_filter_value(key, value)
-
-        if op == "EQ":
-            return record_value == value
-        elif op == "NEQ":
-            return record_value != value
-        elif op == "CONTAINS":
-            return record_value is not None and str(value).lower() in str(record_value).lower()
-        elif op == "STARTSWITH":
-            return record_value is not None and str(record_value).lower().startswith(str(value).lower())
-
-        if op == "GT":
-            return record_value > value
-        elif op == "GTE":
-            return record_value >= value
-        elif op == "LT":
-            return record_value < value
-        else:  # LTE
-            return record_value <= value
 
     elif op == "IN":
         key = filter_dict.get("key")
         values = filter_dict.get("values")
+
         if key is None or values is None:
             raise ValueError(f"IN filter requires 'key' and 'values' fields. Got: {filter_dict}")
-        if key not in allowed_columns:
-            raise ValueError(f"Invalid filter field: '{key}'. Allowed: {sorted(allowed_columns)}")
+
+        if allowed_keys and key not in allowed_keys:
+            raise ValueError(f"Invalid filter field: '{key}'. Allowed: {sorted(allowed_keys)}")
+
+        if key in DATETIME_COLUMNS:
+            values = [_normalize_datetime_value(v) for v in values]
+
         record_value = record.get(key)
         if record_value is None:
-            return False
-        record_value = _normalize_filter_value(key, record_value)
-        values = [_normalize_filter_value(key, value) for value in values]
+            return None
         return record_value in values
 
     elif op == "AND":
         conditions = filter_dict.get("conditions")
         if not conditions:
             raise ValueError(f"AND filter requires 'conditions' field. Got: {filter_dict}")
-        return all(matches_filter_expr(record, c, allowed_columns, _depth + 1) for c in conditions)
+        # Evaluate all branches (no short-circuit) so invalid sub-expressions always raise
+        results = [_eval_filter_expr(record, c, allowed_keys, _depth + 1) for c in conditions]
+        if any(r is False for r in results):
+            return False
+        return None if any(r is None for r in results) else True
 
     elif op == "OR":
         conditions = filter_dict.get("conditions")
         if not conditions:
             raise ValueError(f"OR filter requires 'conditions' field. Got: {filter_dict}")
-        return any(matches_filter_expr(record, c, allowed_columns, _depth + 1) for c in conditions)
+        # Evaluate all branches (no short-circuit) so invalid sub-expressions always raise
+        results = [_eval_filter_expr(record, c, allowed_keys, _depth + 1) for c in conditions]
+        if any(r is True for r in results):
+            return True
+        return None if any(r is None for r in results) else False
 
     elif op == "NOT":
         condition = filter_dict.get("condition")
         if not condition:
             raise ValueError(f"NOT filter requires 'condition' field. Got: {filter_dict}")
-        return not matches_filter_expr(record, condition, allowed_columns, _depth + 1)
+        inner = _eval_filter_expr(record, condition, allowed_keys, _depth + 1)
+        return None if inner is None else not inner
 
-    else:
-        raise ValueError(f"Unknown filter operator: {op}")
+    raise ValueError(f"Unknown filter operator: {op}")
+
+
+def validate_filter_expr(filter_dict: Dict[str, Any], allowed_keys: Optional[Set[str]] = None) -> None:
+    """Validate a FilterExpr dict structure without matching any record.
+
+    Evaluating against an empty record exercises the full expression tree
+    (operator, key and depth validation) so invalid filters raise ValueError
+    even when there are no records to evaluate.
+    """
+    record_matches_filter_expr({}, filter_dict, allowed_keys)
 
 
 def create_index_entries(
@@ -334,87 +368,113 @@ def remove_index_entries(
 # -- Metrics utils --
 
 
-def calculate_date_metrics(date_to_process: date, sessions_data: dict) -> dict:
-    """Calculate metrics for the given date.
+def calculate_date_metrics(date_to_process: date, sessions_data: dict, user_isolation: bool = False) -> List[dict]:
+    """Calculate metrics for the given date, bucketed per user_id.
+
+    Each session is attributed to its owning user when user_isolation is
+    enabled. Sessions without a user_id aggregate under the sentinel
+    empty-string bucket.
 
     Args:
         date_to_process (date): The date to calculate metrics for.
         sessions_data (dict): The sessions data.
+        user_isolation (bool): Whether to bucket metrics per user_id.
 
     Returns:
-        dict: A dictionary with the calculated metrics.
+        List[dict]: A list of per-user metrics records.
     """
-    metrics = {
-        "users_count": 0,
-        "agent_sessions_count": 0,
-        "team_sessions_count": 0,
-        "workflow_sessions_count": 0,
-        "agent_runs_count": 0,
-        "team_runs_count": 0,
-        "workflow_runs_count": 0,
-    }
-    token_metrics = {
-        "input_tokens": 0,
-        "output_tokens": 0,
-        "total_tokens": 0,
-        "audio_total_tokens": 0,
-        "audio_input_tokens": 0,
-        "audio_output_tokens": 0,
-        "cache_read_tokens": 0,
-        "cache_write_tokens": 0,
-        "reasoning_tokens": 0,
-    }
-    model_counts: Dict[str, int] = {}
+
+    def _empty_metric_record() -> Dict[str, Any]:
+        return {
+            "users_count": 0,
+            "agent_sessions_count": 0,
+            "team_sessions_count": 0,
+            "workflow_sessions_count": 0,
+            "agent_runs_count": 0,
+            "team_runs_count": 0,
+            "workflow_runs_count": 0,
+            "token_metrics": {
+                "input_tokens": 0,
+                "output_tokens": 0,
+                "total_tokens": 0,
+                "audio_total_tokens": 0,
+                "audio_input_tokens": 0,
+                "audio_output_tokens": 0,
+                "cache_read_tokens": 0,
+                "cache_write_tokens": 0,
+                "reasoning_tokens": 0,
+            },
+            "model_counts": {},
+            "user_ids": set(),
+        }
 
     session_types = [
         ("agent", "agent_sessions_count", "agent_runs_count"),
         ("team", "team_sessions_count", "team_runs_count"),
         ("workflow", "workflow_sessions_count", "workflow_runs_count"),
     ]
-    all_user_ids = set()
+
+    per_user: Dict[str, Dict[str, Any]] = {}
 
     for session_type, sessions_count_key, runs_count_key in session_types:
         sessions = sessions_data.get(session_type, []) or []
-        metrics[sessions_count_key] = len(sessions)
 
         for session in sessions:
-            if session.get("user_id"):
-                all_user_ids.add(session["user_id"])
-            metrics[runs_count_key] += len(session.get("runs", []))
-            if runs := session.get("runs", []):
-                for run in runs:
-                    if model_id := run.get("model"):
-                        model_provider = run.get("model_provider", "")
-                        model_counts[f"{model_id}:{model_provider}"] = (
-                            model_counts.get(f"{model_id}:{model_provider}", 0) + 1
-                        )
+            session_user_id = session.get("user_id") or ""
+            bucket_key = session_user_id if user_isolation else ""
+            bucket = per_user.setdefault(bucket_key, _empty_metric_record())
+            if session_user_id:
+                bucket["user_ids"].add(session_user_id)
+            bucket[sessions_count_key] += 1
 
-            session_metrics = session.get("session_data", {}).get("session_metrics", {})
-            for field in token_metrics:
-                token_metrics[field] += session_metrics.get(field, 0)
+            runs = session.get("runs") or []
+            bucket[runs_count_key] += len(runs)
+            for run in runs:
+                if model_id := run.get("model"):
+                    model_provider = run.get("model_provider", "")
+                    key = f"{model_id}:{model_provider}"
+                    bucket["model_counts"][key] = bucket["model_counts"].get(key, 0) + 1
 
-    model_metrics = []
-    for model, count in model_counts.items():
-        model_id, model_provider = model.rsplit(":", 1)
-        model_metrics.append({"model_id": model_id, "model_provider": model_provider, "count": count})
+            session_metrics = (session.get("session_data") or {}).get("session_metrics", {})
+            for field in bucket["token_metrics"]:
+                bucket["token_metrics"][field] += session_metrics.get(field, 0)
 
-    metrics["users_count"] = len(all_user_ids)
     current_time = int(time.time())
+    completed = date_to_process < datetime.now(timezone.utc).date()
 
-    # Create a deterministic ID based on date and aggregation period. This simplifies avoiding duplicates
-    metric_id = f"{date_to_process.isoformat()}_daily"
+    records: List[dict] = []
+    for user_id, bucket in per_user.items():
+        model_metrics = []
+        for model, count in bucket["model_counts"].items():
+            model_id, model_provider = model.rsplit(":", 1)
+            model_metrics.append({"model_id": model_id, "model_provider": model_provider, "count": count})
 
-    return {
-        "id": metric_id,
-        "date": date_to_process,
-        "completed": date_to_process < datetime.now(timezone.utc).date(),
-        "token_metrics": token_metrics,
-        "model_metrics": model_metrics,
-        "created_at": current_time,
-        "updated_at": current_time,
-        "aggregation_period": "daily",
-        **metrics,
-    }
+        users_count = len(bucket["user_ids"])
+        # Create a deterministic ID based on date and user. This simplifies avoiding duplicates
+        metric_id = f"{date_to_process.isoformat()}_{user_id}_daily"
+
+        records.append(
+            {
+                "id": metric_id,
+                "date": date_to_process,
+                "completed": completed,
+                "token_metrics": bucket["token_metrics"],
+                "model_metrics": model_metrics,
+                "created_at": current_time,
+                "updated_at": current_time,
+                "aggregation_period": "daily",
+                "user_id": user_id,
+                "users_count": users_count,
+                "agent_sessions_count": bucket["agent_sessions_count"],
+                "team_sessions_count": bucket["team_sessions_count"],
+                "workflow_sessions_count": bucket["workflow_sessions_count"],
+                "agent_runs_count": bucket["agent_runs_count"],
+                "team_runs_count": bucket["team_runs_count"],
+                "workflow_runs_count": bucket["workflow_runs_count"],
+            }
+        )
+
+    return records
 
 
 def fetch_all_sessions_data(
@@ -461,60 +521,3 @@ def get_dates_to_calculate_metrics_for(starting_date: date) -> list[date]:
     if days_diff <= 0:
         return []
     return [starting_date + timedelta(days=x) for x in range(days_diff)]
-
-
-# -- Cultural Knowledge util methods --
-def serialize_cultural_knowledge_for_db(cultural_knowledge: CulturalKnowledge) -> Dict[str, Any]:
-    """Serialize a CulturalKnowledge object for database storage.
-
-    Converts the model's separate content, categories, and notes fields
-    into a single dict for the database content column.
-
-    Args:
-        cultural_knowledge (CulturalKnowledge): The cultural knowledge object to serialize.
-
-    Returns:
-        Dict[str, Any]: A dictionary with the content field as a dict containing content, categories, and notes.
-    """
-    content_dict: Dict[str, Any] = {}
-    if cultural_knowledge.content is not None:
-        content_dict["content"] = cultural_knowledge.content
-    if cultural_knowledge.categories is not None:
-        content_dict["categories"] = cultural_knowledge.categories
-    if cultural_knowledge.notes is not None:
-        content_dict["notes"] = cultural_knowledge.notes
-
-    return content_dict if content_dict else {}
-
-
-def deserialize_cultural_knowledge_from_db(db_row: Dict[str, Any]) -> CulturalKnowledge:
-    """Deserialize a database row to a CulturalKnowledge object.
-
-    The database stores content as a dict containing content, categories, and notes.
-    This method extracts those fields and converts them back to the model format.
-
-    Args:
-        db_row (Dict[str, Any]): The database row as a dictionary.
-
-    Returns:
-        CulturalKnowledge: The cultural knowledge object.
-    """
-    # Extract content, categories, and notes from the content field
-    content_json = db_row.get("content", {}) or {}
-
-    return CulturalKnowledge.from_dict(
-        {
-            "id": db_row.get("id"),
-            "name": db_row.get("name"),
-            "summary": db_row.get("summary"),
-            "content": content_json.get("content"),
-            "categories": content_json.get("categories"),
-            "notes": content_json.get("notes"),
-            "metadata": db_row.get("metadata"),
-            "input": db_row.get("input"),
-            "created_at": db_row.get("created_at"),
-            "updated_at": db_row.get("updated_at"),
-            "agent_id": db_row.get("agent_id"),
-            "team_id": db_row.get("team_id"),
-        }
-    )

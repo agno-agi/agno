@@ -11,10 +11,7 @@ from agno.vectordb.search import SearchType
 
 @pytest.fixture()
 def stub_glide(monkeypatch):
-    """Patch glide_sync references inside the valkeydb module to avoid real network calls.
-
-    Returns a tuple (glide_client_mock, glide_ft_mock).
-    """
+    """Patch glide_sync references inside the valkeydb module to avoid real network calls."""
     # Ensure the module is importable (it may already be if valkey-glide-sync is installed)
     if "glide_sync" not in sys.modules:
         glide_mod = types.ModuleType("glide_sync")
@@ -46,6 +43,8 @@ def stub_glide(monkeypatch):
     from agno.vectordb.valkey import valkeydb as valkeydb_mod
 
     ft_mock = MagicMock(name="glide_ft")
+    # Default search reply shaped like a real [count, ...] response
+    ft_mock.search.return_value = [0]
     monkeypatch.setattr(valkeydb_mod, "glide_ft", ft_mock)
 
     yield ft_mock
@@ -114,7 +113,7 @@ def test_knowledge_insert(create_knowledge):
     try:
         result = knowledge.insert(
             name="Recipes",
-            url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf",
+            text_content="Tom Kha Gai is a Thai coconut soup with chicken and galangal.",
             metadata={"doc_type": "recipe_book"},
             skip_if_exists=True,
         )
@@ -237,8 +236,8 @@ def test_search_hybrid_unsupported(valkey_db):
     db, client, ft_mock = valkey_db
 
     db.search_type = SearchType.hybrid
-    docs = db.search("curry", limit=1)
-    assert docs == []
+    with pytest.raises(ValueError, match="Hybrid search is currently unsupported"):
+        db.search("curry", limit=1)
     ft_mock.search.assert_not_called()
     assert "hybrid" not in db.get_supported_search_types()
 
@@ -289,4 +288,39 @@ def test_filter_query_escapes_tag_values_without_changing_stored_metadata(valkey
     parsed_doc = db._parse_hash(doc)
 
     assert parsed_doc["category"] == "north america"
-    assert db._build_filter_query({"category": "north america"}) == r"(@category:{north\ america})"
+    assert db._build_filter_expression({"category": "north america"}) == r"@category:{north\ america}"
+
+
+def test_embedding_dimension_mismatch_raises(valkey_db):
+    db = valkey_db[0]
+    doc = Document(content="Doc A", name="doc_a", embedding=[0.1] * 4)
+
+    with pytest.raises(ValueError, match="dimensions"):
+        db._parse_hash(doc)
+
+
+def test_meta_data_name_does_not_override_document_name(valkey_db):
+    db = valkey_db[0]
+    doc = Document(content="Doc A", meta_data={"name": "spoofed"}, name="doc_a")
+
+    parsed_doc = db._parse_hash(doc)
+
+    assert parsed_doc["name"] == "doc_a"
+
+
+def test_delete_by_metadata_unindexed_key_is_refused(valkey_db):
+    db, client, ft_mock = valkey_db
+
+    # An unindexed key must refuse the whole delete instead of widening it
+    assert db.delete_by_metadata({"author": "x"}) is False
+    assert db.delete_by_metadata({"category": None}) is False
+    assert db.delete_by_metadata({}) is False
+    ft_mock.search.assert_not_called()
+    client.delete.assert_not_called()
+
+
+def test_username_without_password_raises(import_valkeydb, mock_embedder):
+    ValkeyDB, _ft_mock = import_valkeydb
+
+    with pytest.raises(ValueError, match="password"):
+        ValkeyDB(index_name="test_index", username="user", embedder=mock_embedder)

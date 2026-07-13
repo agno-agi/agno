@@ -1,10 +1,4 @@
-"""Table schemas and related utils used by the ValkeyDb class.
-
-These schemas document the expected field names and types for each record type
-stored in Valkey. While Valkey is a key-value store and does not enforce schemas
-at the storage layer, these definitions serve as the canonical reference for the
-data contracts used by ValkeyDb methods.
-"""
+"""Table schemas and related utils used by the ValkeyDb class"""
 
 from typing import Any
 
@@ -52,6 +46,7 @@ METRICS_SCHEMA = {
     "model_metrics": {"type": "json", "default": {}},
     "date": {"type": "date"},
     "aggregation_period": {"type": "string"},
+    "user_id": {"type": "string", "default": ""},
     "created_at": {"type": "integer"},
     "updated_at": {"type": "integer"},
     "completed": {"type": "boolean", "default": False},
@@ -90,17 +85,21 @@ KNOWLEDGE_SCHEMA = {
 }
 
 
-CULTURAL_KNOWLEDGE_SCHEMA = {
-    "id": {"type": "string", "primary_key": True},
-    "name": {"type": "string"},
-    "summary": {"type": "string"},
-    "content": {"type": "json"},
-    "metadata": {"type": "json"},
-    "input": {"type": "string"},
-    "created_at": {"type": "integer"},
-    "updated_at": {"type": "integer"},
+LEARNING_SCHEMA = {
+    "learning_id": {"type": "string", "primary_key": True},
+    "learning_type": {"type": "string"},
+    "namespace": {"type": "string"},
+    "user_id": {"type": "string"},
     "agent_id": {"type": "string"},
     "team_id": {"type": "string"},
+    "workflow_id": {"type": "string"},
+    "session_id": {"type": "string"},
+    "entity_id": {"type": "string"},
+    "entity_type": {"type": "string"},
+    "content": {"type": "json"},
+    "metadata": {"type": "json"},
+    "created_at": {"type": "integer"},
+    "updated_at": {"type": "integer"},
 }
 
 TRACE_SCHEMA = {
@@ -138,9 +137,8 @@ def get_table_schema_definition(table_type: str) -> dict[str, Any]:
     """
     Get the expected schema definition for the given table.
 
-    Returns the field-name-to-type mapping that documents the data contract
-    for the specified record type. Useful for validation, introspection, and
-    keeping parity with the Postgres schema definitions.
+    For Valkey, we don't need actual schemas since it's a key-value store,
+    but we maintain this for compatibility with the base interface.
 
     Args:
         table_type (str): The type of table to get the schema for.
@@ -154,7 +152,7 @@ def get_table_schema_definition(table_type: str) -> dict[str, Any]:
         "metrics": METRICS_SCHEMA,
         "evals": EVAL_SCHEMA,
         "knowledge": KNOWLEDGE_SCHEMA,
-        "culture": CULTURAL_KNOWLEDGE_SCHEMA,
+        "learnings": LEARNING_SCHEMA,
         "traces": TRACE_SCHEMA,
         "spans": SPAN_SCHEMA,
     }

@@ -4,8 +4,6 @@ Examples demonstrating Valkey integration with Agno agents, teams, and workflows
 
 ## Setup
 
-These configurations and examples will use Valkey GLIDE. 
-
 ```shell
 uv pip install valkey-glide-sync
 
