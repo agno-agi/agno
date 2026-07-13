@@ -59,6 +59,7 @@ from agno.team._default_tools import (
     _acascading_cancel_run,
     _cascading_cancel_run,
 )
+from agno.team._member_execution import run_member_sync, stream_member_sync
 from agno.team.task import TaskList, TaskStatus, save_task_list
 from agno.tools.function import Function
 from agno.utils.events import (
@@ -446,7 +447,8 @@ def _get_task_management_tools(
                 member_run_id = str(uuid4())
                 if run_response.run_id is not None:
                     register_member_run(run_response.run_id, member_run_id)
-                member_stream = member_agent.run(
+                member_stream = stream_member_sync(
+                    member_agent,
                     input=member_agent_task if not history else history,
                     user_id=user_id,
                     session_id=session.session_id,
@@ -498,7 +500,8 @@ def _get_task_management_tools(
                 member_run_id = str(uuid4())
                 if run_response.run_id is not None:
                     register_member_run(run_response.run_id, member_run_id)
-                member_run_response = member_agent.run(
+                member_run_response = run_member_sync(
+                    member_agent,
                     input=member_agent_task if not history else history,
                     user_id=user_id,
                     session_id=session.session_id,
@@ -814,7 +817,8 @@ def _get_task_management_tools(
                 member_run_id = str(uuid4())
                 if run_response.run_id is not None:
                     register_member_run(run_response.run_id, member_run_id)
-                member_run_response = member_agent.run(
+                member_run_response = run_member_sync(
+                    member_agent,
                     input=member_agent_task if not history else history,
                     user_id=user_id,
                     session_id=session.session_id,
