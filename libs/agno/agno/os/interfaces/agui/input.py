@@ -44,7 +44,6 @@ def extract_media(
         if msg.role != "user" or msg.content is None:
             continue
 
-        # String content has no media
         if isinstance(msg.content, str):
             return images, audio, videos, files
 

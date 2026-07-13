@@ -15,13 +15,11 @@ from agno.utils.log import log_debug, log_error
 class JSONReader(Reader):
     """Reader for JSON files"""
 
-    chunk: bool = False
-
-    def __init__(self, chunking_strategy: Optional[ChunkingStrategy] = None, **kwargs):
+    def __init__(self, chunk: bool = True, chunking_strategy: Optional[ChunkingStrategy] = None, **kwargs):
         if chunking_strategy is None:
             chunk_size = kwargs.get("chunk_size", 5000)
             chunking_strategy = FixedSizeChunking(chunk_size=chunk_size)
-        super().__init__(chunking_strategy=chunking_strategy, **kwargs)
+        super().__init__(chunk=chunk, chunking_strategy=chunking_strategy, **kwargs)
 
     @classmethod
     def get_supported_chunking_strategies(cls) -> List[ChunkingStrategyType]:

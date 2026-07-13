@@ -7,15 +7,19 @@ The team coordinates multiple agents while maintaining shared session state.
 """
 
 from agno.agent.agent import Agent
+from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIResponses
 from agno.os import AgentOS
 from agno.os.interfaces.agui import AGUI
 from agno.team.team import Team
 
+db = SqliteDb(db_file="/tmp/agui_team_state_events.db")
+
 recipe_creator = Agent(
     name="recipe_creator",
     role="Recipe Creator",
     model=OpenAIResponses(id="gpt-5.5"),
+    db=db,
     instructions="You create recipes with ingredients and instructions. Focus on the cooking process.",
     markdown=True,
 )
@@ -24,6 +28,7 @@ nutrition_advisor = Agent(
     name="nutrition_advisor",
     role="Nutrition Advisor",
     model=OpenAIResponses(id="gpt-5.5"),
+    db=db,
     instructions="You advise on dietary preferences and nutritional aspects of recipes.",
     markdown=True,
 )
