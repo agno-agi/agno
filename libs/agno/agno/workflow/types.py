@@ -266,7 +266,7 @@ class WorkflowExecutionInput:
         elif isinstance(self.input, (dict, list)):
             import json
 
-            return json.dumps(self.input, indent=2, default=str)
+            return json.dumps(self.input, indent=2, default=str, ensure_ascii=False)
         else:
             return str(self.input)
 
@@ -322,7 +322,7 @@ class StepInput:
         elif isinstance(self.input, (dict, list)):
             import json
 
-            return json.dumps(self.input, indent=2, default=str)
+            return json.dumps(self.input, indent=2, default=str, ensure_ascii=False)
         else:
             return str(self.input)
 
@@ -478,7 +478,9 @@ class StepInput:
         elif isinstance(self.previous_step_content, dict):
             import json
 
-            previous_step_content_str = json.dumps(self.previous_step_content, indent=2, default=str)
+            previous_step_content_str = json.dumps(
+                self.previous_step_content, indent=2, default=str, ensure_ascii=False
+            )
         elif self.previous_step_content:
             previous_step_content_str = str(self.previous_step_content)
 
@@ -1217,9 +1219,7 @@ class StepRequirement:
             try:
                 requirement.set_user_input(validate=True, **requirement.user_input)
             except ValueError as e:
-                raise ValueError(
-                    f"Invalid user_input for step '{requirement.step_name}': {e}"
-                ) from e
+                raise ValueError(f"Invalid user_input for step '{requirement.step_name}': {e}") from e
         return requirement
 
 

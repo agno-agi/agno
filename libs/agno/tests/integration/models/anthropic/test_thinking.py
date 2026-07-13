@@ -16,7 +16,7 @@ def _get_thinking_agent(**kwargs):
     """Create an agent with thinking enabled using consistent settings."""
     default_config = {
         "model": Claude(
-            id="claude-sonnet-4-20250514",
+            id="claude-sonnet-4-5-20250929",
             thinking={"type": "enabled", "budget_tokens": 1024},
         ),
         "markdown": True,
@@ -30,7 +30,7 @@ def _get_interleaved_thinking_agent(**kwargs):
     """Create an agent with interleaved thinking enabled using Claude 4."""
     default_config = {
         "model": Claude(
-            id="claude-sonnet-4-20250514",
+            id="claude-sonnet-4-5-20250929",
             thinking={"type": "enabled", "budget_tokens": 2048},
             betas=["interleaved-thinking-2025-05-14"],
         ),
@@ -158,7 +158,7 @@ async def test_thinking_with_storage():
     """Test that thinking content is stored and retrievable."""
     with tempfile.TemporaryDirectory() as storage_dir:
         agent = Agent(
-            model=Claude(id="claude-sonnet-4-20250514", thinking={"type": "enabled", "budget_tokens": 1024}),
+            model=Claude(id="claude-sonnet-4-5-20250929", thinking={"type": "enabled", "budget_tokens": 1024}),
             db=JsonDb(db_path=storage_dir, session_table="test_session"),
             user_id="test_user",
             session_id="test_session",
@@ -200,7 +200,7 @@ async def test_thinking_with_streaming_storage():
     """Test thinking content with streaming and storage."""
     with tempfile.TemporaryDirectory() as storage_dir:
         agent = Agent(
-            model=Claude(id="claude-sonnet-4-20250514", thinking={"type": "enabled", "budget_tokens": 1024}),
+            model=Claude(id="claude-sonnet-4-5-20250929", thinking={"type": "enabled", "budget_tokens": 1024}),
             db=JsonDb(db_path=storage_dir, session_table="test_session_stream"),
             user_id="test_user_stream",
             session_id="test_session_stream",
@@ -329,7 +329,7 @@ async def test_interleaved_thinking_with_storage():
     with tempfile.TemporaryDirectory() as storage_dir:
         agent = Agent(
             model=Claude(
-                id="claude-sonnet-4-20250514",
+                id="claude-sonnet-4-5-20250929",
                 thinking={"type": "enabled", "budget_tokens": 2048},
                 betas=["interleaved-thinking-2025-05-14"],
             ),
@@ -375,7 +375,7 @@ async def test_interleaved_thinking_streaming_with_storage():
     with tempfile.TemporaryDirectory() as storage_dir:
         agent = Agent(
             model=Claude(
-                id="claude-sonnet-4-20250514",
+                id="claude-sonnet-4-5-20250929",
                 thinking={"type": "enabled", "budget_tokens": 2048},
                 betas=["interleaved-thinking-2025-05-14"],
             ),
@@ -436,8 +436,8 @@ def test_interleaved_thinking_vs_regular_thinking():
     assert interleaved_response.content is not None
 
     # Verify the models are different
-    assert regular_agent.model.id == "claude-sonnet-4-20250514"  # type: ignore
-    assert interleaved_agent.model.id == "claude-sonnet-4-20250514"  # type: ignore
+    assert regular_agent.model.id == "claude-sonnet-4-5-20250929"  # type: ignore
+    assert interleaved_agent.model.id == "claude-sonnet-4-5-20250929"  # type: ignore
 
     # Verify the headers are different
     assert not hasattr(regular_agent.model, "default_headers") or regular_agent.model.default_headers is None  # type: ignore
@@ -451,9 +451,9 @@ def test_interleaved_thinking_vs_regular_thinking():
 def _get_reasoning_streaming_agent(**kwargs):
     """Create an agent with reasoning_model for streaming reasoning tests."""
     default_config = {
-        "model": Claude(id="claude-sonnet-4-20250514"),
+        "model": Claude(id="claude-sonnet-4-5-20250929"),
         "reasoning_model": Claude(
-            id="claude-sonnet-4-20250514",
+            id="claude-sonnet-4-5-20250929",
             thinking={"type": "enabled", "budget_tokens": 1024},
         ),
         "instructions": "You are an expert problem-solving assistant. Think step by step.",

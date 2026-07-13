@@ -6,6 +6,7 @@ from uuid import uuid4
 if TYPE_CHECKING:
     from agno.tracing.schemas import Span, Trace
 
+from agno.db import mcp_oauth_store
 from agno.db.base import BaseDb, ComponentType, SessionType
 from agno.db.migrations.manager import MigrationManager
 from agno.db.postgres.schemas import get_table_schema_definition
@@ -24,7 +25,19 @@ from agno.db.postgres.utils import (
 from agno.db.schemas.culture import CulturalKnowledge
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
+from agno.db.schemas.mcp_oauth import (
+    MCP_OAUTH_CLIENTS,
+    MCP_OAUTH_CODES,
+    MCP_OAUTH_KEYS,
+    MCP_OAUTH_REFRESH_TOKENS,
+    MCP_OAUTH_TABLE_NAME_ATTRS,
+    MCP_OAUTH_TRANSACTIONS,
+)
 from agno.db.schemas.memory import UserMemory
+from agno.db.schemas.service_accounts import (
+    resolve_service_account_sort_column,
+    validate_service_account_update,
+)
 from agno.db.utils import deserialize_session, deserialize_sessions, json_serializer
 from agno.run.base import RunStatus
 from agno.session import AgentSession, Session, TeamSession, WorkflowSession
@@ -79,6 +92,13 @@ class PostgresDb(BaseDb):
         schedules_table: Optional[str] = None,
         schedule_runs_table: Optional[str] = None,
         approvals_table: Optional[str] = None,
+        auth_tokens_table: Optional[str] = None,
+        service_accounts_table: Optional[str] = None,
+        mcp_oauth_clients_table: Optional[str] = None,
+        mcp_oauth_transactions_table: Optional[str] = None,
+        mcp_oauth_codes_table: Optional[str] = None,
+        mcp_oauth_refresh_tokens_table: Optional[str] = None,
+        mcp_oauth_keys_table: Optional[str] = None,
         id: Optional[str] = None,
         create_schema: bool = True,
     ):
@@ -109,6 +129,11 @@ class PostgresDb(BaseDb):
             learnings_table (Optional[str]): Name of the table to store learnings.
             schedules_table (Optional[str]): Name of the table to store cron schedules.
             schedule_runs_table (Optional[str]): Name of the table to store schedule run history.
+            mcp_oauth_clients_table (Optional[str]): Name of the table to store MCP OAuth client registrations.
+            mcp_oauth_transactions_table (Optional[str]): Name of the table to store MCP OAuth transactions.
+            mcp_oauth_codes_table (Optional[str]): Name of the table to store MCP OAuth authorization codes.
+            mcp_oauth_refresh_tokens_table (Optional[str]): Name of the table to store MCP OAuth refresh tokens.
+            mcp_oauth_keys_table (Optional[str]): Name of the table to store MCP OAuth signing keys.
             id (Optional[str]): ID of the database.
             create_schema (bool): Whether to automatically create the database schema if it doesn't exist.
                 Set to False if schema is managed externally (e.g., via migrations). Defaults to True.
@@ -155,6 +180,13 @@ class PostgresDb(BaseDb):
             schedules_table=schedules_table,
             schedule_runs_table=schedule_runs_table,
             approvals_table=approvals_table,
+            auth_tokens_table=auth_tokens_table,
+            service_accounts_table=service_accounts_table,
+            mcp_oauth_clients_table=mcp_oauth_clients_table,
+            mcp_oauth_transactions_table=mcp_oauth_transactions_table,
+            mcp_oauth_codes_table=mcp_oauth_codes_table,
+            mcp_oauth_refresh_tokens_table=mcp_oauth_refresh_tokens_table,
+            mcp_oauth_keys_table=mcp_oauth_keys_table,
         )
 
         self.db_schema: str = db_schema if db_schema is not None else "ai"
@@ -197,6 +229,7 @@ class PostgresDb(BaseDb):
             schedules_table=data.get("schedules_table"),
             schedule_runs_table=data.get("schedule_runs_table"),
             approvals_table=data.get("approvals_table"),
+            service_accounts_table=data.get("service_accounts_table"),
             id=data.get("id"),
         )
 
@@ -238,6 +271,7 @@ class PostgresDb(BaseDb):
             (self.schedules_table_name, "schedules"),
             (self.schedule_runs_table_name, "schedule_runs"),
             (self.approvals_table_name, "approvals"),
+            (self.service_accounts_table_name, "service_accounts"),
         ]
 
         for table_name, table_type in tables_to_create:
@@ -270,6 +304,7 @@ class PostgresDb(BaseDb):
             schema_primary_key = table_schema.pop("__primary_key__", None)
             schema_foreign_keys = table_schema.pop("__foreign_keys__", [])
             schema_composite_indexes = table_schema.pop("__composite_indexes__", [])
+            schema_partial_unique_indexes = table_schema.pop("_partial_unique_indexes", [])
 
             # Build columns
             for col_name, col_config in table_schema.items():
@@ -366,6 +401,21 @@ class PostgresDb(BaseDb):
                 idx_name = f"idx_{table_name}_{'_'.join(idx_config['columns'])}"
                 idx_cols = [table.c[c] for c in idx_config["columns"]]
                 Index(idx_name, *idx_cols)
+
+            # Partial unique indexes
+            for idx_config in schema_partial_unique_indexes:
+                idx_columns = idx_config["columns"]
+                missing = [c for c in idx_columns if c not in table.c]
+                if missing:
+                    raise ValueError(f"Partial unique index references missing columns in {table_name}: {missing}")
+
+                idx_name = f"{table_name}_{idx_config['name']}"
+                Index(
+                    idx_name,
+                    *[table.c[c] for c in idx_columns],
+                    unique=True,
+                    postgresql_where=text(idx_config["where"]),
+                )
 
             # Create schema if requested
             if self.create_schema:
@@ -580,6 +630,29 @@ class PostgresDb(BaseDb):
                 create_table_if_not_found=create_table_if_not_found,
             )
             return self.approvals_table
+
+        if table_type == "auth_tokens":
+            self.auth_tokens_table = self._get_or_create_table(
+                table_name=self.auth_tokens_table_name,
+                table_type="auth_tokens",
+                create_table_if_not_found=create_table_if_not_found,
+            )
+            return self.auth_tokens_table
+
+        if table_type == "service_accounts":
+            self.service_accounts_table = self._get_or_create_table(
+                table_name=self.service_accounts_table_name,
+                table_type="service_accounts",
+                create_table_if_not_found=create_table_if_not_found,
+            )
+            return self.service_accounts_table
+
+        if table_type in MCP_OAUTH_TABLE_NAME_ATTRS:
+            return self._get_or_create_table(
+                table_name=getattr(self, MCP_OAUTH_TABLE_NAME_ATTRS[table_type]),
+                table_type=table_type,
+                create_table_if_not_found=create_table_if_not_found,
+            )
 
         raise ValueError(f"Unknown table type: {table_type}")
 
@@ -4443,7 +4516,6 @@ class PostgresDb(BaseDb):
         user_id: Optional[str] = None,
         agent_id: Optional[str] = None,
         team_id: Optional[str] = None,
-        workflow_id: Optional[str] = None,
         session_id: Optional[str] = None,
         namespace: Optional[str] = None,
         entity_id: Optional[str] = None,
@@ -4459,7 +4531,6 @@ class PostgresDb(BaseDb):
             user_id: Associated user ID.
             agent_id: Associated agent ID.
             team_id: Associated team ID.
-            workflow_id: Associated workflow ID.
             session_id: Associated session ID.
             namespace: Namespace for scoping ('user', 'global', or custom).
             entity_id: Associated entity ID (for entity-specific learnings).
@@ -4481,7 +4552,6 @@ class PostgresDb(BaseDb):
                     user_id=user_id,
                     agent_id=agent_id,
                     team_id=team_id,
-                    workflow_id=workflow_id,
                     session_id=session_id,
                     entity_id=entity_id,
                     entity_type=entity_type,
@@ -4527,6 +4597,42 @@ class PostgresDb(BaseDb):
         except Exception as e:
             log_debug(f"Error deleting learning: {e}")
             return False
+
+    def update_learning(self, id: str, content: Dict[str, Any], metadata: Optional[Dict[str, Any]] = None) -> bool:
+        try:
+            table = self._get_table(table_type="learnings")
+            if table is None:
+                return False
+
+            with self.Session() as sess, sess.begin():
+                stmt = (
+                    table.update()
+                    .where(table.c.learning_id == id)
+                    .values(content=content, metadata=metadata, updated_at=int(time.time()))
+                )
+                result = sess.execute(stmt)
+                return (result.rowcount or 0) > 0
+
+        except Exception as e:
+            log_error(f"Error updating learning: {e}")
+            raise e
+
+    def delete_user_learnings(self, user_id: str, learning_type: Optional[str] = None) -> int:
+        try:
+            table = self._get_table(table_type="learnings")
+            if table is None:
+                return 0
+
+            with self.Session() as sess, sess.begin():
+                stmt = table.delete().where(table.c.user_id == user_id)
+                if learning_type is not None:
+                    stmt = stmt.where(table.c.learning_type == learning_type)
+                result = sess.execute(stmt)
+                return result.rowcount or 0
+
+        except Exception as e:
+            log_error(f"Error deleting user learnings: {e}")
+            raise e
 
     def get_learnings(
         self,
@@ -4596,6 +4702,129 @@ class PostgresDb(BaseDb):
         except Exception as e:
             log_debug(f"Error getting learnings: {e}")
             return []
+
+    def get_learning_by_id(self, id: str) -> Optional[Dict[str, Any]]:
+        try:
+            table = self._get_table(table_type="learnings")
+            if table is None:
+                return None
+            with self.Session() as sess:
+                result = sess.execute(select(table).where(table.c.learning_id == id)).fetchone()
+                return dict(result._mapping) if result else None
+        except Exception as e:
+            log_error(f"Error getting learning by id: {e}")
+            raise e
+
+    def list_learnings(
+        self,
+        learning_type: Optional[str] = None,
+        user_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+        namespace: Optional[str] = None,
+        entity_id: Optional[str] = None,
+        entity_type: Optional[str] = None,
+        include_global: bool = False,
+        limit: int = 100,
+        page: int = 1,
+        sort_by: Optional[str] = None,
+        sort_order: Optional[str] = None,
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        try:
+            table = self._get_table(table_type="learnings")
+            if table is None:
+                return [], 0
+
+            with self.Session() as sess:
+                stmt = select(table)
+                if learning_type is not None:
+                    stmt = stmt.where(table.c.learning_type == learning_type)
+                if user_id is not None:
+                    if include_global:
+                        stmt = stmt.where((table.c.user_id == user_id) | (table.c.user_id.is_(None)))
+                    else:
+                        stmt = stmt.where(table.c.user_id == user_id)
+                if agent_id is not None:
+                    stmt = stmt.where(table.c.agent_id == agent_id)
+                if team_id is not None:
+                    stmt = stmt.where(table.c.team_id == team_id)
+                if session_id is not None:
+                    stmt = stmt.where(table.c.session_id == session_id)
+                if namespace is not None:
+                    stmt = stmt.where(table.c.namespace == namespace)
+                if entity_id is not None:
+                    stmt = stmt.where(table.c.entity_id == entity_id)
+                if entity_type is not None:
+                    stmt = stmt.where(table.c.entity_type == entity_type)
+
+                count_stmt = select(func.count()).select_from(stmt.subquery())
+                total_count = sess.execute(count_stmt).scalar() or 0
+
+                stmt = apply_sorting(stmt, table, sort_by or "updated_at", sort_order or "desc")
+                stmt = stmt.limit(limit).offset((page - 1) * limit)
+                result = sess.execute(stmt).fetchall()
+                return [dict(row._mapping) for row in result], int(total_count)
+
+        except Exception as e:
+            log_error(f"Error listing learnings: {e}")
+            raise e
+
+    def get_learnings_user_stats(
+        self,
+        learning_type: Optional[str] = None,
+        limit: Optional[int] = None,
+        page: Optional[int] = None,
+        user_id: Optional[str] = None,
+        sort_by: Optional[str] = None,
+        sort_order: Optional[str] = None,
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        try:
+            table = self._get_table(table_type="learnings")
+            if table is None:
+                return [], 0
+
+            with self.Session() as sess:
+                last_updated_col = func.max(table.c.updated_at)
+                stmt = select(
+                    table.c.user_id,
+                    last_updated_col.label("last_learning_updated_at"),
+                )
+                if learning_type is not None:
+                    stmt = stmt.where(table.c.learning_type == learning_type)
+                if user_id is not None:
+                    stmt = stmt.where(table.c.user_id == user_id)
+                else:
+                    stmt = stmt.where(table.c.user_id.is_not(None))
+                stmt = stmt.group_by(table.c.user_id)
+
+                sort_columns = {
+                    "user_id": table.c.user_id,
+                    "last_learning_updated_at": last_updated_col,
+                }
+                sort_col = sort_columns.get(sort_by or "last_learning_updated_at", last_updated_col)
+                stmt = stmt.order_by(sort_col.asc() if sort_order == "asc" else sort_col.desc())
+
+                count_stmt = select(func.count()).select_from(stmt.subquery())
+                total_count = sess.execute(count_stmt).scalar() or 0
+
+                if limit is not None:
+                    stmt = stmt.limit(limit)
+                    if page is not None:
+                        stmt = stmt.offset((page - 1) * limit)
+
+                result = sess.execute(stmt).fetchall()
+                return [
+                    {
+                        "user_id": row.user_id,
+                        "last_learning_updated_at": row.last_learning_updated_at,
+                    }
+                    for row in result
+                ], int(total_count)
+
+        except Exception as e:
+            log_error(f"Error getting learning user stats: {e}")
+            raise e
 
     # -- Schedule methods --
     def get_schedule(self, schedule_id: str) -> Optional[Dict[str, Any]]:
@@ -4980,3 +5209,304 @@ class PostgresDb(BaseDb):
         except Exception as e:
             log_debug(f"Error updating approval run_status: {e}")
             return 0
+
+    # --- Built-in MCP OAuth server store ---
+    # Thin delegations to agno.db.mcp_oauth_store (shared with SqliteDb); each fetches the
+    # table via the normal schema-aware _get_table path, so the store is created on first
+    # use like every other agno table.
+
+    def get_mcp_oauth_client(self, client_id: str) -> Optional[str]:
+        table = self._get_table(table_type=MCP_OAUTH_CLIENTS, create_table_if_not_found=True)
+        return mcp_oauth_store.get_client(self.db_engine, table, client_id)
+
+    def create_mcp_oauth_client(
+        self, *, client_id: str, client_metadata: str, now: int, unconsumed_ttl: int, max_clients: int
+    ) -> bool:
+        table = self._get_table(table_type=MCP_OAUTH_CLIENTS, create_table_if_not_found=True)
+        return mcp_oauth_store.create_client(
+            self.db_engine,
+            table,
+            client_id=client_id,
+            client_metadata=client_metadata,
+            now=now,
+            unconsumed_ttl=unconsumed_ttl,
+            max_clients=max_clients,
+        )
+
+    def mark_mcp_oauth_client_consumed(self, client_id: str, now: int) -> None:
+        table = self._get_table(table_type=MCP_OAUTH_CLIENTS, create_table_if_not_found=True)
+        mcp_oauth_store.mark_client_consumed(self.db_engine, table, client_id, now)
+
+    def store_mcp_oauth_transaction(
+        self, *, txn_id: str, client_id: str, params: str, expires_at: int, now: int, max_pending: int
+    ) -> None:
+        table = self._get_table(table_type=MCP_OAUTH_TRANSACTIONS, create_table_if_not_found=True)
+        mcp_oauth_store.store_transaction(
+            self.db_engine,
+            table,
+            txn_id=txn_id,
+            client_id=client_id,
+            params=params,
+            expires_at=expires_at,
+            now=now,
+            max_pending=max_pending,
+        )
+
+    def get_mcp_oauth_transaction(self, txn_id: str) -> Optional[tuple]:
+        table = self._get_table(table_type=MCP_OAUTH_TRANSACTIONS, create_table_if_not_found=True)
+        return mcp_oauth_store.get_transaction(self.db_engine, table, txn_id)
+
+    def consume_mcp_oauth_transaction(self, txn_id: str, now: int) -> Optional[tuple]:
+        table = self._get_table(table_type=MCP_OAUTH_TRANSACTIONS, create_table_if_not_found=True)
+        return mcp_oauth_store.consume_transaction(self.db_engine, table, txn_id, now)
+
+    def store_mcp_oauth_code(self, *, code_hash: str, payload: str, expires_at: int, now: int) -> None:
+        table = self._get_table(table_type=MCP_OAUTH_CODES, create_table_if_not_found=True)
+        mcp_oauth_store.store_code(
+            self.db_engine, table, code_hash=code_hash, payload=payload, expires_at=expires_at, now=now
+        )
+
+    def get_mcp_oauth_code(self, code_hash: str) -> Optional[tuple]:
+        table = self._get_table(table_type=MCP_OAUTH_CODES, create_table_if_not_found=True)
+        return mcp_oauth_store.get_code(self.db_engine, table, code_hash)
+
+    def delete_mcp_oauth_code(self, code_hash: str) -> bool:
+        table = self._get_table(table_type=MCP_OAUTH_CODES, create_table_if_not_found=True)
+        return mcp_oauth_store.delete_code(self.db_engine, table, code_hash)
+
+    def store_mcp_oauth_refresh(
+        self, *, token_hash: str, client_id: str, scopes: str, expires_at: int, now: int, family_id: str
+    ) -> None:
+        table = self._get_table(table_type=MCP_OAUTH_REFRESH_TOKENS, create_table_if_not_found=True)
+        mcp_oauth_store.store_refresh(
+            self.db_engine,
+            table,
+            token_hash=token_hash,
+            client_id=client_id,
+            scopes=scopes,
+            expires_at=expires_at,
+            now=now,
+            family_id=family_id,
+        )
+
+    def get_mcp_oauth_refresh(self, token_hash: str) -> Optional[tuple]:
+        table = self._get_table(table_type=MCP_OAUTH_REFRESH_TOKENS, create_table_if_not_found=True)
+        return mcp_oauth_store.get_refresh(self.db_engine, table, token_hash)
+
+    def delete_mcp_oauth_refresh(self, token_hash: str) -> bool:
+        table = self._get_table(table_type=MCP_OAUTH_REFRESH_TOKENS, create_table_if_not_found=True)
+        return mcp_oauth_store.delete_refresh(self.db_engine, table, token_hash)
+
+    def delete_mcp_oauth_refresh_family(self, family_id: str) -> int:
+        table = self._get_table(table_type=MCP_OAUTH_REFRESH_TOKENS, create_table_if_not_found=True)
+        return mcp_oauth_store.delete_refresh_family(self.db_engine, table, family_id)
+
+    def get_mcp_oauth_keys(self) -> List[tuple]:
+        table = self._get_table(table_type=MCP_OAUTH_KEYS, create_table_if_not_found=True)
+        return mcp_oauth_store.get_keys(self.db_engine, table)
+
+    def insert_mcp_oauth_key(self, *, kid: str, secret: str, created_at: int) -> bool:
+        table = self._get_table(table_type=MCP_OAUTH_KEYS, create_table_if_not_found=True)
+        return mcp_oauth_store.insert_key(self.db_engine, table, kid=kid, secret=secret, created_at=created_at)
+
+    # --- Auth Tokens ---
+
+    def get_auth_token(self, provider: str, user_id: Optional[str], service: str) -> Optional[Dict[str, Any]]:
+        try:
+            table = self._get_table(table_type="auth_tokens")
+            if table is None:
+                return None
+            # Use empty string for NULL user_id to satisfy unique constraint on (provider, user_id, service)
+            effective_user_id = user_id if user_id is not None else ""
+            with self.Session() as sess:
+                result = sess.execute(
+                    select(table).where(
+                        table.c.provider == provider,
+                        table.c.user_id == effective_user_id,
+                        table.c.service == service,
+                    )
+                ).fetchone()
+                if not result:
+                    return None
+                return dict(result._mapping)
+        except Exception as e:
+            log_debug(f"Error getting auth token: {e}")
+            return None
+
+    def upsert_auth_token(self, token: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        try:
+            table = self._get_table(table_type="auth_tokens", create_table_if_not_found=True)
+            if table is None:
+                raise RuntimeError("Failed to get or create auth_tokens table")
+            data = {**token}
+            data["id"] = str(uuid4())
+            # Use empty string for NULL user_id to satisfy NOT NULL + unique constraint
+            data["user_id"] = data.get("user_id") or ""
+            now = int(time.time())
+            data.setdefault("created_at", now)
+            data["updated_at"] = now
+            with self.Session() as sess, sess.begin():
+                stmt = postgresql.insert(table).values(**data)
+                stmt = stmt.on_conflict_do_update(
+                    index_elements=["provider", "user_id", "service"],
+                    set_={
+                        "token_data": stmt.excluded.token_data,
+                        "granted_scopes": stmt.excluded.granted_scopes,
+                        "updated_at": stmt.excluded.updated_at,
+                    },
+                )
+                sess.execute(stmt)
+            return data
+        except Exception as e:
+            log_debug(f"Error upserting auth token: {e}")
+            return None
+
+    def delete_auth_token(self, provider: str, user_id: Optional[str], service: str) -> bool:
+        try:
+            table = self._get_table(table_type="auth_tokens")
+            if table is None:
+                return False
+            effective_user_id = user_id if user_id is not None else ""
+            with self.Session() as sess, sess.begin():
+                result = sess.execute(
+                    table.delete().where(
+                        table.c.provider == provider,
+                        table.c.user_id == effective_user_id,
+                        table.c.service == service,
+                    )
+                )
+                return result.rowcount > 0
+        except Exception as e:
+            log_debug(f"Error deleting auth token: {e}")
+            return False
+
+    # -- Service Accounts methods --
+
+    def create_service_account(self, account_data: Dict[str, Any]) -> Dict[str, Any]:
+        try:
+            table = self._get_table(table_type="service_accounts", create_table_if_not_found=True)
+            if table is None:
+                raise RuntimeError("Failed to get or create service accounts table")
+            with self.Session() as sess, sess.begin():
+                sess.execute(table.insert().values(**account_data))
+            return account_data
+        except Exception as e:
+            log_error(f"Error creating service account: {str(e)}")
+            raise
+
+    def get_service_account(self, service_account_id: str) -> Optional[Dict[str, Any]]:
+        try:
+            table = self._get_table(table_type="service_accounts")
+            if table is None:
+                return None
+            with self.Session() as sess:
+                result = sess.execute(select(table).where(table.c.id == service_account_id)).fetchone()
+                return dict(result._mapping) if result else None
+        except Exception as e:
+            log_debug(f"Error getting service account: {e}")
+            return None
+
+    def get_service_account_by_token_hash(self, token_hash: str) -> Optional[Dict[str, Any]]:
+        """Get a service account by token hash.
+
+        Re-raises on database errors (instead of returning None) so callers can
+        distinguish an unknown token from an unavailable database.
+        """
+        table = self._get_table(table_type="service_accounts")
+        if table is None:
+            # _get_table swallows connectivity errors and returns None, which is
+            # indistinguishable from "table not created yet". Probe the connection so
+            # a real outage propagates (fail closed) instead of reading as an unknown
+            # token; a genuinely absent table returns None.
+            with self.Session() as sess:
+                sess.execute(text("SELECT 1"))
+            return None
+        try:
+            with self.Session() as sess:
+                result = sess.execute(select(table).where(table.c.token_hash == token_hash)).fetchone()
+                return dict(result._mapping) if result else None
+        except Exception as e:
+            log_error(f"Error getting service account by token hash: {e}")
+            raise
+
+    def get_service_account_by_name(self, name: str, include_revoked: bool = False) -> Optional[Dict[str, Any]]:
+        try:
+            table = self._get_table(table_type="service_accounts")
+            if table is None:
+                return None
+            with self.Session() as sess:
+                stmt = select(table).where(table.c.name == name)
+                if not include_revoked:
+                    stmt = stmt.where(table.c.revoked_at.is_(None))
+                stmt = stmt.order_by(table.c.created_at.desc())
+                result = sess.execute(stmt).fetchone()
+                return dict(result._mapping) if result else None
+        except Exception as e:
+            log_debug(f"Error getting service account by name: {e}")
+            return None
+
+    def get_service_accounts(
+        self,
+        include_revoked: bool = True,
+        limit: int = 20,
+        page: int = 1,
+        sort_by: str = "created_at",
+        sort_order: str = "desc",
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        try:
+            table = self._get_table(table_type="service_accounts")
+            if table is None:
+                return [], 0
+            with self.Session() as sess:
+                # Build base query with filters
+                base_query = select(table)
+                if not include_revoked:
+                    base_query = base_query.where(table.c.revoked_at.is_(None))
+
+                # Get total count
+                count_stmt = select(func.count()).select_from(base_query.alias())
+                total_count = sess.execute(count_stmt).scalar() or 0
+
+                # Calculate offset from page
+                offset = (page - 1) * limit
+
+                # Validate sorting parameters
+                sort_col = table.c[resolve_service_account_sort_column(sort_by)]
+                order_by = sort_col.asc() if sort_order == "asc" else sort_col.desc()
+
+                # Get paginated results
+                stmt = base_query.order_by(order_by).limit(limit).offset(offset)
+                results = sess.execute(stmt).fetchall()
+                return [dict(row._mapping) for row in results], total_count
+        except Exception as e:
+            log_debug(f"Error listing service accounts: {e}")
+            return [], 0
+
+    def update_service_account(
+        self, service_account_id: str, return_record: bool = True, **kwargs: Any
+    ) -> Optional[Dict[str, Any]]:
+        validate_service_account_update(kwargs)
+        try:
+            table = self._get_table(table_type="service_accounts")
+            if table is None:
+                return None
+            with self.Session() as sess, sess.begin():
+                sess.execute(table.update().where(table.c.id == service_account_id).values(**kwargs))
+            if not return_record:
+                return None
+            return self.get_service_account(service_account_id)
+        except Exception as e:
+            log_debug(f"Error updating service account: {e}")
+            return None
+
+    def delete_service_account(self, service_account_id: str) -> bool:
+        try:
+            table = self._get_table(table_type="service_accounts")
+            if table is None:
+                return False
+            with self.Session() as sess, sess.begin():
+                result = sess.execute(table.delete().where(table.c.id == service_account_id))
+                return result.rowcount > 0
+        except Exception as e:
+            log_debug(f"Error deleting service account: {e}")
+            return False

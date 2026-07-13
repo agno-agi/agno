@@ -6,20 +6,24 @@ Demonstrates research team.
 """
 
 from agno.agent.agent import Agent
-from agno.models.openai import OpenAIChat
-from agno.os.app import AgentOS
-from agno.os.interfaces.agui.agui import AGUI
-from agno.team.team import Team
+from agno.db.sqlite import SqliteDb
+from agno.models.openai import OpenAIResponses
+from agno.os import AgentOS
+from agno.os.interfaces.agui import AGUI
+from agno.team import Team
 from agno.tools.websearch import WebSearchTools
 
 # ---------------------------------------------------------------------------
 # Create Example
 # ---------------------------------------------------------------------------
 
+db = SqliteDb(db_file="/tmp/agui_research_team.db")
+
 researcher = Agent(
     name="researcher",
     role="Research Assistant",
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIResponses(id="gpt-5.4"),
+    db=db,
     instructions="You are a research assistant. Find information and provide detailed analysis.",
     tools=[WebSearchTools()],
     markdown=True,
@@ -28,7 +32,8 @@ researcher = Agent(
 writer = Agent(
     name="writer",
     role="Content Writer",
-    model=OpenAIChat(id="o4-mini"),
+    model=OpenAIResponses(id="gpt-5.4"),
+    db=db,
     instructions="You are a content writer. Create well-structured content based on research.",
     tools=[WebSearchTools()],
     markdown=True,

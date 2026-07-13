@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+import time
 from dataclasses import dataclass
 from ssl import SSLContext
 from typing import Any, Dict, List, Literal, Optional, Union
@@ -9,11 +11,13 @@ from slack_sdk.web.async_client import AsyncWebClient
 from agno.agent import Agent, RemoteAgent
 from agno.os.interfaces.slack.builders import (
     append_submit_if_needed,
+    build_admin_approval_status_card,
     response_blocks,
     select_confirmation_row,
 )
 from agno.os.interfaces.slack.events import process_event
 from agno.os.interfaces.slack.helpers import open_chat_stream, slack_error_code
+from agno.os.interfaces.slack.ids import decode_admin_approval_button_value
 from agno.os.interfaces.slack.interactions import (
     apply_decisions,
     extract_row_action_context,
@@ -23,6 +27,7 @@ from agno.os.interfaces.slack.interactions import (
 )
 from agno.os.interfaces.slack.state import StreamState, TaskStatus
 from agno.os.interfaces.slack.types import SubmitContext, tool_args, tool_name, truncate
+from agno.run.approval import aresolve_approval
 from agno.team import RemoteTeam, Team
 from agno.tools.slack import SlackTools
 from agno.utils.log import log_error, log_info
@@ -67,14 +72,6 @@ class HITLHandler:
         except Exception as exc:
             if "message_not_found" not in str(exc):
                 log_error(f"[HITL] chat_delete (awaiting indicator) failed for ts={awaiting_ts}: {exc}")
-
-    async def load_active_requirements(self, ctx: SubmitContext) -> List[Any]:
-        try:
-            run_output = await self.entity.aget_run_output(run_id=ctx.run_id, session_id=ctx.session_id)  # type: ignore[union-attr]
-        except Exception as exc:
-            log_error(f"[HITL] aget_run_output failed for run={ctx.run_id}: {exc}")
-            return []
-        return list(getattr(run_output, "active_requirements", None) or []) if run_output else []
 
     async def freeze_form(
         self, ctx: SubmitContext, original_blocks: List[Dict[str, Any]], requirements: List[Any]
@@ -141,6 +138,7 @@ class HITLHandler:
         ctx: SubmitContext,
         stream: Any,
         requirements: List[Any],
+        user_id: Optional[str] = None,
     ) -> StreamState:
         state = StreamState(entity_name=self.entity_name, entity_type=self.entity_type)
         try:
@@ -148,6 +146,7 @@ class HITLHandler:
                 run_id=ctx.run_id,
                 requirements=requirements,
                 session_id=ctx.session_id,
+                user_id=user_id,
                 stream=True,
                 stream_events=True,
             )
@@ -236,6 +235,191 @@ class HITLHandler:
         blocks = append_submit_if_needed(result.blocks, ctx.run_id, ctx.awaiting_ts)
         await self.update_message(ctx.channel, ctx.card_ts, "Rejection pending", blocks)
 
+    async def _get_approval_status(self, approval_id: str) -> str:
+        """Query approval status from DB."""
+        db = getattr(self.entity, "db", None)
+        if not db or not approval_id:
+            return "pending"
+        try:
+            fn = getattr(db, "get_approval", None)
+            if not fn:
+                return "pending"
+            if asyncio.iscoroutinefunction(fn):
+                approval = await fn(approval_id)
+            else:
+                approval = fn(approval_id)
+            return approval.get("status", "pending") if approval else "pending"
+        except Exception as exc:
+            log_error(f"[HITL] Failed to get approval status: {exc}")
+            return "pending"
+
+    def _update_card_to_approved(self, blocks: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Update approval card blocks to show approved status."""
+        new_blocks = []
+        for block in blocks:
+            if block.get("type") == "card" and "admin_approval" in block.get("block_id", ""):
+                block = dict(block)
+                block["subtext"] = {"type": "mrkdwn", "text": ":white_check_mark: Approved"}
+                block["actions"] = []
+            new_blocks.append(block)
+        return new_blocks
+
+    async def _resume_after_approval(
+        self,
+        payload: Dict[str, Any],
+        run_id: str,
+        approval_id: str,
+        channel: str,
+        thread_ts: str,
+        msg_ts: str,
+        awaiting_ts: Optional[str],
+    ) -> None:
+        """Resume a paused run after admin approval."""
+        session_id = f"{self.entity_id}:{thread_ts}"
+
+        try:
+            run_output = await self.entity.aget_run_output(run_id=run_id, session_id=session_id)  # type: ignore[union-attr]
+        except Exception as exc:
+            log_error(f"[HITL] aget_run_output failed for run={run_id}: {exc}")
+            return
+
+        if not run_output:
+            return
+
+        run_user_id = run_output.user_id
+        requirements = list(getattr(run_output, "active_requirements", None) or [])
+
+        for req in requirements:
+            if req.tool_execution and req.tool_execution.approval_id == approval_id:
+                req.confirm()
+                break
+
+        ctx = SubmitContext(
+            run_id=run_id,
+            session_id=session_id,
+            channel=channel,
+            thread_ts=thread_ts,
+            msg_ts=msg_ts,
+            awaiting_ts=awaiting_ts,
+            user_id=(payload.get("user") or {}).get("id") or "",
+            team_id=(payload.get("team") or {}).get("id") or "",
+            state_values={},
+        )
+        stream = await open_chat_stream(
+            self._client(),
+            channel,
+            thread_ts,
+            ctx.user_id,
+            ctx.team_id,
+            self.task_display_mode,
+            self.buffer_size,
+        )
+        state = await self.stream_resumed_run(ctx, stream, requirements, user_id=run_user_id)
+        await self.complete_or_repause(ctx, stream, state)
+
+    async def handle_check_status(self, payload: Dict[str, Any]) -> None:
+        """Handle 'Check Status' button click for admin approval cards."""
+        # 1. Parse button value
+        actions = payload.get("actions") or []
+        if not actions:
+            return
+        button_value = actions[0].get("value") or ""
+        approval_id, req_id, run_id, awaiting_ts = decode_admin_approval_button_value(button_value)
+        if not approval_id or not req_id or not run_id:
+            log_error(f"[HITL] Invalid admin approval button value: {button_value!r}")
+            return
+
+        # 2. Extract Slack context
+        channel = payload.get("channel", {}).get("id", "")
+        message = payload.get("message", {})
+        msg_ts = message.get("ts", "")
+        thread_ts = message.get("thread_ts") or msg_ts
+        if not channel or not msg_ts or not thread_ts:
+            log_error(f"[HITL] Missing Slack context: channel={channel}, msg_ts={msg_ts}, thread_ts={thread_ts}")
+            return
+
+        # 3. Extract card info for rebuilding
+        blocks = message.get("blocks", [])
+        tool_name_str = "Tool"
+        body_text = ""
+        for block in blocks:
+            if block.get("type") == "card":
+                tool_name_str = (block.get("title", {}).get("text") or "Tool").strip("*")
+                body_text = block.get("body", {}).get("text") or ""
+                break
+
+        # 4. Query approval status
+        status = await self._get_approval_status(approval_id)
+
+        # 5. Handle approved — delete indicator, update card, resume run
+        if status == "approved":
+            await self.delete_awaiting_indicator(channel, awaiting_ts)
+            await self.update_message(channel, msg_ts, "Approved", self._update_card_to_approved(blocks))
+            await self._resume_after_approval(payload, run_id, approval_id, channel, thread_ts, msg_ts, awaiting_ts)
+            return
+
+        # 6. Still pending/rejected — update card with current status
+        card = build_admin_approval_status_card(
+            tool_name=tool_name_str,
+            body_text=body_text,
+            status=status,
+            req_id=req_id,
+            approval_id=approval_id,
+            run_id=run_id,
+            awaiting_ts=awaiting_ts or thread_ts,
+        )
+        new_blocks = []
+        for block in blocks:
+            if block.get("type") == "card" and "admin_approval" in block.get("block_id", ""):
+                new_blocks.append(card.to_dict())
+            else:
+                new_blocks.append(block)
+        await self.update_message(channel, msg_ts, f"Status: {status}", new_blocks)
+
+    async def _resolve_required_approvals(
+        self,
+        ctx: SubmitContext,
+        decisions: List[Any],
+        requirements: List[Any],
+    ) -> None:
+        """Resolve DB approval records for tools with approval_type='required'."""
+        db = getattr(self.entity, "db", None)
+        if db is None:
+            return
+
+        reqs_by_id = {r.id: r for r in requirements if r.id}
+        now = int(time.time())
+
+        for decision in decisions:
+            req = reqs_by_id.get(decision.requirement_id)
+            tool_exec = getattr(req, "tool_execution", None) if req else None
+            if tool_exec is None or getattr(tool_exec, "approval_type", None) != "required":
+                continue
+
+            approval_id = getattr(tool_exec, "approval_id", None)
+            if approval_id is None:
+                continue
+
+            status = "rejected" if decision.approved is False else "approved"
+            resolution_data: Dict[str, Any] = {}
+            if decision.rejected_note:
+                resolution_data["note"] = decision.rejected_note
+            if decision.input_values is not None:
+                resolution_data["values"] = decision.input_values
+            if decision.external_result is not None:
+                resolution_data["result"] = decision.external_result
+            if decision.feedback_selections is not None:
+                resolution_data["feedback"] = decision.feedback_selections
+
+            await aresolve_approval(
+                db,
+                approval_id,
+                status=status,
+                resolved_by=ctx.user_id,
+                resolved_at=now,
+                resolution_data=resolution_data or None,
+            )
+
     async def handle_submit(self, payload: Dict[str, Any]) -> None:
         ctx = extract_submit_context(payload, self.entity_id)
         if ctx is None:
@@ -244,14 +428,25 @@ class HITLHandler:
 
         await self.delete_awaiting_indicator(ctx.channel, ctx.awaiting_ts)
 
-        requirements = await self.load_active_requirements(ctx)
-        if not requirements:
+        try:
+            run_output = await self.entity.aget_run_output(run_id=ctx.run_id, session_id=ctx.session_id)  # type: ignore[union-attr]
+        except Exception as exc:
+            log_error(f"[HITL] aget_run_output failed for run={ctx.run_id}: {exc}")
+            run_output = None
+
+        active_reqs = getattr(run_output, "active_requirements", None) if run_output else None
+        if not run_output or not active_reqs:
             await self.post_ephemeral(channel=ctx.channel, user=ctx.user_id, text="This approval is no longer active.")
             return
+
+        run_user_id = run_output.user_id
+        requirements = list(active_reqs)
 
         decisions = await self.validate_and_apply_decisions(ctx, payload, requirements)
         if decisions is None:
             return
+
+        await self._resolve_required_approvals(ctx, decisions, requirements)
 
         original_blocks = list((payload.get("message") or {}).get("blocks") or [])
         await self.freeze_form(ctx, original_blocks, requirements)
@@ -267,7 +462,7 @@ class HITLHandler:
         )
 
         await self.post_denial_cards(stream, decisions, requirements, ctx.run_id)
-        state = await self.stream_resumed_run(ctx, stream, requirements)
+        state = await self.stream_resumed_run(ctx, stream, requirements, user_id=run_user_id)
         await self.complete_or_repause(ctx, stream, state)
 
     async def post_ephemeral(self, *, channel: str, user: str, text: str) -> None:

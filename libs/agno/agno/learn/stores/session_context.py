@@ -29,12 +29,12 @@ from copy import deepcopy
 from dataclasses import dataclass, field
 from os import getenv
 from textwrap import dedent
-from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Union
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Union, cast
 
 from agno.learn.config import LearningMode, SessionContextConfig
 from agno.learn.schemas import SessionContext
 from agno.learn.stores.protocol import LearningStore
-from agno.learn.utils import from_dict_safe, to_dict_safe
+from agno.learn.utils import build_learning_id, from_dict_safe, to_dict_safe
 from agno.utils.log import (
     log_debug,
     log_warning,
@@ -649,7 +649,7 @@ class SessionContextStore(LearningStore):
 
     def _build_context_id(self, session_id: str) -> str:
         """Build a unique context ID."""
-        return f"session_context_{session_id}"
+        return cast(str, build_learning_id("session_context", session_id=session_id))
 
     def _format_context(self, context: Any) -> str:
         """Format context data for display in agent prompt."""

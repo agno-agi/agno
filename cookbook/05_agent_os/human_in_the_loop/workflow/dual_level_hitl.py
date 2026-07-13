@@ -20,7 +20,6 @@ from agno.tools import tool
 from agno.workflow.step import Step
 from agno.workflow.workflow import Workflow
 from rich.console import Console
-
 from workflow_db import db
 
 console = Console()

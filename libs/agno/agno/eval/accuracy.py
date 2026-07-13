@@ -9,7 +9,7 @@ from pydantic import BaseModel, Field
 from agno.agent import Agent
 from agno.db.base import AsyncBaseDb, BaseDb
 from agno.db.schemas.evals import EvalType
-from agno.eval.utils import async_log_eval, log_eval_run, store_result_in_file
+from agno.eval.utils import async_log_eval, log_eval_run, spinner_live, store_result_in_file
 from agno.exceptions import EvalError
 from agno.models.base import Model
 from agno.team.team import Team
@@ -62,11 +62,11 @@ class AccuracyEvaluation:
 @dataclass
 class AccuracyResult:
     results: List[AccuracyEvaluation] = field(default_factory=list)
-    avg_score: float = field(init=False)
-    mean_score: float = field(init=False)
-    min_score: float = field(init=False)
-    max_score: float = field(init=False)
-    std_dev_score: float = field(init=False)
+    avg_score: Optional[float] = field(init=False)
+    mean_score: Optional[float] = field(init=False)
+    min_score: Optional[float] = field(init=False)
+    max_score: Optional[float] = field(init=False)
+    std_dev_score: Optional[float] = field(init=False)
 
     def __post_init__(self):
         self.compute_stats()
@@ -81,6 +81,12 @@ class AccuracyResult:
             self.min_score = min(_results)
             self.max_score = max(_results)
             self.std_dev_score = statistics.stdev(_results) if len(_results) > 1 else 0
+        else:
+            self.avg_score = None
+            self.mean_score = None
+            self.min_score = None
+            self.max_score = None
+            self.std_dev_score = None
 
     def print_summary(self, console: Optional["Console"] = None):
         from rich.box import ROUNDED
@@ -173,6 +179,9 @@ class AccuracyEval:
     print_summary: bool = False
     # Print detailed results
     print_results: bool = False
+    # Render the transient progress spinner. Embedders that must not write to the
+    # console (e.g. the suite runner) disable it.
+    show_spinner: bool = True
     # If set, results will be saved in the given file path
     file_path_to_save_results: Optional[str] = None
     # Enable debug logs
@@ -358,7 +367,6 @@ Remember: You must only compare the agent_output to the expected_output. The exp
             return None
 
         from rich.console import Console
-        from rich.live import Live
         from rich.status import Status
 
         set_log_level_to_debug() if self.debug_mode else set_log_level_to_info()
@@ -369,7 +377,7 @@ Remember: You must only compare the agent_output to the expected_output. The exp
 
         # Add a spinner while running the evaluations
         console = Console()
-        with Live(console=console, transient=True) as live_log:
+        with spinner_live(console, self.show_spinner) as live_log:
             evaluator_agent = self.get_evaluator_agent()
             eval_input = self.get_eval_input()
             eval_expected_output = self.get_eval_expected_output()
@@ -505,7 +513,6 @@ Remember: You must only compare the agent_output to the expected_output. The exp
             return None
 
         from rich.console import Console
-        from rich.live import Live
         from rich.status import Status
 
         set_log_level_to_debug() if self.debug_mode else set_log_level_to_info()
@@ -516,7 +523,7 @@ Remember: You must only compare the agent_output to the expected_output. The exp
 
         # Add a spinner while running the evaluations
         console = Console()
-        with Live(console=console, transient=True) as live_log:
+        with spinner_live(console, self.show_spinner) as live_log:
             evaluator_agent = self.get_evaluator_agent()
             eval_input = self.get_eval_input()
             eval_expected_output = self.get_eval_expected_output()
