@@ -158,10 +158,28 @@ class MCPIdentityBridgeMiddleware:
     challenge on the MCP path) pass through untouched.
     """
 
-    def __init__(self, app: Any, admin_scope: Optional[str] = None, user_isolation: bool = False) -> None:
+    def __init__(
+        self,
+        app: Any,
+        admin_scope: Optional[str] = None,
+        user_isolation: bool = False,
+        user_store: Any = None,
+        user_auto_provision: bool = False,
+        user_email_claim: str = "email",
+        user_name_claim: str = "name",
+        user_directory_fail_closed: bool = False,
+    ) -> None:
         self.app = app
         self.admin_scope = admin_scope
         self.user_isolation = user_isolation
+        # User directory (no-IdP). mcp_auth exempts /mcp from the parent AuthMiddleware,
+        # so the disabled-user kill-switch that lives there does not run for OAuth'd MCP
+        # traffic unless the bridge re-applies it. Carry the store + policy here.
+        self.user_store = user_store
+        self.user_auto_provision = user_auto_provision
+        self.user_email_claim = user_email_claim
+        self.user_name_claim = user_name_claim
+        self.user_directory_fail_closed = user_directory_fail_closed
 
     async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
         if scope["type"] == "http":
@@ -189,6 +207,33 @@ class MCPIdentityBridgeMiddleware:
                     log_warning(f"MCP token claims a reserved principal {user_id!r}; refusing to bridge its identity")
                     await self.app(scope, receive, send)
                     return
+                # User directory kill-switch: a disabled user is denied even with a valid
+                # OAuth token. This mirrors the parent AuthMiddleware's gate, which mcp_auth
+                # bypasses (the /mcp mount is exempt from it). Service-account principals
+                # (sa:) are not directory users and are skipped. If the check errors, honour
+                # user_directory_fail_closed. On denial we simply do NOT bridge the identity,
+                # leaving request.state.authenticated unset so the fail-closed tool gate
+                # rejects the call -- same shape as the reserved-principal path above.
+                if self.user_store is not None and user_id and service_account_name is None:
+                    try:
+                        if self.user_auto_provision:
+                            self.user_store.provision_from_claims(
+                                user_id,
+                                claims,
+                                email_claim=self.user_email_claim,
+                                name_claim=self.user_name_claim,
+                            )
+                        disabled = self.user_store.is_disabled(user_id)
+                    except Exception as e:  # directory unreachable: honour the configured policy
+                        disabled = self.user_directory_fail_closed
+                        log_warning(
+                            f"MCP user directory check failed for {user_id!r}: {e} "
+                            f"(failing {'closed' if self.user_directory_fail_closed else 'open'})"
+                        )
+                    if disabled:
+                        log_warning(f"Disabled user denied on MCP endpoint: {user_id!r}")
+                        await self.app(scope, receive, send)
+                        return
                 # request.state is backed by scope["state"]; the mounted sub-app and the
                 # parent share it, so the tools read these exactly as they do under the
                 # parent AuthMiddleware.
