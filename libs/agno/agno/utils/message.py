@@ -198,7 +198,7 @@ def reformat_tool_call_ids(messages: List[Message], provider: str) -> List[Messa
     if config is None:
         return messages
 
-    prefix = config.get("prefix")
+    prefix: Optional[str] = config.get("prefix")  # type: ignore[assignment]
     if prefix is None:
         # Provider accepts any ID format — no reformatting needed
         return messages
