@@ -6,7 +6,7 @@ from pydantic import BaseModel, Field
 from agno.agent import Agent
 from agno.models.crusoe import Crusoe
 
-CRUSOE_MODEL_ID = "meta-llama/Llama-3.3-70B-Instruct"
+CRUSOE_MODEL_ID = "zai/GLM-5.2"
 
 
 class MovieScript(BaseModel):

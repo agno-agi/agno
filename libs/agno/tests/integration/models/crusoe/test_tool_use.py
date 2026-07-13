@@ -8,7 +8,7 @@ from agno.tools.exa import ExaTools
 from agno.tools.websearch import WebSearchTools
 from agno.tools.yfinance import YFinanceTools
 
-CRUSOE_MODEL_ID = "meta-llama/Llama-3.3-70B-Instruct"
+CRUSOE_MODEL_ID = "zai/GLM-5.2"
 
 
 def test_tool_use():

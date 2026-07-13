@@ -12,19 +12,19 @@ class Crusoe(OpenAILike):
     A class for interacting with Crusoe Managed Inference models.
 
     Attributes:
-        id (str): The model id. Defaults to "meta-llama/Llama-3.3-70B-Instruct".
+        id (str): The model id. Defaults to "zai/GLM-5.2".
         name (str): The model name. Defaults to "Crusoe".
         provider (str): The provider name. Defaults to "Crusoe".
         api_key (Optional[str]): The API key.
-        base_url (str): The base URL. Defaults to "https://managed-inference-api-proxy.crusoecloud.com/v1/".
+        base_url (str): The base URL. Defaults to "https://api.inference.crusoecloud.com/v1/".
     """
 
-    id: str = "meta-llama/Llama-3.3-70B-Instruct"
+    id: str = "zai/GLM-5.2"
     name: str = "Crusoe"
     provider: str = "Crusoe"
 
     api_key: Optional[str] = field(default_factory=lambda: getenv("CRUSOE_API_KEY"))
-    base_url: str = "https://managed-inference-api-proxy.crusoecloud.com/v1/"
+    base_url: str = "https://api.inference.crusoecloud.com/v1/"
 
     def _get_client_params(self) -> Dict[str, Any]:
         if not self.api_key:
