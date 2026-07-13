@@ -16,7 +16,7 @@ from agno.tools.websearch import WebSearchTools
 # ---------------------------------------------------------------------------
 
 agent = Agent(
-    model=Crusoe(id="zai/GLM-5.2"),
+    model=Crusoe(id="nvidia/Nemotron-3-Super-120B-A12B"),
     tools=[WebSearchTools()],
     markdown=True,
 )

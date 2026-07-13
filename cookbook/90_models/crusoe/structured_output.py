@@ -38,7 +38,7 @@ class MovieScript(BaseModel):
 
 # Agent that uses a structured output
 structured_output_agent = Agent(
-    model=Crusoe(id="zai/GLM-5.2"),
+    model=Crusoe(id="google/gemma-4-31b-it"),
     description="You are a helpful assistant. Summarize the movie script based on the location in a JSON object.",
     output_schema=MovieScript,
 )
