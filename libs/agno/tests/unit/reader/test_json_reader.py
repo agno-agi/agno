@@ -288,7 +288,7 @@ def test_json_reader_default_chunk_size():
 
 
 def test_json_reader_chunk_flag_is_forwarded():
-    """The chunk argument must be forwarded to the base Reader so callers 
+    """The chunk argument must be forwarded to the base Reader so callers
     can control chunking."""
     assert JSONReader().chunk is True
     assert JSONReader(chunk=False).chunk is False
@@ -296,7 +296,7 @@ def test_json_reader_chunk_flag_is_forwarded():
 
 
 def test_chunk_false_keeps_large_objects_whole():
-    """A JSON file with 2 large objects (each exceeding the chunk_size threshold) 
+    """A JSON file with 2 large objects (each exceeding the chunk_size threshold)
     yields exactly 2 documents of valid JSON."""
     # Each object is larger than the default 5000-char chunk size.
     big_value = "x" * 6000
