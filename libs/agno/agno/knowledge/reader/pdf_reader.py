@@ -137,8 +137,9 @@ def _clean_page_numbers(
         return None
 
     page_numbers = [find_page_number(content) for content in page_content_list]
-    if all(x is None or x > 5 for x in page_numbers):
-        # This approach won't work reliably for higher page numbers.
+    if all(x is None or x > 5 for x in page_numbers) or sum(x is not None for x in page_numbers) < 2:
+        # This approach won't work reliably for higher page numbers, and a single candidate page
+        # number is not enough evidence of a sequence (e.g. a one-page PDF starting with "2 Fast facts").
         page_content_list = [
             f"\n{page_content_list[i]}\n{extra_content[i]}" if extra_content else page_content_list[i]
             for i in range(len(page_content_list))

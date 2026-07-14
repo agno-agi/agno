@@ -301,6 +301,22 @@ def test_clean_page_numbers_untrustable(p_nr_format):
     assert not clean_content[0].endswith(p_nr_format["end"].format(page_nr=2))
 
 
+def test_clean_page_numbers_single_page_leading_digit_preserved(p_nr_format):
+    """A single-page PDF whose text starts with a digit must not have that digit
+    stripped as a page number."""
+    content = ["2 Fast facts"]
+
+    clean_content, recognized_shift = _clean_page_numbers(
+        content,
+        page_start_numbering_format=p_nr_format["start"],
+        page_end_numbering_format=p_nr_format["end"],
+    )
+
+    assert recognized_shift is None
+    assert "2 Fast facts" in clean_content[0]
+    assert not clean_content[0].startswith(p_nr_format["start"].format(page_nr=2))
+
+
 def _create_encrypted_pdf_with_empty_password() -> BytesIO:
     from pypdf import PdfWriter
 
