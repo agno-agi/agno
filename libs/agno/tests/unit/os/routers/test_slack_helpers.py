@@ -442,19 +442,17 @@ class TestResolveSessionId:
         assert key == "agent-1:C123:111.222"
 
     @pytest.mark.asyncio
-    async def test_falls_back_to_db_get_session_for_remote_entities(self):
-        from unittest.mock import AsyncMock, MagicMock
+    async def test_returns_new_key_for_remote_entities(self):
+        from unittest.mock import MagicMock
 
         from agno.os.interfaces.slack.helpers import resolve_session_id
 
-        # Remote entities don't have aget_session but have db.get_session
+        # Remote entities don't have aget_session — always use new key format
         entity = MagicMock(spec=[])
         del entity.aget_session
-        entity.db = MagicMock()
-        entity.db.get_session = AsyncMock(return_value={"session_id": "agent-1:111.222"})
 
         key = await resolve_session_id(entity, "agent-1", "C123", "111.222")
-        assert key == "agent-1:111.222"
+        assert key == "agent-1:C123:111.222"
 
     @pytest.mark.asyncio
     async def test_returns_new_key_when_no_db_access(self):
