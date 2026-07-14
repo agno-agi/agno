@@ -17,6 +17,12 @@ def slack_error_code(exc: BaseException) -> Optional[str]:
     return None
 
 
+def derive_session_id(entity_id: str, channel_id: str, thread_ts: str) -> str:
+    # Slack `ts` values are only unique per channel — two threads in different
+    # channels can share a thread_ts. Including channel_id prevents collisions.
+    return f"{entity_id}:{channel_id}:{thread_ts}"
+
+
 def task_id(agent_name: Optional[str], base_id: str) -> str:
     # Prefix card IDs per agent so concurrent tool calls from different
     # team members don't collide in the Slack stream

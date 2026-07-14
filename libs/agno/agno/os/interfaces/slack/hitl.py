@@ -16,7 +16,7 @@ from agno.os.interfaces.slack.builders import (
     select_confirmation_row,
 )
 from agno.os.interfaces.slack.events import process_event
-from agno.os.interfaces.slack.helpers import open_chat_stream, slack_error_code
+from agno.os.interfaces.slack.helpers import derive_session_id, open_chat_stream, slack_error_code
 from agno.os.interfaces.slack.ids import decode_admin_approval_button_value
 from agno.os.interfaces.slack.interactions import (
     apply_decisions,
@@ -275,7 +275,7 @@ class HITLHandler:
         awaiting_ts: Optional[str],
     ) -> None:
         """Resume a paused run after admin approval."""
-        session_id = f"{self.entity_id}:{thread_ts}"
+        session_id = derive_session_id(self.entity_id, channel, thread_ts)
 
         try:
             run_output = await self.entity.aget_run_output(run_id=run_id, session_id=session_id)  # type: ignore[union-attr]

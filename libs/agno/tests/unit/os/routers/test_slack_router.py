@@ -65,7 +65,7 @@ def _make_event_context(**overrides: Any) -> EventContext:
         "thread_id": "1708123456.000100",
         "user": "U123",
         "message_text": "Summarize the incident timeline",
-        "session_id": "agent-1:1708123456.000100",
+        "session_id": "agent-1:C123:1708123456.000100",
         "team_id": "T123",
         "resolved_user_id": "U123",
         "display_name": None,
@@ -253,7 +253,7 @@ class TestNonStreamingRoutes:
 
         assert resp.status_code == 200
         await wait_for_call(agent_mock.arun)
-        assert agent_mock.arun.call_args.kwargs["session_id"] == f"researcher:{thread_ts}"
+        assert agent_mock.arun.call_args.kwargs["session_id"] == f"researcher:C123:{thread_ts}"
 
     @pytest.mark.asyncio
     async def test_user_id_is_raw_slack_id_by_default(self):
@@ -923,7 +923,7 @@ class TestHITLFlow:
         ):
             await handler.handle_submit(payload)
 
-        entity.aget_run_output.assert_awaited_once_with(run_id="run-1", session_id="agent-1:111.222")
+        entity.aget_run_output.assert_awaited_once_with(run_id="run-1", session_id="agent-1:C123:111.222")
         assert requirement.confirmation is True
         mock_client.chat_delete.assert_awaited_once_with(channel="C123", ts="await-1")
         mock_open.assert_awaited_once_with(mock_client, "C123", "111.222", "U123", "T123", "plan", 100)

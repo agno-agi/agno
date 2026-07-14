@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
 
+from agno.os.interfaces.slack.helpers import derive_session_id
 from agno.os.interfaces.slack.ids import (
     ACTION_EXTERNAL_RESULT,
     ACTION_REJECT_REASON,
@@ -183,7 +184,7 @@ def extract_submit_context(payload: Dict[str, Any], entity_id: str) -> Optional[
         channel=channel,
         msg_ts=msg_ts,
         thread_ts=thread_ts,
-        session_id=f"{entity_id}:{thread_ts}",
+        session_id=derive_session_id(entity_id, channel, thread_ts),
         awaiting_ts=awaiting_ts,
         user_id=(payload.get("user") or {}).get("id", ""),
         team_id=(payload.get("team") or {}).get("id"),
