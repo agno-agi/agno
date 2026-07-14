@@ -54,9 +54,9 @@ session.execute(
     """
 )
 
-# The Cassandra vector store uses 1024-dim vectors by default.
-# Configure the embedder to match by setting dimensions=1024
-# (text-embedding-3-small supports adjustable output dimensions via the API).
+# The vector store takes its dimension from the embedder, so the value set here
+# determines the column size. text-embedding-3-small supports adjustable output
+# dimensions via the API.
 embedder = OpenAIEmbedder(id="text-embedding-3-small", dimensions=1024)
 
 # --- Basic ScyllaDB setup ---
