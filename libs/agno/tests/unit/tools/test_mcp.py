@@ -1,3 +1,4 @@
+import asyncio
 import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -1269,6 +1270,69 @@ def test_tool_result_model_dump_roundtrip_preserves_metadata():
     payload = tool_result.model_dump()
     restored = ToolResult.model_validate(payload)
     assert restored.metadata == {"trace_id": "abc-123"}
+
+
+# =============================================================================
+# Connection-failure error surfacing
+# =============================================================================
+
+
+@pytest.mark.asyncio
+async def test_mcp_tool_mcperror_returns_actionable_tool_result():
+    """When the MCP server dies mid-call, call_tool raises McpError. The wrapper
+    must return a short, actionable ToolResult."""
+    from mcp.shared.exceptions import McpError
+    from mcp.types import ErrorData
+
+    mock_tool = MagicMock()
+    mock_tool.name = "slow_tool"
+
+    session = AsyncMock()
+    session.send_ping = AsyncMock()
+    session.call_tool = AsyncMock(
+        side_effect=McpError(ErrorData(code=-32001, message="Timed out while waiting for response to ClientRequest."))
+    )
+
+    entrypoint = get_entrypoint_for_tool(mock_tool, session)
+    result = await entrypoint()
+
+    assert isinstance(result, ToolResult)
+    assert "slow_tool" in result.content
+    assert "MCP server may be unreachable" in result.content
+
+
+@pytest.mark.asyncio
+async def test_mcp_tool_cancelled_error_propagates():
+    """CancelledError must propagate so cooperative cancellation still works."""
+    mock_tool = MagicMock()
+    mock_tool.name = "slow_tool"
+
+    session = AsyncMock()
+    session.send_ping = AsyncMock()
+    session.call_tool = AsyncMock(side_effect=asyncio.CancelledError())
+
+    entrypoint = get_entrypoint_for_tool(mock_tool, session)
+
+    with pytest.raises(asyncio.CancelledError):
+        await entrypoint()
+
+
+@pytest.mark.asyncio
+async def test_mcp_tool_generic_exception_still_returns_tool_result():
+    """Non-MCP, non-cancellation exceptions must be caught and surfaced
+    as a ToolResult so the agent run loop keeps moving."""
+    mock_tool = MagicMock()
+    mock_tool.name = "flaky_tool"
+
+    session = AsyncMock()
+    session.send_ping = AsyncMock()
+    session.call_tool = AsyncMock(side_effect=RuntimeError("something else broke"))
+
+    entrypoint = get_entrypoint_for_tool(mock_tool, session)
+    result = await entrypoint()
+
+    assert isinstance(result, ToolResult)
+    assert "something else broke" in result.content
 
 
 # =============================================================================
