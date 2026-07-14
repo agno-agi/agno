@@ -178,14 +178,15 @@ def extract_submit_context(payload: Dict[str, Any], entity_id: str) -> Optional[
     thread_ts = message.get("thread_ts") or msg_ts
     button_value = actions[0].get("value") or ""
     _, awaiting_ts = decode_submit_button_value(button_value)
-
     # Provisional new-format key; handle_submit re-resolves for backward compat
+    session_id = derive_session_id(entity_id, channel, thread_ts)
+
     return SubmitContext(
         run_id=run_id,
         channel=channel,
         msg_ts=msg_ts,
         thread_ts=thread_ts,
-        session_id=derive_session_id(entity_id, channel, thread_ts),
+        session_id=session_id,
         awaiting_ts=awaiting_ts,
         user_id=(payload.get("user") or {}).get("id", ""),
         team_id=(payload.get("team") or {}).get("id"),
