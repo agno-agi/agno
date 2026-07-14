@@ -172,6 +172,35 @@ def test_pydantic_model_parameters_tool_parsing():
     assert response.tool_calls[0]["function"]["name"] == "get_weather_for_city"
 
 
+def test_pydantic_model_with_any_parameters_tool_parsing():
+    class City(BaseModel):
+        name: str
+        country: Any
+
+    def get_weather_for_city(city: City) -> str:
+        """
+        Get the weather for a city
+
+        Args:
+            city: The city to get the weather for
+        """
+        return f"It is currently 70 degrees and cloudy in {city.name}, {city.country}"
+
+    tools = [{"type": "function", "function": Function.from_callable(get_weather_for_city).to_dict()}]
+    model = Gemini()
+    response = model.invoke(
+        messages=[
+            Message(role="system", content="You are an agent"),
+            Message(role="user", content="What is the weather in Paris, France?"),
+        ],
+        assistant_message=Message(role="assistant", content=""),
+        tools=tools,
+    )
+    assert response.tool_calls is not None
+    assert len(response.tool_calls) > 0
+    assert response.tool_calls[0]["function"]["name"] == "get_weather_for_city"
+
+
 def test_complex_nested_parameters_tool_parsing():
     def travel_recommendation(
         destination: str, preferences: Dict[str, Any], budget_range: List[float], include_weather: bool = True

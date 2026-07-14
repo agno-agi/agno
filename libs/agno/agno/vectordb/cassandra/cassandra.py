@@ -1,9 +1,10 @@
 import asyncio
-from typing import Any, Dict, Iterable, List, Optional
+from typing import Any, Dict, Iterable, List, Optional, Union
 
+from agno.filters import FilterExpr
 from agno.knowledge.document import Document
 from agno.knowledge.embedder import Embedder
-from agno.utils.log import log_debug, log_error, log_info
+from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.vectordb.base import VectorDb
 from agno.vectordb.cassandra.index import AgnoMetadataVectorCassandraTable
 
@@ -31,7 +32,7 @@ class Cassandra(VectorDb):
             from agno.knowledge.embedder.openai import OpenAIEmbedder
 
             embedder = OpenAIEmbedder()
-            log_info("Embedder not provided, using OpenAIEmbedder as default.")
+            log_debug("Embedder not provided, using OpenAIEmbedder as default.")
         # Initialize base class with name and description
         super().__init__(name=name, description=description)
 
@@ -39,13 +40,16 @@ class Cassandra(VectorDb):
         self.embedder: Embedder = embedder
         self.session = session
         self.keyspace: str = keyspace
+        self.dimensions: Optional[int] = self.embedder.dimensions
+        if self.dimensions is None:
+            raise ValueError("Embedder.dimensions must be set.")
         self.initialize_table()
 
     def initialize_table(self):
         self.table = AgnoMetadataVectorCassandraTable(
             session=self.session,
             keyspace=self.keyspace,
-            vector_dimension=1024,
+            vector_dimension=self.dimensions,
             table=self.table_name,
             primary_key_type="TEXT",
         )
@@ -140,7 +144,7 @@ class Cassandra(VectorDb):
                             doc.embedding = embeddings[j]
                             doc.usage = usages[j] if j < len(usages) else None
                     except Exception as e:
-                        log_error(f"Error assigning batch embedding to document '{doc.name}': {e}")
+                        log_error(f"Error assigning batch embedding to document '{doc.name}': {str(e)}")
 
             except Exception as e:
                 # Check if this is a rate limit error - don't fall back as it would make things worse
@@ -151,17 +155,17 @@ class Cassandra(VectorDb):
                 )
 
                 if is_rate_limit:
-                    log_error(f"Rate limit detected during batch embedding. {e}")
+                    log_error(f"Rate limit detected during batch embedding.: {str(e)}")
                     raise e
                 else:
-                    log_error(f"Async batch embedding failed, falling back to individual embeddings: {e}")
+                    log_error(f"Async batch embedding failed, falling back to individual embeddings: {str(e)}")
                     # Fall back to individual embedding
                     for doc in documents:
                         try:
                             embed_tasks = [doc.async_embed(embedder=self.embedder)]
                             await asyncio.gather(*embed_tasks, return_exceptions=True)
                         except Exception as e:
-                            log_error(f"Error processing document '{doc.name}': {e}")
+                            log_error(f"Error processing document '{doc.name}': {str(e)}")
         else:
             # Use individual embedding (original behavior)
             for doc in documents:
@@ -169,7 +173,7 @@ class Cassandra(VectorDb):
                     embed_tasks = [doc.async_embed(embedder=self.embedder)]
                     await asyncio.gather(*embed_tasks, return_exceptions=True)
                 except Exception as e:
-                    log_error(f"Error processing document '{doc.name}': {e}")
+                    log_error(f"Error processing document '{doc.name}': {str(e)}")
 
         futures = []
         for doc in documents:
@@ -204,13 +208,17 @@ class Cassandra(VectorDb):
             self.delete_by_content_hash(content_hash)
         await self.async_insert(content_hash, documents, filters)
 
-    def search(self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None) -> List[Document]:
+    def search(
+        self, query: str, limit: int = 5, filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None
+    ) -> List[Document]:
         """Keyword-based search on document metadata."""
         log_debug(f"Cassandra VectorDB : Performing Vector Search on {self.table_name} with query {query}")
+        if filters is not None:
+            log_warning("Filters are not yet supported in Cassandra. No filters will be applied.")
         return self.vector_search(query=query, limit=limit)
 
     async def async_search(
-        self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None
+        self, query: str, limit: int = 5, filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None
     ) -> List[Document]:
         """Search asynchronously by running in a thread."""
         return await asyncio.to_thread(self.search, query, limit, filters)
@@ -221,7 +229,9 @@ class Cassandra(VectorDb):
     ) -> List[Document]:
         return [self._row_to_document(row=hit) for hit in hits]
 
-    def vector_search(self, query: str, limit: int = 5) -> List[Document]:
+    def vector_search(
+        self, query: str, limit: int = 5, filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None
+    ) -> List[Document]:
         """Vector similarity search implementation."""
         query_embedding = self.embedder.get_embedding(query)
         hits = list(
@@ -486,7 +496,7 @@ class Cassandra(VectorDb):
                 log_debug(f"Updated metadata for {updated_count} documents with content_id {content_id}")
 
         except Exception as e:
-            log_error(f"Error updating metadata for content_id {content_id}: {e}")
+            log_error(f"Error updating metadata for content_id {content_id}: {str(e)}")
             raise
 
     def get_supported_search_types(self) -> List[str]:

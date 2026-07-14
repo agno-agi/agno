@@ -2,7 +2,7 @@ import pytest
 
 from agno.agent import Agent, RunOutput
 from agno.models.litellm import LiteLLM
-from agno.tools.duckduckgo import DuckDuckGoTools
+from agno.tools.websearch import WebSearchTools
 from agno.tools.yfinance import YFinanceTools
 
 
@@ -34,7 +34,7 @@ def test_tool_use():
     agent = Agent(
         model=LiteLLM(id="gpt-4o"),
         markdown=True,
-        tools=[DuckDuckGoTools(cache_results=True)],
+        tools=[WebSearchTools(cache_results=True)],
         telemetry=False,
     )
 
@@ -86,7 +86,7 @@ async def test_async_tool_use():
     agent = Agent(
         model=LiteLLM(id="gpt-4o"),
         markdown=True,
-        tools=[DuckDuckGoTools(cache_results=True)],
+        tools=[WebSearchTools(cache_results=True)],
         telemetry=False,
     )
 
@@ -137,7 +137,7 @@ def test_parallel_tool_calls():
     agent = Agent(
         model=LiteLLM(id="gpt-4o"),
         markdown=True,
-        tools=[DuckDuckGoTools(cache_results=True)],
+        tools=[WebSearchTools(cache_results=True)],
         telemetry=False,
     )
 
@@ -162,7 +162,7 @@ def test_multiple_tool_calls():
     agent = Agent(
         model=LiteLLM(id="gpt-4o"),
         markdown=True,
-        tools=[DuckDuckGoTools(cache_results=True), get_weather],
+        tools=[WebSearchTools(cache_results=True), get_weather],
         telemetry=False,
     )
 

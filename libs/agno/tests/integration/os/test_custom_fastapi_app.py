@@ -788,8 +788,8 @@ def test_custom_app_with_mcp_tools_lifespan(test_agent: Agent):
     assert mcp_close_called is True
 
 
-def test_custom_app_with_enable_mcp_server():
-    """Test that enable_mcp_server=True works with a custom base_app.
+def test_custom_app_with_mcp_server():
+    """Test that mcp_server=True works with a custom base_app.
 
     Note: This test requires a compatible version of fastmcp that exports
     fastmcp.server.http.StarletteWithLifespan. If this import fails, it indicates
@@ -812,11 +812,11 @@ def test_custom_app_with_enable_mcp_server():
     # Setup a simple agent
     agent = Agent(name="test-agent", db=InMemoryDb())
 
-    # Setup AgentOS with enable_mcp_server=True and custom base_app
+    # Setup AgentOS with mcp_server=True and custom base_app
     agent_os = AgentOS(
         agents=[agent],
         base_app=custom_app,
-        enable_mcp_server=True,
+        mcp_server=True,
     )
     app = agent_os.get_app()
 
@@ -838,3 +838,23 @@ def test_custom_app_with_enable_mcp_server():
         assert response.status_code == 200
     assert base_app_startup_called is True
     assert base_app_shutdown_called is True
+
+
+def test_custom_health_endpoint():
+    """Test that the custom health endpoint works."""
+
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from agno.agent import Agent
+    from agno.os.routers.health import get_health_router
+
+    app = FastAPI(title="Custom App")
+    health_router = get_health_router(health_endpoint="/health-check")
+    app.include_router(health_router)
+    agent_os = AgentOS(agents=[Agent()], base_app=app)
+    app = agent_os.get_app()
+    client = TestClient(app)
+    response = client.get("/health-check")
+    assert response.status_code == 200
+    assert response.json()["status"] == "ok"
