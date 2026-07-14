@@ -1,5 +1,15 @@
 # Test Log
 
+### tenki_tools.py
+
+**Status:** PASS
+
+**Description:** Adds a Tenki-backed coding agent cookbook plus `TenkiTools` coverage for sync and native async command execution, persistent session reuse, project/workspace scope discovery and fallback, paused/terminated/missing sandbox recovery, safe filesystem paths, working-directory state, status reporting, and confirmation-gated termination.
+
+**Result:** All 28 focused Tenki unit tests passed, including explicit, environment-based, single-scope, and multiple-scope project/workspace selection for sync and async clients. A 222-test core toolkit/function/approval/workspace regression set also passed. The `agno[tenki]` extra resolved in fresh Python 3.10 and 3.12 environments, and toolkit initialization was verified with the published `tenki-sandbox==0.3.6` package. Live scope fallback selected an accessible workspace/project, created a running sandbox without explicit IDs, wrote and read `/home/tenki/scope-test.txt` on the first attempt, and terminated the sandbox successfully. That flow also verified the regression fix that avoids passing the protected `/home/tenki` workdir root to `mkdir`. The full agent cookbook passed in `.venvs/demo`: the agent executed Python in Tenki, wrote `/home/tenki/fibonacci.txt`, returned `[0, 1, 1, 2, 3, 5, 8, 13, 21, 34]`, and reported the correct sum of `88`. An earlier live toolkit smoke test completed Python execution and nested file create/read/list plus cleanup, with the first filesystem operation requiring one retry because of a Tenki runtime-readiness issue tracked by `LuxorLabs/tenki.app#4485`. The full tools test directory was attempted but could not collect because the development environment does not contain 38 unrelated optional tool dependencies.
+
+---
+
 ### file_tools.py (Examples 6-8: exclude_patterns)
 
 **Status:** PASS
