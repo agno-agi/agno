@@ -325,6 +325,7 @@ class Toolkit:
             user_input_schema=function.user_input_schema,
             external_execution=external_execution,
             approval_type=function.approval_type,
+            max_calls=function.max_calls,
             cache_results=function.cache_results if function.cache_results else self.cache_results,
             cache_dir=function.cache_dir if function.cache_dir else self.cache_dir,
             cache_ttl=function.cache_ttl if function.cache_ttl != 3600 else self.cache_ttl,

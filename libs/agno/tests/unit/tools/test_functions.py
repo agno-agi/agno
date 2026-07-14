@@ -31,6 +31,7 @@ def test_function_initialization():
         requires_user_input=True,
         user_input_fields=["param1"],
         external_execution=True,
+        max_calls=3,
         cache_results=True,
         cache_dir="/tmp",
         cache_ttl=7200,
@@ -45,6 +46,7 @@ def test_function_initialization():
     assert func.requires_user_input is True
     assert func.user_input_fields == ["param1"]
     assert func.external_execution is True
+    assert func.max_calls == 3
     assert func.cache_results is True
     assert func.cache_dir == "/tmp"
     assert func.cache_ttl == 7200
@@ -70,6 +72,23 @@ def test_decorator_instantiation():
     assert "param2" not in test_func.parameters["required"]
 
 
+def test_decorator_instantiation_with_max_calls():
+    """Test that @tool forwards max_calls to the Function."""
+
+    @tool(max_calls=2)
+    def limited_tool(param1: str) -> str:
+        return param1
+
+    assert isinstance(limited_tool, Function)
+    assert limited_tool.max_calls == 2
+
+
+def test_function_rejects_negative_max_calls():
+    """Test that max_calls cannot be negative."""
+    with pytest.raises(ValidationError):
+        Function(name="limited_tool", max_calls=-1)
+
+
 def test_function_to_dict():
     """Test the to_dict method returns the correct dictionary representation."""
     func = Function(
@@ -89,9 +108,29 @@ def test_function_to_dict():
     assert result["strict"] is True
     assert result["requires_confirmation"] is True
     assert result["external_execution"] is True
+    assert "max_calls" not in result
     assert "instructions" not in result
     assert "add_instructions" not in result
     assert "entrypoint" not in result
+
+
+def test_function_to_dict_include_max_calls():
+    """Test that max_calls can be included for persistence."""
+    func = Function(name="test_function", max_calls=2)
+
+    result = func.to_dict(include_max_calls=True)
+
+    assert result["max_calls"] == 2
+
+
+def test_function_from_dict_preserves_max_calls():
+    """Test from_dict restores max_calls from execution config."""
+    serialized = Function(name="test_function", max_calls=4).to_dict(include_max_calls=True)
+
+    func = Function.from_dict(serialized)
+
+    assert func.name == "test_function"
+    assert func.max_calls == 4
 
 
 def test_function_from_callable():
@@ -115,6 +154,17 @@ def test_function_from_callable():
     assert func.parameters["properties"]["param2"]["type"] == "integer"
     assert "param1" in func.parameters["required"]
     assert "param2" not in func.parameters["required"]  # Because it has a default value
+
+
+def test_function_from_callable_preserves_max_calls():
+    """Test creating a Function from a callable with max_calls."""
+
+    def test_func(param1: str) -> str:
+        return param1
+
+    func = Function.from_callable(test_func, max_calls=2)
+
+    assert func.max_calls == 2
 
 
 def test_wrap_callable():

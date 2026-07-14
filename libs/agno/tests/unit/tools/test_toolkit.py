@@ -359,6 +359,38 @@ class TestToolDecoratorOnClassMethods:
 
         assert func.show_result is True
 
+    def test_tool_decorator_max_calls(self):
+        """Test that max_calls is preserved when a decorated method is bound."""
+
+        class MyToolkit(Toolkit):
+            def __init__(self):
+                super().__init__(name="test_toolkit", tools=[self.my_tool])
+
+            @tool(max_calls=2)
+            def my_tool(self, x: int) -> int:
+                """A tool with a per-run call limit."""
+                return x * 2
+
+        toolkit = MyToolkit()
+
+        assert toolkit.functions["my_tool"].max_calls == 2
+
+    def test_async_tool_decorator_max_calls(self):
+        """Test that max_calls is preserved when an async decorated method is bound."""
+
+        class MyToolkit(Toolkit):
+            def __init__(self):
+                super().__init__(name="test_toolkit", tools=[self.my_tool])
+
+            @tool(max_calls=2)
+            async def my_tool(self, x: int) -> int:
+                """An async tool with a per-run call limit."""
+                return x * 2
+
+        toolkit = MyToolkit()
+
+        assert toolkit.get_async_functions()["my_tool"].max_calls == 2
+
     def test_tool_decorator_self_binding(self):
         """Test that self is properly bound to the method."""
 
