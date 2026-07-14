@@ -150,6 +150,7 @@ seltz = ["seltz>=0.2.0"]
 superserve = ["superserve"]
 tavily = ["tavily-python>=0.7.9"]
 telegram = ["pyTelegramBotAPI>=4.32.0", "aiohttp"]
+tenki = ["tenki-sandbox>=0.3.6"]
 todoist = ["todoist-api-python"]
 trafilatura = ["trafilatura"]
 twelvelabs = ["twelvelabs>=1.2.8"]
@@ -298,6 +299,7 @@ tools = [
   "agno[superserve]",
   "agno[tavily]",
   "agno[telegram]",
+  # "agno[tenki]",  # Excluded: tenki-sandbox requires protobuf>=6.31, while memori currently requires protobuf<6
   "agno[todoist]",
   "agno[trafilatura]",
   "agno[twelvelabs]",
@@ -603,6 +605,7 @@ module = [
   "streamlit.*",
   "tavily.*",
   "telebot.*",
+  "tenki_sandbox.*",
   "textract.*",
   "timeout_decorator.*",
   "tiktoken.*",
