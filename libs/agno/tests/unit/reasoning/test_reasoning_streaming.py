@@ -298,3 +298,100 @@ def test_message_reasoning_content_optional():
     msg = Message(role="assistant", content="Just content")
     # Should not raise, reasoning_content should be None or not set
     assert msg.content == "Just content"
+
+
+# ============================================================================
+# Test handle_model_response_chunk emits ReasoningContentDeltaEvent
+# ============================================================================
+
+
+def _make_chunk_handler_mocks():
+    """Create minimal mocks for handle_model_response_chunk."""
+    from unittest.mock import MagicMock
+
+    from agno.models.response import ModelResponse
+    from agno.run.agent import RunOutput
+    from agno.session.agent import AgentSession
+
+    agent = MagicMock()
+    agent.id = "test-agent"
+    agent.name = "TestAgent"
+    agent.events_to_skip = []
+    agent.store_events = True
+
+    session = MagicMock(spec=AgentSession)
+    session.session_id = "test-session"
+
+    run_response = RunOutput(run_id="test-run", session_id="test-session", content="")
+    model_response = ModelResponse(content="")
+
+    return agent, session, run_response, model_response
+
+
+def test_handle_model_response_chunk_emits_reasoning_delta_when_streaming():
+    """handle_model_response_chunk must yield ReasoningContentDeltaEvent
+    for model chunks that carry reasoning_content when stream_events=True."""
+    from agno.agent._response import handle_model_response_chunk
+    from agno.models.message import MessageMetrics
+    from agno.models.response import ModelResponse, ModelResponseEvent
+    from agno.run.agent import ReasoningContentDeltaEvent, RunEvent
+
+    agent, session, run_response, model_response = _make_chunk_handler_mocks()
+
+    # Simulate a model chunk with only reasoning_content (like MiMo / DeepSeek / o4-mini)
+    chunk = ModelResponse(
+        event=ModelResponseEvent.assistant_response.value,
+        reasoning_content="Thinking step 1",
+    )
+
+    events = list(
+        handle_model_response_chunk(
+            agent=agent,
+            session=session,
+            run_response=run_response,
+            model_response=model_response,
+            model_response_event=chunk,
+            reasoning_state={"reasoning_started": False, "reasoning_time_taken": 0.0},
+            stream_events=True,
+        )
+    )
+
+    reasoning_deltas = [e for e in events if isinstance(e, ReasoningContentDeltaEvent)]
+    assert len(reasoning_deltas) == 1, (
+        f"Expected 1 ReasoningContentDeltaEvent, got {len(reasoning_deltas)}. "
+        f"Events: {[type(e).__name__ for e in events]}"
+    )
+    assert reasoning_deltas[0].reasoning_content == "Thinking step 1"
+    assert reasoning_deltas[0].event == RunEvent.reasoning_content_delta
+
+
+def test_handle_model_response_chunk_no_reasoning_delta_when_not_streaming():
+    """handle_model_response_chunk must NOT yield ReasoningContentDeltaEvent
+    when stream_events=False (backward compat for non-event consumers)."""
+    from agno.agent._response import handle_model_response_chunk
+    from agno.models.response import ModelResponse, ModelResponseEvent
+    from agno.run.agent import ReasoningContentDeltaEvent
+
+    agent, session, run_response, model_response = _make_chunk_handler_mocks()
+
+    chunk = ModelResponse(
+        event=ModelResponseEvent.assistant_response.value,
+        reasoning_content="Thinking step 1",
+    )
+
+    events = list(
+        handle_model_response_chunk(
+            agent=agent,
+            session=session,
+            run_response=run_response,
+            model_response=model_response,
+            model_response_event=chunk,
+            reasoning_state={"reasoning_started": False, "reasoning_time_taken": 0.0},
+            stream_events=False,
+        )
+    )
+
+    reasoning_deltas = [e for e in events if isinstance(e, ReasoningContentDeltaEvent)]
+    assert len(reasoning_deltas) == 0, (
+        f"Expected 0 ReasoningContentDeltaEvent when stream_events=False, got {len(reasoning_deltas)}"
+    )

@@ -1442,6 +1442,21 @@ def handle_model_response_chunk(
                     model_response.reasoning_content += model_response_event.redacted_reasoning_content
                 run_response.reasoning_content = model_response.reasoning_content
 
+            # Emit ReasoningContentDeltaEvent for streaming consumers (AG-UI, /runs, etc.)
+            # model_response_event.reasoning_content is the per-chunk delta;
+            # the accumulated value is already on run_response.reasoning_content above.
+            reasoning_delta = model_response_event.reasoning_content or model_response_event.redacted_reasoning_content
+            if stream_events and reasoning_delta:
+                yield handle_event(  # type: ignore
+                    create_reasoning_content_delta_event(
+                        from_run_response=run_response,
+                        reasoning_content=reasoning_delta,
+                    ),
+                    run_response,
+                    events_to_skip=agent.events_to_skip,  # type: ignore
+                    store_events=agent.store_events,
+                )
+
             # Handle provider data (one chunk)
             if model_response_event.provider_data is not None:
                 run_response.model_provider_data = model_response_event.provider_data
