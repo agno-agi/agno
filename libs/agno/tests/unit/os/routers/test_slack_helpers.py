@@ -389,56 +389,65 @@ class TestStripBotMention:
         assert result == "Scout"
 
 
-class TestDeriveSessionId:
-    def test_includes_channel_to_prevent_collision(self):
-        key_a = derive_session_id("agent-1", "C_ENG", "111.222")
-        key_b = derive_session_id("agent-1", "C_SALES", "111.222")
-        assert key_a != key_b
-        assert key_a == "agent-1:C_ENG:111.222"
-        assert key_b == "agent-1:C_SALES:111.222"
-
-    def test_format_is_entity_channel_thread(self):
-        key = derive_session_id("my-bot", "C123", "1708123456.000100")
-        assert key == "my-bot:C123:1708123456.000100"
+# -- derive_session_id --
 
 
-class TestResolveSessionId:
-    @pytest.mark.asyncio
-    async def test_returns_legacy_key_when_session_exists(self):
-        entity = Mock()
-        entity.aget_session = AsyncMock(return_value={"session_id": "agent-1:111.222"})
+def test_derive_session_id_includes_channel_to_prevent_collision():
+    key_a = derive_session_id("agent-1", "C_ENG", "111.222")
+    key_b = derive_session_id("agent-1", "C_SALES", "111.222")
+    assert key_a != key_b
+    assert key_a == "agent-1:C_ENG:111.222"
+    assert key_b == "agent-1:C_SALES:111.222"
 
-        key = await resolve_session_id(entity, "agent-1", "C123", "111.222")
-        assert key == "agent-1:111.222"
-        entity.aget_session.assert_awaited_once_with(session_id="agent-1:111.222")
 
-    @pytest.mark.asyncio
-    async def test_returns_new_key_when_no_legacy_session(self):
-        entity = Mock()
-        entity.aget_session = AsyncMock(return_value=None)
+def test_derive_session_id_format_is_entity_channel_thread():
+    key = derive_session_id("my-bot", "C123", "1708123456.000100")
+    assert key == "my-bot:C123:1708123456.000100"
 
-        key = await resolve_session_id(entity, "agent-1", "C123", "111.222")
-        assert key == "agent-1:C123:111.222"
 
-    @pytest.mark.asyncio
-    async def test_returns_new_key_when_aget_session_raises(self):
-        entity = Mock()
-        entity.aget_session = AsyncMock(side_effect=Exception("DB error"))
+# -- resolve_session_id --
 
-        key = await resolve_session_id(entity, "agent-1", "C123", "111.222")
-        assert key == "agent-1:C123:111.222"
 
-    @pytest.mark.asyncio
-    async def test_returns_new_key_for_remote_entities(self):
-        entity = Mock(spec=[])
+@pytest.mark.asyncio
+async def test_resolve_session_id_returns_legacy_key_when_session_exists():
+    entity = Mock()
+    entity.aget_session = AsyncMock(return_value={"session_id": "agent-1:111.222"})
 
-        key = await resolve_session_id(entity, "agent-1", "C123", "111.222")
-        assert key == "agent-1:C123:111.222"
+    key = await resolve_session_id(entity, "agent-1", "C123", "111.222")
+    assert key == "agent-1:111.222"
+    entity.aget_session.assert_awaited_once_with(session_id="agent-1:111.222")
 
-    @pytest.mark.asyncio
-    async def test_returns_new_key_when_no_db_access(self):
-        entity = Mock(spec=[])
-        entity.db = None
 
-        key = await resolve_session_id(entity, "agent-1", "C123", "111.222")
-        assert key == "agent-1:C123:111.222"
+@pytest.mark.asyncio
+async def test_resolve_session_id_returns_new_key_when_no_legacy_session():
+    entity = Mock()
+    entity.aget_session = AsyncMock(return_value=None)
+
+    key = await resolve_session_id(entity, "agent-1", "C123", "111.222")
+    assert key == "agent-1:C123:111.222"
+
+
+@pytest.mark.asyncio
+async def test_resolve_session_id_returns_new_key_when_aget_session_raises():
+    entity = Mock()
+    entity.aget_session = AsyncMock(side_effect=Exception("DB error"))
+
+    key = await resolve_session_id(entity, "agent-1", "C123", "111.222")
+    assert key == "agent-1:C123:111.222"
+
+
+@pytest.mark.asyncio
+async def test_resolve_session_id_returns_new_key_for_remote_entities():
+    entity = Mock(spec=[])
+
+    key = await resolve_session_id(entity, "agent-1", "C123", "111.222")
+    assert key == "agent-1:C123:111.222"
+
+
+@pytest.mark.asyncio
+async def test_resolve_session_id_returns_new_key_when_no_db_access():
+    entity = Mock(spec=[])
+    entity.db = None
+
+    key = await resolve_session_id(entity, "agent-1", "C123", "111.222")
+    assert key == "agent-1:C123:111.222"
