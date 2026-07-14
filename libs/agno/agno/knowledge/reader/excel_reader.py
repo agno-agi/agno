@@ -26,7 +26,9 @@ class ExcelReader(Reader):
         chunking_strategy: Optional[ChunkingStrategy] = None,
         **kwargs,
     ):
-        super().__init__(chunking_strategy=chunking_strategy or RowChunking(), **kwargs)
+        if chunking_strategy is None:
+            chunking_strategy = RowChunking()
+        super().__init__(chunking_strategy=chunking_strategy, **kwargs)
         self.sheets = sheets
 
     @classmethod
