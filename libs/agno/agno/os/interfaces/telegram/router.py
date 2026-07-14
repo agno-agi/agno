@@ -25,6 +25,7 @@ from agno.workflow import RemoteWorkflow, Workflow
 
 try:
     from telebot.async_telebot import AsyncTeleBot
+    from telebot.types import ReactionTypeEmoji
 except ImportError as e:
     raise ImportError("`pyTelegramBotAPI` not installed. Please install using `pip install 'agno[telegram]'`") from e
 
@@ -79,6 +80,7 @@ def attach_routes(
     register_commands: bool = True,
     new_message: str = DEFAULT_NEW_MESSAGE,
     quoted_responses: bool = False,
+    react_emoji: Optional[str] = None,
 ) -> APIRouter:
     if agent is None and team is None and workflow is None:
         raise ValueError("Either agent, team, or workflow must be provided.")
@@ -196,6 +198,28 @@ def attach_routes(
         await send_message(
             bot, chat_id, error_message, reply_to_message_id=reply_to, message_thread_id=message_thread_id
         )
+
+    async def _add_reaction(chat_id: int, message_id: int, emoji: str) -> None:
+        if not emoji:
+            return
+        try:
+            await bot.set_message_reaction(
+                chat_id=chat_id,
+                message_id=message_id,
+                reaction=[ReactionTypeEmoji(emoji=emoji)],
+            )
+        except Exception as e:
+            log_debug(f"Telegram reaction failed: {e}")
+
+    async def _remove_reaction(chat_id: int, message_id: int) -> None:
+        try:
+            await bot.set_message_reaction(
+                chat_id=chat_id,
+                message_id=message_id,
+                reaction=[],
+            )
+        except Exception as e:
+            log_debug(f"Telegram reaction removal failed: {e}")
 
     async def _stream_response(
         message_text: str,
@@ -343,8 +367,13 @@ def attach_routes(
 
             await bot.send_chat_action(chat_id, "typing", message_thread_id=message_thread_id)
 
+            if react_emoji and incoming_message_id:
+                await _add_reaction(chat_id, incoming_message_id, react_emoji)
+
             extracted = await extract_message_payload(bot, message)
             if extracted is None:
+                if react_emoji and incoming_message_id:
+                    await _remove_reaction(chat_id, incoming_message_id)
                 return
             message_text = extracted.pop("message", "")
             warning = extracted.pop("warning", None)
@@ -356,6 +385,8 @@ def attach_routes(
 
             # Skip model invocation if there's nothing to process
             if not message_text and not any(extracted.get(k) for k in ("images", "audio", "videos", "files")):
+                if react_emoji and incoming_message_id:
+                    await _remove_reaction(chat_id, incoming_message_id)
                 return
 
             session_id = session_scope
@@ -380,6 +411,9 @@ def attach_routes(
                 )
             else:
                 await _sync_response(message_text, run_kwargs, chat_id, reply_to, message_thread_id)
+
+            if react_emoji and incoming_message_id:
+                await _remove_reaction(chat_id, incoming_message_id)
 
         except Exception as e:
             log_error(f"Error processing message: {str(e)}")

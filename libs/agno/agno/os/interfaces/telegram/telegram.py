@@ -49,6 +49,7 @@ class Telegram(BaseInterface):
         register_commands: bool = True,
         new_message: str = DEFAULT_NEW_MESSAGE,
         quoted_responses: bool = False,
+        react_emoji: Optional[str] = None,
     ):
         self.agent = agent
         self.team = team
@@ -67,6 +68,7 @@ class Telegram(BaseInterface):
         self.register_commands = register_commands
         self.new_message = new_message
         self.quoted_responses = quoted_responses
+        self.react_emoji = react_emoji
 
         if not (self.agent or self.team or self.workflow):
             raise ValueError("Telegram requires an agent, team, or workflow")
@@ -89,4 +91,5 @@ class Telegram(BaseInterface):
             register_commands=self.register_commands,
             new_message=self.new_message,
             quoted_responses=self.quoted_responses,
+            react_emoji=self.react_emoji,
         )
