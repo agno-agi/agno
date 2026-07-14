@@ -18,7 +18,6 @@ specific workspace or project when multiple are available.
 """
 
 from agno.agent import Agent
-from agno.models.openai import OpenAIResponses
 from agno.tools.tenki import TenkiTools
 
 # ---------------------------------------------------------------------------
@@ -27,7 +26,6 @@ from agno.tools.tenki import TenkiTools
 
 agent = Agent(
     name="Coding Agent with Tenki tools",
-    model=OpenAIResponses(id="gpt-5.5"),
     tools=[
         TenkiTools(
             add_instructions=True,
