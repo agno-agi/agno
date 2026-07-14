@@ -141,7 +141,7 @@ class PubmedTools(Toolkit):
 
         Args:
             query (str): The search query.
-            max_results (int): The maximum number of results to return (default 10).
+            max_results (int, optional): The maximum number of results to return. Defaults to the value set on the toolkit, or 10.
 
         Returns:
             str: A JSON string containing the search results.
