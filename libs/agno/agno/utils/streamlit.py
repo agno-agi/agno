@@ -7,7 +7,7 @@ try:
     from agno.models.anthropic import Claude
     from agno.models.google import Gemini
     from agno.models.openai import OpenAIChat
-    from agno.utils.log import logger
+    from agno.utils.log import log_warning, logger
 except ImportError:
     raise ImportError("`agno` not installed. Please install using `pip install agno`")
 
@@ -67,8 +67,8 @@ def session_selector_widget(agent: Agent, model_id: str, agent_creation_callback
             sort_by="created_at",
             sort_order="desc",
         )
-    except Exception as e:
-        logger.error(f"Error fetching sessions: {e}")
+    except Exception:
+        logger.exception("Error fetching sessions")
         st.sidebar.error("Could not load sessions")
         return
 
@@ -187,7 +187,7 @@ def session_selector_widget(agent: Agent, model_id: str, agent_creation_callback
                             st.sidebar.success("Session renamed!")
                             st.rerun()
                         except Exception as e:
-                            logger.error(f"Error renaming session: {e}")
+                            logger.exception("Error renaming session")
                             st.sidebar.error(f"Error: {str(e)}")
                     else:
                         st.sidebar.error("Please enter a valid name")
@@ -255,12 +255,12 @@ def _load_session(session_id: str, model_id: str, agent_creation_callback: Calla
                 logger.warning(f"No session found in database for session_id: {session_id}")
 
         except Exception as e:
-            logger.warning(f"Could not load chat history: {e}")
+            log_warning(f"Could not load chat history: {str(e)}")
 
         st.rerun()
 
     except Exception as e:
-        logger.error(f"Error loading session: {e}")
+        logger.exception("Error loading session")
         st.sidebar.error(f"Error loading session: {str(e)}")
 
 
@@ -280,7 +280,7 @@ def display_response(agent: Agent, question: str) -> None:
                         if hasattr(resp_chunk, "tool") and resp_chunk.tool:
                             display_tool_calls(tool_calls_container, [resp_chunk.tool])
                     except Exception as tool_error:
-                        logger.warning(f"Error displaying tool calls: {tool_error}")
+                        log_warning(f"Error displaying tool calls: {tool_error}")
 
                     if resp_chunk.content is not None:
                         content = str(resp_chunk.content)
@@ -297,7 +297,7 @@ def display_response(agent: Agent, question: str) -> None:
                     else:
                         add_message("assistant", response)
                 except Exception as add_msg_error:
-                    logger.warning(f"Error adding message with tools: {add_msg_error}")
+                    log_warning(f"Error adding message with tools: {add_msg_error}")
                     add_message("assistant", response)
 
             except Exception as e:
@@ -362,8 +362,8 @@ def knowledge_base_info_widget(agent: Agent) -> None:
             st.sidebar.info("💡 Upload documents to populate the knowledge base")
         else:
             st.sidebar.metric("Documents Loaded", doc_count)
-    except Exception as e:
-        logger.error(f"Error getting knowledge base info: {e}")
+    except Exception:
+        logger.exception("Error getting knowledge base info")
         st.sidebar.warning("Could not retrieve knowledge base information")
 
 

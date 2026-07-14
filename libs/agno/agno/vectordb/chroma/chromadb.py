@@ -1,7 +1,9 @@
 import asyncio
 import json
+from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor
 from hashlib import md5
-from typing import Any, Dict, List, Mapping, Optional, Union, cast
+from typing import Any, Dict, List, Mapping, Optional, Tuple, Union, cast
 
 try:
     from chromadb import Client as ChromaDbClient
@@ -13,18 +15,73 @@ try:
 except ImportError:
     raise ImportError("The `chromadb` package is not installed. Please install it via `pip install chromadb`.")
 
+from agno.filters import FilterExpr
 from agno.knowledge.document import Document
 from agno.knowledge.embedder import Embedder
 from agno.knowledge.reranker.base import Reranker
-from agno.utils.log import log_debug, log_error, log_info, logger
+from agno.utils.log import log_debug, log_error, log_info, log_warning, logger
 from agno.vectordb.base import VectorDb
 from agno.vectordb.distance import Distance
+from agno.vectordb.search import SearchType
+
+
+def reciprocal_rank_fusion(
+    ranked_lists: List[List[Tuple[str, float]]],
+    k: int = 60,
+) -> List[Tuple[str, float]]:
+    """
+    Combine multiple ranked lists using Reciprocal Rank Fusion (RRF).
+
+    RRF is a simple yet effective method for combining multiple rankings.
+    The formula is: RRF(d) = sum(1 / (k + rank_i(d))) for each ranking i
+
+    Args:
+        ranked_lists: List of ranked results, each as [(doc_id, score), ...]
+        k: RRF constant (default 60, as per original paper by Cormack et al.)
+
+    Returns:
+        Fused ranking as [(doc_id, rrf_score), ...] sorted by score descending
+    """
+    rrf_scores: Dict[str, float] = defaultdict(float)
+
+    for ranked_list in ranked_lists:
+        for rank, (doc_id, _) in enumerate(ranked_list, start=1):
+            rrf_scores[doc_id] += 1.0 / (k + rank)
+
+    sorted_results = sorted(rrf_scores.items(), key=lambda x: x[1], reverse=True)
+    return sorted_results
 
 
 class ChromaDb(VectorDb):
+    """
+    ChromaDb class for managing vector operations with ChromaDB.
+
+    Args:
+        collection: The name of the ChromaDB collection. If not provided, derived from 'name'.
+        name: Name of the vector database. Also used as collection name if 'collection' is not provided.
+        description: Description of the vector database.
+        id: Unique identifier for this vector database instance.
+        embedder: The embedder to use when embedding the document contents.
+        distance: The distance metric to use when searching for documents.
+        path: The path to store the ChromaDB data (for persistent client).
+        persistent_client: Whether to use a persistent client.
+        search_type: The search type to use when searching for documents.
+            - SearchType.vector: Pure vector similarity search (default)
+            - SearchType.keyword: Keyword-based search using document content
+            - SearchType.hybrid: Combines vector + FTS with Reciprocal Rank Fusion
+        hybrid_rrf_k: RRF (Reciprocal Rank Fusion) constant for hybrid search.
+            Controls ranking smoothness - higher values give more weight to lower-ranked
+            results, lower values make top results more dominant. Default is 60
+            (per original RRF paper by Cormack et al.).
+        batch_size: Maximum number of documents per batch operation. If not provided,
+            automatically detects ChromaDB's maximum batch size limit.
+        reranker: The reranker to use when reranking documents.
+        **kwargs: Additional arguments to pass to the ChromaDB client.
+    """
+
     def __init__(
         self,
-        collection: str,
+        collection: Optional[str] = None,
         name: Optional[str] = None,
         description: Optional[str] = None,
         id: Optional[str] = None,
@@ -32,12 +89,19 @@ class ChromaDb(VectorDb):
         distance: Distance = Distance.cosine,
         path: str = "tmp/chromadb",
         persistent_client: bool = False,
+        search_type: SearchType = SearchType.vector,
+        hybrid_rrf_k: int = 60,
+        batch_size: Optional[int] = None,
         reranker: Optional[Reranker] = None,
         **kwargs,
     ):
-        # Validate required parameters
-        if not collection:
-            raise ValueError("Collection name must be provided.")
+        # Derive collection from name if not provided
+        if collection is None:
+            if name is not None:
+                # Sanitize name: lowercase and replace spaces with underscores
+                collection = name.lower().replace(" ", "_")
+            else:
+                raise ValueError("Either 'collection' or 'name' must be provided.")
 
         # Dynamic ID generation based on unique identifiers
         if id is None:
@@ -56,7 +120,7 @@ class ChromaDb(VectorDb):
             from agno.knowledge.embedder.openai import OpenAIEmbedder
 
             embedder = OpenAIEmbedder()
-            log_info("Embedder not provided, using OpenAIEmbedder as default.")
+            log_debug("Embedder not provided, using OpenAIEmbedder as default.")
         self.embedder: Embedder = embedder
         # Distance metric
         self.distance: Distance = distance
@@ -71,11 +135,18 @@ class ChromaDb(VectorDb):
         self.persistent_client: bool = persistent_client
         self.path: str = path
 
+        # Search type configuration
+        self.search_type: SearchType = search_type
+        self.hybrid_rrf_k: int = hybrid_rrf_k
+
         # Reranker instance
         self.reranker: Optional[Reranker] = reranker
 
         # Chroma client kwargs
         self.kwargs = kwargs
+
+        # Batch size for ChromaDB operations
+        self._batch_size: Optional[int] = batch_size
 
     def _flatten_metadata(self, metadata: Dict[str, Any]) -> Dict[str, Union[str, int, float, bool]]:
         """
@@ -131,6 +202,71 @@ class ChromaDb(VectorDb):
                 )
         return self._client
 
+    @property
+    def batch_size(self) -> int:
+        """Get the batch size for ChromaDB operations.
+
+        Returns user-provided batch_size if set, otherwise auto-detects ChromaDB's
+        maximum batch size limit based on SQLite's MAX_VARIABLE_NUMBER constraint.
+
+        Returns:
+            int: Batch size for operations
+
+        Note:
+            - User-provided value takes precedence over auto-detection
+            - Auto-detected value is cached after first calculation
+            - Falls back to 100 if auto-detection fails
+            - Eg: typical values: ~5461 on standard systems, ~41666 on systems with higher limits
+        """
+        if self._batch_size is None:
+            try:
+                max_size = self.client.get_max_batch_size()
+                self._batch_size = max_size
+                log_debug(f"ChromaDB max batch size: {max_size}")
+            except Exception as e:
+                # Fallback to conservative value if query fails
+                log_warning(f"Could not query ChromaDB max batch size. Using fallback: 100: {str(e)}")
+                self._batch_size = 100
+        return self._batch_size
+
+    def _batch_operation(
+        self,
+        ids: List[str],
+        embeddings: List,
+        documents: List[str],
+        metadatas: List[Dict[str, Any]],
+        operation_name: str,
+        operation_func: Any,
+    ) -> None:
+        """Execute a batched ChromaDB operation to respect batch size limits."""
+        num_documents = len(documents)
+        if num_documents == 0:
+            return
+
+        batch_size = self.batch_size
+        total_batches = (num_documents + batch_size - 1) // batch_size
+
+        for i in range(0, num_documents, batch_size):
+            batch_ids = ids[i : i + batch_size]
+            batch_embeddings = embeddings[i : i + batch_size]
+            batch_docs = documents[i : i + batch_size]
+            batch_metadata = metadatas[i : i + batch_size]
+
+            operation_func(
+                ids=batch_ids,
+                embeddings=batch_embeddings,
+                documents=batch_docs,
+                metadatas=batch_metadata,
+            )
+
+            if total_batches > 1:
+                batch_num = (i // batch_size) + 1
+                log_debug(
+                    f"{operation_name.capitalize()} batch {batch_num}/{total_batches} ({len(batch_ids)} documents)"
+                )
+
+        log_debug(f"Committed {num_documents} documents")
+
     def create(self) -> None:
         """Create the collection in ChromaDb."""
         if self.exists():
@@ -160,8 +296,8 @@ class ChromaDb(VectorDb):
             collection: Collection = self.client.get_collection(name=self.collection_name)
             result = collection.get(where=cast(Any, {"name": {"$eq": name}}), limit=1)
             return len(result.get("ids", [])) > 0
-        except Exception as e:
-            logger.error(f"Error checking name existence: {e}")
+        except Exception:
+            logger.exception("Error checking name existence")
         return False
 
     async def async_name_exists(self, name: str) -> bool:
@@ -184,10 +320,21 @@ class ChromaDb(VectorDb):
         if not self._collection:
             self._collection = self.client.get_collection(name=self.collection_name)
 
+        id_counts: Dict[str, int] = {}
         for document in documents:
             document.embed(embedder=self.embedder)
             cleaned_content = document.content.replace("\x00", "\ufffd")
-            doc_id = md5(cleaned_content.encode()).hexdigest()
+            # Include content_hash in ID to ensure uniqueness across different content hashes
+            base_id = document.id or md5(cleaned_content.encode()).hexdigest()
+            doc_id = md5(f"{base_id}_{content_hash}".encode()).hexdigest()
+
+            # ChromaDB requires unique IDs within a batch — deduplicate collisions
+            # from documents with identical content (e.g., empty pages from PDF parsing)
+            if doc_id in id_counts:
+                id_counts[doc_id] += 1
+                doc_id = md5(f"{doc_id}_{id_counts[doc_id]}".encode()).hexdigest()
+            else:
+                id_counts[doc_id] = 0
 
             # Handle metadata and filters
             metadata = document.meta_data or {}
@@ -214,9 +361,14 @@ class ChromaDb(VectorDb):
         if self._collection is None:
             logger.warning("Collection does not exist")
         else:
-            if len(docs) > 0:
-                self._collection.add(ids=ids, embeddings=docs_embeddings, documents=docs, metadatas=docs_metadata)
-                log_debug(f"Committed {len(docs)} documents")
+            self._batch_operation(
+                ids=ids,
+                embeddings=docs_embeddings,
+                documents=docs,
+                metadatas=docs_metadata,
+                operation_name="insert",
+                operation_func=self._collection.add,
+            )
 
     async def async_insert(
         self, content_hash: str, documents: List[Document], filters: Optional[Dict[str, Any]] = None
@@ -246,8 +398,8 @@ class ChromaDb(VectorDb):
                         if j < len(embeddings):
                             doc.embedding = embeddings[j]
                             doc.usage = usages[j] if j < len(usages) else None
-                    except Exception as e:
-                        logger.error(f"Error assigning batch embedding to document '{doc.name}': {e}")
+                    except Exception:
+                        logger.exception(f"Error assigning batch embedding to document '{doc.name}'")
 
             except Exception as e:
                 # Check if this is a rate limit error - don't fall back as it would make things worse
@@ -258,10 +410,10 @@ class ChromaDb(VectorDb):
                 )
 
                 if is_rate_limit:
-                    logger.error(f"Rate limit detected during batch embedding. {e}")
+                    logger.exception("Rate limit detected during batch embedding.")
                     raise e
                 else:
-                    logger.warning(f"Async batch embedding failed, falling back to individual embeddings: {e}")
+                    log_warning(f"Async batch embedding failed, falling back to individual embeddings: {str(e)}")
                     # Fall back to individual embedding
                     embed_tasks = [doc.async_embed(embedder=self.embedder) for doc in documents]
                     await asyncio.gather(*embed_tasks, return_exceptions=True)
@@ -270,12 +422,23 @@ class ChromaDb(VectorDb):
             try:
                 embed_tasks = [document.async_embed(embedder=self.embedder) for document in documents]
                 await asyncio.gather(*embed_tasks, return_exceptions=True)
-            except Exception as e:
-                log_error(f"Error processing document: {e}")
+            except Exception:
+                logger.exception("Error processing document")
 
+        id_counts: Dict[str, int] = {}
         for document in documents:
             cleaned_content = document.content.replace("\x00", "\ufffd")
-            doc_id = md5(cleaned_content.encode()).hexdigest()
+            # Include content_hash in ID to ensure uniqueness across different content hashes
+            base_id = document.id or md5(cleaned_content.encode()).hexdigest()
+            doc_id = md5(f"{base_id}_{content_hash}".encode()).hexdigest()
+
+            # ChromaDB requires unique IDs within a batch — deduplicate collisions
+            # from documents with identical content (e.g., empty pages from PDF parsing)
+            if doc_id in id_counts:
+                id_counts[doc_id] += 1
+                doc_id = md5(f"{doc_id}_{id_counts[doc_id]}".encode()).hexdigest()
+            else:
+                id_counts[doc_id] = 0
 
             # Handle metadata and filters
             metadata = document.meta_data or {}
@@ -302,9 +465,18 @@ class ChromaDb(VectorDb):
         if self._collection is None:
             logger.warning("Collection does not exist")
         else:
-            if len(docs) > 0:
-                self._collection.add(ids=ids, embeddings=docs_embeddings, documents=docs, metadatas=docs_metadata)
-                log_debug(f"Committed {len(docs)} documents")
+            # Run the synchronous ChromaDB batch on a worker thread so the
+            # asyncio event loop stays responsive while the (potentially large)
+            # write completes.
+            await asyncio.to_thread(
+                self._batch_operation,
+                ids=ids,
+                embeddings=docs_embeddings,
+                documents=docs,
+                metadatas=docs_metadata,
+                operation_name="async_insert",
+                operation_func=self._collection.add,
+            )
 
     def upsert_available(self) -> bool:
         """Check if upsert is available in ChromaDB."""
@@ -321,8 +493,8 @@ class ChromaDb(VectorDb):
             if self.content_hash_exists(content_hash):
                 self._delete_by_content_hash(content_hash)
             self._upsert(content_hash, documents, filters)
-        except Exception as e:
-            logger.error(f"Error upserting documents by content hash: {e}")
+        except Exception:
+            logger.exception("Error upserting documents by content hash")
             raise
 
     def _upsert(self, content_hash: str, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
@@ -341,10 +513,21 @@ class ChromaDb(VectorDb):
         if not self._collection:
             self._collection = self.client.get_collection(name=self.collection_name)
 
+        id_counts: Dict[str, int] = {}
         for document in documents:
             document.embed(embedder=self.embedder)
             cleaned_content = document.content.replace("\x00", "\ufffd")
-            doc_id = md5(cleaned_content.encode()).hexdigest()
+            # Include content_hash in ID to ensure uniqueness across different content hashes
+            base_id = document.id or md5(cleaned_content.encode()).hexdigest()
+            doc_id = md5(f"{base_id}_{content_hash}".encode()).hexdigest()
+
+            # ChromaDB requires unique IDs within a batch — deduplicate collisions
+            # from documents with identical content (e.g., empty pages from PDF parsing)
+            if doc_id in id_counts:
+                id_counts[doc_id] += 1
+                doc_id = md5(f"{doc_id}_{id_counts[doc_id]}".encode()).hexdigest()
+            else:
+                id_counts[doc_id] = 0
 
             # Handle metadata and filters
             metadata = document.meta_data or {}
@@ -371,9 +554,14 @@ class ChromaDb(VectorDb):
         if self._collection is None:
             logger.warning("Collection does not exist")
         else:
-            if len(docs) > 0:
-                self._collection.upsert(ids=ids, embeddings=docs_embeddings, documents=docs, metadatas=docs_metadata)
-                log_debug(f"Committed {len(docs)} documents")
+            self._batch_operation(
+                ids=ids,
+                embeddings=docs_embeddings,
+                documents=docs,
+                metadatas=docs_metadata,
+                operation_name="upsert",
+                operation_func=self._collection.upsert,
+            )
 
     async def _async_upsert(
         self, content_hash: str, documents: List[Document], filters: Optional[Dict[str, Any]] = None
@@ -408,8 +596,8 @@ class ChromaDb(VectorDb):
                         if j < len(embeddings):
                             doc.embedding = embeddings[j]
                             doc.usage = usages[j] if j < len(usages) else None
-                    except Exception as e:
-                        logger.error(f"Error assigning batch embedding to document '{doc.name}': {e}")
+                    except Exception:
+                        logger.exception(f"Error assigning batch embedding to document '{doc.name}'")
 
             except Exception as e:
                 # Check if this is a rate limit error - don't fall back as it would make things worse
@@ -420,10 +608,10 @@ class ChromaDb(VectorDb):
                 )
 
                 if is_rate_limit:
-                    logger.error(f"Rate limit detected during batch embedding. {e}")
+                    logger.exception("Rate limit detected during batch embedding.")
                     raise e
                 else:
-                    logger.warning(f"Async batch embedding failed, falling back to individual embeddings: {e}")
+                    log_warning(f"Async batch embedding failed, falling back to individual embeddings: {str(e)}")
                     # Fall back to individual embedding
                     embed_tasks = [doc.async_embed(embedder=self.embedder) for doc in documents]
                     await asyncio.gather(*embed_tasks, return_exceptions=True)
@@ -432,9 +620,20 @@ class ChromaDb(VectorDb):
             embed_tasks = [document.async_embed(embedder=self.embedder) for document in documents]
             await asyncio.gather(*embed_tasks, return_exceptions=True)
 
+        id_counts: Dict[str, int] = {}
         for document in documents:
             cleaned_content = document.content.replace("\x00", "\ufffd")
-            doc_id = md5(cleaned_content.encode()).hexdigest()
+            # Include content_hash in ID to ensure uniqueness across different content hashes
+            base_id = document.id or md5(cleaned_content.encode()).hexdigest()
+            doc_id = md5(f"{base_id}_{content_hash}".encode()).hexdigest()
+
+            # ChromaDB requires unique IDs within a batch — deduplicate collisions
+            # from documents with identical content (e.g., empty pages from PDF parsing)
+            if doc_id in id_counts:
+                id_counts[doc_id] += 1
+                doc_id = md5(f"{doc_id}_{id_counts[doc_id]}".encode()).hexdigest()
+            else:
+                id_counts[doc_id] = 0
 
             # Handle metadata and filters
             metadata = document.meta_data or {}
@@ -461,9 +660,18 @@ class ChromaDb(VectorDb):
         if self._collection is None:
             logger.warning("Collection does not exist")
         else:
-            if len(docs) > 0:
-                self._collection.upsert(ids=ids, embeddings=docs_embeddings, documents=docs, metadatas=docs_metadata)
-                log_debug(f"Committed {len(docs)} documents")
+            # Run the synchronous ChromaDB batch on a worker thread so the
+            # asyncio event loop stays responsive while the (potentially large)
+            # write completes.
+            await asyncio.to_thread(
+                self._batch_operation,
+                ids=ids,
+                embeddings=docs_embeddings,
+                documents=docs,
+                metadatas=docs_metadata,
+                operation_name="async_upsert",
+                operation_func=self._collection.upsert,
+            )
 
     async def async_upsert(
         self, content_hash: str, documents: List[Document], filters: Optional[Dict[str, Any]] = None
@@ -473,17 +681,19 @@ class ChromaDb(VectorDb):
             if self.content_hash_exists(content_hash):
                 self._delete_by_content_hash(content_hash)
             await self._async_upsert(content_hash, documents, filters)
-        except Exception as e:
-            logger.error(f"Error upserting documents by content hash: {e}")
+        except Exception:
+            logger.exception("Error upserting documents by content hash")
             raise
 
-    def search(self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None) -> List[Document]:
+    def search(
+        self, query: str, limit: int = 5, filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None
+    ) -> List[Document]:
         """Search the collection for a query.
 
         Args:
             query (str): Query to search for.
             limit (int): Number of results to return.
-            filters (Optional[Dict[str, Any]]): Filters to apply while searching.
+            filters (Optional[Union[Dict[str, Any], List[FilterExpr]]]): Filters to apply while searching.
                 Supports ChromaDB's filtering operators:
                 - $eq, $ne: Equality/Inequality
                 - $gt, $gte, $lt, $lte: Numeric comparisons
@@ -492,9 +702,47 @@ class ChromaDb(VectorDb):
         Returns:
             List[Document]: List of search results.
         """
+        if isinstance(filters, list):
+            log_warning("Filter Expressions are not yet supported in ChromaDB. No filters will be applied.")
+            filters = None
+
+        if not self._collection:
+            self._collection = self.client.get_collection(name=self.collection_name)
+
+        # Route to appropriate search method based on search_type
+        if self.search_type == SearchType.vector:
+            search_results = self._vector_search(query, limit, filters)
+        elif self.search_type == SearchType.keyword:
+            search_results = self._keyword_search(query, limit, filters)
+        elif self.search_type == SearchType.hybrid:
+            search_results = self._hybrid_search(query, limit, filters)
+        else:
+            log_error(f"Invalid search type '{self.search_type}'.")
+            return []
+
+        if self.reranker and search_results:
+            try:
+                search_results = self.reranker.rerank(query=query, documents=search_results)
+            except Exception as e:
+                log_warning(f"Reranker failed, returning unranked results: {str(e)}")
+
+        log_info(f"Found {len(search_results)} documents")
+        return search_results
+
+    def _vector_search(self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None) -> List[Document]:
+        """Perform pure vector similarity search.
+
+        Args:
+            query (str): Query to search for.
+            limit (int): Number of results to return.
+            filters (Optional[Dict[str, Any]]): Metadata filters to apply.
+
+        Returns:
+            List[Document]: List of search results.
+        """
         query_embedding = self.embedder.get_embedding(query)
         if query_embedding is None:
-            logger.error(f"Error getting embedding for Query: {query}")
+            log_error(f"Error getting embedding for Query: {query}")
             return []
 
         if not self._collection:
@@ -506,11 +754,248 @@ class ChromaDb(VectorDb):
         result: QueryResult = self._collection.query(
             query_embeddings=query_embedding,
             n_results=limit,
-            where=where_filter,  # Add where filter
+            where=where_filter,
             include=["metadatas", "documents", "embeddings", "distances", "uris"],
         )
 
-        # Build search results
+        return self._build_search_results(result)
+
+    def _keyword_search(self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None) -> List[Document]:
+        """Perform keyword-based search using document content filtering.
+
+        This uses ChromaDB's where_document filter with $contains operator
+        for basic full-text search functionality.
+
+        Args:
+            query (str): Query to search for (keywords to match in document content).
+            limit (int): Number of results to return.
+            filters (Optional[Dict[str, Any]]): Metadata filters to apply.
+
+        Returns:
+            List[Document]: List of search results.
+        """
+        if not self._collection:
+            self._collection = self.client.get_collection(name=self.collection_name)
+
+        # Convert simple filters to ChromaDB's format if needed
+        where_filter = self._convert_filters(filters) if filters else None
+
+        # Get first significant word for $contains filter
+        query_words = query.split()
+        if not query_words:
+            return []
+
+        # Use where_document to filter by document content
+        where_document: Dict[str, Any] = {"$contains": query_words[0]}
+
+        try:
+            # Get documents matching the keyword filter
+            result = self._collection.get(
+                where=where_filter,
+                where_document=cast(Any, where_document),
+                limit=limit,
+                include=["metadatas", "documents", "embeddings"],
+            )
+
+            return self._build_get_results(cast(Dict[str, Any], result), query)
+        except Exception:
+            logger.exception("Error in keyword search")
+            return []
+
+    def _hybrid_search(self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None) -> List[Document]:
+        """Perform hybrid search combining vector similarity with full-text search using RRF.
+
+        This method combines:
+        1. Dense vector similarity search (semantic search)
+        2. Full-text search (keyword/lexical search)
+
+        Results are fused using Reciprocal Rank Fusion (RRF) for optimal ranking.
+
+        Args:
+            query (str): Query to search for.
+            limit (int): Number of results to return.
+            filters (Optional[Dict[str, Any]]): Metadata filters to apply.
+
+        Returns:
+            List[Document]: List of search results with RRF-fused ranking.
+        """
+        query_embedding = self.embedder.get_embedding(query)
+        if query_embedding is None:
+            log_error(f"Error getting embedding for Query: {query}")
+            return []
+
+        if not self._collection:
+            self._collection = self.client.get_collection(name=self.collection_name)
+
+        # Convert simple filters to ChromaDB's format if needed
+        where_filter = self._convert_filters(filters) if filters else None
+
+        # Fetch more candidates than needed for better fusion
+        fetch_k = min(limit * 3, 100)
+
+        def dense_vector_similarity_search() -> List[Tuple[str, float]]:
+            """Dense vector similarity search."""
+            try:
+                results = self._collection.query(  # type: ignore
+                    query_embeddings=query_embedding,
+                    n_results=fetch_k,
+                    where=where_filter,
+                    include=["documents", "metadatas", "distances"],
+                )
+
+                ranked: List[Tuple[str, float]] = []
+                if results.get("ids") and results["ids"][0]:
+                    for i, doc_id in enumerate(results["ids"][0]):
+                        distance = results["distances"][0][i] if results.get("distances") else 0  # type: ignore
+                        # Convert distance to similarity score (lower distance = higher score)
+                        score = 1.0 / (1.0 + distance)
+                        ranked.append((doc_id, score))
+                return ranked
+            except Exception as e:
+                log_error(f"Error in vector search component: {str(e)}")
+                return []
+
+        def fts_search() -> List[Tuple[str, float]]:
+            """Full-text search using ChromaDB's where_document filter."""
+            try:
+                query_words = query.split()
+                if not query_words:
+                    return []
+
+                # Use first word for $contains filter
+                fts_where_document: Dict[str, Any] = {"$contains": query_words[0]}
+
+                results = self._collection.query(  # type: ignore
+                    query_embeddings=query_embedding,
+                    n_results=fetch_k,
+                    where=where_filter,
+                    where_document=cast(Any, fts_where_document),
+                    include=["documents", "metadatas", "distances"],
+                )
+
+                ranked: List[Tuple[str, float]] = []
+                if results.get("ids") and results["ids"][0]:
+                    for i, doc_id in enumerate(results["ids"][0]):
+                        # Score based on term overlap (simple BM25-like scoring)
+                        doc = results["documents"][0][i] if results.get("documents") else ""  # type: ignore
+                        query_terms = set(query.lower().split())
+                        doc_terms = set(doc.lower().split()) if doc else set()
+                        overlap = len(query_terms & doc_terms)
+                        score = overlap / max(len(query_terms), 1)
+                        ranked.append((doc_id, score))
+
+                # Sort by score descending
+                ranked.sort(key=lambda x: x[1], reverse=True)
+                return ranked
+            except Exception as e:
+                log_error(f"Error in FTS search component: {str(e)}")
+                return []
+
+        # Execute searches in parallel for better performance
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            vector_future = executor.submit(dense_vector_similarity_search)
+            fts_future = executor.submit(fts_search)
+
+            vector_results = vector_future.result()
+            fts_results = fts_future.result()
+
+        # Apply RRF fusion
+        fused_ranking = reciprocal_rank_fusion(
+            [vector_results, fts_results],
+            k=self.hybrid_rrf_k,
+        )
+
+        # Get top IDs from fused ranking
+        top_ids = [doc_id for doc_id, _ in fused_ranking[:limit]]
+
+        if not top_ids:
+            return []
+
+        # Fetch full document data for top results
+        try:
+            full_results = self._collection.get(
+                ids=top_ids,
+                include=["documents", "metadatas", "embeddings"],
+            )
+        except Exception as e:
+            log_error(f"Error fetching full results: {str(e)}")
+            return []
+
+        # Build lookup dict for results
+        doc_lookup: Dict[str, Dict[str, Any]] = {}
+        result_ids = full_results.get("ids", [])
+        result_docs = full_results.get("documents")
+        result_metas = full_results.get("metadatas")
+        result_embeds = full_results.get("embeddings")
+
+        for i, doc_id in enumerate(result_ids if result_ids is not None else []):
+            doc_lookup[doc_id] = {
+                "document": result_docs[i] if result_docs is not None and i < len(result_docs) else None,
+                "metadata": result_metas[i] if result_metas is not None and i < len(result_metas) else None,
+                "embedding": result_embeds[i] if result_embeds is not None and i < len(result_embeds) else None,
+            }
+
+        # Build final results in fused ranking order
+        search_results: List[Document] = []
+        rrf_scores = dict(fused_ranking)
+
+        for doc_id in top_ids:
+            if doc_id not in doc_lookup:
+                continue
+
+            doc_data = doc_lookup[doc_id]
+            doc_metadata = dict(doc_data["metadata"]) if doc_data["metadata"] else {}
+
+            # Add RRF score to metadata
+            doc_metadata["rrf_score"] = rrf_scores.get(doc_id, 0.0)
+
+            # Extract the fields we added to metadata
+            name_val = doc_metadata.pop("name", None)
+            content_id_val = doc_metadata.pop("content_id", None)
+
+            # Convert types to match Document constructor expectations
+            name = str(name_val) if name_val is not None and not isinstance(name_val, str) else name_val
+            content_id = (
+                str(content_id_val)
+                if content_id_val is not None and not isinstance(content_id_val, str)
+                else content_id_val
+            )
+            content = str(doc_data["document"]) if doc_data["document"] is not None else ""
+
+            # Process embedding
+            embedding = None
+            if doc_data["embedding"] is not None:
+                embed_data = doc_data["embedding"]
+                if hasattr(embed_data, "tolist") and callable(getattr(embed_data, "tolist", None)):
+                    try:
+                        embedding = list(cast(Any, embed_data).tolist())
+                    except (AttributeError, TypeError):
+                        embedding = list(embed_data) if isinstance(embed_data, (list, tuple)) else None
+                elif isinstance(embed_data, (list, tuple)):
+                    embedding = [float(x) for x in embed_data if isinstance(x, (int, float))]
+
+            search_results.append(
+                Document(
+                    id=doc_id,
+                    name=name,
+                    meta_data=doc_metadata,
+                    content=content,
+                    embedding=embedding,
+                    content_id=content_id,
+                )
+            )
+
+        return search_results
+
+    def _build_search_results(self, result: QueryResult) -> List[Document]:
+        """Build Document list from ChromaDB QueryResult.
+
+        Args:
+            result: The QueryResult from ChromaDB query.
+
+        Returns:
+            List[Document]: List of Document objects.
+        """
         search_results: List[Document] = []
 
         ids_list = result.get("ids", [[]])  # type: ignore
@@ -519,13 +1004,33 @@ class ChromaDb(VectorDb):
         embeddings_list = result.get("embeddings")  # type: ignore
         distances_list = result.get("distances", [[]])  # type: ignore
 
-        if not ids_list or not metadata_list or not documents_list or embeddings_list is None or not distances_list:
+        # Check if we have valid results - handle numpy arrays carefully
+        if ids_list is None or len(ids_list) == 0:
+            return search_results
+        if metadata_list is None or len(metadata_list) == 0:
+            return search_results
+        if documents_list is None or len(documents_list) == 0:
+            return search_results
+        if distances_list is None or len(distances_list) == 0:
             return search_results
 
         ids = ids_list[0]
         metadata = [dict(m) if m else {} for m in metadata_list[0]]  # Convert to mutable dicts
         documents = documents_list[0]
-        embeddings_raw = embeddings_list[0] if embeddings_list else []
+
+        # Handle embeddings - may be None or numpy array
+        embeddings_raw: Any = []
+        if embeddings_list is not None:
+            try:
+                if len(embeddings_list) > 0:
+                    embeddings_raw = embeddings_list[0]
+            except (TypeError, ValueError):
+                # numpy array truth value issue - try direct access
+                try:
+                    embeddings_raw = embeddings_list[0]
+                except Exception:
+                    embeddings_raw = []
+
         embeddings = []
         for e in embeddings_raw:
             if hasattr(e, "tolist") and callable(getattr(e, "tolist", None)):
@@ -539,7 +1044,8 @@ class ChromaDb(VectorDb):
                 embeddings.append([float(e)])
             else:
                 embeddings.append([])
-        distances = distances_list[0]
+
+        distances = distances_list[0] if len(distances_list) > 0 else []
 
         for idx, distance in enumerate(distances):
             if idx < len(metadata):
@@ -572,12 +1078,95 @@ class ChromaDb(VectorDb):
                     )
                 )
         except Exception as e:
-            logger.error(f"Error building search results: {e}")
+            log_error(f"Error building search results: {str(e)}")
 
-        if self.reranker:
-            search_results = self.reranker.rerank(query=query, documents=search_results)
+        return search_results
 
-        log_info(f"Found {len(search_results)} documents")
+    def _build_get_results(self, result: Dict[str, Any], query: str = "") -> List[Document]:
+        """Build Document list from ChromaDB GetResult.
+
+        Args:
+            result: The GetResult from ChromaDB get.
+            query: The original query for scoring.
+
+        Returns:
+            List[Document]: List of Document objects.
+        """
+        search_results: List[Document] = []
+
+        ids = result.get("ids", [])
+        metadatas = result.get("metadatas", [])
+        documents = result.get("documents", [])
+        embeddings_raw = result.get("embeddings")
+
+        # Check ids safely (may be numpy array)
+        if ids is None:
+            return search_results
+        try:
+            if len(ids) == 0:
+                return search_results
+        except (TypeError, ValueError):
+            return search_results
+
+        embeddings = []
+        # Handle embeddings - may be None or numpy array
+        if embeddings_raw is not None:
+            try:
+                for e in embeddings_raw:
+                    if hasattr(e, "tolist") and callable(getattr(e, "tolist", None)):
+                        try:
+                            embeddings.append(list(cast(Any, e).tolist()))
+                        except (AttributeError, TypeError):
+                            embeddings.append(list(e) if isinstance(e, (list, tuple)) else [])
+                    elif isinstance(e, (list, tuple)):
+                        embeddings.append([float(x) for x in e if isinstance(x, (int, float))])
+                    elif isinstance(e, (int, float)):
+                        embeddings.append([float(e)])
+                    else:
+                        embeddings.append([])
+            except (TypeError, ValueError):
+                # numpy array iteration issue
+                embeddings = []
+
+        try:
+            for idx, id_ in enumerate(ids):
+                doc_metadata = dict(metadatas[idx]) if metadatas and idx < len(metadatas) and metadatas[idx] else {}
+                document = documents[idx] if documents and idx < len(documents) else ""
+
+                # Calculate simple keyword score if query provided
+                if query and document:
+                    query_terms = set(query.lower().split())
+                    doc_terms = set(document.lower().split())
+                    overlap = len(query_terms & doc_terms)
+                    doc_metadata["keyword_score"] = overlap / max(len(query_terms), 1)
+
+                # Extract the fields we added to metadata
+                name_val = doc_metadata.pop("name", None)
+                content_id_val = doc_metadata.pop("content_id", None)
+
+                # Convert types to match Document constructor expectations
+                name = str(name_val) if name_val is not None and not isinstance(name_val, str) else name_val
+                content_id = (
+                    str(content_id_val)
+                    if content_id_val is not None and not isinstance(content_id_val, str)
+                    else content_id_val
+                )
+                content = str(document) if document is not None else ""
+                embedding = embeddings[idx] if idx < len(embeddings) else None
+
+                search_results.append(
+                    Document(
+                        id=id_,
+                        name=name,
+                        meta_data=doc_metadata,
+                        content=content,
+                        embedding=embedding,
+                        content_id=content_id,
+                    )
+                )
+        except Exception as e:
+            log_error(f"Error building get results: {str(e)}")
+
         return search_results
 
     def _convert_filters(self, filters: Dict[str, Any]) -> Dict[str, Any]:
@@ -606,7 +1195,7 @@ class ChromaDb(VectorDb):
         return converted
 
     async def async_search(
-        self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None
+        self, query: str, limit: int = 5, filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None
     ) -> List[Document]:
         """Search asynchronously by running in a thread."""
         return await asyncio.to_thread(self.search, query, limit, filters)
@@ -640,8 +1229,8 @@ class ChromaDb(VectorDb):
             try:
                 collection: Collection = self.client.get_collection(name=self.collection_name)
                 return collection.count()
-            except Exception as e:
-                logger.error(f"Error getting count: {e}")
+            except Exception:
+                logger.exception("Error getting count")
         return 0
 
     def optimize(self) -> None:
@@ -651,14 +1240,14 @@ class ChromaDb(VectorDb):
         try:
             self.client.delete_collection(name=self.collection_name)
             return True
-        except Exception as e:
-            logger.error(f"Error clearing collection: {e}")
+        except Exception:
+            logger.exception("Error clearing collection")
             return False
 
     def delete_by_id(self, id: str) -> bool:
         """Delete document by ID."""
         if not self.client:
-            logger.error("Client not initialized")
+            log_error("Client not initialized")
             return False
 
         try:
@@ -673,14 +1262,14 @@ class ChromaDb(VectorDb):
             collection.delete(ids=[id])
             log_info(f"Deleted document with ID '{id}'")
             return True
-        except Exception as e:
-            logger.error(f"Error deleting document by ID '{id}': {e}")
+        except Exception:
+            logger.exception(f"Error deleting document by ID '{id}'")
             return False
 
     def delete_by_name(self, name: str) -> bool:
         """Delete documents by name."""
         if not self.client:
-            logger.error("Client not initialized")
+            log_error("Client not initialized")
             return False
 
         try:
@@ -698,14 +1287,14 @@ class ChromaDb(VectorDb):
             collection.delete(ids=ids_to_delete)
             log_info(f"Deleted {len(ids_to_delete)} documents with name '{name}'")
             return True
-        except Exception as e:
-            logger.error(f"Error deleting documents by name '{name}': {e}")
+        except Exception:
+            logger.exception(f"Error deleting documents by name '{name}'")
             return False
 
     def delete_by_metadata(self, metadata: Dict[str, Any]) -> bool:
         """Delete documents by metadata."""
         if not self.client:
-            logger.error("Client not initialized")
+            log_error("Client not initialized")
             return False
 
         try:
@@ -728,14 +1317,14 @@ class ChromaDb(VectorDb):
             collection.delete(ids=ids_to_delete)
             log_info(f"Deleted {len(ids_to_delete)} documents with metadata '{metadata}'")
             return True
-        except Exception as e:
-            logger.error(f"Error deleting documents by metadata '{metadata}': {e}")
+        except Exception:
+            logger.exception(f"Error deleting documents by metadata '{metadata}'")
             return False
 
     def delete_by_content_id(self, content_id: str) -> bool:
         """Delete documents by content ID."""
         if not self.client:
-            logger.error("Client not initialized")
+            log_error("Client not initialized")
             return False
 
         try:
@@ -753,14 +1342,14 @@ class ChromaDb(VectorDb):
             collection.delete(ids=ids_to_delete)
             log_info(f"Deleted {len(ids_to_delete)} documents with content_id '{content_id}'")
             return True
-        except Exception as e:
-            logger.error(f"Error deleting documents by content_id '{content_id}': {e}")
+        except Exception:
+            logger.exception(f"Error deleting documents by content_id '{content_id}'")
             return False
 
     def _delete_by_content_hash(self, content_hash: str) -> bool:
         """Delete documents by content hash."""
         if not self.client:
-            logger.error("Client not initialized")
+            log_error("Client not initialized")
             return False
 
         try:
@@ -778,8 +1367,8 @@ class ChromaDb(VectorDb):
             collection.delete(ids=ids_to_delete)
             log_info(f"Deleted {len(ids_to_delete)} documents with content_hash '{content_hash}'")
             return True
-        except Exception as e:
-            logger.error(f"Error deleting documents by content_hash '{content_hash}': {e}")
+        except Exception:
+            logger.exception(f"Error deleting documents by content_hash '{content_hash}'")
             return False
 
     def id_exists(self, id: str) -> bool:
@@ -792,7 +1381,7 @@ class ChromaDb(VectorDb):
             bool: True if the document exists, False otherwise.
         """
         if not self.client:
-            logger.error("Client not initialized")
+            log_error("Client not initialized")
             return False
 
         try:
@@ -803,14 +1392,14 @@ class ChromaDb(VectorDb):
 
             # Return True if the document was found
             return len(found_ids) > 0
-        except Exception as e:
-            logger.error(f"Error checking if ID '{id}' exists: {e}")
+        except Exception:
+            logger.exception(f"Error checking if ID '{id}' exists")
             return False
 
     def content_hash_exists(self, content_hash: str) -> bool:
         """Check if documents with the given content hash exist."""
         if not self.client:
-            logger.error("Client not initialized")
+            log_error("Client not initialized")
             return False
 
         try:
@@ -840,15 +1429,16 @@ class ChromaDb(VectorDb):
                 if "object of type 'int' has no len()" in str(te):
                     # Known issue with ChromaDB 0.5.0 - internal bug
                     # As a workaround, assume content doesn't exist to allow processing to continue
-                    logger.warning(
+                    log_warning(
                         f"ChromaDB internal error (version 0.5.0 bug): {te}. Assuming content_hash '{content_hash}' does not exist."
                     )
+
                     return False
                 else:
                     raise te
 
-        except Exception as e:
-            logger.error(f"Error checking if content_hash '{content_hash}' exists: {e}")
+        except Exception:
+            logger.exception(f"Error checking if content_hash '{content_hash}' exists")
             return False
 
     def update_metadata(self, content_id: str, metadata: Dict[str, Any]) -> None:
@@ -861,7 +1451,7 @@ class ChromaDb(VectorDb):
         """
         try:
             if not self.client:
-                logger.error("Client not initialized")
+                log_error("Client not initialized")
                 return
 
             collection: Collection = self.client.get_collection(name=self.collection_name)
@@ -882,7 +1472,7 @@ class ChromaDb(VectorDb):
                     current_metadatas = []
 
                 if not ids:
-                    logger.debug(f"No documents found with content_id: {content_id}")
+                    log_debug(f"No documents found with content_id: {content_id}")
                     return
 
                 # Flatten the new metadata first
@@ -902,22 +1492,24 @@ class ChromaDb(VectorDb):
 
                 # Convert to the expected type for ChromaDB
                 chroma_metadatas = cast(List[Mapping[str, Union[str, int, float, bool]]], updated_metadatas)
+                chroma_metadatas = [{k: v for k, v in m.items() if k and v} for m in chroma_metadatas]
                 collection.update(ids=ids, metadatas=chroma_metadatas)  # type: ignore
-                logger.debug(f"Updated metadata for {len(ids)} documents with content_id: {content_id}")
+                log_debug(f"Updated metadata for {len(ids)} documents with content_id: {content_id}")
 
             except TypeError as te:
                 if "object of type 'int' has no len()" in str(te):
-                    logger.warning(
-                        f"ChromaDB internal error (version 0.5.0 bug): {te}. Cannot update metadata for content_id '{content_id}'."
+                    log_warning(
+                        f"ChromaDB internal error (version 0.5.0 bug): {te}. Cannot update metadata for content_id '{content_id}'.",
                     )
+
                     return
                 else:
                     raise te
 
         except Exception as e:
-            logger.error(f"Error updating metadata for content_id '{content_id}': {e}")
+            log_error(f"Error updating metadata for content_id '{content_id}': {str(e)}")
             raise
 
     def get_supported_search_types(self) -> List[str]:
         """Get the supported search types for this vector database."""
-        return []  # ChromaDb doesn't use SearchType enum
+        return [SearchType.vector, SearchType.keyword, SearchType.hybrid]

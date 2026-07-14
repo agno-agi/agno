@@ -2,7 +2,7 @@ from os import getenv
 from typing import Any, List, Optional
 
 from agno.tools import Toolkit
-from agno.utils.log import log_info, logger
+from agno.utils.log import log_error, log_info, logger
 
 try:
     import resend  # type: ignore
@@ -22,7 +22,7 @@ class ResendTools(Toolkit):
         self.from_email = from_email
         self.api_key = api_key or getenv("RESEND_API_KEY")
         if not self.api_key:
-            logger.error("No Resend API key provided")
+            log_error("No Resend API key provided")
 
         tools: List[Any] = []
         if all or enable_send_email:
@@ -58,5 +58,5 @@ class ResendTools(Toolkit):
             resend.Emails.send(params)
             return f"Email sent to {to_email} successfully."
         except Exception as e:
-            logger.error(f"Failed to send email {e}")
+            logger.exception("Failed to send email")
             return f"Error: {e}"

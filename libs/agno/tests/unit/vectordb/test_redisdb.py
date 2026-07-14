@@ -101,12 +101,12 @@ def stub_redisvl(monkeypatch):
 
 @pytest.fixture()
 def import_redisdb(stub_redisvl):
-    """Import RedisDB after stubbing dependencies and return (RedisDB, search_idx_mock)."""
+    """Import RedisVectorDb after stubbing dependencies and return (RedisVectorDb, search_idx_mock)."""
     # Delayed import to ensure patches are in place
-    from agno.vectordb.redis import RedisDB  # type: ignore
+    from agno.vectordb.redis import RedisVectorDb  # type: ignore
 
     search_idx_mock, async_idx_mock = stub_redisvl
-    return RedisDB, search_idx_mock, async_idx_mock
+    return RedisVectorDb, search_idx_mock, async_idx_mock
 
 
 @pytest.fixture()
@@ -120,9 +120,9 @@ def sample_documents() -> List[Document]:
 
 @pytest.fixture()
 def redis_db(import_redisdb, mock_embedder):
-    RedisDB, _search_idx_mock, _ = import_redisdb
+    RedisVectorDb, _search_idx_mock, _ = import_redisdb
 
-    db = RedisDB(
+    db = RedisVectorDb(
         index_name="test_index",
         redis_url="redis://localhost:6379/0",
         embedder=mock_embedder,
@@ -161,10 +161,10 @@ def create_knowledge(import_knowledge, redis_db):
     return knowledge
 
 
-def test_knowlwedge_add_content(create_knowledge):
+def test_knowlwedge_insert(create_knowledge):
     knowledge = create_knowledge
     try:
-        result = knowledge.add_content(
+        result = knowledge.insert(
             name="Recipes",
             url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf",
             metadata={"doc_type": "recipe_book"},
@@ -174,7 +174,7 @@ def test_knowlwedge_add_content(create_knowledge):
         assert result is None or result is not False
 
     except Exception as e:
-        pytest.fail(f"add_content raised an unexpected exception: {e}")
+        pytest.fail(f"insert raised an unexpected exception: {e}")
 
 
 def test_create_and_exists(redis_db):

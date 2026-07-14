@@ -1,10 +1,10 @@
 import uuid
-from typing import Any, Dict
 
 import pytest
 
 from agno.agent.agent import Agent
 from agno.models.openai.chat import OpenAIChat
+from agno.run import RunContext
 from agno.team.team import Team
 
 
@@ -134,14 +134,14 @@ def test_get_chat_history_with_default_session_id(test_team):
     assert len(chat_history) >= 4
 
 
-# Tests for get_messages_for_session()
-def test_get_messages_for_session(test_team):
-    """Test get_messages_for_session returns all messages."""
+# Tests for get_session_messages()
+def test_get_session_messages(test_team):
+    """Test get_session_messages returns all messages."""
     session_id = str(uuid.uuid4())
     test_team.run("Hello", session_id=session_id)
     test_team.run("How are you?", session_id=session_id)
 
-    messages = test_team.get_messages_for_session(session_id=session_id)
+    messages = test_team.get_session_messages(session_id=session_id)
     assert len(messages) >= 4
 
 
@@ -365,6 +365,66 @@ async def test_aget_last_run_output(async_test_team):
     assert last_output.run_id == response2.run_id
 
 
+def test_get_last_run_output_supports_team_subclasses(shared_db, simple_agent):
+    """A user-defined Team subclass with the same id must find its persisted
+    runs. The retrieval loop previously compared ``__class__.__name__`` to
+    ``"Team"``, which silently returned None for subclasses.
+    """
+
+    class CustomTeam(Team):
+        pass
+
+    session_id = str(uuid.uuid4())
+
+    writer = CustomTeam(
+        id="custom-team",
+        members=[simple_agent],
+        model=OpenAIChat(id="gpt-4o-mini"),
+        db=shared_db,
+    )
+    response = writer.run("Hello", session_id=session_id)
+
+    reader = CustomTeam(
+        id="custom-team",
+        members=[simple_agent],
+        model=OpenAIChat(id="gpt-4o-mini"),
+        db=shared_db,
+    )
+    last_output = reader.get_last_run_output(session_id=session_id)
+
+    assert last_output is not None
+    assert last_output.run_id == response.run_id
+
+
+@pytest.mark.asyncio
+async def test_aget_last_run_output_supports_team_subclasses(async_shared_db, simple_agent):
+    """Async variant of the subclass regression."""
+
+    class CustomTeam(Team):
+        pass
+
+    session_id = str(uuid.uuid4())
+
+    writer = CustomTeam(
+        id="custom-team-async",
+        members=[simple_agent],
+        model=OpenAIChat(id="gpt-4o-mini"),
+        db=async_shared_db,
+    )
+    response = await writer.arun("Hello", session_id=session_id)
+
+    reader = CustomTeam(
+        id="custom-team-async",
+        members=[simple_agent],
+        model=OpenAIChat(id="gpt-4o-mini"),
+        db=async_shared_db,
+    )
+    last_output = await reader.aget_last_run_output(session_id=session_id)
+
+    assert last_output is not None
+    assert last_output.run_id == response.run_id
+
+
 # Tests for delete_session()
 def test_delete_session(test_team):
     """Test delete_session removes a session."""
@@ -403,16 +463,6 @@ async def test_aget_session_summary(async_test_team):
     assert summary is None  # Summaries not enabled by default
 
 
-# Tests for get_user_memories()
-def test_get_user_memories_without_memory_manager(test_team):
-    """Test get_user_memories returns None without memory manager."""
-    user_id = "test_user"
-    test_team.run("Hello", user_id=user_id, session_id=str(uuid.uuid4()))
-
-    memories = test_team.get_user_memories(user_id=user_id)
-    assert memories is None  # No memory manager configured
-
-
 # Test error handling and edge cases
 def test_convenience_functions_without_db():
     """Test convenience functions fail gracefully without a database."""
@@ -430,9 +480,9 @@ def test_convenience_functions_without_db():
 def test_get_session_state_with_tool_updates(test_team):
     """Test session state updates via tools."""
 
-    def add_item(session_state: Dict[str, Any], item: str) -> str:
+    def add_item(run_context: RunContext, item: str) -> str:
         """Add an item to the list."""
-        session_state["items"].append(item)
+        run_context.session_state["items"].append(item)
         return f"Added {item}"
 
     agent = Agent(

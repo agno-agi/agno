@@ -21,7 +21,8 @@ from couchbase.result import GetResult, MultiMutationResult
 from couchbase.scope import Scope
 
 from agno.knowledge.document import Document
-from agno.vectordb.couchbase.couchbase import CouchbaseSearch, OpenAIEmbedder
+from agno.knowledge.embedder.openai import OpenAIEmbedder
+from agno.vectordb.couchbase.couchbase import CouchbaseSearch
 
 
 @pytest.fixture
@@ -86,7 +87,7 @@ def mock_collection(mock_scope):
 
 @pytest.fixture
 def mock_embedder():
-    with patch("agno.vectordb.couchbase.couchbase.OpenAIEmbedder") as mock_embedder:
+    with patch("agno.knowledge.embedder.openai.OpenAIEmbedder") as mock_embedder:
         openai_embedder = Mock(spec=OpenAIEmbedder)
         openai_embedder.get_embedding_and_usage.return_value = ([0.1, 0.2, 0.3], None)
         openai_embedder.get_embedding.return_value = [0.1, 0.2, 0.3]
@@ -1391,3 +1392,31 @@ def test_delete_by_content_id_exception_handling(couchbase_fts, mock_scope):
     mock_scope.query.side_effect = Exception("Query error")
     result = couchbase_fts.delete_by_content_id("content_123")
     assert result is False
+
+
+# ---------------------------------------------------------------------------
+# Regression: async functions must not call blocking time.sleep
+# ---------------------------------------------------------------------------
+
+
+def test_async_create_collection_does_not_block_event_loop():
+    """`_async_create_collection_and_scope` must not call blocking `time.sleep`.
+
+    Previously the method used `time.sleep(1)` after dropping a collection,
+    which blocks the entire asyncio event loop for one second on every
+    overwrite (any other agent task — tool calls, model streams, other
+    vectordb writes — is frozen during that window). The fix uses
+    `await asyncio.sleep(1)` so only this coroutine yields, matching the
+    pattern already used by `_async_wait_for_index_ready` in the same file.
+    """
+    import inspect
+
+    source = inspect.getsource(CouchbaseSearch._async_create_collection_and_scope)
+    assert "time.sleep" not in source, (
+        "_async_create_collection_and_scope must not call blocking time.sleep "
+        "inside an async function — use `await asyncio.sleep` instead "
+        "(matches the existing pattern in `_async_wait_for_index_ready`)."
+    )
+    assert "asyncio.sleep" in source, (
+        "_async_create_collection_and_scope is expected to use `await asyncio.sleep` for its post-drop wait."
+    )

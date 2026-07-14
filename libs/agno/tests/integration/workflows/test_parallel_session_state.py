@@ -5,7 +5,7 @@ from copy import deepcopy
 
 import pytest
 
-from agno.run.base import RunStatus
+from agno.run.base import RunContext, RunStatus
 from agno.utils.merge_dict import merge_parallel_session_states
 from agno.workflow.parallel import Parallel
 from agno.workflow.step import Step, StepInput, StepOutput
@@ -46,6 +46,40 @@ def test_basic_parallel_modifications(shared_db):
     assert final_state == {"a": 2, "b": 3, "c": 4}
 
 
+def test_basic_parallel_modifications_with_run_context(shared_db):
+    """Test basic parallel modifications to different keys, using the run context"""
+
+    def func_a(step_input: StepInput, run_context: RunContext) -> StepOutput:
+        run_context.session_state["a"] += 1  # type: ignore
+        return StepOutput(content="A done")
+
+    def func_b(step_input: StepInput, run_context: RunContext) -> StepOutput:
+        run_context.session_state["b"] += 1  # type: ignore
+        return StepOutput(content="B done")
+
+    def func_c(step_input: StepInput, run_context: RunContext) -> StepOutput:
+        run_context.session_state["c"] += 1  # type: ignore
+        return StepOutput(content="C done")
+
+    workflow = Workflow(
+        name="Basic Parallel Test",
+        steps=[
+            Parallel(
+                Step(name="Step A", executor=func_a),
+                Step(name="Step B", executor=func_b),
+                Step(name="Step C", executor=func_c),
+            )
+        ],
+        session_state={"a": 1, "b": 2, "c": 3},
+        db=shared_db,
+    )
+
+    workflow.run("test")
+    final_state = workflow.get_session_state()
+
+    assert final_state == {"a": 2, "b": 3, "c": 4}
+
+
 def test_overlapping_modifications(shared_db):
     """Test when multiple functions modify the same key"""
 
@@ -58,7 +92,7 @@ def test_overlapping_modifications(shared_db):
         return StepOutput(content="Added 5 to counter")
 
     def func_multiply_counter(step_input: StepInput, session_state: dict) -> StepOutput:
-        session_state["counter"] = session_state.get("counter", 0) * 2
+        session_state["counter"] = session_state.get("counter", 0) + 10
         return StepOutput(content="Counter multiplied")
 
     workflow = Workflow(
@@ -77,10 +111,47 @@ def test_overlapping_modifications(shared_db):
     workflow.run("test")
     final_state = workflow.get_session_state()
 
-    # One of the three operations should have taken precedence
-    # Since all modify the same key, only one change will be preserved
-    possible_results = [11, 15, 20]  # +1, +5, *2 respectively
-    assert final_state["counter"] in possible_results
+    # All operations should be applied (+1, +5, +10)
+    expected_result = 26
+
+    assert final_state["counter"] == expected_result
+
+
+def test_overlapping_modifications_with_run_context(shared_db):
+    """Test when multiple functions modify the same key, using the run RunContext"""
+
+    def func_increment_counter(step_input: StepInput, run_context: RunContext) -> StepOutput:
+        run_context.session_state["counter"] = run_context.session_state.get("counter", 0) + 1  # type: ignore
+        return StepOutput(content="Counter incremented")
+
+    def func_add_to_counter(step_input: StepInput, run_context: RunContext) -> StepOutput:
+        run_context.session_state["counter"] = run_context.session_state.get("counter", 0) + 5  # type: ignore
+        return StepOutput(content="Added 5 to counter")
+
+    def func_multiply_counter(step_input: StepInput, run_context: RunContext) -> StepOutput:
+        run_context.session_state["counter"] = run_context.session_state.get("counter", 0) + 10  # type: ignore
+        return StepOutput(content="Counter multiplied")
+
+    workflow = Workflow(
+        name="Overlapping Modifications Test",
+        steps=[
+            Parallel(
+                Step(name="Increment", executor=func_increment_counter),
+                Step(name="Add 5", executor=func_add_to_counter),
+                Step(name="Multiply", executor=func_multiply_counter),
+            )
+        ],
+        session_state={"counter": 10},
+        db=shared_db,
+    )
+
+    workflow.run("test")
+    final_state = workflow.get_session_state()
+
+    # All operations should be applied (+1, +5, +10)
+    expected_result = 26
+
+    assert final_state["counter"] == expected_result
 
 
 def test_new_key_additions(shared_db):
@@ -96,6 +167,41 @@ def test_new_key_additions(shared_db):
 
     def func_add_z(step_input: StepInput, session_state: dict) -> StepOutput:
         session_state["z"] = "added by func_z"
+        return StepOutput(content="Z added")
+
+    workflow = Workflow(
+        name="New Key Additions Test",
+        steps=[
+            Parallel(
+                Step(name="Add X", executor=func_add_x),
+                Step(name="Add Y", executor=func_add_y),
+                Step(name="Add Z", executor=func_add_z),
+            )
+        ],
+        session_state={"initial": "value"},
+        db=shared_db,
+    )
+
+    workflow.run("test")
+    final_state = workflow.get_session_state()
+
+    expected = {"initial": "value", "x": "added by func_x", "y": "added by func_y", "z": "added by func_z"}
+    assert final_state == expected
+
+
+def test_new_key_additions_with_run_context(shared_db):
+    """Test adding new keys to session state in parallel, using the run context"""
+
+    def func_add_x(step_input: StepInput, run_context: RunContext) -> StepOutput:
+        run_context.session_state["x"] = "added by func_x"  # type: ignore
+        return StepOutput(content="X added")
+
+    def func_add_y(step_input: StepInput, run_context: RunContext) -> StepOutput:
+        run_context.session_state["y"] = "added by func_y"  # type: ignore
+        return StepOutput(content="Y added")
+
+    def func_add_z(step_input: StepInput, run_context: RunContext) -> StepOutput:
+        run_context.session_state["z"] = "added by func_z"  # type: ignore
         return StepOutput(content="Z added")
 
     workflow = Workflow(
@@ -137,6 +243,61 @@ def test_nested_dictionary_modifications(shared_db):
         if "metrics" not in session_state:
             session_state["metrics"] = {}
         session_state["metrics"]["count"] = 100
+        return StepOutput(content="Metrics updated")
+
+    workflow = Workflow(
+        name="Nested Dictionary Test",
+        steps=[
+            Parallel(
+                Step(name="Update User", executor=func_update_user),
+                Step(name="Update Config", executor=func_update_config),
+                Step(name="Update Metrics", executor=func_update_metrics),
+            )
+        ],
+        session_state={"initial": "data"},
+        db=shared_db,
+    )
+
+    workflow.run("test")
+    final_state = workflow.get_session_state()
+
+    expected = {
+        "initial": "data",
+        "user": {"name": "Updated by func_user"},
+        "config": {"debug": True},
+        "metrics": {"count": 100},
+    }
+    assert final_state == expected
+
+
+def test_nested_dictionary_modifications_with_run_context(shared_db):
+    """Test modifications to nested dictionaries, using the run context"""
+
+    def func_update_user(step_input: StepInput, run_context: RunContext) -> StepOutput:
+        if run_context.session_state is None:
+            run_context.session_state = {}
+
+        if "user" not in run_context.session_state:
+            run_context.session_state["user"] = {}
+        run_context.session_state["user"]["name"] = "Updated by func_user"
+        return StepOutput(content="User updated")
+
+    def func_update_config(step_input: StepInput, run_context: RunContext) -> StepOutput:
+        if run_context.session_state is None:
+            run_context.session_state = {}
+
+        if "config" not in run_context.session_state:
+            run_context.session_state["config"] = {}
+        run_context.session_state["config"]["debug"] = True
+        return StepOutput(content="Config updated")
+
+    def func_update_metrics(step_input: StepInput, run_context: RunContext) -> StepOutput:
+        if run_context.session_state is None:
+            run_context.session_state = {}
+
+        if "metrics" not in run_context.session_state:
+            run_context.session_state["metrics"] = {}
+        run_context.session_state["metrics"]["count"] = 100
         return StepOutput(content="Metrics updated")
 
     workflow = Workflow(
@@ -343,6 +504,60 @@ def test_list_modifications(shared_db):
     assert "shared_item" in final_state["shared_list"]
 
 
+def test_list_modifications_with_run_context(shared_db):
+    """Test modifications to lists in session state, using the run context"""
+
+    def func_append_to_list_a(step_input: StepInput, run_context: RunContext) -> StepOutput:
+        if run_context.session_state is None:
+            run_context.session_state = {}
+
+        if "list_a" not in run_context.session_state:
+            run_context.session_state["list_a"] = []
+        run_context.session_state["list_a"].append("item_from_func_a")
+        return StepOutput(content="List A updated")
+
+    def func_append_to_list_b(step_input: StepInput, run_context: RunContext) -> StepOutput:
+        if run_context.session_state is None:
+            run_context.session_state = {}
+
+        if "list_b" not in run_context.session_state:
+            run_context.session_state["list_b"] = []
+        run_context.session_state["list_b"].append("item_from_func_b")
+        return StepOutput(content="List B updated")
+
+    def func_modify_shared_list(step_input: StepInput, run_context: RunContext) -> StepOutput:
+        if run_context.session_state is None:
+            run_context.session_state = {}
+
+        if "shared_list" in run_context.session_state:
+            run_context.session_state["shared_list"] = run_context.session_state["shared_list"] + ["shared_item"]
+        return StepOutput(content="Shared list updated")
+
+    workflow = Workflow(
+        name="List Modifications Test",
+        steps=[
+            Parallel(
+                Step(name="Update List A", executor=func_append_to_list_a),
+                Step(name="Update List B", executor=func_append_to_list_b),
+                Step(name="Update Shared List", executor=func_modify_shared_list),
+            )
+        ],
+        session_state={"shared_list": ["initial_item"]},
+        db=shared_db,
+    )
+
+    workflow.run("test")
+    final_state = workflow.get_session_state()
+
+    # Each function should have created/updated its respective list
+    assert "list_a" in final_state
+    assert "item_from_func_a" in final_state["list_a"]
+    assert "list_b" in final_state
+    assert "item_from_func_b" in final_state["list_b"]
+    assert "shared_list" in final_state
+    assert "shared_item" in final_state["shared_list"]
+
+
 def test_mixed_data_types(shared_db):
     """Test modifications with various data types"""
 
@@ -360,6 +575,58 @@ def test_mixed_data_types(shared_db):
 
     def func_update_none(step_input: StepInput, session_state: dict) -> StepOutput:
         session_state["none_value"] = None
+        return StepOutput(content="None updated")
+
+    workflow = Workflow(
+        name="Mixed Data Types Test",
+        steps=[
+            Parallel(
+                Step(name="Update Int", executor=func_update_int),
+                Step(name="Update Float", executor=func_update_float),
+                Step(name="Update Bool", executor=func_update_bool),
+                Step(name="Update None", executor=func_update_none),
+            )
+        ],
+        session_state={"existing": "data"},
+        db=shared_db,
+    )
+
+    workflow.run("test")
+    final_state = workflow.get_session_state()
+
+    expected = {"existing": "data", "int_value": 42, "float_value": 3.14159, "bool_value": True, "none_value": None}
+    assert final_state == expected
+
+
+def test_mixed_data_types_with_run_context(shared_db):
+    """Test modifications with various data types, using the run context"""
+
+    def func_update_int(step_input: StepInput, run_context: RunContext) -> StepOutput:
+        if run_context.session_state is None:
+            run_context.session_state = {}
+
+        run_context.session_state["int_value"] = 42
+        return StepOutput(content="Int updated")
+
+    def func_update_float(step_input: StepInput, run_context: RunContext) -> StepOutput:
+        if run_context.session_state is None:
+            run_context.session_state = {}
+
+        run_context.session_state["float_value"] = 3.14159
+        return StepOutput(content="Float updated")
+
+    def func_update_bool(step_input: StepInput, run_context: RunContext) -> StepOutput:
+        if run_context.session_state is None:
+            run_context.session_state = {}
+
+        run_context.session_state["bool_value"] = True
+        return StepOutput(content="Bool updated")
+
+    def func_update_none(step_input: StepInput, run_context: RunContext) -> StepOutput:
+        if run_context.session_state is None:
+            run_context.session_state = {}
+
+        run_context.session_state["none_value"] = None
         return StepOutput(content="None updated")
 
     workflow = Workflow(
