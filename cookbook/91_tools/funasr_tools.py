@@ -14,13 +14,13 @@ Usage:
 from pathlib import Path
 
 from agno.agent import Agent
-from agno.models.openai import OpenAIChat
+from agno.models.openai import OpenAIResponses
 from agno.tools.funasr import FunASRTools
 
 audio_dir = Path(__file__).parent.joinpath("storage/audio")
 
 agent = Agent(
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIResponses(id="gpt-5.5"),
     tools=[FunASRTools(base_dir=audio_dir)],
     instructions=[
         "You transcribe audio files locally using FunASR.",
