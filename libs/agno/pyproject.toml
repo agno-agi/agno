@@ -91,6 +91,7 @@ google = ["google-genai>=1.52.0", "pydantic>=2.12.5"]
 groq = ["groq"]
 ibm = ["ibm-watsonx-ai"]
 infinity = ["infinity_client"]
+invisible_playwright = ["invisible_playwright @ git+https://github.com/feder-cr/invisible_playwright.git"]
 litellm = ["litellm<=1.82.6"]
 lmstudio = ["lmstudio"]
 meta = ["llama-api-client"]
@@ -535,6 +536,7 @@ module = [
   "ibm_watsonx_ai.*",
   "imghdr.*",
   "infinity_client.*",
+  "invisible_playwright.*",
   "jira.*",
   "jsonpatch.*",
   "jwt.*",
