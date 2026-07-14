@@ -723,6 +723,8 @@ def _get_delegate_task_function(
         # Check if the member run is paused (HITL)
         if member_agent_run_response is not None and member_agent_run_response.is_paused:
             _propagate_member_pause(run_response, member_agent, member_agent_run_response)
+            # Persist paused member run so continue_run can find it after session reload
+            session.upsert_run(member_agent_run_response)
             use_team_logger()
             _process_delegate_task_to_member(
                 member_agent_run_response,
@@ -909,6 +911,8 @@ def _get_delegate_task_function(
         # Check if the member run is paused (HITL)
         if member_agent_run_response is not None and member_agent_run_response.is_paused:
             _propagate_member_pause(run_response, member_agent, member_agent_run_response)
+            # Persist paused member run so continue_run can find it after session reload
+            session.upsert_run(member_agent_run_response)
             use_team_logger()
             _process_delegate_task_to_member(
                 member_agent_run_response,
@@ -1081,6 +1085,8 @@ def _get_delegate_task_function(
             # Check if the member run is paused (HITL)
             if member_agent_run_response is not None and member_agent_run_response.is_paused:
                 _propagate_member_pause(run_response, member_agent, member_agent_run_response)
+                # Persist paused member run so continue_run can find it after session reload
+                session.upsert_run(member_agent_run_response)
                 use_team_logger()
                 _process_delegate_task_to_member(
                     member_agent_run_response,
@@ -1221,6 +1227,8 @@ def _get_delegate_task_function(
                         # Check if the member run is paused (HITL)
                         if member_agent_run_response is not None and member_agent_run_response.is_paused:
                             _propagate_member_pause(run_response, agent, member_agent_run_response)
+                            # Persist paused member run so continue_run can find it after session reload
+                            session.upsert_run(member_agent_run_response)
                             _process_delegate_task_to_member(
                                 member_agent_run_response,
                                 agent,
@@ -1399,6 +1407,8 @@ def _get_delegate_task_function(
             for result_text, paused_agent, paused_run_response in results:
                 if paused_agent is not None and paused_run_response is not None:
                     _propagate_member_pause(run_response, paused_agent, paused_run_response)
+                    # Persist paused member run so continue_run can find it after session reload
+                    session.upsert_run(paused_run_response)
                 yield result_text
 
         # After all the member runs, switch back to the team logger
