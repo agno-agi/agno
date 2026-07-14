@@ -139,6 +139,7 @@ opencv = ["opencv-python"]
 oxylabs = ["oxylabs"]
 parallel = ["parallel-web>=1.0"]
 psycopg = ["psycopg-binary", "psycopg"]
+redmine = ["python-redmine"]
 redshift = ["redshift-connector"]
 reportlab = ["reportlab"]
 salesforce = ["simple-salesforce"]
@@ -284,6 +285,7 @@ tools = [
   "agno[oxylabs]",
   "agno[parallel]",
   "agno[psycopg]",
+  "agno[redmine]",
   "agno[redshift]",
   "agno[reportlab]",
   "agno[salesforce]",
@@ -623,6 +625,7 @@ module = [
   "zep_cloud.*",
   "oxylabs.*",
   "parallel.*",
+  "redminelib.*",
   "redshift_connector.*",
   "reportlab.*",
   "surrealdb.*",
