@@ -5,6 +5,7 @@ import pytest
 
 from agno.knowledge.document import Document
 from agno.vectordb.clickhouse import Clickhouse
+from agno.vectordb.search import SearchType
 
 # Configuration for tests
 TEST_TABLE = f"test_clickhouse_{uuid.uuid4().hex[:8]}"
@@ -179,12 +180,15 @@ def test_upsert(mock_clickhouse):
 
     # Test upsert by patching insert
     with patch.object(mock_clickhouse, "insert") as mock_insert:
-        mock_clickhouse.client.query.return_value = False
+        # Mock the query result to have no existing content_hash
+        query_result = MagicMock()
+        query_result.result_rows = []
+        mock_clickhouse.client.query.return_value = query_result
         mock_clickhouse.upsert(documents=docs, content_hash="test_hash")
 
         # Check that insert was called
         mock_insert.assert_called_once_with(documents=docs, filters=None, content_hash="test_hash")
-        # Check that query was called to finalize the upsert
+        # Check that query was called to check for existing content_hash
         mock_clickhouse.client.query.assert_called_once()
 
 
@@ -280,6 +284,11 @@ def test_optimize(mock_clickhouse):
     """Test optimize method."""
     # There's no actual logic to test here, but we can verify it doesn't crash
     mock_clickhouse.optimize()
+
+
+def test_get_supported_search_types(mock_clickhouse):
+    """Test supported search types for Clickhouse."""
+    assert mock_clickhouse.get_supported_search_types() == [SearchType.vector]
 
 
 # Asynchronous Tests

@@ -63,7 +63,6 @@ def test_team_with_parser_model_stream(shared_db):
     final_content = None
 
     for event in response:
-        print(event.event)
         # Capture content from events during streaming
         if hasattr(event, "content") and isinstance(event.content, ParkGuide):
             final_content = event.content

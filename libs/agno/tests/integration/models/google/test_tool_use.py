@@ -5,21 +5,24 @@ from pydantic import BaseModel, Field
 
 from agno.agent import Agent, RunOutput  # noqa
 from agno.models.google import Gemini
-from agno.tools.duckduckgo import DuckDuckGoTools
+from agno.tools.websearch import WebSearchTools
 from agno.tools.yfinance import YFinanceTools
 
 
 def test_tool_use():
+    def get_weather(city: str) -> str:
+        return f"The weather in {city} is sunny."
+
     agent = Agent(
-        model=Gemini(id="gemini-2.0-flash-lite-preview-02-05"),
-        tools=[YFinanceTools(cache_results=True)],
+        model=Gemini(id="gemini-3-flash-preview"),
+        tools=[get_weather],
         markdown=True,
         exponential_backoff=True,
         delay_between_retries=5,
         telemetry=False,
     )
 
-    response = agent.run("What is the current price of TSLA?")
+    response = agent.run("What is the weather in Tokyo?")
 
     # Verify tool usage
     assert response.messages is not None
@@ -28,16 +31,21 @@ def test_tool_use():
 
 
 def test_tool_use_stream():
+    def get_weather(city: str) -> str:
+        return f"The weather in {city} is sunny."
+
     agent = Agent(
-        model=Gemini(id="gemini-2.0-flash-lite-preview-02-05"),
-        tools=[YFinanceTools(cache_results=True)],
+        model=Gemini(id="gemini-3-flash-preview"),
+        tools=[get_weather],
         markdown=True,
         exponential_backoff=True,
         delay_between_retries=5,
         telemetry=False,
     )
 
-    response_stream = agent.run("What is the current price of TSLA?", stream=True, stream_intermediate_steps=True)
+    response_stream = agent.run(
+        "Use the get_weather tool to check the weather in Tokyo.", stream=True, stream_events=True
+    )
 
     responses = []
     tool_call_seen = False
@@ -56,16 +64,19 @@ def test_tool_use_stream():
 
 @pytest.mark.asyncio
 async def test_async_tool_use():
+    def get_weather(city: str) -> str:
+        return f"The weather in {city} is sunny."
+
     agent = Agent(
-        model=Gemini(id="gemini-2.0-flash-lite-preview-02-05"),
-        tools=[YFinanceTools(cache_results=True)],
+        model=Gemini(id="gemini-3-flash-preview"),
+        tools=[get_weather],
         markdown=True,
         exponential_backoff=True,
         delay_between_retries=5,
         telemetry=False,
     )
 
-    response = await agent.arun("What is the current price of TSLA?")
+    response = await agent.arun("What is the weather in Tokyo?")
 
     # Verify tool usage
     assert response.messages is not None
@@ -75,16 +86,21 @@ async def test_async_tool_use():
 
 @pytest.mark.asyncio
 async def test_async_tool_use_stream():
+    def get_weather(city: str) -> str:
+        return f"The weather in {city} is sunny."
+
     agent = Agent(
-        model=Gemini(id="gemini-2.0-flash-lite-preview-02-05"),
-        tools=[YFinanceTools(cache_results=True)],
+        model=Gemini(id="gemini-3-flash-preview"),
+        tools=[get_weather],
         markdown=True,
         exponential_backoff=True,
         delay_between_retries=5,
         telemetry=False,
     )
 
-    response_stream = agent.arun("What is the current price of TSLA?", stream=True, stream_intermediate_steps=True)
+    response_stream = agent.arun(
+        "Use the get_weather tool to check the weather in Tokyo.", stream=True, stream_events=True
+    )
 
     responses = []
     tool_call_seen = False
@@ -99,16 +115,64 @@ async def test_async_tool_use_stream():
 
     assert len(responses) > 0
     assert tool_call_seen, "No tool calls observed in stream"
-    assert any("TSLA" in r.content for r in responses if r.content)
+    assert any("Tokyo" in r.content for r in responses if r.content)
 
 
+def test_tool_use_tool_choice_none():
+    def get_weather(city: str) -> str:
+        return f"The weather in {city} is sunny."
+
+    agent = Agent(
+        model=Gemini(id="gemini-flash-latest"),
+        tools=[get_weather],
+        tool_choice="none",
+        markdown=True,
+        exponential_backoff=True,
+        delay_between_retries=5,
+        telemetry=False,
+    )
+
+    response = agent.run("What is the weather in Tokyo?")
+
+    # Verify tool usage
+    assert not any(msg.tool_calls for msg in response.messages if msg.tool_calls is not None), (
+        "Tool calls should not be made"
+    )
+    assert response.content is not None
+
+
+def test_tool_use_tool_choice_auto():
+    def get_weather(city: str) -> str:
+        return f"The weather in {city} is sunny."
+
+    agent = Agent(
+        model=Gemini(id="gemini-flash-latest"),
+        tools=[get_weather],
+        tool_choice="auto",
+        markdown=True,
+        exponential_backoff=True,
+        delay_between_retries=5,
+        telemetry=False,
+    )
+
+    response = agent.run("What is the weather in Tokyo?")
+
+    # Verify tool usage
+    assert any(msg.tool_calls for msg in response.messages if msg.tool_calls is not None), "Tool calls should be made"
+    assert response.content is not None
+
+
+# Known Gemini issue: the model can answer a native-structured-output request with a
+# function_call part and the run then never completes. Bound the test so a hang fails
+# in 2 minutes instead of stalling the CI job into its 30-minute timeout.
+@pytest.mark.timeout(120)
 def test_tool_use_with_native_structured_outputs():
     class StockPrice(BaseModel):
         price: float = Field(..., description="The price of the stock")
         currency: str = Field(..., description="The currency of the stock")
 
     agent = Agent(
-        model=Gemini(id="gemini-2.0-flash-lite-preview-02-05"),
+        model=Gemini(id="gemini-3-flash-preview"),
         tools=[YFinanceTools(cache_results=True)],
         markdown=True,
         output_schema=StockPrice,
@@ -129,7 +193,7 @@ def test_tool_use_with_json_structured_outputs():
         currency: str = Field(..., description="The currency of the stock")
 
     agent = Agent(
-        model=Gemini(id="gemini-2.0-flash-001"),
+        model=Gemini(id="gemini-flash-latest"),
         tools=[YFinanceTools(cache_results=True)],
         exponential_backoff=True,
         delay_between_retries=5,
@@ -148,7 +212,7 @@ def test_tool_use_with_json_structured_outputs():
 
 def test_parallel_tool_calls():
     agent = Agent(
-        model=Gemini(id="gemini-2.0-flash-lite-preview-02-05"),
+        model=Gemini(id="gemini-3-flash-preview"),
         tools=[YFinanceTools(cache_results=True)],
         markdown=True,
         exponential_backoff=True,
@@ -171,8 +235,8 @@ def test_parallel_tool_calls():
 
 def test_multiple_tool_calls():
     agent = Agent(
-        model=Gemini(id="gemini-2.0-flash-lite-preview-02-05"),
-        tools=[YFinanceTools(cache_results=True), DuckDuckGoTools(cache_results=True)],
+        model=Gemini(id="gemini-3-flash-preview"),
+        tools=[YFinanceTools(cache_results=True), WebSearchTools(cache_results=True)],
         markdown=True,
         exponential_backoff=True,
         delay_between_retries=5,
@@ -194,7 +258,7 @@ def test_multiple_tool_calls():
 
 def test_grounding():
     agent = Agent(
-        model=Gemini(id="gemini-2.0-flash-001", grounding=True),
+        model=Gemini(id="gemini-flash-latest", grounding=True),
         exponential_backoff=True,
         delay_between_retries=5,
         telemetry=False,
@@ -211,7 +275,7 @@ def test_grounding():
 
 def test_grounding_stream():
     agent = Agent(
-        model=Gemini(id="gemini-2.0-flash-001", grounding=True),
+        model=Gemini(id="gemini-flash-latest", grounding=True),
         exponential_backoff=True,
         delay_between_retries=5,
         telemetry=False,
@@ -233,7 +297,7 @@ def test_grounding_stream():
 
 def test_search_stream():
     agent = Agent(
-        model=Gemini(id="gemini-2.0-flash-001", search=True),
+        model=Gemini(id="gemini-flash-latest", search=True),
         exponential_backoff=True,
         delay_between_retries=5,
         telemetry=False,
@@ -253,6 +317,44 @@ def test_search_stream():
     assert citations_found
 
 
+def test_url_context():
+    agent = Agent(
+        model=Gemini(id="gemini-2.5-flash", url_context=True),
+        exponential_backoff=True,
+        delay_between_retries=5,
+        telemetry=False,
+    )
+
+    response = agent.run("Summarize the content from https://docs.agno.com/introduction")
+
+    assert response.content is not None
+    assert response.citations is not None
+    assert response.citations.raw is not None
+    assert "url_context_metadata" in response.citations.raw
+
+
+def test_url_context_stream():
+    agent = Agent(
+        model=Gemini(id="gemini-2.5-flash", url_context=True),
+        exponential_backoff=True,
+        delay_between_retries=5,
+        telemetry=False,
+    )
+
+    response_stream = agent.run("Summarize the content from https://docs.agno.com/introduction", stream=True)
+
+    responses = []
+    citations_found = False
+
+    for chunk in response_stream:
+        responses.append(chunk)
+        if chunk.citations is not None and chunk.citations.raw and "url_context_metadata" in chunk.citations.raw:
+            citations_found = True
+
+    assert len(responses) > 0
+    assert citations_found
+
+
 def test_tool_use_with_enum():
     """A simple test for enum tool use."""
 
@@ -265,7 +367,7 @@ def test_tool_use_with_enum():
         return f"The color is {color.value}"
 
     agent = Agent(
-        model=Gemini(id="gemini-2.0-flash-lite-preview-02-05"),
+        model=Gemini(id="gemini-3-flash-preview"),
         tools=[get_color],
         telemetry=False,
     )

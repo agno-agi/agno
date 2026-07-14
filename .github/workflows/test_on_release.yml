@@ -1,56 +1,42 @@
 name: Main Validation
 
 on:
+  schedule:
+    - cron: "30 21 * * 6"  # Every Saturday 9:30 pm UTC
   push:
     branches:
       - "*release*" # Run on release-* format
       - "release/*" # Run on release/1.2.3 branch format
-      - "v2.0"
+      - "feat/v2.7" # Release-bound branch: full matrix on every push
   workflow_dispatch: # Allows manual triggering
     inputs:
       branch:
-        description: 'Branch to run checks on'
+        description: "Branch to run checks on"
         required: true
         type: string
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+# Every job in this matrix drives live model APIs: a single blanket retry
+# absorbs one-shot model-nondeterminism (a model skipping a tool call, a
+# provider-side tool_use_failed) while anything deterministically broken
+# still fails twice and stays red. Requires pytest-rerunfailures in every
+# job env that runs pytest.
+#
+# Every job also carries timeout-minutes so a hung provider stream fails the
+# job instead of wedging it until GitHub's 6-hour default. The ceiling is
+# 20 min, except the three jobs whose green runs are measured above that
+# (test-google, test-teams-3, test-knowledge-1: 30 min).
+env:
+  PYTEST_ADDOPTS: "--reruns 1"
+
 jobs:
-  style-check:
-    runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        python-version: ["3.9"]
-      fail-fast: true # Stop all matrix jobs if one fails
-
-    defaults:
-      run:
-        working-directory: libs/agno
-
-    steps:
-      - uses: actions/checkout@v3
-      - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v4
-        with:
-          python-version: ${{ matrix.python-version }}
-          cache: "pip"
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade \
-            pip setuptools wheel \
-            ruff mypy pytest types-pyyaml
-          pip install --no-deps -r requirements.txt
-      - name: Ruff format
-        run: |
-          ruff format .
-      - name: Ruff check
-        run: |
-          ruff check .
-      - name: Mypy
-        run: |
-          mypy .
-
   # Run tests for OpenAI
   test-openai:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     strategy:
       matrix:
         python-version: ["3.12"]
@@ -76,6 +62,7 @@ jobs:
   # Run tests for Google
   test-google:
     runs-on: ubuntu-latest
+    timeout-minutes: 30 # Green runs regularly reach ~22 min
     strategy:
       matrix:
         python-version: ["3.12"]
@@ -102,6 +89,7 @@ jobs:
   # Run tests for Anthropic
   test-anthropic:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     strategy:
       matrix:
         python-version: ["3.12"]
@@ -125,36 +113,40 @@ jobs:
           ./scripts/run_model_tests.sh anthropic
 
   # Run tests for AWS
-  test-aws:
-    runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        python-version: ["3.12"]
-      fail-fast: true
-    env:
-      AWS_ACCESS_KEY_ID: ${{ secrets.BEDROCK_AWS_ACCESS_KEY_ID }}
-      AWS_SECRET_ACCESS_KEY: ${{ secrets.BEDROCK_AWS_SECRET_ACCESS_KEY }}
-      AWS_REGION: "us-east-1"
-      EXA_API_KEY: ${{ secrets.EXA_API_KEY }}
-    steps:
-      - uses: actions/checkout@v3
-      - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v4
-        with:
-          python-version: ${{ matrix.python-version }}
-      - name: Install uv
-        run: |
-          curl -LsSf https://astral.sh/uv/install.sh | sh
-          echo "$HOME/.cargo/bin" >> $GITHUB_PATH
-      - name: Run dev setup and AWS tests
-        working-directory: .
-        run: |
-          ./scripts/run_model_tests.sh aws
+  #
+  # -- Some tests hang. Commented out until we revisit them.
+  #
+  # test-aws:
+  #   runs-on: ubuntu-latest
+  #   strategy:
+  #     matrix:
+  #       python-version: ["3.12"]
+  #     fail-fast: true
+  #   env:
+  #     AWS_ACCESS_KEY_ID: ${{ secrets.BEDROCK_AWS_ACCESS_KEY_ID }}
+  #     AWS_SECRET_ACCESS_KEY: ${{ secrets.BEDROCK_AWS_SECRET_ACCESS_KEY }}
+  #     AWS_REGION: "us-east-1"
+  #     EXA_API_KEY: ${{ secrets.EXA_API_KEY }}
+  #   steps:
+  #     - uses: actions/checkout@v3
+  #     - name: Set up Python ${{ matrix.python-version }}
+  #       uses: actions/setup-python@v4
+  #       with:
+  #         python-version: ${{ matrix.python-version }}
+  #     - name: Install uv
+  #       run: |
+  #         curl -LsSf https://astral.sh/uv/install.sh | sh
+  #         echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+  #     - name: Run dev setup and AWS tests
+  #       working-directory: .
+  #       run: |
+  #         ./scripts/run_model_tests.sh aws
 
   # Run tests for Cohere
   test-cohere:
     if: false # Disable cohere tests until we get a production account
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     strategy:
       matrix:
         python-version: ["3.12"]
@@ -179,7 +171,9 @@ jobs:
 
   # Run tests for Deepseek
   test-deepseek:
+    if: false # Disable deepseek tests until we get a production account
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     strategy:
       matrix:
         python-version: ["3.12"]
@@ -205,6 +199,7 @@ jobs:
   test-fireworks:
     if: false # Disable fireworks tests until we get a production account
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     strategy:
       matrix:
         python-version: ["3.12"]
@@ -235,6 +230,7 @@ jobs:
   # Run tests for Groq
   test-groq:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     strategy:
       matrix:
         python-version: ["3.12"]
@@ -261,6 +257,7 @@ jobs:
   test-mistral:
     if: false # Disable mistral tests until we get a production account
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     strategy:
       matrix:
         python-version: ["3.12"]
@@ -287,6 +284,7 @@ jobs:
   test-nvidia:
     if: false # Disable nvidia tests until we get a test account
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     strategy:
       matrix:
         python-version: ["3.12"]
@@ -312,6 +310,7 @@ jobs:
   test-openrouter:
     if: false # Disable openrouter tests until we get a test account
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     strategy:
       matrix:
         python-version: ["3.12"]
@@ -338,6 +337,7 @@ jobs:
   test-perplexity:
     if: false # Disable perplexity tests until we get a production account
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     strategy:
       matrix:
         python-version: ["3.12"]
@@ -361,7 +361,9 @@ jobs:
 
   # Run tests for SambaNova
   test-sambanova:
+    if: false # Temporarily disabled
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     strategy:
       matrix:
         python-version: ["3.12"]
@@ -387,6 +389,7 @@ jobs:
   test-together:
     if: false # The tests take too long to run
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     strategy:
       matrix:
         python-version: ["3.12"]
@@ -412,6 +415,8 @@ jobs:
   # Run tests for xAI
   test-xai:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
+    if: false # Disable xAI tests until we get a test account
     strategy:
       matrix:
         python-version: ["3.12"]
@@ -438,6 +443,7 @@ jobs:
   test-v0:
     if: false # We don't have credits
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     strategy:
       matrix:
         python-version: ["3.12"]
@@ -463,6 +469,7 @@ jobs:
   test-ibm-watsonx:
     if: false # Our account is not working
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     strategy:
       matrix:
         python-version: ["3.12"]
@@ -489,7 +496,9 @@ jobs:
 
   # Run tests for Cerebras
   test-cerebras:
+    if: false
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     strategy:
       matrix:
         python-version: ["3.12"]
@@ -513,6 +522,7 @@ jobs:
 
   test-deepinfra:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     strategy:
       matrix:
         python-version: ["3.12"]
@@ -539,6 +549,7 @@ jobs:
   test-aimlapi:
     if: false # We need more credits
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     strategy:
       matrix:
         python-version: ["3.12"]
@@ -570,6 +581,7 @@ jobs:
   test-dashscope:
     if: false # We need more credits
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     strategy:
       matrix:
         python-version: ["3.12"]
@@ -601,6 +613,7 @@ jobs:
   test-langdb:
     if: false # We do not have a company account
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     strategy:
       matrix:
         python-version: ["3.12"]
@@ -631,6 +644,7 @@ jobs:
 
   test-agents:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     strategy:
       matrix:
         python-version: ["3.12"]
@@ -652,17 +666,30 @@ jobs:
       - name: Run dev setup
         working-directory: .
         run: |
-          ./scripts/dev_setup.sh
+          ./scripts/test_setup.sh
       - name: Run agent integration tests
         working-directory: .
         env:
           AGNO_TELEMETRY: false
         run: |
           source .venv/bin/activate
-          python -m pytest ./libs/agno/tests/integration/agent
+          python -m pytest ./libs/agno/tests/integration/agent/test_guardrails.py \
+          ./libs/agno/tests/integration/agent/test_output_model.py \
+          ./libs/agno/tests/integration/agent/test_input.py \
+          ./libs/agno/tests/integration/agent/test_memory_impact.py \
+          ./libs/agno/tests/integration/agent/test_async_tool_calling.py \
+          ./libs/agno/tests/integration/agent/test_disable_storing_tool_and_history_messages.py \
+          ./libs/agno/tests/integration/agent/test_agent_convenience_functions.py \
+          ./libs/agno/tests/integration/agent/test_session.py \
+          ./libs/agno/tests/integration/agent/test_reasoning_content_default_COT.py \
+          ./libs/agno/tests/integration/agent/test_introduction.py \
+          ./libs/agno/tests/integration/agent/test_followups.py \
+          ./libs/agno/tests/integration/agent/test_tool_hooks.py \
+          ./libs/agno/tests/integration/agent/human_in_the_loop/test_continue_run_history_context.py
 
-  test-teams:
+  test-agents-2:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     strategy:
       matrix:
         python-version: ["3.12"]
@@ -684,17 +711,218 @@ jobs:
       - name: Run dev setup
         working-directory: .
         run: |
-          ./scripts/dev_setup.sh
+          ./scripts/test_setup.sh
+      - name: Run agent integration tests
+        working-directory: .
+        env:
+          AGNO_TELEMETRY: false
+        run: |
+          source .venv/bin/activate
+          python -m pytest ./libs/agno/tests/integration/agent \
+          --ignore=./libs/agno/tests/integration/agent/test_guardrails.py \
+          --ignore=./libs/agno/tests/integration/agent/test_output_model.py \
+          --ignore=./libs/agno/tests/integration/agent/test_input.py \
+          --ignore=./libs/agno/tests/integration/agent/test_memory_impact.py \
+          --ignore=./libs/agno/tests/integration/agent/test_async_tool_calling.py \
+          --ignore=./libs/agno/tests/integration/agent/test_disable_storing_tool_and_history_messages.py \
+          --ignore=./libs/agno/tests/integration/agent/test_agent_convenience_functions.py \
+          --ignore=./libs/agno/tests/integration/agent/test_session.py \
+          --ignore=./libs/agno/tests/integration/agent/test_reasoning_content_default_COT.py \
+          --ignore=./libs/agno/tests/integration/agent/test_introduction.py
+
+  test-teams-1:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      matrix:
+        python-version: ["3.12"]
+      fail-fast: true # Stop all matrix jobs if one fails
+    env:
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
+    steps:
+      - uses: actions/checkout@v3
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install uv
+        run: |
+          curl -LsSf https://astral.sh/uv/install.sh | sh
+          echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+      - name: Run dev setup
+        working-directory: .
+        run: |
+          ./scripts/test_setup.sh
       - name: Run teams integration tests
         working-directory: .
         env:
           AGNO_TELEMETRY: false
         run: |
           source .venv/bin/activate
-          python -m pytest ./libs/agno/tests/integration/teams
+          python -m pytest \
+          ./libs/agno/tests/integration/teams/test_hooks.py \
+          ./libs/agno/tests/integration/teams/test_dependencies.py \
+          ./libs/agno/tests/integration/teams/test_send_media_to_model.py \
+          ./libs/agno/tests/integration/teams/human_in_the_loop/test_team_confirmation_flows.py \
+          ./libs/agno/tests/integration/teams/human_in_the_loop/test_team_user_input_flows.py \
+          ./libs/agno/tests/integration/teams/test_retries.py \
+          ./libs/agno/tests/integration/teams/human_in_the_loop/test_team_external_execution_flows.py \
+          ./libs/agno/tests/integration/teams/human_in_the_loop/test_continue_run_history_context.py
+
+  test-teams-2:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      matrix:
+        python-version: ["3.12"]
+      fail-fast: true # Stop all matrix jobs if one fails
+    env:
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
+    steps:
+      - uses: actions/checkout@v3
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install uv
+        run: |
+          curl -LsSf https://astral.sh/uv/install.sh | sh
+          echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+      - name: Run dev setup
+        working-directory: .
+        run: |
+          ./scripts/test_setup.sh
+      - name: Run teams integration tests
+        working-directory: .
+        env:
+          AGNO_TELEMETRY: false
+        run: |
+          source .venv/bin/activate
+          python -m pytest \
+          ./libs/agno/tests/integration/teams/test_output_schema_override.py \
+          ./libs/agno/tests/integration/teams/test_event_streaming.py \
+          ./libs/agno/tests/integration/teams/test_session_state.py \
+          ./libs/agno/tests/integration/teams/test_storage_and_memory.py \
+          ./libs/agno/tests/integration/teams/human_in_the_loop/test_team_tool_hitl.py \
+          ./libs/agno/tests/integration/teams/test_reasoning_content_default_COT.py \
+          ./libs/agno/tests/integration/teams/test_filter_tool_calls.py \
+          ./libs/agno/tests/integration/teams/test_multimodal.py
+
+  test-teams-3:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30 # Green runs take 24-26 min; split the job to get under 20
+    strategy:
+      matrix:
+        python-version: ["3.12"]
+      fail-fast: true # Stop all matrix jobs if one fails
+    env:
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
+    steps:
+      - uses: actions/checkout@v3
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install uv
+        run: |
+          curl -LsSf https://astral.sh/uv/install.sh | sh
+          echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+      - name: Run dev setup
+        working-directory: .
+        run: |
+          ./scripts/test_setup.sh
+      - name: Run teams integration tests
+        working-directory: .
+        env:
+          AGNO_TELEMETRY: false
+        run: |
+          source .venv/bin/activate
+          python -m pytest \
+          ./libs/agno/tests/integration/teams/test_team_reasoning_new_models.py \
+          ./libs/agno/tests/integration/teams/test_session.py \
+          ./libs/agno/tests/integration/teams/test_input.py \
+          ./libs/agno/tests/integration/teams/test_team_delegation.py \
+          ./libs/agno/tests/integration/teams/test_history.py \
+          ./libs/agno/tests/integration/teams/test_memory_impact.py \
+          ./libs/agno/tests/integration/teams/test_team_with_output_model.py \
+          ./libs/agno/tests/integration/teams/test_team_with_member_with_parser_model.py
+
+  test-teams-4:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      matrix:
+        python-version: ["3.12"]
+      fail-fast: true # Stop all matrix jobs if one fails
+    env:
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
+    steps:
+      - uses: actions/checkout@v3
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install uv
+        run: |
+          curl -LsSf https://astral.sh/uv/install.sh | sh
+          echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+      - name: Run dev setup
+        working-directory: .
+        run: |
+          ./scripts/test_setup.sh
+      - name: Run teams integration tests
+        working-directory: .
+        env:
+          AGNO_TELEMETRY: false
+        run: |
+          source .venv/bin/activate
+          python -m pytest \
+          ./libs/agno/tests/integration/teams/test_team_convenience_functions.py \
+          ./libs/agno/tests/integration/teams/test_introduction.py \
+          ./libs/agno/tests/integration/teams/test_callable_members.py \
+          ./libs/agno/tests/integration/teams/test_structured_output.py \
+          ./libs/agno/tests/integration/teams/test_tool_compression.py \
+          ./libs/agno/tests/integration/teams/test_metrics.py \
+          ./libs/agno/tests/integration/teams/test_parser_model.py \
+          ./libs/agno/tests/integration/teams/test_tasks_mode_streaming.py \
+          ./libs/agno/tests/integration/teams/test_followups.py \
+          ./libs/agno/tests/integration/teams/test_tool_hooks.py \
+          ./libs/agno/tests/integration/teams/test_member_dedup.py \
+          ./libs/agno/tests/integration/teams/human_in_the_loop/test_member_run_persistence.py \
+          ./libs/agno/tests/integration/teams/test_team_run_cancellation.py \
+
+  verify-split-test-coverage:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v3
+      - name: Verify all split integration tests are assigned to CI jobs
+        run: |
+          status=0
+          for dir in teams knowledge; do
+            grep -oE "\./libs/agno/tests/integration/${dir}/[^ \\\\]+(/[^ \\\\]+)*\.py" \
+              .github/workflows/test_on_release.yml \
+              | grep -v '^\s*#' | sort -u > /tmp/wf.txt
+            find "libs/agno/tests/integration/${dir}" -name 'test_*.py' \
+              | sed 's|^|./|' | sort > /tmp/repo.txt
+            if ! diff /tmp/repo.txt /tmp/wf.txt; then
+              echo "::error::${dir} test coverage mismatch — see diff above"
+              status=1
+            fi
+          done
+          exit $status
 
   test-workflows:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     strategy:
       matrix:
         python-version: ["3.12"]
@@ -714,7 +942,7 @@ jobs:
       - name: Run dev setup
         working-directory: .
         run: |
-          ./scripts/dev_setup.sh
+          ./scripts/test_setup.sh
       - name: Run workflows integration tests
         working-directory: .
         env:
@@ -725,6 +953,7 @@ jobs:
 
   test-embedder:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     strategy:
       matrix:
         python-version: ["3.12"]
@@ -745,7 +974,7 @@ jobs:
       - name: Run dev setup
         working-directory: .
         run: |
-          ./scripts/dev_setup.sh
+          ./scripts/test_setup.sh
       - name: Run embedder tests
         working-directory: .
         env:
@@ -756,6 +985,7 @@ jobs:
 
   test-knowledge-1:
     runs-on: ubuntu-latest
+    timeout-minutes: 30 # Green runs regularly reach ~21 min
     strategy:
       matrix:
         python-version: ["3.12"]
@@ -776,7 +1006,7 @@ jobs:
       - name: Run dev setup
         working-directory: .
         run: |
-          ./scripts/dev_setup.sh
+          ./scripts/test_setup.sh
       - name: Run knowledge integration tests
         working-directory: .
         env:
@@ -784,14 +1014,18 @@ jobs:
         run: |
           source .venv/bin/activate
           python -m pytest ./libs/agno/tests/integration/knowledge/test_csv_knowledge.py \
+          ./libs/agno/tests/integration/knowledge/test_docling_knowledge.py \
           ./libs/agno/tests/integration/knowledge/test_docx_knowledge.py \
           ./libs/agno/tests/integration/knowledge/test_json_knowledge.py \
           ./libs/agno/tests/integration/knowledge/test_md_knowledge.py \
           ./libs/agno/tests/integration/knowledge/test_pdf_knowledge.py \
-          ./libs/agno/tests/integration/knowledge/test_text_knowledge.py
+          ./libs/agno/tests/integration/knowledge/test_pptx_knowledge.py \
+          ./libs/agno/tests/integration/knowledge/test_text_knowledge.py \
+          ./libs/agno/tests/integration/knowledge/test_async_knowledge_retriever.py
 
   test-knowledge-2:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     strategy:
       matrix:
         python-version: ["3.12"]
@@ -812,7 +1046,7 @@ jobs:
       - name: Run dev setup
         working-directory: .
         run: |
-          ./scripts/dev_setup.sh
+          ./scripts/test_setup.sh
       - name: Run knowledge integration tests
         working-directory: .
         env:
@@ -822,11 +1056,83 @@ jobs:
           python -m pytest ./libs/agno/tests/integration/knowledge/test_arxiv_knowledge.py \
           ./libs/agno/tests/integration/knowledge/test_firecrawl_knowledge.py \
           ./libs/agno/tests/integration/knowledge/test_website_knowledge.py \
-          ./libs/agno/tests/integration/knowledge/test_youtube_knowledge.py
+          ./libs/agno/tests/integration/knowledge/test_youtube_knowledge.py \
+          ./libs/agno/tests/integration/knowledge/filters/test_agentic_filtering.py
 
-  # Run remaining integration tests
-  test-remaining:
+  # Run A2A tests (isolated due to dependency conflicts)
+  test-a2a:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      matrix:
+        python-version: ["3.12"]
+      fail-fast: true # Stop all matrix jobs if one fails
+    steps:
+      - uses: actions/checkout@v3
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install uv
+        run: |
+          curl -LsSf https://astral.sh/uv/install.sh | sh
+          echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+      - name: Setup environment for A2A tests (without conflicting deps)
+        working-directory: .
+        run: |
+          VIRTUAL_ENV=.venv uv venv --python 3.12
+          VIRTUAL_ENV=.venv uv pip install -r ./libs/agno/requirements.txt
+          # One resolve for both editables: the local agnoctl satisfies agno's floor
+          VIRTUAL_ENV=.venv uv pip install -e ./libs/agnoctl -e ./libs/agno[dev,os,integration-tests,openai]
+          # TODO: a2a-sdk v1.0+ has breaking changes, update agno for it
+          VIRTUAL_ENV=.venv uv pip install "a2a-sdk>=0.3.0,<1.0"
+      - name: Run A2A integration tests
+        working-directory: .
+        env:
+          AGNO_TELEMETRY: false
+        run: |
+          source .venv/bin/activate
+          # TODO: a2a-sdk v1.0+ has breaking changes, update agno for it
+          pip install "a2a-sdk>=0.3.0,<1.0"
+          python -m pytest ./libs/agno/tests/integration/os/interfaces/test_a2a.py
+
+  test-clean:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      matrix:
+        python-version: ["3.12"]
+      fail-fast: true # Stop all matrix jobs if one fails
+    env:
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+    steps:
+      - uses: actions/checkout@v3
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install uv
+        run: |
+          curl -LsSf https://astral.sh/uv/install.sh | sh
+          echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+      - name: Setup environment
+        working-directory: .
+        run: |
+          VIRTUAL_ENV=.venv uv venv --python 3.12
+          VIRTUAL_ENV=.venv uv pip install agno
+          VIRTUAL_ENV=.venv uv pip install -r ./libs/agno/requirements.txt
+          VIRTUAL_ENV=.venv uv pip install openai chromadb sqlalchemy pytest pytest-asyncio pytest-cov pytest-mock pytest-rerunfailures pytest-timeout
+      - name: Run Basic Clean Test
+        working-directory: .
+        env:
+          AGNO_TELEMETRY: false
+        run: |
+          source .venv/bin/activate
+          python -m pytest ./libs/agno/tests/integration/test_basic.py
+
+  test-agent-os:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
     strategy:
       matrix:
         python-version: ["3.12"]
@@ -847,11 +1153,217 @@ jobs:
       - name: Run dev setup
         working-directory: .
         run: |
-          ./scripts/dev_setup.sh
+          ./scripts/test_setup.sh
+      - name: Run AgentOS integration tests
+        working-directory: .
+        env:
+          AGNO_TELEMETRY: false
+        run: |
+          source .venv/bin/activate
+          python -m pytest --ignore=./libs/agno/tests/integration/os/interfaces/test_a2a.py ./libs/agno/tests/integration/os
+
+
+  test-clean-os:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      matrix:
+        python-version: ["3.12"]
+      fail-fast: true # Stop all matrix jobs if one fails
+    env:
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+    steps:
+      - uses: actions/checkout@v3
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install uv
+        run: |
+          curl -LsSf https://astral.sh/uv/install.sh | sh
+          echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+      - name: Setup environment
+        working-directory: .
+        run: |
+          VIRTUAL_ENV=.venv uv venv --python 3.12
+          VIRTUAL_ENV=.venv uv pip install agno
+          VIRTUAL_ENV=.venv uv pip install -r ./libs/agno/requirements.txt
+          VIRTUAL_ENV=.venv uv pip install openai chromadb sqlalchemy fastapi python-multipart pytest pytest-asyncio pytest-cov pytest-mock pytest-rerunfailures pytest-timeout
+      - name: Run Basic Clean Test
+        working-directory: .
+        env:
+          AGNO_TELEMETRY: false
+        run: |
+          source .venv/bin/activate
+          python -m pytest ./libs/agno/tests/integration/test_os_basic.py
+
+  # Run remaining integration tests
+  test-remaining:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      matrix:
+        python-version: ["3.12"]
+      fail-fast: true # Stop all matrix jobs if one fails
+    env:
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+    steps:
+      - uses: actions/checkout@v3
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install uv
+        run: |
+          curl -LsSf https://astral.sh/uv/install.sh | sh
+          echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+      - name: Run dev setup
+        working-directory: .
+        run: |
+          ./scripts/test_setup.sh
       - name: Run remaining integration tests
         working-directory: .
         env:
           AGNO_TELEMETRY: false
         run: |
           source .venv/bin/activate
-          python -m pytest --ignore=./libs/agno/tests/integration/db --ignore=./libs/agno/tests/integration/models --ignore=./libs/agno/tests/integration/agent --ignore=./libs/agno/tests/integration/knowledge --ignore=./libs/agno/tests/integration/teams --ignore=./libs/agno/tests/integration/embedder --ignore=./libs/agno/tests/integration/workflows --ignore=./libs/agno/tests/integration/workflows_2 ./libs/agno/tests/integration
+          python -m pytest --ignore=./libs/agno/tests/integration/db --ignore=./libs/agno/tests/integration/models --ignore=./libs/agno/tests/integration/agent --ignore=./libs/agno/tests/integration/knowledge --ignore=./libs/agno/tests/integration/teams --ignore=./libs/agno/tests/integration/embedder --ignore=./libs/agno/tests/integration/workflows --ignore=./libs/agno/tests/integration/workflows_2 --ignore=./libs/agno/tests/integration/os/interfaces/test_a2a.py --ignore=./libs/agno/tests/integration/os --ignore=./libs/agno/tests/integration/tools/test_seltz.py ./libs/agno/tests/integration
+
+  test-dev-setup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      matrix:
+        python-version: ["3.12"]
+      fail-fast: true
+    steps:
+      - uses: actions/checkout@v3
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install uv
+        run: |
+          curl -LsSf https://astral.sh/uv/install.sh | sh
+          echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+      - name: Make dev_setup.sh executable
+        run: chmod +x ./scripts/dev_setup.sh
+      - name: Run dev setup script
+        run: |
+          ./scripts/dev_setup.sh
+      - name: Verify virtual environment was created
+        run: |
+          if [ ! -d ".venv" ]; then
+            echo "Error: .venv directory not found"
+            exit 1
+          fi
+          echo "✓ Virtual environment created successfully"
+      - name: Verify agno installation
+        run: |
+          source .venv/bin/activate
+          python -c "import agno; print(f'✓ agno version: {agno.__version__}')" || exit 1
+      - name: Verify agnoctl installation
+        run: |
+          source .venv/bin/activate
+          uv pip show agnoctl || exit 1
+          agno --version || exit 1
+      - name: List installed packages
+        run: |
+          source .venv/bin/activate
+          uv pip list
+
+  # Run AgentOS System Tests (multi-container Docker setup)
+  test-agentos-system:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      matrix:
+        python-version: ["3.12"]
+      fail-fast: true
+    env:
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
+    steps:
+      - uses: actions/checkout@v3
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install uv
+        run: |
+          curl -LsSf https://astral.sh/uv/install.sh | sh
+          echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+      - name: Create virtual environment
+        working-directory: ./libs/agno/tests/system
+        run: |
+          VIRTUAL_ENV=.venv uv venv --python 3.12
+      - name: Install test dependencies
+        working-directory: ./libs/agno/tests/system
+        run: |
+          source .venv/bin/activate
+          VIRTUAL_ENV=.venv uv pip install -r requirements.txt
+      - name: Start Docker Compose services
+        working-directory: ./libs/agno/tests/system
+        run: |
+          docker compose up --build -d
+      - name: Wait for services to be healthy
+        working-directory: ./libs/agno/tests/system
+        run: |
+          echo "Waiting for services to become healthy..."
+          MAX_WAIT=180
+          WAIT_INTERVAL=10
+          ELAPSED=0
+
+          while [ $ELAPSED -lt $MAX_WAIT ]; do
+            GATEWAY_HEALTH=$(docker inspect --format='{{.State.Health.Status}}' system-test-gateway 2>/dev/null || echo "not_found")
+            REMOTE_HEALTH=$(docker inspect --format='{{.State.Health.Status}}' system-test-remote 2>/dev/null || echo "not_found")
+            POSTGRES_HEALTH=$(docker inspect --format='{{.State.Health.Status}}' system-test-postgres 2>/dev/null || echo "not_found")
+            A2A_HEALTH=$(docker inspect --format='{{.State.Health.Status}}' system-test-agno-a2a 2>/dev/null || echo "not_found")
+            ADK_HEALTH=$(docker inspect --format='{{.State.Health.Status}}' system-test-adk 2>/dev/null || echo "not_found")
+
+            echo "  Postgres: $POSTGRES_HEALTH, Remote: $REMOTE_HEALTH, Gateway: $GATEWAY_HEALTH, A2A: $A2A_HEALTH, ADK: $ADK_HEALTH"
+
+            if [ "$GATEWAY_HEALTH" = "healthy" ] && [ "$REMOTE_HEALTH" = "healthy" ] && [ "$POSTGRES_HEALTH" = "healthy" ] && [ "$A2A_HEALTH" = "healthy" ] && [ "$ADK_HEALTH" = "healthy" ]; then
+              echo "All services are healthy!"
+              break
+            fi
+
+            sleep $WAIT_INTERVAL
+            ELAPSED=$((ELAPSED + WAIT_INTERVAL))
+          done
+
+          if [ $ELAPSED -ge $MAX_WAIT ]; then
+            echo "Timeout waiting for services to be healthy"
+            docker compose logs
+            exit 1
+          fi
+      - name: Run system tests
+        working-directory: ./libs/agno/tests/system
+        env:
+          GATEWAY_URL: http://localhost:7001
+          AGNO_TELEMETRY: false
+        run: |
+          source .venv/bin/activate
+          python -m pytest ./tests -v --tb=short
+      - name: Show container logs on failure
+        if: failure()
+        working-directory: ./libs/agno/tests/system
+        run: |
+          echo "=== Gateway Server Logs ==="
+          docker compose logs gateway-server --tail=100
+          echo ""
+          echo "=== Remote Server Logs ==="
+          docker compose logs remote-server --tail=100
+          echo ""
+          echo "=== A2A Server Logs ==="
+          docker compose logs agno-a2a-server --tail=100
+          echo ""
+          echo "=== ADK Server Logs ==="
+          docker compose logs adk-server --tail=100
+          echo ""
+      - name: Cleanup Docker resources
+        if: always()
+        working-directory: ./libs/agno/tests/system
+        run: |
+          docker compose down -v

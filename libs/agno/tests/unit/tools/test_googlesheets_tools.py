@@ -6,7 +6,7 @@ from unittest.mock import MagicMock, Mock, patch
 import pytest
 from google.oauth2.credentials import Credentials
 
-from agno.tools.googlesheets import GoogleSheetsTools
+from agno.tools.google.sheets import GoogleSheetsTools
 
 
 @pytest.fixture
@@ -35,10 +35,12 @@ def mock_drive_service():
 @pytest.fixture
 def sheets_tools(mock_credentials, mock_sheets_service):
     """Create GoogleSheetsTools instance with mocked dependencies."""
-    with patch("agno.tools.googlesheets.build") as mock_build:
+    with patch("googleapiclient.discovery.build") as mock_build:
         mock_build.return_value = mock_sheets_service
         tools = GoogleSheetsTools(creds=mock_credentials)
-        tools.service = mock_sheets_service
+        tools._service = mock_sheets_service
+        # Include drive scope to avoid _resolve_creds() re-auth in create_duplicate_sheet
+        tools.scopes.append("https://www.googleapis.com/auth/drive")
         return tools
 
 
@@ -161,7 +163,7 @@ def test_create_duplicate_sheet(sheets_tools, mock_sheets_service, mock_drive_se
     mock_drive_service.permissions.return_value = permissions_mock
 
     # Setup mock for drive service
-    with patch("agno.tools.googlesheets.build") as mock_build:
+    with patch("googleapiclient.discovery.build") as mock_build:
         mock_build.return_value = mock_drive_service
 
         # Execute test
@@ -199,3 +201,18 @@ def test_error_handling(sheets_tools, mock_sheets_service):
     result = sheets_tools.read_sheet(spreadsheet_id="test_id", spreadsheet_range="A1:B2")
 
     assert "Error reading Google Sheet" in result
+
+
+def test_service_account():
+    """Test setting service_account_path when instantiating a GoogleSheetsTools."""
+    path = "/some/path"
+    tool = GoogleSheetsTools(service_account_path=path)
+    assert tool._auth.service_account_path == path
+
+
+def test_service_account_environment_variable(monkeypatch):
+    """Test setting the service account file path via an environment variable."""
+    path = "/some/path"
+    monkeypatch.setenv("GOOGLE_SERVICE_ACCOUNT_FILE", path)
+    tool = GoogleSheetsTools()
+    assert tool._get_service_account_path() == path

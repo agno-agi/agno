@@ -10,6 +10,7 @@ from rich.markdown import Markdown
 from rich.status import Status
 from rich.text import Text
 
+from agno.filters import FilterExpr
 from agno.media import Audio, File, Image, Video
 from agno.models.message import Message
 from agno.reasoning.step import ReasoningStep
@@ -29,12 +30,12 @@ def print_response_stream(
     session_id: Optional[str] = None,
     session_state: Optional[Dict[str, Any]] = None,
     user_id: Optional[str] = None,
+    run_id: Optional[str] = None,
     audio: Optional[Sequence[Audio]] = None,
     images: Optional[Sequence[Image]] = None,
     videos: Optional[Sequence[Video]] = None,
     files: Optional[Sequence[File]] = None,
-    stream_intermediate_steps: bool = False,
-    knowledge_filters: Optional[Dict[str, Any]] = None,
+    knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
     debug_mode: Optional[bool] = None,
     markdown: bool = False,
     show_message: bool = True,
@@ -56,7 +57,7 @@ def print_response_stream(
     accumulated_tool_calls: List = []
 
     with Live(console=console) as live_log:
-        status = Status("Thinking...", spinner="aesthetic", speed=0.4, refresh_per_second=10)
+        status = Status("Working...", spinner="aesthetic", speed=0.4, refresh_per_second=10)
         live_log.update(status)
         response_timer = Timer()
         response_timer.start()
@@ -78,17 +79,19 @@ def print_response_stream(
         if render:
             live_log.update(Group(*panels))
 
+        input_content = get_text_from_message(input)
+
         for response_event in agent.run(
             input=input,
             session_id=session_id,
             session_state=session_state,
             user_id=user_id,
+            run_id=run_id,
             audio=audio,
             images=images,
             videos=videos,
             files=files,
             stream=True,
-            stream_intermediate_steps=stream_intermediate_steps,
             knowledge_filters=knowledge_filters,
             debug_mode=debug_mode,
             add_history_to_context=add_history_to_context,
@@ -102,9 +105,14 @@ def print_response_stream(
                 if response_event.is_paused:  # type: ignore
                     response_event = cast(RunPausedEvent, response_event)  # type: ignore
                     response_panel = create_paused_run_output_panel(response_event)  # type: ignore
-                    panels.append(response_panel)
-                    live_log.update(Group(*panels))
+                    if response_panel is not None:
+                        panels.append(response_panel)
+                        live_log.update(Group(*panels))
                     return
+
+                if response_event.event == RunEvent.pre_hook_completed:  # type: ignore
+                    if response_event.run_input is not None:  # type: ignore
+                        input_content = get_text_from_message(response_event.run_input.input_content)  # type: ignore
 
                 if (
                     response_event.event == RunEvent.tool_call_started  # type: ignore
@@ -125,14 +133,25 @@ def print_response_stream(
                                     response_event.content.model_dump_json(exclude_none=True), indent=2
                                 )
                             except Exception as e:
-                                log_warning(f"Failed to convert response to JSON: {e}")
+                                log_warning(f"Failed to convert response to JSON: {str(e)}")
+                        elif agent.output_schema is not None and isinstance(response_event.content, dict):
+                            try:
+                                response_content_batch = JSON(json.dumps(response_event.content), indent=2)  # type: ignore
+                            except Exception as e:
+                                log_warning(f"Failed to convert response to JSON: {str(e)}")
                         else:
                             try:
                                 response_content_batch = JSON(json.dumps(response_event.content), indent=4)
                             except Exception as e:
-                                log_warning(f"Failed to convert response to JSON: {e}")
+                                log_warning(f"Failed to convert response to JSON: {str(e)}")
                     if hasattr(response_event, "reasoning_content") and response_event.reasoning_content is not None:  # type: ignore
                         _response_reasoning_content += response_event.reasoning_content  # type: ignore
+
+                # Handle streaming reasoning content delta events
+                if response_event.event == RunEvent.reasoning_content_delta:  # type: ignore
+                    if hasattr(response_event, "reasoning_content") and response_event.reasoning_content is not None:  # type: ignore
+                        _response_reasoning_content += response_event.reasoning_content  # type: ignore
+
                 if hasattr(response_event, "reasoning_steps") and response_event.reasoning_steps is not None:  # type: ignore
                     reasoning_steps = response_event.reasoning_steps  # type: ignore
 
@@ -157,9 +176,8 @@ def print_response_stream(
             panels = [status]
             if show_message:
                 # Convert message to a panel
-                message_content = get_text_from_message(input)
                 message_panel = create_panel(
-                    content=Text(message_content, style="green"),
+                    content=Text(input_content, style="green"),
                     title="Message",
                     border_style="cyan",
                 )
@@ -174,6 +192,7 @@ def print_response_stream(
                 show_reasoning=show_reasoning,
                 show_full_reasoning=show_full_reasoning,
                 accumulated_tool_calls=accumulated_tool_calls,
+                compression_manager=agent.compression_manager,
             )
             panels.extend(additional_panels)
             if panels:
@@ -199,9 +218,13 @@ def print_response_stream(
             live_log.update(Group(*panels))
             agent.session_summary_manager.summaries_updated = False
 
+        # Clear compression stats after final display
+        if agent.compression_manager is not None:
+            agent.compression_manager.stats.clear()
+
         response_timer.stop()
 
-        # Final update to remove the "Thinking..." status
+        # Final update to remove the "Working..." status
         panels = [p for p in panels if not isinstance(p, Status)]
         live_log.update(Group(*panels))
 
@@ -212,12 +235,12 @@ async def aprint_response_stream(
     session_id: Optional[str] = None,
     session_state: Optional[Dict[str, Any]] = None,
     user_id: Optional[str] = None,
+    run_id: Optional[str] = None,
     audio: Optional[Sequence[Audio]] = None,
     images: Optional[Sequence[Image]] = None,
     videos: Optional[Sequence[Video]] = None,
     files: Optional[Sequence[File]] = None,
-    stream_intermediate_steps: bool = False,
-    knowledge_filters: Optional[Dict[str, Any]] = None,
+    knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
     debug_mode: Optional[bool] = None,
     markdown: bool = False,
     show_message: bool = True,
@@ -239,7 +262,7 @@ async def aprint_response_stream(
     accumulated_tool_calls: List = []
 
     with Live(console=console) as live_log:
-        status = Status("Thinking...", spinner="aesthetic", speed=0.4, refresh_per_second=10)
+        status = Status("Working...", spinner="aesthetic", speed=0.4, refresh_per_second=10)
         live_log.update(status)
         response_timer = Timer()
         response_timer.start()
@@ -266,12 +289,12 @@ async def aprint_response_stream(
             session_id=session_id,
             session_state=session_state,
             user_id=user_id,
+            run_id=run_id,
             audio=audio,
             images=images,
             videos=videos,
             files=files,
             stream=True,
-            stream_intermediate_steps=stream_intermediate_steps,
             knowledge_filters=knowledge_filters,
             debug_mode=debug_mode,
             add_history_to_context=add_history_to_context,
@@ -282,12 +305,15 @@ async def aprint_response_stream(
             **kwargs,
         )
 
+        input_content = get_text_from_message(input)
+
         async for resp in result:  # type: ignore
             if isinstance(resp, tuple(get_args(RunOutputEvent))):
                 if resp.is_paused:
                     response_panel = create_paused_run_output_panel(resp)  # type: ignore
-                    panels.append(response_panel)
-                    live_log.update(Group(*panels))
+                    if response_panel is not None:
+                        panels.append(response_panel)
+                        live_log.update(Group(*panels))
                     break
 
                 if (
@@ -296,6 +322,10 @@ async def aprint_response_stream(
                     and resp.tool is not None
                 ):
                     accumulated_tool_calls.append(resp.tool)
+
+                if resp.event == RunEvent.pre_hook_completed:  # type: ignore
+                    if resp.run_input is not None:  # type: ignore
+                        input_content = get_text_from_message(resp.run_input.input_content)  # type: ignore
 
                 if resp.event == RunEvent.run_content:  # type: ignore
                     if isinstance(resp.content, str):
@@ -306,13 +336,23 @@ async def aprint_response_stream(
                         try:
                             response_content_batch = JSON(resp.content.model_dump_json(exclude_none=True), indent=2)  # type: ignore
                         except Exception as e:
-                            log_warning(f"Failed to convert response to JSON: {e}")
+                            log_warning(f"Failed to convert response to JSON: {str(e)}")
+                    elif agent.output_schema is not None and isinstance(resp.content, dict):
+                        try:
+                            response_content_batch = JSON(json.dumps(resp.content), indent=2)  # type: ignore
+                        except Exception as e:
+                            log_warning(f"Failed to convert response to JSON: {str(e)}")
                     else:
                         try:
                             response_content_batch = JSON(json.dumps(resp.content), indent=4)
                         except Exception as e:
-                            log_warning(f"Failed to convert response to JSON: {e}")
+                            log_warning(f"Failed to convert response to JSON: {str(e)}")
                     if resp.reasoning_content is not None:  # type: ignore
+                        _response_reasoning_content += resp.reasoning_content  # type: ignore
+
+                # Handle streaming reasoning content delta events
+                if resp.event == RunEvent.reasoning_content_delta:  # type: ignore
+                    if hasattr(resp, "reasoning_content") and resp.reasoning_content is not None:  # type: ignore
                         _response_reasoning_content += resp.reasoning_content  # type: ignore
 
                 if hasattr(resp, "reasoning_steps") and resp.reasoning_steps is not None:  # type: ignore
@@ -338,12 +378,11 @@ async def aprint_response_stream(
 
             panels = [status]
 
-            if input and show_message:
+            if input_content and show_message:
                 render = True
                 # Convert message to a panel
-                message_content = get_text_from_message(input)
                 message_panel = create_panel(
-                    content=Text(message_content, style="green"),
+                    content=Text(input_content, style="green"),
                     title="Message",
                     border_style="cyan",
                 )
@@ -358,6 +397,7 @@ async def aprint_response_stream(
                 show_reasoning=show_reasoning,
                 show_full_reasoning=show_full_reasoning,
                 accumulated_tool_calls=accumulated_tool_calls,
+                compression_manager=agent.compression_manager,
             )
             panels.extend(additional_panels)
             if panels:
@@ -383,9 +423,13 @@ async def aprint_response_stream(
             live_log.update(Group(*panels))
             agent.session_summary_manager.summaries_updated = False
 
+        # Clear compression stats after final display
+        if agent.compression_manager is not None:
+            agent.compression_manager.stats.clear()
+
         response_timer.stop()
 
-        # Final update to remove the "Thinking..." status
+        # Final update to remove the "Working..." status
         panels = [p for p in panels if not isinstance(p, Status)]
         live_log.update(Group(*panels))
 
@@ -399,6 +443,7 @@ def build_panels_stream(
     show_reasoning: bool = True,
     show_full_reasoning: bool = False,
     accumulated_tool_calls: Optional[List] = None,
+    compression_manager: Optional[Any] = None,
 ):
     panels = []
 
@@ -439,8 +484,18 @@ def build_panels_stream(
         for formatted_tool_call in formatted_tool_calls:
             tool_calls_content.append(f"• {formatted_tool_call}\n")
 
+        tool_calls_text = tool_calls_content.plain.rstrip()
+
+        # Add compression stats if available (don't clear - caller will clear after final display)
+        if compression_manager is not None and compression_manager.stats:
+            stats = compression_manager.stats
+            saved = stats.get("original_size", 0) - stats.get("compressed_size", 0)
+            orig = stats.get("original_size", 1)
+            if stats.get("tool_results_compressed", 0) > 0:
+                tool_calls_text += f"\n\ncompressed: {stats.get('tool_results_compressed', 0)} | Saved: {saved:,} chars ({saved / orig * 100:.0f}%)"
+
         tool_calls_panel = create_panel(
-            content=tool_calls_content.plain.rstrip(),
+            content=tool_calls_text,
             title="Tool Calls",
             border_style="yellow",
         )
@@ -461,11 +516,23 @@ def build_panels_stream(
         and response_event.citations is not None
         and response_event.citations.urls is not None
     ):
-        md_content = "\n".join(
+        md_lines = []
+
+        # Add search queries if present
+        if response_event.citations.search_queries:
+            md_lines.append("**Search Queries:**")
+            for query in response_event.citations.search_queries:
+                md_lines.append(f"- {query}")
+            md_lines.append("")  # Empty line before URLs
+
+        # Add URL citations
+        md_lines.extend(
             f"{i + 1}. [{citation.title or citation.url}]({citation.url})"
             for i, citation in enumerate(response_event.citations.urls)
             if citation.url  # Only include citations with valid URLs
         )
+
+        md_content = "\n".join(md_lines)
         if md_content:  # Only create panel if there are citations
             citations_panel = create_panel(
                 content=Markdown(md_content),
@@ -483,12 +550,12 @@ def print_response(
     session_id: Optional[str] = None,
     session_state: Optional[Dict[str, Any]] = None,
     user_id: Optional[str] = None,
+    run_id: Optional[str] = None,
     audio: Optional[Sequence[Audio]] = None,
     images: Optional[Sequence[Image]] = None,
     videos: Optional[Sequence[Video]] = None,
     files: Optional[Sequence[File]] = None,
-    stream_intermediate_steps: bool = False,
-    knowledge_filters: Optional[Dict[str, Any]] = None,
+    knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
     debug_mode: Optional[bool] = None,
     markdown: bool = False,
     show_message: bool = True,
@@ -504,7 +571,7 @@ def print_response(
     **kwargs: Any,
 ):
     with Live(console=console) as live_log:
-        status = Status("Thinking...", spinner="aesthetic", speed=0.4, refresh_per_second=10)
+        status = Status("Working...", spinner="aesthetic", speed=0.4, refresh_per_second=10)
         live_log.update(status)
         response_timer = Timer()
         response_timer.start()
@@ -528,12 +595,13 @@ def print_response(
             session_id=session_id,
             session_state=session_state,
             user_id=user_id,
+            run_id=run_id,
             audio=audio,
             images=images,
             videos=videos,
             files=files,
             stream=False,
-            stream_intermediate_steps=stream_intermediate_steps,
+            stream_events=True,
             knowledge_filters=knowledge_filters,
             debug_mode=debug_mode,
             add_history_to_context=add_history_to_context,
@@ -545,6 +613,20 @@ def print_response(
         )
         response_timer.stop()
 
+        if run_response.input is not None and run_response.input.input_content != input:
+            # Input was modified during the run
+            panels = [status]
+            if show_message:
+                # Convert message to a panel
+                message_content = get_text_from_message(run_response.input.input_content)
+                message_panel = create_panel(
+                    content=Text(message_content, style="green"),
+                    title="Message",
+                    border_style="cyan",
+                )
+                panels.append(message_panel)  # type: ignore
+                live_log.update(Group(*panels))
+
         additional_panels = build_panels(
             run_response=run_response,
             output_schema=agent.output_schema,  # type: ignore
@@ -553,6 +635,7 @@ def print_response(
             show_full_reasoning=show_full_reasoning,
             tags_to_include_in_markdown=tags_to_include_in_markdown,
             markdown=markdown,
+            compression_manager=agent.compression_manager,
         )
         panels.extend(additional_panels)
 
@@ -576,7 +659,7 @@ def print_response(
             live_log.update(Group(*panels))
             agent.session_summary_manager.summaries_updated = False
 
-        # Final update to remove the "Thinking..." status
+        # Final update to remove the "Working..." status
         panels = [p for p in panels if not isinstance(p, Status)]
         live_log.update(Group(*panels))
 
@@ -587,12 +670,12 @@ async def aprint_response(
     session_id: Optional[str] = None,
     session_state: Optional[Dict[str, Any]] = None,
     user_id: Optional[str] = None,
+    run_id: Optional[str] = None,
     audio: Optional[Sequence[Audio]] = None,
     images: Optional[Sequence[Image]] = None,
     videos: Optional[Sequence[Video]] = None,
     files: Optional[Sequence[File]] = None,
-    stream_intermediate_steps: bool = False,
-    knowledge_filters: Optional[Dict[str, Any]] = None,
+    knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
     debug_mode: Optional[bool] = None,
     markdown: bool = False,
     show_message: bool = True,
@@ -608,7 +691,7 @@ async def aprint_response(
     **kwargs: Any,
 ):
     with Live(console=console) as live_log:
-        status = Status("Thinking...", spinner="aesthetic", speed=0.4, refresh_per_second=10)
+        status = Status("Working...", spinner="aesthetic", speed=0.4, refresh_per_second=10)
         live_log.update(status)
         response_timer = Timer()
         response_timer.start()
@@ -627,17 +710,18 @@ async def aprint_response(
             live_log.update(Group(*panels))
 
         # Run the agent
-        run_response = await agent.arun(
+        run_response = await agent.arun(  # type: ignore[misc]
             input=input,
             session_id=session_id,
             session_state=session_state,
             user_id=user_id,
+            run_id=run_id,
             audio=audio,
             images=images,
             videos=videos,
             files=files,
             stream=False,
-            stream_intermediate_steps=stream_intermediate_steps,
+            stream_events=True,
             knowledge_filters=knowledge_filters,
             debug_mode=debug_mode,
             add_history_to_context=add_history_to_context,
@@ -649,6 +733,20 @@ async def aprint_response(
         )
         response_timer.stop()
 
+        if run_response.input is not None and run_response.input.input_content != input:
+            # Input was modified during the run
+            panels = [status]
+            if show_message:
+                # Convert message to a panel
+                message_content = get_text_from_message(run_response.input.input_content)
+                message_panel = create_panel(
+                    content=Text(message_content, style="green"),
+                    title="Message",
+                    border_style="cyan",
+                )
+                panels.append(message_panel)  # type: ignore
+                live_log.update(Group(*panels))
+
         additional_panels = build_panels(
             run_response=run_response,
             output_schema=agent.output_schema,  # type: ignore
@@ -657,6 +755,7 @@ async def aprint_response(
             show_full_reasoning=show_full_reasoning,
             tags_to_include_in_markdown=tags_to_include_in_markdown,
             markdown=markdown,
+            compression_manager=agent.compression_manager,
         )
         panels.extend(additional_panels)
 
@@ -680,7 +779,7 @@ async def aprint_response(
             panels.append(summary_panel)
             live_log.update(Group(*panels))
 
-        # Final update to remove the "Thinking..." status
+        # Final update to remove the "Working..." status
         panels = [p for p in panels if not isinstance(p, Status)]
         live_log.update(Group(*panels))
 
@@ -693,6 +792,7 @@ def build_panels(
     show_full_reasoning: bool = False,
     tags_to_include_in_markdown: Optional[Set[str]] = None,
     markdown: bool = False,
+    compression_manager: Optional[Any] = None,
 ):
     panels = []
 
@@ -700,7 +800,8 @@ def build_panels(
 
     if isinstance(run_response, RunOutput) and run_response.is_paused:
         response_panel = create_paused_run_output_panel(run_response)
-        panels.append(response_panel)
+        if response_panel is not None:
+            panels.append(response_panel)
         return panels
 
     if isinstance(run_response, RunOutput) and run_response.reasoning_steps is not None:
@@ -744,8 +845,19 @@ def build_panels(
         for formatted_tool_call in formatted_tool_calls:
             tool_calls_content.append(f"• {formatted_tool_call}\n")
 
+        tool_calls_text = tool_calls_content.plain.rstrip()
+
+        # Add compression stats if available
+        if compression_manager is not None and compression_manager.stats:
+            stats = compression_manager.stats
+            saved = stats.get("original_size", 0) - stats.get("compressed_size", 0)
+            orig = stats.get("original_size", 1)
+            if stats.get("tool_results_compressed", 0) > 0:
+                tool_calls_text += f"\n\ncompressed: {stats.get('tool_results_compressed', 0)} | Saved: {saved:,} chars ({saved / orig * 100:.0f}%)"
+            compression_manager.stats.clear()
+
         tool_calls_panel = create_panel(
-            content=tool_calls_content.plain.rstrip(),
+            content=tool_calls_text,
             title="Tool Calls",
             border_style="yellow",
         )
@@ -763,12 +875,17 @@ def build_panels(
             try:
                 response_content_batch = JSON(run_response.content.model_dump_json(exclude_none=True), indent=2)
             except Exception as e:
-                log_warning(f"Failed to convert response to JSON: {e}")
+                log_warning(f"Failed to convert response to JSON: {str(e)}")
+        elif output_schema is not None and isinstance(run_response.content, dict):
+            try:
+                response_content_batch = JSON(json.dumps(run_response.content), indent=2)
+            except Exception as e:
+                log_warning(f"Failed to convert response to JSON: {str(e)}")
         else:
             try:
                 response_content_batch = JSON(json.dumps(run_response.content), indent=4)
             except Exception as e:
-                log_warning(f"Failed to convert response to JSON: {e}")
+                log_warning(f"Failed to convert response to JSON: {str(e)}")
 
     # Create panel for response
     response_panel = create_panel(
@@ -783,11 +900,23 @@ def build_panels(
         and run_response.citations is not None
         and run_response.citations.urls is not None
     ):
-        md_content = "\n".join(
+        md_lines = []
+
+        # Add search queries if present
+        if run_response.citations.search_queries:
+            md_lines.append("**Search Queries:**")
+            for query in run_response.citations.search_queries:
+                md_lines.append(f"- {query}")
+            md_lines.append("")  # Empty line before URLs
+
+        # Add URL citations
+        md_lines.extend(
             f"{i + 1}. [{citation.title or citation.url}]({citation.url})"
             for i, citation in enumerate(run_response.citations.urls)
             if citation.url  # Only include citations with valid URLs
         )
+
+        md_content = "\n".join(md_lines)
         if md_content:  # Only create panel if there are citations
             citations_panel = create_panel(
                 content=Markdown(md_content),

@@ -1,7 +1,8 @@
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Union
 
+from agno.filters import FilterExpr
 from agno.knowledge.document import Document
-from agno.utils.log import logger
+from agno.utils.log import log_warning, logger
 from agno.vectordb.base import VectorDb
 
 try:
@@ -17,8 +18,18 @@ class LlamaIndexVectorDb(VectorDb):
     knowledge_retriever: BaseRetriever
     loader: Optional[Callable] = None
 
-    def __init__(self, knowledge_retriever: BaseRetriever, loader: Optional[Callable] = None, **kwargs):
+    def __init__(
+        self,
+        knowledge_retriever: BaseRetriever,
+        loader: Optional[Callable] = None,
+        name: Optional[str] = None,
+        description: Optional[str] = None,
+        **kwargs,
+    ):
         super().__init__(**kwargs)
+        # Initialize base class with name and description
+        super().__init__(name=name, description=description)
+
         self.knowledge_retriever = knowledge_retriever
         self.loader = loader
 
@@ -58,7 +69,9 @@ class LlamaIndexVectorDb(VectorDb):
         logger.warning("LlamaIndexVectorDb.async_upsert() not supported - please check the vectorstore manually.")
         raise NotImplementedError
 
-    def search(self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None) -> List[Document]:
+    def search(
+        self, query: str, limit: int = 5, filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None
+    ) -> List[Document]:
         """
         Returns relevant documents matching the query.
 
@@ -72,6 +85,9 @@ class LlamaIndexVectorDb(VectorDb):
         Raises:
             ValueError: If the knowledge retriever is not of type BaseRetriever.
         """
+        if filters is not None:
+            log_warning("Filters are not supported in LlamaIndex. No filters will be applied.")
+
         if not isinstance(self.knowledge_retriever, BaseRetriever):
             raise ValueError(f"Knowledge retriever is not of type BaseRetriever: {self.knowledge_retriever}")
 
@@ -89,7 +105,7 @@ class LlamaIndexVectorDb(VectorDb):
         return documents
 
     async def async_search(
-        self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None
+        self, query: str, limit: int = 5, filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None
     ) -> List[Document]:
         return self.search(query, limit, filters)
 
@@ -144,3 +160,7 @@ class LlamaIndexVectorDb(VectorDb):
             "LlamaIndexVectorDb.delete_by_content_id() not supported - please check the vectorstore manually."
         )
         return False
+
+    def get_supported_search_types(self) -> List[str]:
+        """Get the supported search types for this vector database."""
+        return []  # LlamaIndexVectorDb doesn't use SearchType enum

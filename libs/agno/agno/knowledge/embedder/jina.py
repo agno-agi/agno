@@ -5,7 +5,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from typing_extensions import Literal
 
 from agno.knowledge.embedder.base import Embedder
-from agno.utils.log import logger
+from agno.utils.log import log_warning, logger
 
 try:
     import requests
@@ -43,7 +43,7 @@ class JinaEmbedder(Embedder):
         return headers
 
     def _response(self, text: str) -> Dict[str, Any]:
-        data = {
+        data: Dict[str, Any] = {
             "model": self.id,
             "late_chunking": self.late_chunking,
             "dimensions": self.dimensions,
@@ -64,7 +64,7 @@ class JinaEmbedder(Embedder):
             result = self._response(text)
             return result["data"][0]["embedding"]
         except Exception as e:
-            logger.warning(f"Failed to get embedding: {e}")
+            log_warning(f"Failed to get embedding: {str(e)}")
             return []
 
     def get_embedding_and_usage(self, text: str) -> Tuple[List[float], Optional[Dict]]:
@@ -74,7 +74,7 @@ class JinaEmbedder(Embedder):
             usage = result.get("usage")
             return embedding, usage
         except Exception as e:
-            logger.warning(f"Failed to get embedding and usage: {e}")
+            log_warning(f"Failed to get embedding and usage: {str(e)}")
             return [], None
 
     async def _async_response(self, text: str) -> Dict[str, Any]:
@@ -104,7 +104,7 @@ class JinaEmbedder(Embedder):
             result = await self._async_response(text)
             return result["data"][0]["embedding"]
         except Exception as e:
-            logger.warning(f"Failed to get embedding: {e}")
+            log_warning(f"Failed to get embedding: {str(e)}")
             return []
 
     async def async_get_embedding_and_usage(self, text: str) -> Tuple[List[float], Optional[Dict]]:
@@ -115,5 +115,68 @@ class JinaEmbedder(Embedder):
             usage = result.get("usage")
             return embedding, usage
         except Exception as e:
-            logger.warning(f"Failed to get embedding and usage: {e}")
+            log_warning(f"Failed to get embedding and usage: {str(e)}")
             return [], None
+
+    async def _async_batch_response(self, texts: List[str]) -> Dict[str, Any]:
+        """Async batch version of _response using aiohttp."""
+        data = {
+            "model": self.id,
+            "late_chunking": self.late_chunking,
+            "dimensions": self.dimensions,
+            "embedding_type": self.embedding_type,
+            "input": texts,  # Jina API expects a list of texts for batch processing
+        }
+        if self.user is not None:
+            data["user"] = self.user
+        if self.request_params:
+            data.update(self.request_params)
+
+        timeout = aiohttp.ClientTimeout(total=self.timeout) if self.timeout else None
+
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            async with session.post(self.base_url, headers=self._get_headers(), json=data) as response:
+                response.raise_for_status()
+                return await response.json()
+
+    async def async_get_embeddings_batch_and_usage(
+        self, texts: List[str]
+    ) -> Tuple[List[List[float]], List[Optional[Dict]]]:
+        """
+        Get embeddings and usage for multiple texts in batches.
+
+        Args:
+            texts: List of text strings to embed
+
+        Returns:
+            Tuple of (List of embedding vectors, List of usage dictionaries)
+        """
+        all_embeddings = []
+        all_usage = []
+        logger.info(f"Getting embeddings and usage for {len(texts)} texts in batches of {self.batch_size}")
+
+        for i in range(0, len(texts), self.batch_size):
+            batch_texts = texts[i : i + self.batch_size]
+
+            try:
+                result = await self._async_batch_response(batch_texts)
+                batch_embeddings = [data["embedding"] for data in result["data"]]
+                all_embeddings.extend(batch_embeddings)
+
+                # For each embedding in the batch, add the same usage information
+                usage_dict = result.get("usage")
+                all_usage.extend([usage_dict] * len(batch_embeddings))
+            except Exception as e:
+                log_warning(f"Error in async batch embedding: {str(e)}")
+                # Fallback to individual calls for this batch
+                for text in batch_texts:
+                    try:
+                        embedding, usage = await self.async_get_embedding_and_usage(text)
+                        all_embeddings.append(embedding)
+                        all_usage.append(usage)
+                    except Exception as e2:
+                        log_warning(f"Error in individual async embedding fallback: {e2}")
+                        all_embeddings.append([])
+                        all_usage.append(None)
+
+        return all_embeddings, all_usage

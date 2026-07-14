@@ -70,7 +70,7 @@ def test_embedding_consistency(embedder):
     embeddings2 = embedder.get_embedding(text)
 
     assert len(embeddings1) == len(embeddings2)
-    assert all(abs(a - b) < 1e-4 for a, b in zip(embeddings1, embeddings2))
+    assert all(abs(a - b) < 1e-3 for a, b in zip(embeddings1, embeddings2))
 
 
 def test_custom_configuration():

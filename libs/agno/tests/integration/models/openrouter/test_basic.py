@@ -12,15 +12,17 @@ def _assert_metrics(response: RunOutput):
     input_tokens = response.metrics.input_tokens
     output_tokens = response.metrics.output_tokens
     total_tokens = response.metrics.total_tokens
+    cost = response.metrics.cost
 
     assert input_tokens > 0
     assert output_tokens > 0
     assert total_tokens > 0
+    assert cost > 0
     assert total_tokens == input_tokens + output_tokens
 
 
 def test_basic():
-    agent = Agent(model=OpenRouter(id="gpt-4o"), markdown=True, telemetry=False)
+    agent = Agent(model=OpenRouter(id="gpt-5.4-mini"), markdown=True, telemetry=False)
 
     response: RunOutput = agent.run("Share a 2 sentence horror story")
 
@@ -33,7 +35,7 @@ def test_basic():
 
 
 def test_basic_stream():
-    agent = Agent(model=OpenRouter(id="gpt-4o"), markdown=True, telemetry=False)
+    agent = Agent(model=OpenRouter(id="gpt-5.4-mini"), markdown=True, telemetry=False)
 
     response_stream = agent.run("Share a 2 sentence horror story", stream=True)
 
@@ -48,7 +50,7 @@ def test_basic_stream():
 
 @pytest.mark.asyncio
 async def test_async_basic():
-    agent = Agent(model=OpenRouter(id="gpt-4o"), markdown=True, telemetry=False)
+    agent = Agent(model=OpenRouter(id="gpt-5.4-mini"), markdown=True, telemetry=False)
 
     response = await agent.arun("Share a 2 sentence horror story")
 
@@ -61,7 +63,7 @@ async def test_async_basic():
 
 @pytest.mark.asyncio
 async def test_async_basic_stream():
-    agent = Agent(model=OpenRouter(id="gpt-4o"), markdown=True, telemetry=False)
+    agent = Agent(model=OpenRouter(id="gpt-5.4-mini"), markdown=True, telemetry=False)
 
     async for response in agent.arun("Share a 2 sentence horror story", stream=True):
         assert response.content is not None
@@ -69,7 +71,7 @@ async def test_async_basic_stream():
 
 def test_with_memory():
     agent = Agent(
-        model=OpenRouter(id="gpt-4o"),
+        model=OpenRouter(id="gpt-5.4-mini"),
         db=InMemoryDb(),
         add_history_to_context=True,
         markdown=True,
@@ -86,7 +88,7 @@ def test_with_memory():
     assert "John Smith" in response2.content
 
     # Verify memories were created
-    messages = agent.get_messages_for_session()
+    messages = agent.get_session_messages()
     assert len(messages) == 5
     assert [m.role for m in messages] == ["system", "user", "assistant", "user", "assistant"]
 
@@ -101,7 +103,7 @@ def test_output_schema():
         plot: str = Field(..., description="Brief plot summary")
 
     agent = Agent(
-        model=OpenRouter(id="gpt-4o"),
+        model=OpenRouter(id="gpt-5.4-mini"),
         markdown=True,
         telemetry=False,
         output_schema=MovieScript,
@@ -123,7 +125,7 @@ def test_json_response_mode():
         plot: str = Field(..., description="Brief plot summary")
 
     agent = Agent(
-        model=OpenRouter(id="gpt-4o"),
+        model=OpenRouter(id="gpt-5.4-mini"),
         use_json_mode=True,
         telemetry=False,
         output_schema=MovieScript,
@@ -140,9 +142,10 @@ def test_json_response_mode():
 
 def test_history():
     agent = Agent(
-        model=OpenRouter(id="gpt-4o"),
+        model=OpenRouter(id="gpt-5.4-mini"),
         db=SqliteDb(db_file="tmp/openrouter/test_basic.db"),
         add_history_to_context=True,
+        store_history_messages=True,
         telemetry=False,
     )
     run_output = agent.run("Hello")

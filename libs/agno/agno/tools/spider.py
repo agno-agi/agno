@@ -42,7 +42,7 @@ class SpiderTools(Toolkit):
 
         tools: List[Any] = []
         if enable_search or all:
-            tools.append(self.search)
+            tools.append(self.search_web)
         if enable_scrape or all:
             tools.append(self.scrape)
         if enable_crawl or all:
@@ -50,7 +50,7 @@ class SpiderTools(Toolkit):
 
         super().__init__(name="spider", tools=tools, **kwargs)
 
-    def search(self, query: str, max_results: int = 5) -> str:
+    def search_web(self, query: str, max_results: int = 5) -> str:
         """Use this function to search the web.
         Args:
             query (str): The query to search the web with.
@@ -88,7 +88,7 @@ class SpiderTools(Toolkit):
             results = app.search(query, options)
             return json.dumps(results)
         except Exception as e:
-            logger.error(f"Error fetching results from spider: {e}")
+            logger.exception("Error fetching results from spider")
             return f"Error fetching results from spider: {e}"
 
     def _scrape(self, url: str) -> str:
@@ -99,7 +99,7 @@ class SpiderTools(Toolkit):
             results = app.scrape_url(url, options)
             return json.dumps(results)
         except Exception as e:
-            logger.error(f"Error fetching content from spider: {e}")
+            logger.exception("Error fetching content from spider")
             return f"Error fetching content from spider: {e}"
 
     def _crawl(self, url: str, limit: Optional[int] = None) -> str:
@@ -112,5 +112,5 @@ class SpiderTools(Toolkit):
             results = app.crawl_url(url, options)
             return json.dumps(results)
         except Exception as e:
-            logger.error(f"Error fetching content from spider: {e}")
+            logger.exception("Error fetching content from spider")
             return f"Error fetching content from spider: {e}"

@@ -3,7 +3,7 @@ from os import getenv
 from typing import Any, Dict, List, Optional
 
 from agno.tools import Toolkit
-from agno.utils.log import logger
+from agno.utils.log import log_error
 
 try:
     from firecrawl import FirecrawlApp  # type: ignore[attr-defined]
@@ -57,7 +57,7 @@ class FirecrawlTools(Toolkit):
     ):
         self.api_key: Optional[str] = api_key or getenv("FIRECRAWL_API_KEY")
         if not self.api_key:
-            logger.error("FIRECRAWL_API_KEY not set. Please set the FIRECRAWL_API_KEY environment variable.")
+            log_error("FIRECRAWL_API_KEY not set. Please set the FIRECRAWL_API_KEY environment variable.")
 
         self.formats: Optional[List[str]] = formats
         self.limit: int = limit
@@ -73,7 +73,7 @@ class FirecrawlTools(Toolkit):
         if all or enable_mapping:
             tools.append(self.map_website)
         if all or enable_search:
-            tools.append(self.search)
+            tools.append(self.search_web)
 
         super().__init__(name="firecrawl_tools", tools=tools, **kwargs)
 
@@ -101,8 +101,10 @@ class FirecrawlTools(Toolkit):
             The results of the crawling.
         """
         params: Dict[str, Any] = {}
-        if self.limit or limit:
-            params["limit"] = self.limit or limit
+        if self.limit is not None:
+            params["limit"] = self.limit
+        elif limit is not None:
+            params["limit"] = limit
         if self.formats:
             params["scrape_options"] = ScrapeOptions(formats=self.formats)  # type: ignore
 
@@ -121,7 +123,7 @@ class FirecrawlTools(Toolkit):
         map_result = self.app.map(url)
         return json.dumps(map_result.model_dump(), cls=CustomJSONEncoder)
 
-    def search(self, query: str, limit: Optional[int] = None):
+    def search_web(self, query: str, limit: Optional[int] = None):
         """Use this function to search for the web using Firecrawl.
 
         Args:
@@ -129,15 +131,21 @@ class FirecrawlTools(Toolkit):
             limit (int): The maximum number of results to return.
         """
         params: Dict[str, Any] = {}
-        if self.limit or limit:
-            params["limit"] = self.limit or limit
+        if self.limit is not None:
+            params["limit"] = self.limit
+        elif limit is not None:
+            params["limit"] = limit
         if self.formats:
             params["scrape_options"] = ScrapeOptions(formats=self.formats)  # type: ignore
         if self.search_params:
             params.update(self.search_params)
 
         search_result = self.app.search(query, **params)
-        if search_result.success:
-            return json.dumps(search_result.data, cls=CustomJSONEncoder)
+
+        if hasattr(search_result, "success"):
+            if search_result.success:
+                return json.dumps(search_result.data, cls=CustomJSONEncoder)
+            else:
+                return f"Error searching with the Firecrawl tool: {search_result.error}"
         else:
-            return "Error searching with the Firecrawl tool: " + search_result.error
+            return json.dumps(search_result.model_dump(), cls=CustomJSONEncoder)
