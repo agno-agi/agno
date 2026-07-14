@@ -196,6 +196,8 @@ class BaseTeamRunEvent(BaseRunOutputEvent):
     run_id: Optional[str] = None
     parent_run_id: Optional[str] = None
     session_id: Optional[str] = None
+    # OpenTelemetry trace_id (32-char hex) for this run, when tracing is active
+    trace_id: Optional[str] = None
 
     workflow_id: Optional[str] = None
     workflow_run_id: Optional[str] = None  # This is the workflow's run_id
@@ -741,6 +743,9 @@ class TeamRunOutput:
     """Response returned by Team.run() functions"""
 
     run_id: Optional[str] = None
+    # OpenTelemetry trace_id (32-char hex) for this run, when tracing is active.
+    # Matches the trace_id in the Agno traces table and in OTLP backends (Langfuse etc.)
+    trace_id: Optional[str] = None
     team_id: Optional[str] = None
     team_name: Optional[str] = None
     session_id: Optional[str] = None

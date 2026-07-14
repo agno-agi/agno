@@ -107,6 +107,7 @@ from agno.utils.log import (
     set_log_level_to_info,
     use_workflow_logger,
 )
+from agno.utils.otel import get_current_trace_id
 from agno.utils.print_response.workflow import (
     aprint_response,
     aprint_response_stream,
@@ -1706,6 +1707,11 @@ class Workflow:
 
         if isinstance(event, (RunOutput, TeamRunOutput)):
             return event
+
+        # Propagate the run's OTel trace_id to every event so clients can correlate
+        # streamed events with traces in real time
+        if getattr(event, "trace_id", None) is None:
+            event.trace_id = workflow_run_response.trace_id
 
         if isinstance(event, WorkflowCompletedEvent) and event.metrics is None:
             event.metrics = workflow_run_response.metrics
@@ -4165,6 +4171,7 @@ class Workflow:
             workflow_name=self.name,
             created_at=int(datetime.now().timestamp()),
             status=RunStatus.pending,
+            trace_id=get_current_trace_id(),
         )
 
         # Start the run metrics timer
@@ -4308,6 +4315,7 @@ class Workflow:
             workflow_name=self.name,
             created_at=int(datetime.now().timestamp()),
             status=RunStatus.pending,
+            trace_id=get_current_trace_id(),
         )
 
         # Start the run metrics timer
@@ -9556,6 +9564,7 @@ class Workflow:
             workflow_id=self.id,
             workflow_name=self.name,
             created_at=int(datetime.now().timestamp()),
+            trace_id=get_current_trace_id(),
         )
 
         # Start the run metrics timer
@@ -9820,6 +9829,7 @@ class Workflow:
             workflow_id=self.id,
             workflow_name=self.name,
             created_at=int(datetime.now().timestamp()),
+            trace_id=get_current_trace_id(),
         )
 
         # Start the run metrics timer

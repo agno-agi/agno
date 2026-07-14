@@ -23,6 +23,7 @@ Observability examples for tracing and monitoring Agno agents, teams, and workfl
 - `mlflow_via_setup_tracing.py`
 - `maxim_ops.py`
 - `opik_via_openinference.py`
+- `trace_id_on_run_output.py`
 - `trace_to_database.py`
 - `trace_to_database_and_langfuse.py`
 - `traceloop_op.py`

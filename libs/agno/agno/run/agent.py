@@ -202,6 +202,8 @@ class BaseAgentRunEvent(BaseRunOutputEvent):
     run_id: Optional[str] = None
     parent_run_id: Optional[str] = None
     session_id: Optional[str] = None
+    # OpenTelemetry trace_id (32-char hex) for this run, when tracing is active
+    trace_id: Optional[str] = None
 
     # Step context for workflow execution
     workflow_id: Optional[str] = None
@@ -613,6 +615,9 @@ class RunOutput:
     """Response returned by Agent.run() or Workflow.run() functions"""
 
     run_id: Optional[str] = None
+    # OpenTelemetry trace_id (32-char hex) for this run, when tracing is active.
+    # Matches the trace_id in the Agno traces table and in OTLP backends (Langfuse etc.)
+    trace_id: Optional[str] = None
     agent_id: Optional[str] = None
     agent_name: Optional[str] = None
     session_id: Optional[str] = None

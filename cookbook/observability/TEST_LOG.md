@@ -28,6 +28,16 @@
 
 ---
 
+### trace_id_on_run_output.py
+
+**Status:** PASS
+
+**Description:** Verified the full flow against a mock model (no network): with setup_tracing(db=...) active, a streaming run with stream_events=True yields RunStarted carrying the trace_id before any content, a non-streaming run returns RunOutput with trace_id set and present in to_dict(), and the trace_id matches the trace row stored in the database (db.get_trace(run_id=...)). Full agent run with a real model was not performed (no OPENAI_API_KEY in the test environment).
+
+**Result:** trace_id surfaced on RunOutput and streamed events; identical to the database trace_id.
+
+---
+
 ### mlflow_via_setup_tracing.py
 
 **Status:** PASS

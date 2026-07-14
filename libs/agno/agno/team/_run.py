@@ -117,6 +117,7 @@ from agno.utils.log import (
     log_info,
     log_warning,
 )
+from agno.utils.otel import get_current_trace_id
 
 # Strong references to background tasks so they aren't garbage-collected mid-execution.
 # See: https://docs.python.org/3/library/asyncio-task.html#asyncio.create_task
@@ -1063,6 +1064,10 @@ def _run(
     12. Create session summary
     13. Cleanup and store (scrub, stop timer, add to session, calculate metrics, save session)
     """
+    # Capture the OTel trace_id for this run while the tracing span is active
+    if run_response.trace_id is None:
+        run_response.trace_id = get_current_trace_id()
+
     from agno.team._hooks import _execute_post_hooks, _execute_pre_hooks
     from agno.team._init import _disconnect_connectable_tools
     from agno.team._managers import _start_learning_future, _start_memory_future
@@ -1421,6 +1426,10 @@ def _run_stream(
     9. Create session summary
     10. Cleanup and store (scrub, add to session, calculate metrics, save session)
     """
+    # Capture the OTel trace_id for this run while the tracing span is active
+    if run_response.trace_id is None:
+        run_response.trace_id = get_current_trace_id()
+
     from agno.team._hooks import _execute_post_hooks, _execute_pre_hooks
     from agno.team._init import _disconnect_connectable_tools
     from agno.team._managers import _start_learning_future, _start_memory_future
@@ -2983,6 +2992,10 @@ async def _arun(
     12. Create session summary
     13. Cleanup and store (scrub, add to session, calculate metrics, save session)
     """
+    # Capture the OTel trace_id for this run while the tracing span is active
+    if run_response.trace_id is None:
+        run_response.trace_id = get_current_trace_id()
+
     from agno.team._hooks import _aexecute_post_hooks, _aexecute_pre_hooks
     from agno.team._init import _disconnect_connectable_tools, _disconnect_mcp_tools
     from agno.team._managers import _astart_learning_task, _astart_memory_task
@@ -3608,6 +3621,10 @@ async def _arun_stream(
     9. Create session summary
     10. Cleanup and store (scrub, add to session, calculate metrics, save session)
     """
+    # Capture the OTel trace_id for this run while the tracing span is active
+    if run_response.trace_id is None:
+        run_response.trace_id = get_current_trace_id()
+
     from agno.team._hooks import _aexecute_post_hooks, _aexecute_pre_hooks
     from agno.team._init import _disconnect_connectable_tools, _disconnect_mcp_tools
     from agno.team._managers import _astart_learning_task, _astart_memory_task

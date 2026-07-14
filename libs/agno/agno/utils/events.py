@@ -1116,6 +1116,11 @@ def handle_event(
     events_to_skip: Optional[List[Union[RunEvent, TeamRunEvent]]] = None,
     store_events: bool = False,
 ) -> Union[RunOutputEvent, TeamRunOutputEvent]:
+    # Propagate the run's OTel trace_id to every event so clients can correlate
+    # streamed events with traces in real time
+    if getattr(event, "trace_id", None) is None:
+        event.trace_id = run_response.trace_id
+
     # We only store events that are not run_response_content events
     _events_to_skip: List[str] = [event.value for event in events_to_skip] if events_to_skip else []
     if store_events and event.event not in _events_to_skip:

@@ -93,6 +93,8 @@ class BaseWorkflowRunOutputEvent(BaseRunOutputEvent):
     workflow_name: Optional[str] = None
     session_id: Optional[str] = None
     run_id: Optional[str] = None
+    # OpenTelemetry trace_id (32-char hex) for this run, when tracing is active
+    trace_id: Optional[str] = None
     step_id: Optional[str] = None
     parent_step_id: Optional[str] = None
 
@@ -705,6 +707,9 @@ class WorkflowRunOutput:
     workflow_name: Optional[str] = None
 
     run_id: Optional[str] = None
+    # OpenTelemetry trace_id (32-char hex) for this run, when tracing is active.
+    # Matches the trace_id in the Agno traces table and in OTLP backends (Langfuse etc.)
+    trace_id: Optional[str] = None
     session_id: Optional[str] = None
     user_id: Optional[str] = None
 

@@ -113,6 +113,7 @@ from agno.utils.log import (
     log_info,
     log_warning,
 )
+from agno.utils.otel import get_current_trace_id
 from agno.utils.response import get_paused_content
 
 # Strong references to background tasks so they aren't garbage-collected mid-execution.
@@ -371,6 +372,10 @@ def _run(
     15. Create session summary
     16. Cleanup and store the run response and session
     """
+    # Capture the OTel trace_id for this run while the tracing span is active
+    if run_response.trace_id is None:
+        run_response.trace_id = get_current_trace_id()
+
     from agno.agent._hooks import execute_post_hooks, execute_pre_hooks
     from agno.agent._init import disconnect_connectable_tools
     from agno.agent._messages import get_run_messages
@@ -783,6 +788,10 @@ def _run_stream(
     12. Create session summary
     13. Cleanup and store the run response and session
     """
+    # Capture the OTel trace_id for this run while the tracing span is active
+    if run_response.trace_id is None:
+        run_response.trace_id = get_current_trace_id()
+
     from agno.agent._hooks import execute_post_hooks, execute_pre_hooks
     from agno.agent._init import disconnect_connectable_tools
     from agno.agent._messages import get_run_messages
@@ -1504,6 +1513,10 @@ async def _arun(
     15. Create session summary
     16. Cleanup and store (scrub, stop timer, save to file, add to session, calculate metrics, save session)
     """
+    # Capture the OTel trace_id for this run while the tracing span is active
+    if run_response.trace_id is None:
+        run_response.trace_id = get_current_trace_id()
+
     from agno.agent._hooks import aexecute_post_hooks, aexecute_pre_hooks
     from agno.agent._init import disconnect_connectable_tools, disconnect_mcp_tools
     from agno.agent._messages import aget_run_messages
@@ -2178,6 +2191,10 @@ async def _arun_stream(
     12. Create session summary
     13. Cleanup and store (scrub, stop timer, save to file, add to session, calculate metrics, save session)
     """
+    # Capture the OTel trace_id for this run while the tracing span is active
+    if run_response.trace_id is None:
+        run_response.trace_id = get_current_trace_id()
+
     from agno.agent._hooks import aexecute_post_hooks, aexecute_pre_hooks
     from agno.agent._init import disconnect_connectable_tools, disconnect_mcp_tools
     from agno.agent._messages import aget_run_messages
