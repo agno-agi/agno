@@ -23,10 +23,10 @@ class ExcelReader(Reader):
     def __init__(
         self,
         sheets: Optional[List[Union[str, int]]] = None,
-        chunking_strategy: Optional[ChunkingStrategy] = RowChunking(),
+        chunking_strategy: Optional[ChunkingStrategy] = None,
         **kwargs,
     ):
-        super().__init__(chunking_strategy=chunking_strategy, **kwargs)
+        super().__init__(chunking_strategy=chunking_strategy or RowChunking(), **kwargs)
         self.sheets = sheets
 
     @classmethod
