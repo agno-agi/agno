@@ -45,6 +45,8 @@ def make_agent_mock():
             status="OK", content="done", reasoning_content=None, images=None, files=None, videos=None, audio=None
         )
     )
+    # Session lookup returns None by default so resolve_session_id uses the new key format
+    agent_mock.aget_session = AsyncMock(return_value=None)
     return agent_mock
 
 

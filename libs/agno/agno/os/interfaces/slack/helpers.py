@@ -23,6 +23,39 @@ def derive_session_id(entity_id: str, channel_id: str, thread_ts: str) -> str:
     return f"{entity_id}:{channel_id}:{thread_ts}"
 
 
+async def _session_exists(entity: Any, session_id: str) -> bool:
+    # Local Agent/Team/Workflow expose aget_session (returns None on miss);
+    # remote entities expose reads via db.get_session. Any probe failure
+    # counts as "not found" so we fall back to the new key.
+    try:
+        aget_session = getattr(entity, "aget_session", None)
+        if aget_session is not None:
+            return await aget_session(session_id=session_id) is not None
+        db = getattr(entity, "db", None)
+        if db is not None:
+            get_session = getattr(db, "get_session", None)
+            if get_session is not None:
+                import asyncio
+
+                if asyncio.iscoroutinefunction(get_session):
+                    return await get_session(session_id=session_id) is not None
+                return get_session(session_id=session_id) is not None
+    except Exception:
+        pass
+    return False
+
+
+async def resolve_session_id(entity: Any, entity_id: str, channel_id: str, thread_ts: str) -> str:
+    # Sessions created before channel-scoped keys were stored as
+    # "{entity_id}:{thread_ts}". Probe for existing legacy session so an
+    # upgrade doesn't orphan thread history; only genuinely new threads get
+    # the collision-safe channel-scoped key. Costs one session read per event.
+    legacy_id = f"{entity_id}:{thread_ts}"
+    if await _session_exists(entity, legacy_id):
+        return legacy_id
+    return derive_session_id(entity_id, channel_id, thread_ts)
+
+
 def task_id(agent_name: Optional[str], base_id: str) -> str:
     # Prefix card IDs per agent so concurrent tool calls from different
     # team members don't collide in the Slack stream

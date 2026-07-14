@@ -179,6 +179,7 @@ def extract_submit_context(payload: Dict[str, Any], entity_id: str) -> Optional[
     button_value = actions[0].get("value") or ""
     _, awaiting_ts = decode_submit_button_value(button_value)
 
+    # Provisional new-format key; handle_submit re-resolves for backward compat
     return SubmitContext(
         run_id=run_id,
         channel=channel,

@@ -401,3 +401,71 @@ class TestDeriveSessionId:
     def test_format_is_entity_channel_thread(self):
         key = derive_session_id("my-bot", "C123", "1708123456.000100")
         assert key == "my-bot:C123:1708123456.000100"
+
+
+class TestResolveSessionId:
+    @pytest.mark.asyncio
+    async def test_returns_legacy_key_when_session_exists(self):
+        from unittest.mock import AsyncMock, MagicMock
+
+        from agno.os.interfaces.slack.helpers import resolve_session_id
+
+        entity = MagicMock()
+        entity.aget_session = AsyncMock(return_value={"session_id": "agent-1:111.222"})
+
+        key = await resolve_session_id(entity, "agent-1", "C123", "111.222")
+        assert key == "agent-1:111.222"
+        entity.aget_session.assert_awaited_once_with(session_id="agent-1:111.222")
+
+    @pytest.mark.asyncio
+    async def test_returns_new_key_when_no_legacy_session(self):
+        from unittest.mock import AsyncMock, MagicMock
+
+        from agno.os.interfaces.slack.helpers import resolve_session_id
+
+        entity = MagicMock()
+        entity.aget_session = AsyncMock(return_value=None)
+
+        key = await resolve_session_id(entity, "agent-1", "C123", "111.222")
+        assert key == "agent-1:C123:111.222"
+
+    @pytest.mark.asyncio
+    async def test_returns_new_key_when_aget_session_raises(self):
+        from unittest.mock import AsyncMock, MagicMock
+
+        from agno.os.interfaces.slack.helpers import resolve_session_id
+
+        entity = MagicMock()
+        entity.aget_session = AsyncMock(side_effect=Exception("DB error"))
+
+        key = await resolve_session_id(entity, "agent-1", "C123", "111.222")
+        assert key == "agent-1:C123:111.222"
+
+    @pytest.mark.asyncio
+    async def test_falls_back_to_db_get_session_for_remote_entities(self):
+        from unittest.mock import AsyncMock, MagicMock
+
+        from agno.os.interfaces.slack.helpers import resolve_session_id
+
+        # Remote entities don't have aget_session but have db.get_session
+        entity = MagicMock(spec=[])
+        del entity.aget_session
+        entity.db = MagicMock()
+        entity.db.get_session = AsyncMock(return_value={"session_id": "agent-1:111.222"})
+
+        key = await resolve_session_id(entity, "agent-1", "C123", "111.222")
+        assert key == "agent-1:111.222"
+
+    @pytest.mark.asyncio
+    async def test_returns_new_key_when_no_db_access(self):
+        from unittest.mock import MagicMock
+
+        from agno.os.interfaces.slack.helpers import resolve_session_id
+
+        # Entity with neither aget_session nor db
+        entity = MagicMock(spec=[])
+        del entity.aget_session
+        entity.db = None
+
+        key = await resolve_session_id(entity, "agent-1", "C123", "111.222")
+        assert key == "agent-1:C123:111.222"
