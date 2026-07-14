@@ -6,8 +6,9 @@ from pathlib import Path
 
 import pytest
 
+from agno.agent import Agent
 from agno.tools import Toolkit, tool
-from agno.tools.function import Function
+from agno.tools.function import Function, FunctionCall
 
 
 def example_func(a: int, b: int) -> int:
@@ -425,6 +426,31 @@ class TestToolDecoratorOnClassMethods:
         assert "run_context" not in func.parameters.get("properties", {})
         assert "key" in func.parameters.get("properties", {})
         assert "value" in func.parameters.get("properties", {})
+
+    def test_tool_decorator_injects_agent_by_type_with_stringized_annotation(self):
+        """A stringized type annotation (as produced by `from __future__ import annotations`)
+        must resolve so the agent is still injected by type."""
+
+        class MyToolkit(Toolkit):
+            def __init__(self):
+                self.captured_agent = None
+                super().__init__(name="test_toolkit", tools=[self.note])
+
+            @tool(name="note")
+            def note(self, text: str, my_agent: "Agent") -> str:
+                """Save a note."""
+                self.captured_agent = my_agent
+                return f"noted:{text}"
+
+        toolkit = MyToolkit()
+        func = toolkit.functions["note"]
+        agent = Agent(name="tester")
+        func._agent = agent
+
+        result = FunctionCall(function=func, arguments={"text": "hi"}).execute()
+
+        assert result.status == "success"
+        assert toolkit.captured_agent is agent
 
     def test_tool_decorator_multiple_methods(self):
         """Test multiple @tool decorated methods in same toolkit."""

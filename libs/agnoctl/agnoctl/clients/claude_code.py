@@ -17,6 +17,7 @@ After the write, connect reads the entry back and re-verifies it, so a write tha
 take effect (or a shadowing entry) is reported, never assumed.
 """
 
+import json
 import shutil
 import subprocess
 from pathlib import Path
@@ -25,9 +26,15 @@ from typing import Any, Callable, Dict, List, Optional
 from agnoctl.clients.base import (
     ClientAdapter,
     ExistingEntry,
+    RemoveResult,
+    UrlMatcher,
     WriteResult,
+    atomic_write_text,
     bearer_header,
+    pop_server_entry,
     read_json_lenient,
+    read_json_strict,
+    remove_servers_entry,
     servers_table,
     token_from_authorization,
     write_servers_entry,
@@ -78,34 +85,72 @@ class ClaudeCodeAdapter(ClientAdapter):
     def detect(self) -> bool:
         return self._which("claude") is not None or self._user_config_path.exists()
 
-    def read_existing(self, server_name: str) -> Optional[ExistingEntry]:
-        """Return the entry Claude Code would resolve: local > project > user scope."""
+    def _scoped_servers(self) -> "List[tuple[Dict[str, Any], str]]":
+        """(servers table, location label) per scope, in Claude Code's resolution
+        precedence: local (~/.claude.json projects.<cwd>) > project (.mcp.json) > user
+        (~/.claude.json mcpServers)."""
+        scopes: "List[tuple[Dict[str, Any], str]]" = []
         user_config = read_json_lenient(self._user_config_path)
-
         if user_config:
             projects = user_config.get("projects")
             if isinstance(projects, dict):
                 project = projects.get(str(self.cwd))
                 if isinstance(project, dict):
-                    entry = _entry_from_servers(
-                        servers_table(project), server_name, str(self._user_config_path) + " (local scope)"
-                    )
-                    if entry:
-                        return entry
-
+                    scopes.append((servers_table(project), str(self._user_config_path) + " (local scope)"))
         project_config = read_json_lenient(self._project_config_path)
         if project_config:
-            entry = _entry_from_servers(servers_table(project_config), server_name, str(self._project_config_path))
-            if entry:
-                return entry
-
+            scopes.append((servers_table(project_config), str(self._project_config_path)))
         if user_config:
-            entry = _entry_from_servers(
-                servers_table(user_config), server_name, str(self._user_config_path) + " (user scope)"
-            )
+            scopes.append((servers_table(user_config), str(self._user_config_path) + " (user scope)"))
+        return scopes
+
+    def read_existing(self, server_name: str) -> Optional[ExistingEntry]:
+        """Return the entry Claude Code would resolve: local > project > user scope."""
+        for servers, location in self._scoped_servers():
+            entry = _entry_from_servers(servers, server_name, location)
             if entry:
                 return entry
         return None
+
+    def list_entries(self) -> Dict[str, ExistingEntry]:
+        entries: Dict[str, ExistingEntry] = {}
+        for servers, location in self._scoped_servers():
+            for name in servers:
+                if name not in entries:
+                    entry = _entry_from_servers(servers, name, location)
+                    if entry:
+                        entries[name] = entry
+        return entries
+
+    def remove(self, server_name: str, matches: Optional[UrlMatcher] = None) -> RemoveResult:
+        """Delete the entry from every scope it lives in: local (~/.claude.json
+        projects.<cwd>), project (.mcp.json), and user (~/.claude.json mcpServers).
+        Both ~/.claude.json scopes are handled in one strict read + one atomic write."""
+        removed_local = removed_user = False
+        if self._user_config_path.exists():
+            config = read_json_strict(self._user_config_path)
+            projects = config.get("projects")
+            if isinstance(projects, dict):
+                project = projects.get(str(self.cwd))
+                if isinstance(project, dict):
+                    removed_local = pop_server_entry(project, server_name, matches)
+            removed_user = pop_server_entry(config, server_name, matches)
+            if removed_local or removed_user:
+                atomic_write_text(self._user_config_path, json.dumps(config, indent=2) + "\n", secure=False)
+
+        removed_project = remove_servers_entry(self._project_config_path, server_name, matches)
+
+        # Report in Claude Code's resolution precedence: local > project > user.
+        locations: List[str] = []
+        if removed_local:
+            locations.append(str(self._user_config_path) + " (local scope)")
+        if removed_project:
+            locations.append(str(self._project_config_path))
+        if removed_user:
+            locations.append(str(self._user_config_path) + " (user scope)")
+        if not locations:
+            return RemoveResult(removed=False)
+        return RemoveResult(removed=True, location=", ".join(locations))
 
     def write(self, server_name: str, url: str, token: Optional[str]) -> WriteResult:
         # A token on `claude mcp add`'s argv would be exposed to `ps`/proc and execve audit

@@ -6,6 +6,7 @@ Demonstrates research team.
 """
 
 from agno.agent.agent import Agent
+from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIResponses
 from agno.os import AgentOS
 from agno.os.interfaces.agui import AGUI
@@ -16,10 +17,13 @@ from agno.tools.websearch import WebSearchTools
 # Create Example
 # ---------------------------------------------------------------------------
 
+db = SqliteDb(db_file="/tmp/agui_research_team.db")
+
 researcher = Agent(
     name="researcher",
     role="Research Assistant",
     model=OpenAIResponses(id="gpt-5.4"),
+    db=db,
     instructions="You are a research assistant. Find information and provide detailed analysis.",
     tools=[WebSearchTools()],
     markdown=True,
@@ -29,6 +33,7 @@ writer = Agent(
     name="writer",
     role="Content Writer",
     model=OpenAIResponses(id="gpt-5.4"),
+    db=db,
     instructions="You are a content writer. Create well-structured content based on research.",
     tools=[WebSearchTools()],
     markdown=True,
