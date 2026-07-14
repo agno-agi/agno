@@ -1,4 +1,4 @@
-"""Tests for ShellTools confirmation gating (issue #8846).
+"""Tests for ShellTools confirmation gating.
 
 ShellTools.run_shell_command executes an arbitrary List[str] command — an RCE
 sink under prompt injection. The toolkit's requires_confirmation_tools gates it
