@@ -1,12 +1,8 @@
 """
-DaoXE Basic
-===========
+DaoXE Tool Use
+==============
 
-Cookbook example for `daoxe/basic.py`.
-
-DaoXE is a multi-model multi-protocol gateway. Use an exact account model ID
-from GET /v1/models (export as DAOXE_MODEL). Do not hardcode a public model
-price list.
+Cookbook example for `daoxe/tool_use.py`.
 """
 
 import asyncio
@@ -14,6 +10,7 @@ import os
 
 from agno.agent import Agent
 from agno.models.daoxe import DaoXE
+from agno.tools.websearch import WebSearchTools
 
 # ---------------------------------------------------------------------------
 # Create Agent
@@ -28,6 +25,7 @@ if not model_id:
 
 agent = Agent(
     model=DaoXE(id=model_id),
+    tools=[WebSearchTools()],
     markdown=True,
 )
 
@@ -36,15 +34,13 @@ agent = Agent(
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
     # --- Sync ---
-    agent.print_response("Share a 2 sentence practical tip about API gateways")
+    agent.print_response("Whats happening in France?")
 
     # --- Sync + Streaming ---
-    agent.print_response("Share a 2 sentence practical tip about API gateways", stream=True)
+    agent.print_response("Whats happening in France?", stream=True)
 
     # --- Async ---
-    asyncio.run(agent.aprint_response("Share a 2 sentence practical tip about API gateways"))
+    asyncio.run(agent.aprint_response("Whats happening in France?"))
 
     # --- Async + Streaming ---
-    asyncio.run(
-        agent.aprint_response("Share a 2 sentence practical tip about API gateways", stream=True)
-    )
+    asyncio.run(agent.aprint_response("Whats happening in France?", stream=True))

@@ -19,6 +19,12 @@ uv pip install -U openai agno
 
 ```shell
 python cookbook/90_models/daoxe/basic.py
+python cookbook/90_models/daoxe/tool_use.py
+python cookbook/90_models/daoxe/structured_output.py
 ```
 
-DaoXE also exposes OpenAI Responses and Anthropic Messages for other clients; this example uses Chat Completions via `OpenAIChat`.
+DaoXE also exposes OpenAI Responses and Anthropic Messages for other clients; these examples use Chat Completions via `agno.models.daoxe.DaoXE` (`OpenAILike`).
+
+Not available in mainland China.
+
+Docs / examples: https://github.com/seven7763/DaoXE-AI
