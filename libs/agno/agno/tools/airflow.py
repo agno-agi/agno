@@ -1,8 +1,10 @@
 from pathlib import Path
 from typing import Any, List, Optional, Union
 
+from agno.exceptions import PathSecurityError
 from agno.tools import Toolkit
-from agno.utils.log import log_debug, log_info, logger
+from agno.utils.log import log_debug, log_info, log_warning, logger
+from agno.utils.path_safety import safe_join_relative_path
 
 
 class AirflowTools(Toolkit):
@@ -18,13 +20,7 @@ class AirflowTools(Toolkit):
         quick start to work with airflow : https://airflow.apache.org/docs/apache-airflow/stable/start.html
         """
 
-        _dags_dir: Optional[Path] = None
-        if dags_dir is not None:
-            if isinstance(dags_dir, str):
-                _dags_dir = Path.cwd().joinpath(dags_dir)
-            else:
-                _dags_dir = dags_dir
-        self.dags_dir: Path = _dags_dir or Path.cwd()
+        self.dags_dir = Path(dags_dir).resolve() if dags_dir is not None else Path.cwd().resolve()
 
         tools: List[Any] = []
         if all or enable_save_dag_file:
@@ -42,13 +38,16 @@ class AirflowTools(Toolkit):
         :return: The file path if successful, otherwise returns an error message.
         """
         try:
-            file_path = self.dags_dir.joinpath(dag_file)
+            file_path = safe_join_relative_path(self.dags_dir, dag_file)
             log_debug(f"Saving contents to {file_path}")
             if not file_path.parent.exists():
                 file_path.parent.mkdir(parents=True, exist_ok=True)
             file_path.write_text(contents)
             log_info(f"Saved: {file_path}")
             return str(file_path)
+        except PathSecurityError as e:
+            log_warning(f"Error saving to file: {str(e)}")
+            return f"Error saving to file: {e}"
         except Exception as e:
             logger.exception("Error saving to file")
             return f"Error saving to file: {e}"
@@ -61,9 +60,12 @@ class AirflowTools(Toolkit):
         """
         try:
             log_info(f"Reading file: {dag_file}")
-            file_path = self.dags_dir.joinpath(dag_file)
+            file_path = safe_join_relative_path(self.dags_dir, dag_file)
             contents = file_path.read_text()
             return str(contents)
+        except PathSecurityError as e:
+            log_warning(f"Error reading file: {str(e)}")
+            return f"Error reading file: {e}"
         except Exception as e:
             logger.exception("Error reading file")
             return f"Error reading file: {e}"
