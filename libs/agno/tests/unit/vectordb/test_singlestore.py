@@ -5,7 +5,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from sqlalchemy.engine import Engine
 
-from agno.document import Document
+from agno.knowledge.document import Document
 from agno.vectordb.distance import Distance
 from agno.vectordb.singlestore import SingleStore
 
@@ -70,7 +70,7 @@ def sample_documents() -> List[Document]:
 
 def test_insert_documents(singlestore_db, sample_documents, mock_session):
     """Test inserting documents"""
-    singlestore_db.insert(sample_documents)
+    singlestore_db.insert(documents=sample_documents, content_hash="test_hash")
 
     # Verify insert was called for each document
     assert mock_session.execute.call_count == len(sample_documents)
@@ -112,7 +112,7 @@ def test_upsert_documents(singlestore_db, sample_documents, mock_session):
     modified_doc = Document(
         content="Tom Kha Gai is a spicy and sour Thai coconut soup", meta_data={"cuisine": "Thai", "type": "soup"}
     )
-    singlestore_db.upsert([modified_doc])
+    singlestore_db.upsert(documents=[modified_doc], content_hash="test_hash")
 
     # Verify upsert was called
     mock_session.execute.assert_called()
@@ -137,17 +137,6 @@ def test_distance_metrics(mock_engine):
         assert db_l2.distance == Distance.l2
 
 
-def test_doc_exists(singlestore_db, sample_documents, mock_session):
-    """Test document existence check"""
-    # Mock document exists
-    mock_session.execute.return_value.first.return_value = True
-    assert singlestore_db.doc_exists(sample_documents[0]) is True
-
-    # Mock document doesn't exist
-    mock_session.execute.return_value.first.return_value = None
-    assert singlestore_db.doc_exists(sample_documents[0]) is False
-
-
 @pytest.mark.asyncio
 async def test_error_handling(singlestore_db, mock_session):
     """Test error handling scenarios"""
@@ -157,7 +146,7 @@ async def test_error_handling(singlestore_db, mock_session):
     assert len(results) == 0
 
     # Test inserting empty document list
-    singlestore_db.insert([])
+    singlestore_db.insert(documents=[], content_hash="test_hash")
     mock_session.execute.return_value.scalar.return_value = 0
     assert singlestore_db.get_count() == 0
 
@@ -167,3 +156,204 @@ def test_custom_embedder(mock_engine, mock_embedder):
     with patch("agno.vectordb.singlestore.singlestore.sessionmaker"):
         db = SingleStore(collection=TEST_COLLECTION, schema=TEST_SCHEMA, db_engine=mock_engine, embedder=mock_embedder)
         assert db.embedder == mock_embedder
+
+
+def test_delete_by_id(singlestore_db, sample_documents, mock_session):
+    """Test deleting documents by ID"""
+    # Mock insert and get_count
+    with patch.object(singlestore_db, "insert"), patch.object(singlestore_db, "get_count") as mock_get_count:
+        singlestore_db.insert(documents=sample_documents, content_hash="test_hash")
+        mock_get_count.return_value = 3
+
+    # Mock delete_by_id method
+    with patch.object(singlestore_db, "delete_by_id") as mock_delete_by_id:
+        mock_delete_by_id.return_value = True
+
+        # Get the actual ID that would be generated for the first document
+        from hashlib import md5
+
+        cleaned_content = sample_documents[0].content.replace("\x00", "\ufffd")
+        doc_id = md5(cleaned_content.encode()).hexdigest()
+
+        # Test delete by ID
+        result = singlestore_db.delete_by_id(doc_id)
+        assert result is True
+        mock_delete_by_id.assert_called_once_with(doc_id)
+
+        # Test delete non-existent ID
+        mock_delete_by_id.reset_mock()
+        mock_delete_by_id.return_value = False
+        result = singlestore_db.delete_by_id("nonexistent_id")
+        assert result is False
+
+
+def test_delete_by_name(singlestore_db, sample_documents, mock_session):
+    """Test deleting documents by name"""
+    # Add names to sample documents
+    sample_documents[0].name = "tom_kha"
+    sample_documents[1].name = "pad_thai"
+    sample_documents[2].name = "green_curry"
+
+    # Mock insert and get_count
+    with patch.object(singlestore_db, "insert"), patch.object(singlestore_db, "get_count") as mock_get_count:
+        singlestore_db.insert(documents=sample_documents, content_hash="test_hash")
+        mock_get_count.return_value = 3
+
+    # Mock delete_by_name method
+    with patch.object(singlestore_db, "delete_by_name") as mock_delete_by_name:
+        mock_delete_by_name.return_value = True
+
+        # Test delete by name
+        result = singlestore_db.delete_by_name("tom_kha")
+        assert result is True
+        mock_delete_by_name.assert_called_once_with("tom_kha")
+
+        # Test delete non-existent name
+        mock_delete_by_name.reset_mock()
+        mock_delete_by_name.return_value = False
+        result = singlestore_db.delete_by_name("nonexistent")
+        assert result is False
+
+
+def test_delete_by_metadata(singlestore_db, sample_documents, mock_session):
+    """Test deleting documents by metadata"""
+    # Mock insert and get_count
+    with patch.object(singlestore_db, "insert"), patch.object(singlestore_db, "get_count") as mock_get_count:
+        singlestore_db.insert(documents=sample_documents, content_hash="test_hash")
+        mock_get_count.return_value = 3
+
+    # Mock delete_by_metadata method
+    with patch.object(singlestore_db, "delete_by_metadata") as mock_delete_by_metadata:
+        # Test delete all Thai cuisine documents
+        mock_delete_by_metadata.return_value = True
+        result = singlestore_db.delete_by_metadata({"cuisine": "Thai"})
+        assert result is True
+        mock_delete_by_metadata.assert_called_once_with({"cuisine": "Thai"})
+
+        # Test delete by specific metadata combination
+        mock_delete_by_metadata.reset_mock()
+        mock_delete_by_metadata.return_value = True
+        result = singlestore_db.delete_by_metadata({"cuisine": "Thai", "type": "soup"})
+        assert result is True
+        mock_delete_by_metadata.assert_called_once_with({"cuisine": "Thai", "type": "soup"})
+
+        # Test delete by non-existent metadata
+        mock_delete_by_metadata.reset_mock()
+        mock_delete_by_metadata.return_value = False
+        result = singlestore_db.delete_by_metadata({"cuisine": "Italian"})
+        assert result is False
+
+
+def test_delete_by_content_id(singlestore_db, sample_documents, mock_session):
+    """Test deleting documents by content ID"""
+    # Add content_id to sample documents
+    sample_documents[0].content_id = "recipe_1"
+    sample_documents[1].content_id = "recipe_2"
+    sample_documents[2].content_id = "recipe_3"
+
+    # Mock insert and get_count
+    with patch.object(singlestore_db, "insert"), patch.object(singlestore_db, "get_count") as mock_get_count:
+        singlestore_db.insert(documents=sample_documents, content_hash="test_hash")
+        mock_get_count.return_value = 3
+
+    # Mock delete_by_content_id method
+    with patch.object(singlestore_db, "delete_by_content_id") as mock_delete_by_content_id:
+        # Test delete by content_id
+        mock_delete_by_content_id.return_value = True
+        result = singlestore_db.delete_by_content_id("recipe_1")
+        assert result is True
+        mock_delete_by_content_id.assert_called_once_with("recipe_1")
+
+        # Test delete non-existent content_id
+        mock_delete_by_content_id.reset_mock()
+        mock_delete_by_content_id.return_value = False
+        result = singlestore_db.delete_by_content_id("nonexistent_content_id")
+        assert result is False
+
+
+def test_delete_by_name_multiple_documents(singlestore_db, mock_session):
+    """Test deleting multiple documents with the same name"""
+    # Create multiple documents with the same name
+    docs = [
+        Document(
+            content="First version of Tom Kha Gai",
+            meta_data={"version": "1"},
+            name="tom_kha",
+            content_id="recipe_1_v1",
+        ),
+        Document(
+            content="Second version of Tom Kha Gai",
+            meta_data={"version": "2"},
+            name="tom_kha",
+            content_id="recipe_1_v2",
+        ),
+        Document(
+            content="Pad Thai recipe",
+            meta_data={"version": "1"},
+            name="pad_thai",
+            content_id="recipe_2_v1",
+        ),
+    ]
+
+    # Mock insert and get_count
+    with patch.object(singlestore_db, "insert"), patch.object(singlestore_db, "get_count") as mock_get_count:
+        singlestore_db.insert(documents=docs, content_hash="test_hash")
+        mock_get_count.return_value = 3
+
+    # Mock delete_by_name and name_exists methods
+    with (
+        patch.object(singlestore_db, "delete_by_name") as mock_delete_by_name,
+        patch.object(singlestore_db, "name_exists") as mock_name_exists,
+    ):
+        mock_delete_by_name.return_value = True
+        mock_name_exists.side_effect = [False, True]  # tom_kha doesn't exist, pad_thai exists
+
+        # Test delete all documents with name "tom_kha"
+        result = singlestore_db.delete_by_name("tom_kha")
+        assert result is True
+        mock_delete_by_name.assert_called_once_with("tom_kha")
+
+        # Verify name_exists behavior
+        assert singlestore_db.name_exists("tom_kha") is False
+        assert singlestore_db.name_exists("pad_thai") is True
+
+
+def test_delete_by_metadata_complex(singlestore_db, mock_session):
+    """Test deleting documents with complex metadata matching"""
+    docs = [
+        Document(
+            content="Thai soup recipe",
+            meta_data={"cuisine": "Thai", "type": "soup", "spicy": True},
+            name="recipe_1",
+        ),
+        Document(
+            content="Thai noodle recipe",
+            meta_data={"cuisine": "Thai", "type": "noodles", "spicy": False},
+            name="recipe_2",
+        ),
+        Document(
+            content="Italian pasta recipe",
+            meta_data={"cuisine": "Italian", "type": "pasta", "spicy": False},
+            name="recipe_3",
+        ),
+    ]
+
+    # Mock insert and get_count
+    with patch.object(singlestore_db, "insert"), patch.object(singlestore_db, "get_count") as mock_get_count:
+        singlestore_db.insert(documents=docs, content_hash="test_hash")
+        mock_get_count.return_value = 3
+
+    # Mock delete_by_metadata method
+    with patch.object(singlestore_db, "delete_by_metadata") as mock_delete_by_metadata:
+        # Test delete only spicy Thai dishes
+        mock_delete_by_metadata.return_value = True
+        result = singlestore_db.delete_by_metadata({"cuisine": "Thai", "spicy": True})
+        assert result is True
+        mock_delete_by_metadata.assert_called_once_with({"cuisine": "Thai", "spicy": True})
+
+        # Test delete all non-spicy dishes
+        mock_delete_by_metadata.reset_mock()
+        mock_delete_by_metadata.return_value = True
+        result = singlestore_db.delete_by_metadata({"spicy": False})
+        assert result is True
+        mock_delete_by_metadata.assert_called_once_with({"spicy": False})

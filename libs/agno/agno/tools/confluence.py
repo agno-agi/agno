@@ -2,6 +2,8 @@ import json
 from os import getenv
 from typing import Any, List, Optional
 
+import requests
+
 from agno.tools import Toolkit
 from agno.utils.log import log_info, logger
 
@@ -37,7 +39,6 @@ class ConfluenceTools(Toolkit):
             - CONFLUENCE_API_KEY
         """
 
-        super().__init__(name="confluence_tools", **kwargs)
         self.url = url or getenv("CONFLUENCE_URL")
         self.username = username or getenv("CONFLUENCE_USERNAME")
         self.password = api_key or getenv("CONFLUENCE_API_KEY") or password or getenv("CONFLUENCE_PASSWORD")
@@ -55,21 +56,30 @@ class ConfluenceTools(Toolkit):
         if not self.password:
             raise ValueError("Confluence API KEY or password not provided")
 
-        self.confluence = Confluence(
-            url=self.url, username=self.username, password=self.password, verify_ssl=verify_ssl
-        )
+        session = requests.Session()
+        session.verify = verify_ssl
+
         if not verify_ssl:
             import urllib3
 
             urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-        tools: List[Any] = []
-        tools.append(self.get_page_content)
-        tools.append(self.get_space_key)
-        tools.append(self.create_page)
-        tools.append(self.update_page)
-        tools.append(self.get_all_space_detail)
-        tools.append(self.get_all_page_from_space)
+        self.confluence = Confluence(
+            url=self.url,
+            username=self.username,
+            password=self.password,
+            verify_ssl=verify_ssl,
+            session=session,
+        )
+
+        tools: List[Any] = [
+            self.get_page_content,
+            self.get_space_key,
+            self.create_page,
+            self.update_page,
+            self.get_all_space_detail,
+            self.get_all_page_from_space,
+        ]
 
         super().__init__(name="confluence_tools", tools=tools, **kwargs)
 
@@ -87,6 +97,9 @@ class ConfluenceTools(Toolkit):
         try:
             log_info(f"Retrieving page content from space '{space_name}'")
             key = self.get_space_key(space_name=space_name)
+            if key == "No space found":
+                return json.dumps({"error": f"Space '{space_name}' not found"})
+
             page = self.confluence.get_page_by_title(key, page_title, expand=expand)
             if page:
                 log_info(f"Successfully retrieved page '{page_title}' from space '{space_name}'")
@@ -96,7 +109,7 @@ class ConfluenceTools(Toolkit):
             return json.dumps({"error": f"Page '{page_title}' not found in space '{space_name}'"})
 
         except Exception as e:
-            logger.error(f"Error retrieving page '{page_title}': {e}")
+            logger.exception(f"Error retrieving page '{page_title}'")
             return json.dumps({"error": str(e)})
 
     def get_all_space_detail(self):
@@ -106,7 +119,20 @@ class ConfluenceTools(Toolkit):
             str: List of space details as a string.
         """
         log_info("Retrieving details for all Confluence spaces")
-        results = self.confluence.get_all_spaces()["results"]
+        results = []
+        start = 0
+        limit = 50
+
+        while True:
+            spaces_data = self.confluence.get_all_spaces(start=start, limit=limit)
+            if not spaces_data.get("results"):
+                break
+            results.extend(spaces_data["results"])
+
+            if len(spaces_data["results"]) < limit:
+                break
+            start += limit
+
         return str(results)
 
     def get_space_key(self, space_name: str):
@@ -118,13 +144,29 @@ class ConfluenceTools(Toolkit):
         Returns:
             str: Space key or "No space found" if space doesn't exist.
         """
-        result = self.confluence.get_all_spaces()
-        spaces = result["results"]
+        start = 0
+        limit = 50
 
-        for space in spaces:
-            if space["name"] == space_name:
-                log_info(f"Found space key for '{space_name}'")
-                return space["key"]
+        while True:
+            result = self.confluence.get_all_spaces(start=start, limit=limit)
+            if not result.get("results"):
+                break
+
+            spaces = result["results"]
+
+            for space in spaces:
+                if space["name"].lower() == space_name.lower():
+                    log_info(f"Found space key for '{space_name}': {space['key']}")
+                    return space["key"]
+
+            for space in spaces:
+                if space["key"] == space_name:
+                    log_info(f"'{space_name}' is already a space key")
+                    return space_name
+
+            if len(spaces) < limit:
+                break
+            start += limit
 
         logger.warning(f"No space named {space_name} found")
         return "No space found"
@@ -140,9 +182,17 @@ class ConfluenceTools(Toolkit):
         """
         log_info(f"Retrieving all pages from space '{space_name}'")
         space_key = self.get_space_key(space_name)
+
+        if space_key == "No space found":
+            return json.dumps({"error": f"Space '{space_name}' not found"})
+
         page_details = self.confluence.get_all_pages_from_space(
             space_key, status=None, expand=None, content_type="page"
         )
+
+        if not page_details:
+            return json.dumps({"error": f"No pages found in space '{space_name}'"})
+
         page_details = str([{"id": page["id"], "title": page["title"]} for page in page_details])
         return page_details
 
@@ -160,11 +210,14 @@ class ConfluenceTools(Toolkit):
         """
         try:
             space_key = self.get_space_key(space_name=space_name)
+            if space_key == "No space found":
+                return json.dumps({"error": f"Space '{space_name}' not found"})
+
             page = self.confluence.create_page(space_key, title, body, parent_id=parent_id)
             log_info(f"Page created: {title} with ID {page['id']}")
             return json.dumps({"id": page["id"], "title": title})
         except Exception as e:
-            logger.error(f"Error creating page '{title}': {e}")
+            logger.exception(f"Error creating page '{title}'")
             return json.dumps({"error": str(e)})
 
     def update_page(self, page_id: str, title: str, body: str) -> str:
@@ -183,5 +236,5 @@ class ConfluenceTools(Toolkit):
             log_info(f"Page updated: {title} with ID {updated_page['id']}")
             return json.dumps({"status": "success", "id": updated_page["id"]})
         except Exception as e:
-            logger.error(f"Error updating page '{title}': {e}")
+            logger.exception(f"Error updating page '{title}'")
             return json.dumps({"error": str(e)})

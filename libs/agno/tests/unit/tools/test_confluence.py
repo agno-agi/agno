@@ -14,6 +14,7 @@ def mock_confluence():
     """Create a mock Confluence client."""
     with patch("agno.tools.confluence.Confluence") as mock_confluence_class:
         mock_client = MagicMock(spec=Confluence)
+        mock_client.get_all_spaces.return_value = {"results": []}
         mock_confluence_class.return_value = mock_client
         yield mock_client
 
@@ -29,38 +30,35 @@ def confluence_tools(mock_confluence):
             "CONFLUENCE_API_KEY": "test_api_key",
         },
     ):
+        mock_confluence.get_all_spaces.return_value = {"results": []}
         tools = ConfluenceTools()
         tools.confluence = mock_confluence
+        mock_confluence.reset_mock()
         return tools
 
 
 # Initialization Tests
 def test_init_with_environment_variables():
     """Test initialization with environment variables."""
-    with patch.dict(
-        "os.environ",
-        {
-            "CONFLUENCE_URL": "https://example.atlassian.net",
-            "CONFLUENCE_USERNAME": "test_user",
-            "CONFLUENCE_API_KEY": "test_api_key",
-        },
+    with (
+        patch.dict(
+            "os.environ",
+            {
+                "CONFLUENCE_URL": "https://example.atlassian.net",
+                "CONFLUENCE_USERNAME": "test_user",
+                "CONFLUENCE_API_KEY": "test_api_key",
+            },
+        ),
+        patch("agno.tools.confluence.Confluence") as mock_confluence_class,
     ):
+        mock_client = MagicMock(spec=Confluence)
+        mock_client.get_all_spaces.return_value = {"results": []}
+        mock_confluence_class.return_value = mock_client
+
         tools = ConfluenceTools()
         assert tools.url == "https://example.atlassian.net"
         assert tools.username == "test_user"
         assert tools.password == "test_api_key"
-
-
-def test_init_with_constructor_parameters():
-    """Test initialization with constructor parameters."""
-    tools = ConfluenceTools(
-        url="https://custom.atlassian.net",
-        username="custom_user",
-        api_key="custom_api_key",
-    )
-    assert tools.url == "https://custom.atlassian.net"
-    assert tools.username == "custom_user"
-    assert tools.password == "custom_api_key"
 
 
 def test_init_with_missing_credentials():

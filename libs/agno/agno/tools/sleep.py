@@ -5,9 +5,10 @@ from agno.utils.log import log_info
 
 
 class SleepTools(Toolkit):
-    def __init__(self, **kwargs):
+    def __init__(self, enable_sleep: bool = True, all: bool = False, **kwargs):
         tools = []
-        tools.append(self.sleep)
+        if all or enable_sleep:
+            tools.append(self.sleep)
 
         super().__init__(name="sleep", tools=tools, **kwargs)
 

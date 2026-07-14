@@ -10,8 +10,8 @@ REM Get current directory
 SET "CURR_DIR=%~dp0"
 SET "REPO_ROOT=%CURR_DIR%\.."
 SET "AGNO_DIR=%REPO_ROOT%\libs\agno"
-SET "AGNO_DOCKER_DIR=%REPO_ROOT%\libs\infra\agno_docker"
-SET "AGNO_AWS_DIR=%REPO_ROOT%\libs\infra\agno_aws"
+SET "AGNO_INFRA_DIR=%REPO_ROOT%\libs\agno_infra"
+SET "COOKBOOK_DIR=%REPO_ROOT%\cookbook"
 
 REM Function to print headings
 CALL :print_heading "Validating all libraries"
@@ -22,13 +22,8 @@ IF NOT EXIST "%AGNO_DIR%" (
     EXIT /B 1
 )
 
-IF NOT EXIST "%AGNO_DOCKER_DIR%" (
-    ECHO [ERROR] AGNO_DOCKER_DIR: %AGNO_DOCKER_DIR% does not exist
-    EXIT /B 1
-)
-
-IF NOT EXIST "%AGNO_AWS_DIR%" (
-    ECHO [ERROR] AGNO_AWS_DIR: %AGNO_AWS_DIR% does not exist
+IF NOT EXIST "%AGNO_INFRA_DIR%" (
+    ECHO [ERROR] AGNO_INFRA_DIR: %AGNO_INFRA_DIR% does not exist
     EXIT /B 1
 )
 
@@ -45,16 +40,16 @@ IF EXIST %AGNO_VALIDATE% (
     ECHO [WARNING] %AGNO_VALIDATE% does not exist, skipping
 )
 
-SET AGNO_DOCKER_VALIDATE="%AGNO_DOCKER_DIR%\scripts\validate.bat"
-IF EXIST %AGNO_DOCKER_VALIDATE% (
-    ECHO [INFO] Running %AGNO_DOCKER_VALIDATE%
-    CALL %AGNO_DOCKER_VALIDATE%
+SET AGNO_INFRA_VALIDATE="%AGNO_INFRA_DIR%\scripts\validate.bat"
+IF EXIST %AGNO_INFRA_VALIDATE% (
+    ECHO [INFO] Running %AGNO_INFRA_VALIDATE%
+    CALL %AGNO_INFRA_VALIDATE%
     IF %ERRORLEVEL% NEQ 0 (
-        ECHO [ERROR] %AGNO_DOCKER_VALIDATE% failed with exit code %ERRORLEVEL%
+        ECHO [ERROR] %AGNO_INFRA_VALIDATE% failed with exit code %ERRORLEVEL%
         EXIT /B %ERRORLEVEL%
     )
 ) ELSE (
-    ECHO [WARNING] %AGNO_DOCKER_VALIDATE% does not exist, skipping
+    ECHO [WARNING] %AGNO_INFRA_VALIDATE% does not exist, skipping
 )
 
 SET AGNO_AWS_VALIDATE="%AGNO_AWS_DIR%\scripts\validate.bat"
@@ -67,7 +62,15 @@ IF EXIST %AGNO_AWS_VALIDATE% (
     )
 ) ELSE (
     ECHO [WARNING] %AGNO_AWS_VALIDATE% does not exist, skipping
-)
+@REM )
+
+@REM SET COOKBOOK_VALIDATE="%COOKBOOK_DIR%\scripts\validate.bat"
+@REM IF EXIST %COOKBOOK_VALIDATE% (
+@REM     ECHO [INFO] Running %COOKBOOK_VALIDATE%
+@REM     CALL %COOKBOOK_VALIDATE%
+@REM ) ELSE (
+@REM     ECHO [WARNING] %COOKBOOK_VALIDATE% does not exist, skipping
+@REM )
 
 ECHO [INFO] All validations complete.
 EXIT /B 0
@@ -79,4 +82,4 @@ ECHO ##################################################
 ECHO # %1
 ECHO ##################################################
 ECHO.
-EXIT /B 
+EXIT /B

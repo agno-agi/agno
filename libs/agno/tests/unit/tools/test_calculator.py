@@ -11,28 +11,19 @@ from agno.tools.calculator import CalculatorTools
 @pytest.fixture
 def calculator_tools():
     """Create a CalculatorTools instance with all operations enabled."""
-    return CalculatorTools(enable_all=True)
+    return CalculatorTools()
 
 
 @pytest.fixture
 def basic_calculator_tools():
     """Create a CalculatorTools instance with only basic operations."""
-    return CalculatorTools()
+    return CalculatorTools(include_tools=["add", "subtract", "multiply", "divide"])
 
 
 def test_initialization_with_selective_operations():
     """Test initialization with only selected operations."""
     # Only enable specific operations
-    tools = CalculatorTools(
-        add=True,
-        subtract=True,
-        multiply=False,
-        divide=False,
-        exponentiate=True,
-        factorial=False,
-        is_prime=True,
-        square_root=False,
-    )
+    tools = CalculatorTools(include_tools=["add", "subtract", "exponentiate", "is_prime"])
 
     # Check which functions are registered
     function_names = [func.name for func in tools.functions.values()]
@@ -49,7 +40,7 @@ def test_initialization_with_selective_operations():
 
 def test_initialization_with_all_operations():
     """Test initialization with all operations enabled."""
-    tools = CalculatorTools(enable_all=True)
+    tools = CalculatorTools()
 
     function_names = [func.name for func in tools.functions.values()]
 
@@ -248,17 +239,17 @@ def test_basic_calculator_has_only_basic_operations(basic_calculator_tools):
 
 def test_error_logging(calculator_tools):
     """Test that errors are properly logged."""
-    with patch("agno.tools.calculator.logger.error") as mock_logger:
+    with patch("agno.tools.calculator.log_error") as mock_log_error:
         calculator_tools.divide(5, 0)
-        mock_logger.assert_called_once_with("Attempt to divide by zero")
+        mock_log_error.assert_called_once_with("Attempt to divide by zero")
 
-        mock_logger.reset_mock()
+        mock_log_error.reset_mock()
         calculator_tools.factorial(-1)
-        mock_logger.assert_called_once_with("Attempt to calculate factorial of a negative number")
+        mock_log_error.assert_called_once_with("Attempt to calculate factorial of a negative number")
 
-        mock_logger.reset_mock()
+        mock_log_error.reset_mock()
         calculator_tools.square_root(-4)
-        mock_logger.assert_called_once_with("Attempt to calculate square root of a negative number")
+        mock_log_error.assert_called_once_with("Attempt to calculate square root of a negative number")
 
 
 def test_large_numbers(calculator_tools):

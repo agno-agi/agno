@@ -1,0 +1,254 @@
+name: PR Triage
+
+on:
+  pull_request_target:
+    types:
+      - opened
+
+permissions:
+  pull-requests: write
+  issues: read
+
+jobs:
+  triage:
+    name: Triage PR
+    runs-on: ubuntu-latest
+    steps:
+      - name: Triage PR
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const pr = context.payload.pull_request;
+            const author = pr.user.login;
+            const body = (pr.body || '');
+            const bodyLower = body.toLowerCase();
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const prNumber = pr.number;
+
+            const labels = [];
+            const findings = [];
+
+            // --- Helper: check if author is an org member / collaborator ---
+            function isOrgMember() {
+              const association = pr.author_association;
+              return ['MEMBER', 'OWNER', 'COLLABORATOR'].includes(association);
+            }
+
+            async function hasWriteAccess() {
+              try {
+                const { data: permLevel } = await github.rest.repos.getCollaboratorPermissionLevel({
+                  owner, repo, username: author,
+                });
+                return ['admin', 'maintain', 'write'].includes(permLevel.permission);
+              } catch (err) {
+                console.log(`Could not check permissions for ${author}: ${err.message}`);
+                return false;
+              }
+            }
+
+            const skipChecks = isOrgMember() || await hasWriteAccess();
+
+            // --- 1. First-time contributor label (applied immediately) ---
+            try {
+              const { data: searchResult } = await github.rest.search.issuesAndPullRequests({
+                q: `repo:${owner}/${repo} type:pr author:${author}`,
+                per_page: 1,
+              });
+              if (searchResult.total_count <= 1) {
+                await github.rest.issues.addLabels({
+                  owner, repo, issue_number: prNumber, labels: ['first-time-contributor'],
+                });
+              }
+            } catch (err) {
+              console.log(`Could not check/label first-time contributor: ${err.message}`);
+            }
+
+            // --- All remaining checks are skipped for org members / collaborators ---
+            if (!skipChecks) {
+
+              // --- 2. Missing issue link ---
+              const hasIssueRef = /(?:fixes|closes|resolves|fix|close|resolve)\s+#\d+/.test(bodyLower)
+                || /#\d+/.test(bodyLower)
+                || /github\.com\/agno-agi\/agno\/issues\/\d+/.test(bodyLower);
+
+              if (!hasIssueRef) {
+                labels.push('missing-issue-link');
+                findings.push(
+                  '**Missing issue link:** Please link the issue this PR addresses using `fixes #<issue_number>`, '
+                  + '`closes #<issue_number>`, or `resolves #<issue_number>` in the PR description. '
+                  + 'If there is no existing issue, please create one first.'
+                );
+              }
+
+              // --- 3. Missing tests ---
+              try {
+                const files = await github.paginate(github.rest.pulls.listFiles, {
+                  owner, repo, pull_number: prNumber, per_page: 100,
+                });
+
+                const changedFiles = files.map(f => f.filename);
+                const touchesSource = changedFiles.some(f =>
+                  f.startsWith('libs/agno/agno/') && f.endsWith('.py')
+                );
+                const touchesTests = changedFiles.some(f =>
+                  f.includes('/tests/') && f.endsWith('.py')
+                );
+
+                if (touchesSource && !touchesTests) {
+                  labels.push('missing-tests');
+                  findings.push(
+                    '**Missing tests:** This PR modifies source code but does not include any test changes. '
+                    + 'Please add or update tests to cover your changes.'
+                  );
+                }
+              } catch (err) {
+                console.log(`Could not check for missing tests: ${err.message}`);
+              }
+
+              // --- 4. Duplicate PRs and issue assignment checks ---
+              const issueRefs = new Set();
+              const closingPatterns = [
+                /(?:fixes|closes|resolves|fix|close|resolve)\s+#(\d+)/gi,
+                /github\.com\/agno-agi\/agno\/issues\/(\d+)/gi,
+              ];
+
+              for (const pattern of closingPatterns) {
+                let match;
+                while ((match = pattern.exec(body)) !== null) {
+                  issueRefs.add(parseInt(match[1], 10));
+                }
+              }
+
+              if (issueRefs.size > 0) {
+                // --- 4a. Duplicate detection ---
+                try {
+                  const duplicates = [];
+                  for (const issueNumber of issueRefs) {
+                    const { data: searchResult } = await github.rest.search.issuesAndPullRequests({
+                      q: `repo:${owner}/${repo} is:pr is:open ${issueNumber} in:body`,
+                      per_page: 10,
+                    });
+                    for (const item of searchResult.items) {
+                      if (item.number !== prNumber && item.pull_request) {
+                        duplicates.push({ issue: issueNumber, pr: item.number });
+                      }
+                    }
+                  }
+
+                  if (duplicates.length > 0) {
+                    labels.push('possible-duplicate');
+                    const prLinks = duplicates.map(d => `- #${d.pr} (also references issue #${d.issue})`).join('\n');
+                    findings.push(
+                      '**Possible duplicate:** The following open PRs also reference the same issue(s):\n\n'
+                      + prLinks + '\n\n'
+                      + 'If this is intentional, please explain in your PR description why this approach is preferred. '
+                      + 'Otherwise, consider collaborating on the existing PR instead.'
+                    );
+                  }
+                } catch (err) {
+                  console.log(`Could not check for duplicates: ${err.message}`);
+                }
+
+                // --- 4b. Linked issue assigned to someone else ---
+                try {
+                  const conflicts = [];
+                  for (const issueNumber of issueRefs) {
+                    try {
+                      const { data: issue } = await github.rest.issues.get({
+                        owner, repo, issue_number: issueNumber,
+                      });
+                      if (issue.assignees && issue.assignees.length > 0) {
+                        const assignedToAuthor = issue.assignees.some(a => a.login === author);
+                        if (!assignedToAuthor) {
+                          const assignees = issue.assignees.map(a => `@${a.login}`).join(', ');
+                          conflicts.push({ issue: issueNumber, assignees });
+                        }
+                      }
+                    } catch (err) {
+                      console.log(`Could not fetch issue #${issueNumber}: ${err.message}`);
+                    }
+                  }
+
+                  if (conflicts.length > 0) {
+                    labels.push('issue-assigned-to-other');
+                    const details = conflicts.map(c => `- Issue #${c.issue} is assigned to ${c.assignees}`).join('\n');
+                    findings.push(
+                      '**Issue assigned to someone else:** This PR references an issue that is already assigned:\n\n'
+                      + details + '\n\n'
+                      + 'Please confirm with the assignee or a maintainer in the issue comments before proceeding.'
+                    );
+                  }
+                } catch (err) {
+                  console.log(`Could not check issue assignments: ${err.message}`);
+                }
+              }
+
+              // --- 5. Low-context PR ---
+              const strippedBody = body
+                .replace(/## Summary/g, '')
+                .replace(/## Type of change/g, '')
+                .replace(/## Checklist/g, '')
+                .replace(/## Additional Notes/g, '')
+                .replace(/### Duplicate and AI-Generated PR Check/g, '')
+                .replace(/- \[ \] .*/g, '')
+                .replace(/- \[x\] .*/g, '')
+                .replace(/---/g, '')
+                .replace(/\(If applicable.*\)/g, '')
+                .replace(/Add any important context.*/g, '')
+                .replace(/Describe key changes.*/g, '')
+                .trim();
+
+              if (strippedBody.length < 30) {
+                labels.push('needs-description');
+                findings.push(
+                  '**Needs description:** This PR has little or no description beyond the template defaults. '
+                  + 'Please fill in the Summary section explaining what this PR does and why.'
+                );
+              }
+            }
+
+            // --- Apply all labels at once ---
+            if (labels.length > 0) {
+              await github.rest.issues.addLabels({
+                owner, repo, issue_number: prNumber, labels,
+              });
+            }
+
+            // --- Determine if PR should be auto-closed ---
+            const shouldClose = labels.includes('issue-assigned-to-other') || labels.includes('possible-duplicate');
+
+            // --- Post a single consolidated comment ---
+            if (findings.length > 0) {
+              const header = findings.length === 1
+                ? '### PR Triage\n\n'
+                : '### PR Triage\n\nA few things to address before this PR can be reviewed:\n\n';
+
+              let comment = header + findings.join('\n\n---\n\n');
+
+              if (shouldClose) {
+                comment += '\n\n---\n\n';
+                comment += '**This PR has been automatically closed.** ';
+                if (labels.includes('issue-assigned-to-other') && labels.includes('possible-duplicate')) {
+                  comment += 'The linked issue is already assigned to someone else and there is an existing PR for it. ';
+                } else if (labels.includes('issue-assigned-to-other')) {
+                  comment += 'The linked issue is already assigned to someone else. ';
+                } else {
+                  comment += 'There is already an open PR addressing this issue. ';
+                }
+                comment += 'If you believe your contribution is valuable, please comment on the original issue explaining your approach and why it might be preferred. ';
+                comment += 'A maintainer can reopen this PR if appropriate.';
+              }
+
+              await github.rest.issues.createComment({
+                owner, repo, issue_number: prNumber, body: comment,
+              });
+            }
+
+            // --- Auto-close PR if it conflicts with existing work ---
+            if (shouldClose) {
+              await github.rest.pulls.update({
+                owner, repo, pull_number: prNumber, state: 'closed',
+              });
+              console.log(`PR #${prNumber} auto-closed due to: ${labels.filter(l => l === 'issue-assigned-to-other' || l === 'possible-duplicate').join(', ')}`);
+            }

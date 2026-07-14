@@ -26,6 +26,8 @@ class BraveSearchTools(Toolkit):
         api_key: Optional[str] = None,
         fixed_max_results: Optional[int] = None,
         fixed_language: Optional[str] = None,
+        enable_brave_search: bool = True,
+        all: bool = False,
         **kwargs,
     ):
         self.api_key = api_key or getenv("BRAVE_API_KEY")
@@ -38,7 +40,8 @@ class BraveSearchTools(Toolkit):
         self.brave_client = Brave(api_key=self.api_key)
 
         tools = []
-        tools.append(self.brave_search)
+        if all or enable_brave_search:
+            tools.append(self.brave_search)
 
         super().__init__(
             name="brave_search",
@@ -49,9 +52,9 @@ class BraveSearchTools(Toolkit):
     def brave_search(
         self,
         query: str,
-        max_results: Optional[int] = None,
-        country: Optional[str] = None,
-        search_lang: Optional[str] = None,
+        max_results: int = 5,
+        country: str = "US",
+        search_lang: str = "en",
     ) -> str:
         """
         Search Brave for the specified query and return the results.
@@ -64,8 +67,8 @@ class BraveSearchTools(Toolkit):
         Returns:
             str: A JSON formatted string containing the search results.
         """
-        max_results = self.fixed_max_results or max_results
-        search_lang = self.fixed_language or search_lang
+        final_max_results = self.fixed_max_results if self.fixed_max_results is not None else max_results
+        final_search_lang = self.fixed_language if self.fixed_language is not None else search_lang
 
         if not query:
             return json.dumps({"error": "Please provide a query to search for"})
@@ -74,9 +77,9 @@ class BraveSearchTools(Toolkit):
 
         search_params = {
             "q": query,
-            "count": max_results,
+            "count": final_max_results,
             "country": country,
-            "search_lang": search_lang,
+            "search_lang": final_search_lang,
             "result_filter": "web",
         }
 

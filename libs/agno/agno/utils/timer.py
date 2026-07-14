@@ -12,7 +12,11 @@ class Timer:
 
     @property
     def elapsed(self) -> float:
-        return self.elapsed_time or (perf_counter() - self.start_time) if self.start_time else 0.0
+        if self.elapsed_time is not None:
+            return self.elapsed_time
+        if self.start_time is not None:
+            return perf_counter() - self.start_time
+        return 0.0
 
     def start(self) -> float:
         self.start_time = perf_counter()
@@ -24,11 +28,11 @@ class Timer:
             self.elapsed_time = self.end_time - self.start_time
         return self.end_time
 
-    def __enter__(self):
+    def __enter__(self) -> "Timer":
         self.start_time = perf_counter()
         return self
 
-    def __exit__(self, *args):
+    def __exit__(self, *args) -> None:
         self.end_time = perf_counter()
         if self.start_time is not None:
             self.elapsed_time = self.end_time - self.start_time

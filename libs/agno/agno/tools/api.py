@@ -2,7 +2,7 @@ import json
 from typing import Any, Dict, List, Literal, Optional
 
 from agno.tools import Toolkit
-from agno.utils.log import log_debug, logger
+from agno.utils.log import log_debug, log_error
 
 try:
     import requests
@@ -21,7 +21,8 @@ class CustomApiTools(Toolkit):
         headers: Optional[Dict[str, str]] = None,
         verify_ssl: bool = True,
         timeout: int = 30,
-        make_request: bool = True,
+        enable_make_request: bool = True,
+        all: bool = False,
         **kwargs,
     ):
         self.base_url = base_url
@@ -33,7 +34,7 @@ class CustomApiTools(Toolkit):
         self.timeout = timeout
 
         tools: List[Any] = []
-        if make_request:
+        if all or enable_make_request:
             tools.append(self.make_request)
 
         super().__init__(name="api_tools", tools=tools, **kwargs)
@@ -44,10 +45,14 @@ class CustomApiTools(Toolkit):
             return HTTPBasicAuth(self.username, self.password)
         return None
 
-    def _get_headers(self, additional_headers: Optional[Dict[str, str]] = None) -> Dict[str, str]:
+    def _get_headers(
+        self,
+        additional_headers: Optional[Dict[str, str]] = None,
+        include_api_key: bool = True,
+    ) -> Dict[str, str]:
         """Combine default headers with additional headers."""
         headers = self.default_headers.copy()
-        if self.api_key:
+        if self.api_key and include_api_key:
             headers["Authorization"] = f"Bearer {self.api_key}"
         if additional_headers:
             headers.update(additional_headers)
@@ -76,7 +81,10 @@ class CustomApiTools(Toolkit):
             str: JSON string containing response data or error message
         """
         try:
-            url = f"{self.base_url.rstrip('/')}/{endpoint.lstrip('/')}" if self.base_url else endpoint
+            if self.base_url:
+                url = f"{self.base_url.rstrip('/')}/{endpoint.lstrip('/')}"
+            else:
+                url = endpoint
             log_debug(f"Making {method} request to {url}")
 
             response = requests.request(
@@ -85,7 +93,7 @@ class CustomApiTools(Toolkit):
                 params=params,
                 data=data,
                 json=json_data,
-                headers=self._get_headers(headers),
+                headers=self._get_headers(headers, include_api_key=bool(self.base_url)),
                 auth=self._get_auth(),
                 verify=self.verify_ssl,
                 timeout=self.timeout,
@@ -103,16 +111,16 @@ class CustomApiTools(Toolkit):
             }
 
             if not response.ok:
-                logger.error(f"Request failed with status {response.status_code}: {response.text}")
+                log_error(f"Request failed with status {response.status_code}: {response.text}")
                 result["error"] = "Request failed"
 
             return json.dumps(result, indent=2)
 
         except requests.exceptions.RequestException as e:
             error_message = f"Request failed: {str(e)}"
-            logger.error(error_message)
+            log_error(error_message)
             return json.dumps({"error": error_message}, indent=2)
         except Exception as e:
             error_message = f"Unexpected error: {str(e)}"
-            logger.error(error_message)
+            log_error(error_message)
             return json.dumps({"error": error_message}, indent=2)

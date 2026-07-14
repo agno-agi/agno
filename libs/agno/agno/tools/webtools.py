@@ -9,12 +9,20 @@ class WebTools(Toolkit):
     A toolkit for working with web-related tools.
     """
 
-    def __init__(self, retries: int = 3):
-        super().__init__(name="web_tools")
-
+    def __init__(
+        self,
+        retries: int = 3,
+        enable_expand_url: bool = True,
+        all: bool = False,
+        **kwargs,
+    ):
         self.retries = retries
 
-        self.register(self.expand_url)
+        tools = []
+        if all or enable_expand_url:
+            tools.append(self.expand_url)
+
+        super().__init__(name="web_tools", tools=tools, **kwargs)
 
     def expand_url(self, url: str) -> str:
         """
@@ -31,7 +39,7 @@ class WebTools(Toolkit):
                 final_url = response.url
                 logger.info(f"expand_url: {url} expanded to {final_url} on attempt {attempt}")
                 return str(final_url)
-            except Exception as e:
-                logger.error(f"Error expanding URL {url} on attempt {attempt}: {e}")
+            except Exception:
+                logger.exception(f"Error expanding URL {url} on attempt {attempt}")
 
         return url

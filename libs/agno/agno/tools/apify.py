@@ -1,12 +1,12 @@
 import json
-import os
 import string
+from os import getenv
 from typing import Any, Dict, List, Optional, Tuple, Union
 
 import requests
 
 from agno.tools import Toolkit
-from agno.utils.log import log_info, logger
+from agno.utils.log import log_error, log_info, logger
 
 try:
     from apify_client import ApifyClient
@@ -21,53 +21,9 @@ class ApifyTools(Toolkit):
         Args:
             actors (Optional[Union[str, List[str]]]): Single Actor ID as string or list of Actor IDs to register as individual tools
             apify_api_token (Optional[str]): Apify API token (defaults to APIFY_API_TOKEN env variable)
-
-        Examples:
-            Configuration Instructions:
-            1. Install required dependencies:
-            pip install agno apify-client
-
-            2. Set the APIFY_API_TOKEN environment variable:
-            Add a .env file with APIFY_API_TOKEN=your_apify_api_key
-
-            Import necessary components:
-
-            from agno.agent import Agent
-            from agno.tools.apify import ApifyTools
-
-            # Create an agent with ApifyTools
-            agent = Agent(
-                tools=[
-                    ApifyTools(actors=["apify/rag-web-browser"])
-                ],
-                markdown=True
-            )
-
-            # Ask the agent to process web content
-            agent.print_response("Summarize the content from https://docs.agno.com/introduction", markdown=True)
-
-            # Using multiple actors with the agent
-            agent = Agent(
-                tools=[
-                    ApifyTools(actors=[
-                        "apify/rag-web-browser",
-                        "compass/crawler-google-places"
-                    ])
-                ],
-                show_tool_calls=True
-            )
-            agent.print_response(
-                '''
-                I'm traveling to Tokyo next month.
-                1. Research the best time to visit and major attractions
-                2. Find one good rated sushi restaurant near Shinjuku
-                Compile a comprehensive travel guide with this information.
-                ''',
-                markdown=True
-            )
         """
         # Get API token from args or environment
-        self.apify_api_token = apify_api_token or os.getenv("APIFY_API_TOKEN")
+        self.apify_api_token = apify_api_token or getenv("APIFY_API_TOKEN")
         if not self.apify_api_token:
             raise ValueError("APIFY_API_TOKEN environment variable or apify_api_token parameter must be set")
 
@@ -138,7 +94,7 @@ class ApifyTools(Toolkit):
 
                 except Exception as e:
                     error_msg = f"Error running Apify Actor {actor_id}: {str(e)}"
-                    logger.error(error_msg)
+                    log_error(error_msg)
                     return json.dumps([{"error": error_msg}])
 
             docstring = f"{actor_description}\n\nArgs:\n"
@@ -164,8 +120,8 @@ Returns:
             self.functions[tool_name].parameters = props_to_json_schema(properties, required)
             log_info(f"Registered Apify Actor '{actor_id}' as function '{tool_name}'")
 
-        except Exception as e:
-            logger.error(f"Failed to register Apify Actor '{actor_id}': {str(e)}")
+        except Exception:
+            logger.exception(f"Failed to register Apify Actor '{actor_id}'")
 
 
 # Constants

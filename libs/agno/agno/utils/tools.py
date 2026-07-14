@@ -13,7 +13,7 @@ def get_function_call_for_tool_call(
         _tool_call_function = tool_call.get("function")
         if _tool_call_function is not None:
             _tool_call_function_name = _tool_call_function.get("name")
-            _tool_call_function_arguments_str = _tool_call_function.get("arguments")
+            _tool_call_function_arguments_str = _tool_call_function.get("arguments") or "{}"
             if _tool_call_function_name is not None:
                 return get_function_call(
                     name=_tool_call_function_name,

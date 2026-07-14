@@ -1,9 +1,0 @@
-agno
-anthropic
-duckduckgo-search
-fastapi[standard]
-openai
-pgvector
-psycopg[binary]
-sqlalchemy
-yfinance

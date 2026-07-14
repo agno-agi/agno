@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
 
 from agno.tools import Toolkit
-from agno.utils.log import log_debug, log_info, logger
+from agno.utils.log import log_debug, log_error, log_info, log_warning, logger
 
 
 class CsvTools(Toolkit):
@@ -12,12 +12,13 @@ class CsvTools(Toolkit):
         self,
         csvs: Optional[List[Union[str, Path]]] = None,
         row_limit: Optional[int] = None,
-        read_csvs: bool = True,
-        list_csvs: bool = True,
-        query_csvs: bool = True,
-        read_column_names: bool = True,
         duckdb_connection: Optional[Any] = None,
         duckdb_kwargs: Optional[Dict[str, Any]] = None,
+        enable_read_csv_file: bool = True,
+        enable_list_csv_files: bool = True,
+        enable_get_columns: bool = True,
+        enable_query_csv_file: bool = True,
+        all: bool = False,
         **kwargs,
     ):
         self.csvs: List[Path] = []
@@ -34,19 +35,19 @@ class CsvTools(Toolkit):
         self.duckdb_kwargs: Optional[Dict[str, Any]] = duckdb_kwargs
 
         tools: List[Any] = []
-        if read_csvs:
+        if all or enable_read_csv_file:
             tools.append(self.read_csv_file)
-        if list_csvs:
+        if all or enable_list_csv_files:
             tools.append(self.list_csv_files)
-        if read_column_names:
+        if all or enable_get_columns:
             tools.append(self.get_columns)
-        if query_csvs:
+        if all or enable_query_csv_file:
             try:
                 import duckdb  # noqa: F401
 
                 tools.append(self.query_csv_file)
-            except ImportError:
-                logger.warning("`duckdb` not installed. Query functionality disabled.")
+            except ImportError as e:
+                log_warning(f"`duckdb` not installed. Query functionality disabled.: {str(e)}")
 
         super().__init__(name="csv_tools", tools=tools, **kwargs)
 
@@ -78,7 +79,7 @@ class CsvTools(Toolkit):
             # Read the csv file
             csv_data = []
             _row_limit = row_limit or self.row_limit
-            with open(str(file_path), newline="") as csvfile:
+            with open(str(file_path), encoding="utf-8-sig", newline="") as csvfile:
                 reader = csv.DictReader(csvfile)
                 if _row_limit is not None:
                     csv_data = [row for row in reader][:_row_limit]
@@ -86,7 +87,7 @@ class CsvTools(Toolkit):
                     csv_data = [row for row in reader]
             return json.dumps(csv_data)
         except Exception as e:
-            logger.error(f"Error reading csv: {e}")
+            logger.exception("Error reading csv")
             return f"Error reading csv: {e}"
 
     def get_columns(self, csv_name: str) -> str:
@@ -106,13 +107,13 @@ class CsvTools(Toolkit):
             file_path = [_csv for _csv in self.csvs if _csv.stem == csv_name][0]
 
             # Get the columns of the csv file
-            with open(str(file_path), newline="") as csvfile:
+            with open(str(file_path), encoding="utf-8-sig", newline="") as csvfile:
                 reader = csv.DictReader(csvfile)
                 columns = reader.fieldnames
 
             return json.dumps(columns)
         except Exception as e:
-            logger.error(f"Error getting columns: {e}")
+            logger.exception("Error getting columns")
             return f"Error getting columns: {e}"
 
     def query_csv_file(self, csv_name: str, sql_query: str) -> str:
@@ -145,12 +146,16 @@ class CsvTools(Toolkit):
             if not self.duckdb_connection:
                 con = duckdb.connect(**(self.duckdb_kwargs or {}))
             if con is None:
-                logger.error("Error connecting to DuckDB")
+                log_error("Error connecting to DuckDB")
                 return "Error connecting to DuckDB, please check the connection."
 
             # Create a table from the csv file
+            # Quote the table name so stems with hyphens or special characters are valid identifiers
+            # Bind the file path as a parameter so it can't break out of the SQL statement
+            table_name = csv_name.replace('"', '""')
             con.execute(
-                f"CREATE TABLE {csv_name} AS SELECT * FROM read_csv('{file_path}', ignore_errors=false, auto_detect=true)"
+                f'CREATE TABLE "{table_name}" AS SELECT * FROM read_csv(?, ignore_errors=false, auto_detect=true)',
+                [str(file_path)],
             )
 
             # -*- Format the SQL Query
@@ -180,5 +185,5 @@ class CsvTools(Toolkit):
             log_debug(f"Query result: {result_output}")
             return result_output
         except Exception as e:
-            logger.error(f"Error querying csv: {e}")
+            logger.exception("Error querying csv")
             return f"Error querying csv: {e}"

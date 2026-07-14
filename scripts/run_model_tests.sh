@@ -30,6 +30,7 @@ if [ -z "$1" ]; then
     echo "- google"
     echo "- groq"
     echo "- ibm"
+    echo "- litellm"
     echo "- mistral"
     echo "- nvidia"
     echo "- openai"
@@ -57,6 +58,8 @@ pip install --upgrade pip
 
 print_info "Installing base packages..."
 pip install \
+    aioboto3 \
+    boto3 \
     docstring-parser \
     gitpython \
     httpx \
@@ -75,6 +78,8 @@ print_info "Installing pytest packages..."
 pip install \
     pytest \
     pytest-asyncio \
+    pytest-rerunfailures \
+    pytest-timeout \
     requests
 
 # Change to agno directory
@@ -199,6 +204,14 @@ case $MODEL_NAME in
             exit 1
         fi
         ;;
+    "litellm")
+        if [ -z "${LITELLM_API_KEY}" ] && [ -z "${OPENAI_API_KEY}" ]; then
+            print_heading "Error: LITELLM_API_KEY or OPENAI_API_KEY environment variable is not set"
+            exit 1
+        fi
+        print_info "Installing litellm package -- required in tests"
+        pip install litellm
+        ;;
     "cerebras")
         if [ -z "${CEREBRAS_API_KEY}" ]; then
             print_heading "Error: CEREBRAS_API_KEY environment variable is not set"
@@ -225,15 +238,17 @@ esac
 
 # Install agno with model and integration test dependencies
 print_heading "Installing agno with ${MODEL_NAME} dependencies"
-print_info "pip install -e .[${MODEL_NAME},integration-tests]"
-pip install -e ".[${MODEL_NAME},integration-tests]"
+print_info "pip install -e ../agnoctl -e .[${MODEL_NAME},integration-tests]"
+# The workspace agnoctl satisfies agno's agnoctl pin, so a just-bumped,
+# not-yet-published version cannot break the resolve around a release.
+pip install -e "../agnoctl" -e ".[${MODEL_NAME},integration-tests]"
 
 # Run the tests
 print_heading "Running ${MODEL_NAME} tests"
 TEST_PATH="tests/integration/models/${MODEL_NAME}"
 if [ -d "$TEST_PATH" ]; then
     print_info "Running tests in ${TEST_PATH}"
-    python -m pytest ${TEST_PATH} -v
+    AGNO_TELEMETRY=false python -m pytest ${TEST_PATH} -v
     TEST_EXIT_CODE=$?
 else
     print_heading "Error: No tests found for ${MODEL_NAME} at ${TEST_PATH}"

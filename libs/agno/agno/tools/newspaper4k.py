@@ -2,7 +2,7 @@ import json
 from typing import Any, Dict, Optional
 
 from agno.tools import Toolkit
-from agno.utils.log import log_debug, logger
+from agno.utils.log import log_debug, log_warning
 
 try:
     import newspaper
@@ -14,19 +14,24 @@ class Newspaper4kTools(Toolkit):
     """
     Newspaper4kTools is a toolkit for getting the text of an article from a URL.
     Args:
-        read_article (bool): Whether to read an article from a URL.
+        enable_read_article (bool): Whether to read an article from a URL.
         include_summary (bool): Whether to include the summary of an article.
         article_length (Optional[int]): The length of the article to read.
     """
 
     def __init__(
-        self, read_article: bool = True, include_summary: bool = False, article_length: Optional[int] = None, **kwargs
+        self,
+        include_summary: bool = False,
+        article_length: Optional[int] = None,
+        enable_read_article: bool = True,
+        all: bool = False,
+        **kwargs,
     ):
         self.include_summary: bool = include_summary
         self.article_length: Optional[int] = article_length
 
         tools = []
-        if read_article:
+        if all or enable_read_article:
             tools.append(self.read_article)
 
         super().__init__(name="newspaper4k_tools", tools=tools, **kwargs)
@@ -61,7 +66,7 @@ class Newspaper4kTools(Toolkit):
 
             return article_data
         except Exception as e:
-            logger.warning(f"Error reading article from {url}: {e}")
+            log_warning(f"Error reading article from {url}: {str(e)}")
             return None
 
     def read_article(self, url: str) -> str:

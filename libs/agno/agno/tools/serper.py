@@ -16,6 +16,12 @@ class SerperTools(Toolkit):
         language: str = "en",
         num_results: int = 10,
         date_range: Optional[str] = None,
+        enable_search: bool = True,
+        enable_search_news: bool = True,
+        enable_search_scholar: bool = True,
+        enable_scrape_webpage: bool = True,
+        all: bool = False,
+        timeout: int = 30,
         **kwargs,
     ):
         """
@@ -27,6 +33,7 @@ class SerperTools(Toolkit):
             language Optional[str]: The language code for search results.
             num_results Optional[int]: The number of search results to retrieve.
             date_range Optional[str]: Default date range filter for searches.
+            timeout Optional[int]: Per-request HTTP timeout in seconds. Default is 30.
         """
         self.api_key = api_key or getenv("SERPER_API_KEY")
         if not self.api_key:
@@ -38,12 +45,16 @@ class SerperTools(Toolkit):
         self.date_range = date_range
 
         tools: List[Any] = []
-        tools.append(self.search)
-        tools.append(self.search_news)
-        tools.append(self.search_scholar)
-        tools.append(self.scrape_webpage)
+        if all or enable_search:
+            tools.append(self.search_web)
+        if all or enable_search_news:
+            tools.append(self.search_news)
+        if all or enable_search_scholar:
+            tools.append(self.search_scholar)
+        if all or enable_scrape_webpage:
+            tools.append(self.scrape_webpage)
 
-        super().__init__(name="serper_tools", tools=tools, **kwargs)
+        super().__init__(name="serper_tools", tools=tools, timeout=timeout, **kwargs)
 
     def _make_request(self, endpoint: str, params: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -79,7 +90,7 @@ class SerperTools(Toolkit):
             payload = json.dumps(params)
 
             log_debug(f"Making request to {url} with params: {params}")
-            response = requests.request("POST", url, headers=headers, data=payload)
+            response = requests.request("POST", url, headers=headers, data=payload, timeout=self.timeout)
             response.raise_for_status()
 
             log_debug(f"Successfully received response from {endpoint} endpoint")
@@ -88,7 +99,7 @@ class SerperTools(Toolkit):
             log_error(f"Serper API error: {str(e)}")
             return {"success": False, "error": str(e)}
 
-    def search(
+    def search_web(
         self,
         query: str,
         num_results: Optional[int] = None,
@@ -124,7 +135,7 @@ class SerperTools(Toolkit):
                 return json.dumps({"error": result["error"]}, indent=2)
 
         except Exception as e:
-            log_error(f"Unexpected error searching Google for query {query}: {e}")
+            log_error(f"Unexpected error searching Google for query {query}: {str(e)}")
             return json.dumps({"error": f"An unexpected error occurred: {str(e)}"}, indent=2)
 
     def search_news(
@@ -163,7 +174,7 @@ class SerperTools(Toolkit):
                 return json.dumps({"error": result["error"]}, indent=2)
 
         except Exception as e:
-            log_error(f"Unexpected error searching news for query {query}: {e}")
+            log_error(f"Unexpected error searching news for query {query}: {str(e)}")
             return json.dumps({"error": f"An unexpected error occurred: {str(e)}"}, indent=2)
 
     def search_scholar(
@@ -202,7 +213,7 @@ class SerperTools(Toolkit):
                 return json.dumps({"error": result["error"]}, indent=2)
 
         except Exception as e:
-            log_error(f"Unexpected error searching scholar for query {query}: {e}")
+            log_error(f"Unexpected error searching scholar for query {query}: {str(e)}")
             return json.dumps({"error": f"An unexpected error occurred: {str(e)}"}, indent=2)
 
     def scrape_webpage(
@@ -242,5 +253,5 @@ class SerperTools(Toolkit):
                 return json.dumps({"error": result["error"]}, indent=2)
 
         except Exception as e:
-            log_error(f"Unexpected error scraping webpage {url}: {e}")
+            log_error(f"Unexpected error scraping webpage {url}: {str(e)}")
             return json.dumps({"error": f"An unexpected error occurred: {str(e)}"}, indent=2)
