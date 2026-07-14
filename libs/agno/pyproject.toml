@@ -172,6 +172,7 @@ postgres = ["psycopg-binary"]
 redis = ["redis", "redisvl>=0.12.1"]
 sql = ["sqlalchemy"]
 sqlite = ["sqlalchemy", "aiosqlite"]
+valkey = ["valkey-glide-sync>=2.1.0"]
 
 # Dependencies for Vector databases
 cassandra = ["cassio"]
@@ -318,6 +319,7 @@ storage = [
   "agno[redis]",  # also listed under vectordbs (redis serves both roles)
   "agno[sql]",
   "agno[sqlite]",
+  "agno[valkey]",  # also listed under vectordbs (valkey serves both roles)
 ]
 
 # All vector databases
@@ -337,6 +339,7 @@ vectordbs = [
   "agno[singlestore]",
   "agno[surrealdb]",
   "agno[upstash]",
+  "agno[valkey]",  # also listed under storage (valkey serves both roles)
   "agno[weaviate]",
 ]
 
@@ -630,6 +633,7 @@ module = [
   "surrealdb.*",
   "trafilatura.*",
   "xlrd.*",
-  "celpy.*"
+  "celpy.*",
+  "glide_sync.*"
 ]
 ignore_missing_imports = true
