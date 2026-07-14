@@ -160,6 +160,8 @@ def make_streaming_body(
 def make_streaming_agent(chunks=None):
     agent = AsyncMock()
     agent.name = "Test Agent"
+    # Session lookup returns None by default so resolve_session_id uses the new key format
+    agent.aget_session = AsyncMock(return_value=None)
 
     async def _arun_stream(*args, **kwargs):
         for c in chunks or []:
