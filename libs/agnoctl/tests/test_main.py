@@ -15,6 +15,8 @@ def test_bare_invocation_shows_home_screen():
     assert "The CLI for AgentOS" in result.output
     for heading in ("Get started", "Operate", "Tokens"):
         assert heading in result.output
+    assert "agno create" in result.output
+    assert "agno create <name>" not in result.output
     assert __version__ in result.output
 
 
@@ -29,3 +31,11 @@ def test_commands_are_registered():
     assert result.exit_code == 0
     for command in ("connect", "create", "status", "tokens", "up", "down", "restart"):
         assert command in result.output
+
+
+def test_create_help_shows_interactive_defaults():
+    result = runner.invoke(app, ["create", "--help"])
+    assert result.exit_code == 0
+    output = result.output.lower()
+    assert "default: agentos." in output
+    assert "when omitted: agentos-docker." in output
