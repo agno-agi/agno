@@ -13,7 +13,6 @@ from agno.agent.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIResponses
 
-
 tool_confirmation_agent = Agent(
     name="tool_confirmation",
     model=OpenAIResponses(id="gpt-5.5"),

@@ -794,7 +794,7 @@ class UserMemoryStore(LearningStore):
 
         messages_for_model = [
             self._get_system_message(existing_data=existing_data),
-            Message(role="user", content=conversation_text),
+            Message(role="user", content=f"Extract memories from this conversation:\n\n{conversation_text}"),
         ]
 
         model_copy = deepcopy(self.model)
@@ -855,7 +855,7 @@ class UserMemoryStore(LearningStore):
 
         messages_for_model = [
             self._get_system_message(existing_data=existing_data),
-            Message(role="user", content=conversation_text),
+            Message(role="user", content=f"Extract memories from this conversation:\n\n{conversation_text}"),
         ]
 
         model_copy = deepcopy(self.model)
