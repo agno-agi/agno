@@ -412,6 +412,10 @@ class GmailTools(GoogleToolkit):
             results = self.service.users().messages().list(**list_kwargs).execute()  # type: ignore
             emails = self._get_message_details(results.get("messages", []))
             response: Dict[str, Any] = {"emails": emails, "count": len(emails)}
+            if count > effective_count:
+                response["requested"] = count
+            if results.get("resultSizeEstimate"):
+                response["totalEstimate"] = results["resultSizeEstimate"]
             if results.get("nextPageToken"):
                 response["nextPageToken"] = results["nextPageToken"]
             return json.dumps(response)
@@ -442,6 +446,10 @@ class GmailTools(GoogleToolkit):
             results = self.service.users().messages().list(**list_kwargs).execute()  # type: ignore
             emails = self._get_message_details(results.get("messages", []))
             response: Dict[str, Any] = {"emails": emails, "count": len(emails)}
+            if count > effective_count:
+                response["requested"] = count
+            if results.get("resultSizeEstimate"):
+                response["totalEstimate"] = results["resultSizeEstimate"]
             if results.get("nextPageToken"):
                 response["nextPageToken"] = results["nextPageToken"]
             return json.dumps(response)
@@ -470,6 +478,10 @@ class GmailTools(GoogleToolkit):
             results = self.service.users().messages().list(**list_kwargs).execute()  # type: ignore
             emails = self._get_message_details(results.get("messages", []))
             response: Dict[str, Any] = {"emails": emails, "count": len(emails)}
+            if count > effective_count:
+                response["requested"] = count
+            if results.get("resultSizeEstimate"):
+                response["totalEstimate"] = results["resultSizeEstimate"]
             if results.get("nextPageToken"):
                 response["nextPageToken"] = results["nextPageToken"]
             return json.dumps(response)
@@ -519,6 +531,10 @@ class GmailTools(GoogleToolkit):
             results = self.service.users().messages().list(**list_kwargs).execute()  # type: ignore
             emails = self._get_message_details(results.get("messages", []))
             response: Dict[str, Any] = {"emails": emails, "count": len(emails)}
+            if count > effective_count:
+                response["requested"] = count
+            if results.get("resultSizeEstimate"):
+                response["totalEstimate"] = results["resultSizeEstimate"]
             if results.get("nextPageToken"):
                 response["nextPageToken"] = results["nextPageToken"]
             return json.dumps(response)
@@ -548,6 +564,10 @@ class GmailTools(GoogleToolkit):
             results = self.service.users().messages().list(**list_kwargs).execute()  # type: ignore
             emails = self._get_message_details(results.get("messages", []))
             response: Dict[str, Any] = {"emails": emails, "count": len(emails)}
+            if count > effective_count:
+                response["requested"] = count
+            if results.get("resultSizeEstimate"):
+                response["totalEstimate"] = results["resultSizeEstimate"]
             if results.get("nextPageToken"):
                 response["nextPageToken"] = results["nextPageToken"]
             return json.dumps(response)
@@ -590,6 +610,11 @@ class GmailTools(GoogleToolkit):
             results = self.service.users().messages().list(**list_kwargs).execute()  # type: ignore
             emails = self._get_message_details(results.get("messages", []))
             response: Dict[str, Any] = {"emails": emails, "count": len(emails)}
+            requested = num_emails or 10
+            if requested > effective_count:
+                response["requested"] = requested
+            if results.get("resultSizeEstimate"):
+                response["totalEstimate"] = results["resultSizeEstimate"]
             if results.get("nextPageToken"):
                 response["nextPageToken"] = results["nextPageToken"]
             return json.dumps(response)
@@ -809,6 +834,10 @@ class GmailTools(GoogleToolkit):
             results = self.service.users().messages().list(**list_kwargs).execute()  # type: ignore
             emails = self._get_message_details(results.get("messages", []))
             response: Dict[str, Any] = {"emails": emails, "count": len(emails)}
+            if count > effective_count:
+                response["requested"] = count
+            if results.get("resultSizeEstimate"):
+                response["totalEstimate"] = results["resultSizeEstimate"]
             if results.get("nextPageToken"):
                 response["nextPageToken"] = results["nextPageToken"]
             return json.dumps(response)
@@ -1485,8 +1514,10 @@ class GmailTools(GoogleToolkit):
             threads = results.get("threads", [])
             response: Dict[str, Any] = {
                 "threads": threads,
-                "resultSizeEstimate": results.get("resultSizeEstimate", len(threads)),
+                "totalEstimate": results.get("resultSizeEstimate", len(threads)),
             }
+            if count > effective_count:
+                response["requested"] = count
             if results.get("nextPageToken"):
                 response["nextPageToken"] = results["nextPageToken"]
             return json.dumps(response)
@@ -1605,8 +1636,10 @@ class GmailTools(GoogleToolkit):
             drafts = results.get("drafts", [])
             response: Dict[str, Any] = {
                 "drafts": drafts,
-                "resultSizeEstimate": results.get("resultSizeEstimate", len(drafts)),
+                "totalEstimate": results.get("resultSizeEstimate", len(drafts)),
             }
+            if count > effective_count:
+                response["requested"] = count
             if results.get("nextPageToken"):
                 response["nextPageToken"] = results["nextPageToken"]
             return json.dumps(response)
