@@ -325,26 +325,103 @@ class Model(ABC):
         # If we've exhausted all retries, raise the last exception
         raise last_exception  # type: ignore
 
+    @staticmethod
+    def _response_has_usable_output(response: ModelResponse) -> bool:
+        """Check whether a ModelResponse chunk contributes usable output.
+
+        Usable output includes non-empty content, reasoning or redacted reasoning,
+        tool calls, or any generated media (audio, images, videos, files).
+        Whitespace-only content is considered usable per the existing contract.
+        """
+        if response.content is not None and response.content != "":
+            return True
+        if response.reasoning_content is not None and response.reasoning_content != "":
+            return True
+        if response.redacted_reasoning_content is not None and response.redacted_reasoning_content != "":
+            return True
+        if response.tool_calls:
+            return True
+        if response.audio is not None:
+            return True
+        if response.images:
+            return True
+        if response.videos:
+            return True
+        if response.audios:
+            return True
+        if response.files:
+            return True
+        return False
+
     def _invoke_stream_with_retry(self, **kwargs) -> Iterator[ModelResponse]:
         """
         Invoke the model stream with retry logic for ModelProviderError.
 
         This method wraps the invoke_stream() call and retries on ModelProviderError
         with optional exponential backoff. Note that retries restart the entire stream.
+
+        When retries are enabled, a stream that completes without producing any
+        usable output (non-empty content, reasoning, tool calls, or media) is
+        treated as a retryable failure.
         """
         last_exception: Optional[ModelProviderError] = None
         retries_with_guidance_count = kwargs.pop("retries_with_guidance_count", 0)
+        has_yielded_usable = False
 
         for attempt in range(self.retries + 1):
             try:
-                yield from self.invoke_stream(**kwargs)
-                return  # Success, exit the retry loop
+                if self.retries > 0 and not has_yielded_usable:
+                    # Buffer chunks until we see usable output, then flush and
+                    # stream directly. If the stream ends without usable output,
+                    # consume a retry attempt.
+                    buffer: List[ModelResponse] = []
+                    has_usable_output = False
+                    stream_iter = self.invoke_stream(**kwargs)
+                    for response in stream_iter:
+                        if not has_usable_output:
+                            buffer.append(response)
+                            if self._response_has_usable_output(response):
+                                has_usable_output = True
+                                has_yielded_usable = True
+                                # Flush the buffer immediately
+                                yield from buffer
+                                buffer = []
+                        else:
+                            # Already found usable output — stream directly
+                            yield response
+
+                    if not has_usable_output:
+                        if attempt < self.retries:
+                            delay = self._get_retry_delay(attempt)
+                            log_warning(
+                                f"Stream completed without usable output "
+                                f"(attempt {attempt + 1}/{self.retries + 1}). "
+                                f"Retrying in {delay}s..."
+                            )
+                            sleep(delay)
+                            continue
+                        else:
+                            log_error(f"Stream completed without usable output after {self.retries + 1} attempts")
+                            last_exception = ModelProviderError(
+                                message=f"Stream completed without usable output "
+                                f"after {self.retries + 1} attempts",
+                                model_name=self.name,
+                                model_id=self.id,
+                            )
+                            break
+                    return  # Success, exit the retry loop
+                else:
+                    yield from self.invoke_stream(**kwargs)
+                    return  # Success, exit the retry loop
             except ModelProviderError as e:
                 last_exception = self.classify_error(e)
                 # Check if error is non-retryable (e.g., context window exceeded, auth errors)
                 if not self._is_retryable_error(last_exception):
                     log_error(f"Non-retryable model provider error: {str(e)}")
                     raise last_exception from e
+                # If we already yielded usable output, don't retry
+                if has_yielded_usable:
+                    raise
                 if attempt < self.retries:
                     delay = self._get_retry_delay(attempt)
                     log_warning(
@@ -357,6 +434,8 @@ class Model(ABC):
                     if self.retries > 0:
                         log_error(f"Model provider error after {self.retries + 1} attempts: {str(e)}")
             except RetryableModelProviderError as e:
+                if has_yielded_usable:
+                    raise
                 current_count = retries_with_guidance_count
                 if current_count >= self.retry_with_guidance_limit:
                     raise ModelProviderError(
@@ -383,21 +462,71 @@ class Model(ABC):
 
         This method wraps the ainvoke_stream() call and retries on ModelProviderError
         with optional exponential backoff. Note that retries restart the entire stream.
+
+        When retries are enabled, a stream that completes without producing any
+        usable output (non-empty content, reasoning, tool calls, or media) is
+        treated as a retryable failure.
         """
         last_exception: Optional[ModelProviderError] = None
         retries_with_guidance_count = kwargs.pop("retries_with_guidance_count", 0)
+        has_yielded_usable = False
 
         for attempt in range(self.retries + 1):
             try:
-                async for response in self.ainvoke_stream(**kwargs):
-                    yield response
-                return  # Success, exit the retry loop
+                if self.retries > 0 and not has_yielded_usable:
+                    # Buffer chunks until we see usable output, then flush and
+                    # stream directly. If the stream ends without usable output,
+                    # consume a retry attempt.
+                    buffer: List[ModelResponse] = []
+                    has_usable_output = False
+                    stream_iter = self.ainvoke_stream(**kwargs)
+                    async for response in stream_iter:
+                        if not has_usable_output:
+                            buffer.append(response)
+                            if self._response_has_usable_output(response):
+                                has_usable_output = True
+                                has_yielded_usable = True
+                                # Flush the buffer immediately
+                                for buffered in buffer:
+                                    yield buffered
+                                buffer = []
+                        else:
+                            # Already found usable output — stream directly
+                            yield response
+
+                    if not has_usable_output:
+                        if attempt < self.retries:
+                            delay = self._get_retry_delay(attempt)
+                            log_warning(
+                                f"Stream completed without usable output "
+                                f"(attempt {attempt + 1}/{self.retries + 1}). "
+                                f"Retrying in {delay}s..."
+                            )
+                            await asyncio.sleep(delay)
+                            continue
+                        else:
+                            log_error(f"Stream completed without usable output after {self.retries + 1} attempts")
+                            last_exception = ModelProviderError(
+                                message=f"Stream completed without usable output "
+                                f"after {self.retries + 1} attempts",
+                                model_name=self.name,
+                                model_id=self.id,
+                            )
+                            break
+                    return  # Success, exit the retry loop
+                else:
+                    async for response in self.ainvoke_stream(**kwargs):
+                        yield response
+                    return  # Success, exit the retry loop
             except ModelProviderError as e:
                 last_exception = self.classify_error(e)
                 # Check if error is non-retryable
                 if not self._is_retryable_error(last_exception):
                     log_error(f"Non-retryable model provider error: {str(e)}")
                     raise last_exception from e
+                # If we already yielded usable output, don't retry
+                if has_yielded_usable:
+                    raise
                 if attempt < self.retries:
                     delay = self._get_retry_delay(attempt)
                     log_warning(
@@ -410,6 +539,8 @@ class Model(ABC):
                     if self.retries > 0:
                         log_error(f"Model provider error after {self.retries + 1} attempts: {str(e)}")
             except RetryableModelProviderError as e:
+                if has_yielded_usable:
+                    raise
                 current_count = retries_with_guidance_count
                 if current_count >= self.retry_with_guidance_limit:
                     raise ModelProviderError(
