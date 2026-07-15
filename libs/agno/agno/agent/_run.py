@@ -5750,6 +5750,8 @@ def _scrub_and_propagate_session_state(
     if run_context is not None and run_context.session_state is not None:
         run_response.session_state = run_context.session_state
         storage_copy.session_state = run_context.session_state
+    if not getattr(agent, "store_run_session_state", True):
+        storage_copy.session_state = None
 
     return storage_copy
 
