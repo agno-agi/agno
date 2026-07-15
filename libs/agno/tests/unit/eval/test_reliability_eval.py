@@ -39,6 +39,15 @@ def test_exact_match_passes():
     assert result.passed_tool_calls == ["multiply"]
 
 
+def test_show_spinner_disabled():
+    result = _run_eval(
+        agent_response=_make_response(_make_tool_call("multiply")),
+        expected_tool_calls=["multiply"],
+        show_spinner=False,
+    )
+    assert result.eval_status == "PASSED"
+
+
 def test_exact_match_fails_on_unexpected_tool():
     result = _run_eval(
         agent_response=_make_response(_make_tool_call("multiply"), _make_tool_call("exponentiate")),

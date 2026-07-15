@@ -17,6 +17,7 @@ Examples for `dbs` in AgentOS.
 - `sqlite.py` — Example showing how to use AgentOS with a SQLite database.
 - `supabase.py` — Example showing how to use AgentOS with Supabase as our database provider.
 - `surreal.py` — Example showing how to use AgentOS with SurrealDB as database.
+- `valkey_db.py` — Example showing how to use AgentOS with Valkey as database.
 
 ## Prerequisites
 - Load environment variables with `direnv allow` (requires `.envrc`).
