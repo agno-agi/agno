@@ -4,7 +4,6 @@ import pytest
 
 from agno.os.interfaces.slack.helpers import (
     BotNameResolver,
-    derive_session_id,
     download_event_files_async,
     extract_event_context,
     member_name,
@@ -387,22 +386,6 @@ class TestStripBotMention:
     def test_mention_only_with_bot_name(self):
         result = strip_bot_mention("<@U0APCSS3MDH>", "U0APCSS3MDH", "Scout")
         assert result == "Scout"
-
-
-# -- derive_session_id --
-
-
-def test_derive_session_id_includes_channel_to_prevent_collision():
-    key_a = derive_session_id("agent-1", "C_ENG", "111.222")
-    key_b = derive_session_id("agent-1", "C_SALES", "111.222")
-    assert key_a != key_b
-    assert key_a == "agent-1:C_ENG:111.222"
-    assert key_b == "agent-1:C_SALES:111.222"
-
-
-def test_derive_session_id_format_is_entity_channel_thread():
-    key = derive_session_id("my-bot", "C123", "1708123456.000100")
-    assert key == "my-bot:C123:1708123456.000100"
 
 
 # -- resolve_session_id --

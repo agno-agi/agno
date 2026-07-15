@@ -17,17 +17,9 @@ def slack_error_code(exc: BaseException) -> Optional[str]:
     return None
 
 
-def derive_session_id(entity_id: str, channel_id: str, thread_ts: str) -> str:
-    # Slack `ts` values are only unique per channel — two threads in different
-    # channels can share a thread_ts. Including channel_id prevents collisions.
-    return f"{entity_id}:{channel_id}:{thread_ts}"
-
-
 async def resolve_session_id(entity: Any, entity_id: str, channel_id: str, thread_ts: str) -> str:
-    # Sessions created before channel-scoped keys were stored as
-    # "{entity_id}:{thread_ts}". Probe for existing legacy session so an
-    # upgrade doesn't orphan thread history; only genuinely new threads get
-    # the collision-safe channel-scoped key. Costs one session read per event.
+    # Sessions created before channel-scoped keys used "{entity_id}:{thread_ts}".
+    # Probe for existing legacy session so an upgrade doesn't orphan history.
     legacy_id = f"{entity_id}:{thread_ts}"
     try:
         session = await entity.aget_session(session_id=legacy_id)
@@ -35,7 +27,8 @@ async def resolve_session_id(entity: Any, entity_id: str, channel_id: str, threa
             return legacy_id
     except Exception:
         pass
-    return derive_session_id(entity_id, channel_id, thread_ts)
+    # New format includes channel_id to prevent cross-channel collisions
+    return f"{entity_id}:{channel_id}:{thread_ts}"
 
 
 def task_id(agent_name: Optional[str], base_id: str) -> str:

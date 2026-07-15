@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
 
-from agno.os.interfaces.slack.helpers import derive_session_id
 from agno.os.interfaces.slack.ids import (
     ACTION_EXTERNAL_RESULT,
     ACTION_REJECT_REASON,
@@ -160,7 +159,7 @@ def extract_row_action_context(payload: Dict[str, Any]) -> Optional[RowActionCon
     )
 
 
-def extract_submit_context(payload: Dict[str, Any], entity_id: str) -> Optional[SubmitContext]:
+def extract_submit_context(payload: Dict[str, Any]) -> Optional[SubmitContext]:
     actions = payload.get("actions") or []
     if not actions:
         return None
@@ -178,15 +177,12 @@ def extract_submit_context(payload: Dict[str, Any], entity_id: str) -> Optional[
     thread_ts = message.get("thread_ts") or msg_ts
     button_value = actions[0].get("value") or ""
     _, awaiting_ts = decode_submit_button_value(button_value)
-    # Provisional new-format key; handle_submit re-resolves for backward compat
-    session_id = derive_session_id(entity_id, channel, thread_ts)
 
     return SubmitContext(
         run_id=run_id,
         channel=channel,
         msg_ts=msg_ts,
         thread_ts=thread_ts,
-        session_id=session_id,
         awaiting_ts=awaiting_ts,
         user_id=(payload.get("user") or {}).get("id", ""),
         team_id=(payload.get("team") or {}).get("id"),
