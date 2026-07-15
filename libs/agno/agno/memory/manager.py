@@ -15,6 +15,7 @@ from agno.memory.strategies.types import (
     MemoryOptimizationStrategyType,
 )
 from agno.models.base import Model
+from agno.models.defaults import DEFAULT_OPENAI_MODEL_ID
 from agno.models.message import Message
 from agno.models.utils import get_model
 from agno.tools.function import Function
@@ -119,7 +120,7 @@ class MemoryManager:
                     "Agno uses `openai` as the default model provider. Please provide a `model` or install `openai`."
                 )
                 exit(1)
-            self.model = OpenAIChat(id="gpt-4o")
+            self.model = OpenAIChat(id=DEFAULT_OPENAI_MODEL_ID)
         return self.model
 
     def read_from_db(self, user_id: Optional[str] = None):
