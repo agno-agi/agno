@@ -194,6 +194,7 @@ jobs:
           pattern: coverage-*
           merge-multiple: true
       - name: Combine coverage reports
+        id: coverage
         run: |
           pip install coverage
           coverage combine
@@ -202,3 +203,12 @@ jobs:
           echo "## Coverage Report" >> $GITHUB_STEP_SUMMARY
           echo "**Combined coverage: ${AGNO_COVERAGE}%**" >> $GITHUB_STEP_SUMMARY
           echo "Combined coverage: $AGNO_COVERAGE"
+          echo "percentage=$AGNO_COVERAGE" >> $GITHUB_OUTPUT
+      - name: Create coverage check
+        uses: LouisBrunner/checks-action@v2.0.0
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          name: "Coverage: ${{ steps.coverage.outputs.percentage }}%"
+          conclusion: success
+          output: |
+            {"title": "Coverage Report", "summary": "Combined test coverage: ${{ steps.coverage.outputs.percentage }}%"}
