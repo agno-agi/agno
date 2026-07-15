@@ -25,10 +25,9 @@ def run_example() -> None:
         markdown=True,
     )
 
-    # Create an agent with extended thinking
+    # Create an agent with extended thinking (native Claude thinking)
     reasoning_agent = Agent(
-        model=Claude(id="claude-sonnet-4-5"),
-        reasoning_model=Claude(
+        model=Claude(
             id="claude-sonnet-4-5",
             thinking={"type": "enabled", "budget_tokens": 1024},
         ),

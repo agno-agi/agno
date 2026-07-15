@@ -37,7 +37,7 @@ finance_agent = Agent(
     markdown=True,
 )
 
-cot_agent = Agent(
+reasoning_tools_agent = Agent(
     name="Chain-of-Thought Agent",
     role="Answer basic questions",
     id="cot-agent",
@@ -47,15 +47,14 @@ cot_agent = Agent(
     num_history_runs=3,
     add_datetime_to_context=True,
     markdown=True,
-    reasoning=True,
+    tools=[ReasoningTools(add_instructions=True)],
 )
 
 reasoning_model_agent = Agent(
     name="Reasoning Model Agent",
     role="Reasoning about Math",
     id="reasoning-model-agent",
-    model=OpenAIChat(id="gpt-4o"),
-    reasoning_model=OpenAIChat(id="o3-mini"),
+    model=OpenAIChat(id="o3-mini"),
     instructions=["You are a reasoning agent that can reason about math."],
     markdown=True,
     db=db,
@@ -118,7 +117,6 @@ reasoning_finance_team = Team(
         web_agent,
         finance_agent,
     ],
-    # reasoning=True,
     tools=[ReasoningTools(add_instructions=True)],
     # uncomment it to use knowledge tools
     # tools=[knowledge_tools],
@@ -139,7 +137,7 @@ agent_os = AgentOS(
     description="Example OS setup",
     agents=[
         finance_agent,
-        cot_agent,
+        reasoning_tools_agent,
         reasoning_model_agent,
         reasoning_tool_agent,
         knowledge_agent,

@@ -14,13 +14,12 @@ from agno.run.agent import RunEvent  # noqa
 # Create Example
 # ---------------------------------------------------------------------------
 
-# Create an agent with reasoning enabled
+# Create an agent with native Claude thinking
 agent = Agent(
-    reasoning_model=Claude(
+    model=Claude(
         id="claude-sonnet-4-5",
         thinking={"type": "enabled", "budget_tokens": 1024},
     ),
-    reasoning=True,
     instructions="Think step by step about the problem.",
 )
 

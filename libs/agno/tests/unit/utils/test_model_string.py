@@ -121,16 +121,13 @@ def test_agent_with_model_string():
 
 
 def test_agent_with_all_model_params_as_strings():
-    """Test Agent with all 4 model parameters as strings."""
+    """Test Agent with all 3 model parameters as strings."""
     agent = Agent(
         model="openai:gpt-4o",
-        reasoning=True,
-        reasoning_model="anthropic:claude-3-5-sonnet-20241022",
         parser_model="google:gemini-2.0-flash-exp",
         output_model="groq:llama-3.1-70b-versatile",
     )
     assert isinstance(agent.model, OpenAIResponses)
-    assert isinstance(agent.reasoning_model, Claude)
     assert isinstance(agent.parser_model, Gemini)
     assert isinstance(agent.output_model, Groq)
 
@@ -150,18 +147,15 @@ def test_team_with_model_string():
 
 
 def test_team_with_all_model_params_as_strings():
-    """Test Team with all 4 model parameters as strings."""
+    """Test Team with all 3 model parameters as strings."""
     agent = Agent(model="openai:gpt-4o")
     team = Team(
         members=[agent],
         model="anthropic:claude-3-5-sonnet-20241022",
-        reasoning=True,
-        reasoning_model="openai:gpt-4o",
         parser_model="google:gemini-2.0-flash-exp",
         output_model="groq:llama-3.1-70b-versatile",
     )
     assert isinstance(team.model, Claude)
-    assert isinstance(team.reasoning_model, OpenAIResponses)
     assert isinstance(team.parser_model, Gemini)
     assert isinstance(team.output_model, Groq)
 

@@ -346,16 +346,6 @@ class TestAgentInitModelType:
         )
         assert agent.parser_model.model_type == ModelType.PARSER_MODEL
 
-    def test_agent_reasoning_model_gets_type_set(self):
-        from agno.agent import Agent
-        from agno.models.openai.chat import OpenAIChat
-
-        agent = Agent(
-            model=OpenAIChat(id="gpt-4o-mini"),
-            reasoning_model=OpenAIChat(id="gpt-4o-mini"),
-        )
-        assert agent.reasoning_model.model_type == ModelType.REASONING_MODEL
-
 
 # ---------------------------------------------------------------------------
 # Re-export shim

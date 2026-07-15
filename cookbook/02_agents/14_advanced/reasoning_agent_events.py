@@ -10,13 +10,14 @@ import asyncio
 from agno.agent import RunEvent
 from agno.agent.agent import Agent
 from agno.models.openai import OpenAIResponses
+from agno.tools.reasoning import ReasoningTools
 
 # ---------------------------------------------------------------------------
 # Create Agent
 # ---------------------------------------------------------------------------
 finance_agent = Agent(
     model=OpenAIResponses(id="gpt-5.2"),
-    reasoning=True,
+    tools=[ReasoningTools(add_instructions=True)],
 )
 
 

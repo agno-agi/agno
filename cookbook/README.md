@@ -43,10 +43,9 @@ Hundreds of examples. Copy, paste, run.
 [09_evals](./09_evals) — Measure what matters: accuracy (LLM-as-judge), performance (latency, memory), reliability (expected tool calls), and agent-as-judge patterns.
 
 ### Reasoning
-[10_reasoning](./10_reasoning) — Make agents think before they act. Three approaches:
-- **Reasoning models** — Use models pre-trained for reasoning (o1, o3, etc.)
+[10_reasoning](./10_reasoning) — Make agents think before they act. Two approaches:
+- **Native reasoning models** — Use models with built-in reasoning (o3, Claude thinking, DeepSeek, etc.)
 - **Reasoning tools** — Give the agent tools that enable reasoning (think, analyze)
-- **Reasoning harness** — Set `reasoning=True` for chain-of-thought with tool use
 
 ### Memory
 [11_memory](./11_memory) — Agents that remember. Store insights and facts about users across conversations for personalized responses.

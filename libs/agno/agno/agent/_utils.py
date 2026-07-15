@@ -161,10 +161,6 @@ def deep_copy_field(agent: Agent, field_name: str, field_value: Any) -> Any:
 
     from pydantic import BaseModel
 
-    # For memory and reasoning_agent, use their deep_copy methods
-    if field_name == "reasoning_agent":
-        return field_value.deep_copy()  # type: ignore
-
     # For tools, return callable factories by reference; share MCP tools but copy others
     if field_name == "tools" and field_value is not None:
         from agno.tools import Toolkit
@@ -204,7 +200,6 @@ def deep_copy_field(agent: Agent, field_name: str, field_value: Any) -> Any:
     if field_name in (
         "db",
         "model",
-        "reasoning_model",
         "knowledge",
         "memory_manager",
         "parser_model",

@@ -32,7 +32,6 @@ class AgentResponse(BaseModel):
     sessions: Optional[Dict[str, Any]] = None
     knowledge: Optional[Dict[str, Any]] = None
     memory: Optional[Dict[str, Any]] = None
-    reasoning: Optional[Dict[str, Any]] = None
     default_tools: Optional[Dict[str, Any]] = None
     system_message: Optional[Dict[str, Any]] = None
     extra_messages: Optional[Dict[str, Any]] = None
@@ -100,10 +99,6 @@ class AgentResponse(BaseModel):
             # Memory defaults
             "enable_agentic_memory": False,
             "update_memory_on_run": False,
-            # Reasoning defaults
-            "reasoning": False,
-            "reasoning_min_steps": 1,
-            "reasoning_max_steps": 10,
             # Default tools defaults
             "read_chat_history": False,
             "search_knowledge": True,
@@ -218,20 +213,6 @@ class AgentResponse(BaseModel):
                     provider=agent.memory_manager.model.provider,
                 ).model_dump()
 
-        reasoning_info: Dict[str, Any] = {
-            "reasoning": agent.reasoning,
-            "reasoning_agent_id": agent.reasoning_agent.id if agent.reasoning_agent else None,
-            "reasoning_min_steps": agent.reasoning_min_steps,
-            "reasoning_max_steps": agent.reasoning_max_steps,
-        }
-
-        if agent.reasoning_model:
-            reasoning_info["reasoning_model"] = ModelResponse(
-                name=agent.reasoning_model.name,
-                model=agent.reasoning_model.id,
-                provider=agent.reasoning_model.provider,
-            ).model_dump()
-
         default_tools_info = {
             "read_chat_history": agent.read_chat_history,
             "search_knowledge": agent.search_knowledge,
@@ -317,7 +298,6 @@ class AgentResponse(BaseModel):
             sessions=filter_meaningful_config(sessions_info, agent_defaults),
             knowledge=filter_meaningful_config(knowledge_info, agent_defaults),
             memory=filter_meaningful_config(memory_info, agent_defaults) if memory_info else None,
-            reasoning=filter_meaningful_config(reasoning_info, agent_defaults),
             default_tools=filter_meaningful_config(default_tools_info, agent_defaults),
             system_message=filter_meaningful_config(system_message_info, agent_defaults),
             extra_messages=filter_meaningful_config(extra_messages_info, agent_defaults),

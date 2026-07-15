@@ -254,12 +254,11 @@ class TestPopulateRegistryComponentsAgents:
 
         assert ("openai", "gpt-5.4") in _model_keys(os.registry)
 
-    def test_reasoning_and_fallback_models_collected(self):
+    def test_fallback_models_collected(self):
         agent = Agent(
             name="A1",
             id="a1",
             model=_model("gpt-5.4"),
-            reasoning_model=_model("o5"),
             fallback_models=[_model("claude", provider="anthropic")],
             telemetry=False,
         )
@@ -268,7 +267,6 @@ class TestPopulateRegistryComponentsAgents:
 
         keys = _model_keys(os.registry)
         assert ("openai", "gpt-5.4") in keys
-        assert ("openai", "o5") in keys
         assert ("anthropic", "claude") in keys
 
     def test_tool_collected_from_agent(self):

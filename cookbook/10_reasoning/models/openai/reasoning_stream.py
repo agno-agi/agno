@@ -14,13 +14,12 @@ from agno.run.agent import RunEvent  # noqa
 # Create Example
 # ---------------------------------------------------------------------------
 def run_example() -> None:
-    # Create an agent with reasoning enabled
+    # Create an agent with native OpenAI o3-mini reasoning
     agent = Agent(
-        reasoning_model=OpenAIResponses(
+        model=OpenAIResponses(
             id="o3-mini",
             reasoning_effort="low",
         ),
-        reasoning=True,
         instructions="Think step by step about the problem.",
     )
 

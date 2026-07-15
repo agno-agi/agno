@@ -18,7 +18,6 @@ Practical examples for building agents with Agno, organized by feature area.
 | 10 | [10_human_in_the_loop](./10_human_in_the_loop/) | Confirmation flows, user input, external execution | 7 |
 | 11 | [11_approvals](./11_approvals/) | Approval workflows, audit trails | 11 |
 | 12 | [12_multimodal](./12_multimodal/) | Image, audio, video processing | 10 |
-| 13 | [13_reasoning](./13_reasoning/) | Multi-step reasoning, reasoning models | 2 |
 | 14 | [14_advanced](./14_advanced/) | Caching, compression, events, retries, concurrency, culture | 20 |
 | 15 | [15_dependencies](./15_dependencies/) | Dependency injection in tools and context | 3 |
 | 16 | [16_skills](./16_skills/) | Agent skills with scripts and reference docs | 1 |

@@ -215,7 +215,6 @@ def _deep_copy_field(team: Team, field_name: str, field_value: Any) -> Any:
     if field_name in (
         "db",
         "model",
-        "reasoning_model",
         "knowledge",
         "memory_manager",
         "parser_model",

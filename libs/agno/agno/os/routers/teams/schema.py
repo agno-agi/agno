@@ -33,7 +33,6 @@ class TeamResponse(BaseModel):
     sessions: Optional[Dict[str, Any]] = None
     knowledge: Optional[Dict[str, Any]] = None
     memory: Optional[Dict[str, Any]] = None
-    reasoning: Optional[Dict[str, Any]] = None
     default_tools: Optional[Dict[str, Any]] = None
     system_message: Optional[Dict[str, Any]] = None
     response_settings: Optional[Dict[str, Any]] = None
@@ -101,10 +100,6 @@ class TeamResponse(BaseModel):
             # Memory defaults
             "enable_agentic_memory": False,
             "update_memory_on_run": False,
-            # Reasoning defaults
-            "reasoning": False,
-            "reasoning_min_steps": 1,
-            "reasoning_max_steps": 10,
             # Default tools defaults
             "search_knowledge": True,
             "read_chat_history": False,
@@ -204,20 +199,6 @@ class TeamResponse(BaseModel):
                     provider=team.memory_manager.model.provider,
                 ).model_dump()
 
-        reasoning_info: Dict[str, Any] = {
-            "reasoning": team.reasoning,
-            "reasoning_agent_id": team.reasoning_agent.id if team.reasoning_agent else None,
-            "reasoning_min_steps": team.reasoning_min_steps,
-            "reasoning_max_steps": team.reasoning_max_steps,
-        }
-
-        if team.reasoning_model:
-            reasoning_info["reasoning_model"] = ModelResponse(
-                name=team.reasoning_model.name,
-                model=team.reasoning_model.id,
-                provider=team.reasoning_model.provider,
-            ).model_dump()
-
         default_tools_info = {
             "search_knowledge": team.search_knowledge,
             "read_chat_history": team.read_chat_history,
@@ -310,7 +291,6 @@ class TeamResponse(BaseModel):
             sessions=filter_meaningful_config(sessions_info, team_defaults),
             knowledge=filter_meaningful_config(knowledge_info, team_defaults),
             memory=filter_meaningful_config(memory_info, team_defaults) if memory_info else None,
-            reasoning=filter_meaningful_config(reasoning_info, team_defaults),
             default_tools=filter_meaningful_config(default_tools_info, team_defaults),
             system_message=filter_meaningful_config(system_message_info, team_defaults),
             response_settings=filter_meaningful_config(response_settings_info, team_defaults),

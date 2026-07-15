@@ -2330,17 +2330,6 @@ class TestModelDeepCopy:
         # Model should be the SAME instance (shared)
         assert copy.model is model
 
-    def test_reasoning_model_is_shared(self):
-        """Reasoning model should also be shared."""
-        model = OpenAIChat(id="gpt-4o-mini")
-        reasoning_model = OpenAIChat(id="gpt-4o")
-        agent = Agent(name="test-agent", id="test-id", model=model, reasoning_model=reasoning_model)
-
-        copy = agent.deep_copy()
-
-        assert copy.model is model
-        assert copy.reasoning_model is reasoning_model
-
     def test_model_in_team_is_shared(self):
         """Team model and member models should be shared."""
         team_model = OpenAIChat(id="gpt-4o-mini")
@@ -2539,55 +2528,6 @@ class TestMemoryManagerDeepCopy:
 
         # Memory manager should be shared
         assert copy.memory_manager is mm
-
-
-# ============================================================================
-# Reasoning Agent Deep Copy Tests
-# ============================================================================
-
-
-class TestReasoningAgentDeepCopy:
-    """Tests for reasoning_agent handling during deep_copy()."""
-
-    def test_reasoning_agent_is_deep_copied(self):
-        """Reasoning agent should be deep copied (isolated)."""
-        reasoning_agent = Agent(name="reasoner", id="reasoner-id", model=OpenAIChat(id="gpt-4o"))
-        agent = Agent(
-            name="main-agent",
-            id="main-id",
-            model=OpenAIChat(id="gpt-4o-mini"),
-            reasoning_agent=reasoning_agent,
-        )
-
-        copy = agent.deep_copy()
-
-        # Reasoning agent should be a DIFFERENT instance (copied)
-        assert copy.reasoning_agent is not reasoning_agent
-        assert copy.reasoning_agent.id == reasoning_agent.id
-        assert copy.reasoning_agent.name == reasoning_agent.name
-
-    def test_reasoning_agent_state_isolated(self):
-        """Reasoning agent state should be isolated."""
-        reasoning_agent = Agent(
-            name="reasoner",
-            id="reasoner-id",
-            model=OpenAIChat(id="gpt-4o"),
-            metadata={"thoughts": []},
-        )
-        agent = Agent(
-            name="main-agent",
-            id="main-id",
-            model=OpenAIChat(id="gpt-4o-mini"),
-            reasoning_agent=reasoning_agent,
-        )
-
-        copy = agent.deep_copy()
-
-        # Modify original reasoning agent metadata
-        reasoning_agent.metadata["thoughts"].append("thought1")
-
-        # Copy's reasoning agent should be unaffected
-        assert copy.reasoning_agent.metadata["thoughts"] == []
 
 
 # ============================================================================

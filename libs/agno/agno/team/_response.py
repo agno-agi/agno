@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from collections import deque
 from typing import (
     TYPE_CHECKING,
     Any,
@@ -48,7 +47,6 @@ from agno.utils.events import (
     create_team_parser_model_response_completed_event,
     create_team_parser_model_response_started_event,
     create_team_reasoning_completed_event,
-    create_team_reasoning_content_delta_event,
     create_team_reasoning_started_event,
     create_team_reasoning_step_event,
     create_team_run_output_content_event,
@@ -63,12 +61,10 @@ from agno.utils.reasoning import (
     add_reasoning_metrics_to_metadata,
     add_reasoning_step_to_metadata,
     append_to_reasoning_content,
-    update_run_output_with_reasoning,
 )
 from agno.utils.string import parse_response_dict_str, parse_response_model_str
 
 if TYPE_CHECKING:
-    from agno.reasoning.manager import ReasoningEvent
     from agno.team.team import Team
 
 
@@ -547,270 +543,6 @@ async def agenerate_response_with_output_model_stream(
     messages_for_run_response = [m for m in run_messages.messages if m.add_to_agent_memory]
     # Update the RunResponse messages
     run_response.messages = messages_for_run_response
-
-
-# ---------------------------------------------------------------------------
-# Reasoning
-# ---------------------------------------------------------------------------
-
-
-def format_reasoning_step_content(team: "Team", run_response: TeamRunOutput, reasoning_step: ReasoningStep) -> str:
-    """Format content for a reasoning step without changing any existing logic."""
-    step_content = ""
-    if reasoning_step.title:
-        step_content += f"## {reasoning_step.title}\n"
-    if reasoning_step.reasoning:
-        step_content += f"{reasoning_step.reasoning}\n"
-    if reasoning_step.action:
-        step_content += f"Action: {reasoning_step.action}\n"
-    if reasoning_step.result:
-        step_content += f"Result: {reasoning_step.result}\n"
-    step_content += "\n"
-
-    # Get the current reasoning_content and append this step
-    current_reasoning_content = ""
-    if hasattr(run_response, "reasoning_content") and run_response.reasoning_content:
-        current_reasoning_content = run_response.reasoning_content
-
-    # Create updated reasoning_content
-    updated_reasoning_content = current_reasoning_content + step_content
-
-    return updated_reasoning_content
-
-
-def handle_reasoning_event(
-    team: "Team",
-    event: "ReasoningEvent",
-    run_response: TeamRunOutput,
-    stream_events: bool,
-) -> Iterator[TeamRunOutputEvent]:
-    """
-    Convert a ReasoningEvent from the ReasoningManager to Team-specific TeamRunOutputEvents.
-
-    This method handles the conversion of generic reasoning events to Team events,
-    keeping the reason() function clean and simple.
-    """
-    from agno.reasoning.manager import ReasoningEventType
-
-    if event.event_type == ReasoningEventType.started:
-        if stream_events:
-            yield handle_event(  # type: ignore
-                create_team_reasoning_started_event(from_run_response=run_response),
-                run_response,
-                events_to_skip=team.events_to_skip,
-                store_events=team.store_events,
-            )
-
-    elif event.event_type == ReasoningEventType.content_delta:
-        if stream_events and event.reasoning_content:
-            yield handle_event(  # type: ignore
-                create_team_reasoning_content_delta_event(
-                    from_run_response=run_response,
-                    reasoning_content=event.reasoning_content,
-                ),
-                run_response,
-                events_to_skip=team.events_to_skip,
-                store_events=team.store_events,
-            )
-
-    elif event.event_type == ReasoningEventType.step:
-        if event.reasoning_step:
-            # Update run_response with this step
-            update_run_output_with_reasoning(
-                run_response=run_response,
-                reasoning_steps=[event.reasoning_step],
-                reasoning_agent_messages=[],
-            )
-            if stream_events:
-                updated_reasoning_content = format_reasoning_step_content(
-                    team,
-                    run_response=run_response,
-                    reasoning_step=event.reasoning_step,
-                )
-                yield handle_event(  # type: ignore
-                    create_team_reasoning_step_event(
-                        from_run_response=run_response,
-                        reasoning_step=event.reasoning_step,
-                        reasoning_content=updated_reasoning_content,
-                    ),
-                    run_response,
-                    events_to_skip=team.events_to_skip,
-                    store_events=team.store_events,
-                )
-
-    elif event.event_type == ReasoningEventType.completed:
-        if event.message and event.reasoning_steps:
-            update_run_output_with_reasoning(
-                run_response=run_response,
-                reasoning_steps=event.reasoning_steps,
-                reasoning_agent_messages=event.reasoning_messages,
-            )
-        if stream_events:
-            yield handle_event(  # type: ignore
-                create_team_reasoning_completed_event(
-                    from_run_response=run_response,
-                    content=ReasoningSteps(reasoning_steps=event.reasoning_steps),
-                    content_type=ReasoningSteps.__name__,
-                ),
-                run_response,
-                events_to_skip=team.events_to_skip,
-                store_events=team.store_events,
-            )
-
-    elif event.event_type == ReasoningEventType.error:
-        log_warning(f"Reasoning error. {event.error}, continuing regular session...")
-
-
-def handle_reasoning(
-    team: "Team", run_response: TeamRunOutput, run_messages: RunMessages, run_context: Optional[RunContext] = None
-) -> None:
-    if team.reasoning or team.reasoning_model is not None:
-        reasoning_generator = reason(
-            team, run_response=run_response, run_messages=run_messages, run_context=run_context, stream_events=False
-        )
-
-        # Consume the generator without yielding
-        deque(reasoning_generator, maxlen=0)
-
-
-def handle_reasoning_stream(
-    team: "Team",
-    run_response: TeamRunOutput,
-    run_messages: RunMessages,
-    run_context: Optional[RunContext] = None,
-    stream_events: bool = False,
-) -> Iterator[TeamRunOutputEvent]:
-    if team.reasoning or team.reasoning_model is not None:
-        reasoning_generator = reason(
-            team,
-            run_response=run_response,
-            run_messages=run_messages,
-            run_context=run_context,
-            stream_events=stream_events,
-        )
-        yield from reasoning_generator
-
-
-async def ahandle_reasoning(
-    team: "Team", run_response: TeamRunOutput, run_messages: RunMessages, run_context: Optional[RunContext] = None
-) -> None:
-    if team.reasoning or team.reasoning_model is not None:
-        reason_generator = areason(
-            team, run_response=run_response, run_messages=run_messages, run_context=run_context, stream_events=False
-        )
-        # Consume the generator without yielding
-        async for _ in reason_generator:
-            pass
-
-
-async def ahandle_reasoning_stream(
-    team: "Team",
-    run_response: TeamRunOutput,
-    run_messages: RunMessages,
-    run_context: Optional[RunContext] = None,
-    stream_events: bool = False,
-) -> AsyncIterator[TeamRunOutputEvent]:
-    if team.reasoning or team.reasoning_model is not None:
-        reason_generator = areason(
-            team,
-            run_response=run_response,
-            run_messages=run_messages,
-            run_context=run_context,
-            stream_events=stream_events,
-        )
-        async for item in reason_generator:
-            yield item
-
-
-def reason(
-    team: "Team",
-    run_response: TeamRunOutput,
-    run_messages: RunMessages,
-    run_context: Optional[RunContext] = None,
-    stream_events: bool = False,
-) -> Iterator[TeamRunOutputEvent]:
-    """
-    Run reasoning using the ReasoningManager.
-
-    Handles both native reasoning models (DeepSeek, Anthropic, etc.) and
-    default Chain-of-Thought reasoning with a clean, unified interface.
-    """
-    from agno.reasoning.manager import ReasoningConfig, ReasoningManager
-
-    # Get the reasoning model (use copy of main model if not provided)
-    reasoning_model: Optional[Model] = team.reasoning_model
-    if reasoning_model is None and team.model is not None:
-        from copy import deepcopy
-
-        reasoning_model = deepcopy(team.model)
-
-    # Create reasoning manager with config
-    manager = ReasoningManager(
-        ReasoningConfig(
-            reasoning_model=reasoning_model,
-            reasoning_agent=team.reasoning_agent,
-            min_steps=team.reasoning_min_steps,
-            max_steps=team.reasoning_max_steps,
-            tools=team.tools if isinstance(team.tools, list) else None,
-            tool_call_limit=team.tool_call_limit,
-            use_json_mode=team.use_json_mode,
-            telemetry=team.telemetry,
-            debug_mode=team.debug_mode,
-            debug_level=team.debug_level,
-            run_context=run_context,
-            run_metrics=run_response.metrics,
-        )
-    )
-
-    # Use the unified reason() method and convert events
-    for event in manager.reason(run_messages, stream=stream_events):
-        yield from handle_reasoning_event(team, event, run_response, stream_events)
-
-
-async def areason(
-    team: "Team",
-    run_response: TeamRunOutput,
-    run_messages: RunMessages,
-    run_context: Optional[RunContext] = None,
-    stream_events: bool = False,
-) -> AsyncIterator[TeamRunOutputEvent]:
-    """
-    Run reasoning asynchronously using the ReasoningManager.
-
-    Handles both native reasoning models (DeepSeek, Anthropic, etc.) and
-    default Chain-of-Thought reasoning with a clean, unified interface.
-    """
-    from agno.reasoning.manager import ReasoningConfig, ReasoningManager
-
-    # Get the reasoning model (use copy of main model if not provided)
-    reasoning_model: Optional[Model] = team.reasoning_model
-    if reasoning_model is None and team.model is not None:
-        from copy import deepcopy
-
-        reasoning_model = deepcopy(team.model)
-
-    # Create reasoning manager with config
-    manager = ReasoningManager(
-        ReasoningConfig(
-            reasoning_model=reasoning_model,
-            reasoning_agent=team.reasoning_agent,
-            min_steps=team.reasoning_min_steps,
-            max_steps=team.reasoning_max_steps,
-            tools=team.tools if isinstance(team.tools, list) else None,
-            tool_call_limit=team.tool_call_limit,
-            use_json_mode=team.use_json_mode,
-            telemetry=team.telemetry,
-            debug_mode=team.debug_mode,
-            debug_level=team.debug_level,
-            run_context=run_context,
-            run_metrics=run_response.metrics,
-        )
-    )
-
-    # Use the unified areason() method and convert events
-    async for event in manager.areason(run_messages, stream=stream_events):
-        for output_event in handle_reasoning_event(team, event, run_response, stream_events):
-            yield output_event
 
 
 # ---------------------------------------------------------------------------

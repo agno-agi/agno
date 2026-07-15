@@ -28,7 +28,6 @@ def get_telemetry_data(agent: Agent) -> Dict[str, Any]:
         "has_culture": agent.enable_agentic_culture is True
         or agent.update_cultural_knowledge is True
         or agent.culture_manager is not None,
-        "has_reasoning": agent.reasoning is True,
         "has_knowledge": agent.knowledge is not None,
         "has_input_schema": agent.input_schema is not None,
         "has_output_schema": agent.output_schema is not None,

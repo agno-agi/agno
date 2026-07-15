@@ -4,13 +4,10 @@ These tests verify that reasoning_content_delta events are properly emitted
 during streaming reasoning, without requiring actual API calls.
 """
 
-from unittest.mock import patch
-
-import pytest
-
 from agno.models.message import Message
 from agno.reasoning.step import ReasoningStep, ReasoningSteps
 from agno.run.agent import RunEvent
+
 
 # ============================================================================
 # Test RunEvent enum has required events
@@ -79,125 +76,6 @@ def test_reasoning_content_delta_event_class_exists():
     )
     assert event.reasoning_content == "Test content"
     assert event.event == RunEvent.reasoning_content_delta
-
-
-# ============================================================================
-# Test Anthropic streaming functions exist
-# ============================================================================
-
-
-def test_anthropic_streaming_functions_exist():
-    """Test that Anthropic streaming functions are importable."""
-    from agno.reasoning.anthropic import (
-        aget_anthropic_reasoning_stream,
-        get_anthropic_reasoning_stream,
-    )
-
-    assert callable(get_anthropic_reasoning_stream)
-    assert callable(aget_anthropic_reasoning_stream)
-
-
-def test_deepseek_streaming_functions_exist():
-    """Test that DeepSeek streaming functions are importable."""
-    from agno.reasoning.deepseek import (
-        aget_deepseek_reasoning_stream,
-        get_deepseek_reasoning_stream,
-    )
-
-    assert callable(get_deepseek_reasoning_stream)
-    assert callable(aget_deepseek_reasoning_stream)
-
-
-# ============================================================================
-# Test streaming function signatures
-# ============================================================================
-
-
-def test_anthropic_stream_yields_tuples():
-    """Test that Anthropic streaming function yields (delta, message) tuples."""
-    import inspect
-
-    from agno.reasoning.anthropic import get_anthropic_reasoning_stream
-
-    # Check it's a generator function
-    sig = inspect.signature(get_anthropic_reasoning_stream)
-    params = list(sig.parameters.keys())
-
-    assert "reasoning_agent" in params
-    assert "messages" in params
-
-
-def test_deepseek_stream_yields_tuples():
-    """Test that DeepSeek streaming function yields (delta, message) tuples."""
-    import inspect
-
-    from agno.reasoning.deepseek import get_deepseek_reasoning_stream
-
-    # Check signature
-    sig = inspect.signature(get_deepseek_reasoning_stream)
-    params = list(sig.parameters.keys())
-
-    assert "reasoning_agent" in params
-    assert "messages" in params
-
-
-# ============================================================================
-# Mock-based streaming tests
-# ============================================================================
-
-
-@patch("agno.reasoning.anthropic.get_anthropic_reasoning_stream")
-def test_anthropic_stream_function_called_with_stream_events(mock_stream):
-    """Test that streaming version is called when stream_events=True for Anthropic."""
-    # Setup mock to return iterator with deltas
-    final_message = Message(
-        role="assistant",
-        content="<thinking>\nTest thinking\n</thinking>",
-        reasoning_content="Test thinking",
-    )
-    mock_stream.return_value = iter(
-        [
-            ("chunk1", None),
-            ("chunk2", None),
-            (None, final_message),
-        ]
-    )
-
-    # Collect results
-    results = list(mock_stream.return_value)
-
-    # Verify we got streaming chunks
-    assert len(results) == 3
-    assert results[0] == ("chunk1", None)
-    assert results[1] == ("chunk2", None)
-    assert results[2][0] is None
-    assert results[2][1] == final_message
-
-
-@pytest.mark.asyncio
-@patch("agno.reasoning.anthropic.aget_anthropic_reasoning_stream")
-async def test_anthropic_async_stream_function(mock_stream):
-    """Test async streaming version for Anthropic."""
-    final_message = Message(
-        role="assistant",
-        content="<thinking>\nAsync thinking\n</thinking>",
-        reasoning_content="Async thinking",
-    )
-
-    async def mock_async_gen():
-        yield ("async_chunk1", None)
-        yield ("async_chunk2", None)
-        yield (None, final_message)
-
-    mock_stream.return_value = mock_async_gen()
-
-    results = []
-    async for item in mock_stream.return_value:
-        results.append(item)
-
-    assert len(results) == 3
-    assert results[0] == ("async_chunk1", None)
-    assert results[1] == ("async_chunk2", None)
 
 
 # ============================================================================

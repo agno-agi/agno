@@ -360,8 +360,7 @@ def _run(
     5. Determine tools for model
     6. Prepare run messages
     7. Start memory creation in background thread
-    8. Reason about the task if reasoning is enabled
-    9. Generate a response from the Model (includes running function calls)
+    8. Generate a response from the Model (includes running function calls)
     10. Update the RunOutput with the model response
     11. Store media if enabled
     12. Convert the response to the structured format if needed
@@ -377,7 +376,6 @@ def _run(
         convert_response_to_structured_format,
         generate_followups,
         generate_response_with_output_model,
-        handle_reasoning,
         parse_response_with_parser_model,
         update_run_response,
     )
@@ -518,13 +516,7 @@ def _run(
 
                 raise_if_cancelled(run_response.run_id)  # type: ignore
 
-                # 5. Reason about the task
-                handle_reasoning(agent, run_response=run_response, run_messages=run_messages, run_context=run_context)
-
-                # Check for cancellation before model call
-                raise_if_cancelled(run_response.run_id)  # type: ignore
-
-                # 6. Generate a response from the Model (includes running function calls)
+                # 5. Generate a response from the Model (includes running function calls)
                 agent.model = cast(Model, agent.model)
 
                 model_response: ModelResponse = call_model_with_fallback(
@@ -789,7 +781,6 @@ def _run_stream(
         generate_followups_stream,
         generate_response_with_output_model_stream,
         handle_model_response_stream,
-        handle_reasoning_stream,
         parse_response_with_parser_model_stream,
     )
     from agno.agent._storage import load_session_state, read_or_create_session, update_metadata
@@ -937,19 +928,7 @@ def _run_stream(
                         store_events=agent.store_events,
                     )
 
-                # 5. Reason about the task if reasoning is enabled
-                yield from handle_reasoning_stream(
-                    agent,
-                    run_response=run_response,
-                    run_messages=run_messages,
-                    run_context=run_context,
-                    stream_events=stream_events,
-                )
-
-                # Check for cancellation before model processing
-                raise_if_cancelled(run_response.run_id)  # type: ignore
-
-                # 6. Process model response
+                # 5. Process model response
                 if agent.output_model is None:
                     for event in handle_model_response_stream(
                         agent,
@@ -1493,8 +1472,7 @@ async def _arun(
     5. Determine tools for model
     6. Prepare run messages
     7. Start memory creation in background task
-    8. Reason about the task if reasoning is enabled
-    9. Generate a response from the Model (includes running function calls)
+    8. Generate a response from the Model (includes running function calls)
     10. Update the RunOutput with the model response
     11. Convert response to structured format
     12. Store media if enabled
@@ -1509,7 +1487,6 @@ async def _arun(
     from agno.agent._response import (
         agenerate_followups,
         agenerate_response_with_output_model,
-        ahandle_reasoning,
         aparse_response_with_parser_model,
         convert_response_to_structured_format,
         update_run_response,
@@ -1657,15 +1634,7 @@ async def _arun(
                 # Check for cancellation before model call
                 await araise_if_cancelled(run_response.run_id)  # type: ignore
 
-                # 8. Reason about the task if reasoning is enabled
-                await ahandle_reasoning(
-                    agent, run_response=run_response, run_messages=run_messages, run_context=run_context
-                )
-
-                # Check for cancellation before model call
-                await araise_if_cancelled(run_response.run_id)  # type: ignore
-
-                # 9. Generate a response from the Model (includes running function calls)
+                # 8. Generate a response from the Model (includes running function calls)
                 model_response: ModelResponse = await acall_model_with_fallback(
                     agent.model,
                     agent.fallback_config,
@@ -2170,8 +2139,7 @@ async def _arun_stream(
     5. Determine tools for model
     6. Prepare run messages
     7. Start memory creation in background task
-    8. Reason about the task if reasoning is enabled
-    9. Generate a response from the Model (includes running function calls)
+    8. Generate a response from the Model (includes running function calls)
     10. Parse response with parser model if provided
     11. Wait for background memory creation
     12. Create session summary
@@ -2184,7 +2152,6 @@ async def _arun_stream(
         agenerate_followups_stream,
         agenerate_response_with_output_model_stream,
         ahandle_model_response_stream,
-        ahandle_reasoning_stream,
         aparse_response_with_parser_model_stream,
     )
     from agno.agent._storage import aread_or_create_session, load_session_state, update_metadata
@@ -2336,21 +2303,7 @@ async def _arun_stream(
                     existing_task=cultural_knowledge_task,
                 )
 
-                # 8. Reason about the task if reasoning is enabled
-                async for item in ahandle_reasoning_stream(
-                    agent,
-                    run_response=run_response,
-                    run_messages=run_messages,
-                    run_context=run_context,
-                    stream_events=stream_events,
-                ):
-                    if not isinstance(item, _CANCEL_BYPASS_EVENT_TYPES):
-                        await araise_if_cancelled(run_response.run_id)  # type: ignore
-                    yield item
-
-                await araise_if_cancelled(run_response.run_id)  # type: ignore
-
-                # 9. Generate a response from the Model
+                # 8. Generate a response from the Model
                 if agent.output_model is None:
                     async for event in ahandle_model_response_stream(
                         agent,

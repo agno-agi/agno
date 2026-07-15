@@ -1513,7 +1513,6 @@ def collect_components_from_agent(agent: Any, registry: Registry, visited: Set[i
     visited.add(id(agent))
 
     registry.add_model(getattr(agent, "model", None))
-    registry.add_model(getattr(agent, "reasoning_model", None))
     registry.add_model(getattr(agent, "parser_model", None))
     registry.add_model(getattr(agent, "output_model", None))
     _collect_fallback_models(agent, registry)
@@ -1534,7 +1533,6 @@ def collect_components_from_team(team: Any, registry: Registry, visited: Set[int
     visited.add(id(team))
 
     registry.add_model(getattr(team, "model", None))
-    registry.add_model(getattr(team, "reasoning_model", None))
     registry.add_model(getattr(team, "parser_model", None))
     registry.add_model(getattr(team, "output_model", None))
     _collect_fallback_models(team, registry)

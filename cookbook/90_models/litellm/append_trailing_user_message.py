@@ -25,7 +25,6 @@ agent = Agent(
         top_p=None,
         append_trailing_user_message=True,
     ),
-    reasoning=True,
     markdown=True,
 )
 
@@ -37,7 +36,6 @@ agent_custom = Agent(
         append_trailing_user_message=True,
         trailing_user_message_content="continue",
     ),
-    reasoning=True,
     markdown=True,
 )
 

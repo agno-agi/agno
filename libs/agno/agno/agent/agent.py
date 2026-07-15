@@ -191,14 +191,6 @@ class Agent:
     # If True, run hooks as FastAPI background tasks (non-blocking). Set by AgentOS.
     _run_hooks_in_background: Optional[bool] = None
 
-    # --- Agent Reasoning ---
-    # Enable reasoning by working through the problem step by step.
-    reasoning: bool = False
-    reasoning_model: Optional[Model] = None
-    reasoning_agent: Optional[Agent] = None
-    reasoning_min_steps: int = 1
-    reasoning_max_steps: int = 10
-
     # --- Default tools ---
     # Add a tool that allows the Model to read the chat history.
     read_chat_history: bool = False
@@ -430,11 +422,6 @@ class Agent:
         tool_hooks: Optional[List[Callable]] = None,
         pre_hooks: Optional[List[Union[Callable[..., Any], BaseGuardrail, BaseEval]]] = None,
         post_hooks: Optional[List[Union[Callable[..., Any], BaseGuardrail, BaseEval]]] = None,
-        reasoning: bool = False,
-        reasoning_model: Optional[Union[Model, str]] = None,
-        reasoning_agent: Optional[Agent] = None,
-        reasoning_min_steps: int = 1,
-        reasoning_max_steps: int = 10,
         read_chat_history: bool = False,
         search_knowledge: bool = True,
         add_search_knowledge_instructions: bool = True,
@@ -589,12 +576,6 @@ class Agent:
 
         self.pre_hooks = pre_hooks
         self.post_hooks = post_hooks
-
-        self.reasoning = reasoning
-        self.reasoning_model = reasoning_model  # type: ignore[assignment]
-        self.reasoning_agent = reasoning_agent
-        self.reasoning_min_steps = reasoning_min_steps
-        self.reasoning_max_steps = reasoning_max_steps
 
         self.read_chat_history = read_chat_history
         self.search_knowledge = search_knowledge

@@ -18,15 +18,13 @@ from agno.run.agent import RunEvent  # noqa
 def run_example() -> None:
     async def streaming_reasoning():
         """Test streaming reasoning with a Gemini model."""
-        # Create an agent with reasoning enabled
-        # Note: For Gemini, you MUST set thinking_budget to enable thinking mode
+        # Create an agent with native Gemini thinking enabled
         agent = Agent(
-            reasoning_model=Gemini(
+            model=Gemini(
                 id="gemini-2.5-flash",
-                thinking_budget=1024,  # Required to enable thinking mode
-                include_thoughts=True,  # Include thought summaries in response
+                thinking_budget=1024,
+                include_thoughts=True,
             ),
-            reasoning=True,
             instructions="Think step by step about the problem.",
         )
 

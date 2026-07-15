@@ -20,7 +20,6 @@ from agno.models.anthropic import Claude
 
 agent = Agent(
     model=Claude(id="claude-sonnet-4-6", append_trailing_user_message=True),
-    reasoning=True,
     markdown=True,
 )
 
@@ -31,7 +30,6 @@ agent_custom = Agent(
         append_trailing_user_message=True,
         trailing_user_message_content=".",
     ),
-    reasoning=True,
     markdown=True,
 )
 

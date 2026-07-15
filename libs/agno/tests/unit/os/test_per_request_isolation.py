@@ -1598,54 +1598,6 @@ class TestHeavyResourcesUnit:
 
         assert copy.model is model
 
-    def test_reasoning_model_is_shared(self):
-        """Reasoning model should be shared."""
-        from agno.models.openai import OpenAIChat
-
-        reasoning_model = OpenAIChat(id="gpt-4o")
-        agent = Agent(name="test", id="test-id", reasoning_model=reasoning_model)
-        copy = agent.deep_copy()
-
-        assert copy.reasoning_model is reasoning_model
-
-
-# ============================================================================
-# Reasoning Agent Unit Tests
-# ============================================================================
-
-
-class TestReasoningAgentUnit:
-    """Unit tests for reasoning_agent deep copy."""
-
-    def test_reasoning_agent_is_copied(self):
-        """Reasoning agent should be deep copied (not shared)."""
-        reasoner = Agent(name="reasoner", id="reasoner-id")
-        agent = Agent(name="main", id="main-id", reasoning_agent=reasoner)
-        copy = agent.deep_copy()
-
-        # Should be a different instance
-        assert copy.reasoning_agent is not reasoner
-        assert copy.reasoning_agent.id == reasoner.id
-
-    def test_reasoning_agent_state_isolated(self):
-        """Reasoning agent state should be isolated."""
-        reasoner = Agent(name="reasoner", id="reasoner-id", metadata={"count": 0})
-        agent = Agent(name="main", id="main-id", reasoning_agent=reasoner)
-        copy = agent.deep_copy()
-
-        # Modify original
-        reasoner.metadata["count"] = 10
-
-        # Copy should be unaffected
-        assert copy.reasoning_agent.metadata["count"] == 0
-
-    def test_reasoning_agent_none(self):
-        """None reasoning_agent should remain None."""
-        agent = Agent(name="test", id="test-id", reasoning_agent=None)
-        copy = agent.deep_copy()
-
-        assert copy.reasoning_agent is None
-
 
 # ============================================================================
 # Error Handling Unit Tests

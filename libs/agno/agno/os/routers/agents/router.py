@@ -1267,7 +1267,7 @@ def get_agent_router(
             "- Agent metadata (ID, name, description)\n"
             "- Model configuration and capabilities\n"
             "- Available tools and their configurations\n"
-            "- Session, knowledge, memory, and reasoning settings\n"
+            "- Session, knowledge, and memory settings\n"
             "- Only meaningful (non-default) configurations are included"
         ),
         responses={
@@ -1373,7 +1373,6 @@ def get_agent_router(
             "- Complete tool inventory and configurations\n"
             "- Session management settings\n"
             "- Knowledge base and memory configurations\n"
-            "- Reasoning capabilities and settings\n"
             "- System prompts and response formatting options"
         ),
         responses={

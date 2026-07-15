@@ -3,7 +3,6 @@ from pydantic import BaseModel, Field
 
 from agno.agent import Agent, RunOutput  # noqa
 from agno.db.sqlite import SqliteDb
-from agno.models.groq.groq import Groq
 from agno.models.mistral import MistralChat
 
 
@@ -159,17 +158,3 @@ def test_history():
     run_output = agent.run("Hello 4")
     assert run_output.messages is not None
     assert len(run_output.messages) == 8
-
-
-def test_with_reasoning():
-    agent = Agent(
-        model=MistralChat(
-            id="mistral-large-latest",
-        ),
-        reasoning_model=Groq(
-            id="deepseek-r1-distill-llama-70b",
-        ),
-        telemetry=False,
-    )
-    response = agent.run("What is the capital of France?")
-    assert response.content is not None

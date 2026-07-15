@@ -5,7 +5,6 @@ Combined Metrics
 When an agent uses multiple background features, each model's
 calls are tracked under separate detail keys:
 - "model" for the agent's own calls
-- "reasoning_model" for reasoning manager calls
 - "compression_model" for compression manager calls
 - "output_model" for output model calls
 - "memory_model" for memory manager calls
@@ -52,8 +51,6 @@ eval_hook = AgentAsJudgeEval(
 agent = Agent(
     model=OpenAIChat(id="gpt-4o-mini"),
     tools=[YFinanceTools(enable_stock_price=True, enable_company_info=True)],
-    reasoning_model=OpenAIChat(id="gpt-4o-mini"),
-    reasoning=True,
     compression_manager=CompressionManager(
         model=OpenAIChat(id="gpt-4o-mini"),
         compress_tool_results_limit=1,

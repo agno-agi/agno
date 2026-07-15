@@ -18,13 +18,12 @@ from agno.run.agent import RunEvent  # noqa
 def run_example() -> None:
     async def streaming_reasoning():
         """Test streaming reasoning with an OpenAI model."""
-        # Create an agent with reasoning enabled
+        # Create an agent with native Claude thinking enabled
         agent = Agent(
-            reasoning_model=Claude(
+            model=Claude(
                 id="claude-sonnet-4-5",
                 thinking={"type": "enabled", "budget_tokens": 1024},
             ),
-            reasoning=True,
             instructions="Think step by step about the problem.",
         )
 

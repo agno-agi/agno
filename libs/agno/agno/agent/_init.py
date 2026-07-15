@@ -238,10 +238,6 @@ def get_models(agent: Agent) -> None:
         agent.model = get_model(agent.model)
         if agent.model is not None:
             agent.model.model_type = ModelType.MODEL
-    if agent.reasoning_model is not None:
-        agent.reasoning_model = get_model(agent.reasoning_model)
-        if agent.reasoning_model is not None:
-            agent.reasoning_model.model_type = ModelType.REASONING_MODEL
     if agent.parser_model is not None:
         agent.parser_model = get_model(agent.parser_model)
         if agent.parser_model is not None:
