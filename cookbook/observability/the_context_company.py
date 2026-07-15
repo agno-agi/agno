@@ -1,0 +1,41 @@
+"""
+The Context Company
+===================
+
+Demonstrates instrumenting an Agno agent with The Context Company.
+
+Setup:
+    pip install "contextcompany[agno]" agno openai yfinance
+
+Set TCC_API_KEY and OPENAI_API_KEY before running this example.
+See https://docs.thecontextcompany.com/frameworks/agno for the complete setup guide.
+"""
+
+import asyncio
+
+from contextcompany.agno import instrument_agno
+
+# Initialize instrumentation before importing Agno.
+instrument_agno()
+
+from agno.agent import Agent
+from agno.models.openai import OpenAIChat
+from agno.tools.yfinance import YFinanceTools
+
+agent = Agent(
+    name="Stock Price Agent",
+    model=OpenAIChat(id="gpt-5.2"),
+    tools=[YFinanceTools()],
+    instructions="You are a stock price agent. Answer questions in the style of a stock analyst.",
+)
+
+
+async def main() -> None:
+    await agent.aprint_response(
+        "What is the current price of Tesla? Then find the current price of NVIDIA.",
+        stream=True,
+    )
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
