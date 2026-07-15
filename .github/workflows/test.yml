@@ -207,4 +207,16 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh pr comment ${{ github.event.pull_request.number }} --body "**Coverage: ${{ env.coverage }}%**"
+          PR_NUMBER=${{ github.event.pull_request.number }}
+          BODY="<!-- coverage-bot -->
+          **Coverage: ${{ env.coverage }}%**"
+
+          # Find existing coverage comment
+          COMMENT_ID=$(gh api repos/${{ github.repository }}/issues/${PR_NUMBER}/comments \
+            --jq '.[] | select(.body | contains("<!-- coverage-bot -->")) | .id' | head -1)
+
+          if [ -n "$COMMENT_ID" ]; then
+            gh api repos/${{ github.repository }}/issues/comments/${COMMENT_ID} -X PATCH -f body="$BODY"
+          else
+            gh pr comment ${PR_NUMBER} --body "$BODY"
+          fi
