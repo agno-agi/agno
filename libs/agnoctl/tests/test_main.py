@@ -1,5 +1,6 @@
 """Root `agno` app: branded home screen, version flag, and command routing."""
 
+from click import unstyle
 from typer.testing import CliRunner
 
 from agnoctl import __version__
@@ -36,6 +37,6 @@ def test_commands_are_registered():
 def test_create_help_shows_interactive_defaults():
     result = runner.invoke(app, ["create", "--help"])
     assert result.exit_code == 0
-    output = " ".join(result.output.lower().replace("│", " ").split())
+    output = " ".join(unstyle(result.output).lower().replace("│", " ").split())
     assert "default: agentos." in output
     assert "when omitted: agentos-docker." in output
