@@ -15,6 +15,9 @@ Prerequisites:
 Optional env vars:
 - MEMANTO_URL (default http://localhost:8000)
 - MEMANTO_AGENT_ID (default agno-demo)
+
+Note: Memanto memory is scoped by MEMANTO_AGENT_ID, not Agno user_id.
+Use separate Memanto agent ids for isolated memory namespaces.
 """
 
 import os
@@ -23,54 +26,50 @@ from agno.agent import Agent
 from agno.models.openai import OpenAIResponses
 from agno.tools.memanto import MemantoTools
 
-# ---------------------------------------------------------------------------
-# Setup
-# ---------------------------------------------------------------------------
-MEMANTO_URL = os.getenv("MEMANTO_URL", "http://localhost:8000")
-MEMANTO_AGENT_ID = os.getenv("MEMANTO_AGENT_ID", "agno-demo")
 
-memanto_tools = MemantoTools(
-    agent_id=MEMANTO_AGENT_ID,
-    base_url=MEMANTO_URL,
-    add_instructions=True,
-)
+def main() -> None:
+    # ---------------------------------------------------------------------------
+    # Setup
+    # ---------------------------------------------------------------------------
+    memanto_url = os.getenv("MEMANTO_URL", "http://localhost:8000")
+    memanto_agent_id = os.getenv("MEMANTO_AGENT_ID", "agno-demo")
 
-# Seed a preference (comment out after first run if you want a clean re-test)
-memanto_tools.remember(
-    content="Alice prefers email communication and dark mode UI.",
-    memory_type="preference",
-    confidence=0.95,
-    tags="ui, communication",
-)
+    memanto_tools = MemantoTools(
+        agent_id=memanto_agent_id,
+        base_url=memanto_url,
+        add_instructions=True,
+    )
 
+    # Seed a preference (comment out after first run if you want a clean re-test)
+    memanto_tools.remember(
+        content="Alice prefers email communication and dark mode UI.",
+        memory_type="preference",
+        confidence=0.95,
+        tags="ui, communication",
+    )
 
-# ---------------------------------------------------------------------------
-# Create Agent
-# ---------------------------------------------------------------------------
-agent = Agent(
-    model=OpenAIResponses(id="gpt-5.5"),
-    tools=[memanto_tools],
-    instructions=[
-        "You are a helpful assistant with long-term Memanto memory.",
-        "Use the recall tool before asking the user to repeat known preferences.",
-        "Store important new preferences with the remember tool.",
-    ],
-    markdown=True,
-)
+    # ---------------------------------------------------------------------------
+    # Create Agent
+    # ---------------------------------------------------------------------------
+    agent = Agent(
+        model=OpenAIResponses(id="gpt-5.5"),
+        tools=[memanto_tools],
+        instructions=[
+            "You are a helpful assistant with long-term Memanto memory.",
+            "Use the recall tool before asking the user to repeat known preferences.",
+            "Store important new preferences with the remember tool.",
+        ],
+        markdown=True,
+    )
 
-
-# ---------------------------------------------------------------------------
-# Run Example
-# ---------------------------------------------------------------------------
-if __name__ == "__main__":
-    user_id = "alice@example.com"
-
+    # ---------------------------------------------------------------------------
+    # Run Example
+    # ---------------------------------------------------------------------------
     print("=" * 60)
     print("Run 1: Introduce yourself")
     print("=" * 60)
     agent.print_response(
         "Hi, my name is Alice. I work in NYC and prefer concise answers.",
-        user_id=user_id,
         stream=True,
     )
 
@@ -80,6 +79,9 @@ if __name__ == "__main__":
     print("=" * 60)
     agent.print_response(
         "What do you know about my communication and UI preferences?",
-        user_id=user_id,
         stream=True,
     )
+
+
+if __name__ == "__main__":
+    main()
