@@ -16,7 +16,7 @@ from agno.os.interfaces.slack.builders import (
     select_confirmation_row,
 )
 from agno.os.interfaces.slack.events import process_event
-from agno.os.interfaces.slack.helpers import open_chat_stream, slack_error_code
+from agno.os.interfaces.slack.helpers import derive_session_id, open_chat_stream, slack_error_code
 from agno.os.interfaces.slack.ids import decode_admin_approval_button_value
 from agno.os.interfaces.slack.interactions import (
     apply_decisions,
@@ -192,9 +192,18 @@ class HITLHandler:
                     requirements=requirements,
                     log_prefix="re-",
                 )
+                # Embed the session id in the new card only when it can't be re-derived from
+                # the thread (per-user thread sessions) — same rule as the original card.
+                thread_derived = derive_session_id(self.entity_id, ctx.channel, ctx.thread_ts)
+                repause_session_id = ctx.session_id if ctx.session_id != thread_derived else None
                 try:
                     await post_pause_card(
-                        self._client(), state.paused_event, ctx.channel, ctx.thread_ts, new_awaiting_ts
+                        self._client(),
+                        state.paused_event,
+                        ctx.channel,
+                        ctx.thread_ts,
+                        new_awaiting_ts,
+                        session_id=repause_session_id,
                     )
                 except Exception as exc:
                     log_error(f"[HITL] Failed to post Card block (re-pause): {exc}")
@@ -224,7 +233,9 @@ class HITLHandler:
         await self.update_message(ctx.channel, ctx.card_ts, "Approval pending", result.blocks)
 
         if result.should_auto_submit:
-            await self.handle_submit(synthetic_submit_payload(payload, ctx.run_id, ctx.awaiting_ts, result.blocks))
+            await self.handle_submit(
+                synthetic_submit_payload(payload, ctx.run_id, ctx.awaiting_ts, result.blocks, ctx.session_id)
+            )
 
     async def handle_row_reject(self, payload: Dict[str, Any]) -> None:
         ctx = extract_row_action_context(payload)
@@ -232,26 +243,26 @@ class HITLHandler:
             return
 
         result = select_confirmation_row(ctx, selected="deny", include_reason_input=True)
-        blocks = append_submit_if_needed(result.blocks, ctx.run_id, ctx.awaiting_ts)
+        blocks = append_submit_if_needed(result.blocks, ctx.run_id, ctx.awaiting_ts, ctx.session_id)
         await self.update_message(ctx.channel, ctx.card_ts, "Rejection pending", blocks)
 
-    async def _get_approval_status(self, approval_id: str) -> str:
-        """Query approval status from DB."""
+    async def _get_approval(self, approval_id: str) -> Optional[Dict[str, Any]]:
+        """Query the approval record from DB."""
         db = getattr(self.entity, "db", None)
         if not db or not approval_id:
-            return "pending"
+            return None
         try:
             fn = getattr(db, "get_approval", None)
             if not fn:
-                return "pending"
+                return None
             if asyncio.iscoroutinefunction(fn):
                 approval = await fn(approval_id)
             else:
                 approval = fn(approval_id)
-            return approval.get("status", "pending") if approval else "pending"
+            return approval or None
         except Exception as exc:
             log_error(f"[HITL] Failed to get approval status: {exc}")
-            return "pending"
+            return None
 
     def _update_card_to_approved(self, blocks: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """Update approval card blocks to show approved status."""
@@ -273,9 +284,15 @@ class HITLHandler:
         thread_ts: str,
         msg_ts: str,
         awaiting_ts: Optional[str],
+        session_id: Optional[str] = None,
     ) -> None:
-        """Resume a paused run after admin approval."""
-        session_id = f"{self.entity_id}:{thread_ts}"
+        """Resume a paused run after admin approval.
+
+        session_id is the paused run's session id from the approval record — required to
+        find the run when sessions are keyed per user. Falls back to the thread-derived id
+        (the only possible session id when the record predates per-user thread sessions).
+        """
+        session_id = session_id or derive_session_id(self.entity_id, channel, thread_ts)
 
         try:
             run_output = await self.entity.aget_run_output(run_id=run_id, session_id=session_id)  # type: ignore[union-attr]
@@ -348,14 +365,24 @@ class HITLHandler:
                 body_text = block.get("body", {}).get("text") or ""
                 break
 
-        # 4. Query approval status
-        status = await self._get_approval_status(approval_id)
+        # 4. Query approval record (carries status + the paused run's session id)
+        approval = await self._get_approval(approval_id)
+        status = approval.get("status", "pending") if approval else "pending"
 
         # 5. Handle approved — delete indicator, update card, resume run
         if status == "approved":
             await self.delete_awaiting_indicator(channel, awaiting_ts)
             await self.update_message(channel, msg_ts, "Approved", self._update_card_to_approved(blocks))
-            await self._resume_after_approval(payload, run_id, approval_id, channel, thread_ts, msg_ts, awaiting_ts)
+            await self._resume_after_approval(
+                payload,
+                run_id,
+                approval_id,
+                channel,
+                thread_ts,
+                msg_ts,
+                awaiting_ts,
+                session_id=(approval or {}).get("session_id"),
+            )
             return
 
         # 6. Still pending/rejected — update card with current status

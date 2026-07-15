@@ -4,6 +4,7 @@ import pytest
 
 from agno.os.interfaces.slack.helpers import (
     BotNameResolver,
+    derive_session_id,
     download_event_files_async,
     extract_event_context,
     member_name,
@@ -68,6 +69,16 @@ class TestExtractEventContext:
     def test_falls_back_to_ts(self):
         ctx = extract_event_context({"text": "hi", "channel": "C1", "user": "U1", "ts": "111"})
         assert ctx["thread_id"] == "111"
+
+    def test_user_falls_back_to_bot_id(self):
+        # Bot-authored events (e.g. webhook posts) may carry no "user" — bot_id keeps
+        # downstream identity handling non-empty
+        ctx = extract_event_context({"text": "hi", "channel": "C1", "bot_id": "B99", "ts": "111"})
+        assert ctx["user"] == "B99"
+
+    def test_user_wins_over_bot_id(self):
+        ctx = extract_event_context({"text": "hi", "channel": "C1", "user": "U1", "bot_id": "B99", "ts": "111"})
+        assert ctx["user"] == "U1"
 
 
 class TestDownloadEventFilesAsync:
@@ -276,6 +287,25 @@ class TestResolveSlackUser:
         assert resolved_id == "UFAIL"
         assert display_name is None
 
+    @pytest.mark.asyncio
+    async def test_bot_id_resolves_via_bots_info(self):
+        # A raw bot id ("B…") never hits users_info — bots_info gives the bot's name,
+        # and the bot id itself stays the canonical user_id (bots have no email)
+        client = AsyncMock()
+        client.bots_info = AsyncMock(return_value={"bot": {"id": "B42", "name": "peerbot"}})
+        resolved_id, display_name = await resolve_slack_user(client, "B42")
+        assert resolved_id == "B42"
+        assert display_name == "peerbot"
+        client.users_info.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_bot_id_api_error_falls_back_gracefully(self):
+        client = AsyncMock()
+        client.bots_info = AsyncMock(side_effect=RuntimeError("Slack API error"))
+        resolved_id, display_name = await resolve_slack_user(client, "BFAIL")
+        assert resolved_id == "BFAIL"
+        assert display_name is None
+
 
 # -- resolve_bot_name --
 
@@ -385,3 +415,21 @@ class TestStripBotMention:
     def test_mention_only_with_bot_name(self):
         result = strip_bot_mention("<@U0APCSS3MDH>", "U0APCSS3MDH", "Scout")
         assert result == "Scout"
+
+
+class TestDeriveSessionId:
+    def test_channel_scoped(self):
+        # Slack ts values are only unique per channel — the same thread_ts in
+        # two channels must never share a session
+        a = derive_session_id("agent-1", "C1", "111.222")
+        b = derive_session_id("agent-1", "C2", "111.222")
+        assert a != b
+        assert a == "agent-1:C1:111.222"
+
+    def test_per_user_keeps_thread_ts_last(self):
+        key = derive_session_id("agent-1", "C1", "111.222", user_key="user@example.com")
+        assert key == "agent-1:C1:user@example.com:111.222"
+
+    def test_empty_user_key_falls_back_to_thread_key(self):
+        assert derive_session_id("agent-1", "C1", "111.222", user_key=None) == "agent-1:C1:111.222"
+        assert derive_session_id("agent-1", "C1", "111.222", user_key="") == "agent-1:C1:111.222"

@@ -37,6 +37,9 @@ class RowActionContext:
     channel: str
     card_ts: str
     blocks: List[Dict[str, Any]]
+    # Decoded from button value — only present when the paused run's session id can't be
+    # re-derived from the thread (per-user thread sessions); propagated on re-encode.
+    session_id: Optional[str] = None
 
 
 @dataclass

@@ -11,6 +11,7 @@ from agno.os.interfaces.slack.events import process_event
 from agno.os.interfaces.slack.helpers import (
     BotNameResolver,
     build_run_metadata,
+    derive_session_id,
     download_event_files_async,
     extract_event_context,
     open_chat_stream,
@@ -64,6 +65,7 @@ class SlackEventHandler:
     task_display_mode: str
     buffer_size: int
     suggested_prompts: Optional[List[Dict[str, str]]] = None
+    per_user_thread_sessions: bool = False
 
     def _client(self) -> AsyncWebClient:
         return AsyncWebClient(token=self.slack_tools.token, ssl=self.ssl)
@@ -80,13 +82,25 @@ class SlackEventHandler:
         bot_name = await self.bot_name_resolver.resolve(client, bot_user_id) if bot_user_id else None
         message_text = strip_bot_mention(raw_ctx["message_text"], bot_user_id, bot_name)
 
-        session_id = f"{self.entity_id}:{raw_ctx['thread_id']}"
         team_id = data.get("team_id") or event.get("team")
 
         resolved_user_id = raw_ctx["user"]
         display_name = None
         if self.resolve_user_identity:
             resolved_user_id, display_name = await resolve_slack_user(client, raw_ctx["user"])
+
+        # One session per (channel, thread) — and per caller when per_user_thread_sessions
+        # is on: agno sessions are single-user rows, so a shared thread key would let the
+        # first speaker claim the session and silently drop every other participant's
+        # history. Keying on the same resolved user id the run uses gives each participant
+        # their own session — history loads are scoped by session_id, so no caller can
+        # ever pull another caller's turns.
+        session_id = derive_session_id(
+            self.entity_id,
+            raw_ctx["channel_id"],
+            raw_ctx["thread_id"],
+            user_key=resolved_user_id if self.per_user_thread_sessions else None,
+        )
 
         channel_name = await resolve_channel_name(client, raw_ctx["channel_id"])
 
@@ -240,11 +254,19 @@ class SlackEventHandler:
                 log_error(f"[HITL] Non-streaming awaiting indicator failed: {exc}")
 
         try:
-            await post_pause_card(client, response, ctx.channel_id, ctx.thread_id, awaiting_ts)
+            await post_pause_card(
+                client, response, ctx.channel_id, ctx.thread_id, awaiting_ts, session_id=self._pause_session_id(ctx)
+            )
         except Exception as exc:
             log_error(f"[HITL] Non-streaming pause card failed: {exc}")
 
         return True
+
+    def _pause_session_id(self, ctx: EventContext) -> Optional[str]:
+        # Embed the session id in the pause card only when the resume path can't re-derive
+        # it from the thread — i.e. when sessions are keyed per user. Keeps default-config
+        # cards byte-identical to before.
+        return ctx.session_id if self.per_user_thread_sessions else None
 
     async def _open_chat_stream(self, client: AsyncWebClient, ctx: EventContext) -> Any:
         return await open_chat_stream(
@@ -381,7 +403,14 @@ class SlackEventHandler:
             requirements=requirements,
         )
         try:
-            await post_pause_card(client, state.paused_event, ctx.channel_id, ctx.thread_id, awaiting_ts)
+            await post_pause_card(
+                client,
+                state.paused_event,
+                ctx.channel_id,
+                ctx.thread_id,
+                awaiting_ts,
+                session_id=self._pause_session_id(ctx),
+            )
         except Exception as exc:
             log_error(f"[HITL] Failed to post Card block (pause): {exc}")
 

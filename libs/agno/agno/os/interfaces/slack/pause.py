@@ -64,14 +64,18 @@ async def post_pause_card(
     channel: str,
     thread_ts: str,
     awaiting_ts: Optional[str] = None,
+    session_id: Optional[str] = None,
 ) -> Optional[str]:
+    # session_id: pass only when the paused run's session id can't be re-derived from the
+    # thread (per-user thread sessions) — it is embedded in the card's button values so the
+    # resume path can load the run from the right session.
     run_id = getattr(paused_event, "run_id", None)
     requirements = list(getattr(paused_event, "active_requirements", None) or [])
     if not run_id or not requirements:
         return None
 
     try:
-        blocks = build_pause_message(run_id, requirements, awaiting_ts)
+        blocks = build_pause_message(run_id, requirements, awaiting_ts, session_id)
         resp = await client.chat_postMessage(
             channel=channel,
             thread_ts=thread_ts,

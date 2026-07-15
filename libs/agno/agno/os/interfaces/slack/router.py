@@ -42,6 +42,59 @@ _IGNORED_SUBTYPES = frozenset(
 )
 
 
+def _is_own_bot_event(event: dict, data: dict) -> bool:
+    """Best-effort check that a bot-authored event was produced by this app itself.
+
+    Own identity comes straight from the event envelope — ``authorizations[].user_id``
+    is this app's bot user id and ``api_app_id`` is this app's id — so no extra API
+    call is needed. Fails closed: if the sender can't be attributed (e.g. a legacy
+    webhook message carrying only ``bot_id``), it is treated as our own so the
+    echo-loop guard still holds.
+    """
+    message = event.get("message") or {}
+    sender_user_id = event.get("user") or message.get("user")
+    sender_app_id = event.get("app_id") or message.get("app_id")
+
+    own_bot_user_id = (data.get("authorizations") or [{}])[0].get("user_id")
+    own_app_id = data.get("api_app_id")
+
+    if own_bot_user_id and sender_user_id:
+        return sender_user_id == own_bot_user_id
+    if own_app_id and sender_app_id:
+        return sender_app_id == own_app_id
+    return True
+
+
+def _should_ignore_event(event: dict, data: dict, respond_to_bot_messages: bool) -> bool:
+    """Decide whether an event is dropped before dispatch.
+
+    Default (``respond_to_bot_messages=False``): every bot-authored event and every
+    lifecycle subtype is dropped — self-loop protection, unchanged behavior.
+
+    Opt-in (``respond_to_bot_messages=True``): only this app's *own* messages are
+    dropped (the echo guard), so other bots' messages flow into normal processing.
+    ``bot_message`` is the delivery subtype for bot-authored channel messages, so it
+    passes; every other lifecycle subtype (edits, deletions, bot add/remove) stays
+    dropped. This can't ping-pong between two bots by default: a reply posted in a
+    thread doesn't @-mention the sender (so no ``app_mention`` fires back), and with
+    ``reply_to_mentions_only=True`` the receiving side only reacts to mentions and
+    DMs. Two bots that both subscribe to ``message.channels`` with
+    ``reply_to_mentions_only=False`` in a shared channel WILL loop — don't combine
+    those settings.
+    """
+    subtype = event.get("subtype")
+    is_bot_authored = bool(event.get("bot_id") or (event.get("message") or {}).get("bot_id"))
+
+    if not respond_to_bot_messages:
+        return is_bot_authored or subtype in _IGNORED_SUBTYPES
+
+    if is_bot_authored and _is_own_bot_event(event, data):
+        return True
+    if subtype in _IGNORED_SUBTYPES and not (is_bot_authored and subtype == "bot_message"):
+        return True
+    return False
+
+
 class SlackEventResponse(BaseModel):
     status: str = Field(default="ok")
 
@@ -68,6 +121,8 @@ def attach_routes(
     buffer_size: int = 100,
     max_file_size: int = 1_073_741_824,  # 1GB
     resolve_user_identity: bool = False,
+    per_user_thread_sessions: bool = False,
+    respond_to_bot_messages: bool = False,
 ) -> APIRouter:
     # Inner functions capture config via closure to keep each instance isolated
     entity = agent or team or workflow
@@ -114,6 +169,7 @@ def attach_routes(
         task_display_mode=task_display_mode,
         buffer_size=buffer_size,
         suggested_prompts=suggested_prompts,
+        per_user_thread_sessions=per_user_thread_sessions,
     )
 
     @router.post(
@@ -164,12 +220,9 @@ def attach_routes(
             # AND inside message_changed's nested "message" object. Slack puts
             # bot_id at different nesting levels depending on event shape — the
             # nested check catches edited bot messages that would otherwise be
-            # reprocessed as new user events.
-            elif (
-                event.get("bot_id")
-                or (event.get("message") or {}).get("bot_id")
-                or event.get("subtype") in _IGNORED_SUBTYPES
-            ):
+            # reprocessed as new user events. With respond_to_bot_messages=True
+            # only this app's own messages are dropped; other bots' pass through.
+            elif _should_ignore_event(event, data, respond_to_bot_messages):
                 pass
             elif streaming:
                 background_tasks.add_task(event_handler.handle_streaming, data)

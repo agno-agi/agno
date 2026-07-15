@@ -38,6 +38,22 @@ class Slack(BaseInterface):
         buffer_size: int = 100,
         max_file_size: int = 1_073_741_824,  # 1GB
         resolve_user_identity: bool = False,
+        # Key sessions per (channel, thread, caller) — <entity_id>:<channel_id>:<user_id>:<thread_ts>
+        # — instead of one shared session per thread. Agno sessions are single-user rows, so the
+        # shared key lets the first speaker claim the session while every other participant's runs
+        # load no history and are never persisted. Per-user keys give each participant their
+        # own session; history loads are scoped by session_id, so no participant can ever
+        # pull another's turns. The user id is the run's resolved identity (email when
+        # resolve_user_identity resolves one, else the Slack id).
+        per_user_thread_sessions: bool = False,
+        # Process messages authored by *other* Slack bots (mentions, DMs, and channel
+        # messages if subscribed). This app's own messages are always dropped (echo guard).
+        # Safe by default against ping-pong: replies don't @-mention the sender and with
+        # reply_to_mentions_only=True only mentions/DMs are processed — but two bots that
+        # both set reply_to_mentions_only=False + respond_to_bot_messages=True in a shared
+        # channel will loop. Slack may not deliver app_mention for bot-authored messages in
+        # all workspaces; subscribing to message.channels is the reliable bot-to-bot route.
+        respond_to_bot_messages: bool = False,
     ):
         self.agent = agent
         self.team = team
@@ -56,6 +72,8 @@ class Slack(BaseInterface):
         self.buffer_size = buffer_size
         self.max_file_size = max_file_size
         self.resolve_user_identity = resolve_user_identity
+        self.per_user_thread_sessions = per_user_thread_sessions
+        self.respond_to_bot_messages = respond_to_bot_messages
 
         if not (self.agent or self.team or self.workflow):
             raise ValueError("Slack requires an agent, team, or workflow")
@@ -78,6 +96,8 @@ class Slack(BaseInterface):
             buffer_size=self.buffer_size,
             max_file_size=self.max_file_size,
             resolve_user_identity=self.resolve_user_identity,
+            per_user_thread_sessions=self.per_user_thread_sessions,
+            respond_to_bot_messages=self.respond_to_bot_messages,
         )
 
         return self.router

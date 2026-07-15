@@ -17,6 +17,17 @@ def slack_error_code(exc: BaseException) -> Optional[str]:
     return None
 
 
+def derive_session_id(entity_id: str, channel_id: str, thread_ts: str, user_key: Optional[str] = None) -> str:
+    # The Slack session key. Channel-scoped because Slack `ts` values are only
+    # unique per channel — two threads in different channels can share a
+    # thread_ts. The per-user variant (per_user_thread_sessions) inserts the
+    # resolved caller so each participant in a thread gets their own session;
+    # thread_ts stays last so keys read naturally in session UIs.
+    if user_key:
+        return f"{entity_id}:{channel_id}:{user_key}:{thread_ts}"
+    return f"{entity_id}:{channel_id}:{thread_ts}"
+
+
 def task_id(agent_name: Optional[str], base_id: str) -> str:
     # Prefix card IDs per agent so concurrent tool calls from different
     # team members don't collide in the Slack stream
@@ -69,7 +80,9 @@ def extract_event_context(event: dict) -> Dict[str, Any]:
     return {
         "message_text": event.get("text", ""),
         "channel_id": event.get("channel", ""),
-        "user": event.get("user", ""),
+        # Bot-authored events may lack "user" (e.g. webhook posts); fall back to the
+        # bot_id so downstream identity handling always gets a stable, non-empty id
+        "user": event.get("user") or event.get("bot_id") or "",
         # Prefer existing thread; fall back to message ts for new conversations
         "thread_id": event.get("thread_ts") or event.get("ts", ""),
         # User-scoped token for assistant.search.context workspace search
@@ -102,7 +115,23 @@ async def resolve_slack_user(async_client: Any, slack_user_id: str) -> Tuple[str
 
     Returns the user's email as canonical_user_id if available, otherwise
     falls back to the raw Slack user ID. Display name is best-effort.
+
+    Bot senders resolve fail-closed to a stable identifier: a bot *user* id
+    ("U…") goes through ``users_info`` like any user (bots have no email, so
+    the id itself stays canonical and the bot's name becomes the display
+    name); a raw bot id ("B…", e.g. a webhook message with no ``user``) goes
+    through ``bots_info``. Never raises — any failure returns the raw id.
     """
+    # Slack ids are typed by prefix: users are "U"/"W", bots are "B"
+    if slack_user_id.startswith("B"):
+        try:
+            resp = await async_client.bots_info(bot=slack_user_id)
+            bot = resp.get("bot", {}) if resp else {}
+            return (slack_user_id, bot.get("name") or None)
+        except Exception as e:
+            log_warning(f"Failed to resolve Slack bot {slack_user_id}: {str(e)}")
+            return (slack_user_id, None)
+
     try:
         resp = await async_client.users_info(user=slack_user_id)
         user = resp.get("user", {}) if resp else {}

@@ -180,7 +180,12 @@ def _build_user_feedback_question_block(req_id: str, question: Any, q_index: int
 
 
 # Builds HITL confirmation card with Approve/Deny buttons for a tool execution
-def _build_confirmation_card(requirement: RunRequirement, run_id: str = "", awaiting_ts: Optional[str] = None) -> Card:
+def _build_confirmation_card(
+    requirement: RunRequirement,
+    run_id: str = "",
+    awaiting_ts: Optional[str] = None,
+    session_id: Optional[str] = None,
+) -> Card:
     req_id = requirement.id or ""
     name = tool_name(requirement)
     args = tool_args(requirement)
@@ -210,7 +215,7 @@ def _build_confirmation_card(requirement: RunRequirement, run_id: str = "", awai
             ],
         )
 
-    button_value = encode_row_button_value(req_id, run_id, awaiting_ts)
+    button_value = encode_row_button_value(req_id, run_id, awaiting_ts, session_id)
     return Card(
         block_id=f"rowact:{req_id}:confirmation",
         title=MarkdownTextObject(text=f"*{name}*"),
@@ -276,8 +281,9 @@ def build_confirmation_toggle_card(
     tool_name: str,
     body_text: str,
     selected: str,
+    session_id: Optional[str] = None,
 ) -> Card:
-    button_value = encode_row_button_value(req_id, run_id, awaiting_ts)
+    button_value = encode_row_button_value(req_id, run_id, awaiting_ts, session_id)
     is_approved = selected == "approve"
     # Slack Block Kit section text has ~200 char limit
     body_text = truncate(body_text, 200)
@@ -314,12 +320,12 @@ def decision_marker(req_id: str, decision: str) -> Dict[str, Any]:
     }
 
 
-def build_submit_button(run_id: str, awaiting_ts: Optional[str]) -> Dict[str, Any]:
+def build_submit_button(run_id: str, awaiting_ts: Optional[str], session_id: Optional[str] = None) -> Dict[str, Any]:
     submit_btn = ButtonElement(
         action_id="submit_pause",
         text=PlainTextObject(text="Submit", emoji=True),
         style="primary",
-        value=encode_submit_button_value(run_id, awaiting_ts),
+        value=encode_submit_button_value(run_id, awaiting_ts, session_id),
     )
     return ActionsBlock(block_id=f"pause:{run_id}", elements=[submit_btn]).to_dict()
 
@@ -344,6 +350,7 @@ def select_confirmation_row(
                 tool_name=name,
                 body_text=body_text,
                 selected=selected,
+                session_id=ctx.session_id,
             )
             updated.append(block_to_dict(toggle_card))
             # Deny keeps card interactive so user can add optional reason before Submit
@@ -380,13 +387,14 @@ def append_submit_if_needed(
     blocks: List[Dict[str, Any]],
     run_id: str,
     awaiting_ts: Optional[str],
+    session_id: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
     if not run_id:
         return blocks
     summary = confirmation_row_summary(blocks)
     if summary.pending_ids or summary.has_global_submit:
         return blocks
-    return blocks + [build_submit_button(run_id, awaiting_ts)]
+    return blocks + [build_submit_button(run_id, awaiting_ts, session_id)]
 
 
 # Builds InputBlocks for user_input pause type (text fields, dropdowns for bool/Enum/Literal)
@@ -429,6 +437,7 @@ def build_pause_message(
     run_id: str,
     requirements: List[RunRequirement],
     awaiting_ts: Optional[str] = None,
+    session_id: Optional[str] = None,
 ) -> List[Any]:
     blocks: List[Any] = []
     processed = 0
@@ -440,7 +449,9 @@ def build_pause_message(
     for i, requirement in enumerate(requirements):
         kind = requirement.pause_type
         if kind == "confirmation":
-            row_blocks = [_build_confirmation_card(requirement, run_id=run_id, awaiting_ts=awaiting_ts)]
+            row_blocks = [
+                _build_confirmation_card(requirement, run_id=run_id, awaiting_ts=awaiting_ts, session_id=session_id)
+            ]
         else:
             # Input/feedback/external rows: just fields, global Submit handles submission
             if kind == "user_input":
@@ -484,7 +495,7 @@ def build_pause_message(
                         action_id=ACTION_SUBMIT,
                         text=PlainTextObject(text="Submit"),
                         style="primary",
-                        value=encode_submit_button_value(run_id, awaiting_ts),
+                        value=encode_submit_button_value(run_id, awaiting_ts, session_id),
                     ),
                 ],
             )

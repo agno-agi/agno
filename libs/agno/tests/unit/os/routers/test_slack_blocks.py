@@ -9,6 +9,10 @@ from agno.os.interfaces.slack.ids import (
     ACTION_ROW_APPROVE,
     ACTION_ROW_REJECT,
     ACTION_SUBMIT,
+    decode_row_button_value,
+    decode_submit_button_value,
+    encode_row_button_value,
+    encode_submit_button_value,
     parse_row_block_id,
     pause_block_id,
     row_block_id,
@@ -94,6 +98,54 @@ class TestRowBlockId:
     def test_non_row_prefix_returns_none(self):
         assert parse_row_block_id("pause:A1") is None
         assert parse_row_block_id("rowact:r1:confirmation") is None
+
+
+# -- Button value encode/decode --
+
+
+class TestButtonValueSessionId:
+    def test_row_value_without_session_id_unchanged(self):
+        # Default config must keep the exact pre-session wire format
+        assert encode_row_button_value("r1", "run-1", "111.222") == "r1|run-1|111.222"
+        assert encode_row_button_value("r1", "run-1", "111.222", None) == "r1|run-1|111.222"
+
+    def test_row_value_round_trip_with_session_id(self):
+        value = encode_row_button_value("r1", "run-1", "111.222", "agent-1:111.222:user@example.com")
+        assert decode_row_button_value(value) == ("r1", "run-1", "111.222", "agent-1:111.222:user@example.com")
+
+    def test_row_value_decode_legacy_formats(self):
+        # Cards posted by older versions carry no session_id field
+        assert decode_row_button_value("r1|run-1|111.222") == ("r1", "run-1", "111.222", None)
+        assert decode_row_button_value("r1|run-1|") == ("r1", "run-1", None, None)
+        assert decode_row_button_value("r1|run-1") == ("r1", "run-1", None, None)
+        assert decode_row_button_value("garbage") == ("", "", None, None)
+
+    def test_submit_value_without_session_id_unchanged(self):
+        assert encode_submit_button_value("run-1", "111.222") == "run-1|111.222"
+        assert encode_submit_button_value("run-1", None) == "run-1|"
+
+    def test_submit_value_round_trip_with_session_id(self):
+        value = encode_submit_button_value("run-1", "111.222", "agent-1:111.222:U456")
+        assert decode_submit_button_value(value) == ("run-1", "111.222", "agent-1:111.222:U456")
+
+    def test_submit_value_decode_legacy_formats(self):
+        assert decode_submit_button_value("run-1|111.222") == ("run-1", "111.222", None)
+        assert decode_submit_button_value("run-1|") == ("run-1", None, None)
+        assert decode_submit_button_value("run-1") == ("run-1", None, None)
+
+    def test_pause_message_embeds_session_id_in_row_buttons(self):
+        card = build_pause_message("A1", [_make_requirement()], session_id="agent-1:111.222:user@example.com")[0]
+        assert card.actions[0].value == "r1|A1||agent-1:111.222:user@example.com"
+        assert card.actions[1].value == "r1|A1||agent-1:111.222:user@example.com"
+
+    def test_pause_message_embeds_session_id_in_global_submit(self):
+        req = _make_requirement(
+            requires_user_input=True,
+            user_input_schema=[UserInputField(name="reason", field_type=str)],
+        )
+        blocks = build_pause_message("A1", [req], session_id="agent-1:111.222:U456")
+        submit = next(b for b in blocks if getattr(b, "block_id", None) == pause_block_id("A1"))
+        assert submit.elements[0].value == "A1||agent-1:111.222:U456"
 
 
 # -- Confirmation row --

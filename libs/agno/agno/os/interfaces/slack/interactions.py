@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
 
+from agno.os.interfaces.slack.helpers import derive_session_id
 from agno.os.interfaces.slack.ids import (
     ACTION_EXTERNAL_RESULT,
     ACTION_REJECT_REASON,
@@ -141,7 +142,7 @@ def extract_row_action_context(payload: Dict[str, Any]) -> Optional[RowActionCon
     button_value = actions[0].get("value") or ""
     if "|" not in button_value:
         return None
-    req_id, run_id, awaiting_ts = decode_row_button_value(button_value)
+    req_id, run_id, awaiting_ts, session_id = decode_row_button_value(button_value)
 
     channel = (payload.get("channel") or {}).get("id")
     message = payload.get("message") or {}
@@ -156,6 +157,7 @@ def extract_row_action_context(payload: Dict[str, Any]) -> Optional[RowActionCon
         channel=channel,
         card_ts=card_ts,
         blocks=list(message.get("blocks") or []),
+        session_id=session_id,
     )
 
 
@@ -176,14 +178,16 @@ def extract_submit_context(payload: Dict[str, Any], entity_id: str) -> Optional[
 
     thread_ts = message.get("thread_ts") or msg_ts
     button_value = actions[0].get("value") or ""
-    _, awaiting_ts = decode_submit_button_value(button_value)
+    _, awaiting_ts, button_session_id = decode_submit_button_value(button_value)
 
+    # The button carries the paused run's session id only when it can't be re-derived
+    # from the thread (per-user thread sessions); otherwise derive it as usual.
     return SubmitContext(
         run_id=run_id,
         channel=channel,
         msg_ts=msg_ts,
         thread_ts=thread_ts,
-        session_id=f"{entity_id}:{thread_ts}",
+        session_id=button_session_id or derive_session_id(entity_id, channel, thread_ts),
         awaiting_ts=awaiting_ts,
         user_id=(payload.get("user") or {}).get("id", ""),
         team_id=(payload.get("team") or {}).get("id"),
@@ -219,13 +223,14 @@ def synthetic_submit_payload(
     run_id: str,
     awaiting_ts: Optional[str],
     blocks: List[Dict[str, Any]],
+    session_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     synthetic = dict(payload)
     synthetic["actions"] = [
         {
             "action_id": "submit_pause",
             "block_id": f"pause:{run_id}",
-            "value": encode_submit_button_value(run_id, awaiting_ts),
+            "value": encode_submit_button_value(run_id, awaiting_ts, session_id),
         }
     ]
     synthetic["message"] = {**(payload.get("message") or {}), "blocks": blocks}

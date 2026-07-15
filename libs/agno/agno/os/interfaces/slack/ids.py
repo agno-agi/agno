@@ -83,32 +83,47 @@ def external_result_block_id(requirement_id: str) -> str:
 
 # --- Button value encoders/decoders ---
 # Pipe-delimited because Slack button values are opaque strings, not JSON — simpler to parse
+# The trailing session_id field is only written when the session id can't be re-derived from
+# the thread (per-user thread sessions), so default-config button values stay unchanged.
+# Decoders tolerate its absence (older cards, default config) and return None.
 
 
-def encode_row_button_value(req_id: str, run_id: str, awaiting_ts: Optional[str]) -> str:
-    return f"{req_id}|{run_id}|{awaiting_ts or ''}"
+def encode_row_button_value(
+    req_id: str, run_id: str, awaiting_ts: Optional[str], session_id: Optional[str] = None
+) -> str:
+    value = f"{req_id}|{run_id}|{awaiting_ts or ''}"
+    if session_id:
+        value = f"{value}|{session_id}"
+    return value
 
 
-def decode_row_button_value(value: str) -> Tuple[str, str, Optional[str]]:
-    # Limit split to 2 so awaiting_ts (which may contain pipes in edge cases) stays intact
-    parts = value.split("|", 2)
+def decode_row_button_value(value: str) -> Tuple[str, str, Optional[str], Optional[str]]:
+    # Limit split to 3 so session_id (last field) stays intact
+    parts = value.split("|", 3)
     if len(parts) == 2:
-        return parts[0], parts[1], None
+        return parts[0], parts[1], None, None
     if len(parts) == 3:
-        return parts[0], parts[1], parts[2] or None
-    return "", "", None
+        return parts[0], parts[1], parts[2] or None, None
+    if len(parts) == 4:
+        return parts[0], parts[1], parts[2] or None, parts[3] or None
+    return "", "", None, None
 
 
-def encode_submit_button_value(run_id: str, awaiting_ts: Optional[str]) -> str:
-    return f"{run_id}|{awaiting_ts or ''}"
+def encode_submit_button_value(run_id: str, awaiting_ts: Optional[str], session_id: Optional[str] = None) -> str:
+    value = f"{run_id}|{awaiting_ts or ''}"
+    if session_id:
+        value = f"{value}|{session_id}"
+    return value
 
 
-def decode_submit_button_value(value: str) -> Tuple[str, Optional[str]]:
-    # Limit split to 1 so awaiting_ts stays intact
-    parts = value.split("|", 1)
+def decode_submit_button_value(value: str) -> Tuple[str, Optional[str], Optional[str]]:
+    # Limit split to 2 so session_id (last field) stays intact
+    parts = value.split("|", 2)
     if len(parts) == 1:
-        return parts[0], None
-    return parts[0], parts[1] or None
+        return parts[0], None, None
+    if len(parts) == 2:
+        return parts[0], parts[1] or None, None
+    return parts[0], parts[1] or None, parts[2] or None
 
 
 # --- Admin approval button value (4 fields: approval_id, req_id, run_id, awaiting_ts) ---
