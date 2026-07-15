@@ -540,8 +540,6 @@ def _get_task_management_tools(
         # Check HITL pause
         if member_run_response is not None and member_run_response.is_paused:
             _propagate_member_pause(run_response, member_agent, member_run_response)
-            # Persist paused member run so continue_run can find it after session reload
-            session.upsert_run(member_run_response)
             task.status = TaskStatus.pending  # Reset to pending so it can be retried after HITL
             save_task_list(run_context.session_state, task_list)
             use_team_logger()
@@ -720,8 +718,6 @@ def _get_task_management_tools(
 
         if member_run_response is not None and member_run_response.is_paused:
             _propagate_member_pause(run_response, member_agent, member_run_response)
-            # Persist paused member run so continue_run can find it after session reload
-            session.upsert_run(member_run_response)
             task.status = TaskStatus.pending
             save_task_list(run_context.session_state, task_list)
             use_team_logger()
@@ -875,8 +871,6 @@ def _get_task_management_tools(
                     # Check HITL pause
                     if member_run is not None and member_run.is_paused:
                         _propagate_member_pause(run_response, member_agent, member_run)
-                        # Persist paused member run so continue_run can find it after session reload
-                        session.upsert_run(member_run)
                         task_obj.status = TaskStatus.pending
                         _post_process_member_run(
                             member_run,
@@ -1094,8 +1088,6 @@ def _get_task_management_tools(
 
             if member_run is not None and member_run.is_paused:
                 _propagate_member_pause(run_response, member_agent, member_run)
-                # Persist paused member run so continue_run can find it after session reload
-                session.upsert_run(member_run)
                 task_obj.status = TaskStatus.pending
                 _post_process_member_run(
                     member_run,
