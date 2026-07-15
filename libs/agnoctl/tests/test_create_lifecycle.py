@@ -81,23 +81,41 @@ def test_create_interactive_uses_defaults(fake_git, monkeypatch, tmp_path):
     assert (tmp_path / "agentos" / ".env").read_text() == "KEY=value\n"
 
 
+def test_create_template_catalog_lists_all_supported_starters():
+    expected = {
+        "agentos-docker": "https://github.com/agno-agi/agentos-docker",
+        "agentos-aws": "https://github.com/agno-agi/agentos-aws",
+        "agentos-azure": "https://github.com/agno-agi/agentos-azure",
+        "agentos-fly": "https://github.com/agno-agi/agentos-fly",
+        "agentos-gcp": "https://github.com/agno-agi/agentos-gcp",
+        "agentos-helm": "https://github.com/agno-agi/agentos-helm",
+        "agentos-modal": "https://github.com/agno-agi/agentos-modal",
+        "agentos-railway": "https://github.com/agno-agi/agentos-railway",
+        "agentos-render": "https://github.com/agno-agi/agentos-render",
+    }
+    assert create_module.TEMPLATES == expected
+    assert create_module.TEMPLATE_CHOICES == list(expected)
+
+
 def test_create_interactive_selects_template_and_name(fake_git, monkeypatch, tmp_path):
     monkeypatch.setattr(create_module, "stdin_is_interactive", lambda: True)
 
-    result = runner.invoke(app, ["create"], input="5\nmy-os\n")
+    render_choice = create_module.TEMPLATE_CHOICES.index("agentos-render") + 1
+    result = runner.invoke(app, ["create"], input=str(render_choice) + "\nmy-os\n")
 
     assert result.exit_code == 0, result.output
-    assert create_module.TEMPLATES["agentos-railway"] in fake_git.calls[0]
+    assert create_module.TEMPLATES["agentos-render"] in fake_git.calls[0]
     assert (tmp_path / "my-os" / ".env").exists()
 
 
 def test_create_interactive_reprompts_invalid_choices(fake_git, monkeypatch, tmp_path):
     monkeypatch.setattr(create_module, "stdin_is_interactive", lambda: True)
 
-    result = runner.invoke(app, ["create"], input="9\n2\n../escape\nvalid-os\n")
+    invalid_choice = len(create_module.TEMPLATE_CHOICES) + 1
+    result = runner.invoke(app, ["create"], input=str(invalid_choice) + "\n2\n../escape\nvalid-os\n")
 
     assert result.exit_code == 0, result.output
-    assert "enter a number from 1 to 5" in result.output
+    assert "enter a number from 1 to " + str(len(create_module.TEMPLATE_CHOICES)) in result.output
     assert "Invalid project name" in result.output
     assert create_module.TEMPLATES["agentos-aws"] in fake_git.calls[0]
     assert (tmp_path / "valid-os").exists()

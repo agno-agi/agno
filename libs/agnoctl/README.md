@@ -8,7 +8,8 @@ Create a new AgentOS interactively:
 uvx agno create
 ```
 
-Choose a starter template and project name, or press Enter to use `agentos-docker`
+Choose from nine maintained starters—Docker, AWS, Azure, Fly, GCP, Helm, Modal,
+Railway, and Render—and name your project. Press Enter to use `agentos-docker`
 and `agentos`. The CLI clones the template and copies `example.env` to `.env`.
 Add your secrets to `agentos/.env`, then cd into `agentos` and run `agno up`.
 
