@@ -149,7 +149,9 @@ class TestPauseResolution:
             user_input_schema=[UserInputField(name="city", field_type=str)],
         )
         with pytest.raises(ValueError, match="user_input expects"):
-            resolve_requirements_from_tool_messages([RunRequirement(te)], [_tm("tc-bad", json.dumps({"city": "Paris"}))])
+            resolve_requirements_from_tool_messages(
+                [RunRequirement(te)], [_tm("tc-bad", json.dumps({"city": "Paris"}))]
+            )
 
     def test_user_input_empty_values_is_accepted_not_raised(self):
         """An explicit empty {"values": {}} is a valid dict (user filled nothing): accepted gracefully

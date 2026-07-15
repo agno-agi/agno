@@ -249,6 +249,30 @@ def test_team_session_state_in_run_output():
     assert reconstructed.session_state == {"phase": "planning", "tasks": 3}
 
 
+def test_team_run_output_to_dict_accepts_serialized_media_dicts():
+    """Test that TeamRunOutput.to_dict() tolerates already-serialized dicts in media fields."""
+    from agno.run.team import TeamRunOutput
+
+    team_output = TeamRunOutput(
+        run_id="team_123",
+        images=[{"url": "https://example.com/image.png"}],
+        videos=[{"url": "https://example.com/video.mp4"}],
+        audio=[{"url": "https://example.com/audio.mp3"}],
+        files=[{"url": "https://example.com/report.pdf"}],
+        response_audio={"id": "audio_123", "content": "base64-audio"},
+        member_responses=[{"run_id": "member_123", "content": "done"}],
+    )
+
+    team_dict = team_output.to_dict()
+
+    assert team_dict["images"] == [{"url": "https://example.com/image.png"}]
+    assert team_dict["videos"] == [{"url": "https://example.com/video.mp4"}]
+    assert team_dict["audio"] == [{"url": "https://example.com/audio.mp3"}]
+    assert team_dict["files"] == [{"url": "https://example.com/report.pdf"}]
+    assert team_dict["response_audio"] == {"id": "audio_123", "content": "base64-audio"}
+    assert team_dict["member_responses"] == [{"run_id": "member_123", "content": "done"}]
+
+
 def test_team_session_state_in_completed_event():
     """Test that TeamRunCompletedEvent includes session_state field."""
     from agno.run.team import TeamRunOutput
