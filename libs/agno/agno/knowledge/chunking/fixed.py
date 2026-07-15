@@ -49,8 +49,7 @@ class FixedSizeChunking(ChunkingStrategy):
                 )
             )
             chunk_number += 1
-            # This chunk already reached the end of the content -- stop, rather than
-            # looping again with an overlap-adjusted start that re-emits the same tail.
+            # Stop once a chunk reaches the end of the content
             if end >= content_length:
                 break
             # Ensure start always advances by at least 1 to prevent infinite loops
