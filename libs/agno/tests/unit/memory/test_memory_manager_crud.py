@@ -11,6 +11,7 @@ import pytest
 
 from agno.db.schemas import UserMemory
 from agno.memory.manager import MemoryManager
+from agno.models.defaults import DEFAULT_OPENAI_MODEL_ID
 
 
 @pytest.fixture
@@ -61,6 +62,11 @@ class TestMemoryManagerInit:
         """MemoryManager can be initialized with a database."""
         mm = MemoryManager(db=mock_db)
         assert mm.db is mock_db
+
+    def test_get_model_uses_default_openai_model_id_when_model_not_provided(self):
+        """Default model fallback tracks the shared DEFAULT_OPENAI_MODEL_ID."""
+        mm = MemoryManager()
+        assert mm.get_model().id == DEFAULT_OPENAI_MODEL_ID
 
     def test_initialization_with_string_model(self):
         """String model is converted via get_model()."""
