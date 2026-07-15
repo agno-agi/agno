@@ -2,12 +2,12 @@
 
 import json
 import os
+import re
 import stat
 import subprocess
 from pathlib import Path
 
 import pytest
-from click import unstyle
 from typer.testing import CliRunner
 
 import agnoctl.commands.create as create_module
@@ -129,7 +129,7 @@ def test_create_interactive_reprompts_existing_default(fake_git, monkeypatch, tm
     result = runner.invoke(app, ["create"], input="\n\nfresh-os\n")
 
     assert result.exit_code == 0, result.output
-    warning = " ".join(unstyle(result.stderr).split())
+    warning = " ".join(re.sub(r"\x1b\[[0-9;]*m", "", result.stderr).split())
     assert "already exists. Choose another name." in warning
     assert (tmp_path / "fresh-os" / ".env").exists()
 
