@@ -52,8 +52,7 @@ def test_scrape_basic(mock_scrape_response):
         assert len(documents) == 1
         assert documents[0].name == "https://example.com"
         assert documents[0].id == "https://example.com_1"
-        # Content is joined with spaces instead of newlines
-        expected_content = "# Test Website This is test content from a scraped website."
+        expected_content = "# Test Website\nThis is test content from a scraped website."
         assert documents[0].content == expected_content
 
         # Verify FirecrawlApp was called correctly
@@ -186,9 +185,8 @@ def test_crawl_basic(mock_crawl_response):
         assert len(documents) == 2
         # Base URL is used for name
         assert documents[0].name == "https://example.com"
-        # Content joined with spaces
-        assert documents[0].content == "# Page 1 This is content from page 1."
-        assert documents[1].content == "# Page 2 This is content from page 2."
+        assert documents[0].content == "# Page 1\nThis is content from page 1."
+        assert documents[1].content == "# Page 2\nThis is content from page 2."
 
         # Verify FirecrawlApp was called correctly
         MockFirecrawlApp.assert_called_once_with(api_key=None)
@@ -261,7 +259,7 @@ def test_read_scrape_mode(mock_scrape_response):
         documents = reader.read("https://example.com")
 
         assert len(documents) == 1
-        expected_content = "# Test Website This is test content from a scraped website."
+        expected_content = "# Test Website\nThis is test content from a scraped website."
         assert documents[0].content == expected_content
 
         mock_app.scrape_url.assert_called_once()

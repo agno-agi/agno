@@ -53,8 +53,7 @@ def test_extract_basic(mock_extract_response):
         assert len(documents) == 1
         assert documents[0].name == "https://example.com"
         assert documents[0].id == "https://example.com_1"
-        # Content is joined with spaces instead of newlines
-        expected_content = "# Test Website This is test content from an extracted website."
+        expected_content = "# Test Website\nThis is test content from an extracted website."
         assert documents[0].content == expected_content
 
         # Verify TavilyClient was called correctly
@@ -242,7 +241,7 @@ def test_read_method(mock_extract_response):
         documents = reader.read("https://example.com")
 
         assert len(documents) == 1
-        expected_content = "# Test Website This is test content from an extracted website."
+        expected_content = "# Test Website\nThis is test content from an extracted website."
         assert documents[0].content == expected_content
 
         mock_client.extract.assert_called_once()
