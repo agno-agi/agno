@@ -5,6 +5,7 @@ import pytest
 
 from agno.knowledge.document import Document
 from agno.vectordb.clickhouse import Clickhouse
+from agno.vectordb.search import SearchType
 
 # Configuration for tests
 TEST_TABLE = f"test_clickhouse_{uuid.uuid4().hex[:8]}"
@@ -283,6 +284,11 @@ def test_optimize(mock_clickhouse):
     """Test optimize method."""
     # There's no actual logic to test here, but we can verify it doesn't crash
     mock_clickhouse.optimize()
+
+
+def test_get_supported_search_types(mock_clickhouse):
+    """Test supported search types for Clickhouse."""
+    assert mock_clickhouse.get_supported_search_types() == [SearchType.vector]
 
 
 # Asynchronous Tests

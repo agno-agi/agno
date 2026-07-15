@@ -18,7 +18,7 @@ Describe the table schemas in instructions and use thinking tools for better res
 
 from agno.agent import Agent
 from agno.models.google import Gemini
-from agno.tools.google_bigquery import GoogleBigQueryTools
+from agno.tools.google.bigquery import GoogleBigQueryTools
 
 # ---------------------------------------------------------------------------
 # Create Agent
@@ -31,7 +31,7 @@ agent = Agent(
         "Always prepend the table name with your_project_id.your_dataset_name when run_sql tool is invoked",
     ],
     tools=[GoogleBigQueryTools(dataset="test_dataset")],
-    model=Gemini(id="gemini-3-flash-preview", vertexai=True),
+    model=Gemini(id="gemini-3.5-flash", vertexai=True),
 )
 
 # ---------------------------------------------------------------------------

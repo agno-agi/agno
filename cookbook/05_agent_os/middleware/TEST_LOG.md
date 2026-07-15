@@ -26,6 +26,16 @@
 
 ---
 
+### agent_os_with_service_accounts.py
+
+**Status:** PASS
+
+**Description:** Serves an AgentOS with JWT middleware (authorization enabled) and a sqlite db. An admin JWT mints a service account token for `claude-code` via POST /service-accounts; the plaintext `agno_pat_...` token is returned once with default run+read scopes and a 90-day expiry. The token then runs the agent over POST /agents/assistant-agent/runs.
+
+**Result:** Verified end to end on 2026-07-04: mint returned 201 with principal `sa:claude-code`; the PAT-authenticated run COMPLETED with the model response and the run and session attributed to user `sa:claude-code`; the PAT could not mint further tokens (403); DELETE revoked the account (204) and the revoked token was rejected with a uniform 401 on its next request.
+
+---
+
 ### custom_fastapi_app_with_jwt_middleware.py
 
 **Status:** PENDING

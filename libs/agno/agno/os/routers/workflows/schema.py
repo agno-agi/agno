@@ -1,6 +1,11 @@
-from typing import Any, Dict, List, Optional
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 from pydantic import BaseModel, Field
+
+if TYPE_CHECKING:
+    from agno.workflow.factory import WorkflowFactory
 
 from agno.os.routers.agents.schema import AgentResponse
 from agno.os.routers.teams.schema import TeamResponse
@@ -84,9 +89,31 @@ class WorkflowResponse(BaseModel):
     team: Optional[TeamResponse] = Field(None, description="Team configuration if used")
     metadata: Optional[Dict[str, Any]] = Field(None, description="Additional metadata")
     workflow_agent: bool = Field(False, description="Whether this workflow uses a WorkflowAgent")
+    is_factory: bool = Field(False, description="Whether this workflow is a factory")
+    factory_input_schema: Optional[Dict[str, Any]] = Field(None, description="JSON Schema for factory_input")
     is_component: bool = Field(False, description="Whether this workflow was created via Builder")
     current_version: Optional[int] = Field(None, description="Current published version number")
     stage: Optional[str] = Field(None, description="Stage of the loaded config (draft/published)")
+
+    @classmethod
+    def from_factory(cls, factory: WorkflowFactory) -> WorkflowResponse:
+        """Create a WorkflowResponse from a WorkflowFactory for /config discovery."""
+        factory_input_schema = None
+        if factory.input_schema is not None:
+            try:
+                factory_input_schema = factory.input_schema.model_json_schema()
+            except Exception:
+                pass
+
+        return cls(
+            id=factory.id,
+            name=factory.name,
+            description=factory.description,
+            db_id=factory.db.id if factory.db else None,
+            is_factory=True,
+            input_schema=factory_input_schema,
+            factory_input_schema=factory_input_schema,
+        )
 
     @classmethod
     async def _resolve_agents_and_teams_recursively(cls, steps: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -116,6 +143,9 @@ class WorkflowResponse(BaseModel):
 
             if step.get("steps"):
                 step["steps"] = await cls._resolve_agents_and_teams_recursively(step["steps"])
+
+            if step.get("else_steps"):
+                step["else_steps"] = await cls._resolve_agents_and_teams_recursively(step["else_steps"])
 
             # Prune None values in the entire step
             steps[idx] = _prune_none(step)

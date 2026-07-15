@@ -250,3 +250,75 @@ async def test_upsert_sessions_update(async_mysql_db_real):
             assert result.created_at == session1.created_at
         else:
             assert result.created_at == session2.created_at
+
+
+# ── session_type=None integration tests ──────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_get_sessions_without_type_returns_all(async_mysql_db_real):
+    """get_sessions(session_type=None) returns agent, team, and workflow sessions together."""
+    agent = AgentSession(session_id="none-type-agent", agent_id="a1", user_id="u1")
+    team = TeamSession(session_id="none-type-team", team_id="t1", user_id="u1")
+    workflow = WorkflowSession(session_id="none-type-wf", workflow_id="w1", user_id="u1")
+
+    await async_mysql_db_real.upsert_session(agent)
+    await async_mysql_db_real.upsert_session(team)
+    await async_mysql_db_real.upsert_session(workflow)
+
+    # session_type=None should return all three
+    sessions_raw, total_count = await async_mysql_db_real.get_sessions(session_type=None, deserialize=False)
+    assert total_count >= 3
+    session_ids = {s["session_id"] for s in sessions_raw}
+    assert "none-type-agent" in session_ids
+    assert "none-type-team" in session_ids
+    assert "none-type-wf" in session_ids
+
+    # Deserialized path should auto-detect correct types
+    sessions = await async_mysql_db_real.get_sessions(session_type=None)
+    assert len(sessions) >= 3
+    types = {type(s) for s in sessions}
+    assert AgentSession in types
+    assert TeamSession in types
+    assert WorkflowSession in types
+
+
+@pytest.mark.asyncio
+async def test_get_sessions_without_type_with_component_id(async_mysql_db_real):
+    """get_sessions(session_type=None, component_id=X) uses OR across agent_id/team_id/workflow_id."""
+    agent = AgentSession(session_id="comp-filter-agent", agent_id="comp-a1", user_id="u1")
+    team = TeamSession(session_id="comp-filter-team", team_id="comp-t1", user_id="u1")
+
+    await async_mysql_db_real.upsert_session(agent)
+    await async_mysql_db_real.upsert_session(team)
+
+    # Filter by agent component_id without specifying type
+    sessions_raw, total_count = await async_mysql_db_real.get_sessions(
+        session_type=None, component_id="comp-a1", deserialize=False
+    )
+    assert total_count >= 1
+    assert any(s["session_id"] == "comp-filter-agent" for s in sessions_raw)
+
+    # Filter by nonexistent component_id
+    sessions_raw, total_count = await async_mysql_db_real.get_sessions(
+        session_type=None, component_id="nonexistent", deserialize=False
+    )
+    assert total_count == 0
+
+
+@pytest.mark.asyncio
+async def test_get_session_without_type_auto_detects(async_mysql_db_real):
+    """get_session(session_type=None) auto-detects the correct session type for deserialization."""
+    agent = AgentSession(session_id="auto-detect-agent", agent_id="a1")
+    team = TeamSession(session_id="auto-detect-team", team_id="t1")
+
+    await async_mysql_db_real.upsert_session(agent)
+    await async_mysql_db_real.upsert_session(team)
+
+    result = await async_mysql_db_real.get_session(session_id="auto-detect-agent", session_type=None)
+    assert result is not None
+    assert isinstance(result, AgentSession)
+
+    result = await async_mysql_db_real.get_session(session_id="auto-detect-team", session_type=None)
+    assert result is not None
+    assert isinstance(result, TeamSession)

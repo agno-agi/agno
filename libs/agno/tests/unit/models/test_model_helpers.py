@@ -21,6 +21,7 @@ from agno.exceptions import AgentRunException
 from agno.models.base import _handle_agent_exception
 from agno.models.message import Message
 from agno.models.openai.chat import OpenAIChat
+from agno.models.openai.like import OpenAILike
 from agno.models.response import ModelResponse
 
 
@@ -100,7 +101,7 @@ class TestModelToDict:
 class TestGetProvider:
     def test_get_provider_returns_provider(self, model_with_provider):
         """get_provider returns explicit provider."""
-        assert model_with_provider.get_provider() == "TestProvider"
+        assert model_with_provider.get_provider() == "TestProvider Chat"
 
     def test_get_provider_returns_name_when_no_provider(self, model_with_name):
         """get_provider returns name from the provider field."""
@@ -110,7 +111,12 @@ class TestGetProvider:
 
     def test_get_provider_returns_openai_default(self, model):
         """OpenAIChat defaults provider to 'OpenAI'."""
-        assert model.get_provider() == "OpenAI"
+        assert model.get_provider() == "OpenAI Chat"
+
+    def test_openai_like_returns_provider_without_chat_suffix(self):
+        """OpenAILike returns the provider without the OpenAIChat suffix."""
+        model = OpenAILike(id="compatible-model", provider="CompatibleProvider")
+        assert model.get_provider() == "CompatibleProvider"
 
 
 # =============================================================================

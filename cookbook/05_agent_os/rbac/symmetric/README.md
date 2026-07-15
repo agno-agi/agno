@@ -7,6 +7,7 @@ Examples for `rbac/symmetric` in AgentOS.
 - `agent_permissions.py` — Per-Agent Permissions Example with AgentOS.
 - `basic.py` — Basic RBAC Example with AgentOS.
 - `custom_scope_mappings.py` — Custom Scope Mappings Example.
+- `user_isolation.py` — Adds opt-in per-user data isolation on top of `basic.py`. Non-admins see only their own data; `agent_os:admin` (or custom `admin_scope`) bypasses isolation.
 - `with_cookie.py` — Basic RBAC Example with AgentOS.
 
 ## Prerequisites

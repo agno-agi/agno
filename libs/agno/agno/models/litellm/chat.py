@@ -12,7 +12,8 @@ from agno.models.metrics import MessageMetrics
 from agno.models.response import ModelResponse
 from agno.run.agent import RunOutput
 from agno.tools.function import Function
-from agno.utils.log import log_debug, log_error, log_warning
+from agno.utils.log import log_debug, log_error, log_info, log_warning
+from agno.utils.models.claude import supports_prefill
 from agno.utils.openai import _format_file_for_message, audio_to_message, images_to_message
 from agno.utils.tokens import count_schema_tokens
 
@@ -36,6 +37,11 @@ class LiteLLM(Model):
     name: str = "LiteLLM"
     provider: str = "LiteLLM"
 
+    # LiteLLM fronts many providers; structured-output support is off by default
+    # (some providers reject response_format) and enabled per instance when supported.
+    supports_native_structured_outputs: bool = False
+    supports_json_schema_outputs: bool = False
+
     api_key: Optional[str] = None
     api_base: Optional[str] = None
     max_tokens: Optional[int] = None
@@ -46,6 +52,8 @@ class LiteLLM(Model):
     extra_query: Optional[Dict[str, Any]] = None
     extra_body: Optional[Dict[str, Any]] = None
     request_params: Optional[Dict[str, Any]] = None
+    append_trailing_user_message: Optional[bool] = None
+    trailing_user_message_content: str = "continue"
 
     client: Optional[Any] = None
 
@@ -60,6 +68,10 @@ class LiteLLM(Model):
         # This ensures the client is preserved when the model is copied for background tasks
         if self.client is not None and self._original_client is None:
             self._original_client = self.client
+
+        # Auto-enable trailing user message for Claude 4.6+ via LiteLLM
+        if self.append_trailing_user_message is None:
+            self.append_trailing_user_message = not supports_prefill(self.id)
 
         # Set up API key from environment variable if not already set
         if not self.client and not self.api_key:
@@ -116,6 +128,11 @@ class LiteLLM(Model):
 
     def _format_messages(self, messages: List[Message], compress_tool_results: bool = False) -> List[Dict[str, Any]]:
         """Format messages for LiteLLM API."""
+        from agno.utils.message import normalize_tool_messages
+
+        # Backwards compat: expand old Gemini combined tool messages into individual canonical messages
+        messages = normalize_tool_messages(messages)
+
         formatted_messages = []
         for m in messages:
             # Use compressed content for tool messages if compression is active
@@ -177,9 +194,19 @@ class LiteLLM(Model):
                     log_warning("Video input is currently unsupported.")
             formatted_messages.append(msg)
 
+        # Claude 4.6+ models do not support assistant message prefill.
+        # Append a trailing user turn so the request ends with a user message.
+        if self.append_trailing_user_message and formatted_messages and formatted_messages[-1]["role"] == "assistant":
+            log_info("Appending trailing user message because this model does not support assistant message prefill")
+            formatted_messages.append({"role": "user", "content": self.trailing_user_message_content})
+
         return formatted_messages
 
-    def get_request_params(self, tools: Optional[List[Dict[str, Any]]] = None) -> Dict[str, Any]:
+    def get_request_params(
+        self,
+        tools: Optional[List[Dict[str, Any]]] = None,
+        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+    ) -> Dict[str, Any]:
         """
         Returns keyword arguments for API requests.
 
@@ -205,6 +232,10 @@ class LiteLLM(Model):
         if tools:
             base_params["tools"] = tools
             base_params["tool_choice"] = "auto"
+
+        # Forward the output schema only for providers that support it; LiteLLM adapts it per provider
+        if self.supports_native_structured_outputs or self.supports_json_schema_outputs:
+            base_params["response_format"] = response_format
 
         # Handle metadata via extra_body as per LiteLLM docs
         if self.metadata:
@@ -235,7 +266,7 @@ class LiteLLM(Model):
         compress_tool_results: bool = False,
     ) -> ModelResponse:
         """Sends a chat completion request to the LiteLLM API."""
-        completion_kwargs = self.get_request_params(tools=tools)
+        completion_kwargs = self.get_request_params(tools=tools, response_format=response_format)
         completion_kwargs["messages"] = self._format_messages(messages, compress_tool_results)
 
         assistant_message.metrics.start_timer()
@@ -258,7 +289,7 @@ class LiteLLM(Model):
         compress_tool_results: bool = False,
     ) -> Iterator[ModelResponse]:
         """Sends a streaming chat completion request to the LiteLLM API."""
-        completion_kwargs = self.get_request_params(tools=tools)
+        completion_kwargs = self.get_request_params(tools=tools, response_format=response_format)
         completion_kwargs["messages"] = self._format_messages(messages, compress_tool_results)
         completion_kwargs["stream"] = True
         completion_kwargs["stream_options"] = {"include_usage": True}
@@ -281,7 +312,7 @@ class LiteLLM(Model):
         compress_tool_results: bool = False,
     ) -> ModelResponse:
         """Sends an asynchronous chat completion request to the LiteLLM API."""
-        completion_kwargs = self.get_request_params(tools=tools)
+        completion_kwargs = self.get_request_params(tools=tools, response_format=response_format)
         completion_kwargs["messages"] = self._format_messages(messages, compress_tool_results)
 
         assistant_message.metrics.start_timer()
@@ -304,7 +335,7 @@ class LiteLLM(Model):
         compress_tool_results: bool = False,
     ) -> AsyncIterator[ModelResponse]:
         """Sends an asynchronous streaming chat request to the LiteLLM API."""
-        completion_kwargs = self.get_request_params(tools=tools)
+        completion_kwargs = self.get_request_params(tools=tools, response_format=response_format)
         completion_kwargs["messages"] = self._format_messages(messages, compress_tool_results)
         completion_kwargs["stream"] = True
         completion_kwargs["stream_options"] = {"include_usage": True}
@@ -321,7 +352,7 @@ class LiteLLM(Model):
             assistant_message.metrics.stop_timer()
 
         except Exception as e:
-            log_error(f"Error in streaming response: {e}")
+            log_error(f"Error in streaming response: {str(e)}")
             raise
 
     def _parse_provider_response(self, response: Any, **kwargs) -> ModelResponse:
@@ -438,8 +469,7 @@ class LiteLLM(Model):
             if not isinstance(function_data, dict):
                 function_data = {}
 
-            # Update function name if provided
-            if function_data.get("name") is not None:
+            if function_data.get("name"):
                 name = function_data.get("name", "")
                 if isinstance(tool_calls_by_index[index]["function"], dict):
                     # type: ignore
@@ -522,6 +552,7 @@ class LiteLLM(Model):
                 metrics.audio_output_tokens = getattr(completion_details, "audio_tokens", 0) or 0
 
         metrics.total_tokens = metrics.input_tokens + metrics.output_tokens
+        metrics.audio_total_tokens = metrics.audio_input_tokens + metrics.audio_output_tokens
 
         return metrics
 

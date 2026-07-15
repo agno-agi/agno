@@ -70,7 +70,7 @@ def create_schema(session: Session, db_schema: str) -> None:
         # MySQL uses CREATE DATABASE instead of CREATE SCHEMA
         session.execute(text(f"CREATE DATABASE IF NOT EXISTS {db_schema};"))
     except Exception as e:
-        log_warning(f"Could not create database {db_schema}: {e}")
+        log_warning(f"Could not create database {db_schema}: {str(e)}")
 
 
 def is_table_available(session: Session, table_name: str, db_schema: str) -> bool:
@@ -91,7 +91,7 @@ def is_table_available(session: Session, table_name: str, db_schema: str) -> boo
         return exists
 
     except Exception as e:
-        log_error(f"Error checking if table exists: {e}")
+        log_error(f"Error checking if table exists: {str(e)}")
         return False
 
 
@@ -125,7 +125,7 @@ def is_valid_table(db_engine: Engine, table_name: str, table_type: str, db_schem
 
         return True
     except Exception as e:
-        log_error(f"Error validating table schema for {db_schema}.{table_name}: {e}")
+        log_error(f"Error validating table schema for {db_schema}.{table_name}: {str(e)}")
         return False
 
 
@@ -434,7 +434,7 @@ async def acreate_schema(session: AsyncSession, db_schema: str) -> None:
         # MySQL uses CREATE DATABASE instead of CREATE SCHEMA
         await session.execute(text(f"CREATE DATABASE IF NOT EXISTS `{db_schema}`;"))
     except Exception as e:
-        log_warning(f"Could not create database {db_schema}: {e}")
+        log_warning(f"Could not create database {db_schema}: {str(e)}")
 
 
 async def ais_table_available(session: AsyncSession, table_name: str, db_schema: str) -> bool:
@@ -455,7 +455,7 @@ async def ais_table_available(session: AsyncSession, table_name: str, db_schema:
         return exists
 
     except Exception as e:
-        log_error(f"Error checking if table exists: {e}")
+        log_error(f"Error checking if table exists: {str(e)}")
         return False
 
 
@@ -487,7 +487,7 @@ async def ais_valid_table(db_engine: AsyncEngine, table_name: str, table_type: s
 
         return True
     except Exception as e:
-        log_error(f"Error validating table schema for {db_schema}.{table_name}: {e}")
+        log_error(f"Error validating table schema for {db_schema}.{table_name}: {str(e)}")
         return False
 
 

@@ -1,0 +1,56 @@
+from dataclasses import dataclass, field
+from os import getenv
+from typing import TYPE_CHECKING, Any, List, Optional, Set
+
+if TYPE_CHECKING:
+    from agno.db.base import BaseDb
+
+
+@dataclass
+class AuthConfig:
+    """Shared auth config for Google toolkits. Enables scope consolidation and DB token storage."""
+
+    # --- OAuth credentials ---
+    client_id: Optional[str] = field(default_factory=lambda: getenv("GOOGLE_CLIENT_ID"))
+    client_secret: Optional[str] = field(default_factory=lambda: getenv("GOOGLE_CLIENT_SECRET"))
+
+    # --- Service account (alternative to OAuth) ---
+    service_account_path: Optional[str] = field(default_factory=lambda: getenv("GOOGLE_SERVICE_ACCOUNT_FILE"))
+    delegated_user: Optional[str] = field(default_factory=lambda: getenv("GOOGLE_DELEGATED_USER"))
+
+    # --- OAuth flow options ---
+    hosted_domain: Optional[str] = field(default_factory=lambda: getenv("GOOGLE_HOSTED_DOMAIN"))
+    access_type: str = "offline"
+    prompt: str = "consent"
+    login_hint: Optional[str] = None
+    include_granted_scopes: bool = False
+
+    # --- Token storage (optional) ---
+    db: Optional["BaseDb"] = None
+    token_encryption_key: Optional[str] = field(default_factory=lambda: getenv("GOOGLE_TOKEN_ENCRYPTION_KEY"))
+    encrypt_tokens: bool = True  # Require encryption by default; set False for local dev only
+
+    # --- HTTP timeout for API calls ---
+    http_timeout: Optional[float] = None
+
+    # --- Scope aggregation (internal) ---
+    _scopes: Set[str] = field(default_factory=set, repr=False)
+    _creds: Any = field(default=None, repr=False)
+
+    def register_scopes(self, scopes: List[str]) -> None:
+        """Register scopes from a toolkit. Called during toolkit __init__."""
+        self._scopes.update(scopes)
+
+    @property
+    def scopes(self) -> List[str]:
+        """Get all registered scopes from all toolkits sharing this auth."""
+        return list(self._scopes)
+
+    @property
+    def creds(self) -> Any:
+        """Shared credentials across all toolkits."""
+        return self._creds
+
+    @creds.setter
+    def creds(self, value: Any) -> None:
+        self._creds = value

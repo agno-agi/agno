@@ -2,24 +2,42 @@
 Output Schema
 =============================
 
-This example shows how to use the output_model parameter to specify the model that will be used to generate the final response.
+Use `output_schema` to return structured data that matches a Pydantic model.
 """
 
-from agno.agent import Agent
+from typing import List
+
+from agno.agent import Agent, RunOutput  # noqa
 from agno.models.openai import OpenAIResponses
-from agno.tools.websearch import WebSearchTools
+from pydantic import BaseModel, Field
+from rich.pretty import pprint  # noqa
+
+
+class BreakingNewsSummary(BaseModel):
+    topic: str = Field(..., description="The topic or region being summarized")
+    summary: str = Field(
+        ..., description="A concise summary of the latest developments"
+    )
+    key_updates: List[str] = Field(
+        ..., description="Important updates or headlines related to the topic"
+    )
+    overall_sentiment: str = Field(
+        ..., description="Overall tone of the news coverage, such as positive or mixed"
+    )
+
 
 # ---------------------------------------------------------------------------
 # Create Agent
 # ---------------------------------------------------------------------------
 agent = Agent(
     model=OpenAIResponses(id="gpt-5.2"),
-    output_model=OpenAIResponses(id="gpt-5-mini"),
-    tools=[WebSearchTools()],
+    description="You summarize current events into clean structured outputs.",
+    output_schema=BreakingNewsSummary,
 )
 
 # ---------------------------------------------------------------------------
 # Run Agent
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
-    agent.print_response("Latest news from France?", stream=True)
+    run: RunOutput = agent.run("Latest news from France?")
+    pprint(run.content)

@@ -34,7 +34,6 @@ from agno.utils.hooks import (
     should_run_hook_in_background,
 )
 from agno.utils.log import (
-    log_error,
     log_exception,
     log_warning,
 )
@@ -85,9 +84,8 @@ def execute_pre_hooks(
                     hook(**filtered_args)
                 except (InputCheckError, OutputCheckError):
                     raise
-                except Exception as e:
-                    log_error(f"Background guardrail '{hook.__name__}' execution failed: {str(e)}")
-                    log_exception(e)
+                except Exception:
+                    log_exception(f"Background guardrail '{hook.__name__}' execution failed")
             else:
                 pending_bg_hooks.append(hook)
         bg_args = copy_args_for_background(all_args)
@@ -142,9 +140,8 @@ def execute_pre_hooks(
 
         except (InputCheckError, OutputCheckError) as e:
             raise e
-        except Exception as e:
-            log_error(f"Pre-hook #{i + 1} execution failed: {str(e)}")
-            log_exception(e)
+        except Exception:
+            log_exception(f"Pre-hook #{i + 1} execution failed")
         finally:
             # Reset global log mode in case an agent in the pre-hook changed it
             set_debug(agent, debug_mode=debug_mode)
@@ -197,9 +194,8 @@ async def aexecute_pre_hooks(
                         hook(**filtered_args)
                 except (InputCheckError, OutputCheckError):
                     raise
-                except Exception as e:
-                    log_error(f"Background guardrail '{hook.__name__}' execution failed: {str(e)}")
-                    log_exception(e)
+                except Exception:
+                    log_exception(f"Background guardrail '{hook.__name__}' execution failed")
             else:
                 pending_bg_hooks.append(hook)
         bg_args = copy_args_for_background(all_args)
@@ -252,9 +248,8 @@ async def aexecute_pre_hooks(
 
         except (InputCheckError, OutputCheckError) as e:
             raise e
-        except Exception as e:
-            log_error(f"Pre-hook #{i + 1} execution failed: {str(e)}")
-            log_exception(e)
+        except Exception:
+            log_exception(f"Pre-hook #{i + 1} execution failed")
         finally:
             # Reset global log mode in case an agent in the pre-hook changed it
             set_debug(agent, debug_mode=debug_mode)
@@ -304,9 +299,8 @@ def execute_post_hooks(
                     hook(**filtered_args)
                 except (InputCheckError, OutputCheckError):
                     raise
-                except Exception as e:
-                    log_error(f"Background guardrail '{hook.__name__}' execution failed: {str(e)}")
-                    log_exception(e)
+                except Exception:
+                    log_exception(f"Background guardrail '{hook.__name__}' execution failed")
             else:
                 pending_bg_hooks.append(hook)
         bg_args = copy_args_for_background(all_args)
@@ -358,9 +352,8 @@ def execute_post_hooks(
                 )
         except (InputCheckError, OutputCheckError) as e:
             raise e
-        except Exception as e:
-            log_error(f"Post-hook #{i + 1} execution failed: {str(e)}")
-            log_exception(e)
+        except Exception:
+            log_exception(f"Post-hook #{i + 1} execution failed")
         finally:
             # Reset global log mode in case an agent in the pre-hook changed it
             set_debug(agent, debug_mode=debug_mode)
@@ -410,9 +403,8 @@ async def aexecute_post_hooks(
                         hook(**filtered_args)
                 except (InputCheckError, OutputCheckError):
                     raise
-                except Exception as e:
-                    log_error(f"Background guardrail '{hook.__name__}' execution failed: {str(e)}")
-                    log_exception(e)
+                except Exception:
+                    log_exception(f"Background guardrail '{hook.__name__}' execution failed")
             else:
                 pending_bg_hooks.append(hook)
         bg_args = copy_args_for_background(all_args)
@@ -461,9 +453,8 @@ async def aexecute_post_hooks(
 
         except (InputCheckError, OutputCheckError) as e:
             raise e
-        except Exception as e:
-            log_error(f"Post-hook #{i + 1} execution failed: {str(e)}")
-            log_exception(e)
+        except Exception:
+            log_exception(f"Post-hook #{i + 1} execution failed")
         finally:
             # Reset global log mode in case an agent in the pre-hook changed it
             set_debug(agent, debug_mode=debug_mode)

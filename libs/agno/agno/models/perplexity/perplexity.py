@@ -134,7 +134,7 @@ class Perplexity(OpenAILike):
             try:
                 model_response.tool_calls = [t.model_dump() for t in response_message.tool_calls]
             except Exception as e:
-                log_warning(f"Error processing tool calls: {e}")
+                log_warning(f"Error processing tool calls: {str(e)}")
 
         # Add citations if present
         if hasattr(response, "citations") and response.citations is not None:
@@ -202,4 +202,5 @@ class Perplexity(OpenAILike):
             metrics.audio_output_tokens = completion_tokens_details.audio_tokens or 0
             metrics.reasoning_tokens = completion_tokens_details.reasoning_tokens or 0
 
+        metrics.audio_total_tokens = metrics.audio_input_tokens + metrics.audio_output_tokens
         return metrics

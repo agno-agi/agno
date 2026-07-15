@@ -12,7 +12,6 @@ from agno.models.message import Message
 from agno.models.metrics import MessageMetrics
 from agno.models.response import ModelResponse
 from agno.run.agent import RunOutput
-from agno.utils.http import get_default_async_client, get_default_sync_client
 from agno.utils.log import log_debug, log_error, log_warning
 
 try:
@@ -138,10 +137,14 @@ class Cerebras(Model):
 
         client_params: Dict[str, Any] = self._get_client_params()
         if self.http_client is not None:
-            client_params["http_client"] = self.http_client
-        else:
-            # Use global sync client when no custom http_client is provided
-            client_params["http_client"] = get_default_sync_client()
+            if isinstance(self.http_client, httpx.Client):
+                client_params["http_client"] = self.http_client
+            else:
+                log_warning("http_client is not an instance of httpx.Client. Ignoring and using SDK default.")
+        # When no custom http_client is provided, let the SDK use its own default client.
+        # Each model instance gets its own connection, preventing HTTP/2 stream saturation
+        # when multiple models (main agent, MemoryManager, etc.) run concurrently.
+
         self.client = CerebrasClient(**client_params)
         return self.client
 
@@ -156,11 +159,15 @@ class Cerebras(Model):
             return self.async_client
 
         client_params: Dict[str, Any] = self._get_client_params()
-        if self.http_client and isinstance(self.http_client, httpx.AsyncClient):
-            client_params["http_client"] = self.http_client
-        else:
-            # Use global async client when no custom http_client is provided
-            client_params["http_client"] = get_default_async_client()
+        if self.http_client:
+            if isinstance(self.http_client, httpx.AsyncClient):
+                client_params["http_client"] = self.http_client
+            else:
+                log_warning("http_client is not an instance of httpx.AsyncClient. Ignoring and using SDK default.")
+        # When no custom http_client is provided, let the SDK use its own default client.
+        # Each model instance gets its own connection, preventing HTTP/2 stream saturation
+        # when multiple models (main agent, MemoryManager, etc.) run concurrently.
+
         self.async_client = AsyncCerebrasClient(**client_params)
         return self.async_client
 
@@ -255,6 +262,10 @@ class Cerebras(Model):
         Returns:
             CompletionResponse: The chat completion response from the API.
         """
+        from agno.utils.message import normalize_tool_messages
+
+        messages = normalize_tool_messages(messages)
+
         assistant_message.metrics.start_timer()
         provider_response = self.get_client().chat.completions.create(
             model=self.id,
@@ -286,6 +297,10 @@ class Cerebras(Model):
         Returns:
             ChatCompletion: The chat completion response from the API.
         """
+        from agno.utils.message import normalize_tool_messages
+
+        messages = normalize_tool_messages(messages)
+
         assistant_message.metrics.start_timer()
         provider_response = await self.get_async_client().chat.completions.create(
             model=self.id,
@@ -317,6 +332,10 @@ class Cerebras(Model):
         Returns:
             Iterator[ChatChunkResponse]: An iterator of chat completion chunks.
         """
+        from agno.utils.message import normalize_tool_messages
+
+        messages = normalize_tool_messages(messages)
+
         assistant_message.metrics.start_timer()
 
         for chunk in self.get_client().chat.completions.create(
@@ -348,6 +367,10 @@ class Cerebras(Model):
         Returns:
             AsyncIterator[ChatChunkResponse]: An asynchronous iterator of chat completion chunks.
         """
+        from agno.utils.message import normalize_tool_messages
+
+        messages = normalize_tool_messages(messages)
+
         assistant_message.metrics.start_timer()
 
         async_stream = await self.get_async_client().chat.completions.create(
@@ -458,7 +481,7 @@ class Cerebras(Model):
                     for tool_call in message.tool_calls
                 ]
             except Exception as e:
-                log_warning(f"Error processing tool calls: {e}")
+                log_warning(f"Error processing tool calls: {str(e)}")
 
         # Add usage metrics
         if response.usage:
@@ -553,11 +576,11 @@ class Cerebras(Model):
             if tool_call_delta.get("type"):
                 tool_call_entry["type"] = tool_call_delta["type"]
 
-            # Update function name and arguments (concatenate for streaming)
+            # Assign function name (atomic); concatenate arguments (streamed incrementally)
             if tool_call_delta.get("function"):
                 func_delta = tool_call_delta["function"]
                 if func_delta.get("name"):
-                    tool_call_entry["function"]["name"] += func_delta["name"]
+                    tool_call_entry["function"]["name"] = func_delta["name"]
                 if func_delta.get("arguments"):
                     tool_call_entry["function"]["arguments"] += func_delta["arguments"]
 

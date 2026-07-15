@@ -40,15 +40,15 @@ team = Team(
 if __name__ == "__main__":
     run_output = team.run("What is the stock price of NVDA?")
 
-    # Aggregated team metrics (leader + all members)
+    # Team leader run metrics
     print("=" * 50)
-    print("AGGREGATED TEAM METRICS")
+    print("TEAM LEADER RUN METRICS")
     print("=" * 50)
     pprint(run_output.metrics)
 
-    # Member-level metrics and tool calls
+    # Member-level run metrics and tool calls
     print("=" * 50)
-    print("MEMBER METRICS AND TOOL CALLS")
+    print("MEMBER RUN METRICS")
     print("=" * 50)
     if run_output.member_responses:
         for member_response in run_output.member_responses:

@@ -24,7 +24,7 @@ from rich.pretty import pprint
 db = PostgresDb(db_url="postgresql+psycopg://ai:ai@localhost:5532/ai")
 
 agent = Agent(
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.1"),
     session_summary_manager=SessionSummaryManager(
         model=OpenAIChat(id="gpt-4o-mini"),
     ),

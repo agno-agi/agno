@@ -2,8 +2,6 @@ from os import getenv
 from textwrap import dedent
 from typing import Optional, Union
 
-import requests
-
 from agno.agent.agent import Agent, RunOutput
 from agno.media import Audio, File, Image, Video
 from agno.team.team import Team, TeamRunOutput
@@ -87,13 +85,9 @@ class DiscordClient:
                 if media_type.startswith("image/"):
                     message_image = media_url
                 elif media_type.startswith("video/"):
-                    req = requests.get(media_url)
-                    video = req.content
-                    message_video = video
+                    message_video = await media.read()
                 elif media_type.startswith("application/"):
-                    req = requests.get(media_url)
-                    document = req.content
-                    message_file = document
+                    message_file = await media.read()
                 elif media_type.startswith("audio/"):
                     message_audio = media_url
 

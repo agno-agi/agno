@@ -42,7 +42,6 @@ from agno.utils.hooks import (
 )
 from agno.utils.log import (
     log_debug,
-    log_error,
     log_exception,
 )
 
@@ -64,6 +63,9 @@ def _get_team_paused_content(run_response: TeamRunOutput) -> str:
         return "Team run paused."
     parts: list[str] = []
     for req in active:
+        # Skip silent external execution requirements — mirrors agent-side filter
+        if req.external_execution_silent:
+            continue
         member = req.member_agent_name or "team"
         tool_name = req.tool_execution.tool_name if req.tool_execution else "unknown"
         if req.needs_confirmation:
@@ -72,7 +74,20 @@ def _get_team_paused_content(run_response: TeamRunOutput) -> str:
             parts.append(f"- {member}: {tool_name} requires user input")
         elif req.needs_external_execution:
             parts.append(f"- {member}: {tool_name} requires external execution")
+    if not parts:
+        return ""
     return "Team run paused. The following require input:\n" + "\n".join(parts)
+
+
+def _member_approval_already_exists(run_response: TeamRunOutput) -> bool:
+    """Return True if all requirements are member-propagated AND already have an approval_id."""
+    reqs = run_response.requirements or []
+    if not reqs:
+        return False
+    return all(
+        getattr(r, "member_agent_id", None) is not None and getattr(r.tool_execution, "approval_id", None) is not None
+        for r in reqs
+    )
 
 
 def handle_team_run_paused(
@@ -88,6 +103,13 @@ def handle_team_run_paused(
     if not run_response.content:
         run_response.content = _get_team_paused_content(run_response)
 
+    # Only create a team-level approval if this is NOT a member-propagated pause.
+    # Member agents already create their own approval record when they pause.
+    if not _member_approval_already_exists(run_response):
+        create_approval_from_pause(
+            db=team.db, run_response=run_response, team_id=team.id, team_name=team.name, user_id=team.user_id
+        )
+
     handle_event(
         create_team_run_paused_event(
             from_run_response=run_response,
@@ -100,9 +122,6 @@ def handle_team_run_paused(
     )
 
     _cleanup_and_store(team, run_response=run_response, session=session, run_context=run_context)
-    create_approval_from_pause(
-        db=team.db, run_response=run_response, team_id=team.id, team_name=team.name, user_id=team.user_id
-    )
 
     log_debug(f"Team Run Paused: {run_response.run_id}", center=True, symbol="*")
     return run_response
@@ -121,6 +140,11 @@ def handle_team_run_paused_stream(
     if not run_response.content:
         run_response.content = _get_team_paused_content(run_response)
 
+    if not _member_approval_already_exists(run_response):
+        create_approval_from_pause(
+            db=team.db, run_response=run_response, team_id=team.id, team_name=team.name, user_id=team.user_id
+        )
+
     pause_event = handle_event(
         create_team_run_paused_event(
             from_run_response=run_response,
@@ -133,9 +157,6 @@ def handle_team_run_paused_stream(
     )
 
     _cleanup_and_store(team, run_response=run_response, session=session, run_context=run_context)
-    create_approval_from_pause(
-        db=team.db, run_response=run_response, team_id=team.id, team_name=team.name, user_id=team.user_id
-    )
 
     if pause_event is not None:
         yield pause_event
@@ -156,6 +177,11 @@ async def ahandle_team_run_paused(
     if not run_response.content:
         run_response.content = _get_team_paused_content(run_response)
 
+    if not _member_approval_already_exists(run_response):
+        await acreate_approval_from_pause(
+            db=team.db, run_response=run_response, team_id=team.id, team_name=team.name, user_id=team.user_id
+        )
+
     handle_event(
         create_team_run_paused_event(
             from_run_response=run_response,
@@ -168,9 +194,6 @@ async def ahandle_team_run_paused(
     )
 
     await _acleanup_and_store(team, run_response=run_response, session=session, run_context=run_context)
-    await acreate_approval_from_pause(
-        db=team.db, run_response=run_response, team_id=team.id, team_name=team.name, user_id=team.user_id
-    )
 
     log_debug(f"Team Run Paused: {run_response.run_id}", center=True, symbol="*")
     return run_response
@@ -189,6 +212,11 @@ async def ahandle_team_run_paused_stream(
     if not run_response.content:
         run_response.content = _get_team_paused_content(run_response)
 
+    if not _member_approval_already_exists(run_response):
+        await acreate_approval_from_pause(
+            db=team.db, run_response=run_response, team_id=team.id, team_name=team.name, user_id=team.user_id
+        )
+
     pause_event = handle_event(
         create_team_run_paused_event(
             from_run_response=run_response,
@@ -201,9 +229,6 @@ async def ahandle_team_run_paused_stream(
     )
 
     await _acleanup_and_store(team, run_response=run_response, session=session, run_context=run_context)
-    await acreate_approval_from_pause(
-        db=team.db, run_response=run_response, team_id=team.id, team_name=team.name, user_id=team.user_id
-    )
 
     if pause_event is not None:
         yield pause_event
@@ -255,9 +280,8 @@ def _execute_pre_hooks(
                     hook(**filtered_args)
                 except (InputCheckError, OutputCheckError):
                     raise
-                except Exception as e:
-                    log_error(f"Background guardrail '{hook.__name__}' execution failed: {str(e)}")
-                    log_exception(e)
+                except Exception:
+                    log_exception(f"Background guardrail '{hook.__name__}' execution failed")
             else:
                 pending_bg_hooks.append(hook)
         bg_args = copy_args_for_background(all_args)
@@ -300,9 +324,8 @@ def _execute_pre_hooks(
 
         except (InputCheckError, OutputCheckError) as e:
             raise e
-        except Exception as e:
-            log_error(f"Pre-hook #{i + 1} execution failed: {str(e)}")
-            log_exception(e)
+        except Exception:
+            log_exception(f"Pre-hook #{i + 1} execution failed")
         finally:
             # Reset global log mode in case an agent in the pre-hook changed it
             _set_debug(team, debug_mode=debug_mode)
@@ -357,9 +380,8 @@ async def _aexecute_pre_hooks(
                         hook(**filtered_args)
                 except (InputCheckError, OutputCheckError):
                     raise
-                except Exception as e:
-                    log_error(f"Background guardrail '{hook.__name__}' execution failed: {str(e)}")
-                    log_exception(e)
+                except Exception:
+                    log_exception(f"Background guardrail '{hook.__name__}' execution failed")
             else:
                 pending_bg_hooks.append(hook)
         bg_args = copy_args_for_background(all_args)
@@ -405,9 +427,8 @@ async def _aexecute_pre_hooks(
 
         except (InputCheckError, OutputCheckError) as e:
             raise e
-        except Exception as e:
-            log_error(f"Pre-hook #{i + 1} execution failed: {str(e)}")
-            log_exception(e)
+        except Exception:
+            log_exception(f"Pre-hook #{i + 1} execution failed")
         finally:
             # Reset global log mode in case an agent in the pre-hook changed it
             _set_debug(team, debug_mode=debug_mode)
@@ -458,9 +479,8 @@ def _execute_post_hooks(
                     hook(**filtered_args)
                 except (InputCheckError, OutputCheckError):
                     raise
-                except Exception as e:
-                    log_error(f"Background guardrail '{hook.__name__}' execution failed: {str(e)}")
-                    log_exception(e)
+                except Exception:
+                    log_exception(f"Background guardrail '{hook.__name__}' execution failed")
             else:
                 pending_bg_hooks.append(hook)
         bg_args = copy_args_for_background(all_args)
@@ -505,9 +525,8 @@ def _execute_post_hooks(
 
         except (InputCheckError, OutputCheckError) as e:
             raise e
-        except Exception as e:
-            log_error(f"Post-hook #{i + 1} execution failed: {str(e)}")
-            log_exception(e)
+        except Exception:
+            log_exception(f"Post-hook #{i + 1} execution failed")
         finally:
             # Reset global log mode in case an agent in the post-hook changed it
             _set_debug(team, debug_mode=debug_mode)
@@ -558,9 +577,8 @@ async def _aexecute_post_hooks(
                         hook(**filtered_args)
                 except (InputCheckError, OutputCheckError):
                     raise
-                except Exception as e:
-                    log_error(f"Background guardrail '{hook.__name__}' execution failed: {str(e)}")
-                    log_exception(e)
+                except Exception:
+                    log_exception(f"Background guardrail '{hook.__name__}' execution failed")
             else:
                 pending_bg_hooks.append(hook)
         bg_args = copy_args_for_background(all_args)
@@ -607,9 +625,8 @@ async def _aexecute_post_hooks(
                 )
         except (InputCheckError, OutputCheckError) as e:
             raise e
-        except Exception as e:
-            log_error(f"Post-hook #{i + 1} execution failed: {str(e)}")
-            log_exception(e)
+        except Exception:
+            log_exception(f"Post-hook #{i + 1} execution failed")
         finally:
             # Reset global log mode in case an agent in the post-hook changed it
             _set_debug(team, debug_mode=debug_mode)

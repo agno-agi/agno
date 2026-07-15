@@ -16,7 +16,7 @@ Run:
 from agno.agent import Agent
 from agno.db.postgres import PostgresDb
 from agno.learn import DecisionLogConfig, LearningMachine, LearningMode
-from agno.models.openai import OpenAIChat
+from agno.models.openai import OpenAIResponses
 from agno.tools.duckduckgo import DuckDuckGoTools
 
 # ---------------------------------------------------------------------------
@@ -33,7 +33,7 @@ db = PostgresDb(db_url="postgresql+psycopg://ai:ai@localhost:5532/ai")
 agent = Agent(
     id="auto-decision-logger",
     name="Auto Decision Logger",
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIResponses(id="gpt-5.5"),
     db=db,
     learning=LearningMachine(
         decision_log=DecisionLogConfig(

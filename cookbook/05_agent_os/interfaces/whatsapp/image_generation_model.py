@@ -20,10 +20,11 @@ image_agent = Agent(
     id="image_generation_model",
     db=agent_db,
     model=Gemini(
-        id="models/gemini-2.5-flash-image",
+        id="gemini-3-pro-image-preview",
         response_modalities=["Text", "Image"],
     ),
-    debug_mode=True,
+    add_history_to_context=True,
+    num_history_runs=3,
 )
 
 
@@ -40,10 +41,4 @@ app = agent_os.get_app()
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
-    """Run your AgentOS.
-
-    You can see the configuration and available apps at:
-    http://localhost:7777/config
-
-    """
     agent_os.serve(app="image_generation_model:app", reload=True)

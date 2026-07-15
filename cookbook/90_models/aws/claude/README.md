@@ -75,3 +75,28 @@ python cookbook/92_models/aws/claude/storage.py
 ```shell
 python cookbook/92_models/aws/claude/knowledge.py
 ```
+
+### 9. Adaptive Thinking with `output_config`
+
+For Claude 4.6 Bedrock models that support adaptive thinking, use `output_config` to control thinking depth via the `effort` parameter:
+
+```shell
+python cookbook/90_models/aws/claude/adaptive_thinking.py
+```
+
+```python
+from agno.models.aws import Claude
+
+model = Claude(
+    id="anthropic.claude-sonnet-4-6-20250514-v1:0",
+    max_tokens=4096,
+    thinking={"type": "adaptive"},
+    output_config={"effort": "high"},
+)
+```
+
+**Valid effort values:**
+- `"low"` - Most efficient, significant token savings
+- `"medium"` - Balanced approach with moderate savings
+- `"high"` - Default, high capability for complex reasoning
+- `"max"` - Absolute maximum capability (Opus 4.6 only)
