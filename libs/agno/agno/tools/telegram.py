@@ -237,7 +237,7 @@ class TelegramTools(Toolkit):
 
         Args:
             message_id: The ID of the message to react to.
-            emoji: The emoji to react with (e.g. "👍", "❤️", "🔥").
+            emoji: The emoji to react with.
 
         Returns:
             JSON string with status.
