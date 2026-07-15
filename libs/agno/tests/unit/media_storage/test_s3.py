@@ -2,6 +2,8 @@
 
 from unittest.mock import MagicMock
 
+import pytest
+
 
 class TestS3MediaStorage:
     def test_upload(self):
@@ -34,6 +36,32 @@ class TestS3MediaStorage:
 
         assert result == b"file-content"
         mock_client.get_object.assert_called_once_with(Bucket="test-bucket", Key="some/key.png")
+
+    def test_download_missing_object_raises_filenotfound(self):
+        """S3 NoSuchKey must surface as FileNotFoundError so the router returns 404, not 502."""
+        from agno.media_storage.s3 import S3MediaStorage
+
+        client_error = pytest.importorskip("botocore.exceptions").ClientError
+        mock_client = MagicMock()
+        mock_client.get_object.side_effect = client_error({"Error": {"Code": "NoSuchKey"}}, "GetObject")
+
+        storage = S3MediaStorage(bucket="test-bucket")
+        storage._client = mock_client
+        with pytest.raises(FileNotFoundError):
+            storage.download("missing/key.png")
+
+    def test_download_other_client_error_propagates(self):
+        """A non-missing error (e.g. AccessDenied) must NOT be masked as FileNotFoundError."""
+        from agno.media_storage.s3 import S3MediaStorage
+
+        client_error = pytest.importorskip("botocore.exceptions").ClientError
+        mock_client = MagicMock()
+        mock_client.get_object.side_effect = client_error({"Error": {"Code": "AccessDenied"}}, "GetObject")
+
+        storage = S3MediaStorage(bucket="test-bucket")
+        storage._client = mock_client
+        with pytest.raises(client_error):
+            storage.download("some/key.png")
 
     def test_get_url_presigned(self):
         from agno.media_storage.s3 import S3MediaStorage

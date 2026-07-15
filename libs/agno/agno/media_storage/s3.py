@@ -106,8 +106,17 @@ class S3MediaStorage(MediaStorage):
 
     def download(self, storage_key: str) -> bytes:
         client = self._get_client()
-        response = client.get_object(Bucket=self.bucket, Key=storage_key)
-        return response["Body"].read()
+        try:
+            response = client.get_object(Bucket=self.bucket, Key=storage_key)
+            return response["Body"].read()
+        except Exception as e:
+            # Normalize a missing object to FileNotFoundError so the media router returns 404
+            # (not 502), consistent with the local and GCS backends.
+            from botocore.exceptions import ClientError
+
+            if isinstance(e, ClientError) and e.response.get("Error", {}).get("Code") in ("NoSuchKey", "404"):
+                raise FileNotFoundError(storage_key) from e
+            raise
 
     def get_url(self, storage_key: str, *, expires_in: int = 0) -> str:
         if expires_in <= 0:

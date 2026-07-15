@@ -83,6 +83,7 @@ langfuse = ["langfuse"]
 
 # Dependencies for Media Storage
 media-storage-s3 = ["boto3", "aioboto3"]
+media-storage-gcs = ["google-cloud-storage"]
 
 # Dependencies for Models
 anthropic = ["anthropic"]

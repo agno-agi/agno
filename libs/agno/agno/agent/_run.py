@@ -5628,13 +5628,11 @@ def scrub_run_output_for_storage(
 ) -> None:
     """Scrub run output based on storage flags before persisting to database."""
     if not agent.store_media:
-        # If media_storage is configured, offload already ran — preserve MediaReferences
-        # (tiny metadata pointers needed to reconstruct media in future turns). Team members
-        # don't own a media_storage, but the team offloads their media, so the caller can
-        # force-preserve references via keep_media_references.
-        keep_references = (
-            keep_media_references if keep_media_references is not None else (agent.media_storage is not None)
-        )
+        # store_media is off: offload was skipped and media is dropped from the persisted run.
+        # A caller can still force-preserve MediaReferences (metadata pointers) it offloaded
+        # elsewhere via keep_media_references — teams use this for members whose media the team
+        # itself stored.
+        keep_references = keep_media_references if keep_media_references is not None else False
         scrub_media_from_run_output(run_response, keep_references=keep_references)
 
     if not agent.store_tool_messages:
@@ -5883,7 +5881,7 @@ def cleanup_and_store(
     # Offload media to external storage onto a deep copy before scrubbing, so the caller's
     # reused input media is never mutated (offload strips content bytes off media objects).
     storage_copy: Optional[RunOutput] = None
-    if agent.media_storage is not None:
+    if agent.media_storage is not None and agent.store_media:
         storage_copy = copy.deepcopy(run_response)
 
         from agno.media_storage.base import AsyncMediaStorage
@@ -5929,14 +5927,14 @@ async def acleanup_and_store(
     run_context: Optional[RunContext] = None,
     user_id: Optional[str] = None,
 ) -> None:
-    from agno.run.approval import aupdate_approval_run_status
-
     import copy
+
+    from agno.run.approval import aupdate_approval_run_status
 
     # Offload media to external storage onto a deep copy before scrubbing, so the caller's
     # reused input media is never mutated (offload strips content bytes off media objects).
     storage_copy: Optional[RunOutput] = None
-    if agent.media_storage is not None:
+    if agent.media_storage is not None and agent.store_media:
         storage_copy = copy.deepcopy(run_response)
 
         from agno.media_storage.base import AsyncMediaStorage, MediaStorage

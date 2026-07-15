@@ -4437,7 +4437,7 @@ def _cleanup_and_store(
     # caller always sees full media regardless of store_media. When offloading,
     # deep-copy first: offload strips content bytes off media objects, and a shallow
     # copy would share those objects with the caller (e.g. reused input Images).
-    if team.media_storage is not None:
+    if team.media_storage is not None and team.store_media:
         storage_copy = copy.deepcopy(run_response)
 
         from agno.media_storage.base import AsyncMediaStorage
@@ -4504,7 +4504,7 @@ async def _acleanup_and_store(
     # caller always sees full media regardless of store_media. When offloading,
     # deep-copy first: offload strips content bytes off media objects, and a shallow
     # copy would share those objects with the caller (e.g. reused input Images).
-    if team.media_storage is not None:
+    if team.media_storage is not None and team.store_media:
         storage_copy = copy.deepcopy(run_response)
 
         from agno.media_storage.base import AsyncMediaStorage, MediaStorage
@@ -4834,9 +4834,8 @@ def scrub_run_output_for_storage(team: "Team", run_response: TeamRunOutput) -> b
     scrubbed = False
 
     if not team.store_media:
-        # If media_storage is configured, offload already ran — preserve MediaReferences
-        # (tiny metadata pointers needed to reconstruct media in future turns)
-        scrub_media_from_run_output(run_response, keep_references=team.media_storage is not None)
+        # store_media is off: offload was skipped and media is dropped from the persisted run.
+        scrub_media_from_run_output(run_response, keep_references=False)
         scrubbed = True
 
     if not team.store_tool_messages:
@@ -4870,7 +4869,7 @@ def _scrub_member_responses(
     from agno.team.team import Team
 
     if keep_media_references is None:
-        keep_media_references = team.media_storage is not None
+        keep_media_references = team.media_storage is not None and team.store_media
 
     for member_response in member_responses:
         member_id = None

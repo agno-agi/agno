@@ -62,4 +62,5 @@ Offload media content (images, audio, video, files) to external storage and keep
 
 - [`05_media_storage_local.py`](05_media_storage_local.py) - Offload media to the local filesystem (LocalMediaStorage)
 - [`06_media_storage_s3.py`](06_media_storage_s3.py) - Offload media to S3-compatible object storage (S3MediaStorage)
+- [`08_media_storage_gcs.py`](08_media_storage_gcs.py) - Offload media to Google Cloud Storage (GCSMediaStorage)
 - [`07_media_storage_multiturn.py`](07_media_storage_multiturn.py) - Multi-turn media reuse with store_media=False

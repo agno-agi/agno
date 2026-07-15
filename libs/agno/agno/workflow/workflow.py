@@ -1425,7 +1425,7 @@ class Workflow:
         Returns:
             Optional[WorkflowSession]: The saved WorkflowSession or None if not saved.
         """
-        if self.media_storage is not None:
+        if self.media_storage is not None and self.store_media:
             await self._aoffload_workflow_session_media(session)
 
         if self.db is not None and session.session_data is not None:
@@ -1457,7 +1457,7 @@ class Workflow:
         if self._has_async_db():
             raise ValueError("Cannot use sync save_session() with an async database. Use asave_session() instead.")
 
-        if self.media_storage is not None:
+        if self.media_storage is not None and self.store_media:
             self._offload_workflow_session_media(session)
 
         if self.db is not None and session.session_data is not None:
@@ -1521,7 +1521,6 @@ class Workflow:
                 log_warning("AsyncMediaStorage provided but sync workflow run was used. Skipping media offload.")
             return
 
-        from agno.utils.agent import scrub_workflow_media
         from agno.utils.media_offload import offload_workflow_media
 
         new_runs = []
@@ -1529,8 +1528,6 @@ class Workflow:
             run_copy = copy.deepcopy(run)
             try:
                 offload_workflow_media(run_copy, media_storage, session.session_id, getattr(run, "run_id", "") or "")
-                if not self.store_media:
-                    scrub_workflow_media(run_copy, keep_references=True)
             except Exception as e:
                 log_warning(f"Media offload failed, falling back to inline storage: {e}")
                 run_copy = run
@@ -1545,8 +1542,6 @@ class Workflow:
         import copy
 
         from agno.media_storage.base import AsyncMediaStorage, MediaStorage
-
-        from agno.utils.agent import scrub_workflow_media
 
         new_runs = []
         for run in session.runs:
@@ -1564,8 +1559,6 @@ class Workflow:
                 else:
                     new_runs.append(run)
                     continue
-                if not self.store_media:
-                    scrub_workflow_media(run_copy, keep_references=True)
             except Exception as e:
                 log_warning(f"Media offload failed, falling back to inline storage: {e}")
                 run_copy = run

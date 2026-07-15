@@ -1,9 +1,9 @@
 """Tests for scrub_media_from_run_output with keep_references=True.
 
-When store_media=False + media_storage is configured, the scrub should preserve
-media that was successfully offloaded (has media_reference) and only remove
-raw-content media. This is the core behavior that enables multi-turn
-conversations to reconstruct images from external storage.
+keep_references lets a caller preserve MediaReference pointers for media it has already
+offloaded (only raw-content media is removed) instead of dropping everything. Teams use
+this to keep member media the team itself stored. With store_media=False the scrub drops
+all media, since the offload is skipped in that case.
 """
 
 from typing import Any, AsyncIterator, Iterator
@@ -346,9 +346,9 @@ class TestScrubDefaultRemovesEverything:
 
 
 class TestScrubRunOutputForStorage:
-    def test_store_media_false_with_media_storage_keeps_references(self):
-        """Agent(store_media=False, media_storage=configured): offloaded media kept as
-        reference, un-offloaded media kept inline (never silently lost)."""
+    def test_store_media_false_with_media_storage_removes_everything(self):
+        """Agent(store_media=False, media_storage=configured): store_media gates the offload,
+        so nothing is stored and all media is dropped from the persisted run."""
         from agno.agent._run import scrub_run_output_for_storage
 
         agent = Agent(model=MockModel(), store_media=False, media_storage=_mock_storage())
@@ -358,11 +358,7 @@ class TestScrubRunOutputForStorage:
         )
         scrub_run_output_for_storage(agent, run_output)
 
-        assert run_output.images is not None
-        kept = {i.id: i for i in run_output.images}
-        assert set(kept) == {"kept", "fallback"}
-        assert kept["kept"].media_reference is not None
-        assert kept["fallback"].content is not None
+        assert run_output.images is None
 
     def test_store_media_false_without_media_storage_removes_everything(self):
         """Agent(store_media=False, media_storage=None) removes all media."""
@@ -392,7 +388,7 @@ class TestScrubRunOutputForStorage:
         assert len(run_output.images) == 2
 
     def test_store_media_false_with_media_storage_scrubs_messages(self):
-        """Messages are also scrubbed with keep_references when media_storage is set."""
+        """Message media is dropped too when store_media is off, even with media_storage set."""
         from agno.agent._run import scrub_run_output_for_storage
 
         agent = Agent(model=MockModel(), store_media=False, media_storage=_mock_storage())
@@ -403,5 +399,4 @@ class TestScrubRunOutputForStorage:
         run_output = RunOutput(messages=[msg])
         scrub_run_output_for_storage(agent, run_output)
 
-        assert msg.images is not None
-        assert {i.id for i in msg.images} == {"msg-kept", "msg-fallback"}
+        assert msg.images is None

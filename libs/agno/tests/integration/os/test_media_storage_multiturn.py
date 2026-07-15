@@ -1,8 +1,9 @@
 """Integration tests for multi-turn media handling through AgentOS API.
 
-Verifies that when store_media=False + media_storage is configured,
-images uploaded via the API are offloaded to external storage and
-reconstructed on subsequent turns via MediaReference pointers.
+Verifies that with store_media=True + media_storage configured, images uploaded via the
+API are offloaded to external storage and reconstructed on subsequent turns via
+MediaReference pointers; and that with store_media=False the offload is skipped and media
+is dropped from the persisted run (nothing lands in storage or the DB).
 """
 
 import shutil
@@ -134,8 +135,8 @@ def _make_client(agent: Agent) -> TestClient:
 class TestAgentOSMediaStorageMultiturn:
     """Test multi-turn media through AgentOS API endpoints."""
 
-    def test_multiturn_store_media_false_preserves_image(self, media_agent_store_false, media_dir):
-        """store_media=False + media_storage: turn 2 should still have image in history."""
+    def test_multiturn_store_media_false_drops_media(self, media_agent_store_false, media_dir):
+        """store_media=False gates the offload: nothing is stored, media is dropped, turns still run."""
         agent = media_agent_store_false
         client = _make_client(agent)
 
@@ -156,23 +157,16 @@ class TestAgentOSMediaStorageMultiturn:
             )
             assert resp1.status_code == 200
 
-            # Verify media was offloaded to disk
+            # store_media=False: offload is skipped, so nothing lands in storage
             media_files = [f for f in Path(media_dir).iterdir() if not f.name.endswith(".meta.json")]
-            assert len(media_files) >= 1, "Image should be offloaded to local storage"
+            assert len(media_files) == 0, "Offload should be skipped when store_media=False"
 
-            # Verify session has MediaReference (not raw bytes)
+            # Session run keeps no media (neither references nor raw bytes)
             session = agent.get_session(session_id=session_id)
             assert session is not None
             assert len(session.runs) == 1
-
-            # Check that messages have media_reference pointers
-            has_media_ref = False
             for msg in session.runs[0].messages or []:
-                if msg.images:
-                    for img in msg.images:
-                        if img.media_reference is not None:
-                            has_media_ref = True
-            assert has_media_ref, "Session run should have MediaReference pointers after offload"
+                assert not msg.images, "Message media should be dropped when store_media=False"
 
             # Turn 2: ask about the image WITHOUT uploading it
             resp2 = client.post(
@@ -225,8 +219,8 @@ class TestAgentOSMediaStorageMultiturn:
             session = agent.get_session(session_id=session_id)
             assert len(session.runs) == 2
 
-    def test_single_turn_offloads_to_disk(self, media_agent_store_false, media_dir):
-        """After a single API call, image should be on disk with MediaReference in session."""
+    def test_single_turn_store_media_false_drops_media(self, media_agent_store_false, media_dir):
+        """After a single API call with store_media=False, nothing is stored and no media is kept."""
         agent = media_agent_store_false
         client = _make_client(agent)
 
@@ -245,22 +239,12 @@ class TestAgentOSMediaStorageMultiturn:
             )
             assert resp.status_code == 200
 
-            # Image on disk
+            # store_media=False: offload skipped, nothing on disk
             media_files = [f for f in Path(media_dir).iterdir() if not f.name.endswith(".meta.json")]
-            assert len(media_files) == 1
-            assert media_files[0].stat().st_size == len(image_bytes)
+            assert len(media_files) == 0
 
-            # Session has MediaReference, not raw bytes
+            # Session run keeps no media (neither references nor raw bytes)
             session = agent.get_session(session_id="single-turn-test")
             run = session.runs[0]
-            has_ref = False
-            has_raw_content = False
             for msg in run.messages or []:
-                if msg.images:
-                    for img in msg.images:
-                        if img.media_reference is not None:
-                            has_ref = True
-                        if img.content is not None:
-                            has_raw_content = True
-            assert has_ref, "Session should have MediaReference"
-            assert not has_raw_content, "Session should NOT have raw content bytes (store_media=False)"
+                assert not msg.images, "Message media should be dropped when store_media=False"

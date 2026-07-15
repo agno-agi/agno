@@ -20,14 +20,17 @@ from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request
 from fastapi.responses import RedirectResponse, StreamingResponse
 
 from agno.db.base import AsyncBaseDb, SessionType
-from agno.media_storage.base import AsyncMediaStorage
 from agno.db.utils import resolve_session_type
+from agno.media_storage.base import AsyncMediaStorage
 from agno.os.auth import get_authentication_dependency
 from agno.os.middleware.user_scope import resolve_db_and_scope
 from agno.os.schema import NotFoundResponse, UnauthenticatedResponse
 from agno.os.settings import AgnoAPISettings
 from agno.remote.base import RemoteDb
 from agno.utils.log import log_warning
+
+# Content types that a browser can execute as script on the API origin; served as downloads.
+_ACTIVE_CONTENT_TYPES = {"text/html", "application/xhtml+xml", "image/svg+xml"}
 
 
 def _iter_media_objects(run: Any):
@@ -78,6 +81,15 @@ def _find_media_reference(session: Any, storage_key: str) -> Optional[Any]:
             if ref is not None and getattr(ref, "storage_key", None) == storage_key:
                 return ref
     return None
+
+
+def _is_stable_public_url(url: Optional[str]) -> bool:
+    """True if ``url`` is a plain public http(s) link, not a presigned/expiring one."""
+    if not url or not url.startswith(("http://", "https://")):
+        return False
+    lowered = url.lower()
+    # Presigned URLs carry a signature/expiry that can go stale; don't hand those back.
+    return not any(m in lowered for m in ("x-amz-signature", "signature=", "x-amz-expires", "expires="))
 
 
 def get_media_router(
@@ -152,11 +164,22 @@ def attach_routes(router: APIRouter, dbs: dict, media_storage: Optional[Any]) ->
             raise HTTPException(status_code=404, detail="Media not found in this session")
 
         # Only serve media this backend actually offloaded; a backend/bucket mismatch would
-        # otherwise surface as a confusing 500.
+        # otherwise surface as a confusing 500 or, worse, serve a same-named object from the
+        # wrong bucket.
         backend_name = getattr(media_storage, "backend_name", None)
         ref_backend = getattr(ref, "storage_backend", None)
         if backend_name is not None and ref_backend is not None and ref_backend != backend_name:
             raise HTTPException(status_code=404, detail="Media is not served by the configured storage backend")
+        os_bucket = getattr(media_storage, "bucket", None)
+        ref_bucket = getattr(ref, "bucket", None)
+        if os_bucket is not None and ref_bucket is not None and ref_bucket != os_bucket:
+            raise HTTPException(status_code=404, detail="Media is not served by the configured storage backend")
+
+        # If the reference already carries a stable public URL (e.g. acl="public-read"), use it
+        # directly — no need to re-sign or stream. Presigned/local URLs fall through and are
+        # re-signed or streamed from the storage_key below.
+        if _is_stable_public_url(getattr(ref, "url", None)):
+            return RedirectResponse(ref.url)
 
         is_async = isinstance(media_storage, AsyncMediaStorage)
 
@@ -192,6 +215,11 @@ def attach_routes(router: APIRouter, dbs: dict, media_storage: Optional[Any]) ->
         media_type = getattr(ref, "mime_type", None)
         if not media_type:
             media_type = mimetypes.guess_type(storage_key)[0] or "application/octet-stream"
-        return StreamingResponse(io.BytesIO(data), media_type=media_type)
+        # nosniff stops the browser from re-interpreting the bytes as active content; active
+        # types (html/svg) are forced to download so they can't execute on the API origin.
+        headers = {"X-Content-Type-Options": "nosniff"}
+        if media_type.split(";")[0].strip().lower() in _ACTIVE_CONTENT_TYPES:
+            headers["Content-Disposition"] = "attachment"
+        return StreamingResponse(io.BytesIO(data), media_type=media_type, headers=headers)
 
     return router
