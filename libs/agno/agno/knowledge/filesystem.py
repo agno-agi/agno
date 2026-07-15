@@ -43,7 +43,7 @@ class FileSystemKnowledge:
 
         # Agent automatically gets grep_file, list_files, get_file tools
         agent = Agent(
-            model=OpenAIChat(id="gpt-4o"),
+            model=OpenAIChat(id="gpt-5.6"),
             knowledge=fs_knowledge,
             search_knowledge=True,
         )

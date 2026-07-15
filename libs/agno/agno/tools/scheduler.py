@@ -8,7 +8,7 @@ Example:
     from agno.tools.scheduler import SchedulerTools
 
     agent = Agent(
-        model=OpenAIChat(id="gpt-4o"),
+        model=OpenAIChat(id="gpt-5.6"),
         tools=[
             SchedulerTools(
                 db=scheduler_db,
