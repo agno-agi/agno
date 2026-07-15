@@ -194,7 +194,6 @@ jobs:
           pattern: coverage-*
           merge-multiple: true
       - name: Combine coverage reports
-        id: coverage
         run: |
           pip install coverage
           coverage combine
@@ -202,13 +201,10 @@ jobs:
           AGNO_COVERAGE=$(python -c 'import json; print(json.load(open("coverage-agno.json"))["totals"]["percent_covered_display"])')
           echo "## Coverage Report" >> $GITHUB_STEP_SUMMARY
           echo "**Combined coverage: ${AGNO_COVERAGE}%**" >> $GITHUB_STEP_SUMMARY
-          echo "Combined coverage: $AGNO_COVERAGE"
-          echo "percentage=$AGNO_COVERAGE" >> $GITHUB_OUTPUT
-      - name: Create coverage check
-        uses: LouisBrunner/checks-action@v2.0.0
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-          name: "Coverage: ${{ steps.coverage.outputs.percentage }}%"
-          conclusion: success
-          output: |
-            {"title": "Coverage Report", "summary": "Combined test coverage: ${{ steps.coverage.outputs.percentage }}%"}
+          echo "coverage=$AGNO_COVERAGE" >> $GITHUB_ENV
+      - name: Post coverage comment
+        if: github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh pr comment ${{ github.event.pull_request.number }} --body "**Coverage: ${{ env.coverage }}%**"
