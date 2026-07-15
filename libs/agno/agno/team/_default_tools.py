@@ -10,7 +10,7 @@ if TYPE_CHECKING:
 import asyncio
 import contextlib
 import json
-from copy import copy
+from copy import deepcopy
 from typing import (
     Any,
     AsyncIterator,
@@ -615,7 +615,7 @@ def _get_delegate_task_function(
         # Make sure for the member agent, we are using the agent logger
         use_agent_logger()
 
-        member_session_state_copy = copy(run_context.session_state)
+        member_session_state_copy = deepcopy(run_context.session_state)
 
         member_agent_run_response = None
         try:
@@ -802,7 +802,7 @@ def _get_delegate_task_function(
         # Make sure for the member agent, we are using the agent logger
         use_agent_logger()
 
-        member_session_state_copy = copy(run_context.session_state)
+        member_session_state_copy = deepcopy(run_context.session_state)
 
         member_agent_run_response = None
         try:
@@ -973,7 +973,7 @@ def _get_delegate_task_function(
         for _, member_agent in enumerate(resolved_members):
             member_agent_task, history = _setup_delegate_task_to_member(member_agent=member_agent, task=task)
 
-            member_session_state_copy = copy(run_context.session_state)
+            member_session_state_copy = deepcopy(run_context.session_state)
             member_agent_run_response = None
             try:
                 if stream:
@@ -1150,7 +1150,7 @@ def _get_delegate_task_function(
 
             async def stream_member(agent: Union[Agent, "Team"]) -> None:
                 member_agent_task, history = _setup_delegate_task_to_member(member_agent=agent, task=task)  # type: ignore
-                member_session_state_copy = copy(run_context.session_state)
+                member_session_state_copy = deepcopy(run_context.session_state)
 
                 member_run_id = str(uuid4())
                 if run_response.run_id is not None:
@@ -1283,7 +1283,7 @@ def _get_delegate_task_function(
                     history=history,
                     member_agent_index=member_agent_index,
                 ) -> tuple[str, Optional[Union[Agent, "Team"]], Optional[Union[RunOutput, TeamRunOutput]]]:
-                    member_session_state_copy = copy(run_context.session_state)
+                    member_session_state_copy = deepcopy(run_context.session_state)
 
                     try:
                         member_run_id = str(uuid4())
