@@ -138,6 +138,7 @@ notion = ["notion-client"]
 opencv = ["opencv-python"]
 oxylabs = ["oxylabs"]
 parallel = ["parallel-web>=1.0"]
+plivo = ["plivo"]
 psycopg = ["psycopg-binary", "psycopg"]
 redmine = ["python-redmine"]
 redshift = ["redshift-connector"]
@@ -284,6 +285,7 @@ tools = [
   "agno[opencv]",
   "agno[oxylabs]",
   "agno[parallel]",
+  "agno[plivo]",
   "agno[psycopg]",
   "agno[redmine]",
   "agno[redshift]",
@@ -572,6 +574,7 @@ module = [
   "pinecone.*",
   "portkey_ai.*",
   "playwright.sync_api.*",
+  "plivo.*",
   "psycopg.*",
   "pyarrow.*",
   "pycountry.*",
