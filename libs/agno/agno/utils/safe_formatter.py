@@ -4,6 +4,8 @@ import string
 class SafeFormatter(string.Formatter):
     def get_value(self, key, args, kwargs):
         """Handle missing keys by returning '{key}'."""
+        if isinstance(key, int):
+            return args[key]
         if key not in kwargs:
             return f"{key}"
         return kwargs[key]
