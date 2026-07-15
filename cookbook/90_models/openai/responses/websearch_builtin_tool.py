@@ -14,7 +14,7 @@ from agno.tools.file import FileTools
 # ---------------------------------------------------------------------------
 
 agent = Agent(
-    model=OpenAIResponses(id="gpt-4o"),
+    model=OpenAIResponses(id="gpt-5.6-luna"),
     tools=[{"type": "web_search_preview"}, FileTools()],
     instructions="Save the results to a file with a relevant name.",
     markdown=True,

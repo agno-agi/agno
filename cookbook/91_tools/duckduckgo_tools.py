@@ -17,19 +17,19 @@ from agno.tools.websearch import WebSearchTools
 
 # Example 1: Enable specific DuckDuckGo functions
 agent = Agent(
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     tools=[DuckDuckGoTools(enable_search=True, enable_news=False)],
 )
 
 # Example 2: Enable all DuckDuckGo functions (both search and news)
 agent_all = Agent(
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     tools=[DuckDuckGoTools(enable_search=True, enable_news=True)],
 )
 
 # Example 3: Enable only news search
 news_agent = Agent(
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     tools=[DuckDuckGoTools(enable_search=False, enable_news=True)],
 )
 
@@ -37,7 +37,7 @@ news_agent = Agent(
 # Note: DuckDuckGoTools always uses duckduckgo backend.
 # For other backends, use WebSearchTools directly.
 yandex_agent = Agent(
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     tools=[WebSearchTools(enable_search=True, enable_news=False, backend="yandex")],
     add_datetime_to_context=True,
 )

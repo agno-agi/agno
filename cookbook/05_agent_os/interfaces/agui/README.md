@@ -145,4 +145,4 @@ To test with the Dojo frontend:
 | No streaming | Missing `AGUI` interface | Add `interfaces=[AGUI(agent=agent)]` to AgentOS |
 | State not syncing | Missing state config | Set `enable_agentic_state=True` on agent |
 | HITL not working | Tool missing flag | Add `requires_confirmation=True` to tool decorator |
-| Multimodal fails | Wrong model | Use Gemini or GPT-4o for image/audio input |
+| Multimodal fails | Wrong model | Use Gemini or gpt-5.6-luna for image/audio input |

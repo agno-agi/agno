@@ -6,7 +6,7 @@ Examples for all supported LLM providers in Agno.
 
 | Provider | Description | API Key |
 |:---------|:------------|:--------|
-| **OpenAI** | GPT-4, GPT-4o, o1, o3 | `OPENAI_API_KEY` |
+| **OpenAI** | GPT-4, gpt-5.6-luna, o1, o3 | `OPENAI_API_KEY` |
 | **Anthropic** | Claude 3.5, Claude Opus | `ANTHROPIC_API_KEY` |
 | **Google** | Gemini Pro, Flash | `GOOGLE_API_KEY` |
 | **AWS Bedrock** | Claude, Llama on AWS | AWS credentials |

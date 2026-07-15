@@ -44,28 +44,28 @@ db = PostgresDb(db_url="postgresql+psycopg://ai:ai@localhost:5532/ai")
 
 eval_hook = AgentAsJudgeEval(
     name="Quality Check",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     criteria="Response should be helpful and accurate",
     scoring_strategy="binary",
 )
 
 agent = Agent(
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     tools=[YFinanceTools(enable_stock_price=True, enable_company_info=True)],
-    reasoning_model=OpenAIChat(id="gpt-4o-mini"),
+    reasoning_model=OpenAIChat(id="gpt-5.6-luna"),
     reasoning=True,
     compression_manager=CompressionManager(
-        model=OpenAIChat(id="gpt-4o-mini"),
+        model=OpenAIChat(id="gpt-5.6-luna"),
         compress_tool_results_limit=1,
     ),
-    output_model=OpenAIChat(id="gpt-4o-mini"),
+    output_model=OpenAIChat(id="gpt-5.6-luna"),
     output_schema=StockSummary,
     structured_outputs=True,
-    memory_manager=MemoryManager(model=OpenAIChat(id="gpt-4o-mini"), db=db),
+    memory_manager=MemoryManager(model=OpenAIChat(id="gpt-5.6-luna"), db=db),
     update_memory_on_run=True,
-    culture_manager=CultureManager(model=OpenAIChat(id="gpt-4o-mini"), db=db),
+    culture_manager=CultureManager(model=OpenAIChat(id="gpt-5.6-luna"), db=db),
     update_cultural_knowledge=True,
-    session_summary_manager=SessionSummaryManager(model=OpenAIChat(id="gpt-4o-mini")),
+    session_summary_manager=SessionSummaryManager(model=OpenAIChat(id="gpt-5.6-luna")),
     enable_session_summaries=True,
     post_hooks=[eval_hook],
     db=db,

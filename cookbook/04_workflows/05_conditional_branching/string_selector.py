@@ -19,19 +19,19 @@ from agno.workflow.workflow import Workflow
 # ---------------------------------------------------------------------------
 tech_expert = Agent(
     name="tech_expert",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     instructions="You are a tech expert. Provide technical analysis.",
 )
 
 biz_expert = Agent(
     name="biz_expert",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     instructions="You are a business expert. Provide business insights.",
 )
 
 generalist = Agent(
     name="generalist",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     instructions="You are a generalist. Provide general information.",
 )
 

@@ -17,7 +17,7 @@ from agno.tools.websearch import WebSearchTools
 agent = Agent(
     name="Agent with Tools",
     id="tools_agent",
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     tools=[WebSearchTools()],
     description="A versatile AI assistant with real-time web search capabilities powered by DuckDuckGo, providing current information and context-aware responses with access to datetime, history, and location data",
     instructions="""

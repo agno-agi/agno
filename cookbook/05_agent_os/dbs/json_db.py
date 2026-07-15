@@ -18,7 +18,7 @@ db = JsonDb(db_path="./agno_json_data")
 agent = Agent(
     name="JSON Demo Agent",
     id="basic-agent",
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     db=db,
     update_memory_on_run=True,
     enable_session_summaries=True,
@@ -31,7 +31,7 @@ agent = Agent(
 team = Team(
     id="basic-team",
     name="JSON Demo Team",
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     db=db,
     members=[agent],
     debug_mode=True,
@@ -41,7 +41,7 @@ team = Team(
 evaluation = AccuracyEval(
     db=db,
     name="JSON Demo Evaluation",
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     agent=agent,
     input="What is 2 + 2?",
     expected_output="4",

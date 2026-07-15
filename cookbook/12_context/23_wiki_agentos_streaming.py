@@ -47,7 +47,7 @@ WIKI_PATH.mkdir()
 wiki = WikiContextProvider(
     id="wiki",
     backend=FileSystemBackend(path=WIKI_PATH),
-    model=OpenAIResponses(id="gpt-5.4-mini"),
+    model=OpenAIResponses(id="gpt-5.6-luna"),
 )
 
 agent = Agent(

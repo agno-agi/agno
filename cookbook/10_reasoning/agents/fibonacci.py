@@ -15,13 +15,13 @@ from agno.models.openai import OpenAIChat
 task = "Give me steps to write a python script for fibonacci series"
 
 cot_agent = Agent(
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     reasoning=True,
     markdown=True,
 )
 
 deepseek_agent = Agent(
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     reasoning_model=DeepSeek(id="deepseek-reasoner"),
     markdown=True,
 )

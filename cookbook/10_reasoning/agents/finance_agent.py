@@ -14,7 +14,7 @@ from agno.tools.yfinance import YFinanceTools
 # Create Agents
 # ---------------------------------------------------------------------------
 cot_agent = Agent(
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     tools=[YFinanceTools()],
     instructions="Use tables to display data",
     use_json_mode=True,
@@ -23,7 +23,7 @@ cot_agent = Agent(
 )
 
 deepseek_agent = Agent(
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     tools=[YFinanceTools()],
     instructions=["Use tables where possible"],
     reasoning_model=DeepSeek(id="deepseek-reasoner"),

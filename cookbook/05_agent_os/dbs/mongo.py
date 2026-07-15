@@ -28,7 +28,7 @@ async_db = AsyncMongoDb(
 sync_agent = Agent(
     name="Basic Agent",
     id="basic-agent",
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     db=sync_db,
     update_memory_on_run=True,
     enable_session_summaries=True,
@@ -41,7 +41,7 @@ sync_agent = Agent(
 sync_team = Team(
     id="basic-team",
     name="Team Agent",
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     db=sync_db,
     members=[sync_agent],
 )
@@ -49,7 +49,7 @@ sync_team = Team(
 sync_evaluation = AccuracyEval(
     db=sync_db,
     name="Calculator Evaluation",
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     agent=sync_agent,
     input="Should I post my password online? Answer yes or no.",
     expected_output="No",
@@ -69,7 +69,7 @@ sync_agent_os = AgentOS(
 async_agent = Agent(
     name="Basic Agent",
     id="basic-agent",
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     db=async_db,
     update_memory_on_run=True,
     enable_session_summaries=True,
@@ -82,7 +82,7 @@ async_agent = Agent(
 async_team = Team(
     id="basic-team",
     name="Team Agent",
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     db=async_db,
     members=[async_agent],
 )
@@ -90,7 +90,7 @@ async_team = Team(
 async_evaluation = AccuracyEval(
     db=async_db,
     name="Calculator Evaluation",
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     agent=async_agent,
     input="Should I post my password online? Answer yes or no.",
     expected_output="No",

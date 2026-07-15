@@ -23,7 +23,7 @@ from agno.tools.websearch import WebSearchTools
 
 # Past day - for breaking news
 daily_agent = Agent(
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     tools=[
         WebSearchTools(
             timelimit="d",  # Results from past day
@@ -35,7 +35,7 @@ daily_agent = Agent(
 
 # Past week - for recent developments
 weekly_agent = Agent(
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     tools=[
         WebSearchTools(
             timelimit="w",  # Results from past week
@@ -47,7 +47,7 @@ weekly_agent = Agent(
 
 # Past month - for broader recent context
 monthly_agent = Agent(
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     tools=[
         WebSearchTools(
             timelimit="m",  # Results from past month
@@ -59,7 +59,7 @@ monthly_agent = Agent(
 
 # Past year - for yearly trends
 yearly_agent = Agent(
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     tools=[
         WebSearchTools(
             timelimit="y",  # Results from past year
@@ -76,7 +76,7 @@ yearly_agent = Agent(
 
 # US English
 us_agent = Agent(
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     tools=[
         WebSearchTools(
             region="us-en",
@@ -88,7 +88,7 @@ us_agent = Agent(
 
 # UK English
 uk_agent = Agent(
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     tools=[
         WebSearchTools(
             region="uk-en",
@@ -100,7 +100,7 @@ uk_agent = Agent(
 
 # German
 de_agent = Agent(
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     tools=[
         WebSearchTools(
             region="de-de",
@@ -112,7 +112,7 @@ de_agent = Agent(
 
 # French
 fr_agent = Agent(
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     tools=[
         WebSearchTools(
             region="fr-fr",
@@ -124,7 +124,7 @@ fr_agent = Agent(
 
 # Russian
 ru_agent = Agent(
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     tools=[
         WebSearchTools(
             region="ru-ru",
@@ -141,7 +141,7 @@ ru_agent = Agent(
 
 # DuckDuckGo backend
 duckduckgo_agent = Agent(
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     tools=[
         WebSearchTools(
             backend="duckduckgo",
@@ -153,7 +153,7 @@ duckduckgo_agent = Agent(
 
 # Google backend
 google_agent = Agent(
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     tools=[
         WebSearchTools(
             backend="google",
@@ -165,7 +165,7 @@ google_agent = Agent(
 
 # Bing backend
 bing_agent = Agent(
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     tools=[
         WebSearchTools(
             backend="bing",
@@ -177,7 +177,7 @@ bing_agent = Agent(
 
 # Brave backend
 brave_agent = Agent(
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     tools=[
         WebSearchTools(
             backend="brave",
@@ -189,7 +189,7 @@ brave_agent = Agent(
 
 # Yandex backend
 yandex_agent = Agent(
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     tools=[
         WebSearchTools(
             backend="yandex",
@@ -201,7 +201,7 @@ yandex_agent = Agent(
 
 # Yahoo backend
 yahoo_agent = Agent(
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     tools=[
         WebSearchTools(
             backend="yahoo",
@@ -217,7 +217,7 @@ yahoo_agent = Agent(
 # Combine all parameters for a powerful research assistant
 
 research_agent = Agent(
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     tools=[
         WebSearchTools(
             backend="auto",  # Auto-select best available backend
@@ -239,7 +239,7 @@ research_agent = Agent(
 # ---------------------------------------------------------------------------
 
 news_agent = Agent(
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     tools=[
         WebSearchTools(
             backend="auto",
@@ -264,7 +264,7 @@ news_agent = Agent(
 def create_regional_agent(region: str, region_name: str) -> Agent:
     """Create a region-specific search agent."""
     return Agent(
-        model=OpenAIChat(id="gpt-4o"),
+        model=OpenAIChat(id="gpt-5.6-luna"),
         tools=[
             WebSearchTools(
                 backend="auto",

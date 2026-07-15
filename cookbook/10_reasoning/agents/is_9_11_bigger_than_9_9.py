@@ -18,10 +18,10 @@ console = Console()
 
 task = "9.11 and 9.9 -- which is bigger?"
 
-regular_agent_openai = Agent(model=OpenAIChat(id="gpt-4o"), markdown=True)
+regular_agent_openai = Agent(model=OpenAIChat(id="gpt-5.6-luna"), markdown=True)
 
 cot_agent_openai = Agent(
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     reasoning=True,
     markdown=True,
 )
@@ -35,7 +35,7 @@ deepseek_agent_claude = Agent(
 )
 
 deepseek_agent_openai = Agent(
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     reasoning_model=DeepSeek(id="deepseek-reasoner"),
     markdown=True,
 )

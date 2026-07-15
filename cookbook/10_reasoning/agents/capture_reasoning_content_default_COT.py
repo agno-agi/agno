@@ -34,7 +34,7 @@ def run_examples() -> None:
     print("\n=== Example 1: Using reasoning=True (default COT) ===\n")
 
     agent = Agent(
-        model=OpenAIChat(id="gpt-4o"),
+        model=OpenAIChat(id="gpt-5.6-luna"),
         reasoning=True,
         markdown=True,
     )
@@ -46,8 +46,8 @@ def run_examples() -> None:
     print("\n\n=== Example 2: Using a custom reasoning_model ===\n")
 
     agent_with_reasoning_model = Agent(
-        model=OpenAIChat(id="gpt-4o"),
-        reasoning_model=OpenAIChat(id="gpt-4o"),
+        model=OpenAIChat(id="gpt-5.6-luna"),
+        reasoning_model=OpenAIChat(id="gpt-5.6-luna"),
         markdown=True,
     )
 
@@ -60,7 +60,7 @@ def run_examples() -> None:
     print("\n\n=== Example 3: Processing stream with reasoning=True ===\n")
 
     streaming_agent = Agent(
-        model=OpenAIChat(id="gpt-4o"),
+        model=OpenAIChat(id="gpt-5.6-luna"),
         reasoning=True,
         markdown=True,
     )
@@ -83,8 +83,8 @@ def run_examples() -> None:
     print("\n\n=== Example 4: Processing stream with reasoning_model ===\n")
 
     streaming_agent_with_model = Agent(
-        model=OpenAIChat(id="gpt-4o"),
-        reasoning_model=OpenAIChat(id="gpt-4o"),
+        model=OpenAIChat(id="gpt-5.6-luna"),
+        reasoning_model=OpenAIChat(id="gpt-5.6-luna"),
         markdown=True,
     )
 

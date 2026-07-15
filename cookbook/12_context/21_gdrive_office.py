@@ -39,7 +39,7 @@ from agno.models.openai import OpenAIResponses
 # ---------------------------------------------------------------------------
 # Create the provider (service-account path from env)
 # ---------------------------------------------------------------------------
-gdrive = GDriveContextProvider(model=OpenAIResponses(id="gpt-5.4-mini"))
+gdrive = GDriveContextProvider(model=OpenAIResponses(id="gpt-5.6-luna"))
 
 # ---------------------------------------------------------------------------
 # Create the Agent

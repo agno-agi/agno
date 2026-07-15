@@ -23,7 +23,7 @@ finance_agent = Agent(
     name="Finance Agent",
     role="Get financial data",
     id="finance-agent",
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     tools=[
         WebSearchTools(
             enable_news=True,
@@ -54,7 +54,7 @@ reasoning_model_agent = Agent(
     name="Reasoning Model Agent",
     role="Reasoning about Math",
     id="reasoning-model-agent",
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     reasoning_model=OpenAIChat(id="o3-mini"),
     instructions=["You are a reasoning agent that can reason about math."],
     markdown=True,
@@ -105,7 +105,7 @@ knowledge_tools = KnowledgeTools(
 knowledge_agent = Agent(
     id="knowledge_agent",
     name="Knowledge Agent",
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     tools=[knowledge_tools],
     markdown=True,
     db=db,
@@ -113,7 +113,7 @@ knowledge_agent = Agent(
 
 reasoning_finance_team = Team(
     name="Reasoning Finance Team",
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     members=[
         web_agent,
         finance_agent,

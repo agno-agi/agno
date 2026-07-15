@@ -19,19 +19,19 @@ from agno.workflow.workflow import Workflow
 # ---------------------------------------------------------------------------
 tech_expert = Agent(
     name="tech_expert",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     instructions="You are a tech expert. Provide technical analysis.",
 )
 
 biz_expert = Agent(
     name="biz_expert",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     instructions="You are a business expert. Provide business insights.",
 )
 
 generalist = Agent(
     name="generalist",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     instructions="You are a generalist. Provide general information.",
 )
 
@@ -72,19 +72,19 @@ workflow_string_selector = Workflow(
 # ---------------------------------------------------------------------------
 researcher = Agent(
     name="researcher",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     instructions="You are a researcher.",
 )
 
 writer = Agent(
     name="writer",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     instructions="You are a writer.",
 )
 
 reviewer = Agent(
     name="reviewer",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     instructions="You are a reviewer.",
 )
 
@@ -124,9 +124,15 @@ workflow_step_choices = Workflow(
 # ---------------------------------------------------------------------------
 # Create Agents For Nested Choices Selector
 # ---------------------------------------------------------------------------
-step_a = Agent(name="step_a", model=OpenAIChat(id="gpt-4o-mini"), instructions="Step A")
-step_b = Agent(name="step_b", model=OpenAIChat(id="gpt-4o-mini"), instructions="Step B")
-step_c = Agent(name="step_c", model=OpenAIChat(id="gpt-4o-mini"), instructions="Step C")
+step_a = Agent(
+    name="step_a", model=OpenAIChat(id="gpt-5.6-luna"), instructions="Step A"
+)
+step_b = Agent(
+    name="step_b", model=OpenAIChat(id="gpt-5.6-luna"), instructions="Step B"
+)
+step_c = Agent(
+    name="step_c", model=OpenAIChat(id="gpt-5.6-luna"), instructions="Step C"
+)
 
 
 def nested_selector(

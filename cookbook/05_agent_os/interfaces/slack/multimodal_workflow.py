@@ -35,7 +35,7 @@ from agno.workflow import Parallel, Step, Workflow
 
 analyst = Agent(
     name="Visual Analyst",
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     instructions=[
         "Analyze any images or files provided.",
         "Describe visual elements, composition, colors, mood.",
@@ -47,7 +47,7 @@ analyst = Agent(
 
 researcher = Agent(
     name="Web Researcher",
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     tools=[WebSearchTools()],
     instructions=[
         "Search the web for information related to the user's request.",
@@ -59,7 +59,7 @@ researcher = Agent(
 
 synthesizer = Agent(
     name="Creative Synthesizer",
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     tools=[DalleTools()],
     instructions=[
         "Combine the analysis and research from previous steps.",

@@ -41,7 +41,7 @@ db = SqliteDb(
 
 researcher = Agent(
     name="Researcher",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     tools=[DuckDuckGoTools()],
     instructions=[
         "Research the topic using web search.",
@@ -51,7 +51,7 @@ researcher = Agent(
 
 writer = Agent(
     name="Writer",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     instructions=[
         "Write a clear, concise summary from the research.",
         "Use **bold** for key terms and keep it under 300 words.",

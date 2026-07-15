@@ -48,7 +48,7 @@ def create_sync_agent(knowledge: Knowledge) -> Agent:
 
 def create_async_agent(knowledge: Knowledge) -> Agent:
     return Agent(
-        model=OpenAIChat(id="gpt-4o-mini"),
+        model=OpenAIChat(id="gpt-5.6-luna"),
         knowledge=knowledge,
         search_knowledge=True,
     )

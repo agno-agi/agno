@@ -34,7 +34,7 @@ async def main() -> None:
     # ------------------------------------------------------------------
     web = WebContextProvider(
         backend=ExaMCPBackend(),  # reads EXA_API_KEY if present; works keyless otherwise
-        model=OpenAIResponses(id="gpt-5.4-mini"),
+        model=OpenAIResponses(id="gpt-5.6-luna"),
     )
 
     # ------------------------------------------------------------------

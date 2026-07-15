@@ -24,14 +24,14 @@ if not CEL_AVAILABLE:
 # ---------------------------------------------------------------------------
 researcher = Agent(
     name="Researcher",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     instructions="Research the given topic.",
     markdown=True,
 )
 
 reviewer = Agent(
     name="Reviewer",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     instructions=(
         "Review the research. If the research is thorough and complete, "
         "include APPROVED in your response."

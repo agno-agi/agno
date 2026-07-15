@@ -38,7 +38,7 @@ team_db = SqliteDb(session_table="team_sessions", db_file="tmp/support_team.db")
 tech_support = Agent(
     name="Technical Support",
     role="Code and technical troubleshooting",
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     tools=[WebSearchTools()],
     instructions=[
         "You handle technical questions about code, APIs, and implementation.",
@@ -52,7 +52,7 @@ tech_support = Agent(
 docs_agent = Agent(
     name="Documentation Specialist",
     role="Finding and explaining documentation",
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     tools=[
         SlackTools(
             enable_search_messages=True,
@@ -72,7 +72,7 @@ docs_agent = Agent(
 # The Team with a coordinator
 support_team = Team(
     name="Support Team",
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     members=[tech_support, docs_agent],
     description="A support team that routes questions to the right specialist.",
     instructions=[

@@ -68,7 +68,7 @@ backend = GitBackend(
 wiki = WikiContextProvider(
     id="wiki",
     backend=backend,
-    model=OpenAIResponses(id="gpt-5.4-mini"),
+    model=OpenAIResponses(id="gpt-5.6-luna"),
 )
 
 # ---------------------------------------------------------------------------

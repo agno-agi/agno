@@ -16,7 +16,7 @@ from agno.workflow.workflow import Workflow
 # ---------------------------------------------------------------------------
 meal_suggester = Agent(
     name="Meal Suggester",
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     instructions=[
         "You are a friendly meal planning assistant who suggests meal categories and cuisines.",
         "Consider the time of day, day of the week, and any context from the conversation.",
@@ -27,7 +27,7 @@ meal_suggester = Agent(
 
 recipe_specialist = Agent(
     name="Recipe Specialist",
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     instructions=[
         "You are a recipe expert who provides specific, detailed recipe recommendations.",
         "Pay close attention to the full conversation to understand user preferences and restrictions.",
@@ -133,7 +133,7 @@ meal_workflow = Workflow(
 # ---------------------------------------------------------------------------
 research_agent = Agent(
     name="Research Specialist",
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     instructions=[
         "You are a research specialist who gathers information on topics.",
         "Conduct thorough research and provide key facts, trends, and insights.",
@@ -145,7 +145,7 @@ research_agent = Agent(
 
 content_creator = Agent(
     name="Content Creator",
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     instructions=[
         "You are an expert content creator who writes engaging content.",
         "Use the research provided and CREATE UNIQUE content that stands out.",
@@ -162,7 +162,7 @@ content_creator = Agent(
 
 publisher_agent = Agent(
     name="Content Publisher",
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     instructions=[
         "You are a content publishing specialist.",
         "Review the created content and prepare it for publication.",

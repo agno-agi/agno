@@ -16,7 +16,7 @@ from agno.tools.websearch import WebSearchTools
 # ---------------------------------------------------------------------------
 def run_example() -> None:
     reasoning_agent = Agent(
-        model=OpenAIChat(id="gpt-4o"),
+        model=OpenAIChat(id="gpt-5.6-luna"),
         tools=[
             ReasoningTools(
                 enable_think=True,

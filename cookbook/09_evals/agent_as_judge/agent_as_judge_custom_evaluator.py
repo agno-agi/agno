@@ -13,7 +13,7 @@ from agno.models.openai import OpenAIChat
 # Create Agent
 # ---------------------------------------------------------------------------
 agent = Agent(
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     instructions="Explain technical concepts simply.",
 )
 
@@ -21,7 +21,7 @@ agent = Agent(
 # Create Evaluator Agent
 # ---------------------------------------------------------------------------
 custom_evaluator = Agent(
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     description="Strict technical evaluator",
     instructions="You are a strict evaluator. Only give high scores to exceptionally clear and accurate explanations.",
 )

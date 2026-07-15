@@ -40,7 +40,7 @@ def get_user_profile(dependencies: dict) -> dict:
 profile_agent = Agent(
     id="profile-agent",
     name="Profile Agent",
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     db=db,
     tools=[get_user_profile],
     instructions="You are a profile agent. You can search for information and access user profiles.",

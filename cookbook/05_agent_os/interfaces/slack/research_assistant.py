@@ -36,7 +36,7 @@ agent_db = SqliteDb(session_table="agent_sessions", db_file="tmp/research_assist
 
 research_assistant = Agent(
     name="Research Assistant",
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     db=agent_db,
     tools=[
         SlackTools(

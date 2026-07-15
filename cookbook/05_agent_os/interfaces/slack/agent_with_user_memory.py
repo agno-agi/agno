@@ -38,7 +38,7 @@ memory_manager = MemoryManager(
                     Collect Information about the users likes and dislikes,
                     Collect information about what the user is doing with their life right now
                 """,
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
 )
 
 

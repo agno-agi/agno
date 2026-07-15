@@ -33,13 +33,13 @@ agent_db = SqliteDb(
 
 drafter = Agent(
     name="Drafter",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     instructions="Draft a response to the user's message. Be helpful and informative.",
 )
 
 editor = Agent(
     name="Editor",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     instructions=[
         "Review and polish the draft for clarity and conciseness.",
         "Keep it short and suitable for a Telegram message.",

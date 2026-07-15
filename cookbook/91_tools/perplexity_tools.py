@@ -15,7 +15,7 @@ from agno.tools.perplexity import PerplexitySearch
 
 # Example 1: Basic search with default settings
 agent = Agent(
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     tools=[PerplexitySearch()],
     show_tool_calls=True,
     markdown=True,
@@ -23,7 +23,7 @@ agent = Agent(
 
 # Example 2: Search with recency and domain filters
 agent_filtered = Agent(
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     tools=[
         PerplexitySearch(
             max_results=10,

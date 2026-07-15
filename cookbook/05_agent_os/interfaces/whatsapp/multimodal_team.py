@@ -23,7 +23,7 @@ from agno.tools.websearch import WebSearchTools
 
 vision_analyst = Agent(
     name="Vision Analyst",
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     role="Analyzes images, files, and visual content in detail.",
     instructions=[
         "You are an expert visual analyst.",
@@ -36,7 +36,7 @@ vision_analyst = Agent(
 
 creative_agent = Agent(
     name="Creative Agent",
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     role="Generates images with DALL-E and searches the web.",
     tools=[DalleTools(), WebSearchTools()],
     instructions=[
@@ -51,7 +51,7 @@ creative_agent = Agent(
 multimodal_team = Team(
     name="Multimodal Team",
     mode="coordinate",
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     members=[vision_analyst, creative_agent],
     instructions=[
         "Route image analysis and file analysis tasks to Vision Analyst.",

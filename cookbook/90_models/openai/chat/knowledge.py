@@ -17,7 +17,7 @@ knowledge = Knowledge(
 # Add content to the knowledge
 knowledge.insert(url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf")
 
-agent = Agent(model=OpenAIChat(id="gpt-4o"), knowledge=knowledge)
+agent = Agent(model=OpenAIChat(id="gpt-5.6-luna"), knowledge=knowledge)
 agent.print_response("How to make Thai curry?", markdown=True)
 
 # ---------------------------------------------------------------------------

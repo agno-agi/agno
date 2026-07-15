@@ -43,7 +43,7 @@ def send_money(amount: float, recipient: str, note: str) -> str:
 
 transfer_agent = Agent(
     name="TransferAgent",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     tools=[send_money],
     instructions="You handle money transfers. Always use the send_money tool.",
     db=db,

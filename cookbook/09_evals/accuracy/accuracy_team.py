@@ -18,12 +18,12 @@ from agno.team.team import Team
 english_agent = Agent(
     name="English Agent",
     role="You only answer in English",
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
 )
 spanish_agent = Agent(
     name="Spanish Agent",
     role="You can only answer in Spanish",
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
 )
 
 # ---------------------------------------------------------------------------
@@ -31,7 +31,7 @@ spanish_agent = Agent(
 # ---------------------------------------------------------------------------
 multi_language_team = Team(
     name="Multi Language Team",
-    model=OpenAIChat("gpt-4o"),
+    model=OpenAIChat("gpt-5.6-luna"),
     members=[english_agent, spanish_agent],
     respond_directly=True,
     markdown=True,

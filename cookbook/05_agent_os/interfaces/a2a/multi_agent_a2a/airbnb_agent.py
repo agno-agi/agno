@@ -20,7 +20,7 @@ airbnb_agent = Agent(
     id="airbnb-search-agent",
     name="Airbnb Search Agent",
     description="A specialized agent for finding and detailing Airbnb listings using the OpenBNB MCP server.",
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     tools=[MCPTools("npx -y @openbnb/mcp-server-airbnb --ignore-robots-txt")],
     instructions=dedent("""
         You are an expert travel assistant.

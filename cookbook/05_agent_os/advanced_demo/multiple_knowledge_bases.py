@@ -36,7 +36,7 @@ knowledge_base = Knowledge(
 
 main_agent = Agent(
     name="Main Agent",
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     knowledge=knowledge_base,
     add_datetime_to_context=True,
     markdown=True,

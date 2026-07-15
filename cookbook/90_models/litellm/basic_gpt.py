@@ -14,7 +14,7 @@ from agno.models.litellm import LiteLLM
 
 openai_agent = Agent(
     model=LiteLLM(
-        id="gpt-4o",
+        id="gpt-5.6-luna",
         name="LiteLLM",
     ),
     markdown=True,

@@ -25,14 +25,14 @@ db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
 # Define agents
 hackernews_agent = Agent(
     name="Hackernews Agent",
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     tools=[HackerNewsTools()],
     instructions="Extract key insights and content from Hackernews posts",
 )
 
 web_agent = Agent(
     name="Web Agent",
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     tools=[WebSearchTools()],
     instructions="Search the web for the latest news and trends",
 )
@@ -46,7 +46,7 @@ research_team = Team(
 
 content_planner = Agent(
     name="Content Planner",
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     instructions=[
         "Plan a content schedule over 4 weeks for the provided topic and research content",
         "Ensure that I have posts for 3 posts per week",

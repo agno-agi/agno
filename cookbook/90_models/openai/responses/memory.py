@@ -20,7 +20,7 @@ db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
 db = PostgresDb(db_url=db_url)
 
 agent = Agent(
-    model=OpenAIResponses(id="gpt-4o"),
+    model=OpenAIResponses(id="gpt-5.6-luna"),
     user_id="test_user",
     session_id="test_session",
     # Pass the database to the Agent

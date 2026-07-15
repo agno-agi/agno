@@ -29,7 +29,7 @@ sync_agent = Agent(
     db=sync_db,
     name="Basic Agent",
     id="basic-agent",
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     add_history_to_context=True,
     num_history_runs=3,
 )
@@ -38,7 +38,7 @@ sync_team = Team(
     db=sync_db,
     id="basic-team",
     name="Team Agent",
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     members=[sync_agent],
     add_history_to_context=True,
     num_history_runs=3,
@@ -56,7 +56,7 @@ sync_agent_os = AgentOS(
 async_agent = Agent(
     name="Basic Agent",
     id="basic-agent",
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     db=async_db,
     update_memory_on_run=True,
     enable_session_summaries=True,
@@ -69,7 +69,7 @@ async_agent = Agent(
 async_team = Team(
     id="basic-team",
     name="Team Agent",
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     db=async_db,
     update_memory_on_run=True,
     members=[async_agent],

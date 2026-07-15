@@ -31,21 +31,21 @@ agent_db = SqliteDb(
 
 researcher = Agent(
     name="Researcher",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     role="Researches topics and provides detailed factual information.",
     instructions=["Provide well-researched, factual information on the given topic."],
 )
 
 writer = Agent(
     name="Writer",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     role="Takes research and writes clear, engaging summaries.",
     instructions=["Write concise, engaging summaries based on the research provided."],
 )
 
 telegram_team = Team(
     name="Telegram Research Team",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     members=[researcher, writer],
     db=agent_db,
     instructions=[

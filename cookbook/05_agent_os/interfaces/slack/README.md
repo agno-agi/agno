@@ -153,7 +153,7 @@ to be enabled (step 5).
 ### Teams and Workflows
 
 - `support_team.py` — Support team routing to Technical Support or Documentation Specialist.
-- `multimodal_team.py` — Team with GPT-4o vision input and DALL-E image output.
+- `multimodal_team.py` — Team with gpt-5.6-luna vision input and DALL-E image output.
 - `multimodal_workflow.py` — Parallel visual analysis + web research, then creative synthesis.
 
 ### Tools and Features

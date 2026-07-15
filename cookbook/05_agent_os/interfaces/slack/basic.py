@@ -27,7 +27,7 @@ agent_db = SqliteDb(session_table="agent_sessions", db_file="tmp/persistent_memo
 
 basic_agent = Agent(
     name="Basic Agent",
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     db=agent_db,
     add_history_to_context=True,
     num_history_runs=3,

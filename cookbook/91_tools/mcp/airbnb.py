@@ -25,7 +25,7 @@ async def run_mcp_agent(message: str):
 
     # Use the MCP tools with an Agent
     agent = Agent(
-        model=OpenAIChat(id="gpt-4o"),
+        model=OpenAIChat(id="gpt-5.6-luna"),
         tools=[mcp_tools],
         markdown=True,
     )

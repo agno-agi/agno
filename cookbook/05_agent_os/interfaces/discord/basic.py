@@ -14,7 +14,7 @@ from agno.models.openai import OpenAIChat
 # ---------------------------------------------------------------------------
 basic_agent = Agent(
     name="Basic Agent",
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     add_history_to_context=True,
     num_history_runs=3,
     add_datetime_to_context=True,

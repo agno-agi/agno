@@ -22,7 +22,7 @@ skills_dir = Path(__file__).parent / "sample_skills"
 # Create an agent with skills
 skills_agent = Agent(
     name="Skills Agent",
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     skills=Skills(loaders=[LocalSkills(str(skills_dir))]),
     instructions=["You are a helpful assistant with access to specialized skills."],
     markdown=True,

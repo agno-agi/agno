@@ -90,7 +90,7 @@ async_faq_knowledge = Knowledge(
 # ---------------------------------------------------------------------------
 sync_knowledge_agent = Agent(
     name="Knowledge Agent",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     knowledge=sync_documents_knowledge,
     search_knowledge=True,
     db=sync_documents_db,
@@ -105,7 +105,7 @@ sync_knowledge_agent = Agent(
 
 async_knowledge_agent = Agent(
     name="Knowledge Agent",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     knowledge=async_documents_knowledge,
     search_knowledge=True,
     db=async_documents_db,

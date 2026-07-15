@@ -21,14 +21,14 @@ db = SqliteDb(id="scheduler-os-demo", db_file="tmp/scheduler_os_demo.db")
 
 greeter = Agent(
     name="Greeter",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     instructions=["You are a friendly greeter."],
     db=db,
 )
 
 reporter = Agent(
     name="Reporter",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     instructions=["You summarize news headlines in 2-3 sentences."],
     db=db,
 )

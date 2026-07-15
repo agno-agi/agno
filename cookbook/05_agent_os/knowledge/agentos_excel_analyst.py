@@ -34,7 +34,7 @@ excel_knowledge = Knowledge(
 
 excel_agent = Agent(
     name="Excel Data Agent",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     db=db,  # For session storage
     knowledge=excel_knowledge,
     search_knowledge=True,

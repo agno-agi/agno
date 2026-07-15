@@ -27,7 +27,7 @@ async def run_agent(message: str) -> None:
     )
     await mcp_tools.connect()
     agent = Agent(
-        model=OpenAIChat(id="gpt-4o"),
+        model=OpenAIChat(id="gpt-5.6-luna"),
         tools=[mcp_tools],
         markdown=True,
     )
@@ -45,7 +45,7 @@ async def run_agent_with_multimcp(message: str) -> None:
         refresh_connection=True,  # (Optional) Refresh the MCP connection and tools on each run
     )
     agent = Agent(
-        model=OpenAIChat(id="gpt-4o"),
+        model=OpenAIChat(id="gpt-5.6-luna"),
         tools=[mcp_tools],
         markdown=True,
     )

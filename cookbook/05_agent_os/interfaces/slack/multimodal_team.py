@@ -5,13 +5,13 @@ Multimodal Team
 Tests streaming a multi-agent team with multimodal input/output in Slack.
 
 Capabilities tested:
-  - Image INPUT:  Send an image to the bot, team analyzes it (GPT-4o vision)
+  - Image INPUT:  Send an image to the bot, team analyzes it (gpt-5.6-luna vision)
   - Image OUTPUT: Ask to generate an image, DALL-E creates it, uploaded to Slack
   - File INPUT:   Send a CSV/text file, team analyzes it
   - Combined:     Send image + ask to modify/recreate it
 
 Team members:
-  - Vision Analyst: Understands images and files via GPT-4o
+  - Vision Analyst: Understands images and files via gpt-5.6-luna
   - Creative Agent: Generates images via DALL-E + web search
 
 Slack scopes: app_mentions:read, assistant:write, chat:write, im:history,
@@ -32,7 +32,7 @@ from agno.tools.websearch import WebSearchTools
 
 vision_analyst = Agent(
     name="Vision Analyst",
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     role="Analyzes images, files, and visual content in detail.",
     instructions=[
         "You are an expert visual analyst.",
@@ -45,7 +45,7 @@ vision_analyst = Agent(
 
 creative_agent = Agent(
     name="Creative Agent",
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     role="Generates images with DALL-E and searches the web.",
     tools=[DalleTools(), WebSearchTools()],
     instructions=[
@@ -64,7 +64,7 @@ creative_agent = Agent(
 multimodal_team = Team(
     name="Multimodal Team",
     mode="coordinate",
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     members=[vision_analyst, creative_agent],
     instructions=[
         "Route image analysis and file analysis tasks to Vision Analyst.",

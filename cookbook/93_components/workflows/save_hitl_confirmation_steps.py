@@ -28,21 +28,21 @@ db = PostgresDb(db_url=db_url)
 research_agent = Agent(
     id="hitl-confirm-researcher",
     name="Researcher",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     instructions="Research the given topic and provide key findings.",
 )
 
 processor_agent = Agent(
     id="hitl-confirm-processor",
     name="Processor",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     instructions="Process and validate the research data.",
 )
 
 writer_agent = Agent(
     id="hitl-confirm-writer",
     name="Writer",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     instructions="Write a summary report from processed research.",
 )
 

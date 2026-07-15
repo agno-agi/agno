@@ -15,7 +15,7 @@ from agno.tools.websearch import WebSearchTools
 # ---------------------------------------------------------------------------
 
 agent = Agent(
-    model=LiteLLM(id="gpt-4o"),
+    model=LiteLLM(id="gpt-5.6-luna"),
     tools=[WebSearchTools()],
     markdown=True,
 )

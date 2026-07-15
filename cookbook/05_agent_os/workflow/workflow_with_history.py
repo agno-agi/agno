@@ -19,7 +19,7 @@ from agno.workflow.workflow import Workflow
 # Define specialized agents for meal planning conversation
 meal_suggester = Agent(
     name="Meal Suggester",
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     instructions=[
         "You are a friendly meal planning assistant who suggests meal categories and cuisines.",
         "Consider the time of day, day of the week, and any context from the conversation.",
@@ -30,7 +30,7 @@ meal_suggester = Agent(
 
 recipe_specialist = Agent(
     name="Recipe Specialist",
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     instructions=[
         "You are a recipe expert who provides specific, detailed recipe recommendations.",
         "Pay close attention to the full conversation to understand user preferences and restrictions.",

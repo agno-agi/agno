@@ -44,7 +44,7 @@ researcher = Agent(
 writer = Agent(
     id="writer",
     name="Writer",
-    model=OpenAIResponses(id="gpt-5.4-mini"),
+    model=OpenAIResponses(id="gpt-5.6-luna"),
 )
 
 # The team has no model of its own; its components come entirely from its members

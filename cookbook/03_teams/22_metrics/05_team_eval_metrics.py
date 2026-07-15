@@ -21,7 +21,7 @@ from rich.pretty import pprint
 # ---------------------------------------------------------------------------
 eval_hook = AgentAsJudgeEval(
     name="Quality Check",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     criteria="Response should be accurate, well-structured, and concise",
     scoring_strategy="binary",
 )
@@ -31,13 +31,13 @@ eval_hook = AgentAsJudgeEval(
 # ---------------------------------------------------------------------------
 researcher = Agent(
     name="Researcher",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     role="Research topics and provide factual information.",
 )
 
 team = Team(
     name="Research Team",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     members=[researcher],
     post_hooks=[eval_hook],
     show_members_responses=True,

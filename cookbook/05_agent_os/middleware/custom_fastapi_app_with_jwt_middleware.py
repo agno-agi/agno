@@ -29,7 +29,7 @@ db = PostgresDb(db_url="postgresql+psycopg://ai:ai@localhost:5532/ai")
 research_agent = Agent(
     id="research-agent",
     name="Research Agent",
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     db=db,
     tools=[WebSearchTools()],
     add_history_to_context=True,

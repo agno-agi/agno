@@ -90,7 +90,7 @@ def ask_weather_agent(request: str) -> str:
 trip_planner = Agent(
     name="Trip Planner",
     id="trip_planner",
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     # Give the agent the tools we just created
     tools=[ask_airbnb_agent, ask_weather_agent],
     markdown=True,

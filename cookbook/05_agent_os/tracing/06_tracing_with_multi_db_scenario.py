@@ -29,7 +29,7 @@ setup_tracing(
 
 agent = Agent(
     name="HackerNews Agent",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     tools=[HackerNewsTools()],
     instructions="You are a hacker news agent. Answer questions concisely.",
     markdown=True,
@@ -38,7 +38,7 @@ agent = Agent(
 
 agent2 = Agent(
     name="Web Search Agent",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     tools=[WebSearchTools()],
     instructions="You are a web search agent. Answer questions concisely.",
     markdown=True,

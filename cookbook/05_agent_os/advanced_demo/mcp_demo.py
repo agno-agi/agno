@@ -64,7 +64,7 @@ agent = Agent(
         - Use headings to organize your responses
         - Be concise and focus on relevant information\
     """),
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     db=SqliteDb(db_file=agent_storage_file),
     update_memory_on_run=True,
     enable_session_summaries=True,

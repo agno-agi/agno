@@ -22,7 +22,7 @@ def run_example() -> None:
     web_agent = Agent(
         name="Web Search Agent",
         role="Handle web search requests",
-        model=OpenAIChat(id="gpt-4o-mini"),
+        model=OpenAIChat(id="gpt-5.6-luna"),
         tools=[WebSearchTools()],
         instructions="Always include sources",
         add_datetime_to_context=True,
@@ -31,7 +31,7 @@ def run_example() -> None:
     finance_agent = Agent(
         name="Finance Agent",
         role="Handle financial data requests",
-        model=OpenAIChat(id="gpt-4o-mini"),
+        model=OpenAIChat(id="gpt-5.6-luna"),
         tools=[WebSearchTools(enable_news=False)],
         instructions=[
             "You are a financial data specialist. Provide concise and accurate data.",

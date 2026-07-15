@@ -42,7 +42,7 @@ basic_agent = Agent(
 basic_team = Team(
     id="basic-team",
     name="Basic Team",
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     db=db,
     members=[basic_agent],
     update_memory_on_run=True,

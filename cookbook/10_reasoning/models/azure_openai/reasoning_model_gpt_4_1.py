@@ -14,7 +14,7 @@ from agno.models.azure.openai_chat import AzureOpenAI
 # ---------------------------------------------------------------------------
 def run_example() -> None:
     agent = Agent(
-        model=AzureOpenAI(id="gpt-4o-mini"), reasoning_model=AzureOpenAI(id="gpt-4.1")
+        model=AzureOpenAI(id="gpt-5.6-luna"), reasoning_model=AzureOpenAI(id="gpt-4.1")
     )
     agent.print_response(
         "Solve the trolley problem. Evaluate multiple ethical frameworks. "

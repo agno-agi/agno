@@ -18,7 +18,7 @@ from agno.tools.visualization import VisualizationTools
 
 # Example 1: Enable all visualization functions
 viz_agent_all = Agent(
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     tools=[
         VisualizationTools(
             all=True,  # Enable all visualization functions
@@ -37,7 +37,7 @@ viz_agent_all = Agent(
 
 # Example 1b: All visualization functions available (explicit flags)
 viz_agent_full = Agent(
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     tools=[
         VisualizationTools(
             enable_create_bar_chart=True,
@@ -60,7 +60,7 @@ viz_agent_full = Agent(
 
 # Example 2: Enable only basic chart types
 viz_agent_basic = Agent(
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     tools=[
         VisualizationTools(
             enable_create_bar_chart=True,
@@ -83,7 +83,7 @@ viz_agent_basic = Agent(
 
 # Example 3: Enable standard visualization functions (avoid complex ones)
 viz_agent_safe = Agent(
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     tools=[
         VisualizationTools(
             enable_create_bar_chart=True,
@@ -106,7 +106,7 @@ viz_agent_safe = Agent(
 
 # Example 4: Statistical analysis focused agent
 viz_agent_stats = Agent(
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     tools=[
         VisualizationTools(
             enable_create_scatter_plot=True,
@@ -227,7 +227,7 @@ if __name__ == "__main__":
     print("=" * 60 + "\n")
 
     bi_agent = Agent(
-        model=OpenAIChat(id="gpt-4o"),
+        model=OpenAIChat(id="gpt-5.6-luna"),
         tools=[
             VisualizationTools(
                 all=True,  # Enable all visualization functions

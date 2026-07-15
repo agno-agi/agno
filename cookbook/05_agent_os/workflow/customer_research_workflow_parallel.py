@@ -156,7 +156,7 @@ class ConsolidatedResearch(BaseModel):
 # Define specialized research agents
 customer_profile_agent = Agent(
     name="Customer Profile Researcher",
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     tools=[WebSearchTools()],
     output_schema=CustomerProfileResearch,
     instructions=[
@@ -173,7 +173,7 @@ customer_profile_agent = Agent(
 
 business_goals_agent = Agent(
     name="Business Goals Researcher",
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     tools=[WebSearchTools(), HackerNewsTools()],
     output_schema=BusinessGoalsResearch,
     instructions=[
@@ -191,7 +191,7 @@ business_goals_agent = Agent(
 
 web_intelligence_agent = Agent(
     name="Web Intelligence Researcher",
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     tools=[WebSearchTools(), HackerNewsTools()],
     output_schema=WebIntelligenceResearch,
     instructions=[
@@ -228,7 +228,7 @@ research_consolidation_team = Team(
 # Task recommender agent
 task_recommender_agent = Agent(
     name="Task Recommender",
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     instructions=[
         "You are an expert task and strategy recommender with deep implementation expertise",
         "Based on consolidated customer research, provide specific, actionable tasks and recommendations",

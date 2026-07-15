@@ -12,27 +12,27 @@ db = PostgresDb(db_url="postgresql://ai:ai@localhost:5532/ai")
 agent = Agent(
     name="Followups Agent",
     id="followup-suggestions-agent",
-    model=OpenAIResponses(id="gpt-4o"),
+    model=OpenAIResponses(id="gpt-5.6-luna"),
     instructions="You are a knowledgeable assistant. Answer questions thoroughly.",
     # Enable built-in followups
     followups=True,
     num_followups=3,
     # Optionally use a cheaper model for followups
-    # followup_model=OpenAIResponses(id="gpt-4o-mini"),
+    # followup_model=OpenAIResponses(id="gpt-5.6-luna"),
     markdown=True,
     db=db,
 )
 team = Team(
     id="followups-team",
     name="Followups Team",
-    model=OpenAIResponses(id="gpt-4o"),
+    model=OpenAIResponses(id="gpt-5.6-luna"),
     members=[agent],
     instructions="You are a knowledgeable assistant. Answer questions thoroughly.",
     # Enable built-in followups
     followups=True,
     num_followups=3,
     # Optionally use a cheaper model for followups
-    # followup_model=OpenAIResponses(id="gpt-4o-mini"),
+    # followup_model=OpenAIResponses(id="gpt-5.6-luna"),
     markdown=True,
     db=db,
 )

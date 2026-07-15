@@ -64,7 +64,7 @@ audio_agent = Agent(
 web_agent = Agent(
     name="Web Agent",
     role="Search the web for information",
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     tools=[WebSearchTools()],
     id="web_agent",
     instructions=[
@@ -79,7 +79,7 @@ finance_agent = Agent(
     name="Finance Agent",
     role="Get financial data",
     id="finance_agent",
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     tools=[YFinanceTools()],
     instructions=[
         "You are a skilled financial analyst with expertise in market data.",
@@ -98,7 +98,7 @@ simple_agent = Agent(
     name="Simple Agent",
     role="Simple agent",
     id="simple_agent",
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     instructions=["You are a simple agent"],
     update_memory_on_run=True,
     db=db,
@@ -108,7 +108,7 @@ research_agent = Agent(
     name="Research Agent",
     role="Research agent",
     id="research_agent",
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     instructions=["You are a research agent"],
     tools=[WebSearchTools(), ExaTools()],
     update_memory_on_run=True,
@@ -119,7 +119,7 @@ research_team = Team(
     name="Research Team",
     description="A team of agents that research the web",
     members=[research_agent, simple_agent],
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     id="research_team",
     instructions=[
         "You are the lead researcher of a research team.",
@@ -134,7 +134,7 @@ multimodal_team = Team(
     name="Multimodal Team",
     description="A team of agents that can handle multiple modalities",
     members=[file_agent, audio_agent, video_agent],
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     respond_directly=True,
     id="multimodal_team",
     instructions=[
@@ -154,7 +154,7 @@ financial_news_team = Team(
         audio_agent,
         video_agent,
     ],
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     respond_directly=True,
     id="financial_news_team",
     instructions=[

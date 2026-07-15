@@ -39,7 +39,7 @@ def run_example() -> None:
 
     # Create agent with KnowledgeTools
     agent = Agent(
-        model=OpenAIChat(id="gpt-4o"),
+        model=OpenAIChat(id="gpt-5.6-luna"),
         tools=[
             KnowledgeTools(
                 knowledge=agno_docs,
@@ -80,7 +80,7 @@ def run_example() -> None:
 
     # Create a fresh agent for streaming
     streaming_agent = Agent(
-        model=OpenAIChat(id="gpt-4o"),
+        model=OpenAIChat(id="gpt-5.6-luna"),
         tools=[
             KnowledgeTools(
                 knowledge=agno_docs,
