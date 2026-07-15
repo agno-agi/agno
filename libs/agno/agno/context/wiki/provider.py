@@ -20,6 +20,7 @@ wiki is just a local folder or a clone of a GitHub repo. See
 from __future__ import annotations
 
 import asyncio
+import json
 from typing import TYPE_CHECKING
 
 from agno.agent import Agent
@@ -29,6 +30,7 @@ from agno.context.mode import ContextMode
 from agno.context.provider import Answer, ContextProvider, Status
 from agno.context.wiki.backend import CommitSummary, WikiBackend
 from agno.run import RunContext
+from agno.tools import tool
 from agno.tools.workspace import Workspace
 from agno.utils.log import log_info
 
@@ -196,6 +198,48 @@ class WikiContextProvider(ContextProvider):
 
     async def _aget_query_agent(self, run_context):
         return self._ensure_read_agent()
+
+    def _update_tool(self):
+        from agno.context.provider import serialize_answer
+
+        provider = self
+
+        @tool(name=self.update_tool_name)
+        async def _update(instruction: str, run_context: RunContext | None = None):
+            try:
+                await provider.asetup()
+
+                answer: Answer | None = None
+                async with provider._git_lock:
+                    await provider.backend.sync()
+
+                    agent = provider._ensure_write_agent()
+                    async for chunk in provider._stream_from_agent(agent, instruction, run_context):
+                        if isinstance(chunk, Answer):
+                            answer = chunk
+                        else:
+                            yield chunk
+
+                    commit = await provider.backend.commit_after_write(model=provider.model)
+
+                if commit is not None:
+                    log_info(
+                        f"WikiContextProvider[{provider.id}] committed {commit.sha[:8]} "
+                        f"({commit.files_changed} file(s)): {commit.message}"
+                    )
+                    note = f"\n\nCommitted {commit.sha[:8]} ({commit.files_changed} file(s)): {commit.message}"
+                    if answer is not None:
+                        answer = Answer(results=answer.results, text=(answer.text or "") + note)
+
+                if answer is not None:
+                    yield json.dumps(serialize_answer(answer))
+                else:
+                    yield json.dumps({})
+
+            except Exception as exc:
+                yield json.dumps({"error": f"{type(exc).__name__}: {exc}"})
+
+        return _update
 
     def _ensure_read_agent(self) -> Agent:
         if self._read_agent is None:

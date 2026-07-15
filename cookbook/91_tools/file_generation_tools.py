@@ -1,6 +1,6 @@
 """
 File Generation Tool Example
-This cookbook shows how to use the FileGenerationTool to generate various file types (JSON, CSV, PDF, TXT).
+This cookbook shows how to use the FileGenerationTool to generate various file types (JSON, CSV, PDF, TXT, DOCX, HTML).
 The tool can generate files from agent responses and make them available for download or further processing.
 
 By default, files are returned as in-memory artifacts only (save_files=False).
@@ -96,6 +96,21 @@ def example_docx_generation():
     print("=== DOCX File Generation Example ===")
     response = agent.run(
         "Create a DOCX report about customer onboarding best practices. Include sections for welcome email, product tour, and success check-ins."
+    )
+    print(response.content)
+    if response.files:
+        for file in response.files:
+            print(f"Generated file: {file.filename} ({file.size} bytes)")
+            if file.url:
+                print(f"File location: {file.url}")
+    print()
+
+
+def example_html_generation():
+    """Example: Generate an HTML file"""
+    print("=== HTML File Generation Example ===")
+    response = agent.run(
+        "Create an HTML landing page for a coffee shop. Include a heading, a short intro, and a list of three signature drinks."
     )
     print(response.content)
     if response.files:

@@ -10,7 +10,7 @@ Each case runs the agent once, then optionally checks the response with
 `AgentAsJudgeEval` (when `criteria` is set) and `ReliabilityEval` (when
 `expected_tool_calls` is set).
 
-Both log to Postgres through `eval_db`. Connect AgentOS at os.agno.com to see history.
+Both log to SQLite through `eval_db`. Connect AgentOS at os.agno.com to see history.
 
 Exit 0 on all-pass, non-zero on any failure or error.
 """
@@ -23,13 +23,15 @@ import typer
 from agents.code_search import code_search_provider
 from agents.git_wiki import git_wiki_provider
 from agents.local_wiki import local_wiki_provider
-from agents.web_search import web_provider
+from agents.notion_wiki import notion_wiki_provider
 from agno.eval import AgentAsJudgeEval, ReliabilityEval
+from agno.media import Audio, Image
 from agno.run.agent import RunOutput
 from rich.console import Console
 from rich.live import Live
 from rich.status import Status
 from rich.table import Table
+from settings import judge_model
 
 from evals.cases import CASES, Case, eval_db
 
@@ -56,6 +58,13 @@ class CaseOutcome:
         return bool(checks) and all(checks)
 
 
+def _case_media(case: Case):
+    """Build media inputs (images/audio) for a case from filepaths."""
+    images = [Image(filepath=p) for p in case.image_paths] or None
+    audio = [Audio(filepath=p) for p in case.audio_paths] or None
+    return images, audio
+
+
 async def _run_case_async(case: Case, *, verbose: bool) -> CaseOutcome:
     judge_passed: bool | None = None
     rel_passed: bool | None = None
@@ -67,8 +76,11 @@ async def _run_case_async(case: Case, *, verbose: bool) -> CaseOutcome:
     response: RunOutput | None
     try:
         if verbose:
+            images, audio = _case_media(case)
             await case.agent.aprint_response(
                 input=case.input,
+                images=images,
+                audio=audio,
                 stream=True,
                 session_id=session_id,
                 markdown=True,
@@ -94,6 +106,7 @@ async def _run_case_async(case: Case, *, verbose: bool) -> CaseOutcome:
                 name=case.name,
                 criteria=case.criteria,
                 scoring_strategy="binary",
+                model=judge_model(),
                 db=eval_db,
             ).arun(input=case.input, output=output_str, print_results=verbose)
         except Exception as exc:
@@ -139,9 +152,12 @@ async def _run_with_live_spinner(case: Case, session_id: str) -> RunOutput | Non
     spinner = Status(base_label, spinner="dots")
 
     response: RunOutput | None = None
+    images, audio = _case_media(case)
     with Live(spinner, console=console, transient=True, refresh_per_second=10):
         async for event in case.agent.arun(
             input=case.input,
+            images=images,
+            audio=audio,
             stream=True,
             stream_events=True,
             yield_run_output=True,
@@ -208,10 +224,11 @@ def _check_cell(passed: bool | None) -> str:
 async def _close_providers() -> None:
     """Release MCP sessions held by the context providers."""
     await local_wiki_provider.aclose()
-    await web_provider.aclose()
     await code_search_provider.aclose()
     if git_wiki_provider is not None:
         await git_wiki_provider.aclose()
+    if notion_wiki_provider is not None:
+        await notion_wiki_provider.aclose()
 
 
 async def _amain(cases: list[Case], *, verbose: bool) -> list[CaseOutcome]:

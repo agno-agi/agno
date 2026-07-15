@@ -282,6 +282,9 @@ class TestCreateExecutorStepRequirement:
         mock_response = MagicMock()
         mock_response.run_id = "run-789"
         mock_req = MagicMock()
+        # An unresolved requirement (otherwise it would be filtered out — only
+        # unresolved tool confirmations are propagated up to the workflow level)
+        mock_req.is_resolved.return_value = False
         mock_req.to_dict.return_value = {"id": "r1", "confirmation": True}
         mock_response.requirements = [mock_req]
 
@@ -297,6 +300,35 @@ class TestCreateExecutorStepRequirement:
         assert req.executor_name == "TestAgent"
         assert req.executor_run_id == "run-789"
         assert req.executor_type == "agent"
+
+    def test_filters_out_resolved_requirements(self):
+        """Already-resolved requirements (from prior pauses) should NOT appear
+        in the new StepRequirement's executor_requirements. The agent's
+        requirements list accumulates across pauses; without this filter the
+        client would see duplicated/stale tool confirmations."""
+        mock_agent = MagicMock()
+        mock_agent.agent_id = "agent-1"
+        mock_agent.name = "Agent"
+
+        step = Step(name="test", agent=mock_agent)
+        step.step_id = "s1"
+
+        resolved_req = MagicMock()
+        resolved_req.is_resolved.return_value = True
+        resolved_req.to_dict.return_value = {"id": "old", "confirmation": True}
+
+        active_req = MagicMock()
+        active_req.is_resolved.return_value = False
+        active_req.to_dict.return_value = {"id": "new", "confirmation": None}
+
+        mock_response = MagicMock()
+        mock_response.run_id = "r1"
+        mock_response.requirements = [resolved_req, active_req]
+
+        req = step._create_executor_step_requirement(step_index=0, executor_response=mock_response)
+
+        # Only the unresolved requirement should be serialized
+        assert req.executor_requirements == [{"id": "new", "confirmation": None}]
 
     def test_creates_requirement_for_team(self):
         """Creates correct StepRequirement for team executor."""
