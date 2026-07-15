@@ -199,5 +199,6 @@ jobs:
           coverage combine
           coverage json -o coverage-agno.json
           AGNO_COVERAGE=$(python -c 'import json; print(json.load(open("coverage-agno.json"))["totals"]["percent_covered_display"])')
-          echo "AGNO_COVERAGE=$AGNO_COVERAGE" >> $GITHUB_ENV
+          echo "## Coverage Report" >> $GITHUB_STEP_SUMMARY
+          echo "**Combined coverage: ${AGNO_COVERAGE}%**" >> $GITHUB_STEP_SUMMARY
           echo "Combined coverage: $AGNO_COVERAGE"
