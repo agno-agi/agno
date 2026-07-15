@@ -11,8 +11,11 @@ from sqlalchemy.engine import create_engine
 from sqlalchemy.types import JSON
 
 from agno.agent.agent import Agent
+from agno.db.migrations.manager import MigrationManager
 from agno.db.sqlite import SqliteDb
 from agno.os import AgentOS
+
+LATEST_SCHEMA_VERSION = MigrationManager.available_versions[-1][1].public
 
 
 def create_old_schema_memory_table(db_file: str, table_name: str) -> None:
@@ -214,7 +217,7 @@ def test_migrate_single_db_success(os_client_with_old_schema_dbs):
 
     # Verify new version
     version_after = get_schema_version(dbs[0], memory_tables[0])
-    assert version_after == "2.5.0"
+    assert version_after == LATEST_SCHEMA_VERSION
 
     # Other databases should still be at old version
     version_db2 = get_schema_version(dbs[1], memory_tables[1])
@@ -269,7 +272,7 @@ def test_migrate_all_dbs_success(os_client_with_old_schema_dbs):
     # Verify all databases are now at new version
     for i, db in enumerate(dbs):
         version = get_schema_version(db, memory_tables[i])
-        assert version == "2.5.0", f"DB {i} should be at version 2.5.0"
+        assert version == LATEST_SCHEMA_VERSION, f"DB {i} should be at version {LATEST_SCHEMA_VERSION}"
 
         columns = get_memory_table_columns(db_file, memory_tables[i])
         assert "created_at" in columns
@@ -365,7 +368,7 @@ def test_migrate_all_dbs_partial_failure(temp_db_file):
 
     # The good database should still be migrated
     version_good = get_schema_version(db_good, memory_table_good)
-    assert version_good == "2.5.0"
+    assert version_good == LATEST_SCHEMA_VERSION
 
     columns = get_memory_table_columns(temp_db_file, memory_table_good)
     assert "created_at" in columns
@@ -383,11 +386,11 @@ def test_migrate_already_migrated_db(os_client_with_old_schema_dbs):
     assert response1.status_code == 200
 
     version_after_first = get_schema_version(dbs[0], memory_tables[0])
-    assert version_after_first == "2.5.0"
+    assert version_after_first == LATEST_SCHEMA_VERSION
 
     # Second migration - should succeed without errors
     response2 = client.post(f"/databases/{dbs[0].id}/migrate")
     assert response2.status_code == 200
 
     version_after_second = get_schema_version(dbs[0], memory_tables[0])
-    assert version_after_second == "2.5.0"
+    assert version_after_second == LATEST_SCHEMA_VERSION

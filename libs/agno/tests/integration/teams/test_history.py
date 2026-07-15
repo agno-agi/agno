@@ -196,15 +196,15 @@ def test_share_member_interactions(shared_db):
 
 
 def test_search_session_history(shared_db):
-    """Test that the team can search through previous sessions when search_session_history=True."""
+    """Test that the team can search through previous sessions when search_past_sessions=True."""
 
     team = Team(
         model=OpenAIChat(id="gpt-5-mini"),
         members=[],
         db=shared_db,
-        instructions="You can search through previous sessions using available tools.",
-        search_session_history=True,  # Enable searching previous sessions
-        num_history_sessions=2,  # Include last 2 sessions
+        instructions="You MUST always search through previous sessions using available tools when asked about past conversations. Never ask clarifying questions - just search and respond with what you find.",
+        search_past_sessions=True,  # Enable searching previous sessions
+        num_past_sessions_to_search=2,  # Include last 2 sessions
     )
 
     # Session 1
@@ -217,7 +217,10 @@ def test_search_session_history(shared_db):
 
     # Session 3 - should be able to search previous sessions
     session_3 = "session_3"
-    response = team.run("What did I say in previous sessions?", session_id=session_3)
+    response = team.run(
+        "Search all my previous sessions and tell me exactly what I said. List all my favorite things.",
+        session_id=session_3,
+    )
 
     assert "pizza" in response.content.lower()
     assert "coffee" in response.content.lower()

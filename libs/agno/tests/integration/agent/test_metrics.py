@@ -143,7 +143,7 @@ def test_run_metrics_details_structure():
     assert len(model_metrics) >= 1
     assert isinstance(model_metrics[0], ModelMetrics)
     assert model_metrics[0].id == "gpt-4o-mini"
-    assert model_metrics[0].provider == "OpenAI"
+    assert model_metrics[0].provider == "OpenAI Chat"
     assert model_metrics[0].input_tokens > 0
     assert model_metrics[0].total_tokens > 0
 
@@ -450,7 +450,7 @@ def test_provider_metrics_openai():
     response = agent.run("Hello")
 
     model_metric = response.metrics.details["model"][0]
-    assert model_metric.provider == "OpenAI"
+    assert model_metric.provider == "OpenAI Chat"
     assert model_metric.id == "gpt-4o-mini"
     assert model_metric.input_tokens > 0
     assert model_metric.output_tokens > 0
@@ -466,7 +466,7 @@ def test_provider_metrics_openai_with_tools():
     assert len(model_entries) >= 1
 
     for entry in model_entries:
-        assert entry.provider == "OpenAI"
+        assert entry.provider == "OpenAI Chat"
         assert entry.id == "gpt-4o-mini"
         assert entry.total_tokens > 0
 

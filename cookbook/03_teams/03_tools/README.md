@@ -10,6 +10,7 @@ Examples for team workflows in tools.
 
 ## Files
 
+- async_toolkit_context.py - Demonstrates async toolkit tools appearing in team system message context.
 - async_tools.py - Demonstrates async tools.
 - custom_tools.py - Demonstrates custom tools.
 - tool_call_limit.py - Demonstrates limiting total tool calls per Team run.

@@ -13,7 +13,7 @@ def build_client(
     url: str, creds: dict[str, str], ns: str, db: str
 ) -> Union[BlockingWsSurrealConnection, BlockingHttpSurrealConnection]:
     client = Surreal(url=url)
-    client.signin(creds)
+    client.signin(creds)  # type: ignore[arg-type]
     client.use(namespace=ns, database=db)
     return client
 
@@ -22,12 +22,12 @@ def _query_aux(
     client: Union[BlockingWsSurrealConnection, BlockingHttpSurrealConnection],
     query: str,
     vars: dict[str, Any],
-) -> Union[list, dict, str, int]:
+) -> Any:
     try:
         response = client.query(query, vars)
-    except Exception as e:
-        msg = f"!! Query execution error: {query} with {vars}, Error: {e}"
-        logger.error(msg)
+    except Exception:
+        msg = f"!! Query execution error: {query} with {vars}"
+        logger.exception(msg)
         raise RuntimeError(msg)
     return response
 
@@ -39,6 +39,8 @@ def query(
     record_type: type[RecordType],
 ) -> Sequence[RecordType]:
     response = _query_aux(client, query, vars)
+    if response is None:
+        return []
     if isinstance(response, list):
         if dataclasses.is_dataclass(record_type) and hasattr(record_type, "from_dict"):
             return [getattr(record_type, "from_dict").__call__(x) for x in response]

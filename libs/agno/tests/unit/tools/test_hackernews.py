@@ -93,7 +93,7 @@ class TestGetTopHackerNewsStories:
             {"id": 11111, "title": "Story 3", "by": "user3", "url": "https://example3.com"},
         ]
 
-        def mock_get(url):
+        def mock_get(url, **kwargs):
             response = MagicMock()
             if "topstories" in url:
                 response.json.return_value = mock_story_ids
@@ -122,7 +122,7 @@ class TestGetTopHackerNewsStories:
             2: {"id": 2, "title": "Story 2", "by": "user2"},
         }
 
-        def mock_get(url):
+        def mock_get(url, **kwargs):
             response = MagicMock()
             if "topstories" in url:
                 response.json.return_value = mock_story_ids
@@ -142,7 +142,7 @@ class TestGetTopHackerNewsStories:
         mock_story_ids = [12345]
         mock_story = {"id": 12345, "title": "Test Story", "by": "testuser", "score": 100}
 
-        def mock_get(url):
+        def mock_get(url, **kwargs):
             response = MagicMock()
             if "topstories" in url:
                 response.json.return_value = mock_story_ids
@@ -160,7 +160,7 @@ class TestGetTopHackerNewsStories:
     def test_get_top_stories_empty_response(self, hackernews_tools):
         """Test handling of empty story list."""
 
-        def mock_get(url):
+        def mock_get(url, **kwargs):
             response = MagicMock()
             response.json.return_value = []
             return response
@@ -170,6 +170,59 @@ class TestGetTopHackerNewsStories:
 
         stories = json.loads(result)
         assert len(stories) == 0
+
+    def test_get_top_stories_error_handling(self, hackernews_tools):
+        """Test error handling when API call fails."""
+        with patch("agno.tools.hackernews.httpx.get", side_effect=Exception("Network error")):
+            result = hackernews_tools.get_top_hackernews_stories(num_stories=5)
+
+        assert "Error fetching stories" in result
+        assert "Network error" in result
+
+    def test_get_top_stories_null_story_skipped(self, hackernews_tools):
+        """Test that null/deleted stories are skipped without crashing."""
+        mock_story_ids = [12345, 0, 67890]
+        mock_stories = {
+            12345: {"id": 12345, "title": "Story 1", "by": "user1"},
+            0: None,  # Deleted/null story
+            67890: {"id": 67890, "title": "Story 2", "by": "user2"},
+        }
+
+        def mock_get(url, **kwargs):
+            response = MagicMock()
+            if "topstories" in url:
+                response.json.return_value = mock_story_ids
+            else:
+                story_id = int(url.split("/")[-1].replace(".json", ""))
+                response.json.return_value = mock_stories.get(story_id)
+            return response
+
+        with patch("agno.tools.hackernews.httpx.get", side_effect=mock_get):
+            result = hackernews_tools.get_top_hackernews_stories(num_stories=3)
+
+        stories = json.loads(result)
+        assert len(stories) == 2
+        assert stories[0]["title"] == "Story 1"
+        assert stories[1]["title"] == "Story 2"
+
+    def test_get_top_stories_missing_by_field(self, hackernews_tools):
+        """Test that stories without 'by' field use 'unknown' as fallback."""
+        mock_story_ids = [12345]
+        mock_story = {"id": 12345, "title": "Job Posting", "type": "job", "url": "https://example.com"}
+
+        def mock_get(url, **kwargs):
+            response = MagicMock()
+            if "topstories" in url:
+                response.json.return_value = mock_story_ids
+            else:
+                response.json.return_value = mock_story
+            return response
+
+        with patch("agno.tools.hackernews.httpx.get", side_effect=mock_get):
+            result = hackernews_tools.get_top_hackernews_stories(num_stories=1)
+
+        stories = json.loads(result)
+        assert stories[0]["username"] == "unknown"
 
     def test_get_top_stories_with_story_metadata(self, hackernews_tools):
         """Test that all story metadata is preserved."""
@@ -185,7 +238,7 @@ class TestGetTopHackerNewsStories:
             "type": "story",
         }
 
-        def mock_get(url):
+        def mock_get(url, **kwargs):
             response = MagicMock()
             if "topstories" in url:
                 response.json.return_value = mock_story_ids
@@ -223,14 +276,15 @@ class TestGetUserDetails:
             result = hackernews_tools.get_user_details("testuser")
 
         user_details = json.loads(result)
+        assert user_details["id"] == "testuser"
         assert user_details["karma"] == 5000
         assert user_details["about"] == "A test user"
         assert user_details["total_items_submitted"] == 5
 
-    def test_get_user_details_user_id_field(self, hackernews_tools):
-        """Test that user_id is extracted correctly."""
+    def test_get_user_details_id_field(self, hackernews_tools):
+        """The HN user object exposes the username under the 'id' key."""
         mock_user = {
-            "user_id": "testuser123",
+            "id": "testuser123",
             "karma": 1000,
             "about": None,
             "submitted": [],
@@ -331,7 +385,7 @@ class TestEdgeCases:
         """Test requesting zero stories."""
         mock_story_ids = [1, 2, 3]
 
-        def mock_get(url):
+        def mock_get(url, **kwargs):
             response = MagicMock()
             response.json.return_value = mock_story_ids
             return response
@@ -350,7 +404,7 @@ class TestEdgeCases:
             2: {"id": 2, "title": "Story 2", "by": "user2"},
         }
 
-        def mock_get(url):
+        def mock_get(url, **kwargs):
             response = MagicMock()
             if "topstories" in url:
                 response.json.return_value = mock_story_ids
@@ -393,7 +447,7 @@ class TestEdgeCases:
             "score": 5000,
         }
 
-        def mock_get(url):
+        def mock_get(url, **kwargs):
             response = MagicMock()
             if "topstories" in url:
                 response.json.return_value = mock_story_ids

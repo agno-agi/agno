@@ -32,6 +32,15 @@
 
 ---
 
+### 04_tools_with_literal_type_param.py
+
+**Status:** PASS
+**Tier:** untagged
+**Description:** Demonstrates using typing.Literal for tool parameters with predefined values. Tests both Toolkit methods and standalone functions with Literal type hints.
+**Result:** JSON schema correctly generates enum constraints for Literal types.
+
+---
+
 ### tool_call_limit.py
 
 **Status:** PASS

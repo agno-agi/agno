@@ -12,22 +12,30 @@ from agno.utils.pprint import pprint_run_response
 
 # Create an image agent (PNG, using the Flux model)
 image_agent = Agent(
-    tools=[ModelsLabTools(file_type=FileType.PNG, model_id="flux", width=1024, height=1024)],
+    tools=[
+        ModelsLabTools(file_type=FileType.PNG, model_id="flux", width=1024, height=1024)
+    ],
     send_media_to_model=False,
 )
 
 # Create a video agent (set to make MP4)
-video_agent = Agent(tools=[ModelsLabTools(file_type=FileType.MP4)], send_media_to_model=False)
+video_agent = Agent(
+    tools=[ModelsLabTools(file_type=FileType.MP4)], send_media_to_model=False
+)
 
 # Create audio agent (set to make WAV)
-audio_agent = Agent(tools=[ModelsLabTools(file_type=FileType.WAV)], send_media_to_model=False)
+audio_agent = Agent(
+    tools=[ModelsLabTools(file_type=FileType.WAV)], send_media_to_model=False
+)
 
 # ---------------------------------------------------------------------------
 # Run Agent
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
     # Generate an image
-    image_response = image_agent.run("Generate an image of a beautiful sunset over the ocean")
+    image_response = image_agent.run(
+        "Generate an image of a beautiful sunset over the ocean"
+    )
     pprint_run_response(image_response, markdown=True)
 
     # Generate a sound effect

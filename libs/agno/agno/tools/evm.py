@@ -125,5 +125,5 @@ class EvmTools(Toolkit):
                 raise Exception("Transaction failed!")
 
         except Exception as e:
-            log_error(f"Error sending transaction: {e}")
+            log_error(f"Error sending transaction: {str(e)}")
             return f"error: {e}"

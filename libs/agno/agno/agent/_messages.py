@@ -94,7 +94,7 @@ def format_message_with_state_variables(
         result = template.safe_substitute(format_variables)
         return result
     except Exception as e:
-        log_warning(f"Template substitution failed: {e}")
+        log_warning(f"Template substitution failed: {str(e)}")
         return message
 
 
@@ -194,12 +194,17 @@ def get_system_message(
                 from zoneinfo import ZoneInfo
 
                 tz = ZoneInfo(agent.timezone_identifier)
-            except Exception:
-                log_warning("Invalid timezone identifier")
+            except Exception as e:
+                log_warning(f"Invalid timezone identifier: {str(e)}")
 
         time = datetime.now(tz) if tz else datetime.now()
 
-        additional_information.append(f"The current time is {time}.")
+        if agent.datetime_format:
+            formatted_time = time.strftime(agent.datetime_format)
+        else:
+            formatted_time = str(time)
+
+        additional_information.append(f"The current time is {formatted_time}.")
 
     # 3.2.3 Add the current location
     if agent.add_location_to_context:
@@ -537,12 +542,17 @@ async def aget_system_message(
                 from zoneinfo import ZoneInfo
 
                 tz = ZoneInfo(agent.timezone_identifier)
-            except Exception:
-                log_warning("Invalid timezone identifier")
+            except Exception as e:
+                log_warning(f"Invalid timezone identifier: {str(e)}")
 
         time = datetime.now(tz) if tz else datetime.now()
 
-        additional_information.append(f"The current time is {time}.")
+        if agent.datetime_format:
+            formatted_time = time.strftime(agent.datetime_format)
+        else:
+            formatted_time = str(time)
+
+        additional_information.append(f"The current time is {formatted_time}.")
 
     # 3.2.3 Add the current location
     if agent.add_location_to_context:
@@ -888,7 +898,7 @@ def get_user_message(
             try:
                 return Message.model_validate(input)
             except Exception as e:
-                log_warning(f"Failed to validate message: {e}")
+                log_warning(f"Failed to validate message: {str(e)}")
                 raise Exception(f"Failed to validate message: {e}")
 
         # If message is provided as a BaseModel, convert it to a Message
@@ -898,7 +908,7 @@ def get_user_message(
                 content = input.model_dump_json(indent=2, exclude_none=True)
                 return Message(role=agent.user_message_role, content=content)
             except Exception as e:
-                log_warning(f"Failed to convert BaseModel to message: {e}")
+                log_warning(f"Failed to convert BaseModel to message: {str(e)}")
                 raise Exception(f"Failed to convert BaseModel to message: {e}")
         else:
             user_msg_content = input
@@ -929,7 +939,7 @@ def get_user_message(
                     retrieval_timer.stop()
                     log_debug(f"Time to get references: {retrieval_timer.elapsed:.4f}s")
                 except Exception as e:
-                    log_warning(f"Failed to get references: {e}")
+                    log_warning(f"Failed to get references: {str(e)}")
 
             if agent.resolve_in_context:
                 user_msg_content = format_message_with_state_variables(
@@ -1053,7 +1063,7 @@ async def aget_user_message(
             try:
                 return Message.model_validate(input)
             except Exception as e:
-                log_warning(f"Failed to validate message: {e}")
+                log_warning(f"Failed to validate message: {str(e)}")
                 raise Exception(f"Failed to validate message: {e}")
 
         # If message is provided as a BaseModel, convert it to a Message
@@ -1063,7 +1073,7 @@ async def aget_user_message(
                 content = input.model_dump_json(indent=2, exclude_none=True)
                 return Message(role=agent.user_message_role, content=content)
             except Exception as e:
-                log_warning(f"Failed to convert BaseModel to message: {e}")
+                log_warning(f"Failed to convert BaseModel to message: {str(e)}")
                 raise Exception(f"Failed to convert BaseModel to message: {e}")
         else:
             user_msg_content = input
@@ -1094,7 +1104,7 @@ async def aget_user_message(
                     retrieval_timer.stop()
                     log_debug(f"Time to get references: {retrieval_timer.elapsed:.4f}s")
                 except Exception as e:
-                    log_warning(f"Failed to get references: {e}")
+                    log_warning(f"Failed to get references: {str(e)}")
 
             if agent.resolve_in_context:
                 user_msg_content = format_message_with_state_variables(
@@ -1218,7 +1228,7 @@ def get_run_messages(
                     run_messages.messages.append(_m_parsed)
                     run_messages.extra_messages.append(_m_parsed)
                 except Exception as e:
-                    log_warning(f"Failed to validate message: {e}")
+                    log_warning(f"Failed to validate message: {str(e)}")
         # Add the extra messages to the run_response
         if len(messages_to_add_to_run_response) > 0:
             log_debug(f"Adding {len(messages_to_add_to_run_response)} extra messages")
@@ -1304,7 +1314,7 @@ def get_run_messages(
             else:
                 user_message = Message.model_validate(input)
         except Exception as e:
-            log_warning(f"Failed to validate message: {e}")
+            log_warning(f"Failed to validate message: {str(e)}")
 
     # 4.4 If input is provided as a BaseModel, convert it to a Message
     elif isinstance(input, BaseModel):
@@ -1313,7 +1323,7 @@ def get_run_messages(
             content = input.model_dump_json(indent=2, exclude_none=True)
             user_message = Message(role=agent.user_message_role, content=content)
         except Exception as e:
-            log_warning(f"Failed to convert BaseModel to message: {e}")
+            log_warning(f"Failed to convert BaseModel to message: {str(e)}")
 
     # 5. Add input messages to run_messages if provided (List[Message] or List[Dict])
     if (
@@ -1335,12 +1345,15 @@ def get_run_messages(
                         run_messages.extra_messages = []
                     run_messages.extra_messages.append(msg)
                 except Exception as e:
-                    log_warning(f"Failed to validate message: {e}")
+                    log_warning(f"Failed to validate message: {str(e)}")
 
     # Add user message to run_messages
     if user_message is not None:
         run_messages.user_message = user_message
         run_messages.messages.append(user_message)
+
+    # Set messages on run_context so tool hooks can access the current message history
+    run_context.messages = run_messages.messages
 
     return run_messages
 
@@ -1420,7 +1433,7 @@ async def aget_run_messages(
                     run_messages.messages.append(_m_parsed)
                     run_messages.extra_messages.append(_m_parsed)
                 except Exception as e:
-                    log_warning(f"Failed to validate message: {e}")
+                    log_warning(f"Failed to validate message: {str(e)}")
         # Add the extra messages to the run_response
         if len(messages_to_add_to_run_response) > 0:
             log_debug(f"Adding {len(messages_to_add_to_run_response)} extra messages")
@@ -1506,7 +1519,7 @@ async def aget_run_messages(
             else:
                 user_message = Message.model_validate(input)
         except Exception as e:
-            log_warning(f"Failed to validate message: {e}")
+            log_warning(f"Failed to validate message: {str(e)}")
 
     # 4.4 If input is provided as a BaseModel, convert it to a Message
     elif isinstance(input, BaseModel):
@@ -1515,7 +1528,7 @@ async def aget_run_messages(
             content = input.model_dump_json(indent=2, exclude_none=True)
             user_message = Message(role=agent.user_message_role, content=content)
         except Exception as e:
-            log_warning(f"Failed to convert BaseModel to message: {e}")
+            log_warning(f"Failed to convert BaseModel to message: {str(e)}")
 
     # 5. Add input messages to run_messages if provided (List[Message] or List[Dict])
     if (
@@ -1537,12 +1550,15 @@ async def aget_run_messages(
                         run_messages.extra_messages = []
                     run_messages.extra_messages.append(msg)
                 except Exception as e:
-                    log_warning(f"Failed to validate message: {e}")
+                    log_warning(f"Failed to validate message: {str(e)}")
 
     # Add user message to run_messages
     if user_message is not None:
         run_messages.user_message = user_message
         run_messages.messages.append(user_message)
+
+    # Set messages on run_context so tool hooks can access the current message history
+    run_context.messages = run_messages.messages
 
     return run_messages
 
@@ -1550,6 +1566,9 @@ async def aget_run_messages(
 def get_continue_run_messages(
     agent: Agent,
     input: List[Message],
+    session: Optional[AgentSession] = None,
+    add_history_to_context: Optional[bool] = None,
+    run_context: Optional[RunContext] = None,
 ) -> RunMessages:
     """This function returns a RunMessages object with the following attributes:
         - system_message: The system message for this run
@@ -1561,6 +1580,10 @@ def get_continue_run_messages(
 
     # Initialize the RunMessages object
     run_messages = RunMessages()
+
+    # Add history to run_messages (optional)
+    if add_history_to_context is None:
+        add_history_to_context = agent.add_history_to_context
 
     # Extract most recent user message from messages as the original user message
     user_message = None
@@ -1578,7 +1601,60 @@ def get_continue_run_messages(
 
     run_messages.system_message = system_message
     run_messages.user_message = user_message
-    run_messages.messages = input
+
+    # Skip re-fetching history if input already contains it (run_response path).
+    input_has_history = any(msg.from_history for msg in input)
+
+    # Build messages in the correct order:
+    # 1. System message first
+    # 2. History messages (from previous runs, only if not already in input)
+    # 3. Remaining input messages (current run's messages, excluding the system message)
+
+    # 1. Add the system message first
+    if system_message is not None:
+        run_messages.messages.append(system_message)
+
+    # 2. Add history messages if not already present in input
+    if add_history_to_context and session is not None and not input_has_history:
+        from copy import deepcopy
+
+        # Only skip messages from history when system_message_role is NOT a standard conversation role.
+        # Standard conversation roles ("user", "assistant", "tool") should never be filtered
+        # to preserve conversation continuity.
+        skip_role = (
+            agent.system_message_role if agent.system_message_role not in ["user", "assistant", "tool"] else None
+        )
+
+        history: List[Message] = session.get_messages(
+            last_n_runs=agent.num_history_runs,
+            limit=agent.num_history_messages,
+            skip_roles=[skip_role] if skip_role else None,
+            agent_id=agent.id if agent.team_id is not None else None,
+        )
+
+        if len(history) > 0:
+            # Create a deep copy of the history messages to avoid modifying the original messages
+            history_copy = [deepcopy(msg) for msg in history]
+
+            # Tag each message as coming from history
+            for _msg in history_copy:
+                _msg.from_history = True
+
+            # Filter tool calls from history if limit is set (before adding to run_messages)
+            if agent.max_tool_calls_from_history is not None:
+                filter_tool_calls(history_copy, agent.max_tool_calls_from_history)
+
+            log_debug(f"Adding {len(history_copy)} messages from history")
+            run_messages.messages += history_copy
+
+    # 3. Add the remaining input messages (skip the system message to avoid duplication)
+    for msg in input:
+        if msg is not system_message:
+            run_messages.messages.append(msg)
+
+    # Set messages on run_context so tool hooks can access the current message history
+    if run_context is not None:
+        run_context.messages = run_messages.messages
 
     return run_messages
 
@@ -1731,7 +1807,7 @@ def get_relevant_docs_from_knowledge(
             knowledge_retriever_kwargs.update({"query": query, "num_documents": num_documents, **kwargs})
             return agent.knowledge_retriever(**knowledge_retriever_kwargs)
         except Exception as e:
-            log_warning(f"Knowledge retriever failed: {e}")
+            log_warning(f"Knowledge retriever failed: {str(e)}")
             raise e
 
     # Use knowledge protocol's retrieve method
@@ -1757,7 +1833,7 @@ def get_relevant_docs_from_knowledge(
 
         return [doc.to_dict() for doc in relevant_docs]
     except Exception as e:
-        log_warning(f"Error retrieving from knowledge base: {e}")
+        log_warning(f"Error retrieving from knowledge base: {str(e)}")
         raise e
 
 
@@ -1822,7 +1898,7 @@ async def aget_relevant_docs_from_knowledge(
 
             return result
         except Exception as e:
-            log_warning(f"Knowledge retriever failed: {e}")
+            log_warning(f"Knowledge retriever failed: {str(e)}")
             raise e
 
     # Use knowledge protocol's retrieve method
@@ -1856,5 +1932,5 @@ async def aget_relevant_docs_from_knowledge(
 
         return [doc.to_dict() for doc in relevant_docs]
     except Exception as e:
-        log_warning(f"Error retrieving from knowledge base: {e}")
+        log_warning(f"Error retrieving from knowledge base: {str(e)}")
         raise e

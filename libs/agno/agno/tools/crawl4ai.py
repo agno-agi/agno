@@ -67,9 +67,12 @@ class Crawl4aiTools(Toolkit):
 
                 config_params["markdown_generator"] = DefaultMarkdownGenerator(content_filter=content_filter)
                 log_debug("Using DefaultMarkdownGenerator with content_filter")
-            except ImportError:
+            except ImportError as e:
                 # If advanced features not available, continue without them
-                log_warning("crawl4ai.content_filter_strategy or crawl4ai.markdown_generation_strategy not installed")
+                log_warning(
+                    f"crawl4ai.content_filter_strategy or crawl4ai.markdown_generation_strategy not installed: {e}"
+                )
+
                 pass
 
         return config_params

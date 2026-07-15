@@ -222,33 +222,20 @@ class TestSessionTokenEnv:
 
 
 class TestApiKeyPath:
-    def test_api_key_client_cached(self, monkeypatch):
+    def test_api_key_env_raises_clear_error(self, monkeypatch):
         monkeypatch.setenv("AWS_BEDROCK_API_KEY", "br-api-key-123")
         monkeypatch.setenv("AWS_REGION", "us-west-2")
 
         model = Claude(id="anthropic.claude-3-sonnet-20240229-v1:0")
 
-        with patch("agno.models.aws.claude.AnthropicBedrock") as MockBedrock:
-            mock_client = MagicMock()
-            mock_client.is_closed.return_value = False
-            MockBedrock.return_value = mock_client
+        with pytest.raises(ValueError, match="AWS_BEDROCK_API_KEY authentication is not currently supported"):
+            model._get_client_params()
 
-            client1 = model.get_client()
-            client2 = model.get_client()
+    def test_api_key_explicit_param_raises_clear_error(self):
+        model = Claude(id="anthropic.claude-3-sonnet-20240229-v1:0", api_key="br-api-key-123")
 
-            assert MockBedrock.call_count == 1
-            assert client1 is client2
-
-    def test_api_key_params(self, monkeypatch):
-        monkeypatch.setenv("AWS_BEDROCK_API_KEY", "br-api-key-123")
-        monkeypatch.setenv("AWS_REGION", "us-west-2")
-
-        model = Claude(id="anthropic.claude-3-sonnet-20240229-v1:0")
-        params = model._get_client_params()
-
-        assert params["api_key"] == "br-api-key-123"
-        assert params["aws_region"] == "us-west-2"
-        assert "aws_session_token" not in params
+        with pytest.raises(ValueError, match="AWS_BEDROCK_API_KEY authentication is not currently supported"):
+            model._get_client_params()
 
 
 class TestSessionNullCredentials:

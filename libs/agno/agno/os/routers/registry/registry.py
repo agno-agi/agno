@@ -5,12 +5,17 @@ from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from agno.os.auth import get_authentication_dependency
+from agno.os.routers.registry.utils import (
+    build_memory_manager_resource,
+    build_session_summary_manager_resource,
+)
 from agno.os.schema import (
     BadRequestResponse,
     CallableMetadata,
     DbMetadata,
     FunctionMetadata,
     InternalServerErrorResponse,
+    KnowledgeMetadata,
     ModelMetadata,
     NotFoundResponse,
     PaginatedResponse,
@@ -436,6 +441,79 @@ def attach_routes(router: APIRouter, registry: Registry) -> APIRouter:
                     )
                 )
 
+        # Agents (code-defined agents for workflow rehydration)
+        if resource_type is None or resource_type == RegistryResourceType.AGENT:
+            for agent in getattr(registry, "agents", []) or []:
+                agent_id = getattr(agent, "id", None)
+                agent_name = getattr(agent, "name", None) or agent_id
+                resources.append(
+                    RegistryContentResponse(
+                        name=agent_name,
+                        id=agent_id,
+                        type=RegistryResourceType.AGENT,
+                        description=_safe_str(getattr(agent, "description", None)),
+                        metadata={
+                            "id": agent_id,
+                            "class_path": _class_path(agent),
+                        },
+                    )
+                )
+
+        # Teams (code-defined teams for workflow rehydration)
+        if resource_type is None or resource_type == RegistryResourceType.TEAM:
+            for team in getattr(registry, "teams", []) or []:
+                team_id = getattr(team, "id", None)
+                team_name = getattr(team, "name", None) or team_id
+                resources.append(
+                    RegistryContentResponse(
+                        name=team_name,
+                        id=team_id,
+                        type=RegistryResourceType.TEAM,
+                        description=_safe_str(getattr(team, "description", None)),
+                        metadata={
+                            "id": team_id,
+                            "class_path": _class_path(team),
+                        },
+                    )
+                )
+
+        # Knowledge instances
+        if resource_type is None or resource_type == RegistryResourceType.KNOWLEDGE:
+            for kb in getattr(registry, "knowledge", []) or []:
+                kb_name = _safe_str(getattr(kb, "name", None)) or kb.__class__.__name__
+                vector_db = getattr(kb, "vector_db", None)
+                contents_db = getattr(kb, "contents_db", None)
+                readers = getattr(kb, "readers", None)
+                # Knowledge.readers is normally a dict, but the codebase also
+                # accepts a list (see Knowledge.get_readers). Count either; any
+                # other unexpected type is treated as unknown rather than crashing.
+                num_readers = len(readers) if isinstance(readers, (dict, list)) else None
+                kb_metadata = KnowledgeMetadata(
+                    class_path=_class_path(kb),
+                    vector_db_class=_class_path(vector_db) if vector_db else None,
+                    contents_db_class=_class_path(contents_db) if contents_db else None,
+                    max_results=getattr(kb, "max_results", None),
+                    num_readers=num_readers,
+                )
+                resources.append(
+                    RegistryContentResponse(
+                        name=kb_name,
+                        type=RegistryResourceType.KNOWLEDGE,
+                        description=_safe_str(getattr(kb, "description", None)),
+                        metadata=kb_metadata.model_dump(exclude_none=True),
+                    )
+                )
+
+        # Memory managers
+        if resource_type is None or resource_type == RegistryResourceType.MEMORY_MANAGER:
+            for mm in getattr(registry, "memory_managers", []) or []:
+                resources.append(build_memory_manager_resource(mm))
+
+        # Session summary managers
+        if resource_type is None or resource_type == RegistryResourceType.SESSION_SUMMARY_MANAGER:
+            for sm in getattr(registry, "session_summary_managers", []) or []:
+                resources.append(build_session_summary_manager_resource(sm))
+
         # Stable ordering helps pagination
         resources.sort(key=lambda r: (r.type, r.name))
         return resources
@@ -479,7 +557,7 @@ def attach_routes(router: APIRouter, registry: Registry) -> APIRouter:
                 ),
             )
         except Exception as e:
-            log_error(f"Error listing registry resources: {e}")
+            log_error(f"Error listing registry resources: {str(e)}")
             raise HTTPException(status_code=500, detail=str(e))
 
     return router
