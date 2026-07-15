@@ -325,7 +325,7 @@ def _get_task_management_tools(
         )
         team_history_str = None
         if team.add_team_history_to_members and session:
-            team_history_str = session.get_team_history_context(num_runs=team.num_team_history_runs)
+            team_history_str = session.get_team_history_context(num_runs=team.num_team_history_runs, team_id=team.id)
 
         member_agent_task: Any = task_description
         if team_history_str or team_member_interactions_str:

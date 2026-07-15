@@ -510,7 +510,7 @@ def _get_delegate_task_function(
         # 5. Get the team history
         team_history_str = None
         if team.add_team_history_to_members and session:
-            team_history_str = session.get_team_history_context(num_runs=team.num_team_history_runs)
+            team_history_str = session.get_team_history_context(num_runs=team.num_team_history_runs, team_id=team.id)
 
         # 6. Create the member agent task or use the input directly
         if team.determine_input_for_members is False:
