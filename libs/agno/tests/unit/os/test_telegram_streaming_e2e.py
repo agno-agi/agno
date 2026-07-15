@@ -9,48 +9,12 @@ Tests cover:
 - Edge cases: empty content, overflow, terminal events, team vs agent prefixing
 """
 
-import sys
 import time
-import types
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-
-
-def _install_fake_telebot():
-    telebot = types.ModuleType("telebot")
-    telebot_async = types.ModuleType("telebot.async_telebot")
-    telebot_apihelper = types.ModuleType("telebot.apihelper")
-    telebot_types = types.ModuleType("telebot.types")
-
-    class AsyncTeleBot:
-        def __init__(self, token=None):
-            self.token = token
-
-    class TeleBot:
-        def __init__(self, token=None):
-            self.token = token
-
-    class ApiTelegramException(Exception):
-        pass
-
-    class ReactionTypeEmoji:
-        def __init__(self, emoji):
-            self.emoji = emoji
-
-    telebot.TeleBot = TeleBot
-    telebot_async.AsyncTeleBot = AsyncTeleBot
-    telebot_apihelper.ApiTelegramException = ApiTelegramException
-    telebot_types.ReactionTypeEmoji = ReactionTypeEmoji
-    sys.modules.setdefault("telebot", telebot)
-    sys.modules.setdefault("telebot.async_telebot", telebot_async)
-    sys.modules.setdefault("telebot.apihelper", telebot_apihelper)
-    sys.modules.setdefault("telebot.types", telebot_types)
-
-
-_install_fake_telebot()
 
 ROUTER_MODULE = "agno.os.interfaces.telegram.router"
 SECURITY_MODULE = "agno.os.interfaces.telegram.security"
