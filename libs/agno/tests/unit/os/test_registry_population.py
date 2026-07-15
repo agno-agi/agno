@@ -466,7 +466,8 @@ class TestPopulateRegistryComponentsToolDedup:
 
         kept = [t for t in os.registry.tools if isinstance(t, DuckDuckGoTools)]
         assert len(kept) == 1 and kept[0] is first
-        assert os.registry._entrypoint_lookup["web_search"].__self__ is first
+        # The lookup stores the source Function; its entrypoint is bound to the kept instance
+        assert os.registry._entrypoint_lookup["web_search"].entrypoint.__self__ is first
 
     def test_toolkits_sharing_name_with_different_functions_both_kept(self):
         # Same name but different function sets are genuinely different tools and
@@ -525,42 +526,28 @@ class TestPopulateRegistryComponentsCacheInvalidation:
 
 
 class TestPopulateRegistryDedupLogging:
-    """Dedup chatter is suppressed for registries AgentOS auto-creates."""
+    """Dedup is an expected wiring step and must never log -- duplicate-skip chatter
+    on startup reads like a problem to users when nothing is wrong."""
 
-    def test_auto_created_registry_is_silent_on_duplicate(self, monkeypatch):
+    def test_dedup_is_silent_even_for_user_declared_registry(self, monkeypatch):
         import agno.registry.registry as registry_module
 
-        debugs = []
-        monkeypatch.setattr(registry_module, "log_debug", lambda msg, *a, **k: debugs.append(msg))
+        logged = []
+        monkeypatch.setattr(registry_module, "log_warning", lambda msg, *a, **k: logged.append(msg))
+        monkeypatch.setattr(registry_module, "log_debug", lambda msg, *a, **k: logged.append(msg), raising=False)
 
         class _NamedToolkit(Toolkit):
             def __init__(self):
                 super().__init__(name="shared_name", tools=[])
 
-        # No registry provided -> AgentOS auto-creates one; duplicates across the
-        # two agents are an internal wiring detail and must not be logged.
-        a = Agent(name="A1", id="a1", tools=[_NamedToolkit()], telemetry=False)
-        b = Agent(name="A2", id="a2", tools=[_NamedToolkit()], telemetry=False)
-        os = AgentOS(agents=[a, b], telemetry=False)
-
-        assert os.registry._emit_dedup_logs is False
-        assert not any("shared_name" in m for m in debugs)
-
-    def test_user_registry_logs_on_clash_with_primitive(self, monkeypatch):
-        import agno.registry.registry as registry_module
-
-        debugs = []
-        monkeypatch.setattr(registry_module, "log_debug", lambda msg, *a, **k: debugs.append(msg))
-
-        class _NamedToolkit(Toolkit):
-            def __init__(self):
-                super().__init__(name="shared_name", tools=[])
-
-        # User explicitly declares a registry; a primitive carrying a matching
-        # toolkit clashes with it, which is worth surfacing.
+        # A user-declared registry clashing with a primitive's toolkit, and an
+        # auto-created registry deduping across agents: both stay silent.
         registry = Registry(tools=[_NamedToolkit()])
         agent = Agent(name="A1", id="a1", tools=[_NamedToolkit()], telemetry=False)
-        os = AgentOS(agents=[agent], registry=registry, telemetry=False)
+        AgentOS(agents=[agent], registry=registry, telemetry=False)
 
-        assert os.registry._emit_dedup_logs is True
-        assert any("shared_name" in m for m in debugs)
+        a = Agent(name="A2", id="a2", tools=[_NamedToolkit()], telemetry=False)
+        b = Agent(name="A3", id="a3", tools=[_NamedToolkit()], telemetry=False)
+        AgentOS(agents=[a, b], telemetry=False)
+
+        assert not any("shared_name" in m for m in logged)
