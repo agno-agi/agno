@@ -19,6 +19,7 @@
 
 # Ignore .env files
 .env
+.env.production
 
 # Ignore .envrc files (used by direnv: https://direnv.net/)
 .envrc

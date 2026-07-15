@@ -318,7 +318,9 @@ class TeamSession:
                 run for run in self.runs if run.status == RunStatus.completed and run.parent_run_id is None
             ]
 
-        if num_runs is not None and len(completed_runs) > num_runs:
+        if num_runs is not None:
+            if num_runs <= 0:
+                return []
             recent_runs = completed_runs[-num_runs:]
         else:
             recent_runs = completed_runs
