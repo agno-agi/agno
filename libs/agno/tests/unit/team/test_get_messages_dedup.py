@@ -234,6 +234,31 @@ class TestGetMessagesMemberDedup:
         assert len(messages) == 4
 
 
+class TestGetMessagesTeamFilter:
+    """Tests for filtering nested team runs by team ID."""
+
+    def test_team_id_includes_nested_team_runs(self):
+        nested_run = TeamRunOutput(
+            run_id="nested-run",
+            team_id="nested-team",
+            parent_run_id="parent-run",
+            status=RunStatus.completed,
+            messages=[Message(role="assistant", content="Nested team response")],
+        )
+        top_level_run = TeamRunOutput(
+            run_id="top-level-run",
+            team_id="top-level-team",
+            status=RunStatus.completed,
+            messages=[Message(role="assistant", content="Top-level team response")],
+        )
+        session = TeamSession(session_id="test-session", runs=[nested_run, top_level_run])
+
+        messages = session.get_messages(team_id="nested-team")
+
+        assert [message.content for message in messages] == ["Nested team response"]
+        assert [message.content for message in session.get_messages()] == ["Top-level team response"]
+
+
 class TestGetTeamHistoryZeroCount:
     """get_team_history() zero/negative num_runs must return empty, not the whole history."""
 
