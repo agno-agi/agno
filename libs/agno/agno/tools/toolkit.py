@@ -1,7 +1,7 @@
 from collections import OrderedDict
 from inspect import iscoroutinefunction
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple, Union, cast
+from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple, Union, cast, get_type_hints
 
 from agno.exceptions import PathSecurityError
 from agno.tools.function import Function
@@ -277,6 +277,23 @@ class Toolkit:
                     return bound
 
             bound_method = make_bound_method(original_func, self)
+            # Expose the original signature (minus self) and annotations on the wrapper.
+            # FunctionCall._build_entrypoint_args inspects the entrypoint's signature to
+            # inject run_context/agent/team/etc.; without this it sees (*args, **kwargs)
+            # and skips the injection.
+            bound_method.__signature__ = sig.replace(  # type: ignore[attr-defined]
+                parameters=[param for param_name, param in sig.parameters.items() if param_name != "self"]
+            )
+            # Resolve annotations against the original method's own module so type-based
+            # Agent/Team injection still works when the user's module uses
+            # `from __future__ import annotations` (PEP 563). The @tool wrapper's globals
+            # point at the decorator module, so unwrap to the underlying method first;
+            # otherwise the raw string annotations stay unresolvable and injection is skipped.
+            try:
+                resolved_annotations = get_type_hints(inspect.unwrap(original_func))
+            except Exception:
+                resolved_annotations = getattr(original_func, "__annotations__", {})
+            bound_method.__annotations__ = {k: v for k, v in resolved_annotations.items() if k != "self"}
         else:
             # Function doesn't expect self (e.g., static method or already bound)
             bound_method = original_func

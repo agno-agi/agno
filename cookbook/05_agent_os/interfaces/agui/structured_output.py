@@ -8,6 +8,7 @@ Demonstrates structured output.
 from typing import List
 
 from agno.agent.agent import Agent
+from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIResponses
 from agno.os import AgentOS
 from agno.os.interfaces.agui import AGUI
@@ -40,6 +41,7 @@ class MovieScript(BaseModel):
 chat_agent = Agent(
     name="Output Schema Agent",
     model=OpenAIResponses(id="gpt-5.4"),
+    db=SqliteDb(db_file="/tmp/agui_structured_output.db"),
     description="You write movie scripts.",
     markdown=True,
     output_schema=MovieScript,

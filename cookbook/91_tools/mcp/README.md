@@ -12,25 +12,33 @@ This example demonstrates how to create an agent that can explore, analyze, and 
 
 This example shows how to create an agent that can explore GitHub repositories, analyze issues, pull requests, and more.
 
-3. Groq with Llama using MCP (`groq_mcp.py`)
+3. BGPT Agent (`bgpt.py`)
+
+This example connects to the hosted BGPT MCP server for evidence-grounded scientific paper search. No local server required; free tier works without an API key.
+
+4. Groq with Llama using MCP (`groq_mcp.py`)
 
 This example uses the file system MCP agent with Groq running the Llama 3.3-70b-versatile model.
 
-4. Include/Exclude Tools (`include_exclude_tools.py`)
+5. Include/Exclude Tools (`include_exclude_tools.py`)
 
 This example shows how to include and exclude tools from the MCP agent. This is useful for reducing the number of tools available to the agent, or for focusing on a specific set of tools.
 
-5. Multiple MCP Servers (`multiple_servers.py`)
+6. Multiple MCP Servers (`multiple_servers.py`)
 
 This example shows how to use multiple MCP servers in the same agent. 
 
-6. Sequential Thinking (`sequential_thinking.py`)
+7. Sequential Thinking (`sequential_thinking.py`)
 
 This example shows how to use the MCP agent to perform sequential thinking.
 
-7. Airbnb Agent (`airbnb.py`)
+8. Airbnb Agent (`airbnb.py`)
 
 This example shows how to create an agent that uses MCP and Gemini 2.5 Pro to search for Airbnb listings.
+
+9. Structured Content Agent (`structured_content.py`)
+
+This example connects to the hosted DeepWiki MCP server (public, no API key) to answer questions about GitHub repositories. It shows how a tool's `structuredContent` is preserved on `ToolResult.metadata["structured_content"]` and read back through a tool hook.
 
 
 ## Getting Started
@@ -56,6 +64,8 @@ export OPENAI_API_KEY="your_openai_api_key"
 ```bash
 python filesystem.py
 python github.py
+python bgpt.py
+python structured_content.py
 ```
 
 ## How It Works

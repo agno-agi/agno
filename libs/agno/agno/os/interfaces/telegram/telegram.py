@@ -24,6 +24,10 @@ DEFAULT_BOT_COMMANDS: List[Dict[str, str]] = [
 class Telegram(BaseInterface):
     type = "telegram"
 
+    # Verifies the Telegram webhook secret token in its router, so it is excluded from
+    # the central auth layer.
+    authenticates_own_requests = True
+
     router: APIRouter
 
     def __init__(
