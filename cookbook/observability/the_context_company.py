@@ -15,6 +15,9 @@ import asyncio
 
 from contextcompany.agno import instrument_agno
 
+# ---------------------------------------------------------------------------
+# Setup
+# ---------------------------------------------------------------------------
 # Initialize instrumentation before importing Agno.
 instrument_agno()
 
@@ -22,6 +25,9 @@ from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.tools.yfinance import YFinanceTools
 
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
 agent = Agent(
     name="Stock Price Agent",
     model=OpenAIChat(id="gpt-5.2"),
@@ -30,6 +36,9 @@ agent = Agent(
 )
 
 
+# ---------------------------------------------------------------------------
+# Run Example
+# ---------------------------------------------------------------------------
 async def main() -> None:
     await agent.aprint_response(
         "What is the current price of Tesla? Then find the current price of NVIDIA.",
