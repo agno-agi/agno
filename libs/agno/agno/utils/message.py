@@ -299,7 +299,11 @@ def get_text_from_message(message: Union[List, Dict, str, Message, BaseModel]) -
                     content_text = get_text_from_message(m.content)
                     if content_text:
                         text_messages.append(content_text)
-        elif "type" in message[0]:
+        elif isinstance(message[0], str):
+            for m in message:
+                if isinstance(m, str):
+                    text_messages.append(m)
+        elif isinstance(message[0], dict) and "type" in message[0]:
             for m in message:
                 m_type = m.get("type")
                 if m_type is not None and isinstance(m_type, str):
@@ -311,7 +315,7 @@ def get_text_from_message(message: Union[List, Dict, str, Message, BaseModel]) -
                         #     text_messages.append(f"Image: {m_value}")
                         # else:
                         #     text_messages.append(f"{m_type}: {m_value}")
-        elif "role" in message[0]:
+        elif isinstance(message[0], dict) and "role" in message[0]:
             for m in message:
                 m_role = m.get("role")
                 if m_role is not None and isinstance(m_role, str):
