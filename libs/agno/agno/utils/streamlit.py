@@ -5,7 +5,6 @@ try:
     from agno.agent import Agent
     from agno.db.base import SessionType
     from agno.models.anthropic import Claude
-    from agno.models.defaults import DEFAULT_OPENAI_MODEL_ID
     from agno.models.google import Gemini
     from agno.models.openai import OpenAIChat
     from agno.utils.log import log_warning, logger
@@ -406,7 +405,7 @@ def get_model_from_id(model_id: str):
     elif model_id.startswith("google:"):
         return Gemini(id=model_id.split("google:")[1])
     else:
-        return OpenAIChat(id=DEFAULT_OPENAI_MODEL_ID)
+        return OpenAIChat(id="gpt-4o")
 
 
 def get_model_with_provider(model_name: str):
