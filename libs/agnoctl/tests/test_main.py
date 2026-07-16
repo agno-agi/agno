@@ -1,4 +1,4 @@
-"""Root `agno` app: branded home screen, version flag, and command routing."""
+"""Root `agno` app: branded home screen, version flag, command routing, and create-help defaults."""
 
 import re
 
@@ -18,7 +18,7 @@ def test_bare_invocation_shows_home_screen():
     for heading in ("Get started", "Operate", "Tokens"):
         assert heading in result.output
     assert "agno create" in result.output
-    assert "agno create <name>" not in result.output
+    assert "agno create <name>" not in result.output  # the pre-interactive home screen advertised a required <name>
     assert __version__ in result.output
 
 
