@@ -5,7 +5,7 @@ The Context Company
 Demonstrates instrumenting an Agno agent with The Context Company.
 
 Setup:
-    pip install "contextcompany[agno]" agno openai yfinance
+    pip install "contextcompany[agno]>=1.9.1" agno openai yfinance
 
 Set TCC_API_KEY and OPENAI_API_KEY before running this example.
 See https://docs.thecontextcompany.com/frameworks/agno for the complete setup guide.
