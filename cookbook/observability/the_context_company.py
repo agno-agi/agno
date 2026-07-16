@@ -21,9 +21,9 @@ from contextcompany.agno import instrument_agno
 # Initialize instrumentation before importing Agno.
 instrument_agno()
 
-from agno.agent import Agent
-from agno.models.openai import OpenAIChat
-from agno.tools.yfinance import YFinanceTools
+from agno.agent import Agent  # noqa: E402
+from agno.models.openai import OpenAIChat  # noqa: E402
+from agno.tools.yfinance import YFinanceTools  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Create Agent
