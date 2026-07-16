@@ -1258,7 +1258,7 @@ def test_search_threads(gmail_tools, mock_gmail_service):
     result = json.loads(gmail_tools.search_threads("is:unread", count=5))
 
     assert len(result["threads"]) == 2
-    assert result["resultSizeEstimate"] == 2
+    assert result["totalEstimate"] == 2
 
 
 def test_search_threads_http_error(gmail_tools, mock_gmail_service):
@@ -1336,7 +1336,7 @@ def test_list_drafts(gmail_tools, mock_gmail_service):
     result = json.loads(gmail_tools.list_drafts(count=10))
 
     assert len(result["drafts"]) == 2
-    assert result["resultSizeEstimate"] == 2
+    assert result["totalEstimate"] == 2
 
 
 def test_list_drafts_http_error(gmail_tools, mock_gmail_service):
