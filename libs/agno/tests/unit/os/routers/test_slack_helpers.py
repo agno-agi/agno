@@ -7,6 +7,7 @@ from agno.os.interfaces.slack.helpers import (
     download_event_files_async,
     extract_event_context,
     member_name,
+    resolve_session_id,
     resolve_slack_user,
     send_slack_message_async,
     should_respond,
@@ -385,3 +386,51 @@ class TestStripBotMention:
     def test_mention_only_with_bot_name(self):
         result = strip_bot_mention("<@U0APCSS3MDH>", "U0APCSS3MDH", "Scout")
         assert result == "Scout"
+
+
+# -- resolve_session_id --
+
+
+@pytest.mark.asyncio
+async def test_resolve_session_id_returns_legacy_key_when_session_exists():
+    entity = Mock()
+    entity.aget_session = AsyncMock(return_value={"session_id": "agent-1:111.222"})
+
+    key = await resolve_session_id(entity, "agent-1", "C123", "111.222")
+    assert key == "agent-1:111.222"
+    entity.aget_session.assert_awaited_once_with(session_id="agent-1:111.222")
+
+
+@pytest.mark.asyncio
+async def test_resolve_session_id_returns_new_key_when_no_legacy_session():
+    entity = Mock()
+    entity.aget_session = AsyncMock(return_value=None)
+
+    key = await resolve_session_id(entity, "agent-1", "C123", "111.222")
+    assert key == "agent-1:C123:111.222"
+
+
+@pytest.mark.asyncio
+async def test_resolve_session_id_returns_new_key_when_aget_session_raises():
+    entity = Mock()
+    entity.aget_session = AsyncMock(side_effect=Exception("DB error"))
+
+    key = await resolve_session_id(entity, "agent-1", "C123", "111.222")
+    assert key == "agent-1:C123:111.222"
+
+
+@pytest.mark.asyncio
+async def test_resolve_session_id_returns_new_key_for_remote_entities():
+    entity = Mock(spec=[])
+
+    key = await resolve_session_id(entity, "agent-1", "C123", "111.222")
+    assert key == "agent-1:C123:111.222"
+
+
+@pytest.mark.asyncio
+async def test_resolve_session_id_returns_new_key_when_no_db_access():
+    entity = Mock(spec=[])
+    entity.db = None
+
+    key = await resolve_session_id(entity, "agent-1", "C123", "111.222")
+    assert key == "agent-1:C123:111.222"

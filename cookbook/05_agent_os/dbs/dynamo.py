@@ -43,7 +43,6 @@ basic_team = Team(
     model=OpenAIChat(id="gpt-4o"),
     db=db,
     members=[basic_agent],
-    debug_mode=True,
 )
 
 # Evals

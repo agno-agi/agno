@@ -1,4 +1,4 @@
-"""Unit tests for StudioTool toolkit.
+"""Unit tests for StudioTools toolkit.
 
 Uses a real SqliteDb backed by a pytest tmp_path so the full component +
 config persistence path is exercised, not mocked.
@@ -16,7 +16,9 @@ from agno.models.openai import OpenAIResponses
 from agno.registry import Registry
 from agno.tools.calculator import CalculatorTools
 from agno.tools.duckduckgo import DuckDuckGoTools
-from agno.tools.studio import StudioTool
+from agno.tools.function import Function
+from agno.tools.studio import StudioTool, StudioTools
+from agno.tools.toolkit import Toolkit
 
 # ----------------------------------------------------------------------
 # Fixtures
@@ -40,16 +42,31 @@ def registry(db):
 
 @pytest.fixture
 def studio(registry, db):
-    return StudioTool(registry=registry, db=db)
+    return StudioTools(registry=registry, db=db)
 
 
 @pytest.fixture
 def studio_versioned(registry, db):
-    return StudioTool(registry=registry, db=db, versions=True)
+    return StudioTools(registry=registry, db=db, versions=True)
 
 
 def _loads(s: str) -> Dict[str, Any]:
     return json.loads(s)
+
+
+# ----------------------------------------------------------------------
+# Backward-compatible alias
+# ----------------------------------------------------------------------
+
+
+class TestStudioToolAlias:
+    def test_singular_alias_resolves_to_canonical_class(self):
+        assert StudioTool is StudioTools
+
+    def test_alias_constructs_a_working_toolkit(self, registry, db):
+        tool = StudioTool(registry=registry, db=db)
+        assert isinstance(tool, StudioTools)
+        assert "create_agent" in tool.functions
 
 
 # ----------------------------------------------------------------------
@@ -103,17 +120,17 @@ class TestInitialization:
         assert "published immediately" not in studio_versioned.instructions
 
     def test_instructions_include_component_rules_only_when_enabled(self, registry, db):
-        default = StudioTool(registry=registry, db=db)
+        default = StudioTools(registry=registry, db=db)
         assert "Team rules" not in default.instructions
         assert "Workflow rules" not in default.instructions
 
-        full = StudioTool(registry=registry, db=db, teams=True, workflows=True)
+        full = StudioTools(registry=registry, db=db, teams=True, workflows=True)
         assert "Team rules" in full.instructions
         assert "Workflow rules" in full.instructions
 
     def test_add_instructions_defaults_on_and_respects_override(self, registry, db):
-        assert StudioTool(registry=registry, db=db).add_instructions is True
-        assert StudioTool(registry=registry, db=db, add_instructions=False).add_instructions is False
+        assert StudioTools(registry=registry, db=db).add_instructions is True
+        assert StudioTools(registry=registry, db=db, add_instructions=False).add_instructions is False
 
     def test_default_does_not_register_team_or_workflow_tools(self, studio):
         names = set(studio.functions.keys())
@@ -127,17 +144,17 @@ class TestInitialization:
         assert "run_workflow" not in studio.async_functions
 
     def test_registers_all_async_run_tools_when_enabled(self, registry, db):
-        tool = StudioTool(registry=registry, db=db, teams=True, workflows=True)
+        tool = StudioTools(registry=registry, db=db, teams=True, workflows=True)
         assert {"run_agent", "run_team", "run_workflow"}.issubset(set(tool.async_functions.keys()))
         assert set(tool.async_functions.keys()) == set(tool.functions.keys())
 
     def test_db_defaults_to_first_registry_db(self, registry):
-        tool = StudioTool(registry=registry)
+        tool = StudioTools(registry=registry)
         assert tool.db is registry.dbs[0]
 
     def test_explicit_db_overrides_registry(self, registry, db):
         other = SqliteDb(id="other", db_file=":memory:")
-        tool = StudioTool(registry=registry, db=other)
+        tool = StudioTools(registry=registry, db=other)
         assert tool.db is other
 
 
@@ -167,7 +184,7 @@ class TestDiscovery:
             return value.upper()
 
         registry.functions.append(transform_content)
-        studio = StudioTool(registry=registry, db=db)
+        studio = StudioTools(registry=registry, db=db)
 
         result = _loads(studio.list_functions())
         assert result["count"] == 1
@@ -182,7 +199,7 @@ class TestDiscovery:
 
     def test_list_agents_includes_studio_created_db_components(self, registry, db):
         code_agent = Agent(id="code-only", name="Code Only", model=OpenAIResponses(id="gpt-5.4"))
-        tool = StudioTool(registry=registry, db=db, agents_list=[code_agent])
+        tool = StudioTools(registry=registry, db=db, agents_list=[code_agent])
         tool.create_agent(name="math-king", instructions="i", model_id="gpt-5.4")
 
         result = _loads(tool.list_agents())
@@ -191,11 +208,11 @@ class TestDiscovery:
         assert ids.get("math-king") == "db"
 
     def test_list_agents_dedupes_when_code_shadows_db(self, registry, db):
-        tool = StudioTool(registry=registry, db=db)
+        tool = StudioTools(registry=registry, db=db)
         tool.create_agent(name="shared", instructions="i", model_id="gpt-5.4")
 
         code_agent = Agent(id="shared", name="Shared Code", model=OpenAIResponses(id="gpt-5.4"))
-        tool2 = StudioTool(registry=registry, db=db, agents_list=[code_agent])
+        tool2 = StudioTools(registry=registry, db=db, agents_list=[code_agent])
 
         result = _loads(tool2.list_agents())
         shared_entries = [a for a in result["agents"] if a["id"] == "shared"]
@@ -203,11 +220,11 @@ class TestDiscovery:
         assert shared_entries[0]["source"] == "code"
 
     def test_list_agents_dedupes_code_without_id_by_name(self, registry, db):
-        tool = StudioTool(registry=registry, db=db)
+        tool = StudioTools(registry=registry, db=db)
         tool.create_agent(name="Shared Name", instructions="i", model_id="gpt-5.4")
 
         code_agent = Agent(name="Shared Name", model=OpenAIResponses(id="gpt-5.4"))
-        tool2 = StudioTool(registry=registry, db=db, agents_list=[code_agent])
+        tool2 = StudioTools(registry=registry, db=db, agents_list=[code_agent])
 
         result = _loads(tool2.list_agents())
         shared_entries = [a for a in result["agents"] if a["name"] == "Shared Name"]
@@ -215,7 +232,7 @@ class TestDiscovery:
         assert shared_entries[0]["source"] == "code"
 
     def test_list_teams_includes_db_components(self, registry, db):
-        tool = StudioTool(registry=registry, db=db, teams=True)
+        tool = StudioTools(registry=registry, db=db, teams=True)
         tool.create_agent(name="a1", instructions="i", model_id="gpt-5.4")
         tool.create_team(name="squad", instructions="i", member_ids=["a1"], model_id="gpt-5.4")
 
@@ -224,7 +241,7 @@ class TestDiscovery:
         assert ids.get("squad") == "db"
 
     def test_list_workflows_includes_db_components(self, registry, db):
-        tool = StudioTool(registry=registry, db=db, workflows=True)
+        tool = StudioTools(registry=registry, db=db, workflows=True)
         tool.create_agent(name="a1", instructions="i", model_id="gpt-5.4")
         tool.create_workflow(name="pipeline", description="d", step_specs=[{"name": "s1", "agent_id": "a1"}])
 
@@ -307,6 +324,180 @@ class TestCreateAgent:
         out = _loads(await studio.acreate_agent(name="async-agent", instructions="i", model_id="gpt-5.4"))
         assert out["status"] == "created"
         assert db.get_component("async-agent") is not None
+
+
+class TestToolNameResolution:
+    """Multiple MCP servers in one registry must stay independently addressable."""
+
+    @pytest.fixture
+    def mcp_registry(self, db):
+        pytest.importorskip("mcp")
+        from agno.tools.mcp import MCPTools
+
+        docs = MCPTools(url="https://docs.example.com/mcp")
+        search = MCPTools(url="https://search.example.com/mcp")
+        registry = Registry(
+            name="MCP Registry",
+            tools=[docs, search],
+            models=[OpenAIResponses(id="gpt-5.5")],
+            dbs=[db],
+        )
+        return registry, docs, search
+
+    def test_two_mcp_toolkits_are_independently_listable(self, mcp_registry, db):
+        registry, docs, search = mcp_registry
+        studio = StudioTool(registry=registry, db=db)
+
+        result = _loads(studio.list_tools())
+        names = [t["name"] for t in result["tools"]]
+        assert len(names) == len(set(names))
+        assert docs.name in names and search.name in names
+
+    def test_two_mcp_toolkits_survive_add_tool_dedup(self, mcp_registry):
+        registry, docs, search = mcp_registry
+        fresh = Registry()
+        fresh.add_tool(docs)
+        fresh.add_tool(search)
+        assert docs in fresh.tools and search in fresh.tools
+
+    def test_create_agent_selects_the_right_mcp_toolkit_by_name(self, mcp_registry, db):
+        registry, docs, search = mcp_registry
+        studio = StudioTool(registry=registry, db=db)
+
+        assert studio._find_tool(docs.name) is docs
+        assert studio._find_tool(search.name) is search
+
+        # Simulate a connected toolkit: create_agent refuses toolkits with no
+        # functions, since they would persist as an empty tool set.
+        search.functions["web_search"] = Function(
+            name="web_search",
+            parameters={"type": "object", "properties": {"query": {"type": "string"}}, "required": ["query"]},
+            skip_entrypoint_processing=True,
+        )
+
+        out = _loads(
+            studio.create_agent(name="web-search-agent", instructions="Search the web.", tool_names=[search.name])
+        )
+        assert out["status"] == "created"
+        assert out["tools"] == [search.name]
+
+    def test_ambiguous_tool_name_errors_instead_of_first_matching(self, db):
+        def alpha():
+            pass
+
+        def beta():
+            pass
+
+        registry = Registry(
+            name="Ambiguous Registry",
+            tools=[Toolkit(name="dup", tools=[alpha]), Toolkit(name="dup", tools=[beta])],
+            models=[OpenAIResponses(id="gpt-5.5")],
+            dbs=[db],
+        )
+        studio = StudioTool(registry=registry, db=db)
+
+        with pytest.raises(ValueError, match="ambiguous"):
+            studio._find_tool("dup")
+
+        out = _loads(studio.create_agent(name="x", instructions="i", tool_names=["dup"]))
+        assert "error" in out
+        assert "ambiguous" in out["error"]
+
+
+class TestMCPToolkitPersistence:
+    """Registry MCP toolkits must persist their functions and survive rehydration.
+
+    Uses stub toolkits with the connected-MCP shape: functions registered on
+    the toolkit at connect time, with a fixed schema and
+    skip_entrypoint_processing=True.
+    """
+
+    @staticmethod
+    def _connect(toolkit: Toolkit) -> Function:
+        """Simulate MCPTools.connect(): register a fixed-schema function."""
+
+        async def call_proxy(**kwargs) -> str:
+            return "docs result"
+
+        func = Function(
+            name="search_docs",
+            description="Search the docs.",
+            parameters={"type": "object", "properties": {"query": {"type": "string"}}, "required": ["query"]},
+            entrypoint=call_proxy,
+            skip_entrypoint_processing=True,
+        )
+        toolkit.functions[func.name] = func
+        return func
+
+    def _registry(self, db, toolkit: Toolkit) -> Registry:
+        return Registry(
+            name="MCP Persistence Registry",
+            tools=[toolkit],
+            models=[OpenAIResponses(id="gpt-5.5")],
+            dbs=[db],
+        )
+
+    def test_create_agent_refuses_unconnected_toolkit(self, db):
+        toolkit = Toolkit(name="agno_docs")  # no functions: never connected
+        studio = StudioTool(registry=self._registry(db, toolkit), db=db)
+
+        out = _loads(studio.create_agent(name="docs-agent", instructions="i", tool_names=["agno_docs"]))
+
+        assert "error" in out
+        assert "agno_docs" in out["error"]
+        assert db.get_component("docs-agent") is None
+
+    def test_edit_agent_refuses_unconnected_toolkit(self, db):
+        toolkit = Toolkit(name="agno_docs")
+        studio = StudioTool(registry=self._registry(db, toolkit), db=db)
+        studio.create_agent(name="docs-agent", instructions="i")
+
+        out = _loads(studio.edit_agent(agent_id="docs-agent", tool_names=["agno_docs"]))
+
+        assert "error" in out
+        assert "agno_docs" in out["error"]
+
+    def test_create_agent_persists_connected_toolkit_functions(self, db):
+        toolkit = Toolkit(name="agno_docs")
+        self._connect(toolkit)
+        studio = StudioTool(registry=self._registry(db, toolkit), db=db)
+
+        out = _loads(studio.create_agent(name="docs-agent", instructions="i", tool_names=["agno_docs"]))
+        assert out["status"] == "created"
+
+        config = db.get_config("docs-agent")["config"]
+        persisted_tools = config.get("tools")
+        assert persisted_tools, "connected toolkit functions must be persisted"
+        assert [t["name"] for t in persisted_tools] == ["search_docs"]
+        assert persisted_tools[0]["parameters"]["required"] == ["query"]
+
+    def test_rehydrated_agent_resolves_mcp_tools_after_late_connect(self, db):
+        """Simulate a restart: persist with a connected toolkit, then rehydrate
+        against a fresh registry whose toolkit connects only after the
+        entrypoint lookup cache was first built."""
+        toolkit = Toolkit(name="agno_docs")
+        self._connect(toolkit)
+        studio = StudioTool(registry=self._registry(db, toolkit), db=db)
+        studio.create_agent(name="docs-agent", instructions="i", tool_names=["agno_docs"])
+
+        # Fresh process: new registry, toolkit not yet connected
+        fresh_toolkit = Toolkit(name="agno_docs")
+        fresh_registry = self._registry(db, fresh_toolkit)
+
+        # Prime the lookup cache before "connect", as startup code paths may
+        assert fresh_registry._entrypoint_lookup == {}
+
+        # The AgentOS lifespan connects the toolkit
+        func = self._connect(fresh_toolkit)
+
+        config = db.get_config("docs-agent")["config"]
+        agent = Agent.from_dict(config, registry=fresh_registry)
+
+        assert agent.tools, "rehydrated agent must keep its MCP tools"
+        rehydrated = {t.name: t for t in agent.tools if isinstance(t, Function)}
+        assert "search_docs" in rehydrated
+        assert rehydrated["search_docs"].entrypoint is func.entrypoint
+        assert rehydrated["search_docs"].skip_entrypoint_processing is True
 
 
 class TestCreateTeam:
@@ -624,7 +815,7 @@ class TestDelete:
         assert "error" in out
 
     def test_delete_agent_only_deletes_db_component_when_live_agent_shadows_id(self, registry, db):
-        studio = StudioTool(registry=registry, db=db)
+        studio = StudioTools(registry=registry, db=db)
         studio.create_agent(name="temp", instructions="i", model_id="gpt-5.4")
 
         class ShadowAgent:
@@ -634,7 +825,7 @@ class TestDelete:
             def delete(self, **kwargs):
                 raise AssertionError("delete_agent should not call delete() on live agents")
 
-        tool = StudioTool(registry=registry, db=db, agents_list=[ShadowAgent()])
+        tool = StudioTools(registry=registry, db=db, agents_list=[ShadowAgent()])
 
         out = _loads(tool.delete_agent("temp"))
         assert out["status"] == "deleted"
@@ -655,13 +846,13 @@ class TestLookup:
 
     def test_find_agent_falls_back_to_live_list(self, registry, db):
         live = Agent(id="live-one", name="Live", model=OpenAIResponses(id="gpt-5.4"), db=db)
-        tool = StudioTool(registry=registry, db=db, agents_list=[live])
+        tool = StudioTools(registry=registry, db=db, agents_list=[live])
         found = tool._find_agent("live-one")
         assert found is live
 
     def test_find_agent_falls_back_to_db(self, studio, registry, db):
         studio.create_agent(name="persisted", instructions="i", model_id="gpt-5.4")
-        fresh = StudioTool(registry=registry, db=db)
+        fresh = StudioTools(registry=registry, db=db)
         found = fresh._find_agent("persisted")
         assert found is not None
         assert found.id == "persisted"
@@ -672,7 +863,7 @@ class TestLookup:
         # silently returning "edited" (review findings 9-12).
         studio.create_agent(name="shared", instructions="db", model_id="gpt-5.4")
         live = Agent(id="shared", name="Shared", model=OpenAIResponses(id="gpt-5.4"), instructions="live")
-        tool = StudioTool(registry=registry, db=db, agents_list=[live], versions=True)
+        tool = StudioTools(registry=registry, db=db, agents_list=[live], versions=True)
 
         out = _loads(tool.edit_agent(agent_id="shared", instructions="updated-live"))
 
@@ -688,7 +879,7 @@ class TestLookup:
 
 class TestTypeGuards:
     def _full(self, registry, db):
-        return StudioTool(registry=registry, db=db, teams=True, workflows=True)
+        return StudioTools(registry=registry, db=db, teams=True, workflows=True)
 
     def test_get_agent_rejects_team_id(self, registry, db):
         tool = self._full(registry, db)
@@ -753,7 +944,7 @@ class TestTypeGuards:
 
 class TestEnableFlags:
     def test_default_enables_agents_only(self, registry, db):
-        tool = StudioTool(registry=registry, db=db)
+        tool = StudioTools(registry=registry, db=db)
         assert tool.enable_agents is True
         assert tool.enable_teams is False
         assert tool.enable_workflows is False
@@ -763,7 +954,7 @@ class TestEnableFlags:
         assert "create_workflow" not in names
 
     def test_opt_in_teams(self, registry, db):
-        tool = StudioTool(registry=registry, db=db, teams=True)
+        tool = StudioTools(registry=registry, db=db, teams=True)
         assert tool.enable_agents is True  # agents stays on by default
         assert tool.enable_teams is True
         assert tool.enable_workflows is False
@@ -771,7 +962,7 @@ class TestEnableFlags:
         assert "create_team" in names
 
     def test_agents_disabled_explicitly(self, registry, db):
-        tool = StudioTool(registry=registry, db=db, agents=False, teams=True)
+        tool = StudioTools(registry=registry, db=db, agents=False, teams=True)
         assert tool.enable_agents is False
         assert tool.enable_teams is True
         names = set(tool.functions.keys())
@@ -779,7 +970,7 @@ class TestEnableFlags:
         assert "create_team" in names
 
     def test_workflows_only(self, registry, db):
-        tool = StudioTool(registry=registry, db=db, agents=False, workflows=True)
+        tool = StudioTools(registry=registry, db=db, agents=False, workflows=True)
         assert tool.enable_agents is False
         assert tool.enable_teams is False
         assert tool.enable_workflows is True
@@ -788,23 +979,23 @@ class TestEnableFlags:
         assert "create_agent" not in names
 
     def test_agents_list_auto_enables_teams_and_workflows(self, registry, db):
-        tool = StudioTool(registry=registry, db=db, agents_list=[])
+        tool = StudioTools(registry=registry, db=db, agents_list=[])
         assert tool.enable_agents is True
         assert tool.enable_teams is True
         assert tool.enable_workflows is True
 
     def test_teams_list_auto_enables_workflows(self, registry, db):
-        tool = StudioTool(registry=registry, db=db, teams_list=[])
+        tool = StudioTools(registry=registry, db=db, teams_list=[])
         assert tool.enable_workflows is True
 
     def test_explicit_flag_overrides_auto_enable(self, registry, db):
         # User passes agents_list but explicitly disables workflows.
-        tool = StudioTool(registry=registry, db=db, agents_list=[], workflows=False)
+        tool = StudioTools(registry=registry, db=db, agents_list=[], workflows=False)
         assert tool.enable_workflows is False
 
     def test_discovery_tools_always_registered(self, registry, db):
         # Even with everything disabled, discovery tools stay registered.
-        tool = StudioTool(registry=registry, db=db, agents=False)
+        tool = StudioTools(registry=registry, db=db, agents=False)
         names = set(tool.functions.keys())
         assert {
             "list_models",
@@ -840,14 +1031,14 @@ class _StubAgent:
 
 class TestRunSerialization:
     def test_run_agent_serializes_non_json_content(self, registry, db):
-        tool = StudioTool(registry=registry, db=db, agents_list=[_StubAgent()])
+        tool = StudioTools(registry=registry, db=db, agents_list=[_StubAgent()])
         out = _loads(tool.run_agent("stub", "hi"))
         assert "error" not in out
         assert out["content"].startswith("2026-01-01")
 
     @pytest.mark.asyncio
     async def test_arun_agent_serializes_non_json_content(self, registry, db):
-        tool = StudioTool(registry=registry, db=db, agents_list=[_StubAgent()])
+        tool = StudioTools(registry=registry, db=db, agents_list=[_StubAgent()])
         out = _loads(await tool.arun_agent("stub", "hi"))
         assert "error" not in out
         assert out["content"].startswith("2026-01-01")
@@ -861,7 +1052,7 @@ class TestRunSerialization:
 class TestNoCascadePersistence:
     def test_create_team_does_not_persist_code_defined_member(self, registry, db):
         greeter = Agent(id="greeter-code", name="Greeter", model=OpenAIResponses(id="gpt-5.4"))
-        tool = StudioTool(registry=registry, db=db, agents_list=[greeter])
+        tool = StudioTools(registry=registry, db=db, agents_list=[greeter])
 
         tool.create_agent(name="studio-agent", instructions="i", model_id="gpt-5.4")
         tool.create_team(
@@ -880,7 +1071,7 @@ class TestNoCascadePersistence:
 
     def test_create_workflow_does_not_persist_code_defined_agent(self, registry, db):
         greeter = Agent(id="greeter-code", name="Greeter", model=OpenAIResponses(id="gpt-5.4"))
-        tool = StudioTool(registry=registry, db=db, agents_list=[greeter])
+        tool = StudioTools(registry=registry, db=db, agents_list=[greeter])
 
         tool.create_workflow(
             name="wf",

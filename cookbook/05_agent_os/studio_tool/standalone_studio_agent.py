@@ -1,6 +1,6 @@
-"""Standalone StudioTool agent (no AgentOS).
+"""Standalone StudioTools agent (no AgentOS).
 
-A simple Agent that uses StudioTool to build, edit, version, and run other
+A simple Agent that uses StudioTools to build, edit, version, and run other
 agents backed by a local SQLite database. No AgentOS server, no REST, just
 in-process composition.
 
@@ -17,7 +17,7 @@ from agno.models.openai import OpenAIResponses
 from agno.registry import Registry
 from agno.tools.calculator import CalculatorTools
 from agno.tools.duckduckgo import DuckDuckGoTools
-from agno.tools.studio import StudioTool
+from agno.tools.studio import StudioTools
 
 DB_DIR = Path(__file__).parent / "tmp"
 DB_DIR.mkdir(exist_ok=True)
@@ -35,7 +35,7 @@ studio_agent = Agent(
     name="Studio",
     model=Claude(id="claude-sonnet-4-5"),
     tools=[
-        StudioTool(registry=registry, db=db, default_model_id="gpt-5.5", versions=True)
+        StudioTools(registry=registry, db=db, default_model_id="gpt-5.5", versions=True)
     ],
     instructions=[
         "You help the user compose agents, teams, and workflows from registry primitives.",
