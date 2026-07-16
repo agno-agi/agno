@@ -165,60 +165,7 @@ jobs:
         working-directory: .
         env:
           AGNO_TELEMETRY: false
-          COVERAGE_FILE: .coverage.${{ matrix.group }}
         run: |
           source .venv/bin/activate
           uv pip install pytest-split --quiet
-          python -m pytest --cov=agno --splits 5 --group ${{ matrix.group }} ./libs/agno/tests/unit --ignore=libs/agno/tests/unit/models/litellm --ignore=libs/agno/tests/unit/tools/test_crawl4ai.py --ignore=libs/agno/tests/unit/tools/test_scrapegraph.py
-      - name: Upload coverage artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: coverage-${{ matrix.group }}
-          path: .coverage.${{ matrix.group }}
-          retention-days: 1
-          include-hidden-files: true
-
-  coverage-report:
-    runs-on: ubuntu-latest
-    needs: tests
-    if: github.event_name != 'push' || !github.event.pull_request
-    permissions:
-      pull-requests: write
-    steps:
-      - uses: actions/checkout@v3
-      - name: Set up Python 3.12
-        uses: actions/setup-python@v4
-        with:
-          python-version: "3.12"
-      - name: Download all coverage artifacts
-        uses: actions/download-artifact@v4
-        with:
-          pattern: coverage-*
-          merge-multiple: true
-      - name: Combine coverage reports
-        run: |
-          pip install coverage
-          coverage combine
-          coverage json -o coverage-agno.json
-          AGNO_COVERAGE=$(python -c 'import json; print(json.load(open("coverage-agno.json"))["totals"]["percent_covered_display"])')
-          echo "## Coverage Report" >> $GITHUB_STEP_SUMMARY
-          echo "**Combined coverage: ${AGNO_COVERAGE}%**" >> $GITHUB_STEP_SUMMARY
-          echo "coverage=$AGNO_COVERAGE" >> $GITHUB_ENV
-      - name: Post coverage comment
-        if: github.event_name == 'pull_request'
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          PR_NUMBER=${{ github.event.pull_request.number }}
-          BODY="<!-- coverage-bot -->
-          **Coverage: ${{ env.coverage }}%**"
-
-          # Find existing coverage comment
-          COMMENT_ID=$(gh api repos/${{ github.repository }}/issues/${PR_NUMBER}/comments \
-            --jq '.[] | select(.body | contains("<!-- coverage-bot -->")) | .id' | head -1)
-
-          if [ -n "$COMMENT_ID" ]; then
-            gh api repos/${{ github.repository }}/issues/comments/${COMMENT_ID} -X PATCH -f body="$BODY"
-          else
-            gh pr comment ${PR_NUMBER} --body "$BODY"
-          fi
+          python -m pytest --splits 5 --group ${{ matrix.group }} ./libs/agno/tests/unit --ignore=libs/agno/tests/unit/models/litellm --ignore=libs/agno/tests/unit/tools/test_crawl4ai.py --ignore=libs/agno/tests/unit/tools/test_scrapegraph.py
