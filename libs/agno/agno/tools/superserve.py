@@ -1,6 +1,7 @@
 import json
 import shlex
 from os import getenv
+from pathlib import Path
 from textwrap import dedent
 from typing import Any, Dict, List, Optional, Union
 from uuid import uuid4
@@ -10,6 +11,7 @@ from agno.team import Team
 from agno.tools import Toolkit
 from agno.utils.code_execution import prepare_python_code
 from agno.utils.log import log_debug, log_info
+from agno.utils.path_safety import safe_join_relative_path
 
 try:
     from superserve import AsyncSandbox, Sandbox
@@ -31,6 +33,8 @@ DEFAULT_INSTRUCTIONS = dedent(
     - `get_sandbox_info`: Inspect the current sandbox
     - `list_sandboxes`: List all sandboxes for the team
     - `shutdown_sandbox`: Delete the current sandbox
+    - `shutdown_sandbox_by_id`: Delete a specific sandbox by its id
+    - `get_preview_url`: Get a public URL for a port exposed in the sandbox
     When asked to run or verify code, write it, execute it with run_python_code or run_command, and show the real output.
     Install missing packages with run_command, for example `pip install <package>`.
     """
@@ -39,6 +43,10 @@ DEFAULT_INSTRUCTIONS = dedent(
 # Key under which the active sandbox id is stored in the agent's session state,
 # so the same sandbox is reused across tool calls and across runs.
 SESSION_STATE_SANDBOX_ID = "superserve_sandbox_id"
+
+# Default template used when none is given. The bare `base` image ships no Python,
+# so run_python_code would fail on it; code-interpreter has Python 3.11 and pip.
+DEFAULT_TEMPLATE = "superserve/code-interpreter"
 
 
 class SuperserveTools(Toolkit):
@@ -58,7 +66,9 @@ class SuperserveTools(Toolkit):
         sandbox_id: Optional[str] = None,
         template: Optional[str] = None,
         timeout: int = 300,
+        auto_delete_seconds: Optional[int] = None,
         command_timeout: int = 60,
+        output_directory: Optional[str] = None,
         metadata: Optional[Dict[str, str]] = None,
         env_vars: Optional[Dict[str, str]] = None,
         secrets: Optional[Dict[str, str]] = None,
@@ -73,6 +83,8 @@ class SuperserveTools(Toolkit):
         enable_get_sandbox_info: bool = True,
         enable_list_sandboxes: bool = True,
         enable_shutdown_sandbox: bool = True,
+        enable_shutdown_sandbox_by_id: bool = True,
+        enable_get_preview_url: bool = True,
         enable_pause_sandbox: bool = False,
         enable_resume_sandbox: bool = False,
         enable_attach_secret: bool = False,
@@ -88,9 +100,13 @@ class SuperserveTools(Toolkit):
             api_key: Superserve API key (defaults to the SUPERSERVE_API_KEY env var).
             base_url: Override the control-plane base URL (defaults to SUPERSERVE_BASE_URL or the SDK default).
             sandbox_id: Connect to an existing sandbox instead of creating a new one.
-            template: Template name to create the sandbox from.
+            template: Template to create the sandbox from (defaults to a Python-ready image).
             timeout: Sandbox lifetime in seconds before it is auto-stopped (default: 300).
+            auto_delete_seconds: Hard TTL in seconds after which the sandbox is deleted even if
+                it is never shut down explicitly (default: None, no hard limit).
             command_timeout: Per-command timeout in seconds (default: 60).
+            output_directory: Host directory that download_directory writes into; downloaded
+                paths are contained within it (default: the current working directory).
             metadata: Metadata to attach to created sandboxes.
             env_vars: Environment variables to set in created sandboxes.
             secrets: Team secrets to bind as {ENV_VAR: secret_name}. The sandbox sees a
@@ -107,6 +123,8 @@ class SuperserveTools(Toolkit):
             enable_get_sandbox_info: Register the get_sandbox_info tool (default: True).
             enable_list_sandboxes: Register the list_sandboxes tool (default: True).
             enable_shutdown_sandbox: Register the shutdown_sandbox tool (default: True).
+            enable_shutdown_sandbox_by_id: Register the shutdown_sandbox_by_id tool (default: True).
+            enable_get_preview_url: Register the get_preview_url tool (default: True).
             enable_pause_sandbox: Register the pause_sandbox tool (default: False).
             enable_resume_sandbox: Register the resume_sandbox tool (default: False).
             enable_attach_secret: Register the attach_secret tool (default: False).
@@ -121,9 +139,11 @@ class SuperserveTools(Toolkit):
 
         self.base_url = base_url or getenv("SUPERSERVE_BASE_URL")
         self.sandbox_id = sandbox_id
-        self.template = template
+        self.template = template or DEFAULT_TEMPLATE
         self.timeout = timeout
+        self.auto_delete_seconds = auto_delete_seconds
         self.command_timeout = command_timeout
+        self.output_directory = Path(output_directory).resolve() if output_directory else Path.cwd().resolve()
         self.metadata = metadata
         self.env_vars = env_vars
         self.secrets = secrets
@@ -168,6 +188,12 @@ class SuperserveTools(Toolkit):
         if all or enable_shutdown_sandbox:
             tools.append(self.shutdown_sandbox)
             async_tools.append((self.ashutdown_sandbox, "shutdown_sandbox"))
+        if all or enable_shutdown_sandbox_by_id:
+            tools.append(self.shutdown_sandbox_by_id)
+            async_tools.append((self.ashutdown_sandbox_by_id, "shutdown_sandbox_by_id"))
+        if all or enable_get_preview_url:
+            tools.append(self.get_preview_url)
+            async_tools.append((self.aget_preview_url, "get_preview_url"))
         if all or enable_pause_sandbox:
             tools.append(self.pause_sandbox)
             async_tools.append((self.apause_sandbox, "pause_sandbox"))
@@ -217,6 +243,14 @@ class SuperserveTools(Toolkit):
         if agent is not None and hasattr(agent, "session_state") and agent.session_state:
             agent.session_state.pop(SESSION_STATE_SANDBOX_ID, None)
 
+    def _is_current_sandbox(self, agent: Optional[Union[Agent, Team]], sandbox_id: str) -> bool:
+        """True if sandbox_id is the sandbox this toolkit is currently using."""
+        if self._sandbox is not None and self._sandbox.id == sandbox_id:
+            return True
+        if self._async_sandbox is not None and self._async_sandbox.id == sandbox_id:
+            return True
+        return self._resolve_sandbox_id(agent) == sandbox_id
+
     def _get_sandbox(self, agent: Optional[Union[Agent, Team]]) -> Sandbox:
         """Get the cached sync sandbox, connecting to or creating one as needed."""
         sandbox_id = self._resolve_sandbox_id(agent)
@@ -231,6 +265,7 @@ class SuperserveTools(Toolkit):
                 name=self._generate_name(),
                 from_template=self.template,
                 timeout_seconds=self.timeout,
+                auto_delete_seconds=self.auto_delete_seconds,
                 metadata=self.metadata,
                 env_vars=self.env_vars,
                 secrets=self.secrets,
@@ -255,6 +290,7 @@ class SuperserveTools(Toolkit):
                 name=self._generate_name(),
                 from_template=self.template,
                 timeout_seconds=self.timeout,
+                auto_delete_seconds=self.auto_delete_seconds,
                 metadata=self.metadata,
                 env_vars=self.env_vars,
                 secrets=self.secrets,
@@ -362,7 +398,7 @@ class SuperserveTools(Toolkit):
         """
         try:
             sandbox = self._get_sandbox(agent)
-            result = sandbox.commands.run(f"ls -la {shlex.quote(directory)}")
+            result = sandbox.commands.run(f"ls -la {shlex.quote(directory)}", timeout_seconds=self.command_timeout)
             if result.exit_code != 0:
                 return self._error(f"Error listing {directory}", result.stderr or "non-zero exit code")
             return f"Contents of {directory}:\n{result.stdout}"
@@ -380,7 +416,7 @@ class SuperserveTools(Toolkit):
         """
         try:
             sandbox = self._get_sandbox(agent)
-            result = sandbox.commands.run(f"rm -rf {shlex.quote(file_path)}")
+            result = sandbox.commands.run(f"rm -rf {shlex.quote(file_path)}", timeout_seconds=self.command_timeout)
             if result.exit_code != 0:
                 return self._error(f"Error deleting {file_path}", result.stderr or "non-zero exit code")
             return f"Deleted: {file_path}"
@@ -392,7 +428,8 @@ class SuperserveTools(Toolkit):
 
         Args:
             sandbox_path: Directory path in the sandbox to download.
-            local_path: Local path to write the zip archive to (e.g. "out.zip").
+            local_path: Path within the tool's output directory to write the zip archive to
+                (e.g. "out.zip"). Must stay inside that directory.
 
         Returns:
             The local path written or an error message.
@@ -400,9 +437,10 @@ class SuperserveTools(Toolkit):
         try:
             sandbox = self._get_sandbox(agent)
             data = sandbox.files.download_dir(sandbox_path, timeout=self.command_timeout)
-            with open(local_path, "wb") as f:
-                f.write(data)
-            return f"Downloaded {sandbox_path} to {local_path}"
+            destination = safe_join_relative_path(self.output_directory, local_path)
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            destination.write_bytes(data)
+            return f"Downloaded {sandbox_path} to {destination}"
         except Exception as e:
             return self._error("Error downloading directory", e)
 
@@ -451,6 +489,41 @@ class SuperserveTools(Toolkit):
             return f"Sandbox {sandbox_id} shut down."
         except Exception as e:
             return self._error("Error shutting down sandbox", e)
+
+    def shutdown_sandbox_by_id(self, agent: Union[Agent, Team], sandbox_id: str) -> str:
+        """Delete a specific sandbox by its id, e.g. one returned by list_sandboxes.
+
+        Args:
+            sandbox_id: The id of the sandbox to delete.
+
+        Returns:
+            A success message or an error message.
+        """
+        try:
+            Sandbox.kill_by_id(sandbox_id, api_key=self.api_key, base_url=self.base_url)
+            # If we just killed the sandbox this toolkit is using, drop the stale cache and session id.
+            if self._is_current_sandbox(agent, sandbox_id):
+                self._sandbox = None
+                self._async_sandbox = None
+                self._clear_sandbox_id(agent)
+            return f"Sandbox {sandbox_id} shut down."
+        except Exception as e:
+            return self._error("Error shutting down sandbox", e)
+
+    def get_preview_url(self, agent: Union[Agent, Team], port: int) -> str:
+        """Get a public URL for a port exposed inside the sandbox.
+
+        Args:
+            port: Port a process inside the sandbox is listening on.
+
+        Returns:
+            A public URL routing to that port, or an error message.
+        """
+        try:
+            sandbox = self._get_sandbox(agent)
+            return sandbox.get_preview_url(port)
+        except Exception as e:
+            return self._error("Error getting preview URL", e)
 
     # ------------------------------------------------------------------
     # Lifecycle tools (opt-in)
@@ -564,7 +637,9 @@ class SuperserveTools(Toolkit):
         """Async variant of list_files."""
         try:
             sandbox = await self._aget_sandbox(agent)
-            result = await sandbox.commands.run(f"ls -la {shlex.quote(directory)}")
+            result = await sandbox.commands.run(
+                f"ls -la {shlex.quote(directory)}", timeout_seconds=self.command_timeout
+            )
             if result.exit_code != 0:
                 return self._error(f"Error listing {directory}", result.stderr or "non-zero exit code")
             return f"Contents of {directory}:\n{result.stdout}"
@@ -575,7 +650,9 @@ class SuperserveTools(Toolkit):
         """Async variant of delete_file."""
         try:
             sandbox = await self._aget_sandbox(agent)
-            result = await sandbox.commands.run(f"rm -rf {shlex.quote(file_path)}")
+            result = await sandbox.commands.run(
+                f"rm -rf {shlex.quote(file_path)}", timeout_seconds=self.command_timeout
+            )
             if result.exit_code != 0:
                 return self._error(f"Error deleting {file_path}", result.stderr or "non-zero exit code")
             return f"Deleted: {file_path}"
@@ -587,9 +664,10 @@ class SuperserveTools(Toolkit):
         try:
             sandbox = await self._aget_sandbox(agent)
             data = await sandbox.files.download_dir(sandbox_path, timeout=self.command_timeout)
-            with open(local_path, "wb") as f:
-                f.write(data)
-            return f"Downloaded {sandbox_path} to {local_path}"
+            destination = safe_join_relative_path(self.output_directory, local_path)
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            destination.write_bytes(data)
+            return f"Downloaded {sandbox_path} to {destination}"
         except Exception as e:
             return self._error("Error downloading directory", e)
 
@@ -626,6 +704,26 @@ class SuperserveTools(Toolkit):
             return f"Sandbox {sandbox_id} shut down."
         except Exception as e:
             return self._error("Error shutting down sandbox", e)
+
+    async def ashutdown_sandbox_by_id(self, agent: Union[Agent, Team], sandbox_id: str) -> str:
+        """Async variant of shutdown_sandbox_by_id."""
+        try:
+            await AsyncSandbox.kill_by_id(sandbox_id, api_key=self.api_key, base_url=self.base_url)
+            if self._is_current_sandbox(agent, sandbox_id):
+                self._sandbox = None
+                self._async_sandbox = None
+                self._clear_sandbox_id(agent)
+            return f"Sandbox {sandbox_id} shut down."
+        except Exception as e:
+            return self._error("Error shutting down sandbox", e)
+
+    async def aget_preview_url(self, agent: Union[Agent, Team], port: int) -> str:
+        """Async variant of get_preview_url."""
+        try:
+            sandbox = await self._aget_sandbox(agent)
+            return sandbox.get_preview_url(port)
+        except Exception as e:
+            return self._error("Error getting preview URL", e)
 
     # ------------------------------------------------------------------
     # Lifecycle tools (async, opt-in)

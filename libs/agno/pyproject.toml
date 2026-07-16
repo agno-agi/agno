@@ -295,6 +295,7 @@ tools = [
   "agno[scavio]",
   "agno[scrapegraph]",
   "agno[seltz]",
+  "agno[superserve]",
   "agno[tavily]",
   "agno[telegram]",
   "agno[todoist]",

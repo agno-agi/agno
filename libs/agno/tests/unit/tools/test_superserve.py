@@ -108,6 +108,8 @@ CORE_TOOLS = {
     "get_sandbox_info",
     "list_sandboxes",
     "shutdown_sandbox",
+    "shutdown_sandbox_by_id",
+    "get_preview_url",
 }
 
 
@@ -263,6 +265,31 @@ def test_delete_file_uses_rm(agent):
     assert "Deleted: /app/old.py" in result
 
 
+def test_download_directory_writes_within_output_dir(agent, tmp_path):
+    sandbox = _sync_sandbox()
+    with patch.object(superserve_module, "Sandbox") as mock_cls:
+        mock_cls.create.return_value = sandbox
+        tools = SuperserveTools(api_key=TEST_API_KEY, output_directory=str(tmp_path))
+        result = tools.download_directory(agent, "/app", "out.zip")
+
+    written = tmp_path / "out.zip"
+    assert written.read_bytes() == b"PK\x03\x04zip-bytes"
+    assert str(written) in result
+
+
+def test_download_directory_rejects_traversal(agent, tmp_path):
+    """A local_path escaping the output directory is rejected and nothing is written."""
+    sandbox = _sync_sandbox()
+    with patch.object(superserve_module, "Sandbox") as mock_cls:
+        mock_cls.create.return_value = sandbox
+        tools = SuperserveTools(api_key=TEST_API_KEY, output_directory=str(tmp_path))
+        result = tools.download_directory(agent, "/app", "../../etc/evil")
+
+    payload = json.loads(result)
+    assert payload["status"] == "error"
+    assert not (tmp_path.parent.parent / "etc" / "evil").exists()
+
+
 def test_get_sandbox_info(agent):
     sandbox = _sync_sandbox("sbx-info")
     with patch.object(superserve_module, "Sandbox") as mock_cls:
@@ -283,6 +310,65 @@ def test_list_sandboxes():
 
     payload = json.loads(result)
     assert {item["id"] for item in payload} == {"sbx-1", "sbx-2"}
+
+
+def test_get_preview_url(agent):
+    sandbox = _sync_sandbox()
+    sandbox.get_preview_url.return_value = "https://sbx-123-8080.superserve.run"
+    with patch.object(superserve_module, "Sandbox") as mock_cls:
+        mock_cls.create.return_value = sandbox
+        tools = SuperserveTools(api_key=TEST_API_KEY)
+        result = tools.get_preview_url(agent, 8080)
+
+    sandbox.get_preview_url.assert_called_once_with(8080)
+    assert result == "https://sbx-123-8080.superserve.run"
+
+
+def test_shutdown_sandbox_by_id(agent):
+    with patch.object(superserve_module, "Sandbox") as mock_cls:
+        tools = SuperserveTools(api_key=TEST_API_KEY)
+        result = tools.shutdown_sandbox_by_id(agent, "sbx-gone")
+
+    mock_cls.kill_by_id.assert_called_once_with("sbx-gone", api_key=TEST_API_KEY, base_url=None)
+    assert "shut down" in result
+
+
+def test_shutdown_sandbox_by_id_clears_active_cache(agent):
+    """Killing the active sandbox by its own id drops the stale cache and session id."""
+    sandbox = _sync_sandbox("sbx-self")
+    with patch.object(superserve_module, "Sandbox") as mock_cls:
+        mock_cls.create.return_value = sandbox
+        tools = SuperserveTools(api_key=TEST_API_KEY)
+        tools.run_command(agent, "echo warmup")  # creates + caches sbx-self
+        assert agent.session_state[SESSION_STATE_SANDBOX_ID] == "sbx-self"
+        result = tools.shutdown_sandbox_by_id(agent, "sbx-self")
+
+    assert tools._sandbox is None
+    assert SESSION_STATE_SANDBOX_ID not in agent.session_state
+    assert "shut down" in result
+
+
+def test_shutdown_sandbox_by_id_keeps_unrelated_cache(agent):
+    """Killing a different sandbox by id leaves the active cache and session id intact."""
+    sandbox = _sync_sandbox("sbx-mine")
+    with patch.object(superserve_module, "Sandbox") as mock_cls:
+        mock_cls.create.return_value = sandbox
+        tools = SuperserveTools(api_key=TEST_API_KEY)
+        tools.run_command(agent, "echo warmup")
+        tools.shutdown_sandbox_by_id(agent, "sbx-other")
+
+    assert tools._sandbox is sandbox
+    assert agent.session_state[SESSION_STATE_SANDBOX_ID] == "sbx-mine"
+
+
+def test_auto_delete_seconds_forwarded_to_create(agent):
+    sandbox = _sync_sandbox()
+    with patch.object(superserve_module, "Sandbox") as mock_cls:
+        mock_cls.create.return_value = sandbox
+        tools = SuperserveTools(api_key=TEST_API_KEY, auto_delete_seconds=120)
+        tools.run_command(agent, "echo hi")
+
+    assert mock_cls.create.call_args.kwargs["auto_delete_seconds"] == 120
 
 
 # ---------------------------------------------------------------------------
@@ -383,3 +469,26 @@ async def test_ashutdown_sandbox(agent):
     sandbox.kill.assert_awaited_once()
     assert SESSION_STATE_SANDBOX_ID not in agent.session_state
     assert "shut down" in result
+
+
+async def test_ashutdown_sandbox_by_id(agent):
+    with patch.object(superserve_module, "AsyncSandbox") as mock_cls:
+        mock_cls.kill_by_id = AsyncMock()
+        tools = SuperserveTools(api_key=TEST_API_KEY)
+        result = await tools.ashutdown_sandbox_by_id(agent, "sbx-gone")
+
+    mock_cls.kill_by_id.assert_awaited_once_with("sbx-gone", api_key=TEST_API_KEY, base_url=None)
+    assert "shut down" in result
+
+
+async def test_aget_preview_url(agent):
+    sandbox = _async_sandbox()
+    # get_preview_url is sync even on AsyncSandbox (built locally, no await).
+    sandbox.get_preview_url = MagicMock(return_value="https://sbx-async-9000.superserve.run")
+    with patch.object(superserve_module, "AsyncSandbox") as mock_cls:
+        mock_cls.create = AsyncMock(return_value=sandbox)
+        tools = SuperserveTools(api_key=TEST_API_KEY)
+        result = await tools.aget_preview_url(agent, 9000)
+
+    sandbox.get_preview_url.assert_called_once_with(9000)
+    assert result == "https://sbx-async-9000.superserve.run"

@@ -27,6 +27,8 @@ from agno.tools.superserve import SuperserveTools
 #   SuperserveTools(enable_pause_sandbox=True, enable_resume_sandbox=True)
 #   SuperserveTools(enable_attach_secret=True, enable_detach_secret=True)
 #   SuperserveTools(all=True)  # register every tool
+# Sandboxes default to a Python-ready template; override it for other runtimes:
+#   SuperserveTools(template="superserve/node-22")
 # To bind a team secret to the sandbox without exposing the real credential:
 #   SuperserveTools(secrets={"OPENAI_API_KEY": "openai-prod"})
 
