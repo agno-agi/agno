@@ -58,7 +58,7 @@ def _clone(repo_url: str, target: Path) -> None:
     shutil.rmtree(target / ".git", ignore_errors=True)
 
 
-def _copy_example_env(project_dir: Path) -> bool:
+def _copy_example_env(project_dir: Path) -> None:
     """Seed a private .env when the template provides example.env.
 
     Custom templates may use a different environment layout, and a tracked .env must
@@ -71,9 +71,9 @@ def _copy_example_env(project_dir: Path) -> bool:
     if env_file.exists():
         if not env_file.is_file():
             raise CLIError(str(env_file) + " exists but is not a file.")
-        return True
+        return
     if not example_env.is_file():
-        return False
+        return
 
     no_follow = getattr(os, "O_NOFOLLOW", 0)
     binary = getattr(os, "O_BINARY", 0)
@@ -93,7 +93,6 @@ def _copy_example_env(project_dir: Path) -> bool:
             except OSError:
                 pass
         raise CLIError("Could not create " + str(env_file) + ": " + str(e))
-    return True
 
 
 def _prompt_template() -> str:
@@ -104,7 +103,7 @@ def _prompt_template() -> str:
         print_info("  " + str(index) + ". " + template_name + suffix)
 
     while True:
-        answer = str(typer.prompt("Template", default="1")).strip()
+        answer = str(typer.prompt("Template", default=str(TEMPLATE_CHOICES.index(DEFAULT_TEMPLATE) + 1))).strip()
         if answer in TEMPLATES:
             return answer
         if answer.isdigit() and 1 <= int(answer) <= len(TEMPLATE_CHOICES):
@@ -131,6 +130,14 @@ def _prompt_project_name() -> str:
         return name
 
 
+def _validate_template(template: str) -> None:
+    if template not in TEMPLATES:
+        raise CLIError(
+            "Unknown template: " + template,
+            hint="Available templates: " + ", ".join(TEMPLATE_CHOICES) + ", or pass --url for a custom repo.",
+        )
+
+
 def _resolve_create_inputs(
     name: Optional[str],
     template: Optional[str],
@@ -147,6 +154,9 @@ def _resolve_create_inputs(
                 "A project name is required in non-interactive mode.",
                 hint="Pass a name, for example: agno create agentos",
             )
+        # A bad --template should fail here, before the user answers the name prompt.
+        if template is not None and template_url is None:
+            _validate_template(template)
         print_info("")
         print_heading("Create an AgentOS")
         print_info("")
@@ -155,7 +165,7 @@ def _resolve_create_inputs(
             print_info("")
         name = _prompt_project_name()
 
-    return name, template or DEFAULT_TEMPLATE
+    return name, DEFAULT_TEMPLATE if template is None else template
 
 
 def create(
@@ -215,14 +225,16 @@ def _create(name: str, template: str, template_url: Optional[str]) -> Dict[str, 
         repo_url = template_url
         template_label = template_url
     else:
-        repo_url = TEMPLATES.get(template, "")
-        if not repo_url:
-            raise CLIError(
-                "Unknown template: " + template,
-                hint="Available templates: " + ", ".join(sorted(TEMPLATES)) + ", or pass --url for a custom repo.",
-            )
+        _validate_template(template)
+        repo_url = TEMPLATES[template]
         template_label = template
 
     _clone(repo_url, target)
-    _copy_example_env(target)
+    try:
+        _copy_example_env(target)
+    except CLIError:
+        # A failed seed must not leave the half-created project behind; a retry
+        # would fail "directory already exists" and hide the real error.
+        shutil.rmtree(target, ignore_errors=True)
+        raise
     return {"path": str(target), "template": template_label}
