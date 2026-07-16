@@ -2,17 +2,12 @@
 
 AgentOS equivalent of cookbook/03_teams/20_human_in_the_loop/multi_round_user_input.py
 
-Demonstrates a member agent that pauses multiple times for user input during
-a single team execution. This is the scenario from issue #8925.
+A team member has multiple tools that require user input. The run pauses
+for each tool, creating a chained HITL flow where the member pauses multiple
+times during a single team execution.
 
 Run:
     .venvs/demo/bin/python cookbook/05_agent_os/human_in_the_loop/team/multi_round_user_input.py
-
-Then use the AgentOS UI at http://localhost:7777 to:
-1. Start a team run with "Help me find a restaurant"
-2. Provide your name when prompted (Round 1)
-3. Provide cuisine and budget when prompted (Round 2)
-4. See the final recommendation
 """
 
 from agno.agent import Agent
@@ -27,8 +22,8 @@ from agno.tools import tool
 # ---------------------------------------------------------------------------
 
 db = SqliteDb(
-    db_file="tmp/agent_os_multi_hitl.db",
-    session_table="multi_hitl_sessions",
+    db_file="tmp/agent_os_hitl.db",
+    session_table="hitl_multi_round_sessions",
 )
 
 # ---------------------------------------------------------------------------
@@ -56,13 +51,10 @@ survey_agent = Agent(
     name="SurveyAgent",
     model=OpenAIResponses(id="gpt-5.5"),
     tools=[collect_name, collect_preferences],
-    instructions=[
-        "You help users find restaurant recommendations.",
-        "You MUST collect information in this order:",
-        "1. First, call collect_name to get the user's name",
-        "2. Then, call collect_preferences to get their cuisine and budget preferences",
-        "3. Finally, provide a personalized recommendation using both pieces of info",
-    ],
+    instructions=(
+        "You MUST call collect_name first, then collect_preferences. "
+        "Do NOT ask clarifying questions - the tools will pause and request input."
+    ),
     db=db,
     telemetry=False,
 )
@@ -72,15 +64,11 @@ survey_agent = Agent(
 # ---------------------------------------------------------------------------
 
 team = Team(
-    id="multi-round-hitl-team",
+    id="hitl-multi-round-team",
     name="RestaurantTeam",
     model=OpenAIResponses(id="gpt-5.5"),
     members=[survey_agent],
-    instructions=[
-        "You are a coordinator. You NEVER answer directly.",
-        "ALWAYS delegate to SurveyAgent for any restaurant or dining request.",
-        "Do not provide your own suggestions - only delegate.",
-    ],
+    instructions="Delegate all restaurant requests to the SurveyAgent immediately.",
     db=db,
     telemetry=False,
     add_history_to_context=True,
@@ -91,8 +79,8 @@ team = Team(
 # ---------------------------------------------------------------------------
 
 agent_os = AgentOS(
-    id="multi-round-hitl",
-    description="AgentOS HITL: Multi-round user input (issue #8925 scenario)",
+    id="hitl-multi-round-user-input",
+    description="AgentOS HITL: chained user input across multiple tool calls",
     agents=[survey_agent],
     teams=[team],
 )
