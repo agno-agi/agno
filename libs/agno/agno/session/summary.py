@@ -37,6 +37,7 @@ class SessionSummary:
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "SessionSummary":
+        data = dict(data)  # don't mutate the caller's dict
         updated_at = data.get("updated_at")
         if updated_at:
             data["updated_at"] = datetime.fromisoformat(updated_at)
