@@ -715,8 +715,10 @@ class MemoryManager:
         ):
             memory_search = response.parsed
 
-        # Otherwise convert the response to the structured format
-        if isinstance(response.content, str):
+        # Otherwise convert the response to the structured format. Only do this when the native
+        # parse above didn't already produce a result, else a native-structured provider that
+        # returns valid `parsed` plus natural-language `content` has its good result clobbered.
+        if memory_search is None and isinstance(response.content, str):
             try:
                 memory_search = parse_response_model_str(response.content, MemorySearchResponse)  # type: ignore
 
