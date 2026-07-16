@@ -1,6 +1,6 @@
 [project]
 name = "agno"
-version = "2.7.2"
+version = "2.7.3"
 description = "The programming language for agentic software."
 requires-python = ">=3.9,<4"
 readme = "README.md"
@@ -138,7 +138,9 @@ notion = ["notion-client"]
 opencv = ["opencv-python"]
 oxylabs = ["oxylabs"]
 parallel = ["parallel-web>=1.0"]
+plivo = ["plivo"]
 psycopg = ["psycopg-binary", "psycopg"]
+redmine = ["python-redmine"]
 redshift = ["redshift-connector"]
 reportlab = ["reportlab"]
 salesforce = ["simple-salesforce"]
@@ -168,6 +170,7 @@ postgres = ["psycopg-binary"]
 redis = ["redis", "redisvl>=0.12.1"]
 sql = ["sqlalchemy"]
 sqlite = ["sqlalchemy", "aiosqlite"]
+valkey = ["valkey-glide-sync>=2.1.0"]
 
 # Dependencies for Vector databases
 cassandra = ["cassio"]
@@ -282,7 +285,9 @@ tools = [
   "agno[opencv]",
   "agno[oxylabs]",
   "agno[parallel]",
+  "agno[plivo]",
   "agno[psycopg]",
+  "agno[redmine]",
   "agno[redshift]",
   "agno[reportlab]",
   "agno[salesforce]",
@@ -314,6 +319,7 @@ storage = [
   "agno[redis]",  # also listed under vectordbs (redis serves both roles)
   "agno[sql]",
   "agno[sqlite]",
+  "agno[valkey]",  # also listed under vectordbs (valkey serves both roles)
 ]
 
 # All vector databases
@@ -333,6 +339,7 @@ vectordbs = [
   "agno[singlestore]",
   "agno[surrealdb]",
   "agno[upstash]",
+  "agno[valkey]",  # also listed under storage (valkey serves both roles)
   "agno[weaviate]",
 ]
 
@@ -567,6 +574,7 @@ module = [
   "pinecone.*",
   "portkey_ai.*",
   "playwright.sync_api.*",
+  "plivo.*",
   "psycopg.*",
   "pyarrow.*",
   "pycountry.*",
@@ -620,11 +628,13 @@ module = [
   "zep_cloud.*",
   "oxylabs.*",
   "parallel.*",
+  "redminelib.*",
   "redshift_connector.*",
   "reportlab.*",
   "surrealdb.*",
   "trafilatura.*",
   "xlrd.*",
-  "celpy.*"
+  "celpy.*",
+  "glide_sync.*"
 ]
 ignore_missing_imports = true

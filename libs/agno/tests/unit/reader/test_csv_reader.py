@@ -321,3 +321,17 @@ async def test_async_read_path_with_custom_encoding(temp_dir):
     content = documents[0].content
     assert "José" in content
     assert "São Paulo" in content
+
+
+def test_default_chunking_strategy_is_not_shared_between_instances():
+    """Each CSVReader() created without an explicit chunking_strategy must get
+    its own RowChunking instance, not a shared mutable default constructed
+    once at import time."""
+    reader_a = CSVReader()
+    reader_b = CSVReader()
+
+    assert reader_a.chunking_strategy is not reader_b.chunking_strategy
+
+    reader_a.chunking_strategy.skip_header = True
+
+    assert reader_b.chunking_strategy.skip_header is False
