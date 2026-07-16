@@ -19,10 +19,12 @@ class OxylabsTools(Toolkit):
         self,
         username: Optional[str] = None,
         password: Optional[str] = None,
+        markdown: bool = False,
         **kwargs,
     ):
         self.username = username or getenv("OXYLABS_USERNAME")
         self.password = password or getenv("OXYLABS_PASSWORD")
+        self.markdown = markdown
 
         if not self.username or not self.password:
             raise ValueError(
@@ -299,15 +301,16 @@ class OxylabsTools(Toolkit):
             log_error(error_msg)
             return self._error_response("search_amazon_products", error_msg, {"query": query})
 
-    def scrape_website(self, url: str, render_javascript: bool = False) -> str:
-        """Scrape content from any website URL and return full Markdown content.
+    def scrape_website(self, url: str, render_javascript: bool = False, markdown: Optional[bool] = None) -> str:
+        """Scrape content from any website URL.
 
         Args:
             url: Website URL to scrape (must start with http:// or https://)
             render_javascript: Whether to enable JavaScript rendering for dynamic content (default: False)
+            markdown: Whether to return content as Markdown instead of parsed HTML (default: uses constructor setting)
 
         Returns:
-            JSON containing full Markdown content of the scraped website
+            JSON containing scraped content (Markdown if markdown=True, otherwise parsed HTML)
         """
         try:
             if not url or not isinstance(url, str):
@@ -329,40 +332,53 @@ class OxylabsTools(Toolkit):
             if not isinstance(render_javascript, bool):
                 return self._error_response("scrape_website", "render_javascript must be a boolean (True/False)")
 
-            log_debug(f"Website scraping: {url} (JS rendering: {render_javascript})")
+            use_markdown = markdown if markdown is not None else self.markdown
 
-            response: Response = self.client.universal.scrape_url(
-                url=url,
-                render=render.HTML if render_javascript else None,
-                markdown=True,
-            )
+            log_debug(f"Website scraping: {url} (JS rendering: {render_javascript}, markdown: {use_markdown})")
 
-            content_info = {"url": url, "javascript_rendered": render_javascript}
+            response: Response
+            if use_markdown:
+                response = self.client.universal.scrape_url(
+                    url=url,
+                    render=render.HTML if render_javascript else None,
+                    markdown=True,
+                )
+            else:
+                response = self.client.universal.scrape_url(
+                    url=url,
+                    render=render.HTML if render_javascript else None,
+                    parse=True,
+                )
+
+            content_info = {"url": url, "javascript_rendered": render_javascript, "markdown": use_markdown}
 
             if response.results and len(response.results) > 0:
                 result = response.results[0]
                 content = result.content
                 status_code = getattr(result, "status_code", None)
 
-                markdown_content = ""
+                scraped_content = ""
                 content_length = 0
 
                 if content:
                     try:
                         content_str = str(content)
                         content_length = len(content_str)
-                        markdown_content = content_str
+                        if use_markdown:
+                            scraped_content = content_str
+                        else:
+                            scraped_content = content_str[:1000] if content_length > 1000 else content_str
                         content_info["scraped"] = True
                     except Exception as e:
                         log_debug(f"Could not process content: {e}")
-                        markdown_content = "Content available but processing failed"
+                        scraped_content = "Content available but processing failed"
                         content_info["scraped"] = False
 
                 content_info.update(
                     {
                         "status_code": status_code,
                         "content_length": content_length,
-                        "markdown_content": markdown_content,
+                        "content": scraped_content.strip() if not use_markdown else scraped_content,
                         "has_content": content_length > 0,
                     }
                 )
