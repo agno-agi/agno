@@ -1,3 +1,30 @@
+"""
+OxylabsTools - Web scraping toolkit powered by Oxylabs Web Scraper API.
+
+Setup:
+    1. Sign up for an Oxylabs account at https://oxylabs.io/
+    2. Get your credentials from the Oxylabs dashboard
+    3. Set environment variables or pass credentials directly:
+        - OXYLABS_USERNAME: Your Oxylabs username
+        - OXYLABS_PASSWORD: Your Oxylabs password
+
+Installation:
+    pip install oxylabs
+
+Example:
+    ```python
+    from agno.agent import Agent
+    from agno.tools.oxylabs import OxylabsTools
+
+    agent = Agent(tools=[OxylabsTools()])
+    agent.print_response("Search Google for 'latest AI news'")
+
+    # For markdown output from website scraping
+    agent = Agent(tools=[OxylabsTools(markdown=True)])
+    agent.print_response("Scrape the content from https://example.com")
+    ```
+"""
+
 import json
 from os import getenv
 from typing import Any, Callable, Dict, List, Optional
@@ -15,6 +42,19 @@ except ImportError:
 
 
 class OxylabsTools(Toolkit):
+    """
+    OxylabsTools provides web scraping capabilities using the Oxylabs Web Scraper API.
+
+    Supports Google search, Amazon product lookup, Amazon search, and general website scraping
+    with optional JavaScript rendering and Markdown output.
+
+    Args:
+        username (Optional[str]): Oxylabs username. Falls back to OXYLABS_USERNAME env var.
+        password (Optional[str]): Oxylabs password. Falls back to OXYLABS_PASSWORD env var.
+        markdown (bool): Default output format for scrape_website. If True, returns Markdown;
+            if False, returns parsed HTML. Default: False.
+    """
+
     def __init__(
         self,
         username: Optional[str] = None,
@@ -76,7 +116,8 @@ class OxylabsTools(Toolkit):
             if response.results and len(response.results) > 0:
                 result = response.results[0]
 
-                # Try parsed content first
+                # SDK returns results in different formats depending on parse mode
+                # Try content_parsed first (structured object), fall back to content (dict)
                 if hasattr(result, "content_parsed") and result.content_parsed:
                     content = result.content_parsed
                     if hasattr(content, "results") and content.results:
@@ -93,6 +134,7 @@ class OxylabsTools(Toolkit):
                                 }
                             )
 
+                # Fallback to dict-based content if parsed object unavailable
                 if not search_results and hasattr(result, "content"):
                     raw_content = result.content
                     if isinstance(raw_content, dict) and "results" in raw_content:
@@ -156,6 +198,8 @@ class OxylabsTools(Toolkit):
             if response.results and len(response.results) > 0:
                 result = response.results[0]
 
+                # SDK returns results in different formats depending on parse mode
+                # Try content (dict) first, fall back to content_parsed (structured object)
                 if hasattr(result, "content") and result.content:
                     content = result.content
                     if isinstance(content, dict):
@@ -171,6 +215,7 @@ class OxylabsTools(Toolkit):
                                 "description": content.get("description", "").strip(),
                                 "stock_status": content.get("stock", "").strip(),
                                 "brand": content.get("brand", "").strip(),
+                                # Limit arrays to avoid overwhelming LLM context
                                 "images": content.get("images", [])[:3],
                                 "bullet_points": content.get("bullet_points", [])[:5]
                                 if content.get("bullet_points")
@@ -178,6 +223,7 @@ class OxylabsTools(Toolkit):
                             }
                         )
 
+                # Fallback to parsed object if dict unavailable
                 elif hasattr(result, "content_parsed") and result.content_parsed:
                     content = result.content_parsed
                     product_info.update(
@@ -192,6 +238,7 @@ class OxylabsTools(Toolkit):
                             "description": getattr(content, "description", "").strip(),
                             "stock_status": getattr(content, "stock", "").strip(),
                             "brand": getattr(content, "brand", "").strip(),
+                            # Limit arrays to avoid overwhelming LLM context
                             "images": getattr(content, "images", [])[:3],
                             "bullet_points": getattr(content, "bullet_points", [])[:5]
                             if getattr(content, "bullet_points", None)
@@ -247,6 +294,8 @@ class OxylabsTools(Toolkit):
             if response.results and len(response.results) > 0:
                 result = response.results[0]
 
+                # SDK returns results in different formats depending on parse mode
+                # Try content (dict) first, fall back to content_parsed (structured object)
                 if hasattr(result, "content") and result.content:
                     content = result.content
                     if isinstance(content, dict) and "results" in content:
@@ -267,6 +316,7 @@ class OxylabsTools(Toolkit):
                                 }
                             )
 
+                # Fallback to parsed object if dict unavailable
                 elif hasattr(result, "content_parsed") and result.content_parsed:
                     content = result.content_parsed
                     if hasattr(content, "results") and content.results:
@@ -336,6 +386,7 @@ class OxylabsTools(Toolkit):
 
             log_debug(f"Website scraping: {url} (JS rendering: {render_javascript}, markdown: {use_markdown})")
 
+            # Oxylabs API uses mutually exclusive options: markdown=True OR parse=True
             response: Response
             if use_markdown:
                 response = self.client.universal.scrape_url(
@@ -365,8 +416,10 @@ class OxylabsTools(Toolkit):
                         content_str = str(content)
                         content_length = len(content_str)
                         if use_markdown:
+                            # Return full markdown content
                             scraped_content = content_str
                         else:
+                            # Truncate parsed HTML to avoid overwhelming LLM context
                             scraped_content = content_str[:1000] if content_length > 1000 else content_str
                         content_info["scraped"] = True
                     except Exception as e:
@@ -378,6 +431,7 @@ class OxylabsTools(Toolkit):
                     {
                         "status_code": status_code,
                         "content_length": content_length,
+                        # Don't strip markdown - whitespace may be semantically meaningful
                         "content": scraped_content.strip() if not use_markdown else scraped_content,
                         "has_content": content_length > 0,
                     }
@@ -398,6 +452,15 @@ class OxylabsTools(Toolkit):
             return self._error_response("scrape_website", error_msg, {"url": url})
 
     def _error_response(self, tool_name: str, error_message: str, context: Optional[Dict[str, Any]] = None) -> str:
-        """Generate a standardized error response."""
+        """Generate a standardized JSON error response.
+
+        Args:
+            tool_name (str): Name of the tool that encountered the error.
+            error_message (str): Human-readable error description.
+            context (Optional[Dict[str, Any]]): Additional context about the error.
+
+        Returns:
+            str: JSON string with tool name, error message, and context.
+        """
         error_data = {"tool": tool_name, "error": error_message, "context": context or {}}
         return json.dumps(error_data, indent=2)
