@@ -97,7 +97,10 @@ class CalculatorTools(Toolkit):
         Returns:
             str: JSON string of the result.
         """
-        result = math.pow(a, b)
+        try:
+            result = math.pow(a, b)
+        except (OverflowError, ValueError) as e:
+            return json.dumps({"operation": "exponentiation", "error": str(e), "result": "Error"})
         log_debug(f"Raising {a} to the power of {b} to get {result}")
         return json.dumps({"operation": "exponentiation", "result": result})
 

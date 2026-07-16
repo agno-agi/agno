@@ -149,6 +149,14 @@ def test_exponentiate_operation(calculator_tools):
     result_data = json.loads(result)
     assert result_data["result"] == 6.25
 
+    # Overflow returns a JSON error instead of raising (like the sibling operations)
+    result_data = json.loads(calculator_tools.exponentiate(2.0, 10000.0))
+    assert "error" in result_data
+
+    # Math domain error (0 ** -1) is handled the same way
+    result_data = json.loads(calculator_tools.exponentiate(0.0, -1.0))
+    assert "error" in result_data
+
 
 def test_factorial_operation(calculator_tools):
     """Test factorial operation."""
