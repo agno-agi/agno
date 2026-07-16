@@ -147,6 +147,7 @@ salesforce = ["simple-salesforce"]
 scavio = ["scavio"]
 scrapegraph = ["scrapegraph-py>=2.0.0"]
 seltz = ["seltz>=0.2.0"]
+superserve = ["superserve"]
 tavily = ["tavily-python>=0.7.9"]
 telegram = ["pyTelegramBotAPI>=4.32.0", "aiohttp"]
 todoist = ["todoist-api-python"]
@@ -294,6 +295,7 @@ tools = [
   "agno[scavio]",
   "agno[scrapegraph]",
   "agno[seltz]",
+  "agno[superserve]",
   "agno[tavily]",
   "agno[telegram]",
   "agno[todoist]",
@@ -507,6 +509,7 @@ module = [
   "crawl4ai.*",
   "daytona.*",
   "daytona_api_client.*",
+  "superserve.*",
   "discord.*",
   "docker.*",
   "docling.*",
