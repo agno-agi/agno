@@ -64,6 +64,7 @@ from agno.os.utils import (
 from agno.registry import Registry
 from agno.run.agent import RunErrorEvent, RunOutput
 from agno.run.base import RunStatus
+from agno.utils.component_versioning import get_pinned_component_version
 from agno.utils.log import log_debug, log_error, log_warning
 from agno.utils.serialize import json_serializer
 
@@ -1059,6 +1060,32 @@ def get_agent_router(
                 component_type="agents",
                 component_id=agent_id,
             )
+
+        if not isinstance(agent, RemoteAgent):
+            get_run_output = getattr(agent, "aget_run_output", None)
+            existing_run = (
+                await get_run_output(run_id=run_id, session_id=session_id, user_id=scoped_user_id or user_id)
+                if callable(get_run_output)
+                else None
+            )
+            if existing_run is not None:
+                pinned_version = get_pinned_component_version(
+                    existing_run.metadata,
+                    component_type="agent",
+                    component_id=agent_id,
+                )
+                if pinned_version is not None and pinned_version != getattr(agent, "_version", None):
+                    agent = await resolve_agent(
+                        agent_id,
+                        os.agents,
+                        factory.db if factory else os.db,
+                        os.registry,
+                        version=pinned_version,
+                        request=request,
+                        user_id=user_id,
+                        session_id=session_id,
+                    )
+                    _require_capability(agent, "acontinue_run", "continue_run")
 
         # Convert tools dict to ToolExecution objects if provided
         updated_tools = None

@@ -1103,6 +1103,8 @@ def _hydrate_from_graph(
 
     team = cls.from_dict(config, db=db, registry=registry)
     team.id = graph["component"]["component_id"]
+    team._version = graph["config"].get("version")
+    team._stage = graph["config"].get("stage")
     # Only fall back to the caller-provided db if the config didn't
     # reconstruct one. Otherwise we'd clobber any custom table names
     # (session_table, memory_table, ...) that were serialized with the team.
@@ -1124,8 +1126,10 @@ def _hydrate_from_graph(
         member_type = link_meta.get("type")
 
         if member_type == "agent":
-            agent = Agent.from_dict(child_config)
+            agent = Agent.from_dict(child_config, registry=registry)
             agent.id = child_graph["component"]["component_id"]
+            agent._version = child_graph["config"].get("version")
+            agent._stage = child_graph["config"].get("stage")
             if agent.db is None:
                 agent.db = db
             team.members.append(agent)
@@ -1158,8 +1162,17 @@ def load(
     Returns:
         The team loaded from the database with hydrated members, or None if not found.
     """
-    # Use graph to load team + all members in a single DB call
-    graph = db.load_component_graph(id, version=version, label=label)
+    # Use graph to load team + all members in a single DB call.
+    # Resolve labels via get_config first because some DB implementations
+    # do not yet accept ``label=...`` on load_component_graph().
+    resolved_version = version
+    if resolved_version is None and label is not None:
+        data = db.get_config(component_id=id, label=label)
+        if data is None:
+            return None
+        resolved_version = data.get("version")
+
+    graph = db.load_component_graph(id, version=resolved_version)
     if graph is None:
         return None
 

@@ -430,6 +430,20 @@ class TestWorkflowLoad:
 
         mock_db.get_config.assert_called_once_with(component_id="labeled-workflow", label="production", version=None)
 
+    def test_load_sets_component_metadata(self, mock_db):
+        """Test load preserves component version metadata."""
+        mock_db.get_config.return_value = {
+            "config": {"id": "meta-workflow", "name": "Meta Workflow"},
+            "version": 2,
+            "stage": "published",
+        }
+
+        workflow = Workflow.load(id="meta-workflow", db=mock_db)
+
+        assert workflow is not None
+        assert workflow._version == 2
+        assert workflow._stage == "published"
+
     def test_load_returns_none_when_not_found(self, mock_db):
         """Test load returns None when workflow not found."""
         mock_db.get_config.return_value = None
@@ -529,6 +543,22 @@ class TestGetWorkflowById:
         assert workflow is not None
         assert workflow.id == "found-workflow"
         assert workflow.name == "Found Workflow"
+        assert workflow._version == 1
+
+    def test_get_workflow_by_id_sets_component_metadata(self, mock_db):
+        """Test get_workflow_by_id preserves component version metadata."""
+        mock_db.get_config.return_value = {
+            "config": {"id": "meta-workflow", "name": "Meta Workflow"},
+            "version": 3,
+            "stage": "published",
+        }
+        mock_db.get_links.return_value = []
+
+        workflow = get_workflow_by_id(db=mock_db, id="meta-workflow")
+
+        assert workflow is not None
+        assert workflow._version == 3
+        assert workflow._stage == "published"
 
     def test_get_workflow_by_id_with_version(self, mock_db):
         """Test get_workflow_by_id retrieves specific version."""

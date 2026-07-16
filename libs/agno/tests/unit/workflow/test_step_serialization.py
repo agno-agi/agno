@@ -235,8 +235,68 @@ class TestStepFromDict:
             mock_db = MagicMock()
             step = Step.from_dict(data, registry=registry, db=mock_db)
 
-            mock_get_agent.assert_called_once_with(db=mock_db, id="db-agent", registry=registry)
+            mock_get_agent.assert_called_once_with(db=mock_db, id="db-agent", version=None, registry=registry)
             assert step.agent is mock_db_agent
+
+    def test_from_dict_agent_uses_linked_child_version(self):
+        """Test from_dict honors pinned child agent versions from workflow links."""
+        mock_agent = MagicMock()
+        mock_agent.id = "db-agent"
+        data = {"type": "Step", "name": "db-step", "agent_id": "db-agent"}
+        links = [
+            {"link_kind": "step_agent", "link_key": "db-step", "child_component_id": "db-agent", "child_version": 7}
+        ]
+
+        with patch("agno.agent.agent.get_agent_by_id") as mock_get_agent:
+            mock_get_agent.return_value = mock_agent
+            step = Step.from_dict(data, db=MagicMock(), links=links)
+
+            mock_get_agent.assert_called_once()
+            assert mock_get_agent.call_args.kwargs["version"] == 7
+            assert step.agent is mock_agent
+
+    def test_from_dict_pinned_agent_does_not_fallback_to_registry(self):
+        """Test a missing pinned agent version cannot silently drift to registry state."""
+        data = {"type": "Step", "name": "db-step", "agent_id": "db-agent"}
+        links = [
+            {"link_kind": "step_agent", "link_key": "db-step", "child_component_id": "db-agent", "child_version": 7}
+        ]
+        registry = MagicMock()
+        registry.get_agent.return_value = MagicMock()
+
+        with patch("agno.agent.agent.get_agent_by_id", return_value=None), pytest.raises(ValueError):
+            Step.from_dict(data, db=MagicMock(), links=links, registry=registry)
+
+        registry.get_agent.assert_not_called()
+
+    def test_from_dict_team_uses_linked_child_version(self):
+        """Test from_dict honors pinned child team versions from workflow links."""
+        mock_team = MagicMock()
+        mock_team.id = "db-team"
+        data = {"type": "Step", "name": "team-step", "team_id": "db-team"}
+        links = [
+            {"link_kind": "step_team", "link_key": "team-step", "child_component_id": "db-team", "child_version": 5}
+        ]
+
+        with patch("agno.team.team.Team.load") as mock_load_team:
+            mock_load_team.return_value = mock_team
+            step = Step.from_dict(data, db=MagicMock(), links=links)
+
+            mock_load_team.assert_called_once()
+            assert mock_load_team.call_args.kwargs["version"] == 5
+            assert step.team is mock_team
+
+    def test_from_dict_pinned_team_does_not_fallback_to_registry(self):
+        """Test a missing pinned team version cannot silently drift to registry state."""
+        data = {"type": "Step", "name": "db-step", "team_id": "db-team"}
+        links = [{"link_kind": "step_team", "link_key": "db-step", "child_component_id": "db-team", "child_version": 5}]
+        registry = MagicMock()
+        registry.get_team.return_value = MagicMock()
+
+        with patch("agno.team.team.Team.load", return_value=None), pytest.raises(ValueError):
+            Step.from_dict(data, db=MagicMock(), links=links, registry=registry)
+
+        registry.get_team.assert_not_called()
 
     def test_from_dict_team_resolved_from_registry(self):
         """Test from_dict resolves team from registry before DB."""

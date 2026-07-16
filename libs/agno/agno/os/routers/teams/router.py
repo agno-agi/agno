@@ -65,6 +65,7 @@ from agno.run.team import TeamRunOutput
 from agno.team.factory import TeamFactory
 from agno.team.remote import RemoteTeam
 from agno.team.team import Team
+from agno.utils.component_versioning import get_pinned_component_version
 from agno.utils.log import log_debug, log_warning, logger
 from agno.utils.serialize import json_serializer
 
@@ -1067,6 +1068,30 @@ def get_team_router(
                 component_type="teams",
                 component_id=team_id,
             )
+
+        if not isinstance(team, RemoteTeam):
+            existing_run = await team.aget_run_output(
+                run_id=run_id, session_id=session_id, user_id=scoped_user_id or user_id
+            )
+            if existing_run is not None:
+                pinned_version = get_pinned_component_version(
+                    existing_run.metadata,
+                    component_type="team",
+                    component_id=team_id,
+                )
+                if pinned_version is not None and pinned_version != getattr(team, "_version", None):
+                    team = await resolve_team(
+                        team_id,
+                        os.teams,
+                        factory.db if factory else os.db,
+                        registry,
+                        version=pinned_version,
+                        request=request,
+                        user_id=user_id,
+                        session_id=session_id,
+                    )
+                    if not isinstance(team, RemoteTeam):
+                        team.store_member_responses = True
 
         # Convert requirements dict to RunRequirement objects if provided
         updated_requirements = None

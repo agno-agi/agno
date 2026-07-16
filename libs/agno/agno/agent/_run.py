@@ -90,6 +90,7 @@ from agno.utils.agent import (
     wait_for_open_threads,
     wait_for_thread_tasks_stream,
 )
+from agno.utils.component_versioning import pin_component_version_metadata
 from agno.utils.events import (
     add_error_event,
     create_run_cancelled_event,
@@ -1413,6 +1414,13 @@ def run_dispatch(
     response_format = get_response_format(agent, run_context=run_context) if agent.parser_model is None else None
 
     # Create a new run_response for this attempt
+    run_context.metadata = pin_component_version_metadata(
+        run_context.metadata,
+        component_type="agent",
+        component_id=agent.id,
+        version=getattr(agent, "_version", None),
+    )
+
     run_response = RunOutput(
         run_id=run_id,
         session_id=session_id,
@@ -2864,6 +2872,13 @@ def arun_dispatch(  # type: ignore
     response_format = get_response_format(agent, run_context=run_context) if agent.parser_model is None else None
 
     # Create a new run_response for this attempt
+    run_context.metadata = pin_component_version_metadata(
+        run_context.metadata,
+        component_type="agent",
+        component_id=agent.id,
+        version=getattr(agent, "_version", None),
+    )
+
     run_response = RunOutput(
         run_id=run_id,
         session_id=session_id,
