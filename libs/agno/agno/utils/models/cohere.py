@@ -11,8 +11,8 @@ def _format_images_for_message(message: Message, images: Sequence[Image]) -> Lis
     Format an image into the format expected by WatsonX.
     """
 
-    # Create a default message content with text
-    message_content_with_image: List[Dict[str, Any]] = [{"type": "text", "text": message.content}]
+    # Create a default message content with text (content may be None when only images are sent)
+    message_content_with_image: List[Dict[str, Any]] = [{"type": "text", "text": message.content or ""}]
 
     # Add images to the message content
     for image in images:
@@ -79,8 +79,9 @@ def format_messages(messages: List[Message], compress_tool_results: bool = False
         }
 
         if message.images is not None and len(message.images) > 0:
-            # Ignore non-string message content
-            if isinstance(message.content, str):
+            # Build the parts list when content is None (the default) or a str; skip only
+            # when content is already a list of parts.
+            if message.content is None or isinstance(message.content, str):
                 message_content_with_image = _format_images_for_message(message=message, images=message.images)
                 if len(message_content_with_image) > 1:
                     message_dict["content"] = message_content_with_image
