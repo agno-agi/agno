@@ -293,9 +293,12 @@ class WorkflowSession:
                 else:
                     messages_from_history = messages_from_history[-limit:]
 
-            # Remove tool result messages that don't have an associated assistant message with tool calls
-            while len(messages_from_history) > 0 and messages_from_history[0].role == "tool":
-                messages_from_history.pop(0)
+            # Remove tool result messages that don't have an associated assistant message with tool
+            # calls. Skip past a leading system message (prepended above) so an orphan tool at index 1
+            # is still stripped instead of left as [system, tool, ...] (a hard provider API error).
+            start = 1 if messages_from_history and messages_from_history[0].role == "system" else 0
+            while len(messages_from_history) > start and messages_from_history[start].role == "tool":
+                messages_from_history.pop(start)
 
         # If limit is not set, return all messages
         else:
@@ -407,9 +410,12 @@ class WorkflowSession:
                 else:
                     messages_from_history = messages_from_history[-limit:]
 
-            # Remove tool result messages that don't have an associated assistant message with tool calls
-            while len(messages_from_history) > 0 and messages_from_history[0].role == "tool":
-                messages_from_history.pop(0)
+            # Remove tool result messages that don't have an associated assistant message with tool
+            # calls. Skip past a leading system message (prepended above) so an orphan tool at index 1
+            # is still stripped instead of left as [system, tool, ...] (a hard provider API error).
+            start = 1 if messages_from_history and messages_from_history[0].role == "system" else 0
+            while len(messages_from_history) > start and messages_from_history[start].role == "tool":
+                messages_from_history.pop(start)
         else:
             for run_response in session_runs:
                 if not (run_response and run_response.messages):
