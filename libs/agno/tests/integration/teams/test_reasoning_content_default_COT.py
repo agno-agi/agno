@@ -75,7 +75,7 @@ def test_reasoning_true_streaming(shared_db):
 
     # Consume all streaming responses
     reasoning_content_found = False
-    for event in team.run("What is the value of 5! (factorial)?", stream=True, stream_intermediate_steps=True):
+    for event in team.run("What is the value of 5! (factorial)?", stream=True, stream_events=True):
         if hasattr(event, "reasoning_content"):
             reasoning_content_found = True
 
@@ -142,7 +142,7 @@ def test_reasoning_model_streaming(shared_db):
     )
 
     # Consume all streaming responses
-    _ = list(team.run("What is the value of 5! (factorial)?", stream=True, stream_intermediate_steps=True))
+    _ = list(team.run("What is the value of 5! (factorial)?", stream=True, stream_events=True))
     run_response = team.get_last_run_output()
     # Print the reasoning_content when received
     if run_response and hasattr(run_response, "reasoning_content") and run_response.reasoning_content:

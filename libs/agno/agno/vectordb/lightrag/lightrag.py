@@ -1,8 +1,9 @@
 import asyncio
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 
 import httpx
 
+from agno.filters import FilterExpr
 from agno.knowledge.document import Document
 from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.vectordb.base import VectorDb
@@ -21,9 +22,14 @@ class LightRag(VectorDb):
         api_key: Optional[str] = None,
         auth_header_name: str = "X-API-KEY",
         auth_header_format: str = "{api_key}",
+        name: Optional[str] = None,
+        description: Optional[str] = None,
     ):
         self.server_url = server_url
         self.api_key = api_key
+        # Initialize base class with name and description
+        super().__init__(name=name, description=description)
+
         self.auth_header_name = auth_header_name
         self.auth_header_format = auth_header_format
 
@@ -87,19 +93,23 @@ class LightRag(VectorDb):
         """Async upsert documents into the vector database"""
         pass
 
-    def search(self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None) -> List[Document]:
+    def search(
+        self, query: str, limit: int = 5, filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None
+    ) -> List[Document]:
         result = asyncio.run(self.async_search(query, limit=limit, filters=filters))
         return result if result is not None else []
 
     async def async_search(
-        self, query: str, limit: Optional[int] = None, filters: Optional[Dict[str, Any]] = None
+        self, query: str, limit: Optional[int] = None, filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None
     ) -> Optional[List[Document]]:
         mode: str = "hybrid"  # Default mode, can be "local", "global", or "hybrid"
+        if filters is not None:
+            log_warning("Filters are not supported in LightRAG. No filters will be applied.")
         try:
             async with httpx.AsyncClient(timeout=30.0) as client:
                 response = await client.post(
                     f"{self.server_url}/query",
-                    json={"query": query, "mode": "hybrid"},
+                    json={"query": query, "mode": "hybrid", "include_references": True},
                     headers=self._get_headers(),
                 )
 
@@ -109,16 +119,13 @@ class LightRag(VectorDb):
                 return self._format_lightrag_response(result, query, mode)
 
         except httpx.RequestError as e:
-            log_error(f"HTTP Request Error: {type(e).__name__}: {str(e)}")
+            log_error(f"HTTP Request Error: {str(e)}")
             return []
         except httpx.HTTPStatusError as e:
-            log_error(f"HTTP Status Error: {e.response.status_code} - {e.response.text}")
+            log_error(f"HTTP Status Error: {str(e)}")
             return []
         except Exception as e:
-            log_error(f"Unexpected error during LightRAG server search: {type(e).__name__}: {str(e)}")
-            import traceback
-
-            log_error(f"Full traceback: {traceback.format_exc()}")
+            log_error(f"Unexpected error during LightRAG server search: {str(e)}")
             return None
 
     def drop(self) -> None:
@@ -168,7 +175,7 @@ class LightRag(VectorDb):
         try:
             return asyncio.run(self.async_delete_by_external_id(external_id))
         except Exception as e:
-            log_error(f"Error in sync delete_by_external_id: {e}")
+            log_error(f"Error in sync delete_by_external_id: {str(e)}")
             return False
 
     async def async_delete_by_external_id(self, external_id: str) -> bool:
@@ -186,7 +193,7 @@ class LightRag(VectorDb):
                 response.raise_for_status()
                 return True
         except Exception as e:
-            log_error(f"Error deleting document {external_id}: {e}")
+            log_error(f"Error deleting document {external_id}: {str(e)}")
             return False
 
     # We use this method when content is coming from unsupported file types that LightRAG can't process
@@ -312,7 +319,7 @@ class LightRag(VectorDb):
             async with httpx.AsyncClient(timeout=30.0) as client:
                 response = await client.post(
                     f"{self.server_url}/query",
-                    json={"query": query, "mode": "hybrid"},
+                    json={"query": query, "mode": "hybrid", "include_references": True},
                     headers=self._get_headers(),
                 )
 
@@ -322,16 +329,13 @@ class LightRag(VectorDb):
                 return self._format_lightrag_response(result, query, mode)
 
         except httpx.RequestError as e:
-            log_error(f"HTTP Request Error: {type(e).__name__}: {str(e)}")
+            log_error(f"HTTP Request Error: {str(e)}")
             return None
         except httpx.HTTPStatusError as e:
-            log_error(f"HTTP Status Error: {e.response.status_code} - {e.response.text}")
+            log_error(f"HTTP Status Error: {str(e)}")
             return None
         except Exception as e:
-            log_error(f"Unexpected error during LightRAG server search: {type(e).__name__}: {str(e)}")
-            import traceback
-
-            log_error(f"Full traceback: {traceback.format_exc()}")
+            log_error(f"Unexpected error during LightRAG server search: {str(e)}")
             return None
 
     def _format_lightrag_response(self, result: Any, query: str, mode: str) -> List[Document]:
@@ -339,10 +343,11 @@ class LightRag(VectorDb):
         # LightRAG server returns a dict with 'response' key, but we expect a list of documents
         # Convert the response to the expected format
         if isinstance(result, dict) and "response" in result:
-            # Wrap the response in a Document object
-            return [
-                Document(content=result["response"], meta_data={"source": "lightrag", "query": query, "mode": mode})
-            ]
+            meta_data = {"source": "lightrag", "query": query, "mode": mode}
+            # Preserve references from LightRAG response for document citations
+            if "references" in result:
+                meta_data["references"] = result["references"]
+            return [Document(content=result["response"], meta_data=meta_data)]
         elif isinstance(result, list):
             # Convert list items to Document objects
             documents = []
@@ -372,3 +377,7 @@ class LightRag(VectorDb):
             metadata (Dict[str, Any]): The metadata to update
         """
         raise NotImplementedError("update_metadata not supported for LightRag - use LightRag's native methods")
+
+    def get_supported_search_types(self) -> List[str]:
+        """Get the supported search types for this vector database."""
+        return []  # LightRag doesn't use SearchType enum

@@ -1,5 +1,5 @@
 <div align="center" id="top">
-  <a href="https://docs.agno.com">
+  <a href="https://agno.com">
     <picture>
       <source media="(prefers-color-scheme: dark)" srcset="https://agno-public.s3.us-east-1.amazonaws.com/assets/logo-dark.svg">
       <source media="(prefers-color-scheme: light)" srcset="https://agno-public.s3.us-east-1.amazonaws.com/assets/logo-light.svg">
@@ -7,133 +7,81 @@
     </picture>
   </a>
 </div>
-<div align="center">
-  <a href="https://docs.agno.com">📚 Documentation</a> &nbsp;|&nbsp;
-  <a href="https://docs.agno.com/examples/introduction">💡 Examples</a> &nbsp;|&nbsp;
-  <a href="https://www.agno.com/?utm_source=github&utm_medium=readme&utm_campaign=agno-github&utm_content=header">🏠 Website</a> &nbsp;|&nbsp;
-  <a href="https://github.com/agno-agi/agno/stargazers">🌟 Star Us</a>
-</div>
 
-## What is Agno?
+<p align="center">
+  Build, run, and manage agent platforms.<br/>
+</p>
 
-[Agno](https://docs.agno.com) is a high-performance runtime for multi-agent systems. Use it to build, run and manage secure multi-agent systems in your cloud.
+## Introduction
 
-Agno gives you the fastest framework for building agents with session management, memory, knowledge, human in the loop and MCP support. You can put agents together as an autonomous multi-agent team, or build step-based agentic workflows for full control over complex multi-step processes.
+Agno is a framework and runtime for agent platforms. Build agents, run them as a service, manage your platform using a web UI.
 
-In 10 lines of code, we can build an Agent that will fetch the top stories from HackerNews and summarize them.
+- Build your agent platform using the Agno SDK.
+- Run your agent platform using the AgentOS runtime.
+- Manage everything using the AgentOS UI.
 
-```python hackernews_agent.py
-from agno.agent import Agent
-from agno.models.anthropic import Claude
-from agno.tools.hackernews import HackerNewsTools
+Agno allows you to own your agent stack. Maintain control of your data, memory, and security posture (JWT-based RBAC), and turn your agent platform into a learning loop with simulations and usage data.
 
-agent = Agent(
-    model=Claude(id="claude-sonnet-4-0"),
-    tools=[HackerNewsTools()],
-    markdown=True,
-)
-agent.print_response("Summarize the top 5 stories on hackernews", stream=True)
+<img width="3192" height="2038" alt="demo-os" src="https://github.com/user-attachments/assets/6d21e6bc-111f-4b81-ba29-6550fead89b2" />
+
+## Get started
+
+Hand this prompt to your coding agent (Claude Code, Cursor, Codex):
+
+```text
+Help me set up my agent platform.
+
+Clone https://github.com/agno-agi/agentos-railway into a folder called
+agent-platform, cd in, read the README, and follow the get started guide.
 ```
 
-But the real advantage of Agno is its [AgentOS](https://docs.agno.com/agent-os/introduction) runtime:
+Your coding agent will set up your agent platform and run it locally using Docker, giving you a REST API for serving your agents, a Postgres database for storing your data and traces, an MCP server, and a control plane.
 
-1. You get a pre-built FastAPI app for running your agentic system, meaning you start building your product on day one. This is a remarkable advantage over other solutions or rolling your own.
-2. You also get a control plane which connects directly to your AgentOS for testing, monitoring and managing your system. This gives you unmatched visibility and control over your system.
-3. Your AgentOS runs in your cloud and you get complete data privacy because no data ever leaves your system. This is incredible for security conscious enterprises that can't send traces to external services.
+Deploying somewhere else? Use the same prompt but point it to a different repo. The starter templates are identical except for the deploy scripts: swap [agentos-railway](https://github.com/agno-agi/agentos-railway) for [agentos-docker](https://github.com/agno-agi/agentos-docker), [agentos-aws](https://github.com/agno-agi/agentos-aws), [agentos-gcp](https://github.com/agno-agi/agentos-gcp), [agentos-azure](https://github.com/agno-agi/agentos-azure), [agentos-fly](https://github.com/agno-agi/agentos-fly), [agentos-render](https://github.com/agno-agi/agentos-render), [agentos-modal](https://github.com/agno-agi/agentos-modal), or [agentos-helm](https://github.com/agno-agi/agentos-helm).
 
-For organizations building agents, Agno provides the complete solution. You get the fastest framework for building agents (speed of development and execution), a pre-built FastAPI app that lets you build your product on day one, and a control plane for managing your system.
+### Prefer to code by hand?
 
-We bring a novel architecture that no other framework provides, your AgentOS runs securely in your cloud, and the control plane connects directly to it from your browser. You don't need to send data to external services or pay retention costs, you get complete privacy and control.
+- [Build your first agent in 20 lines of code.](https://docs.agno.com/first-agent)
+- [Build your own agent platform.](https://docs.agno.com/agent-platform/overview)
+- [Read the docs.](https://docs.agno.com)
 
-## Getting started
+## Features
 
-If you're new to Agno, follow our [quickstart](https://docs.agno.com/introduction/quickstart) to build your first Agent and run it using the AgentOS.
+- [Production API](https://docs.agno.com/runtime/serve-as-api). 50+ endpoints with SSE and websockets to build a product on top.
+- [Storage](https://docs.agno.com/runtime/storage). Store sessions, memory, knowledge, and traces in your own database.
+- [100+ integrations](https://docs.agno.com/tools/toolkits/overview). Connect to GitHub, Slack, Postgres, and more using pre-built toolkits.
+- [Context Providers](https://docs.agno.com/runtime/context). Access live data from Slack, Drive, wikis, MCP, and custom sources.
+- [Human approval](https://docs.agno.com/runtime/human-approval). Pause runs for user confirmation. Block tools that require admin approval.
+- [Observability](https://docs.agno.com/runtime/observability). Monitor with OpenTelemetry tracing, run history, and audit logs.
+- [Security](https://docs.agno.com/runtime/security-and-auth). Get JWT-based RBAC and multi-user, multi-tenant isolation out of the box.
+- [Interfaces](https://docs.agno.com/runtime/interfaces). Expose your agents via Slack, Telegram, WhatsApp, Discord, AG-UI, A2A.
+- [Scheduling](https://docs.agno.com/runtime/scheduling). Cron-based scheduling and background jobs with no external infrastructure.
+- [Deploy anywhere](https://docs.agno.com/runtime/deploy). Run on any cloud platform that runs containers. Docker, Railway, AWS, GCP.
 
-After that, checkout the [examples gallery](https://docs.agno.com/examples/introduction) and build real-world applications with Agno.
+## Use Agno with your coding agent
 
-## Documentation, Community & More Examples
+Two options:
 
-- Docs: <a href="https://docs.agno.com" target="_blank" rel="noopener noreferrer">docs.agno.com</a>
-- Cookbook: <a href="https://github.com/agno-agi/agno/tree/main/cookbook" target="_blank" rel="noopener noreferrer">Cookbook</a>
-- Community forum: <a href="https://community.agno.com/" target="_blank" rel="noopener noreferrer">community.agno.com</a>
-- Discord: <a href="https://discord.gg/4MtYHHrgA8" target="_blank" rel="noopener noreferrer">discord</a>
+1. Recommended: Add Agno docs as an MCP server. Add [docs.agno.com/mcp](https://docs.agno.com/mcp) to your favourite coding agent.
+2. Add Agno docs as an indexed source. In Cursor: Settings → Indexing & Docs → Add `https://docs.agno.com/llms-full.txt`. Also works in VSCode, Windsurf, and similar tools.
 
-## Setup Your Coding Agent to Use Agno
+Read the full guide [here](https://docs.agno.com/coding-agents).
 
-For LLMs and AI assistants to understand and navigate Agno's documentation, we provide an [llms.txt](https://docs.agno.com/llms.txt) or [llms-full.txt](https://docs.agno.com/llms-full.txt) file.
+## Community
 
-This file is built for AI systems to efficiently parse and reference our documentation.
+- [X](https://x.com/AgnoAgi): follow for releases and demos
+- [Newsletter](https://www.agno.com/the-agno-loop-newsletter): monthly updates on what's shipping
 
-### IDE Integration
+## Contributing
 
-When building Agno agents, using Agno documentation as a source in your IDE is a great way to speed up your development. Here's how to integrate with Cursor:
+See the [contributing guide](https://github.com/agno-agi/agno/blob/main/CONTRIBUTING.md).
 
-1. In Cursor, go to the "Cursor Settings" menu.
-2. Find the "Indexing & Docs" section.
-3. Add `https://docs.agno.com/llms-full.txt` to the list of documentation URLs.
-4. Save the changes.
+## License
 
-Now, Cursor will have access to the Agno documentation. You can do the same with other IDEs like VSCode, Windsurf etc.
-
-## Performance
-
-At Agno, we're obsessed with performance. Why? because even simple AI workflows can spawn thousands of Agents. Scale that to a modest number of users and performance becomes a bottleneck. Agno is designed for building highly performant agentic systems:
-
-- Agent instantiation: ~3μs on average
-- Memory footprint: ~6.5Kib on average
-
-> Tested on an Apple M4 MacBook Pro.
-
-While an Agent's run-time is bottlenecked by inference, we must do everything possible to minimize execution time, reduce memory usage, and parallelize tool calls. These numbers may seem trivial at first, but our experience shows that they add up even at a reasonably small scale.
-
-### Instantiation Time
-
-Let's measure the time it takes for an Agent with 1 tool to start up. We'll run the evaluation 1000 times to get a baseline measurement.
-
-You should run the evaluation yourself on your own machine, please, do not take these results at face value.
-
-```shell
-# Setup virtual environment
-./scripts/perf_setup.sh
-source .venvs/perfenv/bin/activate
-# OR Install dependencies manually
-# pip install openai agno langgraph langchain_openai
-
-# Agno
-python evals/performance/instantiation_with_tool.py
-
-# LangGraph
-python evals/performance/other/langgraph_instantiation.py
-```
-
-> The following evaluation is run on an Apple M4 MacBook Pro. It also runs as a Github action on this repo.
-
-LangGraph is on the right, **let's start it first and give it a head start**.
-
-Agno is on the left, notice how it finishes before LangGraph gets 1/2 way through the runtime measurement, and hasn't even started the memory measurement. That's how fast Agno is.
-
-https://github.com/user-attachments/assets/ba466d45-75dd-45ac-917b-0a56c5742e23
-
-### Memory Usage
-
-To measure memory usage, we use the `tracemalloc` library. We first calculate a baseline memory usage by running an empty function, then run the Agent 1000x times and calculate the difference. This gives a (reasonably) isolated measurement of the memory usage of the Agent.
-
-We recommend running the evaluation yourself on your own machine, and digging into the code to see how it works. If we've made a mistake, please let us know.
-
-### Conclusion
-
-Agno agents are designed for performance and while we do share some benchmarks against other frameworks, we should be mindful that accuracy and reliability are more important than speed.
-
-Given that each framework is different and we won't be able to tune their performance like we do with Agno, for future benchmarks we'll only be comparing against ourselves.
-
-## Contributions
-
-We welcome contributions, read our [contributing guide](https://github.com/agno-agi/agno/blob/v2.0/CONTRIBUTING.md) to get started.
+Agno is distributed under the [Apache-2.0 license](LICENSE).
 
 ## Telemetry
 
-Agno logs which model an agent used so we can prioritize updates to the most popular providers. You can disable this by setting `AGNO_TELEMETRY=false` in your environment.
+Agno sends a telemetry event per agent run so we know which model providers to prioritize. Prompts, messages, and outputs are never sent. Disable by setting `AGNO_TELEMETRY=false`.
 
-<p align="left">
-  <a href="#top">⬆️ Back to Top</a>
-</p>
+<p align="right"><a href="#top">↑ Back to top</a></p>

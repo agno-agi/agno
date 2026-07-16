@@ -4,8 +4,8 @@ import pytest
 
 from agno.agent import Agent  # noqa
 from agno.models.nebius import Nebius
-from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.exa import ExaTools
+from agno.tools.websearch import WebSearchTools
 from agno.tools.yfinance import YFinanceTools
 
 NEBIUS_MODEL_ID = "Qwen/Qwen3-30B-A3B"
@@ -36,7 +36,7 @@ def test_tool_use_stream():
         telemetry=False,
     )
 
-    for chunk in agent.run("What is the current price of TSLA?", stream=True, stream_intermediate_steps=True):
+    for chunk in agent.run("What is the current price of TSLA?", stream=True, stream_events=True):
         if chunk.event in ["ToolCallStarted", "ToolCallCompleted"] and hasattr(chunk, "tool") and chunk.tool:  # type: ignore
             if chunk.tool.tool_name:  # type: ignore
                 tool_call_seen = True
@@ -74,7 +74,7 @@ async def test_async_tool_use_stream():
         telemetry=False,
     )
 
-    async for chunk in agent.arun("What is the current price of TSLA?", stream=True, stream_intermediate_steps=True):
+    async for chunk in agent.arun("What is the current price of TSLA?", stream=True, stream_events=True):
         if chunk.event in ["ToolCallStarted", "ToolCallCompleted"] and hasattr(chunk, "tool") and chunk.tool:  # type: ignore
             if chunk.tool.tool_name:  # type: ignore
                 tool_call_seen = True
@@ -109,7 +109,7 @@ def test_parallel_tool_calls():
 def test_multiple_tool_calls():
     agent = Agent(
         model=Nebius(id=NEBIUS_MODEL_ID),
-        tools=[YFinanceTools(cache_results=True), DuckDuckGoTools(cache_results=True)],
+        tools=[YFinanceTools(cache_results=True), WebSearchTools(cache_results=True)],
         markdown=True,
         telemetry=False,
     )

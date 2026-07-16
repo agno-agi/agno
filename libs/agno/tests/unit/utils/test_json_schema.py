@@ -1,5 +1,5 @@
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Literal, Optional, Union
 
 from pydantic import BaseModel
 
@@ -73,7 +73,7 @@ class UserProfileDataclass:
 
 # Test cases for get_json_type_for_py_type
 def test_get_json_type_for_py_type():
-    assert get_json_type_for_py_type("int") == "number"
+    assert get_json_type_for_py_type("int") == "integer"
     assert get_json_type_for_py_type("float") == "number"
     assert get_json_type_for_py_type("str") == "string"
     assert get_json_type_for_py_type("bool") == "boolean"
@@ -92,7 +92,7 @@ def test_is_origin_union_type():
 
 # Test cases for get_json_schema_for_arg
 def test_get_json_schema_for_arg_basic_types():
-    assert get_json_schema_for_arg(int) == {"type": "number"}
+    assert get_json_schema_for_arg(int) == {"type": "integer"}
     assert get_json_schema_for_arg(str) == {"type": "string"}
     assert get_json_schema_for_arg(bool) == {"type": "boolean"}
     assert get_json_schema_for_arg(type(None)) == {"type": "null"}
@@ -103,13 +103,74 @@ def test_get_json_schema_for_arg_collections():
     list_schema = get_json_schema_for_arg(List[str])
     assert list_schema == {"type": "array", "items": {"type": "string"}}
 
-    # Test dict type
+    # Test Dict[str, int] - typed dict
     dict_schema = get_json_schema_for_arg(Dict[str, int])
     assert dict_schema == {
         "type": "object",
         "propertyNames": {"type": "string"},
-        "additionalProperties": {"type": "number"},
+        "additionalProperties": {"type": "integer"},
     }
+
+
+def test_get_json_schema_for_arg_bare_dict():
+    """Test that bare dict allows arbitrary key-value pairs (issue #7175)."""
+    # Bare dict should allow any properties
+    bare_dict_schema = get_json_schema_for_arg(dict)
+    assert bare_dict_schema == {"type": "object", "additionalProperties": True}
+
+    # List of bare dicts
+    list_dict_schema = get_json_schema_for_arg(List[dict])
+    assert list_dict_schema == {
+        "type": "array",
+        "items": {"type": "object", "additionalProperties": True},
+    }
+
+    # Optional[dict] should have anyOf with the correct dict schema
+    optional_dict_schema = get_json_schema_for_arg(Optional[dict])
+    assert "anyOf" in optional_dict_schema
+    dict_variant = next(s for s in optional_dict_schema["anyOf"] if s.get("type") == "object")
+    assert dict_variant.get("additionalProperties") is True
+
+    # Union[dict, str] should have dict with correct schema
+    union_dict_schema = get_json_schema_for_arg(Union[dict, str])
+    assert "anyOf" in union_dict_schema
+    dict_variant = next(s for s in union_dict_schema["anyOf"] if s.get("type") == "object")
+    assert dict_variant.get("additionalProperties") is True
+
+    # Lowercase generic (Python 3.9+): list[dict]
+    list_dict_lower = get_json_schema_for_arg(list[dict])
+    assert list_dict_lower["type"] == "array"
+    assert list_dict_lower["items"].get("additionalProperties") is True
+
+
+def test_get_json_schema_bare_dict_in_function():
+    """Test bare dict as a function parameter generates correct schema."""
+    type_hints = {"data": dict}
+    param_descriptions = {"data": "Arbitrary key-value pairs"}
+
+    schema = get_json_schema(type_hints, param_descriptions)
+
+    assert schema["type"] == "object"
+    assert "properties" in schema
+    assert "data" in schema["properties"]
+
+    data_schema = schema["properties"]["data"]
+    assert data_schema["type"] == "object"
+    assert data_schema["additionalProperties"] is True
+    assert data_schema["description"] == "Arbitrary key-value pairs"
+
+
+def test_get_json_schema_typed_dict_unchanged():
+    """Ensure typed Dict[K, V] still works correctly (regression test)."""
+    # Dict[str, int] should use typed additionalProperties
+    typed_dict = get_json_schema_for_arg(Dict[str, int])
+    assert typed_dict["type"] == "object"
+    assert typed_dict["additionalProperties"] == {"type": "integer"}
+
+    # Lowercase dict[str, int] should work the same
+    typed_dict_lower = get_json_schema_for_arg(dict[str, int])
+    assert typed_dict_lower["type"] == "object"
+    assert typed_dict_lower["additionalProperties"] == {"type": "integer"}
 
 
 def test_get_json_schema_for_arg_union():
@@ -121,6 +182,32 @@ def test_get_json_schema_for_arg_union():
     union_schema = get_json_schema_for_arg(Union[str, int])
     assert "anyOf" in union_schema
     assert len(union_schema["anyOf"]) == 2
+
+
+def test_get_json_schema_for_arg_literal():
+    # Test string Literal type
+    string_literal_schema = get_json_schema_for_arg(Literal["create", "update", "delete"])
+    assert string_literal_schema == {"type": "string", "enum": ["create", "update", "delete"]}
+
+    # Test integer Literal type
+    int_literal_schema = get_json_schema_for_arg(Literal[1, 2, 3])
+    assert int_literal_schema == {"type": "integer", "enum": [1, 2, 3]}
+
+    # Test boolean Literal type
+    bool_literal_schema = get_json_schema_for_arg(Literal[True, False])
+    assert bool_literal_schema == {"type": "boolean", "enum": [True, False]}
+
+    # Test float Literal type
+    float_literal_schema = get_json_schema_for_arg(Literal[1.5, 2.5, 3.5])
+    assert float_literal_schema == {"type": "number", "enum": [1.5, 2.5, 3.5]}
+
+    # Test mixed int/float Literal type - should use "number" to cover both
+    mixed_numeric_schema = get_json_schema_for_arg(Literal[1, 2.5, 3])
+    assert mixed_numeric_schema == {"type": "number", "enum": [1, 2.5, 3]}
+
+    # Test single value Literal
+    single_literal_schema = get_json_schema_for_arg(Literal["only_option"])
+    assert single_literal_schema == {"type": "string", "enum": ["only_option"]}
 
 
 # Test cases for get_json_schema
@@ -141,7 +228,7 @@ def test_get_json_schema_basic():
     assert "properties" in schema
     assert schema["properties"]["name"]["type"] == "string"
     assert schema["properties"]["name"]["description"] == "User's full name"
-    assert schema["properties"]["age"]["type"] == "number"
+    assert schema["properties"]["age"]["type"] == "integer"
     assert schema["properties"]["is_active"]["type"] == "boolean"
 
 
@@ -170,9 +257,27 @@ def test_get_json_schema_with_dataclass():
     assert user_schema["type"] == "object"
     assert "properties" in user_schema
     assert user_schema["properties"]["name"]["type"] == "string"
-    assert user_schema["properties"]["age"]["type"] == "number"
+    assert user_schema["properties"]["age"]["type"] == "integer"
     assert user_schema["properties"]["is_active"]["type"] == "boolean"
     assert user_schema["properties"]["tags"]["type"] == "array"
+
+
+def test_get_json_schema_dataclass_optional_field_without_type():
+    """A dataclass field whose Optional members lack a "type" key (e.g. a mixed-type
+    Literal yields {"enum": [...]}) must not crash schema generation with KeyError."""
+
+    @dataclass
+    class MixedLiteralDataclass:
+        mode: Optional[Literal[1, "a"]] = None
+
+    # Direct call previously raised KeyError: 'type'
+    arg_schema = get_json_schema_for_arg(MixedLiteralDataclass)
+    assert arg_schema["type"] == "object"
+    assert "mode" in arg_schema["properties"]
+
+    # And the parameter must survive instead of being silently dropped
+    schema = get_json_schema({"cfg": MixedLiteralDataclass})
+    assert "cfg" in schema["properties"]
 
 
 def test_get_json_schema_strict():
@@ -191,7 +296,43 @@ def test_get_json_schema_with_complex_types():
     assert schema["properties"]["names"]["type"] == "array"
     assert schema["properties"]["names"]["items"]["type"] == "string"
     assert schema["properties"]["scores"]["type"] == "object"
-    assert schema["properties"]["optional_field"]["type"] == "number"
+    assert schema["properties"]["optional_field"]["type"] == "integer"
+
+
+def test_get_json_schema_with_literal_types():
+    """Test that Literal types are correctly converted to JSON schema with enum."""
+    type_hints = {
+        "operation": Literal["create", "update", "delete"],
+        "priority": Literal[1, 2, 3],
+        "enabled": Literal[True, False],
+    }
+    param_descriptions = {
+        "operation": "The operation to perform",
+        "priority": "Priority level",
+        "enabled": "Whether feature is enabled",
+    }
+
+    schema = get_json_schema(type_hints, param_descriptions)
+
+    # Check operation (string literal)
+    assert schema["properties"]["operation"]["type"] == "string"
+    assert schema["properties"]["operation"]["enum"] == ["create", "update", "delete"]
+    assert schema["properties"]["operation"]["description"] == "The operation to perform"
+
+    # Check priority (integer literal)
+    assert schema["properties"]["priority"]["type"] == "integer"
+    assert schema["properties"]["priority"]["enum"] == [1, 2, 3]
+
+    # Check enabled (boolean literal)
+    assert schema["properties"]["enabled"]["type"] == "boolean"
+    assert schema["properties"]["enabled"]["enum"] == [True, False]
+
+
+def test_get_json_schema_optional_literal():
+    """Test that Optional[Literal[...]] is correctly unwrapped and converted."""
+    schema = get_json_schema({"op": Optional[Literal["a", "b"]]})
+    # get_json_schema unwraps Optional before calling get_json_schema_for_arg
+    assert schema["properties"]["op"] == {"type": "string", "enum": ["a", "b"]}
 
 
 # Test cases for nested structures

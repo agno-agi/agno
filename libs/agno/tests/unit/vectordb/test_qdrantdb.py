@@ -1,5 +1,6 @@
+import asyncio
 from typing import List
-from unittest.mock import Mock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
@@ -429,3 +430,113 @@ def test_delete_by_metadata_complex(qdrant_db, mock_qdrant_client):
         result = qdrant_db.delete_by_metadata({"spicy": False})
         assert result is True
         mock_delete_by_metadata.assert_called_once_with({"spicy": False})
+
+
+@pytest.fixture
+def tracking_embedder():
+    """
+    Mock embedder that tracks whether sync or async methods are called.
+
+    This is used to verify that async search methods properly use
+    async_get_embedding() instead of blocking get_embedding().
+    """
+    mock = Mock()
+    mock.dimensions = 1024
+    mock_embedding = [0.1] * 1024
+
+    # Track call counts
+    mock.sync_call_count = 0
+    mock.async_call_count = 0
+
+    def sync_get_embedding(text: str):
+        mock.sync_call_count += 1
+        return mock_embedding
+
+    mock.get_embedding = sync_get_embedding
+
+    async def async_get_embedding(text: str):
+        mock.async_call_count += 1
+        return mock_embedding
+
+    mock.async_get_embedding = async_get_embedding
+
+    return mock
+
+
+@pytest.mark.asyncio
+async def test_async_search_uses_async_embedder(tracking_embedder):
+    """
+    Verify async_search uses async embedder, not sync.
+    """
+    db = Qdrant(embedder=tracking_embedder, collection="test_collection")
+
+    # Mock the async client
+    mock_async_client = AsyncMock()
+    query_response = Mock()
+    query_response.points = []
+    mock_async_client.query_points.return_value = query_response
+    db._async_client = mock_async_client
+
+    # Call the internal async vector search method
+    await db._run_vector_search_async("test query", limit=5, formatted_filters=None)
+
+    # Verify async embedder was called, not sync
+    assert tracking_embedder.async_call_count == 1, "async_get_embedding should be called once"
+    assert tracking_embedder.sync_call_count == 0, "sync get_embedding should NOT be called"
+
+
+@pytest.mark.asyncio
+async def test_async_hybrid_search_uses_async_embedder(tracking_embedder):
+    """
+    Verify async hybrid search uses async embedder, not sync.
+    """
+    db = Qdrant(embedder=tracking_embedder, collection="test_collection")
+
+    # Mock the sparse encoder
+    mock_sparse_embedding = Mock()
+    mock_sparse_embedding.as_object.return_value = {"indices": [1, 2, 3], "values": [0.1, 0.2, 0.3]}
+    mock_sparse_encoder = Mock()
+    mock_sparse_encoder.embed.return_value = iter([mock_sparse_embedding])
+    db.sparse_encoder = mock_sparse_encoder
+    db.sparse_vector_name = "sparse"
+    db.dense_vector_name = "dense"
+
+    # Mock the async client
+    mock_async_client = AsyncMock()
+    query_response = Mock()
+    query_response.points = []
+    mock_async_client.query_points.return_value = query_response
+    db._async_client = mock_async_client
+
+    # Call the internal async hybrid search method
+    await db._run_hybrid_search_async("test query", limit=5, formatted_filters=None)
+
+    # Verify async embedder was called, not sync
+    assert tracking_embedder.async_call_count == 1, "async_get_embedding should be called once"
+    assert tracking_embedder.sync_call_count == 0, "sync get_embedding should NOT be called"
+
+
+@pytest.mark.asyncio
+async def test_concurrent_async_searches_no_blocking(tracking_embedder):
+    """
+    Verify concurrent async searches don't block each other.
+
+    When multiple async searches run concurrently, they should all use
+    async embedder and not serialize due to blocking sync calls.
+    """
+    db = Qdrant(embedder=tracking_embedder, collection="test_collection")
+
+    # Mock the async client
+    mock_async_client = AsyncMock()
+    query_response = Mock()
+    query_response.points = []
+    mock_async_client.query_points.return_value = query_response
+    db._async_client = mock_async_client
+
+    # Run multiple concurrent searches
+    tasks = [db._run_vector_search_async(f"query {i}", limit=5, formatted_filters=None) for i in range(5)]
+    await asyncio.gather(*tasks)
+
+    # All should use async embedder
+    assert tracking_embedder.async_call_count == 5, "async_get_embedding should be called 5 times"
+    assert tracking_embedder.sync_call_count == 0, "sync get_embedding should NOT be called"

@@ -3,12 +3,12 @@ import gc
 import tracemalloc
 from dataclasses import dataclass, field
 from os import getenv
-from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Union
 from uuid import uuid4
 
-from agno.db.base import BaseDb
+from agno.db.base import AsyncBaseDb, BaseDb
 from agno.db.schemas.evals import EvalType
-from agno.eval.utils import async_log_eval, log_eval_run, store_result_in_file
+from agno.eval.utils import async_log_eval, log_eval_run, spinner_live, store_result_in_file
 from agno.utils.log import log_debug, set_log_level_to_debug, set_log_level_to_info
 from agno.utils.timer import Timer
 
@@ -57,8 +57,13 @@ class PerformanceResult:
             mx = data_sorted[-1]
             std = statistics.stdev(data_sorted) if len(data_sorted) > 1 else 0
             med = statistics.median(data_sorted)
-            # For 95th percentile, use statistics.quantiles
-            p95 = statistics.quantiles(data_sorted, n=100)[94] if len(data_sorted) > 1 else 0
+            # For 95th percentile, use statistics.quantiles with the inclusive method so the
+            # result stays within the observed range for small samples
+            p95 = (
+                statistics.quantiles(data_sorted, n=100, method="inclusive")[94]
+                if len(data_sorted) > 1
+                else data_sorted[0]
+            )
             return avg, mn, mx, std, med, p95
 
         # Populate runtime stats
@@ -206,6 +211,9 @@ class PerformanceEval:
     print_summary: bool = False
     # Print detailed results
     print_results: bool = False
+    # Render the transient progress spinner. Embedders that must not write to the
+    # console (e.g. the suite runner) disable it.
+    show_spinner: bool = True
     # Print detailed memory growth analysis
     memory_growth_tracking: bool = False
     # Number of memory allocations to track
@@ -222,7 +230,7 @@ class PerformanceEval:
     # Enable debug logs
     debug_mode: bool = getenv("AGNO_DEBUG", "false").lower() == "true"
     # The database to store Evaluation results
-    db: Optional[BaseDb] = None
+    db: Optional[Union[BaseDb, AsyncBaseDb]] = None
 
     # Telemetry settings
     # telemetry=True logs minimal telemetry for analytics
@@ -491,9 +499,14 @@ class PerformanceEval:
         6. Print results as requested
         7. Log results to the Agno platform if requested
         """
+        if isinstance(self.db, AsyncBaseDb):
+            raise ValueError("run() is not supported with an async DB. Please use arun() instead.")
+
         from rich.console import Console
-        from rich.live import Live
         from rich.status import Status
+
+        # Generate unique run_id for this execution (don't modify self.eval_id due to concurrency)
+        run_id = str(uuid4())
 
         run_times = []
         memory_usages = []
@@ -501,11 +514,11 @@ class PerformanceEval:
 
         self._set_log_level()
 
-        log_debug(f"************ Evaluation Start: {self.eval_id} ************")
+        log_debug(f"************ Evaluation Start: {run_id} ************")
 
         # Add a spinner while running the evaluations
         console = Console()
-        with Live(console=console, transient=True) as live_log:
+        with spinner_live(console, self.show_spinner) as live_log:
             # 1. Do optional warm-up runs.
             if self.warmup_runs is not None:
                 for i in range(self.warmup_runs):
@@ -612,7 +625,7 @@ class PerformanceEval:
                 ),
             )
 
-        log_debug(f"*********** Evaluation End: {self.eval_id} ***********")
+        log_debug(f"*********** Evaluation End: {run_id} ***********")
         return self.result
 
     async def arun(
@@ -635,8 +648,10 @@ class PerformanceEval:
             )
 
         from rich.console import Console
-        from rich.live import Live
         from rich.status import Status
+
+        # Generate unique run_id for this execution (don't modify self.eval_id due to concurrency)
+        run_id = str(uuid4())
 
         run_times = []
         memory_usages = []
@@ -644,11 +659,11 @@ class PerformanceEval:
 
         self._set_log_level()
 
-        log_debug(f"************ Evaluation Start: {self.eval_id} ************")
+        log_debug(f"************ Evaluation Start: {run_id} ************")
 
         # Add a spinner while running the evaluations
         console = Console()
-        with Live(console=console, transient=True) as live_log:
+        with spinner_live(console, self.show_spinner) as live_log:
             # 1. Do optional warm-up runs.
             if self.warmup_runs is not None:
                 for i in range(self.warmup_runs):
@@ -755,7 +770,7 @@ class PerformanceEval:
                 ),
             )
 
-        log_debug(f"*********** Evaluation End: {self.eval_id} ***********")
+        log_debug(f"*********** Evaluation End: {run_id} ***********")
         return self.result
 
     def _get_telemetry_data(self) -> Dict[str, Any]:

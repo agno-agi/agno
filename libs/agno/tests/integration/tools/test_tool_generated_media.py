@@ -7,17 +7,37 @@ from agno.media import Audio, Image
 from agno.models.openai.chat import OpenAIChat
 from agno.tools.dalle import DalleTools
 
+# Provider-availability failures (model brownouts/retirement windows, billing,
+# quota, auth) say nothing about our code and must not red the build. Contract
+# errors — e.g. sending a parameter the API rejects — must still fail.
+_PROVIDER_UNAVAILABLE_SIGNATURES = (
+    "does not exist",
+    "billing",
+    "insufficient_quota",
+    "rate limit",
+    "invalid_api_key",
+    "permission",
+)
+
+
+def skip_if_provider_unavailable(response) -> None:
+    for tool in response.tools or []:
+        result = str(tool.result or "").lower()
+        if result.startswith("error") and any(sig in result for sig in _PROVIDER_UNAVAILABLE_SIGNATURES):
+            pytest.skip(f"image provider unavailable: {str(tool.result)[:120]}")
+
 
 @pytest.fixture
 def openai_agent():
     """Create an agent with OpenAI model and DALL-E tools."""
-    return Agent(model=OpenAIChat(id="gpt-4o-mini"), db=InMemoryDb(), tools=[DalleTools()], debug_mode=True)
+    return Agent(model=OpenAIChat(id="gpt-4o-mini"), db=InMemoryDb(), tools=[DalleTools()])
 
 
 def test_dalle_image_generation_in_run_output(openai_agent):
     """Test that DALL-E generated images appear in RunOutput."""
     # Run agent with image generation request
     response = openai_agent.run("Generate a simple image of a red apple on white background")
+    skip_if_provider_unavailable(response)
 
     # Verify response contains generated image
     assert response is not None
@@ -39,6 +59,7 @@ def test_dalle_image_generation_persistence(openai_agent):
     """Test that generated images persist in database."""
     # Run agent with image generation request
     response = openai_agent.run("Generate a simple image of a blue circle")
+    skip_if_provider_unavailable(response)
 
     # Verify response contains generated image
     assert response is not None
@@ -79,7 +100,7 @@ def test_multiple_images_generation(openai_agent):
 def test_image_generation_with_streaming(openai_agent):
     """Test that images are captured correctly in streaming mode."""
     # Run agent with streaming enabled
-    response_stream = openai_agent.run("Generate a simple image of a green tree", stream=True)
+    response_stream = openai_agent.run("Generate a simple image of a green tree", stream=True, stream_events=True)
 
     # Collect all streaming events and find the completed event
     run_completed_event = None
@@ -93,6 +114,7 @@ def test_image_generation_with_streaming(openai_agent):
 
     # Verify the completed event contains generated image
     assert run_completed_event is not None
+    skip_if_provider_unavailable(openai_agent.get_last_run_output())
     assert run_completed_event.images is not None
     assert len(run_completed_event.images) >= 1
     assert isinstance(run_completed_event.images[0], Image)
@@ -108,6 +130,7 @@ def test_image_analysis_after_generation(openai_agent):
     """Test that generated images can be analyzed in the same conversation."""
     # First, generate an image
     response1 = openai_agent.run("Generate an image of a red sports car")
+    skip_if_provider_unavailable(response1)
     assert response1 is not None
     assert response1.images is not None
     assert len(response1.images) >= 1
@@ -139,7 +162,7 @@ def test_openai_speech_generation_in_run_output(openai_agent):
 
 def test_media_persistence_across_runs(shared_db):
     """Test that media persists correctly across multiple runs."""
-    agent = Agent(model=OpenAIChat(id="gpt-4o-mini"), db=shared_db, tools=[DalleTools()], debug_mode=True)
+    agent = Agent(model=OpenAIChat(id="gpt-4o-mini"), db=shared_db, tools=[DalleTools()])
 
     # First run: Generate image
     response1 = agent.run("Generate an image of a sunset")

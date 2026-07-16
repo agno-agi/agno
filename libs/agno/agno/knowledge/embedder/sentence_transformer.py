@@ -2,7 +2,7 @@ from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple, Union
 
 from agno.knowledge.embedder.base import Embedder
-from agno.utils.log import logger
+from agno.utils.log import log_warning
 
 try:
     from sentence_transformers import SentenceTransformer
@@ -25,10 +25,14 @@ class SentenceTransformerEmbedder(Embedder):
     prompt: Optional[str] = None
     normalize_embeddings: bool = False
 
-    def get_embedding(self, text: Union[str, List[str]]) -> List[float]:
-        if not self.sentence_transformer_client:
+    def __post_init__(self):
+        # Initialize the SentenceTransformer model eagerly to avoid race conditions in async contexts
+        if self.sentence_transformer_client is None:
             self.sentence_transformer_client = SentenceTransformer(model_name_or_path=self.id)
 
+    def get_embedding(self, text: Union[str, List[str]]) -> List[float]:
+        if self.sentence_transformer_client is None:
+            raise RuntimeError("SentenceTransformer model not initialized")
         model = self.sentence_transformer_client
         embedding = model.encode(text, prompt=self.prompt, normalize_embeddings=self.normalize_embeddings)
         try:
@@ -37,7 +41,7 @@ class SentenceTransformerEmbedder(Embedder):
 
             return embedding  # type: ignore
         except Exception as e:
-            logger.warning(e)
+            log_warning(f"Failed to get embedding: {str(e)}")
             return []
 
     def get_embedding_and_usage(self, text: str) -> Tuple[List[float], Optional[Dict]]:
@@ -47,7 +51,7 @@ class SentenceTransformerEmbedder(Embedder):
         """Async version using thread executor for CPU-bound operations."""
         import asyncio
 
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         # Run the CPU-bound operation in a thread executor
         return await loop.run_in_executor(None, self.get_embedding, text)
 
@@ -55,5 +59,5 @@ class SentenceTransformerEmbedder(Embedder):
         """Async version using thread executor for CPU-bound operations."""
         import asyncio
 
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         return await loop.run_in_executor(None, self.get_embedding_and_usage, text)

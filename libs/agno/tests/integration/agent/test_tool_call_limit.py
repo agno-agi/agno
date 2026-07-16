@@ -34,7 +34,7 @@ def test_tool_use_tool_call_limit_stream():
         telemetry=False,
     )
 
-    response_stream = agent.run("Find me the current price of TSLA and APPL.", stream=True)
+    response_stream = agent.run("Find me the current price of TSLA and APPL.", stream=True, stream_events=True)
 
     tools = []
     for chunk in response_stream:
@@ -78,7 +78,7 @@ async def test_tool_use_tool_call_limit_stream_async():
     )
 
     tools = []
-    async for chunk in agent.arun("Find me the current price of TSLA and APPL.", stream=True):
+    async for chunk in agent.arun("Find me the current price of TSLA and APPL.", stream=True, stream_events=True):
         if chunk.event == RunEvent.tool_call_completed:
             tools.append(chunk.tool)
 

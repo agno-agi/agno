@@ -1,0 +1,73 @@
+[project]
+name = "agnoctl"
+version = "0.1.2"
+description = "The Agno CLI: connect and operate AgentOS from the terminal, built for humans and coding agents"
+requires-python = ">=3.9,<4"
+readme = "README.md"
+license = { file = "LICENSE" }
+authors = [
+  {name = "Agno Team", email = "hello@agno.com"}
+]
+keywords = ["agno", "agentos", "agents", "cli", "mcp"]
+classifiers = [
+    "Intended Audience :: Developers",
+    "Development Status :: 5 - Production/Stable",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Operating System :: OS Independent",
+    "License :: OSI Approved :: Apache Software License",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+
+dependencies = [
+  "httpx",
+  "rich",
+  "typer",
+  "tomli; python_version < '3.11'",
+]
+
+[project.optional-dependencies]
+dev = [
+  "mypy==2.1.0",
+  "pytest==9.1.1",
+  "ruff==0.15.20",
+]
+
+[project.scripts]
+agno = "agnoctl.main:app"
+agnoctl = "agnoctl.main:app"
+
+[project.urls]
+homepage = "https://agno.com"
+documentation = "https://docs.agno.com"
+repository = "https://github.com/agno-agi/agno"
+
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["agnoctl*"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py39"
+[tool.ruff.lint.per-file-ignores]
+"__init__.py" = ["F401"]
+
+[tool.mypy]
+check_untyped_defs = true
+no_implicit_optional = true
+warn_unused_configs = true
+exclude = ["tests*", "build*"]
+
+[[tool.mypy.overrides]]
+module = ["tomli.*"]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

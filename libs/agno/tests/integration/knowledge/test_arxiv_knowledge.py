@@ -24,7 +24,7 @@ def test_arxiv_knowledge_base_integration(setup_vector_db):
         vector_db=setup_vector_db,
     )
 
-    knowledge.add_content(
+    knowledge.insert(
         metadata={"user_tag": "Arxiv content"},
         # "Attention Is All You Need" and "BERT" papers
         topics=["1706.03762", "1810.04805"],
@@ -56,7 +56,7 @@ def test_arxiv_knowledge_base_search_integration(setup_vector_db):
         vector_db=setup_vector_db,
     )
 
-    knowledge.add_content(
+    knowledge.insert(
         metadata={"user_tag": "Arxiv content"},
         topics=["transformer architecture language models"],
         reader=reader,
@@ -86,7 +86,7 @@ async def test_arxiv_knowledge_base_async_integration(setup_vector_db):
         max_results=1,  # Limit to exactly one result per query
     )
 
-    await knowledge.add_content_async(
+    await knowledge.ainsert(
         # "GPT-3" and "AlphaFold" papers
         topics=["2005.14165", "2003.02645"],
         reader=reader,

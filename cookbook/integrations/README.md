@@ -1,31 +1,37 @@
 # Integrations
 
-Integration examples showing how to connect Agno agents with external platforms and services.
+Partner integrations for Agno agents.
 
+## Directories
 
-## Available Integrations
+### [parallel](./parallel/)
+[Parallel](https://parallel.ai) web research for agents: Search, Extract, Task (deep research with citations), and Monitor APIs — from a single research agent up to a deployable AgentOS app.
 
-### [Discord](./discord/)
-Discord bot implementation with media support and user memory capabilities.
+### [surrealdb](./surrealdb/)
+SurrealDB-backed memory manager integration examples.
 
-### [A2A - Agent to Agent](./a2a/)
-Agent-to-agent communication using Google's A2A protocol for distributed agent systems.
+## Moved
 
-### [Observability](./observability/)
-Monitoring and observability integrations for agent performance tracking.
+Some integrations now live closer to their topic:
 
-## Setup
+| Integration | New location |
+|-------------|--------------|
+| Observability (Langfuse, Arize Phoenix, AgentOps, LangSmith, …) | [`cookbook/observability`](../observability/) |
+| Memory providers (Mem0, Memori, Zep) | [`cookbook/11_memory/integrations`](../11_memory/integrations/) |
+| RAG stacks (Infinity, LightRAG, LangChain + Qdrant) | [`cookbook/07_knowledge/05_integrations/rag`](../07_knowledge/05_integrations/rag/) |
+| Discord bot | [`cookbook/05_agent_os/interfaces/discord`](../05_agent_os/interfaces/discord/) |
+| A2A basic server/client | [`cookbook/05_agent_os/interfaces/a2a/basic_agent`](../05_agent_os/interfaces/a2a/basic_agent/) |
 
-Install required dependencies based on the integration you want to use:
+## Running Examples
+
+Use the demo environment:
 
 ```bash
-# For Discord integration
-pip install discord.py agno
-
-# For A2A integration
-pip install a2a-python agno
+.venvs/demo/bin/python cookbook/integrations/<folder>/<file>.py
 ```
 
-## Getting Started
+## Validation
 
-Navigate to the specific integration directory for detailed documentation and examples.
+```bash
+.venvs/demo/bin/python cookbook/scripts/check_cookbook_pattern.py --base-dir cookbook/integrations --recursive
+```

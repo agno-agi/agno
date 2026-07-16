@@ -7,11 +7,12 @@ from uuid import uuid4
 
 from sqlalchemy import Engine
 
+from agno.db.schemas.culture import CulturalKnowledge
 from agno.db.singlestore.schemas import get_table_schema_definition
 from agno.utils.log import log_debug, log_error, log_warning
 
 try:
-    from sqlalchemy import Table
+    from sqlalchemy import Table, func
     from sqlalchemy.inspection import inspect
     from sqlalchemy.orm import Session
     from sqlalchemy.sql.expression import text
@@ -31,6 +32,11 @@ def apply_sorting(stmt, table: Table, sort_by: Optional[str] = None, sort_order:
 
     Returns:
         The modified statement with sorting applied
+
+    Note:
+        For 'updated_at' sorting, uses COALESCE(updated_at, created_at) to fall back
+        to created_at when updated_at is NULL. This ensures pre-2.0 records (which may
+        have NULL updated_at) are sorted correctly by their creation time.
     """
     if sort_by is None:
         return stmt
@@ -39,8 +45,13 @@ def apply_sorting(stmt, table: Table, sort_by: Optional[str] = None, sort_order:
         log_debug(f"Invalid sort field: '{sort_by}'. Will not apply any sorting.")
         return stmt
 
-    # Apply the given sorting
-    sort_column = getattr(table.c, sort_by)
+    # For updated_at, use COALESCE to fall back to created_at if updated_at is NULL
+    # This handles pre-2.0 records that may have NULL updated_at values
+    if sort_by == "updated_at" and hasattr(table.c, "created_at"):
+        sort_column = func.coalesce(table.c.updated_at, table.c.created_at)
+    else:
+        sort_column = getattr(table.c, sort_by)
+
     if sort_order and sort_order == "asc":
         return stmt.order_by(sort_column.asc())
     else:
@@ -61,7 +72,7 @@ def create_schema(session: Session, db_schema: str) -> None:
         log_debug(f"Creating schema if not exists: {db_schema}")
         session.execute(text(f"CREATE SCHEMA IF NOT EXISTS {db_schema};"))
     except Exception as e:
-        log_warning(f"Could not create schema {db_schema}: {e}")
+        log_warning(f"Could not create schema {db_schema}: {str(e)}")
 
 
 def is_table_available(session: Session, table_name: str, db_schema: Optional[str]) -> bool:
@@ -92,7 +103,7 @@ def is_table_available(session: Session, table_name: str, db_schema: Optional[st
         return exists
 
     except Exception as e:
-        log_error(f"Error checking if table exists: {e}")
+        log_error(f"Error checking if table exists: {str(e)}")
         return False
 
 
@@ -137,7 +148,7 @@ def is_valid_table(db_engine: Engine, table_name: str, table_type: str, db_schem
 
     except Exception as e:
         table_ref = f"{db_schema}.{table_name}" if db_schema else table_name
-        log_error(f"Error validating table schema for {table_ref}: {e}")
+        log_error(f"Error validating table schema for {table_ref}: {str(e)}")
         return False
 
 
@@ -233,7 +244,7 @@ def calculate_date_metrics(date_to_process: date, sessions_data: dict) -> dict:
     all_user_ids = set()
 
     for session_type, sessions_count_key, runs_count_key in session_types:
-        sessions = sessions_data.get(session_type, [])
+        sessions = sessions_data.get(session_type, []) or []
         metrics[sessions_count_key] = len(sessions)
 
         for session in sessions:
@@ -254,7 +265,7 @@ def calculate_date_metrics(date_to_process: date, sessions_data: dict) -> dict:
 
     model_metrics = []
     for model, count in model_counts.items():
-        model_id, model_provider = model.split(":")
+        model_id, model_provider = model.rsplit(":", 1)
         model_metrics.append({"model_id": model_id, "model_provider": model_provider, "count": count})
 
     metrics["users_count"] = len(all_user_ids)
@@ -324,3 +335,60 @@ def get_dates_to_calculate_metrics_for(starting_date: date) -> list[date]:
     if days_diff <= 0:
         return []
     return [starting_date + timedelta(days=x) for x in range(days_diff)]
+
+
+# -- Cultural Knowledge util methods --
+def serialize_cultural_knowledge_for_db(cultural_knowledge: CulturalKnowledge) -> Dict[str, Any]:
+    """Serialize a CulturalKnowledge object for database storage.
+
+    Converts the model's separate content, categories, and notes fields
+    into a single JSON dict for the database content column.
+
+    Args:
+        cultural_knowledge (CulturalKnowledge): The cultural knowledge object to serialize.
+
+    Returns:
+        Dict[str, Any]: A dictionary with the content field as JSON containing content, categories, and notes.
+    """
+    content_dict: Dict[str, Any] = {}
+    if cultural_knowledge.content is not None:
+        content_dict["content"] = cultural_knowledge.content
+    if cultural_knowledge.categories is not None:
+        content_dict["categories"] = cultural_knowledge.categories
+    if cultural_knowledge.notes is not None:
+        content_dict["notes"] = cultural_knowledge.notes
+
+    return content_dict if content_dict else {}
+
+
+def deserialize_cultural_knowledge_from_db(db_row: Dict[str, Any]) -> CulturalKnowledge:
+    """Deserialize a database row to a CulturalKnowledge object.
+
+    The database stores content as a JSON dict containing content, categories, and notes.
+    This method extracts those fields and converts them back to the model format.
+
+    Args:
+        db_row (Dict[str, Any]): The database row as a dictionary.
+
+    Returns:
+        CulturalKnowledge: The cultural knowledge object.
+    """
+    # Extract content, categories, and notes from the JSON content field
+    content_json = db_row.get("content", {}) or {}
+
+    return CulturalKnowledge.from_dict(
+        {
+            "id": db_row.get("id"),
+            "name": db_row.get("name"),
+            "summary": db_row.get("summary"),
+            "content": content_json.get("content"),
+            "categories": content_json.get("categories"),
+            "notes": content_json.get("notes"),
+            "metadata": db_row.get("metadata"),
+            "input": db_row.get("input"),
+            "created_at": db_row.get("created_at"),
+            "updated_at": db_row.get("updated_at"),
+            "agent_id": db_row.get("agent_id"),
+            "team_id": db_row.get("team_id"),
+        }
+    )
