@@ -1270,9 +1270,3 @@ class TestRoutingForwardsRunContextToMembers:
         assert "dependencies" not in kwargs
         assert "metadata" not in kwargs
         assert "knowledge_filters" not in kwargs
-
-
-# ===========================================================================
-# 18. Paused member runs are persisted to session (fixes #8925)
-# ===========================================================================
-# Tests moved to test_paused_member_persistence.py (function-based style)
