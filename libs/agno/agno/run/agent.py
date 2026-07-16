@@ -516,7 +516,11 @@ class CustomEvent(BaseAgentRunEvent):
     tool_call_id: Optional[str] = None
 
     def __init__(self, **kwargs):
-        # Store arbitrary attributes directly on the instance
+        # Store arbitrary attributes directly on the instance. created_at uses a
+        # field default_factory (no class attribute), so this custom __init__ must set
+        # it explicitly or to_dict()/asdict() raises AttributeError.
+        if "created_at" not in kwargs:
+            self.created_at = int(time())
         for key, value in kwargs.items():
             setattr(self, key, value)
 

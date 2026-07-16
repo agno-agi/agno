@@ -523,3 +523,19 @@ def test_requirements_in_run_paused_event():
     assert reconstructed.requirements[0].tool_execution.tool_name == "get_the_weather"
     assert reconstructed.requirements[0].tool_execution.requires_confirmation is True
     assert reconstructed.requirements[0].needs_confirmation is True
+
+
+def test_base_custom_event_to_dict_has_created_at():
+    """The base CustomEvent (public, **kwargs init) must be serializable directly;
+    its custom __init__ bypasses the dataclass created_at default_factory."""
+    from agno.run.agent import CustomEvent as AgentCustomEvent
+    from agno.run.team import CustomEvent as TeamCustomEvent
+    from agno.run.workflow import CustomEvent as WorkflowCustomEvent
+
+    for cls in (AgentCustomEvent, TeamCustomEvent, WorkflowCustomEvent):
+        event = cls(name="x", value="y")
+        result = event.to_dict()  # used to raise AttributeError: no attribute 'created_at'
+        assert isinstance(result["created_at"], int)
+
+        # An explicitly-provided created_at is respected.
+        assert cls(created_at=123).created_at == 123
