@@ -15,6 +15,7 @@ import agnoctl.commands.lifecycle as lifecycle_module
 from agnoctl.commands.lifecycle import find_compose_file
 from agnoctl.errors import CLIError
 from agnoctl.main import app
+from tests.conftest import all_output as _all_output
 
 runner = CliRunner()
 
@@ -22,10 +23,17 @@ runner = CliRunner()
 class FakeGit:
     """Simulates `git clone` by scaffolding a template directory."""
 
-    def __init__(self, returncode: int = 0, with_example_env: bool = True, existing_env=None):
+    def __init__(
+        self,
+        returncode: int = 0,
+        with_example_env: bool = True,
+        existing_env=None,
+        symlink_example_env: bool = False,
+    ):
         self.returncode = returncode
         self.with_example_env = with_example_env
         self.existing_env = existing_env
+        self.symlink_example_env = symlink_example_env
         self.calls = []
 
     def __call__(self, args, **kwargs):
@@ -34,7 +42,9 @@ class FakeGit:
             target = Path(args[-1])
             (target / ".git").mkdir(parents=True)
             (target / "docker-compose.yml").write_text("services: {}\n")
-            if self.with_example_env:
+            if self.symlink_example_env:
+                (target / "example.env").symlink_to(target.parent / "outside.env")
+            elif self.with_example_env:
                 (target / "example.env").write_text("KEY=value\n")
             if self.existing_env is not None:
                 (target / ".env").write_text(self.existing_env)
@@ -264,6 +274,48 @@ def test_copy_example_env_rejects_dangling_destination_symlink(tmp_path):
         create_module._copy_example_env(project)
 
     assert not outside.exists()
+
+
+@pytest.mark.skipif(not hasattr(os, "symlink"), reason="symlinks are unavailable")
+def test_create_symlinked_example_env_fails_cleanly_via_cli(monkeypatch, tmp_path):
+    fake = FakeGit(symlink_example_env=True)
+    monkeypatch.setattr(create_module.subprocess, "run", fake)
+    monkeypatch.setattr(create_module.shutil, "which", lambda name: "/usr/bin/git")
+    monkeypatch.chdir(tmp_path)
+
+    result = runner.invoke(app, ["create", "my-os"])
+
+    assert result.exit_code == 1
+    assert "symlinked" in _all_output(result)
+    assert not (tmp_path / "my-os").exists()
+
+    # The retry must hit the same refusal, not "directory already exists".
+    second = runner.invoke(app, ["create", "my-os", "--json"])
+    assert second.exit_code == 1
+    assert "symlinked" in json.loads(second.output)["error"]
+    assert not (tmp_path / "my-os").exists()
+
+
+def test_create_empty_template_is_rejected(fake_git):
+    result = runner.invoke(app, ["create", "my-os", "-t", "", "--json"])
+
+    assert result.exit_code == 1
+    assert "Unknown template" in json.loads(result.output)["error"]
+    assert fake_git.calls == []
+
+
+def test_create_unknown_template_rejected_before_name_prompt(fake_git, monkeypatch):
+    def fail_prompt(*args, **kwargs):
+        pytest.fail("a bad --template must fail before any prompt")
+
+    monkeypatch.setattr(create_module.typer, "prompt", fail_prompt)
+    monkeypatch.setattr(create_module, "stdin_is_interactive", lambda: True)
+
+    result = runner.invoke(app, ["create", "-t", "bogus"])
+
+    assert result.exit_code == 1
+    assert "Unknown template" in _all_output(result)
+    assert fake_git.calls == []
 
 
 @pytest.mark.parametrize("name", ["../escape", "a/b", "/tmp/abs", ".."])
