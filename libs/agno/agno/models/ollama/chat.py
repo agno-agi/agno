@@ -175,14 +175,20 @@ class Ollama(Model):
             for tool_call in message.tool_calls:
                 if "function" in tool_call:
                     function_data = tool_call["function"]
+                    # arguments may be absent or an empty string (e.g. a no-arg tool call from
+                    # another provider replayed through Ollama); json.loads("") / a missing key
+                    # would otherwise crash.
+                    raw_arguments = function_data.get("arguments")
+                    if isinstance(raw_arguments, str):
+                        arguments = json.loads(raw_arguments) if raw_arguments.strip() else {}
+                    else:
+                        arguments = raw_arguments if raw_arguments is not None else {}
                     formatted_tool_call = {
                         "id": tool_call.get("id"),
                         "type": "function",
                         "function": {
                             "name": function_data["name"],
-                            "arguments": json.loads(function_data["arguments"])
-                            if isinstance(function_data["arguments"], str)
-                            else function_data["arguments"],
+                            "arguments": arguments,
                         },
                     }
                     formatted_tool_calls.append(formatted_tool_call)
