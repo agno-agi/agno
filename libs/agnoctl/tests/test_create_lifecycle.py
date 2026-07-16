@@ -296,6 +296,32 @@ def test_create_symlinked_example_env_fails_cleanly_via_cli(monkeypatch, tmp_pat
     assert not (tmp_path / "my-os").exists()
 
 
+@pytest.mark.skipif(not hasattr(os, "symlink"), reason="symlinks are unavailable")
+def test_create_reports_leftover_dir_when_cleanup_fails(monkeypatch, tmp_path):
+    fake = FakeGit(symlink_example_env=True)
+    monkeypatch.setattr(create_module.subprocess, "run", fake)
+    monkeypatch.setattr(create_module.shutil, "which", lambda name: "/usr/bin/git")
+    monkeypatch.chdir(tmp_path)
+    target = tmp_path / "my-os"
+
+    real_rmtree = create_module.shutil.rmtree
+
+    def locked_rmtree(path, *args, **kwargs):
+        if Path(path) == target:
+            raise OSError("locked")
+        return real_rmtree(path, *args, **kwargs)
+
+    monkeypatch.setattr(create_module.shutil, "rmtree", locked_rmtree)
+
+    result = runner.invoke(app, ["create", "my-os", "--json"])
+
+    assert result.exit_code == 1
+    payload = json.loads(result.output)
+    assert "symlinked" in payload["error"]
+    assert str(target) in payload["hint"]
+    assert target.exists()
+
+
 def test_create_empty_template_is_rejected(fake_git):
     result = runner.invoke(app, ["create", "my-os", "-t", "", "--json"])
 

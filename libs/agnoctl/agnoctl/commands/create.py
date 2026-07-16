@@ -232,9 +232,12 @@ def _create(name: str, template: str, template_url: Optional[str]) -> Dict[str, 
     _clone(repo_url, target)
     try:
         _copy_example_env(target)
-    except CLIError:
+    except CLIError as e:
         # A failed seed must not leave the half-created project behind; a retry
         # would fail "directory already exists" and hide the real error.
-        shutil.rmtree(target, ignore_errors=True)
+        try:
+            shutil.rmtree(target)
+        except OSError:
+            e.hint = "Remove the leftover directory " + str(target) + ", then re-run."
         raise
     return {"path": str(target), "template": template_label}
