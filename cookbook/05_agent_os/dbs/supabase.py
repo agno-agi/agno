@@ -40,7 +40,6 @@ team = Team(
     model=OpenAIChat(id="gpt-4o"),
     update_memory_on_run=True,
     members=[agent],
-    debug_mode=True,
 )
 
 # Evals

@@ -79,7 +79,6 @@ async def main():
         name="Isolated Agent",
         knowledge=knowledge_isolated,
         search_knowledge=True,
-        debug_mode=True,
     )
 
     print("--- Agent with isolate_vector_search=True ---")
@@ -94,7 +93,6 @@ async def main():
         name="Shared Agent",
         knowledge=knowledge_shared,
         search_knowledge=True,
-        debug_mode=True,
     )
 
     print("--- Agent with isolate_vector_search=False (default) ---")

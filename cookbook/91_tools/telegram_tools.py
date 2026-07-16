@@ -39,6 +39,29 @@ agent = Agent(
     markdown=True,
 )
 
+# Example 2: Agent that reacts to messages with emoji
+reaction_agent = Agent(
+    name="telegram-reactor",
+    tools=[
+        TelegramTools(
+            token=telegram_token,
+            chat_id=chat_id,
+            enable_react_with_emoji=True,
+        )
+    ],
+    description="You are a Telegram assistant that acknowledges messages with emoji reactions.",
+    instructions=[
+        "When processing a user request, react to their message with an appropriate emoji",
+        "Use these reactions based on context:",
+        "  - Positive/success: react with a thumbs up",
+        "  - Question/thinking: react with eyes",
+        "  - Error/problem: react with a warning sign",
+        "  - Completed task: react with a checkmark",
+        "Always react BEFORE sending your response message",
+    ],
+    markdown=True,
+)
+
 # ---------------------------------------------------------------------------
 # Run Agent
 # ---------------------------------------------------------------------------
