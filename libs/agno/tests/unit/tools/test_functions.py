@@ -492,6 +492,21 @@ def test_function_call_execution_with_error():
     assert "Test error" in result.error
 
 
+def test_function_call_execute_with_none_arguments():
+    """execute() must handle arguments=None like aexecute() (not `**None`)."""
+
+    def test_func() -> str:
+        return "ok"
+
+    func = Function(name="test_func", entrypoint=test_func)
+
+    call = FunctionCall(function=func, arguments=None)
+    result = call.execute()
+
+    assert result.status == "success"
+    assert result.result == "ok"
+
+
 def test_function_call_with_hooks():
     """Test function call execution with pre and post hooks."""
     pre_hook_called = False

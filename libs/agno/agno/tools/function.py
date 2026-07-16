@@ -1084,7 +1084,8 @@ class FunctionCall(BaseModel):
                 execution_chain = self._build_nested_execution_chain(entrypoint_args=entrypoint_args)
                 result = execution_chain(self.function.name, self.function.entrypoint, self.arguments or {})
             else:
-                result = self.function.entrypoint(**entrypoint_args, **self.arguments)  # type: ignore
+                # Guard None/empty arguments like aexecute() does; `**None` raises TypeError.
+                result = self.function.entrypoint(**entrypoint_args, **(self.arguments or {}))
 
             # Handle generator case
             if isgenerator(result):
