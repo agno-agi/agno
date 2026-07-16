@@ -154,3 +154,24 @@ class TestFormatFileForMessage:
 
         assert result["source"]["type"] == "url"
         assert "citations" not in result
+
+
+class TestFormatMessagesDoesNotMutate:
+    def test_list_content_not_mutated_across_calls(self):
+        from agno.models.message import Message
+        from agno.utils.models.claude import format_messages
+
+        message = Message(
+            role="user",
+            content=[{"type": "text", "text": "hi"}],
+            files=[File(content=b"name,age\nAlice,30", mime_type="text/csv")],
+        )
+
+        # format_messages runs several times per request lifecycle; the caller's list-shaped
+        # content must not accumulate the appended file/image blocks.
+        first, _ = format_messages([message])
+        assert len(message.content) == 1
+        assert len(first[0]["content"]) == 2  # text + document in the output copy
+
+        format_messages([message])
+        assert len(message.content) == 1

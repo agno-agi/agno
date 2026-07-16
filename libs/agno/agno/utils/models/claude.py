@@ -487,6 +487,11 @@ def format_messages(
         elif message.role == "user":
             if isinstance(content, str):
                 content = [{"type": "text", "text": content}]
+            else:
+                # Copy so the image/file appends below don't mutate the caller's Message
+                # (format_messages runs several times per request — e.g. count_tokens then
+                # invoke — which would otherwise duplicate blocks unboundedly).
+                content = list(content)
 
             if message.images is not None:
                 for image in message.images:
