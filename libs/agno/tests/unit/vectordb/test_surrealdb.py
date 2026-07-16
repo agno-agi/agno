@@ -123,6 +123,7 @@ def test_create(surrealdb_vector, mock_surrealdb_client):
         assert "DEFINE TABLE IF NOT EXISTS test_collection" in args
         assert "DEFINE INDEX IF NOT EXISTS vector_idx" in args
         assert f"DIMENSION {surrealdb_vector.dimensions}" in args
+        assert "DEFINE FIELD IF NOT EXISTS meta_data ON test_collection TYPE object FLEXIBLE;" in args
 
 
 def test_exists(surrealdb_vector, mock_surrealdb_client):

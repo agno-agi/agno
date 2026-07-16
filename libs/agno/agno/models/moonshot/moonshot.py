@@ -12,14 +12,14 @@ class MoonShot(OpenAILike):
     A class for interacting with MoonShot models.
 
     Attributes:
-        id (str): The model id. Defaults to "kimi-k2-thinking".
+        id (str): The model id. Defaults to "kimi-k2.5".
         name (str): The model name. Defaults to "Moonshot".
         provider (str): The provider name. Defaults to "Moonshot".
         api_key (Optional[str]): The API key.
         base_url (str): The base URL. Defaults to "https://api.moonshot.ai/v1".
     """
 
-    id: str = "kimi-k2-thinking"
+    id: str = "kimi-k2.5"
     name: str = "Moonshot"
     provider: str = "Moonshot"
 

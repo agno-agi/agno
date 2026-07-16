@@ -154,10 +154,7 @@ def bulk_upsert_metrics(
         return results
 
     except Exception as e:
-        import traceback
-
-        log_error(traceback.format_exc())
-        log_error(f"Error upserting metrics: {e}")
+        log_error(f"Error upserting metrics: {str(e)}")
 
     return []
 

@@ -11,14 +11,17 @@ try:
     from boto3 import client as AwsClient
     from boto3.session import Session
     from botocore.exceptions import ClientError
-except ImportError:
-    log_error("`boto3` not installed. Please install it via `pip install boto3`.")
+except ImportError as e:
+    log_error(f"`boto3` not installed. Please install it via `pip install boto3`.: {str(e)}")
     raise
 
 try:
     import aioboto3
-except ImportError:
-    log_warning("`aioboto3` not installed. Async methods will not be available. Install via `pip install aioboto3`.")
+except ImportError as e:
+    log_warning(
+        f"`aioboto3` not installed. Async methods will not be available. Install via `pip install aioboto3`.: {e}",
+    )
+
     aioboto3 = None
 
 
@@ -318,7 +321,7 @@ class AwsBedrockEmbedder(Embedder):
             log_warning("No embeddings found in response")
             return []
         except Exception as e:
-            log_warning(f"Error extracting embeddings: {e}")
+            log_warning(f"Error extracting embeddings: {str(e)}")
             return []
 
     def response(self, text: str) -> Dict[str, Any]:

@@ -50,6 +50,9 @@ class MistralChat(Model):
     max_tokens: Optional[int] = None
     top_p: Optional[float] = None
     random_seed: Optional[int] = None
+    frequency_penalty: Optional[float] = None
+    presence_penalty: Optional[float] = None
+    stop: Optional[Union[str, List[str]]] = None
     safe_mode: bool = False
     safe_prompt: bool = False
     request_params: Optional[Dict[str, Any]] = None
@@ -114,14 +117,20 @@ class MistralChat(Model):
             Dict[str, Any]: The API kwargs.
         """
         _request_params: Dict[str, Any] = {}
-        if self.temperature:
+        if self.temperature is not None:
             _request_params["temperature"] = self.temperature
-        if self.max_tokens:
+        if self.max_tokens is not None:
             _request_params["max_tokens"] = self.max_tokens
-        if self.top_p:
+        if self.top_p is not None:
             _request_params["top_p"] = self.top_p
-        if self.random_seed:
+        if self.random_seed is not None:
             _request_params["random_seed"] = self.random_seed
+        if self.frequency_penalty is not None:
+            _request_params["frequency_penalty"] = self.frequency_penalty
+        if self.presence_penalty is not None:
+            _request_params["presence_penalty"] = self.presence_penalty
+        if self.stop is not None:
+            _request_params["stop"] = self.stop
         if self.safe_mode:
             _request_params["safe_mode"] = self.safe_mode
         if self.safe_prompt:
@@ -151,7 +160,11 @@ class MistralChat(Model):
             {
                 "temperature": self.temperature,
                 "max_tokens": self.max_tokens,
+                "top_p": self.top_p,
                 "random_seed": self.random_seed,
+                "frequency_penalty": self.frequency_penalty,
+                "presence_penalty": self.presence_penalty,
+                "stop": self.stop,
                 "safe_mode": self.safe_mode,
                 "safe_prompt": self.safe_prompt,
             }
@@ -203,10 +216,10 @@ class MistralChat(Model):
             return model_response
 
         except HTTPValidationError as e:
-            log_error(f"HTTPValidationError from Mistral: {e}")
+            log_error(f"HTTPValidationError from Mistral: {str(e)}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
         except SDKError as e:
-            log_error(f"SDKError from Mistral: {e}")
+            log_error(f"SDKError from Mistral: {str(e)}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
     def invoke_stream(
@@ -237,10 +250,10 @@ class MistralChat(Model):
             assistant_message.metrics.stop_timer()
 
         except HTTPValidationError as e:
-            log_error(f"HTTPValidationError from Mistral: {e}")
+            log_error(f"HTTPValidationError from Mistral: {str(e)}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
         except SDKError as e:
-            log_error(f"SDKError from Mistral: {e}")
+            log_error(f"SDKError from Mistral: {str(e)}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
     async def ainvoke(
@@ -285,10 +298,10 @@ class MistralChat(Model):
 
             return model_response
         except HTTPValidationError as e:
-            log_error(f"HTTPValidationError from Mistral: {e}")
+            log_error(f"HTTPValidationError from Mistral: {str(e)}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
         except SDKError as e:
-            log_error(f"SDKError from Mistral: {e}")
+            log_error(f"SDKError from Mistral: {str(e)}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
     async def ainvoke_stream(
@@ -318,10 +331,10 @@ class MistralChat(Model):
             assistant_message.metrics.stop_timer()
 
         except HTTPValidationError as e:
-            log_error(f"HTTPValidationError from Mistral: {e}")
+            log_error(f"HTTPValidationError from Mistral: {str(e)}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
         except SDKError as e:
-            log_error(f"SDKError from Mistral: {e}")
+            log_error(f"SDKError from Mistral: {str(e)}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
     def _parse_provider_response(self, response: ChatCompletionResponse, **kwargs) -> ModelResponse:

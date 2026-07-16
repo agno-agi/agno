@@ -53,6 +53,7 @@ class FakeRunResponse:
     session_id: Optional[str] = "sess-456"
     tools: Optional[list] = None
     requirements: Optional[list] = None
+    metadata: Optional[Dict[str, Any]] = None
 
 
 @dataclass
@@ -521,6 +522,27 @@ class TestCheckAndApplyApprovalResolution:
         check_and_apply_approval_resolution(db=db, run_id="r1", run_response=rr)
         assert t.confirmed is False
 
+    def test_attaches_resolved_approval_to_metadata(self):
+        approval = {"status": "approved", "resolution_data": None, "resolved_by": "alice", "resolved_at": 1700000000}
+        db = MagicMock()
+        db.get_approvals.return_value = ([approval], 1)
+        rr = FakeRunResponse(tools=[FakeToolExecution(approval_type="required", requires_confirmation=True)])
+        check_and_apply_approval_resolution(db=db, run_id="r1", run_response=rr)
+        assert rr.metadata is not None
+        assert rr.metadata["approval"] == approval
+
+    def test_preserves_existing_metadata(self):
+        approval = {"status": "approved", "resolution_data": None}
+        db = MagicMock()
+        db.get_approvals.return_value = ([approval], 1)
+        rr = FakeRunResponse(
+            tools=[FakeToolExecution(approval_type="required", requires_confirmation=True)],
+            metadata={"existing": "value"},
+        )
+        check_and_apply_approval_resolution(db=db, run_id="r1", run_response=rr)
+        assert rr.metadata["existing"] == "value"
+        assert rr.metadata["approval"] == approval
+
 
 # =============================================================================
 # acheck_and_apply_approval_resolution (async)
@@ -566,3 +588,13 @@ class TestAsyncCheckAndApplyApprovalResolution:
         rr = FakeRunResponse(tools=[t])
         await acheck_and_apply_approval_resolution(db=db, run_id="r1", run_response=rr)
         assert t.confirmed is True
+
+    @pytest.mark.asyncio
+    async def test_attaches_resolved_approval_to_metadata(self):
+        approval = {"status": "approved", "resolution_data": None, "resolved_by": "alice"}
+        db = MagicMock()
+        db.get_approvals = AsyncMock(return_value=([approval], 1))
+        rr = FakeRunResponse(tools=[FakeToolExecution(approval_type="required", requires_confirmation=True)])
+        await acheck_and_apply_approval_resolution(db=db, run_id="r1", run_response=rr)
+        assert rr.metadata is not None
+        assert rr.metadata["approval"] == approval

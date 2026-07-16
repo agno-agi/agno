@@ -77,7 +77,7 @@ class GoogleBigQueryTools(Toolkit):
             log_debug(f"table_names: {tables_str}")
             return tables_str
         except Exception as e:
-            logger.error(f"Error getting tables: {e}")
+            logger.exception("Error getting tables")
             return f"Error getting tables: {e}"
 
     def describe_table(self, table_id: str) -> str:
@@ -97,7 +97,7 @@ class GoogleBigQueryTools(Toolkit):
             result = json.dumps({"table_description": desc, "columns": col_names})
             return result
         except Exception as e:
-            logger.error(f"Error getting table schema: {e}")
+            logger.exception("Error getting table schema")
             return f"Error getting table schema: {e}"
 
     def run_sql_query(self, query: str) -> str:
@@ -112,7 +112,7 @@ class GoogleBigQueryTools(Toolkit):
         try:
             return json.dumps(self._run_sql(sql=query), default=str)
         except Exception as e:
-            logger.error(f"Error running query: {e}")
+            logger.exception("Error running query")
             return f"Error running query: {e}"
 
     def _run_sql(self, sql: str) -> str:
@@ -130,6 +130,6 @@ class GoogleBigQueryTools(Toolkit):
             results = query_job.result()
             results_str = str([dict(row) for row in results])
             return results_str.replace("\n", " ")
-        except Exception as e:
-            logger.error(f"Error while executing SQL: {e}")
+        except Exception:
+            logger.exception("Error while executing SQL")
             return ""

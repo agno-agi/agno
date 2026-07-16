@@ -5,7 +5,7 @@ import httpx
 from pydantic import BaseModel, Field, HttpUrl
 
 from agno.tools import Toolkit
-from agno.utils.log import logger
+from agno.utils.log import log_error
 
 
 class JinaReaderToolsConfig(BaseModel):
@@ -59,7 +59,7 @@ class JinaReaderTools(Toolkit):
             return self._truncate_content(str(content))
         except Exception as e:
             error_msg = f"Error reading URL: {str(e)}"
-            logger.error(error_msg)
+            log_error(error_msg)
             return error_msg
 
     def search_query(self, query: str) -> str:
@@ -77,7 +77,7 @@ class JinaReaderTools(Toolkit):
             return self._truncate_content(str(content))
         except Exception as e:
             error_msg = f"Error performing search: {str(e)}"
-            logger.error(error_msg)
+            log_error(error_msg)
             return error_msg
 
     def _get_headers(self) -> Dict[str, str]:

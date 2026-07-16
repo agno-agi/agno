@@ -2,7 +2,7 @@ from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple, Union
 
 from agno.knowledge.embedder.base import Embedder
-from agno.utils.log import logger
+from agno.utils.log import log_warning
 
 try:
     from sentence_transformers import SentenceTransformer
@@ -41,7 +41,7 @@ class SentenceTransformerEmbedder(Embedder):
 
             return embedding  # type: ignore
         except Exception as e:
-            logger.warning(e)
+            log_warning(f"Failed to get embedding: {str(e)}")
             return []
 
     def get_embedding_and_usage(self, text: str) -> Tuple[List[float], Optional[Dict]]:
@@ -51,7 +51,7 @@ class SentenceTransformerEmbedder(Embedder):
         """Async version using thread executor for CPU-bound operations."""
         import asyncio
 
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         # Run the CPU-bound operation in a thread executor
         return await loop.run_in_executor(None, self.get_embedding, text)
 
@@ -59,5 +59,5 @@ class SentenceTransformerEmbedder(Embedder):
         """Async version using thread executor for CPU-bound operations."""
         import asyncio
 
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         return await loop.run_in_executor(None, self.get_embedding_and_usage, text)

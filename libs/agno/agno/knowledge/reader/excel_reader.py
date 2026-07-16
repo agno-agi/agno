@@ -23,9 +23,11 @@ class ExcelReader(Reader):
     def __init__(
         self,
         sheets: Optional[List[Union[str, int]]] = None,
-        chunking_strategy: Optional[ChunkingStrategy] = RowChunking(),
+        chunking_strategy: Optional[ChunkingStrategy] = None,
         **kwargs,
     ):
+        if chunking_strategy is None:
+            chunking_strategy = RowChunking()
         super().__init__(chunking_strategy=chunking_strategy, **kwargs)
         self.sheets = sheets
 
@@ -186,7 +188,7 @@ class ExcelReader(Reader):
             raise
         except Exception as e:
             file_desc = getattr(file, "name", str(file)) if isinstance(file, IO) else file
-            log_error(f"Error reading {file_desc}: {e}")
+            log_error(f"Error reading {file_desc}: {str(e)}")
             return []
 
     async def async_read(
@@ -221,5 +223,5 @@ class ExcelReader(Reader):
             raise
         except Exception as e:
             file_desc = getattr(file, "name", str(file)) if isinstance(file, IO) else file
-            log_error(f"Error reading {file_desc}: {e}")
+            log_error(f"Error reading {file_desc}: {str(e)}")
             return []

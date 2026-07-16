@@ -82,7 +82,7 @@ class LearningMachine:
     session_context: SessionContextInput = False
     entity_memory: EntityMemoryInput = False
     learned_knowledge: LearnedKnowledgeInput = False
-    decision_log: DecisionLogInput = False  # Phase 2
+    decision_log: DecisionLogInput = False
 
     # Namespace for entity_memory and learned_knowledge
     namespace: str = "global"
@@ -147,7 +147,7 @@ class LearningMachine:
                 store_type="learned_knowledge",
             )
 
-        # Decision Log (Phase 2)
+        # Decision Log
         if self.decision_log:
             self._stores["decision_log"] = self._resolve_store(
                 input_value=self.decision_log,
@@ -477,7 +477,7 @@ class LearningMachine:
                     tools.extend(store_tools)
                     log_debug(f"Got {len(store_tools)} tools from {name}")
             except Exception as e:
-                log_warning(f"Error getting tools from {name}: {e}")
+                log_warning(f"Error getting tools from {name}: {str(e)}")
 
         return tools
 
@@ -508,7 +508,7 @@ class LearningMachine:
                     tools.extend(store_tools)
                     log_debug(f"Got {len(store_tools)} tools from {name}")
             except Exception as e:
-                log_warning(f"Error getting tools from {name}: {e}")
+                log_warning(f"Error getting tools from {name}: {str(e)}")
 
         return tools
 
@@ -551,7 +551,7 @@ class LearningMachine:
                 if getattr(store, "was_updated", False):
                     log_debug(f"Store {name} was updated")
             except Exception as e:
-                log_warning(f"Error processing through {name}: {e}")
+                log_warning(f"Error processing through {name}: {str(e)}")
 
     async def aprocess(
         self,
@@ -580,7 +580,7 @@ class LearningMachine:
                 if getattr(store, "was_updated", False):
                     log_debug(f"Store {name} was updated")
             except Exception as e:
-                log_warning(f"Error processing through {name}: {e}")
+                log_warning(f"Error processing through {name}: {str(e)}")
 
     # =========================================================================
     # Lower-Level API
@@ -628,7 +628,7 @@ class LearningMachine:
                 except Exception:
                     pass
             except Exception as e:
-                log_warning(f"Error recalling from {name}: {e}")
+                log_warning(f"Error recalling from {name}: {str(e)}")
 
         return results
 
@@ -668,7 +668,7 @@ class LearningMachine:
                 except Exception:
                     pass
             except Exception as e:
-                log_warning(f"Error recalling from {name}: {e}")
+                log_warning(f"Error recalling from {name}: {str(e)}")
 
         return results
 
@@ -684,7 +684,7 @@ class LearningMachine:
                     if formatted:
                         parts.append(formatted)
                 except Exception as e:
-                    log_warning(f"Error building context from {name}: {e}")
+                    log_warning(f"Error building context from {name}: {str(e)}")
 
         return "\n\n".join(parts)
 

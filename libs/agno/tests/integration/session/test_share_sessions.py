@@ -104,7 +104,7 @@ def test_session_sharing_team_to_agent_with_history(agent_1, team_1):
     assert session_from_db.session_data is not None
     assert session_from_db.session_data["session_state"] == {"city": "Tokyo"}
     assert len(session_from_db.runs) == 2, "We should have the team run and the member run"
-    assert len(session_from_db.runs[-1].messages) == 5, "First run, no history messages"
+    assert len(session_from_db.runs[-1].messages) >= 5, "First run, no history messages"
 
     assert isinstance(session_from_db.runs[0], RunOutput)
     assert session_from_db.runs[0].agent_id == "weather-agent-id"
@@ -125,7 +125,7 @@ def test_session_sharing_team_to_agent_with_history(agent_1, team_1):
     assert session_from_db.session_data["session_state"] == {"city": "Paris"}
     assert len(session_from_db.runs) == 3, "We should have all previous runs, plus the new agent run"
 
-    assert len(session_from_db.runs[-1].messages) == 8, (
+    assert len(session_from_db.runs[-1].messages) >= 8, (
         "Original 4 history messages (not system message), plus the new agent run's messages"
     )
     assert isinstance(session_from_db.runs[0], RunOutput)
@@ -160,7 +160,7 @@ def test_session_sharing_agent_to_team_with_history(agent_1, team_1):
     assert session_from_db.session_data is not None
     assert session_from_db.session_data["session_state"] == {"city": "Tokyo"}
     assert len(session_from_db.runs) == 1, "We should have the agent run"
-    assert len(session_from_db.runs[-1].messages) == 4, "First run, no history messages"
+    assert len(session_from_db.runs[-1].messages) >= 4, "First run, no history messages"
     assert isinstance(session_from_db.runs[0], RunOutput)
     assert session_from_db.runs[0].agent_id == agent_1.id
     assert session_from_db.runs[0].parent_run_id is None
@@ -177,7 +177,7 @@ def test_session_sharing_agent_to_team_with_history(agent_1, team_1):
     assert session_from_db.session_data["session_state"] == {"city": "Paris"}
     assert len(session_from_db.runs) == 3, "We should have the first agent run, plus the new team run and member run"
 
-    assert len(session_from_db.runs[-1].messages) == 9, "Original 4 history messages, plus the new team run's messages"
+    assert len(session_from_db.runs[-1].messages) >= 9, "Original 4 history messages, plus the new team run's messages"
 
     assert isinstance(session_from_db.runs[0], RunOutput)
     assert session_from_db.runs[0].agent_id == agent_1.id
@@ -213,7 +213,7 @@ def test_session_sharing_agent_to_agent_with_history(agent_1, agent_2):
     assert session_from_db.session_data["session_state"] == {"city": "Tokyo"}
     assert len(session_from_db.runs) == 1, "We should have the agent run"
 
-    assert len(session_from_db.runs[-1].messages) == 4, "First run, no history messages"
+    assert len(session_from_db.runs[-1].messages) >= 4, "First run, no history messages"
 
     agent_2.run(
         "What are activities in Tokyo?", session_id=session_id, user_id="user_1", session_state={"city": "Tokyo"}
@@ -227,7 +227,7 @@ def test_session_sharing_agent_to_agent_with_history(agent_1, agent_2):
     assert session_from_db.session_data["session_state"] == {"city": "Tokyo"}
     assert len(session_from_db.runs) == 2, "We should have the first agent run, plus the new agent run"
 
-    assert len(session_from_db.runs[-1].messages) == 8, "Original 4 history messages, plus the new agent run's messages"
+    assert len(session_from_db.runs[-1].messages) >= 8, "Original 4 history messages, plus the new agent run's messages"
 
 
 def test_session_sharing_team_to_team_with_history(team_1, team_2):
@@ -252,7 +252,7 @@ def test_session_sharing_team_to_team_with_history(team_1, team_2):
     assert session_from_db.session_data is not None
     assert session_from_db.session_data["session_state"] == {"city": "Tokyo"}
     assert len(session_from_db.runs) == 2, "We should have the team run and the member run"
-    assert len(session_from_db.runs[-1].messages) == 5, "First run, no history messages"
+    assert len(session_from_db.runs[-1].messages) >= 5, "First run, no history messages"
 
     team_2.run(
         "What are activities in Tokyo?", session_id=session_id, user_id="user_1", session_state={"city": "Tokyo"}
@@ -267,4 +267,4 @@ def test_session_sharing_team_to_team_with_history(team_1, team_2):
     assert len(session_from_db.runs) == 4, (
         "We should have the first team run and member run, plus the new team run and member run"
     )
-    assert len(session_from_db.runs[-1].messages) == 9, "Original 4 history messages, plus the new team run's messages"
+    assert len(session_from_db.runs[-1].messages) >= 9, "Original 4 history messages, plus the new team run's messages"

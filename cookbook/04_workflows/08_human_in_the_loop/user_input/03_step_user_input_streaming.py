@@ -18,7 +18,7 @@ This is useful for:
 
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
-from agno.models.openai import OpenAIChat
+from agno.models.openai import OpenAIResponses
 from agno.run.workflow import (
     StepCompletedEvent,
     StepPausedEvent,
@@ -45,7 +45,7 @@ def gather_context(step_input: StepInput) -> StepOutput:
 # Step 2: Content generator agent (HITL configured on Step)
 content_agent = Agent(
     name="Content Generator",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIResponses(id="gpt-5.4"),
     instructions=[
         "You are a content generator.",
         "Generate content based on the topic and user preferences provided.",

@@ -8,7 +8,7 @@ from bson import ObjectId
 from agno.filters import FilterExpr
 from agno.knowledge.document import Document
 from agno.knowledge.embedder import Embedder
-from agno.utils.log import log_debug, log_info, log_warning, logger
+from agno.utils.log import log_debug, log_error, log_info, log_warning, logger
 from agno.vectordb.base import VectorDb
 from agno.vectordb.distance import Distance
 from agno.vectordb.search import SearchType
@@ -176,8 +176,8 @@ class MongoDb(VectorDb):
 
                 except errors.ConnectionFailure as e:
                     raise ConnectionError(f"Failed to connect to Azure Cosmos DB: {e}")
-                except Exception as e:
-                    logger.error(f"An error occurred while connecting to Azure Cosmos DB: {e}")
+                except Exception:
+                    logger.exception("An error occurred while connecting to Azure Cosmos DB")
                     raise
             else:
                 try:
@@ -188,10 +188,10 @@ class MongoDb(VectorDb):
                     log_info("Connected to MongoDB successfully.")
                     self._db = self._client[self.database]  # type: ignore
                 except errors.ConnectionFailure as e:
-                    logger.error(f"Failed to connect to MongoDB: {e}")
+                    logger.exception("Failed to connect to MongoDB")
                     raise ConnectionError(f"Failed to connect to MongoDB: {e}")
-                except Exception as e:
-                    logger.error(f"An error occurred while connecting to MongoDB: {e}")
+                except Exception:
+                    logger.exception("An error occurred while connecting to MongoDB")
                     raise
         return self._client
 
@@ -210,8 +210,8 @@ class MongoDb(VectorDb):
             try:
                 await self._async_client.admin.command("ping")
                 log_info("Connected to MongoDB asynchronously.")
-            except Exception as e:
-                logger.error(f"Failed to connect to MongoDB asynchronously: {e}")
+            except Exception:
+                logger.exception("Failed to connect to MongoDB asynchronously")
                 raise
         return self._async_client
 
@@ -285,8 +285,8 @@ class MongoDb(VectorDb):
 
                 log_info(f"Created vector search index '{index_name}' successfully")
 
-            except Exception as e:
-                logger.error(f"Error creating vector search index: {e}")
+            except Exception:
+                logger.exception("Error creating vector search index")
                 raise
         else:
             for attempt in range(max_retries):
@@ -343,13 +343,13 @@ class MongoDb(VectorDb):
 
                 except errors.OperationFailure as e:
                     if "Duplicate Index" in str(e) and attempt < max_retries - 1:
-                        logger.warning(f"Index already exists, retrying... (attempt {attempt + 1})")
+                        log_warning(f"Index already exists, retrying... (attempt {attempt + 1}): {str(e)}")
                         time.sleep(retry_delay * (attempt + 1))
                         continue
-                    logger.error(f"Failed to create search index: {e}")
+                    logger.exception("Failed to create search index")
                     raise
-                except Exception as e:
-                    logger.error(f"Unexpected error creating search index: {e}")
+                except Exception:
+                    logger.exception("Unexpected error creating search index")
                     raise
 
     async def _create_search_index_async(self) -> None:
@@ -384,11 +384,11 @@ class MongoDb(VectorDb):
                 log_info(f"Search index '{index_name}' created successfully.")
                 return
 
-            except Exception as e:
+            except Exception:
                 if attempt < max_retries - 1:
                     await asyncio.sleep(retry_delay * (attempt + 1))
                     continue
-                logger.error(f"Failed to create search index: {e}")
+                logger.exception("Failed to create search index")
                 raise
 
     def _search_index_exists(self) -> bool:
@@ -413,8 +413,8 @@ class MongoDb(VectorDb):
 
                 log_debug(f"Vector search index '{index_name}' not found")
                 return False
-            except Exception as e:
-                logger.error(f"Error checking search index existence: {e}")
+            except Exception:
+                logger.exception("Error checking search index existence")
                 return False
         else:
             try:
@@ -422,8 +422,8 @@ class MongoDb(VectorDb):
                 indexes = list(collection.list_search_indexes())  # type: ignore
                 exists = any(index["name"] == index_name for index in indexes)  # type: ignore
                 return exists
-            except Exception as e:
-                logger.error(f"Error checking search index existence: {e}")
+            except Exception:
+                logger.exception("Error checking search index existence")
                 return False
 
     def _wait_for_index_ready(self) -> None:
@@ -434,8 +434,8 @@ class MongoDb(VectorDb):
                 if self._search_index_exists():
                     log_info(f"Search index '{index_name}' is ready.")
                     break
-            except Exception as e:
-                logger.error(f"Error checking index status: {e}")
+            except Exception:
+                logger.exception("Error checking index status")
                 raise TimeoutError("Timeout waiting for search index to become ready.")
             time.sleep(1)
 
@@ -450,11 +450,8 @@ class MongoDb(VectorDb):
                 if any(index["name"] == index_name for index in indexes):
                     log_info(f"Search index '{index_name}' is ready.")
                     break
-            except Exception as e:
-                logger.error(f"Error checking index status asynchronously: {e}")
-                import traceback
-
-                logger.error(f"Traceback: {traceback.format_exc()}")
+            except Exception:
+                logger.exception("Error checking index status asynchronously")
 
             if time.time() - start_time > self.wait_until_index_ready_in_seconds:  # type: ignore
                 raise TimeoutError("Timeout waiting for search index to become ready.")
@@ -488,8 +485,8 @@ class MongoDb(VectorDb):
             exists = collection.find_one({"name": name}) is not None
             log_debug(f"Document with name '{name}' {'exists' if exists else 'does not exist'}")
             return exists
-        except Exception as e:
-            logger.error(f"Error checking document name existence: {e}")
+        except Exception:
+            logger.exception("Error checking document name existence")
             return False
 
     def id_exists(self, id: str) -> bool:
@@ -507,8 +504,8 @@ class MongoDb(VectorDb):
             exists = result is not None
             log_debug(f"Document with ID '{id}' {'exists' if exists else 'does not exist'}")
             return exists
-        except Exception as e:
-            logger.error(f"Error checking document ID existence: {e}")
+        except Exception:
+            logger.exception("Error checking document ID existence")
             return False
 
     def content_hash_exists(self, content_hash: str) -> bool:
@@ -526,8 +523,8 @@ class MongoDb(VectorDb):
             exists = result is not None
             log_debug(f"Document with content_hash '{content_hash}' {'exists' if exists else 'does not exist'}")
             return exists
-        except Exception as e:
-            logger.error(f"Error checking content_hash existence: {e}")
+        except Exception:
+            logger.exception("Error checking content_hash existence")
             return False
 
     def insert(self, content_hash: str, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
@@ -543,8 +540,8 @@ class MongoDb(VectorDb):
                     raise ValueError(f"Failed to generate embedding for document: {document.id}")
                 doc_data = self.prepare_doc(content_hash, document, filters)
                 prepared_docs.append(doc_data)
-            except ValueError as e:
-                logger.error(f"Error preparing document '{document.name}': {e}")
+            except ValueError:
+                logger.exception(f"Error preparing document '{document.name}'")
 
         if prepared_docs:
             try:
@@ -553,9 +550,9 @@ class MongoDb(VectorDb):
                 if self.wait_after_insert_in_seconds and self.wait_after_insert_in_seconds > 0:
                     time.sleep(self.wait_after_insert_in_seconds)
             except errors.BulkWriteError as e:
-                logger.warning(f"Bulk write error while inserting documents: {e.details}")
-            except Exception as e:
-                logger.error(f"Error inserting documents: {e}")
+                log_warning(f"Bulk write error while inserting documents: {e.details}: {str(e)}")
+            except Exception:
+                logger.exception("Error inserting documents")
 
     def upsert(self, content_hash: str, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
         """Upsert documents into the MongoDB collection."""
@@ -574,8 +571,8 @@ class MongoDb(VectorDb):
                     upsert=True,
                 )
                 log_info(f"Upserted document: {doc_data['_id']}")
-            except Exception as e:
-                logger.error(f"Error upserting document '{document.name}': {e}")
+            except Exception:
+                logger.exception(f"Error upserting document '{document.name}'")
 
     def upsert_available(self) -> bool:
         """Indicate that upsert functionality is available."""
@@ -597,7 +594,7 @@ class MongoDb(VectorDb):
 
         query_embedding = self.embedder.get_embedding(query)
         if query_embedding is None:
-            logger.error(f"Failed to generate embedding for query: {query}")
+            log_error(f"Failed to generate embedding for query: {query}")
             return []
 
         if self.cosmos_compatibility:
@@ -641,8 +638,8 @@ class MongoDb(VectorDb):
                 log_info(f"Search completed. Found {len(docs)} documents.")
                 return docs
 
-            except Exception as e:
-                logger.error(f"Error during vector search: {e}")
+            except Exception:
+                logger.exception("Error during vector search")
                 return []
         else:
             # MongoDB Atlas Search
@@ -701,8 +698,8 @@ class MongoDb(VectorDb):
                 log_info(f"Search completed. Found {len(docs)} documents.")
                 return docs
 
-            except Exception as e:
-                logger.error(f"Error during search: {e}")
+            except Exception:
+                logger.exception("Error during search")
                 raise
 
     def vector_search(self, query: str, limit: int = 5) -> List[Document]:
@@ -730,8 +727,8 @@ class MongoDb(VectorDb):
             ]
             log_debug(f"Keyword search completed. Found {len(results)} documents.")
             return results
-        except Exception as e:
-            logger.error(f"Error during keyword search: {e}")
+        except Exception:
+            logger.exception("Error during keyword search")
             return []
 
     def hybrid_search(
@@ -757,7 +754,7 @@ class MongoDb(VectorDb):
 
         query_embedding = self.embedder.get_embedding(query)
         if query_embedding is None:
-            logger.error(f"Failed to generate embedding for query: {query}")
+            log_error(f"Failed to generate embedding for query: {query}")
             return []
 
         collection = self._get_collection()
@@ -909,16 +906,16 @@ class MongoDb(VectorDb):
             log_info(f"Hybrid search completed. Found {len(docs)} documents.")
             return docs
         except errors.OperationFailure as e:
-            logger.error(
+            log_error(
                 f"Error during hybrid search, potentially due to missing or misconfigured Atlas Search index for text search: {e}"
             )
-            logger.error(f"Details: {e.details}")
+            log_error(f"Details: {e.details}: {str(e)}")
             return []
         except Exception as e:
-            logger.error(f"Error during hybrid search: {e}")
+            logger.exception("Error during hybrid search")
             import traceback
 
-            logger.error(f"Traceback: {traceback.format_exc()}")
+            log_error(f"Traceback: {traceback.format_exc()}: {str(e)}")
             return []
 
     def drop(self) -> None:
@@ -935,11 +932,11 @@ class MongoDb(VectorDb):
                         log_info(f"Dropping index '{index_name}'")
                         try:
                             collection.drop_index(index_name)
-                        except Exception as e:
-                            logger.error(f"Error dropping index: {e}")
+                        except Exception:
+                            logger.exception("Error dropping index")
 
-                except Exception as e:
-                    logger.error(f"Error dropping collection: {e}")
+                except Exception:
+                    logger.exception("Error dropping collection")
                     raise
             else:
                 # MongoDB Atlas specific handling
@@ -948,8 +945,8 @@ class MongoDb(VectorDb):
                         collection.drop_search_index(index_name)
                         time.sleep(2)
 
-                except Exception as e:
-                    logger.error(f"Error dropping collection: {e}")
+                except Exception:
+                    logger.exception("Error dropping collection")
                     raise
 
         # Drop the collection
@@ -978,8 +975,8 @@ class MongoDb(VectorDb):
                 success = result.deleted_count >= 0
                 log_info(f"Deleted {result.deleted_count} documents from collection.")
                 return success
-            except Exception as e:
-                logger.error(f"Error deleting documents: {e}")
+            except Exception:
+                logger.exception("Error deleting documents")
                 return False
         # Return True if collection doesn't exist (nothing to delete)
         return True
@@ -1016,8 +1013,8 @@ class MongoDb(VectorDb):
             count = collection.count_documents({})
             log_debug(f"Collection '{self.collection_name}' has {count} documents.")
             return count
-        except Exception as e:
-            logger.error(f"Error getting document count: {e}")
+        except Exception:
+            logger.exception("Error getting document count")
             return 0
 
     async def async_insert(
@@ -1042,8 +1039,8 @@ class MongoDb(VectorDb):
                         if j < len(embeddings):
                             doc.embedding = embeddings[j]
                             doc.usage = usages[j] if j < len(usages) else None
-                    except Exception as e:
-                        logger.error(f"Error assigning batch embedding to document '{doc.name}': {e}")
+                    except Exception:
+                        logger.exception(f"Error assigning batch embedding to document '{doc.name}'")
 
             except Exception as e:
                 # Check if this is a rate limit error - don't fall back as it would make things worse
@@ -1054,10 +1051,10 @@ class MongoDb(VectorDb):
                 )
 
                 if is_rate_limit:
-                    logger.error(f"Rate limit detected during batch embedding. {e}")
+                    logger.exception("Rate limit detected during batch embedding.")
                     raise e
                 else:
-                    logger.warning(f"Async batch embedding failed, falling back to individual embeddings: {e}")
+                    log_warning(f"Async batch embedding failed, falling back to individual embeddings: {str(e)}")
                     # Fall back to individual embedding
                     embed_tasks = [doc.async_embed(embedder=self.embedder) for doc in documents]
                     await asyncio.gather(*embed_tasks, return_exceptions=True)
@@ -1071,8 +1068,8 @@ class MongoDb(VectorDb):
             try:
                 doc_data = self.prepare_doc(content_hash, document, filters)
                 prepared_docs.append(doc_data)
-            except ValueError as e:
-                logger.error(f"Error preparing document '{document.name}': {e}")
+            except ValueError:
+                logger.exception(f"Error preparing document '{document.name}'")
 
         if prepared_docs:
             try:
@@ -1081,9 +1078,9 @@ class MongoDb(VectorDb):
                 if self.wait_after_insert_in_seconds and self.wait_after_insert_in_seconds > 0:
                     await asyncio.sleep(self.wait_after_insert_in_seconds)
             except errors.BulkWriteError as e:
-                logger.warning(f"Bulk write error while inserting documents: {e.details}")
-            except Exception as e:
-                logger.error(f"Error inserting documents asynchronously: {e}")
+                log_warning(f"Bulk write error while inserting documents: {e.details}: {str(e)}")
+            except Exception:
+                logger.exception("Error inserting documents asynchronously")
 
     async def async_upsert(
         self, content_hash: str, documents: List[Document], filters: Optional[Dict[str, Any]] = None
@@ -1107,8 +1104,8 @@ class MongoDb(VectorDb):
                         if j < len(embeddings):
                             doc.embedding = embeddings[j]
                             doc.usage = usages[j] if j < len(usages) else None
-                    except Exception as e:
-                        logger.error(f"Error assigning batch embedding to document '{doc.name}': {e}")
+                    except Exception:
+                        logger.exception(f"Error assigning batch embedding to document '{doc.name}'")
 
             except Exception as e:
                 # Check if this is a rate limit error - don't fall back as it would make things worse
@@ -1119,10 +1116,10 @@ class MongoDb(VectorDb):
                 )
 
                 if is_rate_limit:
-                    logger.error(f"Rate limit detected during batch embedding. {e}")
+                    logger.exception("Rate limit detected during batch embedding.")
                     raise e
                 else:
-                    logger.warning(f"Async batch embedding failed, falling back to individual embeddings: {e}")
+                    log_warning(f"Async batch embedding failed, falling back to individual embeddings: {str(e)}")
                     # Fall back to individual embedding
                     embed_tasks = [doc.async_embed(embedder=self.embedder) for doc in documents]
                     await asyncio.gather(*embed_tasks, return_exceptions=True)
@@ -1140,8 +1137,8 @@ class MongoDb(VectorDb):
                     upsert=True,
                 )
                 log_info(f"Upserted document: {doc_data['_id']}")
-            except Exception as e:
-                logger.error(f"Error upserting document '{document.name}' asynchronously: {e}")
+            except Exception:
+                logger.exception(f"Error upserting document '{document.name}' asynchronously")
 
     async def async_search(
         self, query: str, limit: int = 5, filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None
@@ -1152,7 +1149,7 @@ class MongoDb(VectorDb):
             filters = None
         query_embedding = await self.embedder.async_get_embedding(query)
         if query_embedding is None:
-            logger.error(f"Failed to generate embedding for query: {query}")
+            log_error(f"Failed to generate embedding for query: {query}")
             return []
 
         try:
@@ -1210,12 +1207,8 @@ class MongoDb(VectorDb):
             log_info(f"Async search completed. Found {len(docs)} documents.")
             return docs
 
-        except Exception as e:
-            logger.error(f"Error during async search: {e}")
-            # Include traceback for better debugging
-            import traceback
-
-            logger.error(f"Traceback: {traceback.format_exc()}")
+        except Exception:
+            logger.exception("Error during async search")
             raise
 
     async def async_drop(self) -> None:
@@ -1225,8 +1218,8 @@ class MongoDb(VectorDb):
                 collection = await self._get_async_collection()
                 await collection.drop()
                 log_info(f"Collection '{self.collection_name}' dropped asynchronously")
-            except Exception as e:
-                logger.error(f"Error dropping collection asynchronously: {e}")
+            except Exception:
+                logger.exception("Error dropping collection asynchronously")
                 raise
 
     async def async_exists(self) -> bool:
@@ -1237,8 +1230,8 @@ class MongoDb(VectorDb):
             exists = self.collection_name in collection_names
             log_debug(f"Collection '{self.collection_name}' existence (async): {exists}")
             return exists
-        except Exception as e:
-            logger.error(f"Error checking collection existence asynchronously: {e}")
+        except Exception:
+            logger.exception("Error checking collection existence asynchronously")
             return False
 
     async def async_name_exists(self, name: str) -> bool:
@@ -1248,8 +1241,8 @@ class MongoDb(VectorDb):
             exists = await collection.find_one({"name": name}) is not None
             log_debug(f"Document with name '{name}' {'exists' if exists else 'does not exist'} (async)")
             return exists
-        except Exception as e:
-            logger.error(f"Error checking document name existence asynchronously: {e}")
+        except Exception:
+            logger.exception("Error checking document name existence asynchronously")
             return False
 
     def _get_cosmos_similarity_metric(self) -> str:
@@ -1293,8 +1286,8 @@ class MongoDb(VectorDb):
             else:
                 log_info(f"No documents found with ID '{id}' to delete.")
                 return True
-        except Exception as e:
-            logger.error(f"Error deleting document with ID '{id}': {e}")
+        except Exception:
+            logger.exception(f"Error deleting document with ID '{id}'")
             return False
 
     def delete_by_name(self, name: str) -> bool:
@@ -1307,8 +1300,8 @@ class MongoDb(VectorDb):
                 f"Deleted {result.deleted_count} document(s) with name '{name}' from collection '{self.collection_name}'."
             )
             return True
-        except Exception as e:
-            logger.error(f"Error deleting documents with name '{name}': {e}")
+        except Exception:
+            logger.exception(f"Error deleting documents with name '{name}'")
             return False
 
     def delete_by_metadata(self, metadata: Dict[str, Any]) -> bool:
@@ -1328,8 +1321,8 @@ class MongoDb(VectorDb):
                 f"Deleted {result.deleted_count} document(s) with metadata '{metadata}' from collection '{self.collection_name}'."
             )
             return True
-        except Exception as e:
-            logger.error(f"Error deleting documents with metadata '{metadata}': {e}")
+        except Exception:
+            logger.exception(f"Error deleting documents with metadata '{metadata}'")
             return False
 
     def _delete_by_content_hash(self, content_hash: str) -> bool:
@@ -1346,8 +1339,8 @@ class MongoDb(VectorDb):
             result = collection.delete_many({"content_hash": content_hash})
             log_info(f"Deleted {result.deleted_count} documents with content_hash '{content_hash}'")
             return True
-        except Exception as e:
-            logger.error(f"Error deleting documents by content_hash '{content_hash}': {e}")
+        except Exception:
+            logger.exception(f"Error deleting documents by content_hash '{content_hash}'")
             return False
 
     def delete_by_content_id(self, content_id: str) -> bool:
@@ -1360,8 +1353,8 @@ class MongoDb(VectorDb):
                 f"Deleted {result.deleted_count} document(s) with content_id '{content_id}' from collection '{self.collection_name}'."
             )
             return True
-        except Exception as e:
-            logger.error(f"Error deleting documents with content_id '{content_id}': {e}")
+        except Exception:
+            logger.exception(f"Error deleting documents with content_id '{content_id}'")
             return False
 
     def update_metadata(self, content_id: str, metadata: Dict[str, Any]) -> None:
@@ -1391,8 +1384,8 @@ class MongoDb(VectorDb):
             else:
                 logger.debug(f"Updated metadata for {result.matched_count} documents with content_id: {content_id}")
 
-        except Exception as e:
-            logger.error(f"Error updating metadata for content_id '{content_id}': {e}")
+        except Exception:
+            logger.exception(f"Error updating metadata for content_id '{content_id}'")
             raise
 
     def get_supported_search_types(self) -> List[str]:

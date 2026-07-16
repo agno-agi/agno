@@ -13,7 +13,7 @@ Two approaches for HITL:
 
 from agno.agent import Agent
 from agno.db.postgres import PostgresDb
-from agno.models.openai import OpenAIChat
+from agno.models.openai import OpenAIResponses
 from agno.workflow.decorators import pause
 from agno.workflow.step import Step
 from agno.workflow.types import StepInput, StepOutput
@@ -27,7 +27,7 @@ db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
 # ============================================================
 research_agent = Agent(
     name="Researcher",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIResponses(id="gpt-5.4"),
     instructions=[
         "You are a research assistant.",
         "Given a topic, provide 3 key points about it in a concise bullet list.",
@@ -57,7 +57,7 @@ def process_research(step_input: StepInput) -> StepOutput:
 # ============================================================
 writer_agent = Agent(
     name="Writer",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIResponses(id="gpt-5.4"),
     instructions=[
         "You are a blog writer.",
         "Given processed research, write a short 2-paragraph blog post.",
