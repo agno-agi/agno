@@ -321,6 +321,10 @@ class AwsBedrock(Model):
                 if isinstance(message.content, list):
                     formatted_message["content"].extend(message.content)
                 elif message.tool_calls:
+                    # Preserve any narration text that accompanies the tool call; otherwise this
+                    # branch emits only toolUse blocks and the assistant text is dropped on replay.
+                    if isinstance(message.content, str) and message.content:
+                        formatted_message["content"].append({"text": message.content})
                     tool_use_content = []
                     for tool_call in message.tool_calls:
                         try:
