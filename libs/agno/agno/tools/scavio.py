@@ -109,36 +109,34 @@ class ScavioTools(Toolkit):
         country_code: Optional[str] = None,
         language: Optional[str] = None,
         page: Optional[int] = None,
-        search_type: Optional[str] = None,
         device: Optional[str] = None,
         nfpr: Optional[bool] = None,
-        light_request: Optional[bool] = None,
     ) -> str:
-        """Search Google for real-time web results.
+        """Search Google for real-time organic web results.
 
         Args:
             query (str): The search query.
             country_code (Optional[str]): Two-letter country code to localize results (e.g. "us").
             language (Optional[str]): Two-letter language code for results (e.g. "en").
-            page (Optional[int]): Result page number (1-based).
-            search_type (Optional[str]): Result type: "classic", "news", "maps", or "images".
+            page (Optional[int]): Result page number (1-based); page 2 fetches the next 10 results.
             device (Optional[str]): "desktop" or "mobile".
             nfpr (Optional[bool]): Disable auto-correction / spelling suggestions when True.
-            light_request (Optional[bool]): Return a lighter, cheaper response when True.
 
         Returns:
-            str: JSON string of search results.
+            str: JSON string with an ``organic_results`` list (each item has title, link,
+            and snippet). Costs 1 credit.
         """
+        # The Scavio Google API is v2: localization uses gl/hl and paging uses a
+        # result offset (start). Map the public param names onto that wire shape.
+        start = (page - 1) * 10 if page and page > 1 else None
         return self._call(
             self.client.google.search,
             query,
-            country_code=country_code,
-            language=language,
-            page=page,
-            search_type=search_type,
+            gl=country_code,
+            hl=language,
+            start=start,
             device=device,
             nfpr=nfpr,
-            light_request=light_request,
         )
 
     # ------------------------------------------------------------------ Amazon
