@@ -53,7 +53,10 @@ class JSONReader(Reader):
             else:
                 raise ValueError("Unsupported file type. Must be Path or file-like object.")
 
-            if isinstance(json_contents, dict):
+            # Wrap any non-list top-level value (dict or a bare scalar) in a single-element
+            # list; otherwise enumerate() would iterate a string char-by-char or crash on
+            # a number/bool.
+            if not isinstance(json_contents, list):
                 json_contents = [json_contents]
 
             documents = [

@@ -51,6 +51,20 @@ def test_read_json_list():
     assert [json.loads(doc.content) for doc in documents] == test_data
 
 
+@pytest.mark.parametrize("value", ["hello world", 42, True])
+def test_read_json_top_level_scalar(value):
+    # A bare top-level scalar (valid JSON) used to iterate char-by-char (str) or crash
+    # (int/bool); it must produce a single document.
+    json_bytes = BytesIO(json.dumps(value).encode())
+    json_bytes.name = "test.json"
+
+    reader = JSONReader(chunk=False)
+    documents = reader.read(json_bytes)
+
+    assert len(documents) == 1
+    assert json.loads(documents[0].content) == value
+
+
 def test_chunking():
     # Test document chunking functionality
     test_data = {"key": "value"}
