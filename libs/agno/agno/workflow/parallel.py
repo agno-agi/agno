@@ -365,7 +365,7 @@ class Parallel:
         # Use index to preserve order
         indexed_steps = list(enumerate(self.steps))
 
-        with ThreadPoolExecutor(max_workers=len(self.steps)) as executor:
+        with ThreadPoolExecutor(max_workers=max(1, len(self.steps))) as executor:
             # Submit all tasks with their original indices
             # Use copy_context().run to propagate context variables to child threads
             future_to_index = {
@@ -551,7 +551,7 @@ class Parallel:
         # Submit all parallel tasks
         indexed_steps = list(enumerate(self.steps))
 
-        with ThreadPoolExecutor(max_workers=len(self.steps)) as executor:
+        with ThreadPoolExecutor(max_workers=max(1, len(self.steps))) as executor:
             # Submit all tasks
             # Use copy_context().run to propagate context variables to child threads
             futures = [
