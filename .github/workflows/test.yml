@@ -161,6 +161,13 @@ jobs:
         run: |
           set -e
           ./scripts/test_setup.sh
+      - name: Restore test durations cache
+        uses: actions/cache/restore@v4
+        with:
+          path: .test_durations
+          key: test-durations-${{ hashFiles('libs/agno/tests/**/*.py') }}
+          restore-keys: |
+            test-durations-
       - name: Run tests (group ${{ matrix.group }}/5)
         working-directory: .
         env:
@@ -168,4 +175,47 @@ jobs:
         run: |
           source .venv/bin/activate
           uv pip install pytest-split --quiet
-          python -m pytest --splits 5 --group ${{ matrix.group }} ./libs/agno/tests/unit --ignore=libs/agno/tests/unit/models/litellm --ignore=libs/agno/tests/unit/tools/test_crawl4ai.py --ignore=libs/agno/tests/unit/tools/test_scrapegraph.py
+          python -m pytest --splits 5 --group ${{ matrix.group }} --splitting-algorithm=least_duration --store-durations --durations-path .test_durations ./libs/agno/tests/unit --ignore=libs/agno/tests/unit/models/litellm --ignore=libs/agno/tests/unit/tools/test_crawl4ai.py --ignore=libs/agno/tests/unit/tools/test_scrapegraph.py
+      - name: Upload test durations
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-durations-${{ matrix.group }}
+          path: .test_durations
+          retention-days: 1
+          include-hidden-files: true
+
+  update-durations:
+    runs-on: ubuntu-latest
+    needs: tests
+    if: always() && needs.tests.result == 'success'
+    steps:
+      - uses: actions/checkout@v3
+      - name: Download all duration artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: test-durations-*
+          path: durations
+      - name: Merge durations files
+        run: |
+          pip install pytest-split --quiet
+          # Merge all duration files into one
+          python3 << 'EOF'
+          import json
+          from pathlib import Path
+
+          merged = {}
+          for f in Path("durations").rglob(".test_durations"):
+              with open(f) as fp:
+                  data = json.load(fp)
+                  merged.update(data)
+
+          with open(".test_durations", "w") as fp:
+              json.dump(merged, fp, indent=2)
+
+          print(f"Merged {len(merged)} test durations")
+          EOF
+      - name: Save merged durations to cache
+        uses: actions/cache/save@v4
+        with:
+          path: .test_durations
+          key: test-durations-${{ hashFiles('libs/agno/tests/**/*.py') }}
