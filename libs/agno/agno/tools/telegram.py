@@ -8,6 +8,7 @@ from agno.utils.log import log_debug
 try:
     from telebot import TeleBot
     from telebot.apihelper import ApiTelegramException
+    from telebot.types import ReactionTypeEmoji
 except ImportError as e:
     raise ImportError("`pyTelegramBotAPI` not installed. Please install using `pip install 'agno[telegram]'`") from e
 
@@ -27,6 +28,7 @@ class TelegramTools(Toolkit):
         enable_send_sticker: Enable send_sticker tool. Defaults to False.
         enable_edit_message: Enable edit_message tool. Defaults to False.
         enable_delete_message: Enable delete_message tool. Defaults to False.
+        enable_react_with_emoji: Enable react_with_emoji tool. Defaults to False.
         all: Enable all tools. Overrides individual flags when True.
     """
 
@@ -43,6 +45,7 @@ class TelegramTools(Toolkit):
         enable_send_sticker: bool = False,
         enable_edit_message: bool = False,
         enable_delete_message: bool = False,
+        enable_react_with_emoji: bool = False,
         all: bool = False,
         **kwargs: Any,
     ):
@@ -72,6 +75,8 @@ class TelegramTools(Toolkit):
             tools.append(self.edit_message)
         if enable_delete_message or all:
             tools.append(self.delete_message)
+        if enable_react_with_emoji or all:
+            tools.append(self.react_with_emoji)
 
         super().__init__(name="telegram", tools=tools, **kwargs)
 
@@ -224,5 +229,25 @@ class TelegramTools(Toolkit):
         try:
             self.bot.delete_message(self._chat_id, message_id)
             return json.dumps({"status": "success", "deleted": True})
+        except ApiTelegramException as e:
+            return json.dumps({"status": "error", "message": str(e)})
+
+    def react_with_emoji(self, message_id: int, emoji: str) -> str:
+        """React to a message with an emoji.
+
+        Args:
+            message_id: The ID of the message to react to.
+            emoji: The emoji to react with.
+
+        Returns:
+            JSON string with status.
+        """
+        try:
+            self.bot.set_message_reaction(
+                chat_id=self._chat_id,
+                message_id=message_id,
+                reaction=[ReactionTypeEmoji(emoji=emoji)],
+            )
+            return json.dumps({"status": "success", "message_id": message_id, "emoji": emoji})
         except ApiTelegramException as e:
             return json.dumps({"status": "error", "message": str(e)})

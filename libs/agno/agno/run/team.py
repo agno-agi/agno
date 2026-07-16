@@ -884,22 +884,27 @@ class TeamRunOutput:
             _dict["followups"] = self.followups
 
         if self.images is not None:
-            _dict["images"] = [img.to_dict() for img in self.images]
+            _dict["images"] = [img.to_dict() if isinstance(img, Image) else img for img in self.images]
 
         if self.videos is not None:
-            _dict["videos"] = [vid.to_dict() for vid in self.videos]
+            _dict["videos"] = [vid.to_dict() if isinstance(vid, Video) else vid for vid in self.videos]
 
         if self.audio is not None:
-            _dict["audio"] = [aud.to_dict() for aud in self.audio]
+            _dict["audio"] = [aud.to_dict() if isinstance(aud, Audio) else aud for aud in self.audio]
 
         if self.files is not None:
-            _dict["files"] = [file.to_dict() for file in self.files]
+            _dict["files"] = [file.to_dict() if isinstance(file, File) else file for file in self.files]
 
         if self.response_audio is not None:
-            _dict["response_audio"] = self.response_audio.to_dict()
+            if isinstance(self.response_audio, Audio):
+                _dict["response_audio"] = self.response_audio.to_dict()
+            else:
+                _dict["response_audio"] = self.response_audio
 
         if self.member_responses:
-            _dict["member_responses"] = [response.to_dict() for response in self.member_responses]
+            _dict["member_responses"] = [
+                response.to_dict() if hasattr(response, "to_dict") else response for response in self.member_responses
+            ]
 
         if self.citations is not None:
             if isinstance(self.citations, Citations):
