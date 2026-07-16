@@ -69,3 +69,13 @@
 **Result:** Unit tests pass covering snapshot URL construction, byte-for-byte write to disk, "current" resolution from session_state, and the no-cached-env error path. Live cookbook awaiting partner key.
 
 ---
+
+### tavily_tools_advanced.py
+
+**Status:** PASS
+
+**Description:** Runs two agents with advanced Tavily search parameters against the live API: domain-restricted research (include_domains=["arxiv.org", "github.com"], exclude_domains=["reddit.com"], time_range="month", country="united states") and recent news scoped by day count (topic="news", days=3). Request payloads were additionally verified at the wire level: configured parameters present in every request, unset parameters omitted (the {query, search_depth, include_answer, max_results} baseline is unchanged when nothing is configured).
+
+**Result:** Both examples completed without errors. Domain-restricted search returned arxiv-sourced MoE papers, and the news agent returned items from the last few days. Note: answer text is model-composed; the domain restriction applies to the search results feeding it.
+
+---
