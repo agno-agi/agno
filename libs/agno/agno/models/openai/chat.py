@@ -337,10 +337,11 @@ class OpenAIChat(Model):
         if (message.images is not None and len(message.images) > 0) or (
             message.audio is not None and len(message.audio) > 0
         ):
-            # Ignore non-string message content
-            # because we assume that the images/audio are already added to the message
-            if isinstance(message.content, str):
-                message_dict["content"] = [{"type": "text", "text": message.content}]
+            # Skip only when content is already a pre-built list of parts; a str or None
+            # (the default) still needs its media appended.
+            if message.content is None or isinstance(message.content, str):
+                text = message.content if isinstance(message.content, str) else ""
+                message_dict["content"] = [{"type": "text", "text": text}]
                 if message.images is not None:
                     message_dict["content"].extend(images_to_message(images=message.images))
 
@@ -372,8 +373,9 @@ class OpenAIChat(Model):
                 if file_part:
                     message_dict["content"].insert(0, file_part)
 
-        # Manually add the content field even if it is None
-        if message.content is None:
+        # Manually add the content field even if it is None, unless media/files already
+        # built a content list above (which would otherwise be clobbered back to "").
+        if message.content is None and "content" not in message_dict:
             message_dict["content"] = ""
         return message_dict
 
