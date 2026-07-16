@@ -5474,13 +5474,15 @@ def _route_requirements_to_members(
             from agno.team._tools import _propagate_member_pause
 
             _propagate_member_pause(run_response, member, member_response)
+            # Persist paused member run so continue_run can find it after session reload
+            session.upsert_run(member_response)
         else:
+            # Update the member's run in the team session so its status is persisted
+            # (member agents skip save_session when team_id is set)
+            session.upsert_run(member_response)
+
             content = getattr(member_response, "content", None) or "Task completed"
             member_results.append(f"[{member.name or member_id}]: {content}")
-
-        # Persist member run so continue_run can find it after session reload
-        # (member agents skip save_session when team_id is set, so we do it here)
-        session.upsert_run(member_response)
 
         # Clear _member_run_response references to allow GC of the member RunOutput
         for req in reqs:
@@ -5607,18 +5609,16 @@ def _route_requirements_to_members_stream(
         if member_response is None:
             log_warning(f"Member {member_id} streaming did not yield a final RunOutput")
             member_results.append(f"[{member.name or member_id}]: Task completed (no final output)")
-        else:
-            if getattr(member_response, "is_paused", False):
-                from agno.team._tools import _propagate_member_pause
+        elif getattr(member_response, "is_paused", False):
+            from agno.team._tools import _propagate_member_pause
 
-                _propagate_member_pause(run_response, member, member_response)
-            else:
-                content = getattr(member_response, "content", None) or "Task completed"
-                member_results.append(f"[{member.name or member_id}]: {content}")
-
-            # Persist member run so continue_run can find it after session reload
-            # (member agents skip save_session when team_id is set, so we do it here)
+            _propagate_member_pause(run_response, member, member_response)
+            # Persist paused member run so continue_run can find it after session reload
             session.upsert_run(member_response)
+        else:
+            session.upsert_run(member_response)
+            content = getattr(member_response, "content", None) or "Task completed"
+            member_results.append(f"[{member.name or member_id}]: {content}")
 
         # Clear _member_run_response references to allow GC of the member RunOutput
         for req in reqs:
@@ -5708,19 +5708,20 @@ async def _aroute_requirements_to_members(
         for req in reqs:
             req._member_run_response = None
 
-        result: Optional[str] = None
         if getattr(member_response, "is_paused", False):
             from agno.team._tools import _propagate_member_pause
 
             _propagate_member_pause(run_response, member, member_response)
+            # Persist paused member run so continue_run can find it after session reload
+            session.upsert_run(member_response)
+            return None
         else:
-            content = getattr(member_response, "content", None) or "Task completed"
-            result = f"[{member.name or member_id}]: {content}"
+            # Update the member's run in the team session so its status is persisted
+            # (member agents skip save_session when team_id is set, so we do it here)
+            session.upsert_run(member_response)
 
-        # Persist member run so continue_run can find it after session reload
-        # (member agents skip save_session when team_id is set, so we do it here)
-        session.upsert_run(member_response)
-        return result
+            content = getattr(member_response, "content", None) or "Task completed"
+            return f"[{member.name or member_id}]: {content}"
 
     tasks = [_continue_member(mid, reqs) for mid, reqs in member_reqs.items()]
     results = await asyncio.gather(*tasks, return_exceptions=True)
@@ -5855,18 +5856,16 @@ async def _aroute_requirements_to_members_stream(
         if member_response is None:
             log_warning(f"Member {member_id} streaming did not yield a final RunOutput")
             member_results.append(f"[{member.name or member_id}]: Task completed (no final output)")
-        else:
-            if getattr(member_response, "is_paused", False):
-                from agno.team._tools import _propagate_member_pause
+        elif getattr(member_response, "is_paused", False):
+            from agno.team._tools import _propagate_member_pause
 
-                _propagate_member_pause(run_response, member, member_response)
-            else:
-                content = getattr(member_response, "content", None) or "Task completed"
-                member_results.append(f"[{member.name or member_id}]: {content}")
-
-            # Persist member run so continue_run can find it after session reload
-            # (member agents skip save_session when team_id is set, so we do it here)
+            _propagate_member_pause(run_response, member, member_response)
+            # Persist paused member run so continue_run can find it after session reload
             session.upsert_run(member_response)
+        else:
+            session.upsert_run(member_response)
+            content = getattr(member_response, "content", None) or "Task completed"
+            member_results.append(f"[{member.name or member_id}]: {content}")
 
         # Clear _member_run_response references to allow GC of the member RunOutput
         for req in reqs:
