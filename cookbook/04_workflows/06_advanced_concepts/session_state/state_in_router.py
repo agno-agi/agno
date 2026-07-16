@@ -20,7 +20,9 @@ from agno.workflow.workflow import Workflow
 # ---------------------------------------------------------------------------
 # Define Router Functions (Preference-Based Routing)
 # ---------------------------------------------------------------------------
-def route_based_on_user_preference(step_input: StepInput, run_context: RunContext) -> Step:
+def route_based_on_user_preference(
+    step_input: StepInput, run_context: RunContext
+) -> Step:
     print("\n=== Routing Decision ===")
     print(f"User ID: {run_context.session_state.get('current_user_id')}")
     print(f"Session ID: {run_context.session_state.get('current_session_id')}")

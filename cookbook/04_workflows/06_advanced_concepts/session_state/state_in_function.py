@@ -145,7 +145,9 @@ def custom_content_planning_function(
         )
 
 
-def content_summary_function(step_input: StepInput, run_context: RunContext) -> StepOutput:
+def content_summary_function(
+    step_input: StepInput, run_context: RunContext
+) -> StepOutput:
     session_state = run_context.session_state
     if "content_plans" not in session_state or not session_state["content_plans"]:
         return StepOutput(

@@ -20,7 +20,9 @@ def check_user_has_context(step_input: StepInput, run_context: RunContext) -> bo
     print("\n=== Evaluating Condition ===")
     print(f"User ID: {run_context.session_state.get('current_user_id')}")
     print(f"Session ID: {run_context.session_state.get('current_session_id')}")
-    print(f"Has been greeted: {run_context.session_state.get('has_been_greeted', False)}")
+    print(
+        f"Has been greeted: {run_context.session_state.get('has_been_greeted', False)}"
+    )
 
     return run_context.session_state.get("has_been_greeted", False)
 
@@ -28,7 +30,9 @@ def check_user_has_context(step_input: StepInput, run_context: RunContext) -> bo
 def mark_user_as_greeted(step_input: StepInput, run_context: RunContext) -> StepOutput:
     print("\n=== Marking User as Greeted ===")
     run_context.session_state["has_been_greeted"] = True
-    run_context.session_state["greeting_count"] = run_context.session_state.get("greeting_count", 0) + 1
+    run_context.session_state["greeting_count"] = (
+        run_context.session_state.get("greeting_count", 0) + 1
+    )
 
     return StepOutput(
         content=f"User has been greeted. Total greetings: {run_context.session_state['greeting_count']}"
