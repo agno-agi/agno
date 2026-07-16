@@ -345,7 +345,7 @@ def calculate_date_metrics(date_to_process: date, sessions_data: dict) -> dict:
                         model_counts[f"{model_id}:{model_provider}"] = (
                             model_counts.get(f"{model_id}:{model_provider}", 0) + 1
                         )
-            session_metrics = session.get("session_data", {}).get("session_metrics", {})
+            session_metrics = (session.get("session_data") or {}).get("session_metrics", {})
             for field in token_metrics:
                 token_metrics[field] += session_metrics.get(field, 0)
     model_metrics = []
