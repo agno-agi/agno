@@ -28,3 +28,9 @@ def test_requires_confirmation_tools_gates_run_shell_command():
     """The documented HITL pattern marks run_shell_command for confirmation."""
     tools = ShellTools(requires_confirmation_tools=["run_shell_command"])
     assert tools.functions["run_shell_command"].requires_confirmation is True
+
+
+def test_run_shell_command_tail_zero_returns_no_lines():
+    # tail=0 is a legal int; `[-tail:]` is `[-0:]` == the whole list, returning everything.
+    tools = ShellTools()
+    assert tools.run_shell_command(["printf", "a\nb\nc\n"], tail=0) == ""

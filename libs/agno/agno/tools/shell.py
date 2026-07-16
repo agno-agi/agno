@@ -62,7 +62,7 @@ class ShellTools(Toolkit):
             log_debug(f"Return code: {result.returncode}")
             if result.returncode != 0:
                 return f"Error: {result.stderr}"
-            return "\n".join(result.stdout.split("\n")[-tail:])
+            return "\n".join(result.stdout.split("\n")[-tail:] if tail > 0 else [])
         except Exception as e:
             log_warning(f"Failed to run shell command: {str(e)}")
             return f"Error: {e}"

@@ -66,3 +66,14 @@ def test_query_csv_file_path_injection_is_neutralized(tmp_path):
 
     # The path is bound as a parameter, so the injected statement never runs
     assert connection.execute("SELECT COUNT(*) FROM inventory").fetchone()[0] == 1
+
+
+def test_read_csv_file_row_limit_zero_returns_no_rows(tmp_path):
+    # row_limit=0 is a legal non-negative int; `row_limit or self.row_limit` treated
+    # it as falsy and returned every row.
+    csv_path = tmp_path / "data.csv"
+    csv_path.write_text("a,b\n1,2\n3,4\n", encoding="utf-8")
+    tools = CsvTools(csvs=[csv_path])
+
+    assert json.loads(tools.read_csv_file("data", row_limit=0)) == []
+    assert json.loads(tools.read_csv_file("data", row_limit=1)) == [{"a": "1", "b": "2"}]

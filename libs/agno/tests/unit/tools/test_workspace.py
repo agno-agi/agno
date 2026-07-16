@@ -839,3 +839,10 @@ def test_empty_exclude_patterns_opts_out():
         result = json.loads(ws.list_files(pattern="**/*.py"))
         paths = [e["path"] for e in result["files"]]
         assert any(".venv" in p for p in paths)
+
+
+def test_run_command_tail_zero_returns_no_lines():
+    # tail=0 is a legal int; `splitlines()[-tail:]` is `[-0:]` == everything.
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        ws = Workspace(tmp_dir)
+        assert ws.run_command(["printf", "a\nb\nc\n"], tail=0) == ""

@@ -78,7 +78,7 @@ class CsvTools(Toolkit):
 
             # Read the csv file
             csv_data = []
-            _row_limit = row_limit or self.row_limit
+            _row_limit = row_limit if row_limit is not None else self.row_limit
             with open(str(file_path), encoding="utf-8-sig", newline="") as csvfile:
                 reader = csv.DictReader(csvfile)
                 if _row_limit is not None:
