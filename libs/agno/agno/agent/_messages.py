@@ -920,6 +920,17 @@ def get_user_message(
                 else:
                     raise Exception("message must be a string or a callable when add_references is True")
 
+            # Resolve template variables before knowledge retrieval so RAG runs on the resolved
+            # query (e.g. "Tell me about quantum physics") rather than the literal template
+            # ("Tell me about {topic}").
+            if agent.resolve_in_context:
+                user_msg_content = format_message_with_state_variables(
+                    agent,
+                    user_msg_content,
+                    run_context=run_context,
+                )
+
+            if agent.add_knowledge_to_context:
                 try:
                     retrieval_timer = Timer()
                     retrieval_timer.start()
@@ -940,13 +951,6 @@ def get_user_message(
                     log_debug(f"Time to get references: {retrieval_timer.elapsed:.4f}s")
                 except Exception as e:
                     log_warning(f"Failed to get references: {str(e)}")
-
-            if agent.resolve_in_context:
-                user_msg_content = format_message_with_state_variables(
-                    agent,
-                    user_msg_content,
-                    run_context=run_context,
-                )
 
             # Convert to string for concatenation operations
             user_msg_content_str = get_text_from_message(user_msg_content) if user_msg_content is not None else ""
@@ -1085,6 +1089,17 @@ async def aget_user_message(
                 else:
                     raise Exception("message must be a string or a callable when add_references is True")
 
+            # Resolve template variables before knowledge retrieval so RAG runs on the resolved
+            # query (e.g. "Tell me about quantum physics") rather than the literal template
+            # ("Tell me about {topic}").
+            if agent.resolve_in_context:
+                user_msg_content = format_message_with_state_variables(
+                    agent,
+                    user_msg_content,
+                    run_context=run_context,
+                )
+
+            if agent.add_knowledge_to_context:
                 try:
                     retrieval_timer = Timer()
                     retrieval_timer.start()
@@ -1105,13 +1120,6 @@ async def aget_user_message(
                     log_debug(f"Time to get references: {retrieval_timer.elapsed:.4f}s")
                 except Exception as e:
                     log_warning(f"Failed to get references: {str(e)}")
-
-            if agent.resolve_in_context:
-                user_msg_content = format_message_with_state_variables(
-                    agent,
-                    user_msg_content,
-                    run_context=run_context,
-                )
 
             # Convert to string for concatenation operations
             user_msg_content_str = get_text_from_message(user_msg_content) if user_msg_content is not None else ""
