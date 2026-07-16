@@ -8,6 +8,7 @@ from uuid import uuid4
 from agno.media import Image
 from agno.tools import Toolkit
 from agno.tools.function import ToolResult
+from agno.utils.gemini import inject_agno_client_header
 from agno.utils.log import log_debug, logger
 
 try:
@@ -69,7 +70,7 @@ class NanoBananaTools(Toolkit):
     def create_image(self, prompt: str) -> ToolResult:
         """Generate an image from a text prompt."""
         try:
-            client = genai.Client(api_key=self.api_key)
+            client = genai.Client(**inject_agno_client_header({"api_key": self.api_key}))
             log_debug(f"NanoBanana generating image with prompt: {prompt}")
 
             cfg = types.GenerateContentConfig(

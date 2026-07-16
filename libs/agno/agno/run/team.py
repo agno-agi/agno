@@ -50,10 +50,10 @@ class TeamRunInput:
         elif isinstance(self.input_content, BaseModel):
             return self.input_content.model_dump_json(exclude_none=True)
         elif isinstance(self.input_content, Message):
-            return json.dumps(self.input_content.to_dict())
+            return json.dumps(self.input_content.to_dict(), ensure_ascii=False)
         elif isinstance(self.input_content, list):
             try:
-                return json.dumps(self.to_dict().get("input_content"))
+                return json.dumps(self.to_dict().get("input_content"), ensure_ascii=False)
             except Exception:
                 return str(self.input_content)
         else:
@@ -277,6 +277,7 @@ class RunCompletedEvent(BaseTeamRunEvent):
     images: Optional[List[Image]] = None  # Images attached to the response
     videos: Optional[List[Video]] = None  # Videos attached to the response
     audio: Optional[List[Audio]] = None  # Audio attached to the response
+    files: Optional[List[File]] = None  # Files attached to the response
     response_audio: Optional[Audio] = None  # Model audio response
     references: Optional[List[MessageReferences]] = None
     additional_input: Optional[List[Message]] = None
@@ -326,6 +327,18 @@ class RunPausedEvent(BaseTeamRunEvent):
         if not self.requirements:
             return []
         return [req for req in self.requirements if not req.is_resolved()]
+
+    @property
+    def tools_awaiting_external_execution(self):
+        return [t for t in self.tools if t.external_execution_required] if self.tools else []
+
+    @property
+    def tools_requiring_confirmation(self):
+        return [t for t in self.tools if t.requires_confirmation] if self.tools else []
+
+    @property
+    def tools_requiring_user_input(self):
+        return [t for t in self.tools if t.requires_user_input] if self.tools else []
 
 
 @dataclass
@@ -425,6 +438,7 @@ class ToolCallCompletedEvent(BaseTeamRunEvent):
     images: Optional[List[Image]] = None  # Images produced by the tool call
     videos: Optional[List[Video]] = None  # Videos produced by the tool call
     audio: Optional[List[Audio]] = None  # Audio produced by the tool call
+    files: Optional[List[File]] = None  # Files produced by the tool call
 
 
 @dataclass
@@ -635,6 +649,8 @@ TeamRunOutputEvent = Union[
     RunContinuedEvent,
     PreHookStartedEvent,
     PreHookCompletedEvent,
+    PostHookStartedEvent,
+    PostHookCompletedEvent,
     ReasoningStartedEvent,
     ReasoningStepEvent,
     ReasoningContentDeltaEvent,
@@ -774,6 +790,23 @@ class TeamRunOutput:
     # User control flow (HITL) requirements to continue a run when paused, in order of arrival
     requirements: Optional[list[RunRequirement]] = None
 
+    # Checkpoint coordinate: index into messages at the most recent checkpoint write.
+    # Set when checkpoint="tool-batch" (or any future non-default level) persists mid-run state.
+    last_checkpoint_at_message_index: Optional[int] = None
+
+    # Fork lineage. Distinct from parent_run_id (which carries workflow-step parentage
+    # for team-as-workflow-member); see the corresponding fields on RunOutput.
+    forked_from_run_id: Optional[str] = None
+    forked_from_message_index: Optional[int] = None
+
+    # Branching lineage: the source session_id this team run was originally
+    # created in (set when a session is forked; preserved across nested forks).
+    forked_from_session_id: Optional[str] = None
+
+    # Regeneration lineage: the run_id of the immediate predecessor this team
+    # run was regenerated from.
+    regenerated_from: Optional[str] = None
+
     # === FOREIGN KEY RELATIONSHIPS ===
     # These fields establish relationships to parent workflow/step structures
     # and should be treated as foreign keys for data integrity
@@ -851,22 +884,27 @@ class TeamRunOutput:
             _dict["followups"] = self.followups
 
         if self.images is not None:
-            _dict["images"] = [img.to_dict() for img in self.images]
+            _dict["images"] = [img.to_dict() if isinstance(img, Image) else img for img in self.images]
 
         if self.videos is not None:
-            _dict["videos"] = [vid.to_dict() for vid in self.videos]
+            _dict["videos"] = [vid.to_dict() if isinstance(vid, Video) else vid for vid in self.videos]
 
         if self.audio is not None:
-            _dict["audio"] = [aud.to_dict() for aud in self.audio]
+            _dict["audio"] = [aud.to_dict() if isinstance(aud, Audio) else aud for aud in self.audio]
 
         if self.files is not None:
-            _dict["files"] = [file.to_dict() for file in self.files]
+            _dict["files"] = [file.to_dict() if isinstance(file, File) else file for file in self.files]
 
         if self.response_audio is not None:
-            _dict["response_audio"] = self.response_audio.to_dict()
+            if isinstance(self.response_audio, Audio):
+                _dict["response_audio"] = self.response_audio.to_dict()
+            else:
+                _dict["response_audio"] = self.response_audio
 
         if self.member_responses:
-            _dict["member_responses"] = [response.to_dict() for response in self.member_responses]
+            _dict["member_responses"] = [
+                response.to_dict() if hasattr(response, "to_dict") else response for response in self.member_responses
+            ]
 
         if self.citations is not None:
             if isinstance(self.citations, Citations):
@@ -1014,6 +1052,7 @@ class TeamRunOutput:
         elif isinstance(self.content, BaseModel):
             return self.content.model_dump_json(exclude_none=True, **kwargs)
         else:
+            kwargs.setdefault("ensure_ascii", False)
             return json.dumps(self.content, **kwargs)
 
     def add_member_run(self, run_response: Union["TeamRunOutput", RunOutput]) -> None:

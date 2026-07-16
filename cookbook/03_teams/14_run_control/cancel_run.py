@@ -36,8 +36,9 @@ def long_running_task(team: Team, run_id_container: dict) -> None:
                 run_id_container["run_id"] = chunk.run_id
 
             if chunk.event in [TeamRunEvent.run_content, RunEvent.run_content]:
-                print(chunk.content, end="", flush=True)
-                content_pieces.append(chunk.content)
+                if chunk.content:
+                    print(chunk.content, end="", flush=True)
+                    content_pieces.append(chunk.content)
             elif chunk.event == RunEvent.run_cancelled:
                 print(f"\nMember run was cancelled: {chunk.run_id}")
                 run_id_container["result"] = {

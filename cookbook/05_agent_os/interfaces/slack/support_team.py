@@ -13,6 +13,10 @@ Key concepts:
 
 Slack scopes: app_mentions:read, assistant:write, chat:write, im:history,
              search:read, channels:history
+
+Environment variables:
+    SLACK_TOKEN         Bot token (xoxb-) for standard Slack APIs
+    SLACK_USER_TOKEN    User token (xoxp-) required for search_messages
 """
 
 from agno.agent import Agent

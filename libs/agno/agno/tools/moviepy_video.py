@@ -1,3 +1,6 @@
+import os
+import tempfile
+from contextlib import suppress
 from typing import Any, Dict, List, Optional
 
 from agno.tools import Toolkit
@@ -7,6 +10,22 @@ try:
     from moviepy import ColorClip, CompositeVideoClip, TextClip, VideoFileClip  # type: ignore
 except ImportError:
     raise ImportError("`moviepy` not installed. Please install using `pip install moviepy ffmpeg`")
+
+
+def _make_temp_output_path(output_path: str) -> str:
+    output_dir = os.path.dirname(os.path.abspath(output_path))
+    filename = os.path.basename(output_path)
+    stem, suffix = os.path.splitext(filename)
+    fd, temp_path = tempfile.mkstemp(prefix=f".{stem}.", suffix=f".tmp{suffix}", dir=output_dir)
+    os.close(fd)
+    os.unlink(temp_path)
+    return temp_path
+
+
+def _remove_file_if_exists(path: Optional[str]) -> None:
+    if path:
+        with suppress(FileNotFoundError):
+            os.remove(path)
 
 
 class MoviePyVideoTools(Toolkit):
@@ -247,14 +266,19 @@ class MoviePyVideoTools(Toolkit):
         Returns:
             str: Path to the created SRT file, or error message if failed
         """
+        temp_output_path: Optional[str] = None
         try:
             log_debug(f"Creating SRT file at {output_path}")
             # Since we're getting SRT format from Whisper API now,
             # we can just write it directly to file
-            with open(output_path, "w", encoding="utf-8") as f:
+            temp_output_path = _make_temp_output_path(output_path)
+            with open(temp_output_path, "w", encoding="utf-8") as f:
                 f.write(transcription)
+            os.replace(temp_output_path, output_path)
+            temp_output_path = None
             return output_path
         except Exception as e:
+            _remove_file_if_exists(temp_output_path)
             logger.exception("Failed to create SRT file")
             return f"Failed to create SRT file: {str(e)}"
 
@@ -280,6 +304,10 @@ class MoviePyVideoTools(Toolkit):
         Returns:
             str: Path to the captioned video file, or error message if failed
         """
+        video = None
+        final_video = None
+        all_caption_clips = []
+        temp_output_path: Optional[str] = None
         try:
             # If no output path provided, create one based on input video
             if output_path is None:
@@ -297,8 +325,6 @@ class MoviePyVideoTools(Toolkit):
 
             # Split into lines
             subtitle_lines = self.split_text_into_lines(words)
-
-            all_caption_clips = []
 
             # Create caption clips for each line
             for line in subtitle_lines:
@@ -326,8 +352,9 @@ class MoviePyVideoTools(Toolkit):
             final_video = CompositeVideoClip([video] + all_caption_clips, size=video.size)
 
             # Write output with optimized settings
+            temp_output_path = _make_temp_output_path(output_path)
             final_video.write_videofile(
-                output_path,
+                temp_output_path,
                 codec="libx264",
                 audio_codec="aac",
                 fps=video.fps,
@@ -335,15 +362,22 @@ class MoviePyVideoTools(Toolkit):
                 threads=4,
                 # Disable default progress bar
             )
-
-            # Cleanup
-            video.close()
-            final_video.close()
-            for clip in all_caption_clips:
-                clip.close()
+            os.replace(temp_output_path, output_path)
+            temp_output_path = None
 
             return output_path
 
         except Exception as e:
+            _remove_file_if_exists(temp_output_path)
             logger.exception("Failed to embed captions")
             return f"Failed to embed captions: {str(e)}"
+        finally:
+            for clip in all_caption_clips:
+                with suppress(Exception):
+                    clip.close()
+            if final_video is not None:
+                with suppress(Exception):
+                    final_video.close()
+            if video is not None:
+                with suppress(Exception):
+                    video.close()
