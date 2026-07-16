@@ -1494,7 +1494,9 @@ def _format_message_with_state_variables(
         metadata or {},
         {"user_id": user_id} if user_id is not None else {},
     )
-    converted_msg = message
+    # Escape literal `$` so Template only substitutes the `${var}` forms created below,
+    # not pre-existing `$word` text the user wrote (e.g. shell/env vars).
+    converted_msg = message.replace("$", "$$")
     for var_name in format_variables.keys():
         # Only convert standalone {var_name} patterns, not nested ones
         pattern = r"\{" + re.escape(var_name) + r"\}"
