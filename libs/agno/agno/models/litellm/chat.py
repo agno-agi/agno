@@ -145,8 +145,11 @@ class LiteLLM(Model):
 
             # Handle media
             if (m.images is not None and len(m.images) > 0) or (m.audio is not None and len(m.audio) > 0):
-                if isinstance(m.content, str):
-                    content_list = [{"type": "text", "text": m.content}]
+                # Build the parts list when content is None (the default) or a str, so the
+                # media is appended; skip only when content is already a list of parts.
+                if m.content is None or isinstance(m.content, str):
+                    text = m.content if isinstance(m.content, str) else ""
+                    content_list = [{"type": "text", "text": text}]
                     if m.images is not None:
                         content_list.extend(images_to_message(images=m.images))
                     if m.audio is not None:
