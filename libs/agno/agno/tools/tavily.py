@@ -22,7 +22,7 @@ class TavilyTools(Toolkit):
         all: bool = False,
         max_tokens: int = 6000,
         include_answer: bool = True,
-        search_depth: Literal["basic", "advanced"] = "advanced",
+        search_depth: Literal["basic", "advanced", "fast", "ultra-fast"] = "advanced",
         extract_depth: Literal["basic", "advanced"] = "basic",
         include_images: bool = False,
         include_favicon: bool = False,
@@ -33,11 +33,13 @@ class TavilyTools(Toolkit):
         time_range: Optional[Literal["day", "week", "month", "year", "d", "w", "m", "y"]] = None,
         start_date: Optional[str] = None,
         end_date: Optional[str] = None,
+        days: Optional[int] = None,
         include_domains: Optional[List[str]] = None,
         exclude_domains: Optional[List[str]] = None,
         country: Optional[str] = None,
         auto_parameters: bool = False,
         chunks_per_source: Optional[int] = None,
+        search_params: Optional[Dict[str, Any]] = None,
         **kwargs,
     ):
         """Initialize TavilyTools with search and extract capabilities.
@@ -51,7 +53,7 @@ class TavilyTools(Toolkit):
             all: Enable all available tools. Defaults to False.
             max_tokens: Maximum tokens for search results. Defaults to 6000.
             include_answer: Include AI-generated answer in search results. Defaults to True.
-            search_depth: Search depth level - basic (1 credit) or advanced (2 credits). Defaults to "advanced".
+            search_depth: Search depth level - basic (1 credit), advanced (2 credits), fast, or ultra-fast. Defaults to "advanced".
             extract_depth: Extract depth level - basic (1 credit/5 URLs) or advanced (2 credits/5 URLs). Defaults to "basic".
             include_images: Include images in extracted content. Defaults to False.
             include_favicon: Include favicon in extracted content. Defaults to False.
@@ -62,11 +64,13 @@ class TavilyTools(Toolkit):
             time_range: Time window for results - day, week, month, year (or d/w/m/y). Defaults to None.
             start_date: Only include results published after this date (YYYY-MM-DD). Defaults to None.
             end_date: Only include results published before this date (YYYY-MM-DD). Defaults to None.
+            days: Number of days back to include results, applies to the news topic only. Defaults to None.
             include_domains: Restrict results to these domains. Defaults to None.
             exclude_domains: Exclude these domains from results. Defaults to None.
             country: Boost results from this country (e.g. "united states"). Defaults to None.
             auto_parameters: Let Tavily auto-tune search parameters for the query; explicitly set parameters (including the always-sent search_depth and include_answer) take precedence. Defaults to False.
             chunks_per_source: Number of content chunks per source (1-3), advanced search only. Defaults to None.
+            search_params: Additional parameters merged into every search request, for any Tavily option not exposed above. Defaults to None.
             **kwargs: Additional arguments passed to Toolkit.
         """
         self.api_key = api_key or getenv("TAVILY_API_KEY")
@@ -75,7 +79,7 @@ class TavilyTools(Toolkit):
         self.api_base_url = api_base_url or getenv("TAVILY_API_BASE_URL")
 
         self.client: TavilyClient = TavilyClient(api_key=self.api_key, api_base_url=self.api_base_url)
-        self.search_depth: Literal["basic", "advanced"] = search_depth
+        self.search_depth: Literal["basic", "advanced", "fast", "ultra-fast"] = search_depth
         self.extract_depth: Literal["basic", "advanced"] = extract_depth
         self.max_tokens: int = max_tokens
         self.include_answer: bool = include_answer
@@ -88,11 +92,13 @@ class TavilyTools(Toolkit):
         self.time_range: Optional[Literal["day", "week", "month", "year", "d", "w", "m", "y"]] = time_range
         self.start_date: Optional[str] = start_date
         self.end_date: Optional[str] = end_date
+        self.days: Optional[int] = days
         self.include_domains: Optional[List[str]] = include_domains
         self.exclude_domains: Optional[List[str]] = exclude_domains
         self.country: Optional[str] = country
         self.auto_parameters: bool = auto_parameters
         self.chunks_per_source: Optional[int] = chunks_per_source
+        self.search_params: Optional[Dict[str, Any]] = search_params
 
         tools: List[Any] = []
 
@@ -119,7 +125,7 @@ class TavilyTools(Toolkit):
             str: JSON string of results related to the query.
         """
 
-        search_params: Dict[str, Any] = {
+        params: Dict[str, Any] = {
             "query": query,
             "search_depth": self.search_depth,
             "include_answer": self.include_answer,
@@ -128,17 +134,20 @@ class TavilyTools(Toolkit):
             "time_range": self.time_range,
             "start_date": self.start_date,
             "end_date": self.end_date,
+            "days": self.days,
             "include_domains": self.include_domains,
             "exclude_domains": self.exclude_domains,
             "country": self.country,
             "chunks_per_source": self.chunks_per_source,
         }
         if self.auto_parameters:
-            search_params["auto_parameters"] = True
+            params["auto_parameters"] = True
+        if self.search_params:
+            params.update(self.search_params)
         # Only send parameters that are set
-        search_params = {k: v for k, v in search_params.items() if v is not None}
+        params = {k: v for k, v in params.items() if v is not None}
 
-        response = self.client.search(**search_params)
+        response = self.client.search(**params)
 
         clean_response: Dict[str, Any] = {"query": query}
         if "answer" in response:
@@ -208,7 +217,7 @@ class TavilyTools(Toolkit):
             # Prepare extract parameters
             extract_params: Dict[str, Any] = {
                 "urls": url_list,
-                "depth": self.extract_depth,
+                "extract_depth": self.extract_depth,
             }
 
             # Add optional parameters if specified

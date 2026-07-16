@@ -2,8 +2,8 @@
 Tavily Tools - Advanced Search Parameters
 =============================
 
-Demonstrates scoping Tavily web search with domain, recency, topic,
-and country filters.
+Demonstrates scoping Tavily web search with the advanced parameters:
+domain restriction, recency, topic, and country localization.
 """
 
 from agno.agent import Agent
@@ -13,55 +13,40 @@ from agno.tools.tavily import TavilyTools
 # Create Agent
 # ---------------------------------------------------------------------------
 
-# Example 1: restrict search to trusted domains
+
+# Domain-restricted research, limited to the last month, US-localized
 research_agent = Agent(
     tools=[
         TavilyTools(
-            include_domains=["arxiv.org", "github.com"],
-            exclude_domains=["reddit.com"],
+            include_domains=[
+                "arxiv.org",
+                "github.com",
+            ],  # restrict results to these domains
+            exclude_domains=["reddit.com"],  # drop results from these domains
+            time_range="month",  # only results from the last month
+            country="united states",  # boost results from this country
         )
-    ]
+    ],
+    markdown=True,
 )
 
-# Example 2: recent news only
+# Recent news from the last few days (days applies to the news topic only)
 news_agent = Agent(
     tools=[
         TavilyTools(
-            topic="news",
-            time_range="week",
+            topic="news",  # general, news, or finance
+            days=3,  # only news from the last 3 days
         )
-    ]
-)
-
-# Example 3: date-window search with localized results
-# (country applies to the default general topic only)
-localized_agent = Agent(
-    tools=[
-        TavilyTools(
-            start_date="2026-01-01",
-            end_date="2026-06-30",
-            country="united states",
-        )
-    ]
-)
-
-# Example 4: let Tavily auto-tune remaining search parameters
-# (explicitly set values like search_depth take precedence)
-auto_agent = Agent(
-    tools=[
-        TavilyTools(
-            auto_parameters=True,
-            chunks_per_source=3,
-        )
-    ]
+    ],
+    markdown=True,
 )
 
 # ---------------------------------------------------------------------------
 # Run Agent
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
-    research_agent.print_response("Find recent papers on mixture-of-experts language models", markdown=True)
+    research_agent.print_response(
+        "Find recent papers on mixture-of-experts language models"
+    )
 
-    news_agent.print_response("What happened in AI this week?", markdown=True)
-
-    localized_agent.print_response("Summarize major US tech earnings from the first half of 2026", markdown=True)
+    news_agent.print_response("What are the latest developments in AI?")

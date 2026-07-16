@@ -74,8 +74,8 @@
 
 **Status:** PASS
 
-**Description:** Runs three agents with advanced Tavily search parameters against the live API: domain-restricted research (include_domains=["arxiv.org"], exclude_domains=["reddit.com"]), recent news (topic="news", time_range="week"), and date-window search with country localization (start_date/end_date + country). Request payloads for all three configurations were additionally verified at the wire level: configured parameters present in every request, unset parameters omitted.
+**Description:** Runs two agents with advanced Tavily search parameters against the live API: domain-restricted research (include_domains=["arxiv.org", "github.com"], exclude_domains=["reddit.com"], time_range="month", country="united states") and recent news scoped by day count (topic="news", days=3). Request payloads were additionally verified at the wire level: configured parameters present in every request, unset parameters omitted (the {query, search_depth, include_answer, max_results} baseline is unchanged when nothing is configured).
 
-**Result:** All three examples completed without errors. Domain-restricted search returned arxiv-sourced papers, news search returned current-week items, and the localized date-window search returned first-half-2026 US results. Note: answer text is model-composed; the domain restriction applies to the search results feeding it.
+**Result:** Both examples completed without errors. Domain-restricted search returned arxiv-sourced MoE papers, and the news agent returned items from the last few days. Note: answer text is model-composed; the domain restriction applies to the search results feeding it.
 
 ---
