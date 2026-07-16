@@ -5,6 +5,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+pytest.importorskip("google.genai")
+
 from agno.exceptions import ModelProviderError
 from agno.media import File
 from agno.models.google.gemini import Gemini

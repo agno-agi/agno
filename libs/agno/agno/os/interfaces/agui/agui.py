@@ -47,3 +47,8 @@ class AGUI(BaseInterface):
         self.router = attach_routes(router=self.router, agent=self.agent, team=self.team)
 
         return self.router
+
+    def get_scope_mappings(self) -> dict:
+        # Agent-wins precedence must match router dispatch (entity = agent or team)
+        family = "agents" if self.agent is not None else "teams"
+        return {f"POST {self.prefix}/agui": [f"{family}:run"]}

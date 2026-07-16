@@ -45,6 +45,8 @@ def make_agent_mock():
             status="OK", content="done", reasoning_content=None, images=None, files=None, videos=None, audio=None
         )
     )
+    # Session lookup returns None by default so resolve_session_id uses the new key format
+    agent_mock.aget_session = AsyncMock(return_value=None)
     return agent_mock
 
 
@@ -158,6 +160,8 @@ def make_streaming_body(
 def make_streaming_agent(chunks=None):
     agent = AsyncMock()
     agent.name = "Test Agent"
+    # Session lookup returns None by default so resolve_session_id uses the new key format
+    agent.aget_session = AsyncMock(return_value=None)
 
     async def _arun_stream(*args, **kwargs):
         for c in chunks or []:

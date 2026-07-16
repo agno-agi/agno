@@ -241,6 +241,40 @@ class TestSessionIsolation:
         )
         assert resp.status_code == 404
 
+    def test_create_session_conflict_does_not_leak_across_users(self, client):
+        """Re-creating User A's session_id as User B must 409 without leaking A's session.
+
+        POST /sessions rejects a duplicate session_id with 409 (mirrors create_learning)
+        and returns no session body, so a non-owner re-posting an existing id cannot read
+        User A's user_id / session_name / history through this path under user isolation.
+        """
+        token_a = create_token("user-a", scopes=["agent_os:admin"])
+        token_b = create_token("user-b")
+
+        # User A creates a session with a client-supplied id.
+        session_id = "shared-conflict-id"
+        resp = client.post(
+            "/sessions?type=agent",
+            json={
+                "session_id": session_id,
+                "agent_id": "test-agent",
+                "user_id": "user-a",
+                "session_name": "user-a-private",
+            },
+            headers=auth_header(token_a),
+        )
+        assert resp.status_code == 201, resp.text
+
+        # User B re-creates the same id — must be a bodyless 409, never User A's session.
+        resp = client.post(
+            "/sessions?type=agent",
+            json={"session_id": session_id},
+            headers=auth_header(token_b),
+        )
+        assert resp.status_code == 409, resp.text
+        assert "user-a" not in resp.text
+        assert "user-a-private" not in resp.text
+
     def test_user_cannot_delete_other_users_session(self, client):
         """User B should not be able to delete User A's session."""
         token_a = create_token("user-a", scopes=["agent_os:admin"])

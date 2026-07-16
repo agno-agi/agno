@@ -1,12 +1,14 @@
+import asyncio
 import json
 from functools import partial
-from typing import TYPE_CHECKING, Optional, Union
+from typing import TYPE_CHECKING, Any, Dict, Optional, Union
 from uuid import uuid4
 
-from agno.utils.log import log_debug, log_exception
+from agno.utils.log import log_debug, log_error, log_exception
 
 try:
     from mcp import ClientSession
+    from mcp.shared.exceptions import McpError
     from mcp.types import CallToolResult, EmbeddedResource, ImageContent, TextContent
     from mcp.types import Tool as MCPTool
 except (ImportError, ModuleNotFoundError):
@@ -22,6 +24,66 @@ if TYPE_CHECKING:
     from agno.team.team import Team
     from agno.tools.mcp.mcp import MCPTools
     from agno.tools.mcp.multi_mcp import MultiMCPTools
+
+
+def get_default_toolkit_name(
+    url: Optional[str] = None,
+    command: Optional[str] = None,
+    server_params: Optional[Any] = None,
+    fallback: str = "MCPTools",
+) -> str:
+    """Derive a stable toolkit name from MCP connection parameters.
+
+    Distinct servers produce distinct names so that multiple MCP toolkits can
+    coexist in one Registry: they stay distinguishable in listings, selectable
+    by name, and are not collapsed by structural deduplication. The name is
+    derived at construction time (no connection needed): from the URL for HTTP
+    transports, from the command for stdio, or from the equivalent fields of
+    ``server_params``. Query strings and fragments are dropped from URLs so
+    credentials passed as query parameters never end up in the toolkit name.
+
+    Returns ``fallback`` when no connection parameters are available (e.g. the
+    toolkit wraps an existing session).
+    """
+    target: Optional[str] = None
+    if url:
+        target = _strip_url_for_name(url)
+    elif command:
+        target = command
+    elif server_params is not None:
+        params_url = getattr(server_params, "url", None)
+        params_command = getattr(server_params, "command", None)
+        if params_url:
+            target = _strip_url_for_name(params_url)
+        elif params_command:
+            args = getattr(server_params, "args", None) or []
+            target = " ".join([str(params_command), *(str(arg) for arg in args)])
+
+    if not target:
+        return fallback
+
+    slug = "".join(char if char.isalnum() else "_" for char in target.lower())
+    while "__" in slug:
+        slug = slug.replace("__", "_")
+    slug = slug.strip("_")
+    if not slug:
+        return fallback
+    return f"mcp_{slug}"[:64]
+
+
+def _strip_url_for_name(url: str) -> str:
+    """Reduce a URL to scheme-less host + path, dropping userinfo, query and fragment.
+
+    Everything that can carry credentials (``user:pass@`` userinfo, query
+    parameters, fragments) is removed so it can never leak into the toolkit
+    name, which surfaces in registry listings and persisted configs.
+    """
+    remainder = url.split("://", 1)[-1]
+    remainder = remainder.split("?", 1)[0].split("#", 1)[0]
+    authority, slash, path = remainder.partition("/")
+    if "@" in authority:
+        authority = authority.rsplit("@", 1)[-1]
+    return authority + slash + path
 
 
 def get_entrypoint_for_tool(
@@ -65,7 +127,10 @@ def get_entrypoint_for_tool(
 
             # Return an error if the tool call failed
             if result.isError:
-                return ToolResult(content=f"Error from MCP tool '{tool_name}': {result.content}")
+                return ToolResult(
+                    content=f"Error from MCP tool '{tool_name}': {result.content}",
+                    metadata=_build_mcp_metadata(result),
+                )
 
             # Process the result content
             response_str = ""
@@ -143,8 +208,12 @@ def get_entrypoint_for_tool(
                     # Handle other content types
                     response_str += f"[Unsupported content type: {content_item.type}]\n"
 
+            if not response_str.strip():
+                response_str = _serialize_structured_content(result) or ""
+
             return ToolResult(
                 content=response_str.strip(),
+                metadata=_build_mcp_metadata(result),
                 images=images if images else None,
             )
 
@@ -185,11 +254,47 @@ def get_entrypoint_for_tool(
                 return await _call_with_session(active_session)
 
             return await _call_with_session(session)
+        except asyncio.CancelledError:
+            raise
+        except McpError as e:
+            msg = f"MCP tool '{tool_name}' failed: {e}. The MCP server may be unreachable or the request timed out."
+            log_error(msg)
+            return ToolResult(content=msg)
         except Exception as e:
             log_exception(f"Failed to call MCP tool '{tool_name}': {e}")
             return ToolResult(content=f"Error: {e}")
 
     return partial(call_tool, tool_name=tool.name)
+
+
+def _build_mcp_metadata(result: "CallToolResult") -> Optional[Dict[str, Any]]:
+    """Collect a tool result's extra MCP data into a single ToolResult.metadata dict.
+
+    Protocol `_meta` and the tool's `structuredContent` are stored as the reserved keys
+    `meta` and `structured_content` rather than as separate ToolResult fields, so future MCP
+    additions become new keys here instead of new attributes. `getattr` guards both: older MCP
+    servers (mcp < 1.10.0) expose no `structuredContent`, so the key is simply omitted. Returns
+    None when there is nothing to preserve.
+    """
+    metadata: Dict[str, Any] = {}
+    if getattr(result, "meta", None) is not None:
+        metadata["meta"] = result.meta
+    structured_content = getattr(result, "structuredContent", None)
+    if structured_content is not None:
+        metadata["structured_content"] = structured_content
+    return metadata or None
+
+
+def _serialize_structured_content(result: "CallToolResult") -> Optional[str]:
+    """Serialize structuredContent so structured-only MCP responses reach the model loop."""
+    structured_content = getattr(result, "structuredContent", None)
+    if structured_content is None:
+        return None
+
+    try:
+        return json.dumps(structured_content, ensure_ascii=False, sort_keys=True, default=str)
+    except (TypeError, ValueError):
+        return str(structured_content)
 
 
 def prepare_command(command: str) -> list[str]:
