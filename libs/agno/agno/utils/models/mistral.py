@@ -74,12 +74,15 @@ def format_messages(messages: List[Message], compress_tool_results: bool = False
             else:
                 mistral_message = UserMessage(role="user", content=message.content)
         elif message.role == "assistant":
-            if message.reasoning_content is not None:
-                mistral_message = UserMessage(role="user", content=message.content)
-            elif message.tool_calls is not None:
+            # tool_calls must win: an assistant turn that both reasoned and called a tool
+            # would otherwise be flattened to a UserMessage, dropping the tool_calls and
+            # orphaning the following tool result.
+            if message.tool_calls is not None:
                 mistral_message = AssistantMessage(
                     role="assistant", content=message.content, tool_calls=message.tool_calls
                 )
+            elif message.reasoning_content is not None:
+                mistral_message = UserMessage(role="user", content=message.content)
             else:
                 mistral_message = AssistantMessage(role=message.role, content=message.content)
         elif message.role == "system":
