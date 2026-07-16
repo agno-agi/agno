@@ -351,3 +351,56 @@ async def test_get_user_memory_stats_with_pagination(async_postgres_db_real: Asy
 
     assert len(stats) == 2
     assert total_count == 5
+
+
+@pytest.mark.asyncio
+async def test_get_all_memory_topics_with_user_id_filter(async_postgres_db_real: AsyncPostgresDb):
+    """Test get_all_memory_topics filters correctly by user_id (PR #7490 fix)"""
+    memories = [
+        UserMemory(memory_id="alice_topic_m1", memory="Alice memory 1", user_id="alice", topics=["work", "python"]),
+        UserMemory(memory_id="alice_topic_m2", memory="Alice memory 2", user_id="alice", topics=["travel"]),
+        UserMemory(memory_id="bob_topic_m1", memory="Bob memory", user_id="bob", topics=["gaming", "rust"]),
+    ]
+
+    for memory in memories:
+        await async_postgres_db_real.upsert_user_memory(memory)
+
+    alice_topics = await async_postgres_db_real.get_all_memory_topics(user_id="alice")
+    assert set(alice_topics) == {"work", "python", "travel"}
+
+    bob_topics = await async_postgres_db_real.get_all_memory_topics(user_id="bob")
+    assert set(bob_topics) == {"gaming", "rust"}
+
+
+@pytest.mark.asyncio
+async def test_get_all_memory_topics_unknown_user_returns_empty(async_postgres_db_real: AsyncPostgresDb):
+    """Test get_all_memory_topics returns empty list for unknown user"""
+    memory = UserMemory(memory_id="existing_topic_m", memory="Existing", user_id="existing_user", topics=["topic1"])
+    await async_postgres_db_real.upsert_user_memory(memory)
+
+    unknown_topics = await async_postgres_db_real.get_all_memory_topics(user_id="unknown_user")
+    assert unknown_topics == []
+
+
+@pytest.mark.asyncio
+async def test_get_all_memory_topics_tenant_isolation(async_postgres_db_real: AsyncPostgresDb):
+    """Test that user_id filtering provides proper tenant isolation"""
+    memories = [
+        UserMemory(
+            memory_id="iso_async_a", memory="Alice secret", user_id="alice_iso", topics=["confidential", "alice_only"]
+        ),
+        UserMemory(
+            memory_id="iso_async_b", memory="Bob secret", user_id="bob_iso", topics=["confidential", "bob_only"]
+        ),
+    ]
+
+    for memory in memories:
+        await async_postgres_db_real.upsert_user_memory(memory)
+
+    alice_topics = set(await async_postgres_db_real.get_all_memory_topics(user_id="alice_iso"))
+    bob_topics = set(await async_postgres_db_real.get_all_memory_topics(user_id="bob_iso"))
+
+    assert "alice_only" in alice_topics
+    assert "alice_only" not in bob_topics
+    assert "bob_only" in bob_topics
+    assert "bob_only" not in alice_topics

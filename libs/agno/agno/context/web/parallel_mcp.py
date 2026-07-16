@@ -21,10 +21,12 @@ the raw extraction payload.
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Sequence
 from os import getenv
 from typing import Any, Optional
 
+from agno import __version__ as _AGNO_VERSION
 from agno.context.backend import ContextBackend
 from agno.context.provider import Status
 from agno.utils.log import log_info, log_warning
@@ -67,7 +69,7 @@ class ParallelMCPBackend(ContextBackend):
         return Status(ok=True, detail=f"search.parallel.ai/{endpoint} ({'keyed' if self.api_key else 'keyless'})")
 
     async def astatus(self) -> Status:
-        return self.status()
+        return await asyncio.to_thread(self.status)
 
     def get_tools(self) -> list:
         if self._mcp_tools is None:
@@ -80,9 +82,9 @@ class ParallelMCPBackend(ContextBackend):
         from agno.tools.mcp import MCPTools
         from agno.tools.mcp.params import StreamableHTTPClientParams
 
-        headers: dict[str, Any] | None = None
+        headers: dict[str, Any] = {"User-Agent": f"agno/{_AGNO_VERSION}"}
         if self.api_key:
-            headers = {"Authorization": f"Bearer {self.api_key}"}
+            headers["Authorization"] = f"Bearer {self.api_key}"
 
         server_params = StreamableHTTPClientParams(
             url=self.url,

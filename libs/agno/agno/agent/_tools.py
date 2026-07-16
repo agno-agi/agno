@@ -126,6 +126,10 @@ def get_tools(
     resolved_tools = get_resolved_tools(agent, run_context)
     resolved_knowledge = get_resolved_knowledge(agent, run_context)
 
+    # Append client_tools (e.g., AG-UI frontend tools) if present
+    if run_context.client_tools:
+        resolved_tools = list(resolved_tools or []) + list(run_context.client_tools)
+
     # Connect tools that require connection management
     _init.connect_connectable_tools(agent)
 
@@ -230,6 +234,10 @@ async def aget_tools(
     resolved_tools = get_resolved_tools(agent, run_context)
     resolved_knowledge = get_resolved_knowledge(agent, run_context)
 
+    # Append client_tools (e.g., AG-UI frontend tools) if present
+    if run_context.client_tools:
+        resolved_tools = list(resolved_tools or []) + list(run_context.client_tools)
+
     # Connect tools that require connection management
     _init.connect_connectable_tools(agent)
 
@@ -250,14 +258,10 @@ async def aget_tools(
                         is_alive = await tool.is_alive()  # type: ignore
                         if not is_alive:
                             await tool.connect(force=True)  # type: ignore
-                    except (RuntimeError, BaseException) as e:
-                        log_warning(f"Failed to check if MCP tool is alive or to connect to it: {str(e)}")
-                        continue
-
-                    try:
-                        await tool.build_tools()  # type: ignore
-                    except (RuntimeError, BaseException) as e:
-                        log_warning(f"Failed to build tools for {str(tool)}: {str(e)}")
+                        else:
+                            await tool.build_tools()  # type: ignore
+                    except Exception as e:
+                        log_warning(f"Failed to refresh MCP tool {str(tool)}: {str(e)}")
                         continue
 
                 # Only add the tool if it successfully connected and built its tools
@@ -355,6 +359,7 @@ def parse_tools(
     strict = False
     if (
         output_schema is not None
+        and agent.parser_model is None
         and (agent.structured_outputs or (not agent.use_json_mode))
         and model.supports_native_structured_outputs
     ):
@@ -372,6 +377,10 @@ def parse_tools(
             toolkit_functions = tool.get_async_functions() if async_mode else tool.get_functions()
             for name, _func in toolkit_functions.items():
                 if name in _function_names:
+                    log_warning(
+                        f"Duplicate tool name '{name}' from toolkit '{tool.name}' "
+                        f"already registered on agent; skipping the duplicate."
+                    )
                     continue
                 _function_names.append(name)
                 _func = _func.model_copy(deep=True)
@@ -388,12 +397,17 @@ def parse_tools(
                 _functions.append(_func)
                 log_debug(f"Added tool {name} from {tool.name}")
 
+                # Add per-function instructions
+                if _func.add_instructions and _func.instructions is not None:
+                    agent._tool_instructions.append(_func.instructions)
+
             # Add instructions from the toolkit
             if tool.add_instructions and tool.instructions is not None:
                 agent._tool_instructions.append(tool.instructions)
 
         elif isinstance(tool, Function):
             if tool.name in _function_names:
+                log_warning(f"Duplicate tool name '{tool.name}' already registered on agent; skipping the duplicate.")
                 continue
             _function_names.append(tool.name)
 
@@ -421,6 +435,9 @@ def parse_tools(
                 function_name = tool.__name__
 
                 if function_name in _function_names:
+                    log_warning(
+                        f"Duplicate tool name '{function_name}' already registered on agent; skipping the duplicate."
+                    )
                     continue
                 _function_names.append(function_name)
 
@@ -555,7 +572,7 @@ def handle_get_user_input_tool_update(agent: Agent, run_messages: RunMessages, t
     run_messages.messages.append(
         Message(
             role=agent.model.tool_message_role,
-            content=f"User inputs retrieved: {json.dumps(user_input_result)}",
+            content=f"User inputs retrieved: {json.dumps(user_input_result, ensure_ascii=False)}",
             tool_call_id=tool.tool_call_id,
             tool_name=tool.tool_name,
             tool_args=tool.tool_args,
@@ -576,7 +593,7 @@ def handle_ask_user_tool_update(agent: Agent, run_messages: RunMessages, tool: T
     run_messages.messages.append(
         Message(
             role=agent.model.tool_message_role,
-            content=f"User feedback received: {json.dumps(feedback_result)}",
+            content=f"User feedback received: {json.dumps(feedback_result, ensure_ascii=False)}",
             tool_call_id=tool.tool_call_id,
             tool_name=tool.tool_name,
             tool_args=tool.tool_args,

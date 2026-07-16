@@ -68,7 +68,8 @@ Format: `resource:action`
 
 Examples:
 ```
-system:read       # Read system configuration
+config:read       # Read OS configuration (legacy alias: system:read)
+registry:read     # Read the code-defined registry
 agents:read       # List all agents
 agents:run        # Run any agent
 teams:read        # List all teams
@@ -258,9 +259,10 @@ All AgentOS endpoints have default scope requirements:
 
 ```python
 {
-    # System
-    "GET /config": ["system:read"],
-    "GET /models": ["system:read"],
+    # Config (legacy alias: system:read)
+    "GET /config": ["config:read"],
+    "GET /models": ["config:read"],
+    "GET /registry": ["registry:read"],
     
     # Agents
     "GET /agents": ["agents:read"],

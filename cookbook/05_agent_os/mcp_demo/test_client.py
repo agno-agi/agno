@@ -1,9 +1,17 @@
 """
-First run the AgentOS with enable_mcp=True
+MCP client example: an agent that operates an AgentOS through its MCP server.
+
+First run the AgentOS with the MCP server enabled:
 
 ```bash
-python cookbook/agent_os/mcp/enable_mcp.py
+.venvs/demo/bin/python cookbook/05_agent_os/mcp_demo/mcp_server_example.py
 ```
+
+Then run this client in a second terminal. It connects to the AgentOS MCP server
+at /mcp and drives it through the 8 built-in tools: discover the OS
+(get_agentos_config), run components (run_agent / run_team / run_workflow),
+resolve pauses (continue_run), stop runs (cancel_run), and browse conversations
+(get_sessions / get_session_runs).
 """
 
 import asyncio
@@ -11,7 +19,7 @@ from uuid import uuid4
 
 from agno.agent import Agent
 from agno.db.in_memory import InMemoryDb
-from agno.models.openai import OpenAIChat
+from agno.models.openai import OpenAIResponses
 from agno.tools.mcp import MCPTools
 
 # ---------------------------------------------------------------------------
@@ -29,12 +37,12 @@ async def run_agent() -> None:
         transport="streamable-http", url=server_url, timeout_seconds=60
     ) as mcp_tools:
         agent = Agent(
-            model=OpenAIChat(id="gpt-5.2"),
+            model=OpenAIResponses(id="gpt-5.5"),
             tools=[mcp_tools],
             instructions=[
-                "You are a helpful assistant that has access to the configuration of a AgentOS.",
-                "If you are asked to do something, use the appropriate tool to do it. ",
-                "Look up information you need in the AgentOS configuration.",
+                "You operate an AgentOS through its MCP tools.",
+                "Call get_agentos_config first to discover the agents, teams, and workflows you can run.",
+                "Use the run tools to delegate work, and the session tools to review past conversations.",
             ],
             user_id="john@example.com",
             session_id=session_id,
@@ -49,38 +57,19 @@ async def run_agent() -> None:
         )
 
         # await agent.aprint_response(
-        #     input="Use my agent to search the web for the latest news about AI",
+        #     input="Use my web research agent to find the latest news about AI",
         #     stream=True,
         #     markdown=True,
         # )
 
-        ## Memory management
+        ## Session history
         # await agent.aprint_response(
-        #     input="What memories do you have of me?",
-        #     stream=True,
-        #     markdown=True,
-        # )
-
-        # await agent.aprint_response(
-        #     input="I like to ski, remember that of me.",
-        #     stream=True,
-        #     markdown=True,
-        # )
-        # await agent.aprint_response(
-        #     input="Clean up all duplicate memories of me.",
-        #     stream=True,
-        #     markdown=True,
-        # )
-
-        ## Session management
-        # await agent.aprint_response(
-        #     input="How many sessions does my web-research-agent have?",
+        #     input="List my recent sessions and summarize what the last conversation was about.",
         #     stream=True,
         #     markdown=True,
         # )
 
 
-# Example usage
 # ---------------------------------------------------------------------------
 # Run Example
 # ---------------------------------------------------------------------------
