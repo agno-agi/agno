@@ -107,6 +107,47 @@ def test_create_clone_failure(monkeypatch, tmp_path):
     assert "git clone failed" in json.loads(result.output)["error"]
 
 
+def test_create_bare_json_requires_name(fake_git):
+    result = runner.invoke(app, ["create", "--json"])
+    assert result.exit_code == 1
+    payload = json.loads(result.output)
+    assert "project name" in payload["error"].lower()
+    assert "optionally --template" in payload["hint"]
+    assert fake_git.calls == []
+
+
+def test_create_interactive_prompts_template_and_name(fake_git, monkeypatch):
+    monkeypatch.setattr(create_module, "stdin_is_interactive", lambda: True)
+    # Template choice 2 = agentos-aws; then accept the default project directory name.
+    result = runner.invoke(app, ["create"], input="2\n\n")
+    assert result.exit_code == 0, result.output
+    assert "Select starter template" in result.output
+    assert "Created" in result.output
+    assert "agentos-aws" in result.output
+    assert create_module.TEMPLATES["agentos-aws"] in fake_git.calls[0]
+    assert (Path.cwd() / "agentos-aws" / "docker-compose.yml").exists()
+
+
+def test_create_interactive_name_only_still_prompts_template(fake_git, monkeypatch):
+    monkeypatch.setattr(create_module, "stdin_is_interactive", lambda: True)
+    # Name provided; still ask which template (Enter = docker default).
+    result = runner.invoke(app, ["create", "my-os"], input="\n")
+    assert result.exit_code == 0, result.output
+    assert "Select starter template" in result.output
+    assert create_module.TEMPLATES["agentos-docker"] in fake_git.calls[0]
+    assert (Path.cwd() / "my-os" / "docker-compose.yml").exists()
+
+
+def test_create_interactive_template_only_prompts_name(fake_git, monkeypatch):
+    monkeypatch.setattr(create_module, "stdin_is_interactive", lambda: True)
+    result = runner.invoke(app, ["create", "-t", "agentos-fly"], input="fly-os\n")
+    assert result.exit_code == 0, result.output
+    assert "Select starter template" not in result.output
+    assert "Project Name" in result.output
+    assert create_module.TEMPLATES["agentos-fly"] in fake_git.calls[0]
+    assert (Path.cwd() / "fly-os" / "docker-compose.yml").exists()
+
+
 # -- infra -----------------------------------------------------------------------------
 
 
