@@ -29,6 +29,4 @@ agent = Agent(
     markdown=True,
 )
 
-agent.print_response(
-    "List the audio files, then transcribe the first one.", stream=True
-)
+agent.print_response("List the audio files, then transcribe the first one.", stream=True)
