@@ -70,13 +70,20 @@ class ClickUpTools(Toolkit):
         if not name:
             return items[0] if items else None
 
-        pattern = re.compile(name, re.IGNORECASE)
+        # Exact match first so a literal name that isn't valid regex still resolves.
+        name_lower = name.lower()
         for item in items:
-            # Try exact match first (case-insensitive)
-            if item["name"].lower() == name.lower():
+            if item.get("name", "").lower() == name_lower:
                 return item
-            # Then try regex pattern match
-            if pattern.search(item["name"]):
+
+        # Then fuzzy regex match; a name with unbalanced brackets/metachars is not a
+        # valid pattern, so degrade to "no match" instead of raising re.error.
+        try:
+            pattern = re.compile(name, re.IGNORECASE)
+        except re.error:
+            return None
+        for item in items:
+            if pattern.search(item.get("name", "")):
                 return item
         return None
 
