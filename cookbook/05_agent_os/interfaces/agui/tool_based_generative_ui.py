@@ -26,6 +26,7 @@ Valid image names (from Dojo):
 from typing import List
 
 from agno.agent.agent import Agent
+from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIResponses
 from agno.tools import tool
 
@@ -44,7 +45,9 @@ VALID_IMAGE_NAMES = [
 
 
 @tool(external_execution=True, external_execution_silent=True)
-def generate_haiku(japanese: List[str], english: List[str], image_name: str, gradient: str) -> str:
+def generate_haiku(
+    japanese: List[str], english: List[str], image_name: str, gradient: str
+) -> str:
     """Generate and display a haiku with image and styling.
 
     Args:
@@ -59,11 +62,12 @@ def generate_haiku(japanese: List[str], english: List[str], image_name: str, gra
 generative_ui_agent = Agent(
     name="tool_based_generative_ui",
     model=OpenAIResponses(id="gpt-5.5"),
+    db=SqliteDb(db_file="/tmp/agui_tool_based_generative_ui.db"),
     tools=[generate_haiku],
     instructions=f"""You are a haiku poet. When asked to create a haiku:
 
 1. Create a beautiful haiku in both English (5-7-5 syllables) and Japanese
-2. Choose a relevant image from: {', '.join(VALID_IMAGE_NAMES)}
+2. Choose a relevant image from: {", ".join(VALID_IMAGE_NAMES)}
 3. Choose a beautiful CSS gradient for the background
 4. Use the generate_haiku tool with all parameters
 

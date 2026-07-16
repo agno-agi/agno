@@ -44,6 +44,7 @@ from typing import TYPE_CHECKING, Any, Callable, Dict, List, Literal, Optional, 
 from fastapi import HTTPException, Query, Request
 
 from agno.db.base import AsyncBaseDb, BaseDb
+from agno.db.schemas.service_accounts import SERVICE_ACCOUNT_PRINCIPAL_PREFIX
 from agno.os.scopes import AgentOSScope
 from agno.os.utils import get_db
 from agno.remote.base import RemoteDb
@@ -92,25 +93,78 @@ def get_scoped_user_id(request: Request) -> Optional[str]:
 
     If the operator configured a custom ``admin_scope`` on JWTMiddleware, that
     value is honoured here too (read from ``request.state.admin_scope``).
+
+    Service-account (``sa:``) principals are the exception to the isolation
+    opt-in: they always self-scope to the data they created, even when
+    ``user_isolation`` is off, unless the token carries admin. A service account
+    is a machine identity whose sessions and memories are stamped with its own
+    principal, so "unscoped" would mean "reads every user's history" — never the
+    intended default for a minted token. An operator who wants a cross-user
+    debugging token mints one with the admin scope.
     """
-    # Opt-in gate: when user isolation is disabled, callers see the raw,
+    user_id = getattr(request.state, "user_id", None)
+    scopes: List[str] = getattr(request.state, "scopes", [])
+    admin_scope_raw = getattr(request.state, "admin_scope", None)
+    # Ignore non-string values (e.g. MagicMock auto-attrs in tests).
+    admin_scope: Optional[str] = admin_scope_raw if isinstance(admin_scope_raw, str) else None
+    is_admin = _has_admin_scope(scopes, admin_scope=admin_scope)
+    is_service_account = isinstance(user_id, str) and user_id.startswith(SERVICE_ACCOUNT_PRINCIPAL_PREFIX)
+
+    # Admin reads across users, so it is never scoped — checked first so it works
+    # regardless of the user_isolation flag (an admin service account must not
+    # fall through to self-scoping).
+    if is_admin:
+        return None
+
+    # Service-account self-scoping — independent of the user_isolation flag.
+    if is_service_account:
+        return user_id
+
+    # Opt-in gate: when user isolation is disabled, human/JWT callers see the raw,
     # unscoped DB and route-level ownership checks behave as if no JWT user
     # were present. JWT/RBAC remain in force; they're orthogonal to scoping.
     if not getattr(request.state, "user_isolation_enabled", False):
         return None
 
-    user_id = getattr(request.state, "user_id", None)
     if not user_id:
         return None
 
-    scopes: List[str] = getattr(request.state, "scopes", [])
-    admin_scope_raw = getattr(request.state, "admin_scope", None)
-    # Ignore non-string values (e.g. MagicMock auto-attrs in tests).
-    admin_scope: Optional[str] = admin_scope_raw if isinstance(admin_scope_raw, str) else None
-    if _has_admin_scope(scopes, admin_scope=admin_scope):
-        return None
-
     return user_id
+
+
+def resolve_run_user_id(request: Request, client_user_id: Optional[str] = None) -> Optional[str]:
+    """Resolve the ``user_id`` a run should be attributed to, pinning authenticated callers.
+
+    Interfaces (A2A, AGUI) accept a client-supplied identity for anonymous attribution,
+    but must never take run identity from the client once the server has assigned one.
+    Precedence, mirroring the REST run route:
+
+    1. A non-admin scoped caller (a JWT user under ``user_isolation`` or any
+       service-account principal) is pinned to its own principal — the
+       client-supplied identity is ignored.
+    2. Any other authenticated caller (admin, or an unscoped JWT user) is pinned
+       to ``request.state.user_id``.
+    3. An anonymous caller (no server-assigned identity) may supply an identity
+       for attribution, but must not claim a server-reserved principal
+       (``sa:*`` / ``__scheduler__``).
+    """
+    # Local import: the jwt middleware imports modules that must stay importable
+    # without user_scope, so keep this edge lazy rather than module-level.
+    from agno.os.middleware.jwt import is_reserved_principal
+
+    scoped = get_scoped_user_id(request)
+    if scoped is not None:
+        return scoped
+
+    # Truthiness, not `is not None`: a validated JWT with an empty-string sub carries no
+    # usable identity, so fall through to anonymous handling rather than pinning user_id="".
+    state_uid = getattr(request.state, "user_id", None)
+    if state_uid:
+        return state_uid
+
+    if is_reserved_principal(client_user_id):
+        raise HTTPException(status_code=403, detail="Client-supplied user_id may not claim a reserved principal")
+    return client_user_id
 
 
 async def resolve_db_and_scope(

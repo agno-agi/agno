@@ -43,7 +43,10 @@ from agno.workflow import Workflow
 @pytest.fixture
 def test_agent():
     """Create a test agent for A2A."""
-    return Agent(name="test-a2a-agent", instructions="You are a helpful assistant.")
+    agent = Agent(name="test-a2a-agent", instructions="You are a helpful assistant.")
+    # Return same instance from deep_copy so arun patches work
+    agent.deep_copy = lambda **kwargs: agent
+    return agent
 
 
 @pytest.fixture
@@ -54,27 +57,6 @@ def test_client(test_agent: Agent):
     return TestClient(app)
 
 
-def _collect_route_paths(app) -> list[str]:
-    """Walk app.routes recursively, descending into any nested routers.
-
-    starlette 1.x wraps included routers in `_IncludedRouter`, which doesn't have
-    `.path` or `.routes` directly — the wrapped routes live on `.original_router`.
-    """
-    paths: list[str] = []
-
-    def visit(routes) -> None:
-        for r in routes:
-            if hasattr(r, "path"):
-                paths.append(r.path)
-            if hasattr(r, "routes"):
-                visit(r.routes)
-            elif hasattr(r, "original_router"):
-                visit(r.original_router.routes)
-
-    visit(app.routes)
-    return paths
-
-
 def test_a2a_interface_parameter():
     """Test that the A2A interface is setup correctly using the a2a_interface parameter."""
     agent = Agent()
@@ -83,7 +65,7 @@ def test_a2a_interface_parameter():
 
     assert app is not None
     assert any([isinstance(interface, A2A) for interface in agent_os.interfaces])
-    paths = _collect_route_paths(app)
+    paths = [route.path for route in agent_os.get_routes() if hasattr(route, "path")]
     assert "/a2a/agents/{id}/v1/message:send" in paths
     assert "/a2a/agents/{id}/v1/message:stream" in paths
 
@@ -97,7 +79,7 @@ def test_a2a_interface_in_interfaces_parameter():
 
     assert app is not None
     assert any([isinstance(interface, A2A) for interface in agent_os.interfaces])
-    paths = _collect_route_paths(app)
+    paths = [route.path for route in agent_os.get_routes() if hasattr(route, "path")]
     assert "/a2a/agents/{id}/v1/message:send" in paths
     assert "/a2a/agents/{id}/v1/message:stream" in paths
 
@@ -613,7 +595,10 @@ def test_team():
     """Create a test team for A2A."""
     agent1 = Agent(name="agent1", instructions="You are agent 1.")
     agent2 = Agent(name="agent2", instructions="You are agent 2.")
-    return Team(name="test-a2a-team", members=[agent1, agent2], instructions="You are a helpful team.")
+    team = Team(name="test-a2a-team", members=[agent1, agent2], instructions="You are a helpful team.")
+    # Return same instance from deep_copy so arun patches work
+    team.deep_copy = lambda **kwargs: team
+    return team
 
 
 @pytest.fixture
@@ -1119,6 +1104,8 @@ def test_workflow():
         return f"Workflow echo: {input}"
 
     workflow = Workflow(name="test-a2a-workflow", steps=[echo_step])
+    # Return same instance from deep_copy so arun patches work
+    workflow.deep_copy = lambda **kwargs: workflow
     return workflow
 
 

@@ -11,6 +11,7 @@ Dojo expects:
 """
 
 from agno.agent.agent import Agent
+from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIResponses
 from agno.tools import tool
 
@@ -25,18 +26,58 @@ def change_background(background: str) -> str:
 def get_weather(location: str) -> dict:
     """Get the current weather for a location."""
     data = {
-        "San Francisco": {"city": "San Francisco", "temperature": 18, "humidity": 65, "wind_speed": 12, "conditions": "Sunny"},
-        "New York": {"city": "New York", "temperature": 22, "humidity": 55, "wind_speed": 8, "conditions": "Cloudy"},
-        "Tokyo": {"city": "Tokyo", "temperature": 26, "humidity": 70, "wind_speed": 5, "conditions": "Rainy"},
-        "London": {"city": "London", "temperature": 15, "humidity": 80, "wind_speed": 15, "conditions": "Overcast"},
-        "Paris": {"city": "Paris", "temperature": 20, "humidity": 60, "wind_speed": 10, "conditions": "Partly cloudy"},
+        "San Francisco": {
+            "city": "San Francisco",
+            "temperature": 18,
+            "humidity": 65,
+            "wind_speed": 12,
+            "conditions": "Sunny",
+        },
+        "New York": {
+            "city": "New York",
+            "temperature": 22,
+            "humidity": 55,
+            "wind_speed": 8,
+            "conditions": "Cloudy",
+        },
+        "Tokyo": {
+            "city": "Tokyo",
+            "temperature": 26,
+            "humidity": 70,
+            "wind_speed": 5,
+            "conditions": "Rainy",
+        },
+        "London": {
+            "city": "London",
+            "temperature": 15,
+            "humidity": 80,
+            "wind_speed": 15,
+            "conditions": "Overcast",
+        },
+        "Paris": {
+            "city": "Paris",
+            "temperature": 20,
+            "humidity": 60,
+            "wind_speed": 10,
+            "conditions": "Partly cloudy",
+        },
     }
-    return data.get(location, {"city": location, "temperature": 20, "humidity": 60, "wind_speed": 10, "conditions": "Partly cloudy"})
+    return data.get(
+        location,
+        {
+            "city": location,
+            "temperature": 20,
+            "humidity": 60,
+            "wind_speed": 10,
+            "conditions": "Partly cloudy",
+        },
+    )
 
 
 agentic_chat_agent = Agent(
     name="agentic_chat",
     model=OpenAIResponses(id="gpt-5.5"),
+    db=SqliteDb(db_file="/tmp/agentic_chat.db"),
     tools=[change_background, get_weather],
     instructions="""You are a helpful assistant with frontend and backend capabilities.
 
