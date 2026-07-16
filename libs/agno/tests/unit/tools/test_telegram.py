@@ -14,11 +14,17 @@ class _FakeApiTelegramException(Exception):
         )
 
 
+class _FakeReactionTypeEmoji:
+    def __init__(self, emoji):
+        self.emoji = emoji
+
+
 @pytest.fixture(autouse=True)
 def _mock_telebot():
     with (
         patch("agno.tools.telegram.TeleBot") as mock_telebot,
         patch("agno.tools.telegram.ApiTelegramException", _FakeApiTelegramException),
+        patch("agno.tools.telegram.ReactionTypeEmoji", _FakeReactionTypeEmoji),
     ):
         mock_telebot.return_value = MagicMock()
         yield {"TeleBot": mock_telebot}
@@ -116,6 +122,20 @@ class TestTelegramToolsInit:
         assert "edit_message" in tools.functions
         assert "delete_message" in tools.functions
 
+    def test_react_disabled_by_default(self, monkeypatch):
+        monkeypatch.setenv("TELEGRAM_TOKEN", "fake-token")
+        from agno.tools.telegram import TelegramTools
+
+        tools = TelegramTools(chat_id="12345")
+        assert "react_with_emoji" not in tools.functions
+
+    def test_react_enabled(self, monkeypatch):
+        monkeypatch.setenv("TELEGRAM_TOKEN", "fake-token")
+        from agno.tools.telegram import TelegramTools
+
+        tools = TelegramTools(chat_id="12345", enable_react_with_emoji=True)
+        assert "react_with_emoji" in tools.functions
+
     def test_all_flag_enables_everything(self, monkeypatch):
         monkeypatch.setenv("TELEGRAM_TOKEN", "fake-token")
         from agno.tools.telegram import TelegramTools
@@ -131,6 +151,7 @@ class TestTelegramToolsInit:
             "send_sticker",
             "edit_message",
             "delete_message",
+            "react_with_emoji",
         )
         for name in expected:
             assert name in tools.functions
@@ -418,6 +439,39 @@ class TestDeleteMessage:
         tools.bot.delete_message = MagicMock(side_effect=_FakeApiTelegramException("deleteMessage", "Bad Request", 400))
 
         result = tools.delete_message(message_id=42)
+        parsed = json.loads(result)
+        assert parsed["status"] == "error"
+        assert "Bad Request" in parsed["message"]
+
+
+class TestReactWithEmoji:
+    def test_success(self, monkeypatch):
+        monkeypatch.setenv("TELEGRAM_TOKEN", "fake-token")
+        from agno.tools.telegram import TelegramTools
+
+        tools = TelegramTools(chat_id="12345", enable_react_with_emoji=True)
+        tools.bot.set_message_reaction = MagicMock(return_value=True)
+
+        result = tools.react_with_emoji(message_id=42, emoji="👍")
+        tools.bot.set_message_reaction.assert_called_once()
+        call_kwargs = tools.bot.set_message_reaction.call_args
+        assert call_kwargs.kwargs["chat_id"] == "12345"
+        assert call_kwargs.kwargs["message_id"] == 42
+        parsed = json.loads(result)
+        assert parsed["status"] == "success"
+        assert parsed["message_id"] == 42
+        assert parsed["emoji"] == "👍"
+
+    def test_api_error(self, monkeypatch):
+        monkeypatch.setenv("TELEGRAM_TOKEN", "fake-token")
+        from agno.tools.telegram import TelegramTools
+
+        tools = TelegramTools(chat_id="12345", enable_react_with_emoji=True)
+        tools.bot.set_message_reaction = MagicMock(
+            side_effect=_FakeApiTelegramException("setMessageReaction", "Bad Request", 400)
+        )
+
+        result = tools.react_with_emoji(message_id=42, emoji="👍")
         parsed = json.loads(result)
         assert parsed["status"] == "error"
         assert "Bad Request" in parsed["message"]

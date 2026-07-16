@@ -42,7 +42,6 @@ file_agent = Agent(
         "Briefly explain what was generated.",
     ],
     markdown=True,
-    debug_mode=True,
     add_history_to_context=True,
     num_history_runs=3,
 )
