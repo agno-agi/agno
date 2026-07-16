@@ -252,8 +252,10 @@ class Groq(Model):
             and isinstance(response_format, dict)
             and response_format.get("type") == "json_object"
         ):
-            # This is required by Groq to ensure the model outputs in the correct format
-            message.content += "\n\nYour output should be in JSON format."
+            # This is required by Groq to ensure the model outputs in the correct format.
+            # Write it to the payload rather than mutating the shared Message (which both
+            # dropped it from this request and duplicated it on every reuse).
+            message_dict["content"] = message.content + "\n\nYour output should be in JSON format."
 
         if message.images is not None and len(message.images) > 0:
             # Ignore non-string message content
