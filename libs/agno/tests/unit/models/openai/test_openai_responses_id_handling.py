@@ -102,6 +102,48 @@ def test_format_messages_maps_tool_output_fc_to_call_id():
     assert out_items[0]["call_id"] == "call_def456"
 
 
+def test_format_messages_preserves_assistant_text_with_tool_call():
+    model = OpenAIResponses(id="gpt-4.1-mini")
+
+    # An assistant turn that carries both text and a tool call (reasoning/GPT models
+    # routinely emit this). The text used to be dropped by the elif chain.
+    assistant = Message(
+        role="assistant",
+        content="Let me look that up for you.",
+        tool_calls=[
+            {
+                "id": "fc_abc123",
+                "call_id": "call_def456",
+                "type": "function",
+                "function": {"name": "search", "arguments": "{}"},
+            }
+        ],
+    )
+
+    fm = model._format_messages(messages=[assistant])
+
+    text_items = [x for x in fm if isinstance(x, dict) and x.get("content") == "Let me look that up for you."]
+    fc_items = [x for x in fm if isinstance(x, dict) and x.get("type") == "function_call"]
+
+    assert len(text_items) == 1
+    assert len(fc_items) == 1
+
+
+def test_format_messages_tool_call_without_content_emits_no_text():
+    model = OpenAIResponses(id="gpt-4.1-mini")
+
+    assistant = Message(
+        role="assistant",
+        content=None,
+        tool_calls=[{"id": "fc_1", "call_id": "call_1", "type": "function", "function": {"name": "s", "arguments": "{}"}}],
+    )
+
+    fm = model._format_messages(messages=[assistant])
+
+    assert len(fm) == 1
+    assert fm[0]["type"] == "function_call"
+
+
 def test_parse_provider_response_maps_ids():
     model = OpenAIResponses(id="gpt-4.1-mini")
 

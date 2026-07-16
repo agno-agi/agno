@@ -690,6 +690,11 @@ class OpenAIResponses(Model):
                 if self._using_reasoning_model() and previous_response_id is not None:
                     continue
 
+                # Preserve any assistant text that accompanies the tool call; otherwise the
+                # elif chain below (role == "assistant") is unreachable and the text is lost.
+                if message.content:
+                    formatted_messages.append({"role": self.role_map[message.role], "content": message.content})
+
                 for tool_call in message.tool_calls:
                     formatted_messages.append(
                         {
