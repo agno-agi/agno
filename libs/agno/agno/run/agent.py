@@ -835,6 +835,8 @@ class RunOutput:
     def to_json(self, separators=(", ", ": "), indent: Optional[int] = 2) -> str:
         import json
 
+        from agno.utils.serialize import json_serializer
+
         try:
             _dict = self.to_dict()
         except Exception as e:
@@ -842,9 +844,9 @@ class RunOutput:
             raise
 
         if indent is None:
-            return json.dumps(_dict, separators=separators)
+            return json.dumps(_dict, separators=separators, default=json_serializer, ensure_ascii=False)
         else:
-            return json.dumps(_dict, indent=indent, separators=separators)
+            return json.dumps(_dict, indent=indent, separators=separators, default=json_serializer, ensure_ascii=False)
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "RunOutput":

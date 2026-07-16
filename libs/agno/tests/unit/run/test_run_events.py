@@ -523,3 +523,20 @@ def test_requirements_in_run_paused_event():
     assert reconstructed.requirements[0].tool_execution.tool_name == "get_the_weather"
     assert reconstructed.requirements[0].tool_execution.requires_confirmation is True
     assert reconstructed.requirements[0].needs_confirmation is True
+
+
+def test_run_output_to_json_preserves_unicode_and_serializes_datetime():
+    """RunOutput/TeamRunOutput.to_json must match the base event: keep non-ASCII
+    unraveled and serialize non-JSON-native values (e.g. datetime) instead of crashing."""
+    from agno.run.agent import RunOutput
+    from agno.run.team import TeamRunOutput
+
+    for cls in (RunOutput, TeamRunOutput):
+        # Non-ASCII content is not escaped to \uXXXX
+        result = cls(run_id="r1", content="héllo 中文").to_json(indent=None)
+        assert "中文" in result
+        assert "\\u" not in result
+
+        # A datetime in metadata serializes rather than raising TypeError
+        result = cls(run_id="r1", content="x", metadata={"ts": datetime(2020, 1, 1)}).to_json(indent=None)
+        assert "2020" in json.loads(result)["metadata"]["ts"]
