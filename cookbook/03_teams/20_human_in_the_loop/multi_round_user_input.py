@@ -59,6 +59,7 @@ team = Team(
     name="RestaurantTeam",
     model=OpenAIResponses(id="gpt-5.5"),
     members=[survey_agent],
+    instructions="Delegate all restaurant requests to the SurveyAgent immediately.",
     db=db,
     telemetry=False,
     add_history_to_context=True,
