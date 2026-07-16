@@ -408,6 +408,17 @@ class StepInput:
         """Helper method to recursively extract deepest content from nested steps"""
         # If this step has nested steps, go deeper
         if step_output.steps and len(step_output.steps) > 0:
+            # For Parallel steps, aggregate content from ALL inner branches, not just the last
+            # one (otherwise every branch except the last is silently dropped).
+            if step_output.step_type == StepType.PARALLEL:
+                aggregated_parts = []
+                for i, inner_step in enumerate(step_output.steps):
+                    inner_content = self._get_deepest_step_content(inner_step)
+                    if inner_content:
+                        step_name = inner_step.step_name or f"Step {i + 1}"
+                        aggregated_parts.append(f"=== {step_name} ===\n{inner_content}")
+                return "\n\n".join(aggregated_parts) if aggregated_parts else step_output.content  # type: ignore[return-value]
+
             return self._get_deepest_step_content(step_output.steps[-1])
 
         # Return the content of this step
