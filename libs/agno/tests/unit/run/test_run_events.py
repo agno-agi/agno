@@ -523,3 +523,17 @@ def test_requirements_in_run_paused_event():
     assert reconstructed.requirements[0].tool_execution.tool_name == "get_the_weather"
     assert reconstructed.requirements[0].tool_execution.requires_confirmation is True
     assert reconstructed.requirements[0].needs_confirmation is True
+
+
+def test_run_event_from_dict_reconstructs_citations():
+    from agno.models.message import UrlCitation
+    from agno.models.response import Citations
+    from agno.run.agent import RunContentEvent
+
+    event = RunContentEvent(content="x", citations=Citations(urls=[UrlCitation(url="http://e.com", title="T")]))
+
+    restored = RunContentEvent.from_dict(event.to_dict())
+
+    # Was left as a raw dict (only to_dict emitted citations; from_dict never rebuilt it).
+    assert isinstance(restored.citations, Citations)
+    assert restored.citations.urls[0].url == "http://e.com"

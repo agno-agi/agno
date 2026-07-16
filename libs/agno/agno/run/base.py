@@ -260,6 +260,10 @@ class BaseRunOutputEvent:
         if references is not None:
             data["references"] = [MessageReferences.model_validate(reference) for reference in references]
 
+        citations = data.pop("citations", None)
+        if citations is not None:
+            data["citations"] = Citations.model_validate(citations)
+
         metrics = data.pop("metrics", None)
         if metrics:
             data["metrics"] = RunMetrics.from_dict(metrics)
