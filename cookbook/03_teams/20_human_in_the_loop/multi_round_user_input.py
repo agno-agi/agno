@@ -2,14 +2,8 @@
 Multi-Round User Input (Chained HITL)
 =====================================
 
-Demonstrates a member agent that pauses MULTIPLE times for user input
-during a single team execution. This is the scenario from issue #8925.
-
-The member agent has TWO tools that require user input:
-1. collect_name() - asks for user's name
-2. collect_preferences() - asks for user's preferences
-
-The agent calls both tools in sequence, causing TWO pause/resume cycles.
+Demonstrates a member agent that pauses multiple times for user input
+during a single team execution. Regression test for issue #8925.
 """
 
 from agno.agent import Agent
@@ -21,6 +15,9 @@ from agno.utils import pprint
 from rich.console import Console
 from rich.prompt import Prompt
 
+# ---------------------------------------------------------------------------
+# Setup
+# ---------------------------------------------------------------------------
 console = Console()
 
 db = SqliteDb(
@@ -31,16 +28,19 @@ db = SqliteDb(
 
 @tool(requires_user_input=True, user_input_fields=["name"])
 def collect_name(name: str = "") -> str:
-    """Collect the user's name. Call this first before collecting preferences."""
+    """Collect the user's name."""
     return f"User's name is: {name}"
 
 
 @tool(requires_user_input=True, user_input_fields=["cuisine", "budget"])
 def collect_preferences(cuisine: str = "", budget: str = "") -> str:
-    """Collect user's dining preferences. Call this after getting their name."""
+    """Collect user's dining preferences."""
     return f"User prefers {cuisine} cuisine with a {budget} budget."
 
 
+# ---------------------------------------------------------------------------
+# Create Members
+# ---------------------------------------------------------------------------
 survey_agent = Agent(
     name="SurveyAgent",
     model=OpenAIResponses(id="gpt-5-mini"),
@@ -56,6 +56,9 @@ survey_agent = Agent(
     telemetry=False,
 )
 
+# ---------------------------------------------------------------------------
+# Create Team
+# ---------------------------------------------------------------------------
 team = Team(
     name="RestaurantTeam",
     model=OpenAIResponses(id="gpt-5-mini"),
@@ -70,15 +73,15 @@ team = Team(
     add_history_to_context=True,
 )
 
-
+# ---------------------------------------------------------------------------
+# Run Team
+# ---------------------------------------------------------------------------
 if __name__ == "__main__":
     session_id = "multi_round_hitl_session"
 
     console.print("\n[bold green]Multi-Round HITL Demo[/]")
     console.print("This demo shows a member agent pausing TWICE for user input.\n")
 
-    # Initial run
-    console.print("[cyan]Starting team.run()...[/]")
     run_response = team.run(
         "Help me find a restaurant for dinner tonight",
         session_id=session_id,
@@ -104,7 +107,6 @@ if __name__ == "__main__":
                     )
                 requirement.provide_user_input(values)
 
-        console.print(f"\n[cyan]Calling team.continue_run() (round {round_num})...[/]")
         run_response = team.continue_run(run_response, session_id=session_id)
 
         round_num += 1
