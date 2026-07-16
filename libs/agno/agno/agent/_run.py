@@ -963,9 +963,13 @@ def _run_stream(
                         session_state=run_context.session_state,
                         run_context=run_context,
                     ):
+                        # Deliver the event before checking for cancellation: the model stream
+                        # has already committed this delta's content to run_response.content, so
+                        # cancelling before the yield would drop its RunContent event and leave the
+                        # streamed events diverging from the persisted/returned content.
+                        yield event
                         if not isinstance(event, _CANCEL_BYPASS_EVENT_TYPES):
                             raise_if_cancelled(run_response.run_id)  # type: ignore
-                        yield event
                 else:
                     from agno.run.agent import (
                         IntermediateRunContentEvent,
@@ -2364,9 +2368,13 @@ async def _arun_stream(
                         session_state=run_context.session_state,
                         run_context=run_context,
                     ):
+                        # Deliver the event before checking for cancellation: the model stream
+                        # has already committed this delta's content to run_response.content, so
+                        # cancelling before the yield would drop its RunContent event and leave the
+                        # streamed events diverging from the persisted/returned content.
+                        yield event
                         if not isinstance(event, _CANCEL_BYPASS_EVENT_TYPES):
                             await araise_if_cancelled(run_response.run_id)  # type: ignore
-                        yield event
                 else:
                     from agno.run.agent import (
                         IntermediateRunContentEvent,
