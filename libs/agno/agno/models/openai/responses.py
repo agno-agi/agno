@@ -644,12 +644,12 @@ class OpenAIResponses(Model):
                 # Ignore non-string message content
                 # because we assume that the images/audio are already added to the message
                 if message.images is not None and len(message.images) > 0:
-                    # Ignore non-string message content
-                    # because we assume that the images/audio are already added to the message
-                    if isinstance(message.content, str):
-                        message_dict["content"] = [{"type": "input_text", "text": message.content}]
-                        if message.images is not None:
-                            message_dict["content"].extend(images_to_message(images=message.images))
+                    # Build the parts list when content is None (the default) or a str, so the
+                    # images are appended; skip only when content is already a list of parts.
+                    if message.content is None or isinstance(message.content, str):
+                        text = message.content if isinstance(message.content, str) else ""
+                        message_dict["content"] = [{"type": "input_text", "text": text}]
+                        message_dict["content"].extend(images_to_message(images=message.images))
 
                 if message.audio is not None and len(message.audio) > 0:
                     log_warning("Audio input is currently unsupported.")
