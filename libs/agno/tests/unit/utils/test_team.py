@@ -126,3 +126,11 @@ def test_get_member_id():
     # Team with only UUID id (no name) -> use the UUID id
     inner_team = Team(id=str(uuid.uuid4()), members=[member])
     assert get_member_id(inner_team) == inner_team.id
+
+    # Agent with snake_case id -> id is preserved as-is, not converted to kebab-case
+    member = Agent(name="Billing Agent", id="billing_agent")
+    assert get_member_id(member) == "billing_agent"
+
+    # Team with snake_case id -> id is preserved as-is, not converted to kebab-case
+    inner_team = Team(name="Billing Team", id="billing_team", members=[member])
+    assert get_member_id(inner_team) == "billing_team"
