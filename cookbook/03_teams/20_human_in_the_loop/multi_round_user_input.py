@@ -43,7 +43,7 @@ def collect_preferences(cuisine: str = "", budget: str = "") -> str:
 # ---------------------------------------------------------------------------
 survey_agent = Agent(
     name="SurveyAgent",
-    model=OpenAIResponses(id="gpt-5-mini"),
+    model=OpenAIResponses(id="gpt-5.5"),
     tools=[collect_name, collect_preferences],
     instructions=[
         "You help users find restaurant recommendations.",
@@ -61,7 +61,7 @@ survey_agent = Agent(
 # ---------------------------------------------------------------------------
 team = Team(
     name="RestaurantTeam",
-    model=OpenAIResponses(id="gpt-5-mini"),
+    model=OpenAIResponses(id="gpt-5.5"),
     members=[survey_agent],
     instructions=[
         "You are a coordinator. You NEVER answer directly.",
