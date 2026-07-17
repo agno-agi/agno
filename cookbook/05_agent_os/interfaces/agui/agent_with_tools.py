@@ -50,7 +50,6 @@ agent = Agent(
     add_location_to_context=True,
     timezone_identifier="Etc/UTC",
     markdown=True,
-    debug_mode=True,
 )
 
 
