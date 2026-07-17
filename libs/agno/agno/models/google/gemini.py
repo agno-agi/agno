@@ -7,7 +7,7 @@ from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from os import getenv
 from pathlib import Path
-from typing import Any, Dict, Iterator, List, Optional, Type, Union
+from typing import Any, Dict, Iterator, List, Optional, Type, Union, cast
 from uuid import uuid4
 
 from pydantic import BaseModel
@@ -83,7 +83,7 @@ class Gemini(Model):
     Based on https://googleapis.github.io/python-genai/
     """
 
-    id: str = "gemini-flash-latest"
+    id: str = "gemini-3.5-flash"
     name: str = "Gemini"
     provider: str = "Google"
 
@@ -244,6 +244,20 @@ class Gemini(Model):
         )
         cleaned_dict = {k: v for k, v in model_dict.items() if v is not None}
         return cleaned_dict
+
+    @staticmethod
+    def _format_unexpected_error_message(error: Exception) -> str:
+        """Return a loggable message for a generic provider exception.
+
+        - If ``str(error)`` is non-empty, pass it through unchanged. This keeps
+          existing log/error semantics intact for the common case (rate limits,
+          timeouts with a message, API error strings, etc).
+        - If ``str(error)`` is empty, fall back to the exception class name so
+          the log/ ``ModelProviderError`` still contains a debuggable token
+          instead of an empty string (the original bug).
+        """
+        error_message = str(error).strip()
+        return error_message or type(error).__name__
 
     def _append_file_search_tool(self, builtin_tools: List[Tool]) -> None:
         """Append Gemini File Search tool to builtin_tools if file search is enabled.
@@ -574,8 +588,9 @@ class Gemini(Model):
         except RetryableModelProviderError:
             raise
         except Exception as e:
-            log_error(f"Unknown error from Gemini API: {str(e)}")
-            raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
+            error_message = self._format_unexpected_error_message(e)
+            log_error(f"Unknown error from Gemini API: {error_message}")
+            raise ModelProviderError(message=error_message, model_name=self.name, model_id=self.id) from e
 
     def invoke_stream(
         self,
@@ -628,8 +643,9 @@ class Gemini(Model):
         except RetryableModelProviderError:
             raise
         except Exception as e:
-            log_error(f"Unknown error from Gemini API: {str(e)}")
-            raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
+            error_message = self._format_unexpected_error_message(e)
+            log_error(f"Unknown error from Gemini API: {error_message}")
+            raise ModelProviderError(message=error_message, model_name=self.name, model_id=self.id) from e
 
     async def ainvoke(
         self,
@@ -687,8 +703,9 @@ class Gemini(Model):
         except RetryableModelProviderError:
             raise
         except Exception as e:
-            log_error(f"Unknown error from Gemini API: {str(e)}")
-            raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
+            error_message = self._format_unexpected_error_message(e)
+            log_error(f"Unknown error from Gemini API: {error_message}")
+            raise ModelProviderError(message=error_message, model_name=self.name, model_id=self.id) from e
 
     async def ainvoke_stream(
         self,
@@ -744,8 +761,9 @@ class Gemini(Model):
         except RetryableModelProviderError:
             raise
         except Exception as e:
-            log_error(f"Unknown error from Gemini API: {str(e)}")
-            raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
+            error_message = self._format_unexpected_error_message(e)
+            log_error(f"Unknown error from Gemini API: {error_message}")
+            raise ModelProviderError(message=error_message, model_name=self.name, model_id=self.id) from e
 
     def _format_messages(self, messages: List[Message], compress_tool_results: bool = False):
         """
@@ -835,10 +853,12 @@ class Gemini(Model):
                             # Case 1: Video is a file_types.File object (Recommended)
                             # Add it as a File object
                             if video.content is not None and isinstance(video.content, GeminiFile):
+                                # The content annotation says bytes, but uploaded videos carry a File
+                                gemini_video = cast(GeminiFile, video.content)
                                 # Google recommends that if using a single video, place the text prompt after the video.
-                                if video.content.uri and video.content.mime_type:
+                                if gemini_video.uri and gemini_video.mime_type:
                                     message_parts.insert(
-                                        0, Part.from_uri(file_uri=video.content.uri, mime_type=video.content.mime_type)
+                                        0, Part.from_uri(file_uri=gemini_video.uri, mime_type=gemini_video.mime_type)
                                     )
                             else:
                                 video_file = self._format_video_for_message(video)
@@ -853,13 +873,15 @@ class Gemini(Model):
                     try:
                         for audio_snippet in message.audio:
                             if audio_snippet.content is not None and isinstance(audio_snippet.content, GeminiFile):
+                                # The content annotation says bytes, but uploaded audio carries a File
+                                gemini_audio = cast(GeminiFile, audio_snippet.content)
                                 # Google recommends that if using a single audio file, place the text prompt after the audio file.
-                                if audio_snippet.content.uri and audio_snippet.content.mime_type:
+                                if gemini_audio.uri and gemini_audio.mime_type:
                                     message_parts.insert(
                                         0,
                                         Part.from_uri(
-                                            file_uri=audio_snippet.content.uri,
-                                            mime_type=audio_snippet.content.mime_type,
+                                            file_uri=gemini_audio.uri,
+                                            mime_type=gemini_audio.mime_type,
                                         ),
                                     )
                             else:

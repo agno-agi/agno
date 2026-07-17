@@ -39,41 +39,18 @@ from agno.tools.google.calendar import GoogleCalendarTools
 
 if TYPE_CHECKING:
     from agno.models.base import Model
+    from agno.tools.google.auth import AuthConfig
 
 
 DEFAULT_READ_INSTRUCTIONS = """\
 You answer questions by searching and reading Google Calendar.
 
-## Tools available
+## Behavior
 
-- `list_events(time_min, time_max)` — events in a date range
-- `search_events(query)` — free-text search across event titles/descriptions
-- `get_event(event_id)` — full details for one event
-- `check_availability(time_min, time_max)` — busy/free slots
-- `find_available_slots(...)` — suggest meeting times
-- `list_calendars()` — all calendars the user can access
-
-## Searching for events
-
-1. **For "what's on my calendar today/this week"** — use `list_events`
-   with appropriate `time_min` and `time_max` (ISO 8601 format).
-
-2. **For "find meetings about X"** — use `search_events(query="X")`.
-
-3. **For specific event details** — use `get_event(event_id)` after
-   finding the event ID from a list or search.
-
-## Time zones
-
-- Always ask the user's timezone if not obvious from context.
-- Return times in the user's local timezone, not UTC.
-- When listing events, show both date and time clearly.
-
-## Citing results
-
-- Include event IDs so the user can reference them later.
-- Link to the event's `htmlLink` when available.
-- For recurring events, clarify which instance you're referring to.
+- **Ask for timezone** if not obvious from context. Return times in the
+  user's local timezone, not UTC.
+- **Cite results.** Include event IDs and `htmlLink` so the user can
+  reference or open events later.
 
 **Read-only.** No creating, updating, or deleting events.
 """
@@ -81,38 +58,13 @@ You answer questions by searching and reading Google Calendar.
 DEFAULT_WRITE_INSTRUCTIONS = """\
 You manage Google Calendar — searching, reading, and modifying events.
 
-## Tools available
+## Safety
 
-- `create_event(summary, start, end, ...)` — create new event
-- `update_event(event_id, ...)` — modify existing event
-- `delete_event(event_id)` — remove an event
-- `list_events`, `search_events`, `get_event` — for lookups
-
-## Before modifying
-
-1. **Always look up first.** Use `get_event(event_id)` or `search_events`
-   to confirm you have the right event before updating or deleting.
-
-2. **Confirm ambiguous requests.** If the user says "move my meeting"
-   but has multiple meetings, ask which one.
-
-## Creating events
-
-- **Required:** `summary`, `start`, `end` (ISO 8601 with timezone)
-- **Optional:** `description`, `location`, `attendees`, `reminders`
-- Always confirm the timezone with the user if not explicit.
-- For all-day events, use date format (`2026-05-01`), not datetime.
-
-## Updating events
-
-- Only specify fields that should change — omit unchanged fields.
-- For attendees: `notify_attendees=True` sends update emails (default).
-  Set to `False` for minor changes that don't need notifications.
-
-## Deleting events
-
-- Confirm before deleting, especially for recurring events.
-- For recurring events, clarify: delete this instance or all future?
+- **Confirm ambiguous requests.** If the user says "move my meeting"
+  but has multiple meetings, ask which one.
+- **Confirm timezone** when creating events if not explicit.
+- **Confirm before deleting**, especially for recurring events.
+  For recurring events, clarify: delete this instance or all future?
 """
 
 
@@ -122,10 +74,12 @@ class GoogleCalendarContextProvider(ContextProvider):
     def __init__(
         self,
         *,
-        # Service account auth
+        # Unified auth config (preferred — enables DB storage + scope aggregation)
+        auth: AuthConfig | None = None,
+        # Service account auth (legacy — use auth= instead)
         service_account_path: str | None = None,
         delegated_user: str | None = None,
-        # OAuth auth (browser flow)
+        # OAuth auth (browser flow, legacy — use auth= instead)
         credentials_path: str | None = None,  # OAuth client config (client_id/secret JSON)
         token_path: str | None = None,  # Cached user tokens after consent
         calendar_id: str = "primary",
@@ -139,6 +93,9 @@ class GoogleCalendarContextProvider(ContextProvider):
         write: bool = False,
     ) -> None:
         super().__init__(id=id, name=name, mode=mode, model=model, read=read, write=write)
+
+        # Store auth config for toolkit creation
+        self._auth = auth
 
         self._sa_path = service_account_path or getenv("GOOGLE_SERVICE_ACCOUNT_FILE")
         self._credentials_path = credentials_path
@@ -160,6 +117,7 @@ class GoogleCalendarContextProvider(ContextProvider):
             sa_path=self._sa_path,
             token_path=self._token_path,
             delegated_user=self._delegated_user,
+            auth=self._auth,
         )
 
     async def astatus(self) -> Status:
@@ -205,6 +163,12 @@ class GoogleCalendarContextProvider(ContextProvider):
             self._write_toolkit = self._build_write_toolkit()
         return self._write_toolkit
 
+    async def _aget_query_agent(self, run_context):
+        return self._ensure_read_agent()
+
+    async def _aget_update_agent(self, run_context):
+        return self._ensure_write_agent()
+
     def _ensure_read_agent(self) -> Agent:
         if self._read_agent is None:
             self._read_agent = Agent(
@@ -231,6 +195,7 @@ class GoogleCalendarContextProvider(ContextProvider):
 
     def _build_read_toolkit(self) -> GoogleCalendarTools:
         return GoogleCalendarTools(
+            auth=self._auth,
             service_account_path=self._sa_path,
             delegated_user=self._delegated_user,
             credentials_path=self._credentials_path,
@@ -245,6 +210,7 @@ class GoogleCalendarContextProvider(ContextProvider):
 
     def _build_write_toolkit(self) -> GoogleCalendarTools:
         return GoogleCalendarTools(
+            auth=self._auth,
             service_account_path=self._sa_path,
             delegated_user=self._delegated_user,
             credentials_path=self._credentials_path,

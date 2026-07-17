@@ -51,6 +51,13 @@ class BaseDb(ABC):
         schedules_table: Optional[str] = None,
         schedule_runs_table: Optional[str] = None,
         approvals_table: Optional[str] = None,
+        auth_tokens_table: Optional[str] = None,
+        service_accounts_table: Optional[str] = None,
+        mcp_oauth_clients_table: Optional[str] = None,
+        mcp_oauth_transactions_table: Optional[str] = None,
+        mcp_oauth_codes_table: Optional[str] = None,
+        mcp_oauth_refresh_tokens_table: Optional[str] = None,
+        mcp_oauth_keys_table: Optional[str] = None,
         id: Optional[str] = None,
     ):
         self.id = id or str(uuid4())
@@ -70,6 +77,14 @@ class BaseDb(ABC):
         self.schedules_table_name = schedules_table or "agno_schedules"
         self.schedule_runs_table_name = schedule_runs_table or "agno_schedule_runs"
         self.approvals_table_name = approvals_table or "agno_approvals"
+        self.auth_tokens_table_name = auth_tokens_table or "agno_auth_tokens"
+        self.service_accounts_table_name = service_accounts_table or "agno_service_accounts"
+        # Built-in MCP OAuth authorization server store (see agno.os.mcp_auth_builtin).
+        self.mcp_oauth_clients_table_name = mcp_oauth_clients_table or "agno_mcp_oauth_clients"
+        self.mcp_oauth_transactions_table_name = mcp_oauth_transactions_table or "agno_mcp_oauth_transactions"
+        self.mcp_oauth_codes_table_name = mcp_oauth_codes_table or "agno_mcp_oauth_codes"
+        self.mcp_oauth_refresh_tokens_table_name = mcp_oauth_refresh_tokens_table or "agno_mcp_oauth_refresh_tokens"
+        self.mcp_oauth_keys_table_name = mcp_oauth_keys_table or "agno_mcp_oauth_keys"
 
     def to_dict(self) -> Dict[str, Any]:
         """
@@ -93,6 +108,13 @@ class BaseDb(ABC):
             "schedules_table": self.schedules_table_name,
             "schedule_runs_table": self.schedule_runs_table_name,
             "approvals_table": self.approvals_table_name,
+            "auth_tokens_table": self.auth_tokens_table_name,
+            "service_accounts_table": self.service_accounts_table_name,
+            "mcp_oauth_clients_table": self.mcp_oauth_clients_table_name,
+            "mcp_oauth_transactions_table": self.mcp_oauth_transactions_table_name,
+            "mcp_oauth_codes_table": self.mcp_oauth_codes_table_name,
+            "mcp_oauth_refresh_tokens_table": self.mcp_oauth_refresh_tokens_table_name,
+            "mcp_oauth_keys_table": self.mcp_oauth_keys_table_name,
         }
 
     @classmethod
@@ -117,6 +139,13 @@ class BaseDb(ABC):
             schedules_table=data.get("schedules_table"),
             schedule_runs_table=data.get("schedule_runs_table"),
             approvals_table=data.get("approvals_table"),
+            auth_tokens_table=data.get("auth_tokens_table"),
+            service_accounts_table=data.get("service_accounts_table"),
+            mcp_oauth_clients_table=data.get("mcp_oauth_clients_table"),
+            mcp_oauth_transactions_table=data.get("mcp_oauth_transactions_table"),
+            mcp_oauth_codes_table=data.get("mcp_oauth_codes_table"),
+            mcp_oauth_refresh_tokens_table=data.get("mcp_oauth_refresh_tokens_table"),
+            mcp_oauth_keys_table=data.get("mcp_oauth_keys_table"),
             id=data.get("id"),
         )
 
@@ -937,6 +966,41 @@ class BaseDb(ABC):
         """
         raise NotImplementedError
 
+    def update_learning(self, id: str, content: Dict[str, Any], metadata: Optional[Dict[str, Any]] = None) -> bool:
+        """Update an existing learning record in place. Does NOT insert.
+
+        Unlike ``upsert_learning`` this only touches an existing row (sets content/metadata/
+        updated_at; never inserts and never changes created_at or identity fields). It exists
+        so PATCH can be a true update: a row deleted out from under the caller simply isn't
+        matched, instead of being silently re-created (which would also let a concurrent agent
+        write get clobbered/destroyed).
+
+        Args:
+            id: The learning ID to update.
+            content: Replacement content.
+            metadata: Replacement metadata.
+
+        Returns:
+            True if a row was updated, False if no row with that id exists.
+        """
+        raise NotImplementedError
+
+    def delete_user_learnings(self, user_id: str, learning_type: Optional[str] = None) -> int:
+        """Delete every learning record owned by a user.
+
+        Removes all rows where ``user_id`` matches. Records with no owner
+        (``user_id IS NULL``) are not affected.
+
+        Args:
+            user_id: The user whose learnings should be deleted.
+            learning_type: When provided, restrict deletion to this single learning type;
+                otherwise all of the user's learnings are removed.
+
+        Returns:
+            The number of records deleted.
+        """
+        raise NotImplementedError
+
     @abstractmethod
     def get_learnings(
         self,
@@ -965,6 +1029,87 @@ class BaseDb(ABC):
 
         Returns:
             List of learning records.
+        """
+        raise NotImplementedError
+
+    def get_learning_by_id(self, id: str) -> Optional[Dict[str, Any]]:
+        """Retrieve a single learning record by its primary key.
+
+        Args:
+            id: The learning ID.
+
+        Returns:
+            The learning record dict, or None if not found.
+        """
+        raise NotImplementedError
+
+    def list_learnings(
+        self,
+        learning_type: Optional[str] = None,
+        user_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+        namespace: Optional[str] = None,
+        entity_id: Optional[str] = None,
+        entity_type: Optional[str] = None,
+        include_global: bool = False,
+        limit: int = 100,
+        page: int = 1,
+        sort_by: Optional[str] = None,
+        sort_order: Optional[str] = None,
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        """List learning records with pagination, returning the page and total count.
+
+        Args:
+            learning_type: Filter by learning type.
+            user_id: Filter by user ID.
+            agent_id: Filter by agent ID.
+            team_id: Filter by team ID.
+            session_id: Filter by session ID.
+            namespace: Filter by namespace.
+            entity_id: Filter by entity ID.
+            entity_type: Filter by entity type.
+            include_global: When True and ``user_id`` is set, also include records where
+                ``user_id IS NULL`` (global / non-user-scoped). Has no effect when
+                ``user_id`` is None.
+            limit: Page size.
+            page: 1-indexed page number.
+            sort_by: Field to sort by (defaults to ``updated_at``).
+            sort_order: Sort order, ``'asc'`` or ``'desc'`` (defaults to ``desc``).
+
+        Returns:
+            Tuple of (records, total_count) where records is the requested page.
+        """
+        raise NotImplementedError
+
+    def get_learnings_user_stats(
+        self,
+        learning_type: Optional[str] = None,
+        limit: Optional[int] = None,
+        page: Optional[int] = None,
+        user_id: Optional[str] = None,
+        sort_by: Optional[str] = None,
+        sort_order: Optional[str] = None,
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        """List the users that own learning records, with per-user counts.
+
+        Groups the learnings table by ``user_id`` (excluding records with no owner) so a
+        client can present a list of users before drilling into a single user's profile
+        and memories. Mirrors ``get_user_memory_stats``.
+
+        Args:
+            learning_type: Restrict the grouping to a single learning type (e.g.
+                ``'user_profile'`` or ``'user_memory'``).
+            limit: Page size.
+            page: 1-indexed page number.
+            user_id: Restrict the result to a single user.
+            sort_by: Field to sort by -- ``user_id`` or ``last_learning_updated_at`` (the default).
+            sort_order: Sort order, ``'asc'`` or ``'desc'`` (defaults to ``desc``).
+
+        Returns:
+            Tuple of (user_stats, total_count) where each entry has the shape
+            ``{"user_id": str, "last_learning_updated_at": int}``.
         """
         raise NotImplementedError
 
@@ -1094,6 +1239,146 @@ class BaseDb(ABC):
         """
         raise NotImplementedError
 
+    # --- Auth Tokens (Optional) ---
+
+    def get_auth_token(self, provider: str, user_id: Optional[str], service: str) -> Optional[Dict[str, Any]]:
+        """Get stored OAuth token for a provider/user/service combination."""
+        raise NotImplementedError
+
+    def upsert_auth_token(self, token: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """Store or update OAuth token. Token dict must include provider, user_id, service, token_data."""
+        raise NotImplementedError
+
+    def delete_auth_token(self, provider: str, user_id: Optional[str], service: str) -> bool:
+        """Delete stored OAuth token for a provider/user/service combination. Returns True if deleted."""
+        raise NotImplementedError
+
+    # --- Built-in MCP OAuth server store (Optional) ---
+    # Backs AgentOSBuiltinAuth (agno.os.mcp_auth_builtin): the OAuth 2.1 authorization
+    # server the AgentOS MCP endpoint runs when a deployer opts in. Implemented by the sync
+    # SQLAlchemy backends (PostgresDb / SqliteDb); every other backend inherits these
+    # NotImplementedError stubs, and AgentOSBuiltinAuth rejects a db that lacks them at
+    # construction. The provider SHA-256-hashes codes/refresh tokens and JSON-serializes
+    # payloads before calling these, so only opaque strings reach the store.
+
+    def get_mcp_oauth_client(self, client_id: str) -> Optional[str]:
+        """The stored client_metadata JSON for a DCR client, or None."""
+        raise NotImplementedError
+
+    def create_mcp_oauth_client(
+        self, *, client_id: str, client_metadata: str, now: int, unconsumed_ttl: int, max_clients: int
+    ) -> bool:
+        """Register a public client. Returns False when the unconsumed-registration cap is
+        reached (nothing inserted), True after insert."""
+        raise NotImplementedError
+
+    def mark_mcp_oauth_client_consumed(self, client_id: str, now: int) -> None:
+        """Stamp consumed_at so the client is exempt from the unconsumed-registration cap."""
+        raise NotImplementedError
+
+    def store_mcp_oauth_transaction(
+        self, *, txn_id: str, client_id: str, params: str, expires_at: int, now: int, max_pending: int
+    ) -> None:
+        """Insert a pending authorization, sweeping expired rows and evicting the oldest to keep the table bounded."""
+        raise NotImplementedError
+
+    def get_mcp_oauth_transaction(self, txn_id: str) -> Optional[tuple]:
+        """The (params, expires_at) for a pending authorization, or None."""
+        raise NotImplementedError
+
+    def consume_mcp_oauth_transaction(self, txn_id: str, now: int) -> Optional[tuple]:
+        """Atomically claim a live transaction: returns (params, expires_at) on exactly one replica, else None."""
+        raise NotImplementedError
+
+    def store_mcp_oauth_code(self, *, code_hash: str, payload: str, expires_at: int, now: int) -> None:
+        """Insert a hashed authorization code, sweeping expired rows first."""
+        raise NotImplementedError
+
+    def get_mcp_oauth_code(self, code_hash: str) -> Optional[tuple]:
+        """The (payload, expires_at) for a hashed authorization code, or None."""
+        raise NotImplementedError
+
+    def delete_mcp_oauth_code(self, code_hash: str) -> bool:
+        """Delete a hashed code atomically. Returns True iff exactly one row was removed (single-use guarantee)."""
+        raise NotImplementedError
+
+    def store_mcp_oauth_refresh(
+        self, *, token_hash: str, client_id: str, scopes: str, expires_at: int, now: int, family_id: str
+    ) -> None:
+        """Insert a hashed refresh token (tagged with its rotation family), sweeping expired rows first."""
+        raise NotImplementedError
+
+    def get_mcp_oauth_refresh(self, token_hash: str) -> Optional[tuple]:
+        """The (client_id, scopes, expires_at) for a hashed refresh token, or None."""
+        raise NotImplementedError
+
+    def delete_mcp_oauth_refresh(self, token_hash: str) -> bool:
+        """Delete a hashed refresh token atomically. Returns True iff exactly one row was removed (rotation-on-use)."""
+        raise NotImplementedError
+
+    def delete_mcp_oauth_refresh_family(self, family_id: str) -> int:
+        """Delete every refresh token in a rotation family (reuse-detection revocation). Returns the count removed."""
+        raise NotImplementedError
+
+    def get_mcp_oauth_keys(self) -> List[tuple]:
+        """All (kid, secret) signing keys, newest first."""
+        raise NotImplementedError
+
+    def insert_mcp_oauth_key(self, *, kid: str, secret: str, created_at: int) -> bool:
+        """Insert a signing key. Returns False on a uniqueness conflict (lost the cold-start race), True on success."""
+        raise NotImplementedError
+
+    # --- Service Accounts (Optional) ---
+    # These methods are optional. Override in subclasses to enable service account persistence.
+
+    def create_service_account(self, account_data: Dict[str, Any]) -> Dict[str, Any]:
+        """Create a service account. Raises on failure (including duplicate active name)."""
+        raise NotImplementedError
+
+    def get_service_account(self, service_account_id: str) -> Optional[Dict[str, Any]]:
+        """Get a service account by ID."""
+        raise NotImplementedError
+
+    def get_service_account_by_token_hash(self, token_hash: str) -> Optional[Dict[str, Any]]:
+        """Get a service account by its token hash."""
+        raise NotImplementedError
+
+    def get_service_account_by_name(self, name: str, include_revoked: bool = False) -> Optional[Dict[str, Any]]:
+        """Get a service account by name. By default only considers active (non-revoked) accounts."""
+        raise NotImplementedError
+
+    def get_service_accounts(
+        self,
+        include_revoked: bool = True,
+        limit: int = 20,
+        page: int = 1,
+        sort_by: str = "created_at",
+        sort_order: str = "desc",
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        """List service accounts.
+
+        Returns:
+            Tuple of (service_accounts, total_count)
+        """
+        raise NotImplementedError
+
+    def update_service_account(
+        self, service_account_id: str, return_record: bool = True, **kwargs: Any
+    ) -> Optional[Dict[str, Any]]:
+        """Update a service account by ID (e.g. set revoked_at or last_used_at).
+
+        Only SERVICE_ACCOUNT_MUTABLE_COLUMNS may be updated; any other column, an
+        empty update, or resetting revoked_at to None raises ValueError.
+
+        With return_record=False the post-update re-fetch is skipped and None is
+        returned on success too — for callers that discard the row (last_used touches).
+        """
+        raise NotImplementedError
+
+    def delete_service_account(self, service_account_id: str) -> bool:
+        """Hard-delete a service account by ID. Returns True if deleted."""
+        raise NotImplementedError
+
 
 class AsyncBaseDb(ABC):
     """Base abstract class for all our async database implementations."""
@@ -1114,6 +1399,8 @@ class AsyncBaseDb(ABC):
         schedules_table: Optional[str] = None,
         schedule_runs_table: Optional[str] = None,
         approvals_table: Optional[str] = None,
+        auth_tokens_table: Optional[str] = None,
+        service_accounts_table: Optional[str] = None,
     ):
         self.id = id or str(uuid4())
         self.session_table_name = session_table or "agno_sessions"
@@ -1129,6 +1416,8 @@ class AsyncBaseDb(ABC):
         self.schedules_table_name = schedules_table or "agno_schedules"
         self.schedule_runs_table_name = schedule_runs_table or "agno_schedule_runs"
         self.approvals_table_name = approvals_table or "agno_approvals"
+        self.auth_tokens_table_name = auth_tokens_table or "agno_auth_tokens"
+        self.service_accounts_table_name = service_accounts_table or "agno_service_accounts"
 
     async def _create_all_tables(self) -> None:
         """Create all tables for this database. Override in subclasses."""
@@ -1644,6 +1933,43 @@ class AsyncBaseDb(ABC):
         """
         raise NotImplementedError
 
+    async def update_learning(
+        self, id: str, content: Dict[str, Any], metadata: Optional[Dict[str, Any]] = None
+    ) -> bool:
+        """Async update an existing learning record in place. Does NOT insert.
+
+        Unlike ``upsert_learning`` this only touches an existing row (sets content/metadata/
+        updated_at; never inserts and never changes created_at or identity fields). It exists
+        so PATCH can be a true update: a row deleted out from under the caller simply isn't
+        matched, instead of being silently re-created (which would also let a concurrent agent
+        write get clobbered/destroyed).
+
+        Args:
+            id: The learning ID to update.
+            content: Replacement content.
+            metadata: Replacement metadata.
+
+        Returns:
+            True if a row was updated, False if no row with that id exists.
+        """
+        raise NotImplementedError
+
+    async def delete_user_learnings(self, user_id: str, learning_type: Optional[str] = None) -> int:
+        """Async delete every learning record owned by a user.
+
+        Removes all rows where ``user_id`` matches. Records with no owner
+        (``user_id IS NULL``) are not affected.
+
+        Args:
+            user_id: The user whose learnings should be deleted.
+            learning_type: When provided, restrict deletion to this single learning type;
+                otherwise all of the user's learnings are removed.
+
+        Returns:
+            The number of records deleted.
+        """
+        raise NotImplementedError
+
     @abstractmethod
     async def get_learnings(
         self,
@@ -1672,6 +1998,87 @@ class AsyncBaseDb(ABC):
 
         Returns:
             List of learning records.
+        """
+        raise NotImplementedError
+
+    async def get_learning_by_id(self, id: str) -> Optional[Dict[str, Any]]:
+        """Async retrieve a single learning record by its primary key.
+
+        Args:
+            id: The learning ID.
+
+        Returns:
+            The learning record dict, or None if not found.
+        """
+        raise NotImplementedError
+
+    async def list_learnings(
+        self,
+        learning_type: Optional[str] = None,
+        user_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+        namespace: Optional[str] = None,
+        entity_id: Optional[str] = None,
+        entity_type: Optional[str] = None,
+        include_global: bool = False,
+        limit: int = 100,
+        page: int = 1,
+        sort_by: Optional[str] = None,
+        sort_order: Optional[str] = None,
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        """Async list learning records with pagination, returning the page and total count.
+
+        Args:
+            learning_type: Filter by learning type.
+            user_id: Filter by user ID.
+            agent_id: Filter by agent ID.
+            team_id: Filter by team ID.
+            session_id: Filter by session ID.
+            namespace: Filter by namespace.
+            entity_id: Filter by entity ID.
+            entity_type: Filter by entity type.
+            include_global: When True and ``user_id`` is set, also include records where
+                ``user_id IS NULL`` (global / non-user-scoped). Has no effect when
+                ``user_id`` is None.
+            limit: Page size.
+            page: 1-indexed page number.
+            sort_by: Field to sort by (defaults to ``updated_at``).
+            sort_order: Sort order, ``'asc'`` or ``'desc'`` (defaults to ``desc``).
+
+        Returns:
+            Tuple of (records, total_count) where records is the requested page.
+        """
+        raise NotImplementedError
+
+    async def get_learnings_user_stats(
+        self,
+        learning_type: Optional[str] = None,
+        limit: Optional[int] = None,
+        page: Optional[int] = None,
+        user_id: Optional[str] = None,
+        sort_by: Optional[str] = None,
+        sort_order: Optional[str] = None,
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        """Async list the users that own learning records, with per-user counts.
+
+        Groups the learnings table by ``user_id`` (excluding records with no owner) so a
+        client can present a list of users before drilling into a single user's profile
+        and memories. Mirrors ``get_user_memory_stats``.
+
+        Args:
+            learning_type: Restrict the grouping to a single learning type (e.g.
+                ``'user_profile'`` or ``'user_memory'``).
+            limit: Page size.
+            page: 1-indexed page number.
+            user_id: Restrict the result to a single user.
+            sort_by: Field to sort by -- ``user_id`` or ``last_learning_updated_at`` (the default).
+            sort_order: Sort order, ``'asc'`` or ``'desc'`` (defaults to ``desc``).
+
+        Returns:
+            Tuple of (user_stats, total_count) where each entry has the shape
+            ``{"user_id": str, "last_learning_updated_at": int}``.
         """
         raise NotImplementedError
 
@@ -1799,4 +2206,66 @@ class AsyncBaseDb(ABC):
         Returns:
             Number of approvals updated.
         """
+        raise NotImplementedError
+
+    # --- Auth Tokens (Optional) ---
+
+    async def get_auth_token(self, provider: str, user_id: Optional[str], service: str) -> Optional[Dict[str, Any]]:
+        """Get stored OAuth token for a provider/user/service combination."""
+        raise NotImplementedError
+
+    async def upsert_auth_token(self, token: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """Store or update OAuth token. Token dict must include provider, user_id, service, token_data."""
+        raise NotImplementedError
+
+    async def delete_auth_token(self, provider: str, user_id: Optional[str], service: str) -> bool:
+        """Delete stored OAuth token for a provider/user/service combination. Returns True if deleted."""
+        raise NotImplementedError
+
+    # --- Service Accounts (Optional) ---
+    # These methods are optional. Override in subclasses to enable service account persistence.
+
+    async def create_service_account(self, account_data: Dict[str, Any]) -> Dict[str, Any]:
+        """Create a service account. Raises on failure (including duplicate active name)."""
+        raise NotImplementedError
+
+    async def get_service_account(self, service_account_id: str) -> Optional[Dict[str, Any]]:
+        """Get a service account by ID."""
+        raise NotImplementedError
+
+    async def get_service_account_by_token_hash(self, token_hash: str) -> Optional[Dict[str, Any]]:
+        """Get a service account by its token hash."""
+        raise NotImplementedError
+
+    async def get_service_account_by_name(self, name: str, include_revoked: bool = False) -> Optional[Dict[str, Any]]:
+        """Get a service account by name. By default only considers active (non-revoked) accounts."""
+        raise NotImplementedError
+
+    async def get_service_accounts(
+        self,
+        include_revoked: bool = True,
+        limit: int = 20,
+        page: int = 1,
+        sort_by: str = "created_at",
+        sort_order: str = "desc",
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        """List service accounts.
+
+        Returns:
+            Tuple of (service_accounts, total_count)
+        """
+        raise NotImplementedError
+
+    async def update_service_account(
+        self, service_account_id: str, return_record: bool = True, **kwargs: Any
+    ) -> Optional[Dict[str, Any]]:
+        """Update a service account by ID (e.g. set revoked_at or last_used_at).
+
+        Only SERVICE_ACCOUNT_MUTABLE_COLUMNS may be updated; any other column, an
+        empty update, or resetting revoked_at to None raises ValueError.
+        """
+        raise NotImplementedError
+
+    async def delete_service_account(self, service_account_id: str) -> bool:
+        """Hard-delete a service account by ID. Returns True if deleted."""
         raise NotImplementedError

@@ -558,6 +558,32 @@ def scrub_history_messages_from_run_output(run_response: Union[RunOutput, TeamRu
         run_response.messages = [msg for msg in run_response.messages if not msg.from_history]
 
 
+def isolate_media_scrub_targets(run_response: Union[RunOutput, TeamRunOutput]) -> None:
+    """Give ``run_response`` its own shallow copies of the collections that media
+    scrubbing mutates in place (Message objects and RunInput).
+
+    ``scrub_media_from_run_output`` (store_media=False) reassigns attributes on
+    Message and RunInput objects. A shallow ``copy.copy`` of a RunOutput shares
+    those nested objects with the source, so scrubbing a *storage copy* on a
+    mid-run checkpoint would strip media off the still-running live run. Call
+    this on the storage copy before scrubbing on the in-flight (checkpoint) path.
+
+    Shallow per-element copies are enough — the scrub only reassigns attributes,
+    it does not mutate nested structures — and they avoid duplicating the media
+    payloads themselves (the copies share the payload refs until they are nulled).
+    """
+    import copy
+
+    if run_response.messages is not None:
+        run_response.messages = [copy.copy(message) for message in run_response.messages]
+    if run_response.additional_input is not None:
+        run_response.additional_input = [copy.copy(message) for message in run_response.additional_input]
+    if run_response.reasoning_messages is not None:
+        run_response.reasoning_messages = [copy.copy(message) for message in run_response.reasoning_messages]
+    if run_response.input is not None:
+        run_response.input = copy.copy(run_response.input)
+
+
 def get_run_output_util(
     entity: Union["Agent", "Team"],
     run_id: str,
@@ -664,6 +690,9 @@ def get_last_run_output_util(
     Returns:
         RunOutput: The last run response from the database.
     """
+    from agno.agent.agent import Agent
+    from agno.team.team import Team
+
     _ensure_entity_id(entity)
 
     if session_id is not None:
@@ -673,11 +702,11 @@ def get_last_run_output_util(
         session = entity.get_session(session_id=session_id)
         if session is not None and session.runs is not None and len(session.runs) > 0:
             for run_output in reversed(session.runs):
-                if entity.__class__.__name__ == "Agent":
-                    if hasattr(run_output, "agent_id") and run_output.agent_id == entity.id:
+                if isinstance(entity, Team):
+                    if getattr(run_output, "team_id", None) == entity.id:
                         return run_output  # type: ignore
-                elif entity.__class__.__name__ == "Team":
-                    if hasattr(run_output, "team_id") and run_output.team_id == entity.id:
+                elif isinstance(entity, Agent):
+                    if getattr(run_output, "agent_id", None) == entity.id:
                         return run_output  # type: ignore
         else:
             log_warning(f"No run responses found in Session {session_id}")
@@ -688,11 +717,11 @@ def get_last_run_output_util(
         and len(entity.cached_session.runs) > 0
     ):
         for run_output in reversed(entity.cached_session.runs):
-            if entity.__class__.__name__ == "Agent":
-                if hasattr(run_output, "agent_id") and run_output.agent_id == entity.id:
+            if isinstance(entity, Team):
+                if getattr(run_output, "team_id", None) == entity.id:
                     return run_output  # type: ignore
-            elif entity.__class__.__name__ == "Team":
-                if hasattr(run_output, "team_id") and run_output.team_id == entity.id:
+            elif isinstance(entity, Agent):
+                if getattr(run_output, "agent_id", None) == entity.id:
                     return run_output  # type: ignore
     return None
 
@@ -709,17 +738,20 @@ async def aget_last_run_output_util(
     Returns:
         RunOutput: The last run response from the database.
     """
+    from agno.agent.agent import Agent
+    from agno.team.team import Team
+
     _ensure_entity_id(entity)
 
     if session_id is not None:
         session = await entity.aget_session(session_id=session_id)
         if session is not None and session.runs is not None and len(session.runs) > 0:
             for run_output in reversed(session.runs):
-                if entity.__class__.__name__ == "Agent":
-                    if hasattr(run_output, "agent_id") and run_output.agent_id == entity.id:
+                if isinstance(entity, Team):
+                    if getattr(run_output, "team_id", None) == entity.id:
                         return run_output  # type: ignore
-                elif entity.__class__.__name__ == "Team":
-                    if hasattr(run_output, "team_id") and run_output.team_id == entity.id:
+                elif isinstance(entity, Agent):
+                    if getattr(run_output, "agent_id", None) == entity.id:
                         return run_output  # type: ignore
         else:
             log_warning(f"No run responses found in Session {session_id}")
@@ -730,11 +762,11 @@ async def aget_last_run_output_util(
         and len(entity.cached_session.runs) > 0
     ):
         for run_output in reversed(entity.cached_session.runs):
-            if entity.__class__.__name__ == "Agent":
-                if hasattr(run_output, "agent_id") and run_output.agent_id == entity.id:
+            if isinstance(entity, Team):
+                if getattr(run_output, "team_id", None) == entity.id:
                     return run_output  # type: ignore
-            elif entity.__class__.__name__ == "Team":
-                if hasattr(run_output, "team_id") and run_output.team_id == entity.id:
+            elif isinstance(entity, Agent):
+                if getattr(run_output, "agent_id", None) == entity.id:
                     return run_output  # type: ignore
     return None
 

@@ -260,6 +260,9 @@ class MCPContextProvider(ContextProvider):
         self._tool_descriptions = _describe_tools(self._tools)
         return self._tools
 
+    async def _aget_query_agent(self, run_context):
+        return await self._aensure_agent()
+
     async def _aensure_agent(self) -> Agent:
         """Lazy-build the sub-agent AFTER the MCP session is connected
         so the tool descriptions reflect what the server actually

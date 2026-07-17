@@ -3,7 +3,7 @@ Claude Model Test
 =================
 Tests learning with Claude instead of OpenAI.
 
-All other cookbooks use OpenAI (gpt-5.2). This test verifies that
+All other cookbooks use OpenAI (gpt-5.5). This test verifies that
 learning works with Claude models, ensuring the implementation is
 model-agnostic.
 
@@ -25,7 +25,7 @@ from agno.models.anthropic import Claude
 db = PostgresDb(db_url="postgresql+psycopg://ai:ai@localhost:5532/ai")
 
 agent = Agent(
-    model=Claude(id="claude-sonnet-4-5"),  # Using Claude
+    model=Claude(id="claude-sonnet-4-6"),  # Using Claude
     db=db,
     learning=LearningMachine(
         user_profile=UserProfileConfig(

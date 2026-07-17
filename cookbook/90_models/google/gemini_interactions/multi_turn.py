@@ -6,6 +6,10 @@ Demonstrates server-side conversation history with the Interactions API.
 After the first response, subsequent turns only send the new message
 and reference the previous interaction via `previous_interaction_id`.
 This enables implicit caching and reduces token costs.
+
+Multi-turn requires a db (e.g. SqliteDb) so the interaction_id from each
+turn's response is persisted on the assistant message and read back on
+the next turn.
 """
 
 from agno.agent import Agent
@@ -17,7 +21,7 @@ from agno.models.google import GeminiInteractions
 # ---------------------------------------------------------------------------
 
 agent = Agent(
-    model=GeminiInteractions(id="gemini-3-flash-preview"),
+    model=GeminiInteractions(id="gemini-3.5-flash"),
     add_history_to_context=True,
     db=SqliteDb(db_file="tmp/data.db"),
     markdown=True,
