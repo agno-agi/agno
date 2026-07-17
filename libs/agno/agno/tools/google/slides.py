@@ -113,15 +113,12 @@ class GoogleSlidesTools(GoogleToolkit):
         delete_presentation: bool = False,
         delete_slide: bool = False,
         all: bool = False,
-        # Pagination cap �� limits results per API call to prevent context overflow
-        max_results: int = 20,
         instructions: Optional[str] = None,
         add_instructions: bool = True,
         **kwargs,
     ):
         self.slides_service: Any = None
         self.drive_service: Any = None
-        self.max_results = max_results
 
         tools = []
         if all or create_presentation:
@@ -337,19 +334,19 @@ class GoogleSlidesTools(GoogleToolkit):
         try:
             if page_size <= 0:
                 return json.dumps({"error": "page_size must be a positive integer."})
-            effective_size = min(page_size, self.max_results)
             response = (
                 self.drive_service.files()
                 .list(
                     q="mimeType='application/vnd.google-apps.presentation'",
-                    pageSize=effective_size,
+                    pageSize=page_size,
                     pageToken=page_token,
                     fields="nextPageToken, files(id, name, createdTime, modifiedTime)",
                 )
                 .execute()
             )
             files = response.get("files", [])
-            return json.dumps({"presentations": files, "nextPageToken": response.get("nextPageToken")})
+            next_token = response.get("nextPageToken")
+            return json.dumps({"presentations": files, "next_page_token": next_token})
         except Exception as e:
             return json.dumps({"error": str(e)})
 
