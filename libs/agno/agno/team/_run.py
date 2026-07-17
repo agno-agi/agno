@@ -2364,6 +2364,14 @@ async def _arun_tasks(
         return run_response
 
     except (KeyboardInterrupt, asyncio.CancelledError) as cancel_exc:
+        if _is_disconnect_after_pause(cancel_exc, run_response):
+            # The run already finished pausing for HITL; a disconnect must not demote
+            # it to cancelled. Just make sure the pause is persisted.
+            if team_session is not None:
+                _persist_cancelled_team_run_in_background(
+                    team, run_response=run_response, session=team_session, run_context=run_context
+                )
+            raise
         run_response = _handle_team_run_cancellation(
             run_response, KeyboardInterrupt(), run_messages, session=team_session
         )
@@ -2886,6 +2894,14 @@ async def _arun_tasks_stream(
         yield run_error
 
     except (KeyboardInterrupt, asyncio.CancelledError, GeneratorExit) as cancel_exc:
+        if _is_disconnect_after_pause(cancel_exc, run_response):
+            # The run already finished pausing for HITL; a disconnect must not demote
+            # it to cancelled. Just make sure the pause is persisted.
+            if team_session is not None:
+                _persist_cancelled_team_run_in_background(
+                    team, run_response=run_response, session=team_session, run_context=run_context
+                )
+            raise
         run_response = _handle_team_run_cancellation(
             run_response, KeyboardInterrupt(), run_messages, session=team_session
         )
@@ -3286,6 +3302,14 @@ async def _arun(
                 return run_response
 
             except (KeyboardInterrupt, asyncio.CancelledError) as cancel_exc:
+                if _is_disconnect_after_pause(cancel_exc, run_response):
+                    # The run already finished pausing for HITL; a disconnect must not
+                    # demote it to cancelled. Just make sure the pause is persisted.
+                    if team_session is not None:
+                        _persist_cancelled_team_run_in_background(
+                            team, run_response=run_response, session=team_session, run_context=run_context
+                        )
+                    raise
                 run_response = _handle_team_run_cancellation(
                     run_response, KeyboardInterrupt(), run_messages, session=team_session
                 )
@@ -4010,6 +4034,14 @@ async def _arun_stream(
                 break
 
             except (KeyboardInterrupt, asyncio.CancelledError, GeneratorExit) as cancel_exc:
+                if _is_disconnect_after_pause(cancel_exc, run_response):
+                    # The run already finished pausing for HITL; a disconnect must not
+                    # demote it to cancelled. Just make sure the pause is persisted.
+                    if team_session is not None:
+                        _persist_cancelled_team_run_in_background(
+                            team, run_response=run_response, session=team_session, run_context=run_context
+                        )
+                    raise
                 run_response = _handle_team_run_cancellation(
                     run_response, KeyboardInterrupt(), run_messages, session=team_session
                 )
@@ -4328,6 +4360,22 @@ def _normalize_team_cancellation_reason(
     if isinstance(error, RunCancelledException):
         return str(error) or f"Run {run_response.run_id} was cancelled"
     return "Operation cancelled by user"
+
+
+def _is_disconnect_after_pause(cancel_exc: BaseException, run_response: TeamRunOutput) -> bool:
+    """True if `cancel_exc` is a torn-down stream/task rather than an explicit cancel
+    request, and the run has already finished pausing for HITL.
+
+    An explicit, user-requested cancel is only ever signalled via `RunCancelledException`
+    (raised after checking the cancellation registry) and must always win over a paused
+    run. `asyncio.CancelledError` and `GeneratorExit`, in contrast, just mean the consuming
+    stream or task went away — e.g. an SSE client disconnecting right as a HITL pause is
+    being persisted. Treating that as a cancellation would demote an already-PAUSED run to
+    CANCELLED and strip its pause markers, leaving it stuck: unresumable via
+    `RunNotContinuableError`, yet still reported as PAUSED wherever it's embedded (e.g. a
+    workflow's `step_executor_runs`). See agno-agi/agno#8910.
+    """
+    return isinstance(cancel_exc, (asyncio.CancelledError, GeneratorExit)) and run_response.status == RunStatus.paused
 
 
 def _handle_team_run_cancellation(
@@ -8248,6 +8296,14 @@ async def _acontinue_run(
                 if run_response is None:
                     run_response = TeamRunOutput(run_id=run_id)
                 run_response = cast(TeamRunOutput, run_response)
+                if _is_disconnect_after_pause(cancel_exc, run_response):
+                    # The run already finished pausing for HITL; a disconnect must not
+                    # demote it to cancelled. Just make sure the pause is persisted.
+                    if team_session is not None:
+                        _persist_cancelled_team_run_in_background(
+                            team, run_response=run_response, session=team_session, run_context=run_context
+                        )
+                    raise
                 run_response = _handle_team_run_cancellation(
                     run_response, KeyboardInterrupt(), run_messages, session=team_session
                 )
@@ -8897,6 +8953,14 @@ async def _acontinue_run_stream(
                 if run_response is None:
                     run_response = TeamRunOutput(run_id=run_id)
                 run_response = cast(TeamRunOutput, run_response)
+                if _is_disconnect_after_pause(cancel_exc, run_response):
+                    # The run already finished pausing for HITL; a disconnect must not
+                    # demote it to cancelled. Just make sure the pause is persisted.
+                    if team_session is not None:
+                        _persist_cancelled_team_run_in_background(
+                            team, run_response=run_response, session=team_session, run_context=run_context
+                        )
+                    raise
                 run_response = _handle_team_run_cancellation(
                     run_response, KeyboardInterrupt(), run_messages, session=team_session
                 )
