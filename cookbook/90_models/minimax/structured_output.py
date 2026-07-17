@@ -39,7 +39,7 @@ class MovieScript(BaseModel):
 # MiniMax does not implement OpenAI-style native `response_format` /
 # `json_schema`, so we drive structured output through JSON mode.
 agent = Agent(
-    model=MiniMax(id="MiniMax-M2.7"),
+    model=MiniMax(id="MiniMax-M3"),
     description="You write movie scripts.",
     output_schema=MovieScript,
     use_json_mode=True,

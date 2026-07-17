@@ -63,7 +63,7 @@ class TeamSession:
 
         runs = data.get("runs")
         serialized_runs: List[Union[TeamRunOutput, RunOutput]] = []
-        if runs is not None and isinstance(runs[0], dict):
+        if runs and isinstance(runs[0], dict):
             for run in runs:
                 if "agent_id" in run:
                     serialized_runs.append(RunOutput.from_dict(run))
@@ -302,7 +302,9 @@ class TeamSession:
         # Get completed runs only (exclude current/pending run)
         completed_runs = [run for run in self.runs if run.status == RunStatus.completed and run.parent_run_id is None]
 
-        if num_runs is not None and len(completed_runs) > num_runs:
+        if num_runs is not None:
+            if num_runs <= 0:
+                return []
             recent_runs = completed_runs[-num_runs:]
         else:
             recent_runs = completed_runs

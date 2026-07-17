@@ -631,21 +631,24 @@ async def test_git_run_sets_terminal_prompt_zero(monkeypatch, tmp_path: Path):
 
 @pytest.mark.asyncio
 async def test_provider_query_tool_serialises_answer(tmp_path: Path):
+    from agno.run.agent import RunOutput
+
     p = WikiContextProvider(backend=FileSystemBackend(path=tmp_path))
 
     class _StubAgent:
         async def arun(self, message: str, **kwargs):  # noqa: ANN001
-            class _Out:
-                content = "hello"
-
-                def get_content_as_string(self):
-                    return self.content
-
-            return _Out()
+            # When stream=True, arun is an async generator function
+            yield RunOutput(content="hello")
 
     p._read_agent = _StubAgent()
     tool = next(t for t in p.get_tools() if t.name == "query_wiki")
-    out = await tool.entrypoint(question="anything")
+
+    # Collect output from generator (tool wrapper returns coroutine)
+    gen = await tool.entrypoint(question="anything")
+    out = ""
+    async for chunk in gen:
+        if isinstance(chunk, str):
+            out = chunk
     payload = json.loads(out)
     assert payload == {"text": "hello"}
 

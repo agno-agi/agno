@@ -50,6 +50,7 @@ class RemoteDb:
     session_table_name: Optional[str] = None
     knowledge_table_name: Optional[str] = None
     memory_table_name: Optional[str] = None
+    learnings_table_name: Optional[str] = None
     metrics_table_name: Optional[str] = None
     eval_table_name: Optional[str] = None
     traces_table_name: Optional[str] = None
@@ -77,6 +78,7 @@ class RemoteDb:
         session_table_name = None
         knowledge_table_name = None
         memory_table_name = None
+        learnings_table_name = None
         metrics_table_name = None
         eval_table_name = None
         traces_table_name = None
@@ -92,6 +94,10 @@ class RemoteDb:
         if config and config.memory and config.memory.dbs is not None:
             memory_dbs = [db for db in config.memory.dbs if db.db_id == db_id]
             memory_table_name = memory_dbs[0].tables[0] if memory_dbs and memory_dbs[0].tables else None
+
+        if config and config.learning and config.learning.dbs is not None:
+            learning_dbs = [db for db in config.learning.dbs if db.db_id == db_id]
+            learnings_table_name = learning_dbs[0].tables[0] if learning_dbs and learning_dbs[0].tables else None
 
         if config and config.metrics and config.metrics.dbs is not None:
             metrics_dbs = [db for db in config.metrics.dbs if db.db_id == db_id]
@@ -111,6 +117,7 @@ class RemoteDb:
             session_table_name=session_table_name,
             knowledge_table_name=knowledge_table_name,
             memory_table_name=memory_table_name,
+            learnings_table_name=learnings_table_name,
             metrics_table_name=metrics_table_name,
             eval_table_name=eval_table_name,
             traces_table_name=traces_table_name,

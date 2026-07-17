@@ -1,16 +1,32 @@
 import asyncio
 import hmac
+from functools import lru_cache
 from os import getenv
-from typing import Any, List, Optional, Set
+from typing import Any, Dict, List, Literal, Optional, Set
 
 from fastapi import Depends, HTTPException, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from starlette.concurrency import run_in_threadpool
 
-from agno.os.scopes import get_accessible_resource_ids, has_required_scopes
+from agno.os.scopes import (
+    get_accessible_resource_ids,
+    get_default_scope_mappings,
+    has_required_scopes,
+)
+from agno.os.service_accounts import TOKEN_PREFIX as SERVICE_ACCOUNT_TOKEN_PREFIX
+from agno.os.service_accounts import ServiceAccountVerification, authenticate_service_account_request
 from agno.os.settings import AgnoAPISettings
 
 # Create a global HTTPBearer instance
 security = HTTPBearer(auto_error=False)
+
+
+@lru_cache(maxsize=1)
+def _default_scope_mappings() -> Dict[str, List[str]]:
+    """The default route→scope mappings, built once (they are static data) so the
+    per-request service-account path does not rebuild the dict on every call."""
+    return get_default_scope_mappings()
+
 
 # Scopes granted to the internal service token (used by the scheduler executor).
 # Shared constant so auth.py and jwt.py stay in sync.
@@ -51,12 +67,129 @@ def get_auth_token_from_request(request: Request) -> Optional[str]:
     return None
 
 
+async def _authenticate_service_account(
+    request: Request, token: str, treat_unverifiable_as_anonymous: bool = False
+) -> bool:
+    """Verify a service account token (agno_pat_...) and attach its identity to the request.
+
+    Runs for requests that carry an ``agno_pat_`` bearer but were not already
+    authenticated by the auth middleware. On success, request.state gets the same
+    identity the middleware would attach (user_id = the ``sa:<name>`` principal,
+    the account's scopes) and the scopes are enforced against the route. Scope
+    enforcement is never skipped: service account scopes are ACL data owned by
+    this AgentOS instance, unlike JWT claims.
+
+    ``treat_unverifiable_as_anonymous`` selects what happens when the token can
+    NOT be verified (unknown, expired, revoked, or verification unavailable):
+
+    - ``False`` (instances with auth configured): the request is rejected.
+    - ``True`` (open instances -- no security key, no JWT): the token is ignored
+      and the request proceeds anonymously, the same as any other unrecognized
+      header on a server without auth. This keeps a stale token left behind in a
+      client from locking out an instance that has no auth on it.
+
+    A token that DOES verify is never ignored: it attributes the request and its
+    scopes apply, in both modes.
+    """
+    verifier = getattr(request.app.state, "service_account_verifier", None)
+    if verifier is None:
+        if treat_unverifiable_as_anonymous:
+            return True
+        raise HTTPException(status_code=401, detail="Service accounts are not enabled on this AgentOS instance")
+
+    admin_scope_raw = getattr(request.app.state, "admin_scope", None)
+    admin_scope = admin_scope_raw if isinstance(admin_scope_raw, str) else None
+
+    error = await authenticate_service_account_request(
+        request,
+        token,
+        verifier=verifier,
+        scope_mappings=_default_scope_mappings(),
+        admin_scope=admin_scope,
+    )
+    if error is not None:
+        status_code, detail, required_scopes = error
+        if status_code == 403:
+            # The token verified, so the account's ACL applies: insufficient scopes
+            # reject the request even on an otherwise-open instance.
+            raise HTTPException(status_code=403, detail=build_insufficient_permissions_detail(required_scopes))
+        if treat_unverifiable_as_anonymous:
+            return True
+        raise HTTPException(status_code=status_code, detail=detail)
+
+    return True
+
+
 def _is_jwt_configured() -> bool:
     """Check if JWT authentication is configured via environment variables.
 
     This covers cases where JWT middleware is set up manually (not via authorization=True).
     """
     return bool(getenv("JWT_VERIFICATION_KEY") or getenv("JWT_JWKS_FILE"))
+
+
+def _has_jwt_middleware(app: Any) -> bool:
+    """Check whether the app has JWTMiddleware installed via ``add_middleware``.
+
+    Covers deployments that wire JWT auth by calling ``app.add_middleware(JWTMiddleware, ...)``
+    directly instead of via ``AgentOS(authorization=True)`` or JWT env vars.
+    """
+    if app is None:
+        return False
+    try:
+        from agno.os.middleware.jwt import JWTMiddleware, jwt_kwargs_have_key_source
+    except ImportError:
+        return False
+    user_middleware = getattr(app, "user_middleware", None) or []
+    for mw in user_middleware:
+        cls = getattr(mw, "cls", None)
+        if not (isinstance(cls, type) and issubclass(cls, JWTMiddleware)):
+            continue
+        # Only count instances that actually validate JWTs: AgentOS installs the same
+        # middleware class as the auth layer for security-key / service-account-only
+        # modes, constructed without any JWT source. (Env-var-configured JWT is
+        # detected separately by _is_jwt_configured.)
+        if jwt_kwargs_have_key_source(getattr(mw, "kwargs", None) or {}):
+            return True
+    return False
+
+
+def get_effective_auth_mode(
+    settings: Optional[AgnoAPISettings],
+    authorization: bool = False,
+    app: Any = None,
+) -> Literal["none", "security_key", "jwt"]:
+    """Return the REST/WS authentication mode effectively enforced by the OS.
+
+    This describes the REST/WS plane only. ``mcp_auth`` is deliberately NOT consulted:
+    it protects the MCP endpoint alone (its own OAuth surface is described separately
+    under ``/info``'s ``mcp.oauth`` block), so folding it in here would mislabel a
+    deployment -- reporting "oauth" while REST is actually open, or masking a real "jwt"
+    REST posture. Consumers read this to pick REST/WS credentials, so it must reflect the
+    REST plane. The precedence mirrors ``get_authentication_dependency``: JWT (via
+    authorization=True on AgentOS, JWT environment variables, or a manually installed
+    ``JWTMiddleware``) over the security key over no auth.
+
+    Args:
+        settings: The API settings containing the security key and authorization flag
+        authorization: The AgentOS authorization flag (JWT middleware enabled)
+        app: The Starlette/FastAPI app instance; when provided, its middleware stack
+            is inspected so a manually-installed ``JWTMiddleware`` is detected.
+
+    Returns:
+        "jwt" when JWT authorization is effectively active, "security_key" when only the
+        OS security key is enforced, "none" when REST authentication is disabled.
+    """
+    if (
+        authorization
+        or (settings is not None and settings.authorization_enabled)
+        or _is_jwt_configured()
+        or _has_jwt_middleware(app)
+    ):
+        return "jwt"
+    if settings is not None and settings.os_security_key:
+        return "security_key"
+    return "none"
 
 
 def get_authentication_dependency(settings: AgnoAPISettings):
@@ -84,6 +217,19 @@ def get_authentication_dependency(settings: AgnoAPISettings):
         if getattr(request.state, "authenticated", False):
             return True
 
+        # Service account tokens (agno_pat_...) are dispatched by prefix: they never
+        # reach the JWT validator or the security-key comparison below. With auth
+        # configured (security key or JWT), a PAT must verify or the request is
+        # rejected. On an open instance a PAT that verifies still provides
+        # attribution and scope enforcement, while one that cannot be verified is
+        # ignored like any other unrecognized header on a server without auth.
+        token = credentials.credentials if credentials else None
+        if token and token.startswith(SERVICE_ACCOUNT_TOKEN_PREFIX):
+            instance_has_auth = bool(settings and settings.os_security_key) or _is_jwt_configured()
+            return await _authenticate_service_account(
+                request, token, treat_unverifiable_as_anonymous=not instance_has_auth
+            )
+
         # Also skip if JWT is configured via environment variables
         if _is_jwt_configured():
             return True
@@ -110,6 +256,11 @@ def get_authentication_dependency(settings: AgnoAPISettings):
         if token != settings.os_security_key:
             raise HTTPException(status_code=401, detail="Invalid authentication token")
 
+        # A valid security key is a trusted, unscoped root. Mark it authenticated like the
+        # internal-token path above, so downstream gates that distinguish an authenticated
+        # root from an anonymous open-mode caller (e.g. service-account minting) treat it as
+        # a real credential rather than falling through to the fail-closed anonymous branch.
+        request.state.authenticated = True
         return True
 
     return auth_dependency
@@ -143,6 +294,23 @@ def validate_websocket_token(token: str, settings: AgnoAPISettings) -> bool:
 
     # Verify the token matches the configured security key
     return token == settings.os_security_key
+
+
+async def verify_websocket_service_account(
+    token: str, app: Any, client_key: Optional[str] = None
+) -> Optional[ServiceAccountVerification]:
+    """Verify a service-account token (``agno_pat_...``) for WebSocket authentication.
+
+    The REST dependency accepts service account tokens in every deployment mode, so the
+    WebSocket path must too. Returns the full verification result (None when no verifier
+    is configured) rather than a bare pass/fail: the caller needs ``result.account`` --
+    its principal and scopes -- to populate the WebSocket auth context so the same RBAC
+    and attribution gates that police JWTs apply to PATs.
+    """
+    verifier = getattr(app.state, "service_account_verifier", None)
+    if verifier is None:
+        return None
+    return await verifier.verify(token, client_key=client_key)
 
 
 def build_insufficient_permissions_detail(required_scopes: Optional[List[str]]) -> str:
@@ -378,47 +546,64 @@ def require_approval_resolved(db: Any) -> Any:
     """
 
     async def dependency(request: Request) -> None:
-        # Mirror require_resource_access: skip entirely when authorization is disabled.
-        if not getattr(request.state, "authorization_enabled", False):
-            return
-
-        if db is None:
-            return
-
-        # Callers with approvals:write (admins) bypass this gate — they can
-        # force-continue a run for operational or debugging purposes.
-        user_scopes: List[str] = getattr(request.state, "scopes", [])
-        if has_required_scopes(user_scopes, ["approvals:write"]):
-            return
-
-        run_id: Optional[str] = request.path_params.get("run_id")
-        if not run_id:
-            return
-
-        fn = getattr(db, "get_approvals", None)
-        if fn is None:
-            return
-
-        try:
-            if asyncio.iscoroutinefunction(fn):
-                result = await fn(run_id=run_id, status="pending", approval_type="required")
-            else:
-                result = fn(run_id=run_id, status="pending", approval_type="required")
-
-            approvals = result[0] if isinstance(result, tuple) else result
-            if approvals:
-                raise HTTPException(
-                    status_code=403,
-                    detail="This run requires admin approval before it can be continued",
-                )
-        except HTTPException:
-            raise
-        except Exception as exc:
-            # DB doesn't support approvals or another transient error — let the
-            # run continue so non-approval setups are unaffected.
-            from agno.utils.log import log_warning
-
-            log_warning(f"Approval resolution check skipped due to error: {exc}: {exc}")
-            return
+        reason = await run_continuation_blocked_reason(
+            db,
+            request.path_params.get("run_id"),
+            authorization_enabled=getattr(request.state, "authorization_enabled", False),
+            user_scopes=getattr(request.state, "scopes", []),
+        )
+        if reason:
+            raise HTTPException(status_code=403, detail=reason)
 
     return dependency
+
+
+async def run_continuation_blocked_reason(
+    db: Any,
+    run_id: Optional[str],
+    *,
+    authorization_enabled: bool,
+    user_scopes: List[str],
+) -> Optional[str]:
+    """Whether a paused run may NOT be continued yet, as a 403 detail string (else None).
+
+    A run paused on an admin-required approval must not be continued by its own initiator;
+    only a separate admin (holding ``approvals:write``) may resolve it. This is the single
+    decision shared by the REST ``/continue`` routes (via ``require_approval_resolved``) and
+    the MCP ``continue_run`` tool, so the gate cannot drift between transports.
+
+    Fails open only for the approval feature itself: if the db has no approvals support the
+    check is skipped, so non-approval deployments are unaffected. It never fails open on the
+    authorization decision — that is the caller's ``authorization_enabled`` gate.
+    """
+    # Mirror require_resource_access: skip entirely when authorization is disabled.
+    if not authorization_enabled or db is None or not run_id:
+        return None
+
+    # Callers with approvals:write (admins) bypass this gate — they can force-continue a
+    # run for operational or debugging purposes.
+    if has_required_scopes(user_scopes, ["approvals:write"]):
+        return None
+
+    fn = getattr(db, "get_approvals", None)
+    if fn is None:
+        return None
+
+    try:
+        if asyncio.iscoroutinefunction(fn):
+            result = await fn(run_id=run_id, status="pending", approval_type="required")
+        else:
+            # Sync DB drivers do blocking I/O; keep it off the event loop, matching the
+            # service-account verifier and the service-accounts router.
+            result = await run_in_threadpool(fn, run_id=run_id, status="pending", approval_type="required")
+        approvals = result[0] if isinstance(result, tuple) else result
+        if approvals:
+            return "This run requires admin approval before it can be continued"
+    except Exception as exc:
+        # DB doesn't support approvals or another transient error — let the run continue
+        # so non-approval setups are unaffected.
+        from agno.utils.log import log_warning
+
+        log_warning(f"Approval resolution check skipped due to error: {exc}")
+
+    return None

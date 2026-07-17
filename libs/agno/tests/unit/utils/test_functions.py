@@ -98,7 +98,7 @@ def test_get_function_call_non_dict_arguments(sample_functions):
 
 
 def test_get_function_call_argument(sample_functions):
-    """Test argument sanitization for boolean and null values."""
+    """Test boolean and null coercion and whitespace preservation for other strings."""
     arguments = json.dumps(
         {
             "param1": "None",
@@ -118,8 +118,50 @@ def test_get_function_call_argument(sample_functions):
         "param1": None,
         "param2": True,
         "param3": False,
-        "param4": "test",
+        "param4": "  test  ",
     }
+
+
+def test_get_function_call_preserves_string_argument_whitespace(sample_functions):
+    """Test preservation of leading and trailing whitespace in string arguments."""
+    arguments = json.dumps({"code": "\n  return value\n", "space": " "})
+
+    result = get_function_call(
+        name="test_function_2",
+        arguments=arguments,
+        functions=sample_functions,
+    )
+
+    assert result is not None
+    assert result.arguments == {"code": "\n  return value\n", "space": " "}
+
+
+def test_get_function_call_preserves_newline_only_string_arguments(sample_functions):
+    """Test preservation of whitespace-only string arguments."""
+    arguments = json.dumps({"param1": "\n\n", "param2": "  \t  ", "param3": "\n \n"})
+    result = get_function_call(
+        name="test_function",
+        arguments=arguments,
+        functions=sample_functions,
+    )
+    assert result is not None
+    assert result.error is None
+    assert result.arguments["param1"] == "\n\n"
+    assert result.arguments["param2"] == "  \t  "
+    assert result.arguments["param3"] == "\n \n"
+
+
+def test_get_function_call_coercion_with_surrounding_whitespace(sample_functions):
+    """Test boolean and null coercion with surrounding whitespace."""
+    arguments = json.dumps({"param1": "  None  ", "param2": " true ", "param3": "  FALSE  "})
+    result = get_function_call(
+        name="test_function",
+        arguments=arguments,
+        functions=sample_functions,
+    )
+    assert result is not None
+    assert result.error is None
+    assert result.arguments == {"param1": None, "param2": True, "param3": False}
 
 
 def test_get_function_call_argument_advanced(sample_functions):

@@ -31,7 +31,7 @@ Hundreds of examples. Copy, paste, run.
 ## Deep Dives
 
 ### Storage
-[06_storage](./06_storage) — Give your agents persistent storage. Postgres and SQLite recommended. Also supports DynamoDB, Firestore, MongoDB, Redis, SingleStore, SurrealDB, and more.
+[06_storage](./06_storage) — Give your agents persistent storage. Postgres and SQLite recommended. Also supports DynamoDB, Firestore, MongoDB, Redis, SingleStore, SurrealDB, Valkey, and more.
 
 ### Knowledge & RAG
 [07_knowledge](./07_knowledge) — Give your agents information to search at runtime. Covers chunking strategies (semantic, recursive, agentic), embedders, vector databases, hybrid search, and loading from URLs, S3, GCS, YouTube, PDFs, and more.
@@ -58,7 +58,10 @@ Hundreds of examples. Copy, paste, run.
 [91_tools](./91_tools) — Extend what agents can do. Web search, SQL, email, APIs, MCP, Discord, Slack, Docker, and custom tools with the `@tool` decorator.
 
 ### Integrations
-[92_integrations](./92_integrations) — Connect to Discord, observability tools (Langfuse, Arize Phoenix, AgentOps, LangSmith), memory providers, and A2A protocol.
+[integrations](./integrations) — Partner integrations. [Parallel](https://parallel.ai) for web-scale search, extraction, and deep research; SurrealDB for agent memory.
+
+### Observability
+[observability](./observability) — Trace and monitor agents, teams, and workflows: Langfuse, Arize Phoenix, AgentOps, LangSmith, MLflow, Weave, Logfire, and more (via OpenInference, OpenLIT, and autolog).
 
 ## Quality Standard
 

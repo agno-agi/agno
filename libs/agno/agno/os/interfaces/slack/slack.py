@@ -13,6 +13,10 @@ from agno.workflow import RemoteWorkflow, Workflow
 class Slack(BaseInterface):
     type = "slack"
 
+    # Verifies the Slack request signature (X-Slack-Signature) in its router, so it is
+    # excluded from the central auth layer.
+    authenticates_own_requests = True
+
     router: APIRouter
 
     def __init__(

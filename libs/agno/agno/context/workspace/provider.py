@@ -95,6 +95,9 @@ class WorkspaceContextProvider(ContextProvider):
     # Sub-agent
     # ------------------------------------------------------------------
 
+    async def _aget_query_agent(self, run_context):
+        return self._ensure_agent()
+
     def _ensure_agent(self) -> Agent:
         if self._agent is None:
             self._agent = self._build_agent()

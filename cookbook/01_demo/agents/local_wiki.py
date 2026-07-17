@@ -2,7 +2,7 @@
 LocalWiki Agent
 ===============
 
-A read + write wiki backed by a local markdown folder, with web ingestion wired in. Agent sees two tools:
+A read + write wiki backed by a local markdown folder, with web search wired in. Agent sees two tools:
 
   query_local_wiki(question)   — read sub-agent scoped to the wiki
   update_local_wiki(...)       — write sub-agent that can also fetch
@@ -17,14 +17,14 @@ from agno.agent import Agent
 from agno.context.web import ParallelMCPBackend
 from agno.context.wiki import FileSystemBackend, WikiContextProvider
 from db import get_db
-from settings import default_model, sub_agent_model
+from settings import default_model, html_tools, sub_agent_model
 
 WIKI_PATH = Path(__file__).resolve().parents[1] / "data" / "wiki"
 WIKI_PATH.mkdir(parents=True, exist_ok=True)
 if not (WIKI_PATH / "README.md").exists():
     (WIKI_PATH / "README.md").write_text(
         "# Local Wiki\n\n"
-        "Pages live under `papers/`, `articles/`, and the root.\n"
+        "Pages can be filed in folders (for example `notes/`) or at the root.\n"
         "Ask the agent to ingest a URL and it will file the digest here.\n"
     )
 
@@ -37,15 +37,28 @@ local_wiki_provider = WikiContextProvider(
 
 
 LOCAL_WIKI_INSTRUCTIONS = """\
-You curate a local markdown wiki. Two things you do:
+You curate a local markdown wiki through two tools: query_local_wiki
+(reads the wiki) and update_local_wiki (adds or edits pages, and can
+fetch a URL before writing). What you do:
 
-1. Answer "what does the wiki say about X" — call query_local_wiki
-   and quote the page in your response. If the wiki is silent, say
-   so plainly rather than guessing from the web.
-2. Ingest sources into the wiki — when asked to "add", "save",
-   "file", or "ingest" a URL or topic, call update_local_wiki with
-   a clear instruction that names the destination path and asks
-   the writer to cite sources.
+- Reading: relay what query_local_wiki returns faithfully. If the wiki
+  has no page on the topic, say so plainly — never invent pages,
+  content, or URLs.
+- Ingesting sources: when asked to add, save, file, or ingest a URL or
+  topic, hand it to update_local_wiki, then report where the page landed.
+- Ingesting media: you alone can see an attached image or PDF, so digest
+  it yourself into clean markdown — a title, a short summary, the key
+  points — then file it with update_local_wiki and show that digest in
+  your reply, noting where it landed. The digest is the product, not the
+  raw file; record that the source was the attachment.
+- Generating HTML: when asked to produce an HTML page or report, call
+  generate_html_file with a complete HTML5 document (doctype, html, head,
+  body). The .html file it returns is the deliverable on its own — do not
+  also file it as a wiki page unless asked. Tell the user you generated a
+  downloadable HTML file and name it.
+
+If an ask is ambiguous, ask one short question instead of guessing.
+Keep your own replies in tidy markdown.
 """
 
 
@@ -54,9 +67,8 @@ local_wiki = Agent(
     name="LocalWiki",
     model=default_model(),
     db=get_db(),
-    tools=local_wiki_provider.get_tools(),
+    tools=[*local_wiki_provider.get_tools(), html_tools()],
     instructions=LOCAL_WIKI_INSTRUCTIONS + "\n\n" + local_wiki_provider.instructions(),
-    enable_agentic_memory=True,
     add_datetime_to_context=True,
     add_history_to_context=True,
     num_history_runs=5,

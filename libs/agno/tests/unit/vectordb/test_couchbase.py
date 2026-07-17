@@ -1418,6 +1418,5 @@ def test_async_create_collection_does_not_block_event_loop():
         "(matches the existing pattern in `_async_wait_for_index_ready`)."
     )
     assert "asyncio.sleep" in source, (
-        "_async_create_collection_and_scope is expected to use "
-        "`await asyncio.sleep` for its post-drop wait."
+        "_async_create_collection_and_scope is expected to use `await asyncio.sleep` for its post-drop wait."
     )

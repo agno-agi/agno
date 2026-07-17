@@ -25,7 +25,11 @@ _MAX_EXTRACT_CHARS = 50_000
 
 
 class ParallelBackend(ContextBackend):
-    """Backend for `WebContextProvider` backed by Parallel's beta API."""
+    """Backend for `WebContextProvider` backed by Parallel's web API.
+
+    Targets the GA top-level client surface (`client.search` / `client.extract`)
+    in `parallel-web` >= 1.0, not the pre-1.0 `client.beta.*` endpoints.
+    """
 
     def __init__(self, *, api_key: str | None = None) -> None:
         self.api_key: str = api_key if api_key else getenv("PARALLEL_API_KEY", "")
@@ -63,8 +67,10 @@ class ParallelBackend(ContextBackend):
             if not backend.api_key:
                 return json.dumps({"error": "PARALLEL_API_KEY not configured"})
             try:
-                out = await backend._get_client().beta.search(
-                    objective=objective, max_results=max_results, mode="agentic"
+                out = await backend._get_client().search(
+                    search_queries=[objective],
+                    objective=objective,
+                    mode="advanced",
                 )
             except Exception as exc:
                 log_error(f"web_search failed: {exc}")
@@ -93,7 +99,10 @@ class ParallelBackend(ContextBackend):
             if not backend.api_key:
                 return json.dumps({"error": "PARALLEL_API_KEY not configured"})
             try:
-                result = await backend._get_client().beta.extract(urls=[url], full_content=True)
+                result = await backend._get_client().extract(
+                    urls=[url],
+                    advanced_settings={"full_content": {"max_chars_per_result": _MAX_EXTRACT_CHARS}},
+                )
             except Exception as exc:
                 log_error(f"web_extract failed for {url}: {exc}")
                 return json.dumps({"error": f"{type(exc).__name__}: {exc}"})

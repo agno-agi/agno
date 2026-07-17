@@ -43,7 +43,6 @@ basic_team = Team(
     db=db,
     update_memory_on_run=True,
     members=[basic_agent],
-    debug_mode=True,
 )
 
 # Evals
