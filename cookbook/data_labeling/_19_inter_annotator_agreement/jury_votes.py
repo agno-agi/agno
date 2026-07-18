@@ -37,8 +37,9 @@ class Vote(BaseModel):
 # ---------------------------------------------------------------------------
 # Create Agents - three juror framings of one judge model
 # ---------------------------------------------------------------------------
-# Jurors run at temperature=0: every vote below is a deterministic function
-# of the framing, so disagreement measures the framings, not sampling noise.
+# Jurors run at temperature=0 so disagreement measures the framings, not
+# sampling noise. Votes can still drift with model updates and serving-side
+# nondeterminism.
 terse_juror = Agent(
     model=Gemini(id="gemini-3.5-flash", temperature=0),
     instructions="Pick the better answer to the prompt: a, b, or tie.",
@@ -160,6 +161,8 @@ def raw_agreement(matrix: Matrix) -> float:
         pairs = list(combinations(values, 2))
         agree = sum(1 for x, y in pairs if x == y)
         per_item.append(agree / len(pairs))
+    if not per_item:
+        raise ValueError("raw_agreement needs at least one item with two votes")
     return sum(per_item) / len(per_item)
 
 
@@ -233,6 +236,8 @@ def cohen_kappa(a: list[Optional[str]], b: list[Optional[str]]) -> float:
     #   kappa = (p_o - p_e) / (1 - p_e)
     pairs = [(x, y) for x, y in zip(a, b) if x is not None and y is not None]
     n = len(pairs)
+    if n == 0:
+        raise ValueError("cohen_kappa needs at least one co-voted item")
     p_o = sum(1 for x, y in pairs if x == y) / n
     categories = sorted({v for pair in pairs for v in pair})
     p_e = sum(
@@ -243,6 +248,37 @@ def cohen_kappa(a: list[Optional[str]], b: list[Optional[str]]) -> float:
     if p_e == 1.0:
         return 1.0 if p_o == 1.0 else 0.0
     return (p_o - p_e) / (1 - p_e)
+
+
+# ---------------------------------------------------------------------------
+# Self Check - assert each metric against hand-derived cases, including a
+# missing cell for alpha
+# ---------------------------------------------------------------------------
+def self_check() -> None:
+    # Case 1: perfect agreement with mixed votes -> every metric is 1.0.
+    perfect: Matrix = [["a"] * 3, ["b"] * 3, ["a"] * 3, ["tie"] * 3]
+    assert abs(raw_agreement(perfect) - 1.0) < 1e-9
+    assert abs(fleiss_kappa(perfect) - 1.0) < 1e-9
+    assert abs(krippendorff_alpha(perfect) - 1.0) < 1e-9
+    assert (
+        abs(cohen_kappa([r[0] for r in perfect], [r[1] for r in perfect]) - 1.0) < 1e-9
+    )
+
+    # Case 2: 3 jurors x 3 items with one missing cell, derived by hand.
+    #   item 1: a, a, None   item 2: a, b, b   item 3: b, b, b
+    # Raw agreement per item: 1 (one pair, agrees), 1/3, 1 -> mean 7/9.
+    # Alpha: coincidences o[a][a]=2 (item 1, m=2, weight 1), item 2 (m=3,
+    #   weight 1/2) adds o[a][b]=o[b][a]=1 and o[b][b]=1, item 3 adds
+    #   o[b][b]=3. Marginals n_a=3, n_b=5, n=8. D_o=2,
+    #   D_e=2*(3*5)/(8-1)=30/7, alpha = 1 - 2/(30/7) = 8/15.
+    # Fleiss on the complete rows (items 2 and 3): P_i = 1/3 and 1, so
+    #   P_bar = 2/3; totals a=1, b=5 of 6 -> P_e = 1/36 + 25/36 = 13/18;
+    #   kappa = (2/3 - 13/18) / (1 - 13/18) = -0.2 (below-chance agreement).
+    missing: Matrix = [["a", "a", None], ["a", "b", "b"], ["b", "b", "b"]]
+    assert abs(raw_agreement(missing) - 7 / 9) < 1e-9
+    assert abs(krippendorff_alpha(missing) - 8 / 15) < 1e-9
+    complete = [row for row in missing if None not in row]
+    assert abs(fleiss_kappa(complete) - (-0.2)) < 1e-9
 
 
 # ---------------------------------------------------------------------------
@@ -260,6 +296,9 @@ def cast_vote(juror: Agent, pair: dict) -> str:
 
 
 if __name__ == "__main__":
+    self_check()
+    print("self_check passed: metrics match the hand-derived values")
+
     matrix: Matrix = []
     for pair in PAIRS:
         row: list[Optional[str]] = []

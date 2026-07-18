@@ -34,8 +34,9 @@ class SentimentLabel(BaseModel):
 # ---------------------------------------------------------------------------
 # Create Agents - three genuinely different framings of one guideline
 # ---------------------------------------------------------------------------
-# Judges run at temperature=0, so each framing is a deterministic annotator;
-# any disagreement below comes from the instructions, not sampling noise.
+# Judges run at temperature=0 so disagreement comes from the instructions,
+# not sampling noise. Labels can still drift with model updates and
+# serving-side nondeterminism.
 terse_rater = Agent(
     model=Gemini(id="gemini-3.5-flash", temperature=0),
     instructions="Label the sentiment of the text: positive, negative, or neutral.",
@@ -127,6 +128,8 @@ def raw_agreement(matrix: Matrix) -> float:
         pairs = list(combinations(values, 2))
         agree = sum(1 for x, y in pairs if x == y)
         per_item.append(agree / len(pairs))
+    if not per_item:
+        raise ValueError("raw_agreement needs at least one item with two ratings")
     return sum(per_item) / len(per_item)
 
 
@@ -197,6 +200,8 @@ def cohen_kappa(a: list[Optional[str]], b: list[Optional[str]]) -> float:
     #   kappa = (p_o - p_e) / (1 - p_e)
     pairs = [(x, y) for x, y in zip(a, b) if x is not None and y is not None]
     n = len(pairs)
+    if n == 0:
+        raise ValueError("cohen_kappa needs at least one co-rated item")
     p_o = sum(1 for x, y in pairs if x == y) / n
     categories = sorted({v for pair in pairs for v in pair})
     p_e = sum(
