@@ -1,6 +1,6 @@
 # Data labeling
 
-End-to-end examples for data classification and labeling using agents.
+Agents for labeling, classification, and synthetic data generation. 26 folders: 68 single-file runnable examples plus the `image_search` app (74 Python files in all).
 
 Each subfolder holds examples for one theme, containing a `basic.py` that runs end-to-end, plus variants that add task-meaningful options on top.
 
