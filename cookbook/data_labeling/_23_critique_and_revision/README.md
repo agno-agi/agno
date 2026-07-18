@@ -21,12 +21,15 @@ curation can trace exactly why each response looks the way it does.
   draft. Ends by printing a paste-ready list literal in the exact
   EXAMPLES shape of `../_05_text_pairwise_preference/dpo_jury.py`: this
   folder generates the pairs that the `_05` jury consumes, so
-  self-labeled pairs get relabeled by an independent jury before
-  training. Chosen/rejected alternate between slots `a` and `b` by index
-  parity, so a jury with position bias is exposed.
+  self-generated pairs get relabeled by a jury. The pairs carry
+  `source_family="google"` (the drafting model's family), so dpo_jury's
+  self-preference recusal benches its Gemini juror on them and only the
+  other four families vote. Chosen/rejected alternate between slots `a`
+  and `b` by index parity, so a jury with position bias is exposed.
 - `iterative_revisions.py` - adds a temperature-0 judge (score 1-5
   against the principle plus general quality) as a stopping rule: revise
-  only while score < 4, up to 3 rounds. Rows store the score trajectory
+  only while the score is below 4, up to 3 judge rounds (so at most 2
+  revisions). Rows store the score trajectory
   per prompt - the calibration signal for how many revision rounds a
   production pipeline should pay for.
 

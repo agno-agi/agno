@@ -161,7 +161,10 @@ if __name__ == "__main__":
             a, b = pair["rejected"], pair["chosen"]
         literal_lines.append("    dict(")
         literal_lines.append(f"        id={pair_id!r},")
-        literal_lines.append('        source_family="self",')
+        # Both sides of every pair were written by the drafting model, so
+        # source_family carries its family and dpo_jury's self-preference
+        # recusal benches the google juror on these pairs.
+        literal_lines.append('        source_family="google",')
         literal_lines.append("        gold=None,")
         literal_lines.append(f"        prompt={pair['prompt']!r},")
         literal_lines.append(f"        a={a!r},")

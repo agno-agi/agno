@@ -4,7 +4,8 @@ Critique and Revision - Iterative Revisions
 
 Add a stopping rule to the critique-revision loop: a temperature-0 judge
 scores each candidate 1-5 against the principle plus general quality,
-and revision only continues while the score is below 4, up to 3 rounds.
+and revision only continues while the score is below 4, up to 3 judge
+rounds (so at most 2 revisions).
 The score trajectory is stored per row, so you can see which prompts
 converged after one critique, which needed more, and which hit the round
 cap without converging - the calibration signal for deciding how many

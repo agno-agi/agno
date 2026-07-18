@@ -6,9 +6,10 @@ Personas condition math problem generation: each problem is grounded in one
 persona's working world (a farmer's feed rates, a photographer's shot
 counts), which varies surface form without touching the arithmetic. The
 problem shape is pinned to unit-rate multiplication - exactly two whole
-numbers in the text, answer = their product - so a pure-Python check can
-re-derive every gold answer from the problem text itself. Rows that fail
-the check are dropped and counted; only verified rows are written. The
+numbers in the text, answer = their product - so a pure-Python check
+re-derives each gold as the product of the two numbers in the text. Rows
+that fail the check are dropped and counted; only verified rows are
+written. The
 output feeds ../_21_rejection_sampling/, which needs trustworthy golds.
 """
 
@@ -107,6 +108,12 @@ problem_agent = Agent(
 # ---------------------------------------------------------------------------
 # Verify (pure Python: re-derive the gold from the problem text)
 # ---------------------------------------------------------------------------
+# The check proves the stated answer is the product of the two numbers in
+# the text and that every prompt constraint the code can see holds. It
+# cannot check question semantics: a problem whose question deviates from
+# the constrained product shape (e.g. asks for a sum) would still pass.
+# Closing that gap needs a judge or teacher disagreement - see
+# _21_rejection_sampling.
 def verify(problem: str, answer: int) -> tuple[bool, str]:
     numbers = [int(m) for m in re.findall(r"\d+", problem)]
     if len(numbers) != 2:
@@ -114,6 +121,8 @@ def verify(problem: str, answer: int) -> tuple[bool, str]:
             False,
             f"expected exactly 2 numbers in problem text, found {len(numbers)}",
         )
+    if not all(2 <= n <= 99 for n in numbers):
+        return False, f"numbers {numbers} outside the required 2-99 range"
     product = numbers[0] * numbers[1]
     if product != answer:
         return (
@@ -170,5 +179,5 @@ if __name__ == "__main__":
     kept = len(rows)
     print(
         f"wrote {kept} rows to {out_path}, kept {kept}, dropped {dropped} "
-        f"of {len(PERSONAS)} generated (every kept answer re-derived in code)"
+        f"of {len(PERSONAS)} generated (product re-derived in code for every kept answer)"
     )

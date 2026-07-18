@@ -28,16 +28,16 @@ temperature-0 judge deciding which rollouts are good enough to keep.
   executed tool calls. Kept rows carry the judge's reason in provenance.
 
 Execution is deliberately limited to the offline CalculatorTools toolkit in
-this demo: DuckDuckGo and YFinance tools appear schema-only and are never
-called, so runs are deterministic on the tool side and need no network
-beyond the model API.
+this demo: the DuckDuckGo tools appear schema-only in `basic.py` and are
+never called, so runs are deterministic on the tool side and need no
+network beyond the model API.
 
 Rows are written to `data/generated/` (gitignored - run the scripts to
 regenerate). Abridged rows from a real run:
 
 ```json
 {"query": "Calculate the sum of 124.5 and 89.2", "tool_name": "add", "arguments": {"a": 124.5, "b": 89.2}, "schema_source": "agno.tools.calculator"}
-{"persona": "dinner_host", "messages": [{"role": "user", "content": "Hey! I'm planning a dinner with some friends ..."}, ...], "tool_calls": [{"tool_name": "multiply", "arguments": {"a": 4, "b": 18.5}, "result": "{\"operation\": \"multiplication\", \"result\": 74.0}"}, ...], "turns": 3}
+{"persona": "dinner_host", "messages": [{"role": "user", "content": "Hey! I'm planning a dinner with some friends ..."}, ...], "tool_calls": [{"tool_name": "multiply", "arguments": {"b": 18.5, "a": 4}, "result": "{\"operation\": \"multiplication\", \"result\": 74.0}"}, ...], "turns": 3}
 {"persona": "math_student", "messages": [...], "tool_calls": [...], "turns": 3, "provenance": {"judge": "gemini-3.5-flash", "reason": "The assistant correctly checked if 97 is prime using the 'is_prime' tool and computed 12 factorial divided by 10 factorial ... obtaining the correct result of 132."}}
 ```
 

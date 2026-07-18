@@ -4,7 +4,7 @@ End-to-end examples for data classification and labeling using agents.
 
 Each subfolder holds examples for one theme, containing a `basic.py` that runs end-to-end, plus variants that add task-meaningful options on top.
 
-Workflows are organized by modality (text, image, audio, video, document) and output shape (classify, extract, rank, span-label). Further patterns (`_17_llm_as_judge`, `_18_quality_review`, `_19_inter_annotator_agreement`) compose on top of any of these, and the synthetic-data workflows (`_20`-`_22`) generate and curate training data rather than label existing inputs.
+Workflows are organized by modality (text, image, audio, video, document) and output shape (classify, extract, rank, span-label). Further patterns (`_17_llm_as_judge`, `_18_quality_review`, `_19_inter_annotator_agreement`) compose on top of any of these, and the synthetic-data workflows (`_20`-`_25`) generate and curate training data rather than label existing inputs.
 
 Start with [`_01_text_classification/basic.py`](_01_text_classification/basic.py). Every other cookbook mirrors its structure.
 
