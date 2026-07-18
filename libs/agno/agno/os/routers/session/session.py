@@ -204,6 +204,7 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
                 },
             },
             400: {"description": "Invalid request parameters", "model": BadRequestResponse},
+            409: {"description": "A session with the supplied session_id already exists"},
             422: {"description": "Validation error", "model": ValidationErrorResponse},
             500: {"description": "Failed to create session", "model": InternalServerErrorResponse},
         },
@@ -247,6 +248,24 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
 
         # Generate session_id if not provided
         session_id = create_session_request.session_id or str(uuid4())
+
+        # A create for a client-supplied session_id that already exists is a conflict, not a
+        # silent overwrite: upserting a fresh (empty) session over it drops the stored
+        # runs/session_data, and on owner-guarded backends the failed upsert surfaces as a 500.
+        # Mirror create_learning / schedules / service-accounts: reject with 409 and steer the
+        # caller to PATCH; the stored session is never touched.
+        if create_session_request.session_id is not None:
+            if isinstance(db, AsyncBaseDb):
+                existing_session = await db.get_session(
+                    session_id=session_id, session_type=session_type, deserialize=False
+                )
+            else:
+                existing_session = db.get_session(session_id=session_id, session_type=session_type, deserialize=False)
+            if existing_session is not None:
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"Session with id '{session_id}' already exists. Use PATCH /sessions/{session_id} to update it.",
+                )
 
         # Prepare session_data with session_state and session_name
         session_data: dict[str, Any] = {}

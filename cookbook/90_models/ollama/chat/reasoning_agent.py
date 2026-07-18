@@ -15,7 +15,6 @@ from agno.models.ollama import Ollama
 reasoning_agent = Agent(
     model=Ollama(id="gpt-oss:120b"),
     reasoning=True,
-    debug_mode=True,
 )
 
 reasoning_agent.print_response(
