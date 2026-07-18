@@ -4,7 +4,7 @@ End-to-end examples for data classification and labeling using agents.
 
 Each subfolder holds examples for one theme, containing a `basic.py` that runs end-to-end, plus variants that add task-meaningful options on top.
 
-Workflows are organized by modality (text, image, audio, video, document) and output shape (classify, extract, rank, span-label). Two further patterns (`_17_llm_as_judge`, `_18_quality_review`) compose on top of any of these.
+Workflows are organized by modality (text, image, audio, video, document) and output shape (classify, extract, rank, span-label). Further patterns (`_17_llm_as_judge`, `_18_quality_review`, `_19_inter_annotator_agreement`) compose on top of any of these.
 
 Start with [`_01_text_classification/basic.py`](_01_text_classification/basic.py). Every other cookbook mirrors its structure.
 
@@ -55,6 +55,7 @@ cookbook/data_labeling/
 These layer on top of any modality.
 - [`_17_llm_as_judge/`](_17_llm_as_judge/): score outputs against a rubric. The same machinery as labeling, repurposed for evals.
 - [`_18_quality_review/`](_18_quality_review/): labeler, reviewer, adjudicator pipeline applied on top of an extraction primitive.
+- [`_19_inter_annotator_agreement/`](_19_inter_annotator_agreement/): raw agreement, Fleiss' kappa, Krippendorff's alpha, and pairwise Cohen's kappa over agent labelers and jury votes, with low-agreement items routed to review.
 
 ## Running a cookbook
 
@@ -77,7 +78,8 @@ Each subfolder's `README.md` documents its inputs, the model it expects, and any
 | Variable | Used by |
 |---|---|
 | `GOOGLE_API_KEY` | Default for every cookbook (Gemini 3.5 Flash, natively multimodal) |
-| `ANTHROPIC_API_KEY` | `_18_quality_review/` (Claude is the second labeler) and `_05_text_pairwise_preference/dpo_jury.py` |
-| `OPENAI_API_KEY`, `GROQ_API_KEY`, `MISTRAL_API_KEY` | `_05_text_pairwise_preference/dpo_jury.py` only — the 5-model jury |
+| `ANTHROPIC_API_KEY` | `_18_quality_review/` (Claude is the second labeler) and the `_05_text_pairwise_preference/` jury files (`dpo_jury.py`, `jury_calibrated.py`, `jury_hardened.py`) |
+| `OPENAI_API_KEY` | The `_05_text_pairwise_preference/` jury files |
+| `GROQ_API_KEY`, `MISTRAL_API_KEY` | `_05_text_pairwise_preference/dpo_jury.py` only — the 5-model jury |
 
 The per-cookbook README calls out which model it uses and why.
