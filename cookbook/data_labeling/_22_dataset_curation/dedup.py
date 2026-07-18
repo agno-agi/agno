@@ -128,6 +128,10 @@ ROWS = [
 # ---------------------------------------------------------------------------
 def shingles(text: str) -> set:
     tokens = text.lower().split()
+    if len(tokens) < SHINGLE_SIZE:
+        # Texts shorter than one shingle fall back to a single whole-text
+        # shingle so minhash_signature never sees an empty set.
+        return {" ".join(tokens)}
     return {
         " ".join(tokens[i : i + SHINGLE_SIZE])
         for i in range(len(tokens) - SHINGLE_SIZE + 1)

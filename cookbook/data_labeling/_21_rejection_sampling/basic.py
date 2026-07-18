@@ -4,9 +4,12 @@ Rejection Sampling - Basic
 
 Generate K candidate reasoning traces per problem with a teacher model, then
 keep only the traces whose final answer matches a programmatically verified
-gold. The verifier is pure code (integer equality), so every kept trace is
-correct by construction - no judge involved. This is the data type behind
-verified-reasoning recipes: sample, check, keep.
+gold. The verifier is pure code (integer equality), so every kept trace has
+a verified-correct final answer - no judge involved. The reasoning text
+itself is not checked: a trace with flawed reasoning that lands on the right
+integer is kept, the known false-positive mode of answer-only rejection
+sampling. This is the data type behind verified-reasoning recipes: sample,
+check, keep.
 
 Each problem here has an integer gold answer that was verified by hand and
 by a script before being committed.

@@ -58,7 +58,7 @@ These layer on top of any modality.
 - [`_19_inter_annotator_agreement/`](_19_inter_annotator_agreement/): raw agreement, Fleiss' kappa, Krippendorff's alpha, and pairwise Cohen's kappa over agent labelers and jury votes, with low-agreement items routed to review.
 
 ### Synthetic data generation
-These emit training data (JSONL with per-row provenance and kept/dropped counts) rather than labels.
+These emit training data (JSONL with per-row provenance; filtered files print kept/dropped counts) rather than labels.
 - [`_20_instruction_generation/`](_20_instruction_generation/): self-instruct from seeds, typed Evol-Instruct operators, and a topic-tree pipeline emitting SFT chat rows.
 - [`_21_rejection_sampling/`](_21_rejection_sampling/): sample K solutions and keep what a programmatic verifier or judge accepts - verified reasoning traces, best-of-n for non-verifiable prompts, and RL prompt selection by pass rate.
 - [`_22_dataset_curation/`](_22_dataset_curation/): the filters - judge quality-gate over JSONL, pure-stdlib MinHash near-dedup, and 13-gram benchmark decontamination.

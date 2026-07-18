@@ -9,15 +9,18 @@ sample, keep what checks out.
 
 This is not [`_17_llm_as_judge/`](../_17_llm_as_judge/). There, the judge
 emits a score report and a human reads it. Here, the verifier or judge gates
-a generation loop: its verdict decides row by row what enters the dataset,
-and the scores travel with each kept row as provenance.
+a generation loop: its verdict decides row by row what enters the dataset.
+`judge_gate.py` writes all N scores with each kept row and
+`rl_prompt_selection.py` writes the pass rate; `basic.py` rows carry no
+score - their provenance is the verified final answer itself.
 
 ## Files
 
 - `basic.py` — verified reasoning traces. A teacher samples K=4 solutions
   per math/code problem; a pure-code verifier (integer equality against a
-  hand-checked gold) keeps only correct traces. No judge anywhere in the
-  keep path.
+  hand-checked gold) keeps only traces whose final answer verifies. The
+  reasoning text itself is not checked - a flawed derivation that lands on
+  the right integer is kept. No judge anywhere in the keep path.
 - `judge_gate.py` — best-of-N for prompts with no programmatic verifier. A
   generator samples N=3 candidates; a temperature-0 judge scores each
   against a rubric; the argmax candidate is kept only if it clears an

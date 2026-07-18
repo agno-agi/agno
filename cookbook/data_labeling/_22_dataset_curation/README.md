@@ -13,9 +13,11 @@ numbers they print should be exactly reproducible.
   response) row 1-5 on clarity, factual correctness, and self-containedness
   (temperature-0 judge); keeps rows scoring >= 4 and writes them out with
   score and reason attached as provenance. Reads the committed fixture
-  `data/sample_rows.jsonl`; point `input_path` at
-  `../_20_instruction_generation/data/generated/*.jsonl` to gate generated
-  data once that exists.
+  `data/sample_rows.jsonl`. The gate expects `{"instruction", "response"}`
+  rows; to point `input_path` at another generator's output, map its fields
+  into that shape first (`_20_instruction_generation/` emits instructions
+  without responses, and `_21_rejection_sampling/` rows use
+  `prompt`/`reasoning` keys).
 - `dedup.py` - no LLM. MinHash near-duplicate detection in pure stdlib: word
   3-gram shingles, 64 keyed blake2b hash functions, estimated Jaccard >= 0.7
   clustered with union-find, first row per cluster kept. Fully deterministic

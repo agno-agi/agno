@@ -96,12 +96,20 @@ if __name__ == "__main__":
     print("-" * 75)
     with output_path.open("w") as f:
         for i, row in enumerate(rows):
-            run: RunOutput = judge.run(build_input(row))
-            v: RowVerdict = run.content
+            v = None
+            for _ in range(3):  # retry schema breaks, never coerce
+                run: RunOutput = judge.run(build_input(row))
+                if isinstance(run.content, RowVerdict):
+                    v = run.content
+                    break
+            if v is None:
+                raise RuntimeError("judge failed to produce a valid RowVerdict")
             preview = row["instruction"][:52]
             print(f"{i:>3}  {v.score:>5}  {v.verdict:<7}  {preview}")
             print(f"                     -> {v.reason}")
-            if v.verdict == "keep":
+            # The gate is the score bar; the verdict field is provenance. A
+            # judge emitting verdict="keep" with score < 4 does not pass.
+            if v.verdict == "keep" and v.score >= 4:
                 f.write(
                     json.dumps(
                         {

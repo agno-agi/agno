@@ -4,9 +4,10 @@ Generate synthetic training instructions from a small amount of hand-written
 input - the definitional synthetic-data workload. Three classic recipes:
 grow a pool from seed instructions (Self-Instruct), increase complexity with
 typed evolution operators (Evol-Instruct), and expand a topic tree into
-SFT-ready chat data. Every generated row passes a stdlib filter and carries
-provenance (seed ids, parent instruction, or tree branch) so downstream
-curation can trace and prune.
+SFT-ready chat data. The self-instruct and evolution files run every
+candidate through a stdlib filter; the topic tree caps counts by slicing.
+Every row carries provenance (seed ids, parent instruction, or tree branch)
+so downstream curation can trace and prune.
 
 ## Files
 
@@ -29,7 +30,7 @@ regenerate). Abridged rows from a real run:
 ```json
 {"instruction": "Design three fictional plants that would thrive in a volcanic, sulfur-rich soil environment. For each plant, provide its common name, its scientific-sounding name, and a one-sentence description of its survival mechanism.", "seed_ids": ["seed-01", "seed-02", "seed-03"], "round": 1}
 {"instruction": "Explain how a hash table works to a junior software developer by using the concrete scenario of storing and retrieving 10,000 employee records ...", "parent": "Explain how a hash table works.", "operator": "concretize", "depth": 1}
-{"messages": [{"role": "user", "content": "How do B+ Tree indexes and Log-Structured Merge (LSM) Tree indexes differ in their write amplification behavior ...?"}, {"role": "assistant", "content": "During high-throughput insert workloads, B+ Trees suffer from high write amplification due to their in-place update model. ..."}], "provenance": {"topic": "database indexing", "subtopic": "Index Data Structures and Physical Implementation", "depth": 3}}
+{"messages": [{"role": "user", "content": "How do B+ Tree indexes and Log-Structured Merge (LSM) Tree indexes differ in their write amplification behavior ...?"}, {"role": "assistant", "content": "During high-throughput insert workloads, B+ Trees suffer from high write amplification due to their in-place update model. ..."}], "provenance": {"topic": "database indexing", "subtopic": "Index Data Structures and Algorithms", "depth": 3}}
 ```
 
 ## When to use

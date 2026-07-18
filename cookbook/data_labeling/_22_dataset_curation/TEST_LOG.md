@@ -6,9 +6,9 @@ Tested 2026-07-18 against `gemini-3.5-flash`, agno 2.7.4.
 
 **Status:** PASS
 
-**Description:** LLM judge quality gate over the committed fixture data/sample_rows.jsonl (12 SFT rows: 7 good plus 5 planted defects - vague, factually wrong, non-self-contained, truncated, instruction-echo). A temperature-0 Gemini judge scores each row 1-5 on clarity, factual correctness, and self-containedness; rows with verdict keep (score >= 4) are written to data/generated/curated.jsonl with score and reason as provenance.
+**Description:** LLM judge quality gate over the committed fixture data/sample_rows.jsonl (12 SFT rows: 7 good plus 5 planted defects - vague, factually wrong, non-self-contained, truncated, instruction-echo). A temperature-0 Gemini judge scores each row 1-5 on clarity, factual correctness, and self-containedness; rows are written to data/generated/curated.jsonl (with score and reason as provenance) only when the verdict is keep AND the score clears the >= 4 bar, both enforced in code; structured output is isinstance-checked with retries.
 
-**Result:** All 7 good rows kept with score 5; all 5 planted defects dropped with the correct deciding criterion in the reason (vague sleep tips: "extremely vague", 50 C boiling point: "factually incorrect as water boils at 100 degrees Celsius", missing passage: "refers to a missing passage", truncated venv steps: "incomplete and ends abruptly", instruction echo: "merely echoes the instruction back"). Summary line: "wrote 7 rows to data/generated/curated.jsonl: kept 7, dropped 5 of 12". Ran twice (before and after ruff format) with identical verdicts on all 12 rows.
+**Result:** All 7 good rows kept with score 5; all 5 planted defects dropped with the correct deciding criterion in the reason (vague sleep tips: "extremely vague", 50 C boiling point: "factually incorrect as water boils at 100 degrees Celsius", missing passage: "refers to a missing passage", truncated venv steps: "incomplete and ends abruptly", instruction echo: "merely echoes the instruction back"). Summary line: "wrote 7 rows to data/generated/curated.jsonl: kept 7, dropped 5 of 12". Ran three times (including after the enforced score-bar gate was added) with identical verdicts on all 12 rows.
 
 ---
 
