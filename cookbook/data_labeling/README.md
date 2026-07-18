@@ -77,6 +77,7 @@ Each subfolder's `README.md` documents its inputs, the model it expects, and any
 | Variable | Used by |
 |---|---|
 | `GOOGLE_API_KEY` | Default for every cookbook (Gemini 3.5 Flash, natively multimodal) |
-| `ANTHROPIC_API_KEY` | `_18_quality_review/` only — Claude Opus 4.7 is the second labeler |
+| `ANTHROPIC_API_KEY` | `_18_quality_review/` (Claude is the second labeler) and `_05_text_pairwise_preference/dpo_jury.py` |
+| `OPENAI_API_KEY`, `GROQ_API_KEY`, `MISTRAL_API_KEY` | `_05_text_pairwise_preference/dpo_jury.py` only — the 5-model jury |
 
 The per-cookbook README calls out which model it uses and why.
