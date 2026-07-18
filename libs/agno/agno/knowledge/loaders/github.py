@@ -133,10 +133,10 @@ class GitHubLoader(BaseLoader):
                     response.raise_for_status()
                     data = response.json()
             except httpx.HTTPStatusError as e:
-                log_error(f"GitHub App token exchange failed: {e.response.status_code} {e.response.text}")
+                log_error(f"GitHub App token exchange failed: {e.response.status_code} {e.response.text}: {str(e)}")
                 raise
             except httpx.HTTPError as e:
-                log_error(f"GitHub App token exchange request failed: {e}")
+                log_error(f"GitHub App token exchange request failed: {str(e)}")
                 raise
 
             installation_token, expires_at_ts = self._parse_token_response(data)
@@ -185,10 +185,10 @@ class GitHubLoader(BaseLoader):
                     response.raise_for_status()
                     data = response.json()
             except httpx.HTTPStatusError as e:
-                log_error(f"GitHub App token exchange failed: {e.response.status_code} {e.response.text}")
+                log_error(f"GitHub App token exchange failed: {e.response.status_code} {e.response.text}: {str(e)}")
                 raise
             except httpx.HTTPError as e:
-                log_error(f"GitHub App token exchange request failed: {e}")
+                log_error(f"GitHub App token exchange request failed: {str(e)}")
                 raise
 
             installation_token, expires_at_ts = self._parse_token_response(data)
@@ -251,6 +251,7 @@ class GitHubLoader(BaseLoader):
     def _build_github_metadata(
         self,
         gh_config: GitHubConfig,
+        repo: str,
         branch: str,
         file_path: str,
         file_name: str,
@@ -260,11 +261,21 @@ class GitHubLoader(BaseLoader):
             "source_type": "github",
             "source_config_id": gh_config.id,
             "source_config_name": gh_config.name,
-            "github_repo": gh_config.repo,
+            "github_repo": repo,
             "github_branch": branch,
             "github_path": file_path,
             "github_filename": file_name,
         }
+
+    @staticmethod
+    def _resolve_github_repo(remote_content: GitHubContent, gh_config: GitHubConfig) -> Optional[str]:
+        """Resolve the effective repo for this request.
+
+        Prefers the per-request override on the content reference, falls back
+        to the config's ``repo``. Returns ``None`` if neither is set; callers
+        should treat this as a configuration error.
+        """
+        return remote_content.repo or gh_config.repo
 
     def _build_github_virtual_path(self, repo: str, branch: str, file_path: str) -> str:
         """Build virtual path for GitHub content."""
@@ -331,13 +342,27 @@ class GitHubLoader(BaseLoader):
     ):
         """Load content from GitHub (async).
 
-        Requires the GitHub config to contain repo and optionally token for private repos.
-        Uses the GitHub API to fetch file contents.
+        Requires the effective repo (from GitHubContent or GitHubConfig) and
+        optionally a token for private repos. Uses the GitHub API to fetch file
+        contents.
         """
         remote_content: GitHubContent = cast(GitHubContent, content.remote_content)
         gh_config = self._validate_github_config(content, config)
         if gh_config is None:
             return
+
+        repo = self._resolve_github_repo(remote_content, gh_config)
+        if not repo:
+            # Raise rather than log-and-return: the content entry hasn't been
+            # created yet, so returning here would silently no-op and callers
+            # (e.g. Knowledge.insert / ainsert) would treat the operation as
+            # successful. Surfacing this as a ValueError lets the caller handle
+            # the misconfiguration explicitly.
+            raise ValueError(
+                f"GitHub repo not specified. Set 'repo' on GitHubConfig '{gh_config.id}' "
+                f"or pass it at request time via GitHubConfig.file(..., repo=...) / "
+                f"GitHubConfig.folder(..., repo=...)."
+            )
 
         headers = await self._abuild_github_headers(gh_config)
         branch = self._get_github_branch(remote_content, gh_config)
@@ -350,7 +375,7 @@ class GitHubLoader(BaseLoader):
             async def list_files_recursive(folder: str) -> List[Dict[str, str]]:
                 """Recursively list all files in a GitHub folder."""
                 files: List[Dict[str, str]] = []
-                api_url = f"https://api.github.com/repos/{gh_config.repo}/contents/{folder}"
+                api_url = f"https://api.github.com/repos/{repo}/contents/{folder}"
                 if branch:
                     api_url += f"?ref={branch}"
 
@@ -369,12 +394,12 @@ class GitHubLoader(BaseLoader):
                             subdir_files = await list_files_recursive(item["path"])
                             files.extend(subdir_files)
                 except Exception as e:
-                    log_error(f"Error listing GitHub folder {folder}: {e}")
+                    log_error(f"Error listing GitHub folder {folder}: {str(e)}")
 
                 return files
 
             if path_to_process:
-                api_url = f"https://api.github.com/repos/{gh_config.repo}/contents/{path_to_process}"
+                api_url = f"https://api.github.com/repos/{repo}/contents/{path_to_process}"
                 if branch:
                     api_url += f"?ref={branch}"
 
@@ -393,7 +418,7 @@ class GitHubLoader(BaseLoader):
                     else:
                         files_to_process.append({"path": path_data["path"], "name": path_data["name"]})
                 except Exception as e:
-                    log_error(f"Error fetching GitHub path {path_to_process}: {e}")
+                    log_error(f"Error fetching GitHub path {path_to_process}: {str(e)}")
                     return
 
             if not files_to_process:
@@ -408,8 +433,8 @@ class GitHubLoader(BaseLoader):
                 file_name = file_info["name"]
 
                 # Build metadata and virtual path using helpers
-                virtual_path = self._build_github_virtual_path(gh_config.repo, branch, file_path)
-                github_metadata = self._build_github_metadata(gh_config, branch, file_path, file_name)
+                virtual_path = self._build_github_virtual_path(repo, branch, file_path)
+                github_metadata = self._build_github_metadata(gh_config, repo, branch, file_path, file_name)
                 merged_metadata = self._merge_metadata(github_metadata, content.metadata)
 
                 # Compute content name using base helper
@@ -430,7 +455,7 @@ class GitHubLoader(BaseLoader):
                     continue
 
                 # Fetch file content
-                api_url = f"https://api.github.com/repos/{gh_config.repo}/contents/{file_path}"
+                api_url = f"https://api.github.com/repos/{repo}/contents/{file_path}"
                 if branch:
                     api_url += f"?ref={branch}"
                 try:
@@ -439,7 +464,7 @@ class GitHubLoader(BaseLoader):
                     file_data = response.json()
                     file_content = await self._aprocess_github_file_content(file_data, client, headers)
                 except Exception as e:
-                    log_error(f"Error fetching GitHub file {file_path}: {e}")
+                    log_error(f"Error fetching GitHub file {file_path}: {str(e)}")
                     content_entry.status = ContentStatus.FAILED
                     content_entry.status_message = str(e)
                     await self._aupdate_content(content_entry)
@@ -473,13 +498,27 @@ class GitHubLoader(BaseLoader):
     ):
         """Load content from GitHub (sync).
 
-        Requires the GitHub config to contain repo and optionally token for private repos.
-        Uses the GitHub API to fetch file contents.
+        Requires the effective repo (from GitHubContent or GitHubConfig) and
+        optionally a token for private repos. Uses the GitHub API to fetch file
+        contents.
         """
         remote_content: GitHubContent = cast(GitHubContent, content.remote_content)
         gh_config = self._validate_github_config(content, config)
         if gh_config is None:
             return
+
+        repo = self._resolve_github_repo(remote_content, gh_config)
+        if not repo:
+            # Raise rather than log-and-return: the content entry hasn't been
+            # created yet, so returning here would silently no-op and callers
+            # (e.g. Knowledge.insert / ainsert) would treat the operation as
+            # successful. Surfacing this as a ValueError lets the caller handle
+            # the misconfiguration explicitly.
+            raise ValueError(
+                f"GitHub repo not specified. Set 'repo' on GitHubConfig '{gh_config.id}' "
+                f"or pass it at request time via GitHubConfig.file(..., repo=...) / "
+                f"GitHubConfig.folder(..., repo=...)."
+            )
 
         headers = self._build_github_headers(gh_config)
         branch = self._get_github_branch(remote_content, gh_config)
@@ -492,7 +531,7 @@ class GitHubLoader(BaseLoader):
             def list_files_recursive(folder: str) -> List[Dict[str, str]]:
                 """Recursively list all files in a GitHub folder."""
                 files: List[Dict[str, str]] = []
-                api_url = f"https://api.github.com/repos/{gh_config.repo}/contents/{folder}"
+                api_url = f"https://api.github.com/repos/{repo}/contents/{folder}"
                 if branch:
                     api_url += f"?ref={branch}"
 
@@ -511,12 +550,12 @@ class GitHubLoader(BaseLoader):
                             subdir_files = list_files_recursive(item["path"])
                             files.extend(subdir_files)
                 except Exception as e:
-                    log_error(f"Error listing GitHub folder {folder}: {e}")
+                    log_error(f"Error listing GitHub folder {folder}: {str(e)}")
 
                 return files
 
             if path_to_process:
-                api_url = f"https://api.github.com/repos/{gh_config.repo}/contents/{path_to_process}"
+                api_url = f"https://api.github.com/repos/{repo}/contents/{path_to_process}"
                 if branch:
                     api_url += f"?ref={branch}"
 
@@ -535,7 +574,7 @@ class GitHubLoader(BaseLoader):
                     else:
                         files_to_process.append({"path": path_data["path"], "name": path_data["name"]})
                 except Exception as e:
-                    log_error(f"Error fetching GitHub path {path_to_process}: {e}")
+                    log_error(f"Error fetching GitHub path {path_to_process}: {str(e)}")
                     return
 
             if not files_to_process:
@@ -550,8 +589,8 @@ class GitHubLoader(BaseLoader):
                 file_name = file_info["name"]
 
                 # Build metadata and virtual path using helpers
-                virtual_path = self._build_github_virtual_path(gh_config.repo, branch, file_path)
-                github_metadata = self._build_github_metadata(gh_config, branch, file_path, file_name)
+                virtual_path = self._build_github_virtual_path(repo, branch, file_path)
+                github_metadata = self._build_github_metadata(gh_config, repo, branch, file_path, file_name)
                 merged_metadata = self._merge_metadata(github_metadata, content.metadata)
 
                 # Compute content name using base helper
@@ -572,7 +611,7 @@ class GitHubLoader(BaseLoader):
                     continue
 
                 # Fetch file content
-                api_url = f"https://api.github.com/repos/{gh_config.repo}/contents/{file_path}"
+                api_url = f"https://api.github.com/repos/{repo}/contents/{file_path}"
                 if branch:
                     api_url += f"?ref={branch}"
                 try:
@@ -581,7 +620,7 @@ class GitHubLoader(BaseLoader):
                     file_data = response.json()
                     file_content = self._process_github_file_content(file_data, client, headers)
                 except Exception as e:
-                    log_error(f"Error fetching GitHub file {file_path}: {e}")
+                    log_error(f"Error fetching GitHub file {file_path}: {str(e)}")
                     content_entry.status = ContentStatus.FAILED
                     content_entry.status_message = str(e)
                     self._update_content(content_entry)

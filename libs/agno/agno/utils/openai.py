@@ -53,8 +53,9 @@ def audio_to_message(audio: Sequence[Audio]) -> List[Dict[str, Any]]:
                             audio_format = "wav"
                     except Exception as e:
                         log_warning(
-                            f"Could not determine audio format from URL: {audio_snippet.url}. Error: {e}. Defaulting."
+                            f"Could not determine audio format from URL: {audio_snippet.url}. Defaulting.: {e}",
                         )
+
                         audio_format = "wav"  # Default if guessing fails
 
         # The audio is a file path
@@ -67,7 +68,7 @@ def audio_to_message(audio: Sequence[Audio]) -> List[Dict[str, Any]]:
                     if not audio_format:
                         audio_format = path.suffix.lstrip(".")
                 except Exception as e:
-                    log_error(f"Failed to read audio file {path}: {e}")
+                    log_error(f"Failed to read audio file {path}: {str(e)}")
                     continue  # Skip this audio snippet if file reading fails
             else:
                 log_error(f"Audio file not found or is not a file: {path}")
@@ -112,7 +113,7 @@ def _process_image_path(
         with open(path, "rb") as image_file:
             image_data = image_file.read()
     except Exception as e:
-        log_error(f"Failed to read image file {path}: {e}")
+        log_error(f"Failed to read image file {path}: {str(e)}")
         raise
 
     base64_image = base64.b64encode(image_data).decode("utf-8")
@@ -154,8 +155,8 @@ def process_image(image: Image) -> Optional[Dict[str, Any]]:
 
         return image_payload
 
-    except (FileNotFoundError, IsADirectoryError, ValueError) as e:
-        log_error(f"Failed to process image due to invalid input: {str(e)}")
+    except (FileNotFoundError, IsADirectoryError, ValueError):
+        log_error("Failed to process image due to invalid input")
         return None  # Return None for handled validation errors
     except Exception as e:
         log_error(f"An unexpected error occurred while processing image: {str(e)}")

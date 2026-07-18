@@ -39,7 +39,7 @@ file_agent = Agent(
 
 video_agent = Agent(
     name="Video Understanding Agent",
-    model=Gemini(id="gemini-3-flash-preview"),
+    model=Gemini(id="gemini-3.5-flash"),
     id="video-understanding-agent",
     role="Answer questions about video files",
     db=db,
@@ -53,7 +53,7 @@ audio_agent = Agent(
     name="Audio Understanding Agent",
     id="audio-understanding-agent",
     role="Answer questions about audio files",
-    model=OpenAIChat(id="gpt-4o-audio-preview"),
+    model=OpenAIChat(id="gpt-audio"),
     db=db,
     update_memory_on_run=True,
     add_history_to_context=True,

@@ -3,12 +3,14 @@ import subprocess
 from pathlib import Path
 from typing import Dict, List, Optional
 
+from agno.exceptions import PathSecurityError
 from agno.skills.errors import SkillValidationError
 from agno.skills.loaders.base import SkillLoader
 from agno.skills.skill import Skill
-from agno.skills.utils import is_safe_path, read_file_safe, run_script
+from agno.skills.utils import read_file_safe, run_script
 from agno.tools.function import Function
 from agno.utils.log import log_debug, log_warning
+from agno.utils.path_safety import safe_join_relative_path
 
 
 class Skills:
@@ -45,7 +47,7 @@ class Skills:
             except SkillValidationError:
                 raise  # Re-raise validation errors as hard failures
             except Exception as e:
-                log_warning(f"Error loading skills from {loader}: {e}")
+                log_warning(f"Error loading skills from {loader}: {str(e)}")
 
         log_debug(f"Loaded {len(self._skills)} total skills")
 
@@ -239,18 +241,17 @@ class Skills:
                 }
             )
 
-        # Validate path to prevent path traversal attacks
+        # Validate and resolve path to prevent path traversal attacks
         refs_dir = Path(skill.source_path) / "references"
-        if not is_safe_path(refs_dir, reference_path):
+        try:
+            ref_file = safe_join_relative_path(refs_dir, reference_path)
+        except PathSecurityError:
             return json.dumps(
                 {
                     "error": f"Invalid reference path: '{reference_path}'",
                     "skill_name": skill_name,
                 }
             )
-
-        # Load the reference file
-        ref_file = refs_dir / reference_path
         try:
             content = read_file_safe(ref_file)
             return json.dumps(
@@ -307,17 +308,17 @@ class Skills:
                 }
             )
 
-        # Validate path to prevent path traversal attacks
+        # Validate and resolve path to prevent path traversal attacks
         scripts_dir = Path(skill.source_path) / "scripts"
-        if not is_safe_path(scripts_dir, script_path):
+        try:
+            script_file = safe_join_relative_path(scripts_dir, script_path)
+        except PathSecurityError:
             return json.dumps(
                 {
                     "error": f"Invalid script path: '{script_path}'",
                     "skill_name": skill_name,
                 }
             )
-
-        script_file = scripts_dir / script_path
 
         if not execute:
             # Read mode: return script content

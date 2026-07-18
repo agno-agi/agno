@@ -198,8 +198,8 @@ class ScheduleExecutor:
 
             return final_run
 
-        except asyncio.CancelledError:
-            log_warning(f"Schedule {schedule_id} execution cancelled")
+        except asyncio.CancelledError as e:
+            log_warning(f"Schedule {schedule_id} execution cancelled: {str(e)}")
             if run_record_id is not None:
                 cancel_updates: Dict[str, Any] = {
                     "completed_at": int(time.time()),
@@ -223,11 +223,12 @@ class ScheduleExecutor:
                         sched.cron_expr,
                         sched.timezone or "UTC",
                     )
-                except Exception:
+                except Exception as e:
                     log_warning(
-                        f"Failed to compute next_run_at for schedule {schedule_id}; "
-                        "disabling schedule to prevent it from becoming stuck"
+                        f"Failed to compute next_run_at for schedule {schedule_id}; : {e}"
+                        f"disabling schedule to prevent it from becoming stuck: {e}",
                     )
+
                     next_run_at = None
                     try:
                         if asyncio.iscoroutinefunction(getattr(db, "update_schedule", None)):
@@ -415,7 +416,7 @@ class ScheduleExecutor:
                     params={"session_id": session_id},
                 )
             except Exception as exc:
-                log_warning(f"Poll request failed for run {run_id}: {exc}")
+                log_warning(f"Poll request failed for run {run_id}: {exc}: {exc}")
                 continue
 
             if resp.status_code == 404:
@@ -435,8 +436,8 @@ class ScheduleExecutor:
 
             try:
                 data = resp.json()
-            except (json.JSONDecodeError, ValueError):
-                log_warning(f"Invalid JSON in poll response for run {run_id}")
+            except (json.JSONDecodeError, ValueError) as e:
+                log_warning(f"Invalid JSON in poll response for run {run_id}: {str(e)}")
                 continue
 
             run_status = data.get("status")

@@ -6,8 +6,10 @@ from pathlib import Path
 from textwrap import dedent
 from typing import Any, List, Optional, Union
 
+from agno.exceptions import PathSecurityError
 from agno.tools import Toolkit
 from agno.utils.log import log_error, log_info, logger
+from agno.utils.path_safety import safe_join_relative_path
 
 
 @functools.lru_cache(maxsize=None)
@@ -377,7 +379,7 @@ class CodingTools(Toolkit):
         except PermissionError:
             return f"Error: Permission denied: {file_path}"
         except Exception as e:
-            log_error(f"Error reading file: {e}")
+            log_error(f"Error reading file: {str(e)}")
             return f"Error reading file: {e}"
 
     def edit_file(self, file_path: str, old_text: str, new_text: str) -> str:
@@ -461,7 +463,7 @@ class CodingTools(Toolkit):
         except PermissionError:
             return f"Error: Permission denied: {file_path}"
         except Exception as e:
-            log_error(f"Error editing file: {e}")
+            log_error(f"Error editing file: {str(e)}")
             return f"Error editing file: {e}"
 
     def write_file(self, file_path: str, contents: str) -> str:
@@ -491,7 +493,7 @@ class CodingTools(Toolkit):
         except PermissionError:
             return f"Error: Permission denied: {file_path}"
         except Exception as e:
-            log_error(f"Error writing file: {e}")
+            log_error(f"Error writing file: {str(e)}")
             return f"Error writing file: {e}"
 
     def run_shell(self, command: str, timeout: Optional[int] = None) -> str:
@@ -555,7 +557,7 @@ class CodingTools(Toolkit):
             effective_timeout = timeout if timeout is not None else self.shell_timeout
             return f"Error: Command timed out after {effective_timeout} seconds"
         except Exception as e:
-            log_error(f"Error running shell command: {e}")
+            log_error(f"Error running shell command: {str(e)}")
             return f"Error running shell command: {e}"
 
     def grep(
@@ -645,7 +647,7 @@ class CodingTools(Toolkit):
         except FileNotFoundError:
             return "Error: grep command not found. Install grep to use this tool."
         except Exception as e:
-            log_error(f"Error running grep: {e}")
+            log_error(f"Error running grep: {str(e)}")
             return f"Error running grep: {e}"
 
     def find(self, pattern: str, path: Optional[str] = None, limit: int = 500) -> str:
@@ -681,9 +683,11 @@ class CodingTools(Toolkit):
             for match in resolved_path.glob(pattern):
                 try:
                     rel_path = match.relative_to(self.base_dir)
+                    if self.restrict_to_base_dir:
+                        safe_join_relative_path(self.base_dir, rel_path.as_posix())
                     suffix = "/" if match.is_dir() else ""
-                    matches.append(str(rel_path) + suffix)
-                except ValueError:
+                    matches.append(rel_path.as_posix() + suffix)
+                except (ValueError, PathSecurityError):
                     continue  # Skip paths outside base_dir
 
                 if len(matches) >= limit:
@@ -701,7 +705,7 @@ class CodingTools(Toolkit):
             return result + footer
 
         except Exception as e:
-            log_error(f"Error finding files: {e}")
+            log_error(f"Error finding files: {str(e)}")
             return f"Error finding files: {e}"
 
     def ls(self, path: Optional[str] = None, limit: int = 500) -> str:
@@ -731,6 +735,11 @@ class CodingTools(Toolkit):
 
             entries = []
             for entry in sorted(resolved_path.iterdir(), key=lambda p: p.name.lower()):
+                if self.restrict_to_base_dir:
+                    try:
+                        safe_join_relative_path(self.base_dir, entry.relative_to(self.base_dir).as_posix())
+                    except (ValueError, PathSecurityError):
+                        continue
                 suffix = "/" if entry.is_dir() else ""
                 entries.append(entry.name + suffix)
                 if len(entries) >= limit:
@@ -749,5 +758,5 @@ class CodingTools(Toolkit):
         except PermissionError:
             return f"Error: Permission denied: {path or '.'}"
         except Exception as e:
-            log_error(f"Error listing directory: {e}")
+            log_error(f"Error listing directory: {str(e)}")
             return f"Error listing directory: {e}"

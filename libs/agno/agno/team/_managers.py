@@ -214,7 +214,7 @@ def _process_learnings(
         )
         log_debug("Learning extraction completed.")
     except Exception as e:
-        log_warning(f"Error processing learnings: {e}")
+        log_warning(f"Error processing learnings: {str(e)}")
     return collector
 
 
@@ -242,7 +242,7 @@ async def _aprocess_learnings(
         )
         log_debug("Learning extraction completed.")
     except Exception as e:
-        log_warning(f"Error processing learnings: {e}")
+        log_warning(f"Error processing learnings: {str(e)}")
     return collector
 
 

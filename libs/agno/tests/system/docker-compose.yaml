@@ -22,8 +22,8 @@ services:
   # Remote AgentOS Server (hosts actual agents, teams, workflows)
   remote-server:
     build:
-      context: ../..
-      dockerfile: tests/system/Dockerfile.remote
+      context: ../../..
+      dockerfile: agno/tests/system/Dockerfile.remote
     container_name: system-test-remote
     environment:
       DATABASE_URL: postgresql+psycopg://ai:ai@postgres:5432/ai
@@ -75,8 +75,8 @@ services:
   # A2A AgentOS Server (hosts actual agents, teams, workflows)
   agno-a2a-server:
     build:
-      context: ../..
-      dockerfile: tests/system/Dockerfile.agno_a2a
+      context: ../../..
+      dockerfile: agno/tests/system/Dockerfile.agno_a2a
     container_name: system-test-agno-a2a
     environment:
       DATABASE_URL: postgresql+psycopg://ai:ai@postgres:5432/ai
@@ -103,8 +103,8 @@ services:
   # Gateway AgentOS Server (consumes remote agents via RemoteAgent, RemoteTeam, RemoteWorkflow)
   gateway-server:
     build:
-      context: ../..
-      dockerfile: tests/system/Dockerfile.gateway
+      context: ../../..
+      dockerfile: agno/tests/system/Dockerfile.gateway
     container_name: system-test-gateway
     environment:
       DATABASE_URL: postgresql+psycopg://ai:ai@postgres:5432/ai

@@ -354,10 +354,30 @@ def test_github_config_folder_method_with_branch_override():
     assert content.branch == "feature-branch"
 
 
-def test_github_config_missing_repo():
-    """Test that missing repo raises ValidationError."""
-    with pytest.raises(ValidationError):
-        GitHubConfig(id="gh-source", name="My Repo")
+def test_github_config_repo_optional():
+    """Repo is optional; it can be supplied per request via file()/folder() instead."""
+    config = GitHubConfig(id="gh-source", name="My Repo")
+    assert config.repo is None
+
+
+def test_github_config_file_method_with_repo_override():
+    """file() accepts a per-request repo override."""
+    config = GitHubConfig(id="gh-source", name="My Repo", branch="main")
+    content = config.file("docs/README.md", repo="other-org/other-repo")
+
+    assert content.config_id == "gh-source"
+    assert content.file_path == "docs/README.md"
+    assert content.repo == "other-org/other-repo"
+    assert content.branch == "main"
+
+
+def test_github_config_folder_method_with_repo_override():
+    """folder() accepts a per-request repo override."""
+    config = GitHubConfig(id="gh-source", name="My Repo", repo="owner/default", branch="main")
+    content = config.folder("src/api", repo="owner/other")
+
+    assert content.folder_path == "src/api"
+    assert content.repo == "owner/other"
 
 
 def test_github_config_with_metadata():

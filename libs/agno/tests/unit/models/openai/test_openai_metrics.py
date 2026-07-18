@@ -17,12 +17,14 @@ class MockCompletionUsage:
         prompt_tokens: Optional[int] = 0,
         completion_tokens: Optional[int] = 0,
         total_tokens: Optional[int] = 0,
+        prompt_tokens_details=None,
+        completion_tokens_details=None,
     ):
         self.prompt_tokens = prompt_tokens
         self.completion_tokens = completion_tokens
         self.total_tokens = total_tokens
-        self.prompt_tokens_details = None
-        self.completion_tokens_details = None
+        self.prompt_tokens_details = prompt_tokens_details
+        self.completion_tokens_details = completion_tokens_details
 
 
 class MockChoice:
@@ -98,3 +100,32 @@ def test_openai_streaming_metrics_simulation():
 
     # Should collect metrics from all chunks with usage
     assert len(collected_metrics) == 3
+
+
+def test_openai_get_metrics_computes_audio_total_tokens():
+    """Audio totals should be derived from input and output audio token counts."""
+    model = OpenAIChat(id="gpt-4o")
+
+    class MockPromptTokensDetails:
+        def __init__(self):
+            self.audio_tokens = 11
+            self.cached_tokens = 7
+
+    class MockCompletionTokensDetails:
+        def __init__(self):
+            self.audio_tokens = 13
+            self.reasoning_tokens = 5
+
+    usage = MockCompletionUsage(
+        prompt_tokens=100,
+        completion_tokens=20,
+        total_tokens=120,
+        prompt_tokens_details=MockPromptTokensDetails(),
+        completion_tokens_details=MockCompletionTokensDetails(),
+    )
+
+    metrics = model._get_metrics(usage)  # type: ignore[arg-type]
+
+    assert metrics.audio_input_tokens == 11
+    assert metrics.audio_output_tokens == 13
+    assert metrics.audio_total_tokens == 24

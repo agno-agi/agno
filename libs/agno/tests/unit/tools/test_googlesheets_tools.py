@@ -35,10 +35,12 @@ def mock_drive_service():
 @pytest.fixture
 def sheets_tools(mock_credentials, mock_sheets_service):
     """Create GoogleSheetsTools instance with mocked dependencies."""
-    with patch("agno.tools.google.sheets.build") as mock_build:
+    with patch("googleapiclient.discovery.build") as mock_build:
         mock_build.return_value = mock_sheets_service
         tools = GoogleSheetsTools(creds=mock_credentials)
-        tools.service = mock_sheets_service
+        tools._service = mock_sheets_service
+        # Include drive scope to avoid _resolve_creds() re-auth in create_duplicate_sheet
+        tools.scopes.append("https://www.googleapis.com/auth/drive")
         return tools
 
 
@@ -161,7 +163,7 @@ def test_create_duplicate_sheet(sheets_tools, mock_sheets_service, mock_drive_se
     mock_drive_service.permissions.return_value = permissions_mock
 
     # Setup mock for drive service
-    with patch("agno.tools.google.sheets.build") as mock_build:
+    with patch("googleapiclient.discovery.build") as mock_build:
         mock_build.return_value = mock_drive_service
 
         # Execute test
@@ -205,9 +207,7 @@ def test_service_account():
     """Test setting service_account_path when instantiating a GoogleSheetsTools."""
     path = "/some/path"
     tool = GoogleSheetsTools(service_account_path=path)
-    with patch("agno.tools.google.sheets.ServiceAccountCredentials") as mock_creds_class:
-        tool._auth()
-    mock_creds_class.from_service_account_file.assert_called_once_with(path, scopes=tool.scopes)
+    assert tool._auth.service_account_path == path
 
 
 def test_service_account_environment_variable(monkeypatch):
@@ -215,6 +215,4 @@ def test_service_account_environment_variable(monkeypatch):
     path = "/some/path"
     monkeypatch.setenv("GOOGLE_SERVICE_ACCOUNT_FILE", path)
     tool = GoogleSheetsTools()
-    with patch("agno.tools.google.sheets.ServiceAccountCredentials") as mock_creds_class:
-        tool._auth()
-    mock_creds_class.from_service_account_file.assert_called_once_with(path, scopes=tool.scopes)
+    assert tool._get_service_account_path() == path
