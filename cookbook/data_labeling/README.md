@@ -62,6 +62,9 @@ These emit training data (JSONL with per-row provenance; filtered files print ke
 - [`_20_instruction_generation/`](_20_instruction_generation/): self-instruct from seeds, typed Evol-Instruct operators, and a topic-tree pipeline emitting SFT chat rows.
 - [`_21_rejection_sampling/`](_21_rejection_sampling/): sample K solutions and keep what a programmatic verifier or judge accepts - verified reasoning traces, best-of-n for non-verifiable prompts, and RL prompt selection by pass rate.
 - [`_22_dataset_curation/`](_22_dataset_curation/): the filters - judge quality-gate over JSONL, pure-stdlib MinHash near-dedup, and 13-gram benchmark decontamination.
+- [`_23_critique_and_revision/`](_23_critique_and_revision/): constitutional-AI-style draft, critique against a written principle, revise - SFT rows with critique provenance, plus (chosen, rejected) pairs in the exact shape the `_05` jury consumes.
+- [`_24_persona_driven_generation/`](_24_persona_driven_generation/): typed personas condition prompt and gold-answer problem generation, with a measured (not asserted) diversity report.
+- [`_25_tool_call_trajectories/`](_25_tool_call_trajectories/): function-calling SFT data validated against real agno tool schemas, multi-turn user-sim vs tool-executing assistant rollouts, and a judge filter keeping successful trajectories.
 
 ## Running a cookbook
 
