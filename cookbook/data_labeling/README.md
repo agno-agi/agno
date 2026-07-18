@@ -4,7 +4,7 @@ End-to-end examples for data classification and labeling using agents.
 
 Each subfolder holds examples for one theme, containing a `basic.py` that runs end-to-end, plus variants that add task-meaningful options on top.
 
-Workflows are organized by modality (text, image, audio, video, document) and output shape (classify, extract, rank, span-label). Further patterns (`_17_llm_as_judge`, `_18_quality_review`, `_19_inter_annotator_agreement`) compose on top of any of these.
+Workflows are organized by modality (text, image, audio, video, document) and output shape (classify, extract, rank, span-label). Further patterns (`_17_llm_as_judge`, `_18_quality_review`, `_19_inter_annotator_agreement`) compose on top of any of these, and the synthetic-data workflows (`_20`-`_22`) generate and curate training data rather than label existing inputs.
 
 Start with [`_01_text_classification/basic.py`](_01_text_classification/basic.py). Every other cookbook mirrors its structure.
 
@@ -56,6 +56,12 @@ These layer on top of any modality.
 - [`_17_llm_as_judge/`](_17_llm_as_judge/): score outputs against a rubric. The same machinery as labeling, repurposed for evals.
 - [`_18_quality_review/`](_18_quality_review/): labeler, reviewer, adjudicator pipeline applied on top of an extraction primitive.
 - [`_19_inter_annotator_agreement/`](_19_inter_annotator_agreement/): raw agreement, Fleiss' kappa, Krippendorff's alpha, and pairwise Cohen's kappa over agent labelers and jury votes, with low-agreement items routed to review.
+
+### Synthetic data generation
+These emit training data (JSONL with per-row provenance and kept/dropped counts) rather than labels.
+- [`_20_instruction_generation/`](_20_instruction_generation/): self-instruct from seeds, typed Evol-Instruct operators, and a topic-tree pipeline emitting SFT chat rows.
+- [`_21_rejection_sampling/`](_21_rejection_sampling/): sample K solutions and keep what a programmatic verifier or judge accepts - verified reasoning traces, best-of-n for non-verifiable prompts, and RL prompt selection by pass rate.
+- [`_22_dataset_curation/`](_22_dataset_curation/): the filters - judge quality-gate over JSONL, pure-stdlib MinHash near-dedup, and 13-gram benchmark decontamination.
 
 ## Running a cookbook
 
