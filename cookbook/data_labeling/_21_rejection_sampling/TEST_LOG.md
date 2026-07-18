@@ -31,3 +31,13 @@ Tested 2026-07-18 against `gemini-3.5-flash`, agno 2.7.4.
 **Result:** Observed pass rates: r1 4/4, r2 4/4, r3 4/4, r4 (digit-sum count over 1..500) 4/4, r5 (60-step iterated map mod 1013) 4/4, r6 (613th prime) 4/4, r7 (exact 17-digit multiplication) 4/4, r8 (12345th prime) 2/4. Printed "kept 1 of 8 prompts (learning zone 0 < pass@4 < 1)" and "wrote 1 rows, dropped 7 always-solved, dropped 0 never-solved"; the kept row is {"prompt": "What is the 12345th prime number?", "gold": 132241, "pass_rate": 0.5}. Designed difficulty and observed difficulty diverged sharply: every designed-hard problem was solved 4/4 (the model does exact 17x17-digit multiplication in its reasoning), and the designed-impossible prompt landed mid-band because the model estimates the 12345th prime and hits it about half the time. Band membership is noisy at K=4: in an earlier run of an earlier problem set the 613th prime scored 2/4, and calibration probes scored the 60-step map 3/4 and the 12345th prime 1/4. Runtime was about 15 minutes, dominated by reasoning tokens on the hard problems.
 
 ---
+
+### step_rewards.py
+
+**Status:** PASS
+
+**Description:** Math-Shepherd-style Monte-Carlo step scoring over the first 3 problems of basic.py's hand-verified gold set (imported, not duplicated). A solver writes one stepwise solution per problem (capped at 5 steps via instructions); each step prefix gets K=3 continuation rollouts from a default-temperature completer pinned to faithful continuation, and the step's score is the fraction of rollouts whose final_answer passes basic.py's pure-code verifier (integer equality to gold). p1's step 2 is a deliberately corrupted splice (72 - 15 miscomputed as 67). Rows {problem, steps, step_scores, k} go to data/generated/prm_rows.jsonl.
+
+**Result:** Observed step scores (MC scores are observed-once; a rerun resamples both solutions and rollouts): p1 [1.00, 0.00, 1.00] - the printout flagged "first sharp drop at step 2 (1.00 -> 0.00) - reasoning breaks here" exactly at the corrupted step, with full recovery at step 3, which re-derives 57 * 5 = 285; p2 [1.00, 1.00, 1.00, 1.00]; p3 [1.00, 1.00, 1.00, 1.00, 1.00]; both uncorrupted solutions were flat at 1.00 and printed "no sharp drop". Printed "wrote 3 rows, scored 12 steps, ran 36 rollouts". JSONL re-read confirmed 3 rows with exactly the keys problem/steps/step_scores/k, len(steps) == len(step_scores) in every row, and k == 3. Completer faithfulness is load-bearing: an earlier run with a gentler continuation instruction ("build on the given steps; do not restart from scratch") scored the same corrupted step 0.67 because 2 of 3 rollouts repaired the arithmetic mid-flight; recorded as a calibration note in the README.
+
+---

@@ -1,6 +1,6 @@
 # Data labeling
 
-Agents for labeling, classification, and synthetic data generation. 26 folders: 68 single-file runnable examples plus the `image_search` app (74 Python files in all).
+Agents for labeling, classification, and synthetic data generation. 28 folders: 75 single-file runnable examples plus the `image_search` app (81 Python files in all).
 
 Each subfolder holds examples for one theme, containing a `basic.py` that runs end-to-end, plus variants that add task-meaningful options on top.
 
@@ -65,6 +65,10 @@ These emit training data (JSONL with per-row provenance; filtered files print ke
 - [`_23_critique_and_revision/`](_23_critique_and_revision/): constitutional-AI-style draft, critique against a written principle, revise - SFT rows with critique provenance, plus (chosen, rejected) pairs in the exact shape the `_05` jury consumes.
 - [`_24_persona_driven_generation/`](_24_persona_driven_generation/): typed personas condition prompt and gold-answer problem generation, with a measured (not asserted) diversity report.
 - [`_25_tool_call_trajectories/`](_25_tool_call_trajectories/): function-calling SFT data validated against real agno tool schemas, multi-turn user-sim vs tool-executing assistant rollouts, and a judge filter keeping successful trajectories.
+
+### Scale and safety
+- [`_26_scale_out/`](_26_scale_out/): the N=100k mechanics every other folder inherits - async fan-out with bounded concurrency and measured speedup, checkpointed resume by row id, and token/cost accounting with batch-tier projections.
+- [`_27_safety_labeling/`](_27_safety_labeling/): policy-taxonomy classification with escalation, over-refusal preference pairs in the `_05` jury shape, and a persona-generated boundary-probe eval set with a content screen.
 
 ## Running a cookbook
 

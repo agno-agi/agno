@@ -13,6 +13,9 @@ a generation loop: its verdict decides row by row what enters the dataset.
 `judge_gate.py` writes all N scores with each kept row and
 `rl_prompt_selection.py` writes the pass rate; `basic.py` rows carry no
 score - their provenance is the verified final answer itself.
+`step_rewards.py` keeps every row and moves the verifier's verdict inside
+the trace: K rollouts per step prefix turn outcome checks into per-step
+scores.
 
 ## Files
 
@@ -28,6 +31,19 @@ score - their provenance is the verified final answer itself.
 - `rl_prompt_selection.py` — pass rates as a prompt filter. Problems the
   model solves 4/4 teach nothing; problems it solves 0/4 give no reward
   signal. Keep the band in between (0 < pass@4 < 1) as RL training prompts.
+- `step_rewards.py` — per-step process rewards from the same outcome check
+  (Math-Shepherd-style Monte-Carlo step scoring). `basic.py` pays an
+  outcome reward: the whole trace is kept or dropped on its final answer.
+  Here each step prefix gets K=3 continuation rollouts, and the step's
+  score is the fraction that still reach the verified gold - a process
+  reward with no judge grading steps
+  ([`_17_llm_as_judge/`](../_17_llm_as_judge/)) and no per-step human
+  labels. DeepSeek-R1 skipped neural PRMs because step correctness is hard
+  to define, step annotation does not scale, and a trained reward model
+  invites reward hacking; MC step scoring gives you per-step credit
+  assignment anyway, priced at K rollouts per step and hacking-proof to
+  the extent the verifier is. One solution carries a deliberately
+  corrupted step so the score cliff is visible.
 
 ## Example rows
 
@@ -45,10 +61,18 @@ A row written by `judge_gate.py`, with all N scores as provenance:
 {"prompt": "Write a coherent paragraph of 30 to 40 words about winter mornings that does not contain the letter 'e' anywhere.", "chosen": "Cold air grips a frosty world. A soft light slips through our window. Frost clings to glass. Our sun glows with gold, warming a cold, still city. Fog drifts, but this bright dawn brings joy.", "chosen_score": 5, "all_scores": [5, 5, 5], "judge_reason": "The response is a coherent paragraph of exactly 35 words about winter mornings that completely avoids the letter 'e'."}
 ```
 
+A row written by `step_rewards.py`. Step 2 is the deliberately corrupted
+splice (72 - 15 miscomputed as 67); its score cliffs to 0.0 and recovers
+at step 3, which re-derives the correct daily count:
+
+```json
+{"problem": "A bakery makes 12 trays of muffins per day, with 6 muffins per tray. Each day 15 muffins are set aside for staff and the rest are sold. How many muffins are sold across 5 days?", "steps": ["Multiply 12 trays of muffins by 6 muffins per tray to find the daily total of 72 muffins.", "Each day the bakery bakes 12 * 6 = 72 muffins; setting aside 15 for staff leaves 72 - 15 = 67 muffins sold per day.", "Multiply 57 muffins sold per day by 5 days to find the total of 285 muffins sold."], "step_scores": [1.0, 0.0, 1.0], "k": 3}
+```
+
 ## Calibration notes from testing
 
-Two observations from testing against `gemini-3.5-flash` (a reasoning
-model), worth knowing before trusting either gate:
+Three observations from testing against `gemini-3.5-flash` (a reasoning
+model), worth knowing before trusting these gates:
 
 - The judge gate saturates when generator and judge are the same strength.
   In our runs every prompt scored [5, 5, 5] and nothing was dropped - and
@@ -68,6 +92,15 @@ model), worth knowing before trusting either gate:
   the 613th prime scored 2/4 in one run and 4/4 in the next. Measure pass
   rates rather than guessing them, and treat K=4 as a demo cap, not a
   measurement.
+- MC step scores are only as honest as the completer is faithful. With a
+  gentle continuation instruction ("build on the given steps; do not
+  restart from scratch") the corrupted step in `step_rewards.py` scored
+  0.67: rollouts noticed the arithmetic error and repaired it mid-flight,
+  so the score measured recoverability, not step correctness. The shipped
+  instruction pins the prefix ("treat the given steps as fixed ... even if
+  you believe one contains an error"), and the same corrupted step scored
+  0.0 with a clean recovery to 1.0 on the following step. Scores are also
+  coarse at K=3 - the only observable values are 0, 1/3, 2/3, and 1.
 
 ## When to use
 
@@ -75,6 +108,10 @@ model), worth knowing before trusting either gate:
   `basic.py` when answers are programmatically checkable, `judge_gate.py`
   when they are not.
 - Selecting which prompts are worth RL compute: `rl_prompt_selection.py`.
+- Localizing the step where a reasoning trace breaks, or producing
+  per-step reward labels for process supervision: `step_rewards.py`. For
+  a judge that grades steps directly instead of rolling them out, see
+  [`_17_llm_as_judge/`](../_17_llm_as_judge/).
 - Scoring existing model outputs without gating a dataset:
   [`_17_llm_as_judge/`](../_17_llm_as_judge/).
 - Deduplicating, filtering, and packaging rows that survived the gate:
@@ -86,6 +123,7 @@ model), worth knowing before trusting either gate:
 python cookbook/data_labeling/_21_rejection_sampling/basic.py
 python cookbook/data_labeling/_21_rejection_sampling/judge_gate.py
 python cookbook/data_labeling/_21_rejection_sampling/rl_prompt_selection.py
+python cookbook/data_labeling/_21_rejection_sampling/step_rewards.py
 ```
 
 `rl_prompt_selection.py` is the slow one - expect roughly 15 minutes,
