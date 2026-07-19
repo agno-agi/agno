@@ -57,6 +57,7 @@ from agno.run.team import (
 from agno.session import TeamSession
 from agno.team._default_tools import (
     _acascading_cancel_run,
+    _await_if_needed,
     _cascading_cancel_run,
 )
 from agno.team.task import TaskList, TaskStatus, save_task_list
@@ -647,6 +648,7 @@ def _get_task_management_tools(
                     run_id=member_run_id,
                     yield_run_output=True,
                 )
+                member_stream = await _await_if_needed(member_stream)
                 draining_after_cancel = False
                 async for event in member_stream:
                     if isinstance(event, (TeamRunOutput, RunOutput)):
