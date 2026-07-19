@@ -157,6 +157,22 @@ See `symmetric/advanced_scopes.py` for comprehensive examples of:
 - Multiple permission levels
 - Audience verification
 
+### Beyond token scopes: managed roles, a user directory, custom providers
+
+The examples above authorize straight from the token's `scopes`. When you'd rather
+decide access *inside* AgentOS -- assign someone a role at runtime, keep a list of
+users, or plug in your own policy -- use these. Each one is runnable
+(`python <file>`) and prints a real ALLOWED/BLOCKED transcript.
+
+| Example | What it shows |
+|---------|---------------|
+| `managed_roles.py` | Assign a **role** to a user and change it at runtime. The token carries no scopes; the store decides. |
+| `managed_users.py` | The credential-less **user directory** + the disabled kill-switch: disabling someone blocks their next request even though their token is still valid. |
+| `managed_roles_sessions.py` | Role-based control over the session surface (read vs rename vs delete). |
+| `managed_roles_audit.py` | The **audit trail**: a change trail (who changed which role) plus a decision trail (every allow/deny). |
+| `custom_authorization_provider.py` | Write your **own** `AuthorizationProvider` (here: pricing tiers) and plug it into the same enforcement points. |
+| `idp_workos_auth0.py` | Map **roles from your IdP** (WorkOS/Auth0/Okta) claims onto AgentOS permissions, verified against a JWKS. |
+
 ## Quick Start
 
 ### 1. Enable RBAC
