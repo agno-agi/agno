@@ -14,8 +14,8 @@ class CodeScorer:
 
     A `bool` becomes `Score(1.0, True)` / `Score(0.0, False)` -- `pass_threshold` is not
     consulted. A `float` is passed through with `passed = value >= pass_threshold`; an
-    `int` is accepted and treated as a float; a value outside [0, 1] raises rather than
-    clamping. A `Score` is used verbatim. Sync callables run via `asyncio.to_thread`;
+    `int` is accepted and treated as a float; a value outside [0, 1] raises. A `Score`
+    is used verbatim. Sync callables run via `asyncio.to_thread`;
     coroutine functions, and callable objects whose `__call__` is async, are awaited.
 
     `run.content` is `Any`, not `str`: under `output_schema` it is a pydantic model, and

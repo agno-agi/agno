@@ -34,8 +34,8 @@ class Score:
     detail: Optional[Dict[str, Any]] = None
 
     def __post_init__(self) -> None:
-        # Raise rather than clamp: a scorer written against a 1-10 mental model must
-        # fail loudly, not silently green every attempt.
+        # An out-of-range value fails loudly: a scorer written against a 1-10 mental
+        # model must not silently green every attempt.
         if not 0.0 <= self.value <= 1.0:
             raise ValueError(f"Score.value must be in [0, 1], got {self.value}")
 
