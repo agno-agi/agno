@@ -1,6 +1,6 @@
 """Unit tests for ReliabilityEval.
 
-Since 2.7.5 tool evidence comes from executions (`RunOutput.tools`), not message-side
+Since 2.8.0 tool evidence comes from executions (`RunOutput.tools`), not message-side
 requests: fixtures build `ToolExecution`s, and an expectation is satisfied only by a
 clean one (`tool_call_error` not true). The semantics these tests encode -- unordered
 name-set matching, duplicates satisfied by one call, subset argument matching,
@@ -16,7 +16,7 @@ from agno.models.message import Message
 from agno.models.response import ToolExecution
 from agno.run.agent import RunOutput
 
-_ANNOTATION = "(requested but refused/errored — execution matching, new in 2.7.5)"
+_ANNOTATION = "(requested but refused/errored — execution matching, new in 2.8.0)"
 
 
 def _make_execution(name: str, arguments: dict = None, error: bool = None) -> ToolExecution:
@@ -88,7 +88,7 @@ def test_fails_when_no_tools_called():
 
 
 # ---------------------------------------------------------------------------
-# Execution matching (new in 2.7.5): refused, errored, and HITL calls
+# Execution matching (new in 2.8.0): refused, errored, and HITL calls
 # ---------------------------------------------------------------------------
 
 

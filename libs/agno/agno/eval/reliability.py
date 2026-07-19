@@ -201,7 +201,7 @@ class ReliabilityEval:
                     missing_names.add(expected_tool)
                     if expected_tool in attempted_names:
                         missing_tool_calls.append(
-                            f"{expected_tool} (requested but refused/errored — execution matching, new in 2.7.5)"
+                            f"{expected_tool} (requested but refused/errored — execution matching, new in 2.8.0)"
                         )
                     else:
                         missing_tool_calls.append(expected_tool)
