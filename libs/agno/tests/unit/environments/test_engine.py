@@ -405,3 +405,34 @@ def bench_agent_construction_share():
 def test_bench_agent_construction_share():
     # pytest only collects test_*; this wrapper runs the named bench.
     bench_agent_construction_share()
+
+
+# ---------------------------------------------------------------------------
+# Engine hardening (review-round fixes)
+# ---------------------------------------------------------------------------
+
+
+async def test_callback_error_does_not_destroy_batch():
+    # A broken on_attempt_end must not cost the batch: it is disabled after the
+    # first raise and every AttemptResult still comes back.
+    def broken_callback(input_index, attempt_index, attempt):
+        raise RuntimeError("renderer bug")
+
+    results = await arun_batch(StubAgent(), ["a", "b"], k=2, concurrency=2, on_attempt_end=broken_callback)
+
+    flat = [attempt for attempts in results for attempt in attempts]
+    assert len(flat) == 4
+    assert all(attempt.stop_reason == "completed" for attempt in flat)
+
+
+async def test_engine_validates_bounds():
+    with pytest.raises(ValueError, match="k must be"):
+        await arun_batch(StubAgent(), ["a"], k=0)
+    # concurrency=0 would hang forever on Semaphore(0), not raise.
+    with pytest.raises(ValueError, match="concurrency must be"):
+        await arun_batch(StubAgent(), ["a"], concurrency=0)
+    # Bare strings satisfy Sequence but zip per character.
+    with pytest.raises(TypeError, match="bare string"):
+        await arun_batch(StubAgent(), "abc")
+    with pytest.raises(TypeError, match="bare string"):
+        await arun_batch(StubAgent(), ["abc"], expected="x")

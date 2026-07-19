@@ -21,6 +21,7 @@ from agno.run.base import RunStatus
 from agno.run.team import RunErrorEvent as TeamRunErrorEvent
 from agno.run.team import TeamRunOutput
 from agno.scorer import AnyRunOutput, Score, Scorer
+from agno.utils.log import log_warning
 
 _RUN_ERROR_EVENTS = (RunErrorEvent, TeamRunErrorEvent)
 
@@ -249,11 +250,23 @@ async def arun_batch(
     skipped -- their slots are simply absent from the inner tuples -- while in-flight
     attempts drain normally.
     """
+    if k < 1:
+        raise ValueError(f"k must be >= 1, got {k}")
+    if concurrency < 1:
+        # Semaphore(0) would make every attempt block forever instead of raising.
+        raise ValueError(f"concurrency must be >= 1, got {concurrency}")
+    if isinstance(inputs, str):
+        raise TypeError("inputs must be a sequence of input strings, not a bare string")
+    if isinstance(expected, str):
+        raise TypeError("expected must be a sequence zipped to inputs, not a bare string")
     if expected is not None and len(expected) != len(inputs):
         raise ValueError(f"expected has length {len(expected)} but inputs has length {len(inputs)}; they are zipped")
 
     semaphore = asyncio.Semaphore(concurrency)
     results: Dict[Tuple[int, int], AttemptResult] = {}
+    # A broken callback must not read as a batch failure: disable it after the first
+    # raise instead of destroying the completed AttemptResults.
+    callback_enabled = [True]
 
     async def _bounded(input_index: int, attempt_index: int) -> None:
         async with semaphore:
@@ -262,8 +275,14 @@ async def arun_batch(
             expected_value = expected[input_index] if expected is not None else None
             result = await _run_attempt(subject, inputs[input_index], expected_value, scorer, timeout_seconds)
             results[(input_index, attempt_index)] = result
-            if on_attempt_end is not None:
-                on_attempt_end(input_index, attempt_index, result)
+            if on_attempt_end is not None and callback_enabled[0]:
+                try:
+                    on_attempt_end(input_index, attempt_index, result)
+                except Exception as exc:
+                    callback_enabled[0] = False
+                    log_warning(
+                        f"on_attempt_end raised {type(exc).__name__}: {exc}; disabled for the rest of the batch"
+                    )
 
     tasks = [
         asyncio.ensure_future(_bounded(input_index, attempt_index))
