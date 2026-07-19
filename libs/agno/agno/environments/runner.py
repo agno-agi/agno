@@ -500,7 +500,10 @@ def _read_only_learning_machine(machine: Any, source_db: Any) -> Any:
     surfaces -- are dropped loudly. Bare-True store configs (and the knowledge
     auto-enable, which defaults its save tools ON) are materialized first so the
     flag pass can reach them. Per-user reads still come back empty: the attempt
-    runs a fresh rollout user."""
+    runs a fresh rollout user. One deliberate prompt deviation follows from the
+    severing: store context blocks that mention their update tools lose those
+    sentences, exactly like the agentic memory/culture tool blocks -- write-tool
+    text describes tools the attempt does not have."""
     from agno.learn.config import (
         DecisionLogConfig,
         EntityMemoryConfig,

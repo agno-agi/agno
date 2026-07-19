@@ -1065,8 +1065,9 @@ async def test_hermetic_real_agent_full_override_set(tmp_path):
     assert summary_manager.model is None  # attempt init never wrote its model here
     assert caller.fallback_config.on_error[0].cache_response is True
     assert not save_path.exists()
-    # Exactly one provider call per attempt on the main model, none anywhere else:
-    # no summary call, no reasoning call, no memory call rode along.
+    # Exactly one provider call per attempt on the main model, none anywhere
+    # else: no summary or memory call rode along. (Reasoning is not enabled on
+    # this caller, so the reasoning slots are exercised as bindings only.)
     assert [call[0] for call in calls] == ["fake-main", "fake-main"]
 
 
@@ -1360,6 +1361,19 @@ async def test_read_parity_culture():
 
     attempt_prompt, production_prompt = await _parity_prompts(build)
     assert "CULTURE-MARKER-XYZZY" in attempt_prompt  # global culture reads survive
+    assert attempt_prompt == production_prompt
+
+
+async def test_read_parity_culture_write_flag_only_no_db():
+    # The gate's path 5a: a caller with only a culture WRITE flag and no db.
+    # Production resolves add_culture_to_context=True and renders the culture
+    # empty state; severing the write flag before resolution used to lose the
+    # whole block. Resolution now runs first, against the attempt's fresh db.
+    def build(model):
+        return Agent(model=model, update_cultural_knowledge=True, telemetry=False)
+
+    attempt_prompt, production_prompt = await _parity_prompts(build)
+    assert "no cultural knowledge is currently available" in attempt_prompt
     assert attempt_prompt == production_prompt
 
 
