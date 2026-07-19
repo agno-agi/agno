@@ -45,6 +45,13 @@ def test_runtime_and_local_behavior_fields_do_not_split():
     assert model_identity_payload(OpenAIResponses(id="gpt-5.5", cache_response=True)) == model_identity_payload(
         OpenAIResponses(id="gpt-5.5")
     )
+    # Provider-side bookkeeping: request tags, response storage, and the
+    # abuse-attribution user id never shape the sampled distribution, and they
+    # routinely differ between otherwise-identical baseline and current runs.
+    plain = model_identity_payload(OpenAIResponses(id="gpt-5.5"))
+    assert model_identity_payload(OpenAIResponses(id="gpt-5.5", metadata={"run": "a"})) == plain
+    assert model_identity_payload(OpenAIResponses(id="gpt-5.5", store=True)) == plain
+    assert model_identity_payload(OpenAIResponses(id="gpt-5.5", user="tenant-42")) == plain
 
 
 def test_prompt_fields_are_env_not_policy():
@@ -86,19 +93,16 @@ _PINNED_OPENAI_RESPONSES_FIELDS = [
     "include",
     "max_output_tokens",
     "max_tool_calls",
-    "metadata",
     "parallel_tool_calls",
     "reasoning",
     "reasoning_effort",
     "reasoning_summary",
     "request_params",
     "service_tier",
-    "store",
     "strict_output",
     "temperature",
     "top_p",
     "truncation",
-    "user",
     "verbosity",
 ]
 
@@ -110,7 +114,6 @@ _PINNED_OPENAI_CHAT_FIELDS = [
     "logprobs",
     "max_completion_tokens",
     "max_tokens",
-    "metadata",
     "modalities",
     "presence_penalty",
     "reasoning_effort",
@@ -118,12 +121,10 @@ _PINNED_OPENAI_CHAT_FIELDS = [
     "seed",
     "service_tier",
     "stop",
-    "store",
     "strict_output",
     "temperature",
     "top_logprobs",
     "top_p",
-    "user",
     "verbosity",
 ]
 

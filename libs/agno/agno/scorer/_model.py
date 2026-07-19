@@ -41,7 +41,11 @@ _INFRASTRUCTURE_FIELDS = frozenset(
 _RUNTIME_FIELDS = frozenset({"model_type"})
 
 # Local client behavior -- retries, response cache, display names, message-role
-# plumbing, capability flags. None of it changes the sampled distribution.
+# plumbing, capability flags -- plus provider-side bookkeeping (metadata request
+# tags, store, the abuse-attribution user id). None of it changes the sampled
+# distribution. service_tier is NOT here: it routes requests to different
+# processing infrastructure and is not provably output-neutral, so it stays
+# enumerated.
 _LOCAL_BEHAVIOR_FIELDS = frozenset(
     {
         "retries",
@@ -62,6 +66,9 @@ _LOCAL_BEHAVIOR_FIELDS = frozenset(
         "name",
         "supports_native_structured_outputs",
         "supports_json_schema_outputs",
+        "metadata",
+        "store",
+        "user",
     }
 )
 

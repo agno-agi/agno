@@ -8,6 +8,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
+import agno.utils.log as log_module
 from agno.exceptions import InputCheckError, OutputCheckError
 from agno.guardrails.base import BaseGuardrail
 from agno.run import RunContext
@@ -19,6 +20,18 @@ from agno.team._hooks import (
     _execute_pre_hooks,
 )
 from agno.utils.hooks import normalize_pre_hooks
+
+
+@pytest.fixture(autouse=True)
+def _restore_debug_globals():
+    # The inline hook path ends in set_debug(team), and these tests pass MagicMock
+    # teams: set_debug copies team.debug_level -- a MagicMock attribute -- into
+    # agno.utils.log's module globals, and nothing restores them, so every later
+    # real-run test in the same session dies on `MagicMock >= int` inside log_debug.
+    original_on, original_level = log_module.debug_on, log_module.debug_level
+    yield
+    log_module.debug_on = original_on
+    log_module.debug_level = original_level
 
 
 class BlockingGuardrail(BaseGuardrail):
@@ -52,6 +65,7 @@ def _make_team(run_hooks_in_background: bool = True) -> MagicMock:
     team = MagicMock()
     team._run_hooks_in_background = run_hooks_in_background
     team.debug_mode = False
+    team.debug_level = 1  # a real int: set_debug forwards this into log globals
     team.events_to_skip = None
     team.store_events = False
     return team

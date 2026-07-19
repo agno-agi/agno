@@ -198,9 +198,10 @@ async def test_hermetic_no_memory_capture():
 
 
 async def test_hermetic_no_learning_writes():
-    # deep_copy shares a LearningMachine by reference and it resolves against its own
-    # db: left attached, a "hermetic" run would write learning updates to the
-    # caller's real store.
+    # deep_copy shares the learning value by reference: a real LearningMachine gets
+    # a read-only rebind (pinned by test_learning_reads_survive_hermetic_attempts);
+    # anything else truthy -- learning=True, duck-typed stand-ins like this one --
+    # is nulled, never left attached to write into the caller's store.
     recorder = Recorder()
     caller_learning = object()
     env = _stub_env(recorder, learning=caller_learning)
@@ -851,15 +852,21 @@ class RecordingFakeModel(Model):
     list each call received. The runner's per-attempt copy.copy shares the mutable
     records, so the caller-side lists see attempt traffic."""
 
-    def __init__(self, tag="fake", calls=None, seen_messages=None):
+    def __init__(self, tag="fake", calls=None, seen_messages=None, seen_tools=None):
         super().__init__(id=f"fake-{tag}", name=f"fake-{tag}", provider="test")
         self.calls = calls if calls is not None else []
         self.seen_messages = seen_messages if seen_messages is not None else []
+        self.seen_tools = seen_tools if seen_tools is not None else []
 
     def __deepcopy__(self, memo):
         # Fallback resolution deepcopies models; keep sharing the records and the
         # cache flag so tests can observe both across the copy.
-        clone = type(self)(tag=self.id.removeprefix("fake-"), calls=self.calls, seen_messages=self.seen_messages)
+        clone = type(self)(
+            tag=self.id.removeprefix("fake-"),
+            calls=self.calls,
+            seen_messages=self.seen_messages,
+            seen_tools=self.seen_tools,
+        )
         clone.cache_response = self.cache_response
         return clone
 
@@ -869,6 +876,11 @@ class RecordingFakeModel(Model):
             if isinstance(value, list) and value and all(isinstance(m, Message) for m in value):
                 self.seen_messages.append(list(value))
                 break
+        for tool in kwargs.get("tools") or []:
+            if isinstance(tool, dict):
+                name = tool.get("function", {}).get("name") or tool.get("name")
+                if name:
+                    self.seen_tools.append(name)
         return ModelResponse(role="assistant", content="The answer is 42.")
 
     def invoke(self, *args, **kwargs):
@@ -1015,6 +1027,8 @@ async def test_hermetic_real_agent_full_override_set(tmp_path):
         assert attempt_agent.session_summary_manager is None
         assert attempt_agent.enable_session_summaries is False
         assert attempt_agent.memory_manager is None
+        assert attempt_agent.add_memories_to_context is False
+        assert attempt_agent.add_session_summary_to_context is False
         assert attempt_agent.compression_manager is not compression_manager
         assert attempt_agent.compression_manager.stats == {}
         assert attempt_agent.compression_manager.stats is not compression_manager.stats
@@ -1030,6 +1044,8 @@ async def test_hermetic_real_agent_full_override_set(tmp_path):
     # The caller is untouched, in objects and in side effects.
     assert caller.db is caller_db
     assert caller.model is main_model and main_model.cache_response is True
+    assert caller.add_memories_to_context is None
+    assert caller.add_session_summary_to_context is None
     assert summary_manager.model is None  # attempt init never wrote its model here
     assert caller.fallback_config.on_error[0].cache_response is True
     assert not save_path.exists()
@@ -1062,6 +1078,117 @@ async def test_culture_reads_survive_hermetic_attempts():
     assert "no cultural knowledge is currently available" not in prompt_text
 
 
+class FakeLearnedKnowledge:
+    """Duck-typed knowledge store holding one GLOBAL learned item, recording reads
+    and any write reaching it."""
+
+    def __init__(self):
+        self.search_calls = []
+        self.writes = []
+        self.items = [
+            {"content": '{"title": "Deploy rule", "learning": "LEARNING-MARKER-XYZZY", "namespace": "global"}'}
+        ]
+
+    def search(self, query, max_results=5, filters=None, **kwargs):
+        self.search_calls.append(query)
+        return list(self.items)
+
+    def __getattr__(self, name):
+        if name.startswith(("add", "upsert", "insert", "save", "delete")):
+
+            def _write(*args, **kwargs):
+                self.writes.append((name, args, kwargs))
+
+            return _write
+        raise AttributeError(name)
+
+
+async def test_learning_reads_survive_hermetic_attempts():
+    # Regression pin: nulling agent.learning severed global learned-knowledge READS
+    # -- the <learning_system> block, the search_learnings tool, the store read
+    # path -- when only the writes must go. Learned knowledge is global state like
+    # culture, so attempts read it exactly as production does.
+    from agno.learn import LearningMachine
+    from agno.learn.config import LearnedKnowledgeConfig
+
+    seen_messages = []
+    seen_tools = []
+    recording_model = RecordingFakeModel("learning", seen_messages=seen_messages, seen_tools=seen_tools)
+    knowledge = FakeLearnedKnowledge()
+    machine = LearningMachine(learned_knowledge=LearnedKnowledgeConfig(knowledge=knowledge))
+    caller = Agent(model=recording_model, db=InMemoryDb(), learning=machine, telemetry=False)
+
+    result = await arun_rollouts(_real_env(caller), k=1, concurrency=1)
+
+    assert result.pass_rate == 1.0
+    prompt_text = "\n".join(
+        str(message.content) for messages in seen_messages for message in messages if message.content
+    )
+    assert "<learning_system>" in prompt_text
+    assert "search_learnings" in seen_tools  # the read tool survives
+    assert "save_learning" not in seen_tools  # the write tool does not
+    assert knowledge.writes == []
+    # The caller's machine is untouched and still writable in production.
+    assert caller.learning is machine
+    assert machine.learned_knowledge.agent_can_save is True
+
+
+async def test_hermetic_learning_extraction_never_fires():
+    # An ALWAYS-mode store extracts after every run via an extra model call; inside
+    # an attempt that call must not ride along and nothing may land in the caller's
+    # store -- while the read surfaces stay up.
+    from agno.learn import LearningMachine
+    from agno.learn.config import LearnedKnowledgeConfig, LearningMode
+
+    calls = []
+    recording_model = RecordingFakeModel("main", calls=calls)
+    knowledge = FakeLearnedKnowledge()
+    machine = LearningMachine(
+        learned_knowledge=LearnedKnowledgeConfig(knowledge=knowledge, mode=LearningMode.ALWAYS),
+    )
+    caller = Agent(model=recording_model, db=InMemoryDb(), learning=machine, telemetry=False)
+
+    result = await arun_rollouts(_real_env(caller), k=2, concurrency=2)
+
+    assert result.pass_rate == 1.0
+    assert [call[0] for call in calls] == ["fake-main", "fake-main"]  # no extraction call rode along
+    assert knowledge.writes == []
+    assert machine.learned_knowledge.mode is LearningMode.ALWAYS  # caller config untouched
+
+
+async def test_attempt_prompt_same_whether_caller_ran_before_handover():
+    # add_memories_to_context / add_session_summary_to_context default to None and
+    # are resolved IN PLACE on the caller's first run: without the override forcing
+    # them off, an already-run caller handed its attempts a memory boilerplate
+    # block that a never-run caller's attempts did not get -- two prompts for the
+    # same Env and task.
+    from agno.memory import MemoryManager
+
+    def build_caller(tag, seen_messages):
+        return Agent(
+            model=RecordingFakeModel(tag, seen_messages=seen_messages),
+            db=InMemoryDb(),
+            memory_manager=MemoryManager(),
+            telemetry=False,
+        )
+
+    seen_fresh = []
+    fresh_caller = build_caller("fresh", seen_fresh)
+
+    seen_ran = []
+    ran_caller = build_caller("ran", seen_ran)
+    await ran_caller.arun(input="warmup")  # resolves the context flags on the caller
+    seen_ran.clear()
+
+    await arun_rollouts(_real_env(fresh_caller), k=1, concurrency=1)
+    await arun_rollouts(_real_env(ran_caller), k=1, concurrency=1)
+
+    fresh_prompts = ["\n".join(str(m.content) for m in messages) for messages in seen_fresh]
+    ran_prompts = ["\n".join(str(m.content) for m in messages) for messages in seen_ran]
+    assert fresh_prompts and fresh_prompts == ran_prompts
+    assert "retain memories" not in "\n".join(ran_prompts)
+
+
 class MCPTools:
     """Named exactly like the real class: the run-start guard matches on MRO class
     names, mirroring the run path's own MCP detection -- so this stand-in triggers
@@ -1085,6 +1212,38 @@ async def test_factory_env_with_mcp_tools_not_rejected():
         return stub
 
     env = Env(name="mcp-factory", tasks=(EnvTask(input="one"),), scorer=CodeScorer(lambda r, e: True), agent=factory)
+    result = await arun_rollouts(env, k=1, concurrency=1)
+    assert result.n_attempts == 1
+
+
+async def test_live_agent_with_nested_mcp_tools_rejected_at_run_start():
+    # deep_copy shares a reasoning agent's tools by reference exactly like
+    # top-level ones: the guard must see MCPTools anywhere the hermetic walk goes.
+    caller = Agent(
+        model=RecordingFakeModel("mcp-outer"),
+        reasoning_agent=Agent(model=RecordingFakeModel("mcp-inner"), tools=[MCPTools()], telemetry=False),
+        telemetry=False,
+    )
+    with pytest.raises(RuntimeError, match="factory"):
+        await arun_rollouts(_real_env(caller), k=1)
+
+
+async def test_factory_env_with_nested_mcp_tools_not_rejected():
+    recorder = Recorder()
+
+    def factory():
+        stub = StubRolloutAgent(recorder)
+        nested = StubRolloutAgent(recorder)
+        nested.tools = [MCPTools()]
+        stub.reasoning_agent = nested
+        return stub
+
+    env = Env(
+        name="mcp-nested-factory",
+        tasks=(EnvTask(input="one"),),
+        scorer=CodeScorer(lambda r, e: True),
+        agent=factory,
+    )
     result = await arun_rollouts(env, k=1, concurrency=1)
     assert result.n_attempts == 1
 

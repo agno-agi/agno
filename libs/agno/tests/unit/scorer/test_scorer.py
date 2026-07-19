@@ -45,6 +45,24 @@ def test_scorer_does_not_import_eval_or_environments():
     assert not offenders, offenders
 
 
+def test_scorer_and_suite_import_cleanly_in_fresh_interpreters():
+    # eval imports scorer at module scope (the allowed direction; suite.py needs
+    # real Score/Scorer names so get_type_hints resolves over Case/CaseResult), and
+    # importing any scorer submodule executes the whole package __init__ -- judge.py
+    # included, which builds on agno.agent. That is safe exactly as long as
+    # agno.agent never imports agno.eval.suite back; a fresh interpreter per entry
+    # point catches that cycle the moment it becomes real, where in-process test
+    # imports would mask it.
+    for entry in ("import agno.scorer", "import agno.eval.suite"):
+        result = subprocess.run(
+            [sys.executable, "-c", entry],
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+        assert result.returncode == 0, f"{entry!r} failed in a fresh interpreter:\n{result.stderr}"
+
+
 def test_no_lowercase_status_literals():
     # RunStatus subclasses str with UPPERCASE values, so `run.status == "completed"`
     # is silently always false -- and mypy accepts the comparison as overlapping.
