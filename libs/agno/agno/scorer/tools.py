@@ -45,11 +45,22 @@ class ToolCallScorer:
         arguments: Optional[Dict[str, Union[Dict[str, Any], List[Dict[str, Any]]]]] = None,
         allow_additional: bool = True,
     ) -> None:
+        if isinstance(expected_tools, str):
+            raise TypeError(f"expected_tools must be a sequence of tool names, not the bare string {expected_tools!r}")
         # Dedupe preserving declaration order: duplicate expected names are one check.
         self.expected_tools = list(dict.fromkeys(expected_tools))
         self.arguments = arguments
         self.allow_additional = allow_additional
-        if not self.expected_tools and not self.arguments:
+        # A scorer with zero checks would vacuously green every run. Count the checks
+        # exactly as score() will: an arguments entry whose spec list is empty
+        # contributes none, so it is rejected too.
+        n_spec_checks = 0
+        for tool_name, raw_specs in (arguments or {}).items():
+            specs = raw_specs if isinstance(raw_specs, list) else [raw_specs]
+            if not specs:
+                raise ValueError(f"argument specs for {tool_name!r} are empty; an empty list checks nothing")
+            n_spec_checks += len(specs)
+        if not self.expected_tools and n_spec_checks == 0:
             raise ValueError("ToolCallScorer needs expected_tools and/or arguments; with neither there is no check")
 
     def score(self, run: AnyRunOutput, expected: Any = None) -> Score:
@@ -85,7 +96,10 @@ class ToolCallScorer:
                     else:
                         notes.append(f"no clean {tool_name!r} execution matches arguments {spec!r}")
 
-        additional = [name for name in sorted(clean_names) if name not in self.expected_tools]
+        # A call the scorer itself expects -- by name or through an argument spec --
+        # is never "additional": an arguments-only strict scorer must be satisfiable.
+        allowed_names = set(self.expected_tools) | set(self.arguments or {})
+        additional = [name for name in sorted(clean_names) if name not in allowed_names]
         all_satisfied = n_satisfied == n_checks
         passed = all_satisfied
         if not self.allow_additional and additional:
@@ -97,7 +111,8 @@ class ToolCallScorer:
         if isinstance(run, TeamRunOutput) and any(member.tools for member in run.member_responses or []):
             notes.append("member tool executions were not inspected (member matching is out of scope for 2.7.5)")
 
-        value = n_satisfied / n_checks if n_checks else 1.0
+        # The constructor guarantees at least one check.
+        value = n_satisfied / n_checks
         return Score(value=value, passed=passed, reason="; ".join(notes) if notes else None)
 
     async def ascore(self, run: AnyRunOutput, expected: Any = None) -> Score:

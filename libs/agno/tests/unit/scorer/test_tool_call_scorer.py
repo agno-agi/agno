@@ -137,3 +137,27 @@ def test_tool_call_scorer_team_top_level_only():
 def test_tool_call_scorer_requires_a_check():
     with pytest.raises(ValueError, match="expected_tools"):
         ToolCallScorer([])
+    # A truthy arguments dict whose spec lists are empty contributes zero checks --
+    # it must not construct a scorer that vacuously greens every run.
+    with pytest.raises(ValueError, match="empty"):
+        ToolCallScorer([], arguments={"search": []})
+    # A bare string would be exploded into per-character expectations.
+    with pytest.raises(TypeError, match="bare string"):
+        ToolCallScorer("search")
+
+
+def test_tool_call_scorer_arguments_only_strict_mode_satisfiable():
+    # A tool named only in `arguments` is a required check, not an "additional" call:
+    # an arguments-only strict scorer must pass a run containing exactly that call.
+    run = _run_with(ToolExecution(tool_name="search", tool_args={"query": "agno"}))
+    result = ToolCallScorer([], arguments={"search": {"query": "agno"}}, allow_additional=False).score(run)
+    assert result.passed is True
+    assert result.value == 1.0
+
+    # A genuinely unrelated clean call still fails strict mode.
+    with_extra = _run_with(
+        ToolExecution(tool_name="search", tool_args={"query": "agno"}),
+        ToolExecution(tool_name="summarize"),
+    )
+    strict = ToolCallScorer([], arguments={"search": {"query": "agno"}}, allow_additional=False).score(with_extra)
+    assert strict.passed is False

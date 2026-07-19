@@ -168,6 +168,10 @@ def test_all_scorers_have_sync_score():
     assert tool_scorer.score(_run()).passed is False
     assert judge_scorer.score(_run()).passed is True
 
-    # A third-party scorer implementing only ascore still satisfies the protocol.
-    for scorer in (code_scorer, tool_scorer, judge_scorer):
+    # A third-party scorer implementing only ascore also satisfies the protocol.
+    class AscoreOnly:
+        async def ascore(self, run, expected=None):
+            return Score(value=1.0, passed=True)
+
+    for scorer in (code_scorer, tool_scorer, judge_scorer, AscoreOnly()):
         assert isinstance(scorer, Scorer)
