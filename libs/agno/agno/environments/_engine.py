@@ -78,17 +78,16 @@ def _materialize(subject: Any) -> Any:
     `cache_response` is disabled unconditionally on the effective model: the response
     cache is a shared disk cache keyed by messages, so a cached attempt is a replay,
     not a sample -- K identical attempts, zero variance, a silently degenerate
-    environment. For a live subject the model is `copy.copy`'d first (shallow, so the
+    environment. On both branches the model is `copy.copy`'d first (shallow, so the
     HTTP client underneath stays shared) and the flag set on the copy, never on the
-    caller's instance; a factory-built model is fresh, so direct assignment is enough.
+    incoming instance: a factory product usually carries a fresh model, but a factory
+    closure may share one model object across calls, and flipping the flag in place
+    would mutate the caller's instance.
     """
     if callable(subject):
         agent = subject()
-        model = getattr(agent, "model", None)
-        if model is not None:
-            model.cache_response = False
-        return agent
-    agent = subject.deep_copy()
+    else:
+        agent = subject.deep_copy()
     model = getattr(agent, "model", None)
     if model is not None:
         model_copy = copy.copy(model)
