@@ -1,0 +1,117 @@
+"""ToolCallScorer: deterministic tool-call checking against executions."""
+
+import hashlib
+import json
+from typing import Any, Dict, List, Optional, Sequence, Union
+
+from agno.models.response import ToolExecution
+from agno.run.team import TeamRunOutput
+from agno.scorer.base import AnyRunOutput, EnvFingerprintError, Score
+
+
+class ToolCallScorer:
+    """Check tool calls against `RunOutput.tools` -- the executions, not the requests.
+
+    Request-side matching counts a call that was refused, errored, or given junk
+    arguments, which makes it satisfiable without the tool ever doing work. An
+    expectation here is satisfied only by an execution whose `tool_call_error` is not
+    true (`None` counts as clean: rehydrated runs carry `None` for success).
+
+    Matching semantics: order-insensitive; an expectation is satisfied by at least one
+    clean execution of that name; duplicate expected names are satisfied by a single
+    call (set semantics). Argument specs match by subset -- every expected key present
+    with an equal value in `ToolExecution.tool_args`, extra actual keys allowed, no
+    type coercion. `value` is the fraction of checks satisfied (name expectations plus
+    argument specs, equally weighted); `passed` requires every check satisfied and,
+    under `allow_additional=False`, no additional clean calls.
+
+    The per-task `expected` argument of `score`/`ascore` is not consulted: tool
+    expectations live on the constructor as `expected_tools`. A task suite whose
+    per-task expectations are answers can still use this scorer; they simply don't
+    reach it.
+
+    For a `TeamRunOutput` only the top-level `tools` -- the leader's executions -- are
+    inspected. Member tool matching is out of scope for 2.7.5; when member responses
+    carry tools the `Score.reason` names the limitation.
+
+    Name-only matching remains satisfiable by a successful call with junk arguments.
+    For reward use, set `arguments`.
+    """
+
+    def __init__(
+        self,
+        expected_tools: Sequence[str],
+        *,
+        arguments: Optional[Dict[str, Union[Dict[str, Any], List[Dict[str, Any]]]]] = None,
+        allow_additional: bool = True,
+    ) -> None:
+        # Dedupe preserving declaration order: duplicate expected names are one check.
+        self.expected_tools = list(dict.fromkeys(expected_tools))
+        self.arguments = arguments
+        self.allow_additional = allow_additional
+        if not self.expected_tools and not self.arguments:
+            raise ValueError("ToolCallScorer needs expected_tools and/or arguments; with neither there is no check")
+
+    def score(self, run: AnyRunOutput, expected: Any = None) -> Score:
+        executions: List[ToolExecution] = list(run.tools or [])
+        # A refused call never enters run.tools; a rejected HITL call does, marked by
+        # tool_call_error=True. `not t.tool_call_error` is the only correct filter:
+        # is_paused is cleared on resume, and `requires_confirmation and not confirmed`
+        # is false for a rejected call too.
+        clean = [t for t in executions if not t.tool_call_error]
+        clean_names = {t.tool_name for t in clean if t.tool_name}
+
+        notes: List[str] = []
+        n_checks = 0
+        n_satisfied = 0
+
+        for name in self.expected_tools:
+            n_checks += 1
+            if name in clean_names:
+                n_satisfied += 1
+            else:
+                notes.append(f"expected tool {name!r} has no clean execution")
+
+        if self.arguments:
+            for tool_name, raw_specs in self.arguments.items():
+                specs = raw_specs if isinstance(raw_specs, list) else [raw_specs]
+                candidates = [dict(t.tool_args or {}) for t in clean if t.tool_name == tool_name]
+                for spec in specs:
+                    n_checks += 1
+                    if any(
+                        all(key in args and args[key] == value for key, value in spec.items()) for args in candidates
+                    ):
+                        n_satisfied += 1
+                    else:
+                        notes.append(f"no clean {tool_name!r} execution matches arguments {spec!r}")
+
+        additional = [name for name in sorted(clean_names) if name not in self.expected_tools]
+        all_satisfied = n_satisfied == n_checks
+        passed = all_satisfied
+        if not self.allow_additional and additional:
+            passed = False
+            notes.append(f"additional tool calls not allowed: {additional}")
+
+        if not executions:
+            notes.insert(0, "run has no tool executions")
+        if isinstance(run, TeamRunOutput) and any(member.tools for member in run.member_responses or []):
+            notes.append("member tool executions were not inspected (member matching is out of scope for 2.7.5)")
+
+        value = n_satisfied / n_checks if n_checks else 1.0
+        return Score(value=value, passed=passed, reason="; ".join(notes) if notes else None)
+
+    async def ascore(self, run: AnyRunOutput, expected: Any = None) -> Score:
+        return self.score(run, expected)
+
+    def digest(self) -> str:
+        """sha256 hex over the scorer's expectations, for `env_fingerprint`."""
+        payload = {
+            "expected_tools": sorted(self.expected_tools),
+            "arguments": self.arguments,
+            "allow_additional": self.allow_additional,
+        }
+        try:
+            canonical = json.dumps(payload, sort_keys=True, ensure_ascii=True, separators=(",", ":"))
+        except (TypeError, ValueError) as exc:
+            raise EnvFingerprintError(f"ToolCallScorer expectations are not JSON-serializable: {exc}") from exc
+        return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
