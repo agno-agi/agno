@@ -220,7 +220,7 @@ class SuiteResult:
                     "skipped": result.skipped,
                     "passed": result.passed,
                     "error": result.error,
-                    # Appended at the end of the case payload (2.7.5): purely additive
+                    # Appended at the end of the case payload (2.8.0): purely additive
                     # for CI consumers -- all three are null when no scorer is set.
                     "score_value": result.score.value if result.score is not None else None,
                     "score_passed": result.score.passed if result.score is not None else None,
