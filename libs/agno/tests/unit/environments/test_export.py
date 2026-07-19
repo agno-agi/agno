@@ -216,9 +216,7 @@ def test_export_counters_sum(tmp_path):
             _attempt(_conversational_run("good")),
             _attempt(_conversational_run("bad"), passed=False),
             _attempt(_conversational_run("limit"), limit_hit=True),
-            _attempt(_conversational_run("tools"), tools=[ToolExecution(tool_name="t")])
-            if False
-            else _attempt(_conversational_run("tools", tools=[ToolExecution(tool_name="t")])),
+            _attempt(_conversational_run("tools", tools=[ToolExecution(tool_name="t")])),
             _attempt(RunOutput(content="no messages", status=RunStatus.completed)),
             _attempt(_conversational_run("unscored"), unscored=True),
         ]

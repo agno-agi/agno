@@ -113,10 +113,14 @@ class Env:
         if isinstance(self.agent, Agent) or callable(self.agent):
             return
         received = type(self.agent).__name__
-        if received == "Team":
+        try:
+            from agno.team.team import Team
+        except ImportError:
+            Team = None  # type: ignore[assignment, misc]
+        if Team is not None and isinstance(self.agent, Team):
             raise TypeError(
-                "Env.agent does not accept a Team in 2.7.5; team environments arrive in the team "
-                "release with member-level hermetic semantics"
+                f"Env.agent does not accept a Team (got {received}) in 2.7.5; team environments "
+                "arrive in the team release with member-level hermetic semantics"
             )
         raise TypeError(f"Env.agent must be an Agent or a zero-arg factory returning one, got {received}")
 
@@ -219,20 +223,33 @@ def _prompt_component(value: Any, label: str) -> Any:
 
 def env_fingerprint_of(env: "Env", agent: Agent) -> str:
     """sha256 over the environment identity: tasks, scorer, declared tools, prompt
-    strings, declared session_state, and termination settings."""
-    payload = {
-        "tasks": [[resolved_task_id(task, index), task.input, task.expected] for index, task in enumerate(env.tasks)],
-        "scorer": _scorer_digest(env.scorer),
-        "tools": _declared_tool_schemas(agent),
-        "instructions": _prompt_component(getattr(agent, "instructions", None), "instructions"),
-        "description": _prompt_component(getattr(agent, "description", None), "description"),
-        "system_message": _prompt_component(getattr(agent, "system_message", None), "system_message"),
-        "session_state": getattr(agent, "session_state", None),
-        "termination": {
-            "timeout_seconds": env.timeout_seconds,
-            "tool_call_limit": getattr(agent, "tool_call_limit", None),
-        },
-    }
+    strings, declared session_state, and termination settings.
+
+    Every component failure surfaces as EnvFingerprintError -- including exceptions
+    raised while BUILDING the payload (a sourceless scorer, a schema builder choking
+    on an exotic tool) -- so the runner's catch-and-degrade-to-None is complete and a
+    fingerprint can never crash a run.
+    """
+    try:
+        payload = {
+            "tasks": [
+                [resolved_task_id(task, index), task.input, task.expected] for index, task in enumerate(env.tasks)
+            ],
+            "scorer": _scorer_digest(env.scorer),
+            "tools": _declared_tool_schemas(agent),
+            "instructions": _prompt_component(getattr(agent, "instructions", None), "instructions"),
+            "description": _prompt_component(getattr(agent, "description", None), "description"),
+            "system_message": _prompt_component(getattr(agent, "system_message", None), "system_message"),
+            "session_state": getattr(agent, "session_state", None),
+            "termination": {
+                "timeout_seconds": env.timeout_seconds,
+                "tool_call_limit": getattr(agent, "tool_call_limit", None),
+            },
+        }
+    except EnvFingerprintError:
+        raise
+    except Exception as exc:
+        raise EnvFingerprintError(f"fingerprint component failed: {type(exc).__name__}: {exc}") from exc
     return _sha256(payload)
 
 
@@ -240,16 +257,21 @@ def policy_fingerprint_of(model: Model) -> str:
     """sha256 over the policy identity: model class, id, provider, base_url, and the
     named sampling params. The id is in the list: gpt-5.5 and gpt-5.5-mini must not
     hash identically -- that is exactly the drift the split exists to catch."""
-    payload: Dict[str, Any] = {
-        "class": type(model).__qualname__,
-        "id": model.id,
-        "provider": model.provider,
-        "base_url": str(getattr(model, "base_url", None)),
-    }
-    for param in _SAMPLING_PARAMS:
-        value = getattr(model, param, None)
-        if value is not None:
-            payload[param] = value
+    try:
+        payload: Dict[str, Any] = {
+            "class": type(model).__qualname__,
+            "id": model.id,
+            "provider": model.provider,
+            "base_url": str(getattr(model, "base_url", None)),
+        }
+        for param in _SAMPLING_PARAMS:
+            value = getattr(model, param, None)
+            if value is not None:
+                payload[param] = value
+    except EnvFingerprintError:
+        raise
+    except Exception as exc:
+        raise EnvFingerprintError(f"fingerprint component failed: {type(exc).__name__}: {exc}") from exc
     return _sha256(payload)
 
 

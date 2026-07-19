@@ -115,7 +115,11 @@ def to_sft_jsonl(result: EnvRunResult, path: Union[str, Path], *, only_passed: b
             )
 
     output_path = Path(path)
-    output_path.write_text("".join(line + "\n" for line in lines), encoding="utf-8")
+    # newline="" disables platform newline translation: on Windows, translated CRLF
+    # would silently push an exact-fit file past the byte cap and break the
+    # sha256-pinned determinism.
+    with open(output_path, "w", encoding="utf-8", newline="") as handle:
+        handle.write("".join(line + "\n" for line in lines))
 
     sidecar = {
         "env_fingerprint": result.env_fingerprint,
@@ -131,9 +135,8 @@ def to_sft_jsonl(result: EnvRunResult, path: Union[str, Path], *, only_passed: b
         "options": {"only_passed": only_passed},
         "lines": provenance,
     }
-    Path(str(output_path) + ".meta.json").write_text(
-        json.dumps(sidecar, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
-    )
+    with open(str(output_path) + ".meta.json", "w", encoding="utf-8", newline="") as handle:
+        handle.write(json.dumps(sidecar, ensure_ascii=False, indent=2) + "\n")
     return report
 
 

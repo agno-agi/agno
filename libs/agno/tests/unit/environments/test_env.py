@@ -115,6 +115,48 @@ def test_fingerprint_rejects_unserializable_expected():
     with pytest.raises(EnvFingerprintError):
         env.env_fingerprint()
 
+    # The other half of the contract: the rollout runner catches, stamps None, and
+    # warns -- the run itself completes.
+    import asyncio
+
+    from agno.environments import arun_rollouts
+    from agno.scorer import Score
+
+    class StubFingerprintAgent:
+        model = None
+
+        async def arun(self, *, input, stream, stream_events, yield_run_output, session_id):
+            from agno.run.agent import RunOutput
+            from agno.run.base import RunStatus
+
+            yield RunOutput(content="ok", status=RunStatus.completed)
+
+    stub_env = Env(
+        name="degrades",
+        tasks=(EnvTask(input="q", expected=object()),),
+        scorer=CodeScorer(lambda run, expected: Score(value=1.0, passed=True)),
+        agent=lambda: StubFingerprintAgent(),
+    )
+    result = asyncio.run(arun_rollouts(stub_env, k=1))
+    assert result.env_fingerprint is None
+    assert result.pass_rate == 1.0
+
+
+def test_fingerprint_component_failures_become_env_fingerprint_error():
+    # Exceptions raised while BUILDING the payload must surface as
+    # EnvFingerprintError too, or the runner's catch-and-degrade is incomplete: a
+    # functools.partial tool has no __name__ and would otherwise escape as a raw
+    # AttributeError and crash the run at fingerprint time.
+    import functools
+
+    def helper(query: str, depth: int) -> str:
+        return query
+
+    partial_tool = functools.partial(helper, depth=2)
+    env = _env(agent=Agent(model=OpenAIChat(id="gpt-5-mini"), instructions="Answer tersely.", tools=[partial_tool]))
+    with pytest.raises(EnvFingerprintError):
+        env.env_fingerprint()
+
 
 def test_env_matches_rejects_none():
     good = _env()
@@ -144,6 +186,15 @@ def test_env_agent_validation():
 
     with pytest.raises(TypeError, match="team release"):
         _env(agent=Team(members=[Agent(id="member")]))
+
+    # A Team subclass IS a Team: the deferral message follows isinstance, not the
+    # class name, and still names the received type.
+    class MyTeam(Team):
+        pass
+
+    with pytest.raises(TypeError, match="team release") as excinfo:
+        _env(agent=MyTeam(members=[Agent(id="member")]))
+    assert "MyTeam" in str(excinfo.value)
     with pytest.raises(TypeError, match="str"):
         _env(agent="my-agent")
     with pytest.raises(TypeError, match="OpenAIChat"):

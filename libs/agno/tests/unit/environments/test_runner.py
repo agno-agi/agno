@@ -367,12 +367,21 @@ async def test_partial_errors_do_not_stop():
 
 
 async def test_errors_grouped_by_task():
-    env = _stub_env(tasks=(EnvTask(input="one", expected="echo:one"), EnvTask(input="two")), error=RuntimeError("boom"))
-    result = await arun_rollouts(env, k=1, concurrency=1)
+    # One errored attempt on t1 only: the grouping must be non-empty, keyed by the
+    # errored task's id, and absent for the clean task.
+    recorder = Recorder()
+    env = _stub_env(
+        recorder,
+        tasks=(EnvTask(input="one", expected="echo:one"), EnvTask(input="two", expected="echo:two")),
+        error_on_calls={0},
+    )
+    result = await arun_rollouts(env, k=2, concurrency=2)
 
     grouped = result.errors()
-    assert set(grouped) <= {"t1", "t2"}
-    assert all("RuntimeError: boom" in message for messages in grouped.values() for message in messages)
+    assert list(grouped) == ["t1"]
+    assert len(grouped["t1"]) == 1
+    assert "RuntimeError: attempt exploded" in grouped["t1"][0]
+    assert result.stopped_early is None  # mixed first completions are not a storm
 
 
 async def test_run_rollouts_raises_in_running_loop():
