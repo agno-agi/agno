@@ -36,6 +36,11 @@ if TYPE_CHECKING:
     from rich.console import Console
     from rich.status import Status
 
+    # TYPE_CHECKING only: a module-scope `from agno.scorer import ...` would eagerly
+    # execute agno/scorer/__init__.py, whose JudgeScorer constructs an Agent -- a new
+    # edge into exactly the circular import this package's lazy __getattr__ avoids.
+    from agno.scorer import Score, Scorer
+
 __all__ = [
     "Case",
     "CaseResult",
@@ -87,6 +92,14 @@ class Case:
     expected_tool_calls: Optional[Tuple[str, ...]] = None
     allow_additional_tool_calls: bool = True
 
+    # Scorer check - set `scorer` to score the run in-process (agno.scorer protocol:
+    # anything with `async ascore(run, expected)`). Runs only on gradeable runs,
+    # inside the case timeout, and receives (result.response, case.expected) -- for a
+    # team case that is the TeamRunOutput, so a scorer written against agent content
+    # sees the leader's synthesis. `expected` is the value handed to the scorer.
+    scorer: Optional["Scorer"] = None
+    expected: Optional[Any] = None
+
     # Lifecycle hooks. setup runs before the run (outside the timeout); its return
     # value ("context") is passed to teardown. teardown always runs once setup has
     # completed (pass, fail, error, timeout) and receives (context, result) so it can
@@ -103,9 +116,9 @@ class Case:
             raise ValueError(f"case {self.name!r}: provide only one of 'agent' or 'team'")
         # Truthiness, not `is None`: criteria="" or expected_tool_calls=() would
         # otherwise construct a case whose checks pass vacuously - a green CI gate
-        # that verified nothing.
-        if not self.criteria and not self.expected_tool_calls:
-            raise ValueError(f"case {self.name!r} has no checks: set criteria and/or expected_tool_calls")
+        # that verified nothing. A scorer instance is always truthy, so `is None`.
+        if not self.criteria and not self.expected_tool_calls and self.scorer is None:
+            raise ValueError(f"case {self.name!r} has no checks: set criteria, expected_tool_calls, and/or scorer")
         # A raw string bypasses the JudgeMode type, so reject an unknown mode and, for NUMERIC, a
         # judge_threshold outside 1-10. Membership accepts the enum members and their equal strings.
         if self.judge_mode not in (JudgeMode.BINARY, JudgeMode.NUMERIC):
@@ -132,6 +145,7 @@ class CaseResult:
     judge_reason: Optional[str] = None  # the judge's stated reason, when available
     judge_score: Optional[int] = None  # numeric-mode score (1-10); None in binary mode
     reliability_passed: Optional[bool] = None  # None = check not configured
+    score: Optional["Score"] = None  # scorer verdict; None = check not configured
     output: Optional[str] = None  # response text - what the judge graded
     tools_called: Tuple[str, ...] = ()  # tool names fired during the run, in order
     timed_out: bool = False
@@ -148,6 +162,8 @@ class CaseResult:
         if self.error:
             return False
         checks = [c for c in (self.judge_passed, self.reliability_passed) if c is not None]
+        if self.score is not None:
+            checks.append(self.score.passed)
         return bool(checks) and all(checks)
 
 
@@ -204,6 +220,11 @@ class SuiteResult:
                     "skipped": result.skipped,
                     "passed": result.passed,
                     "error": result.error,
+                    # Appended at the end of the case payload (2.7.5): purely additive
+                    # for CI consumers -- all three are null when no scorer is set.
+                    "score_value": result.score.value if result.score is not None else None,
+                    "score_passed": result.score.passed if result.score is not None else None,
+                    "score_reason": result.score.reason if result.score is not None else None,
                 }
                 for result in self.results
             ],
@@ -426,6 +447,14 @@ async def _run_case_body(
                 _append_error(result, "reliability: returned no result")
             else:
                 result.reliability_passed = reliability.eval_status == "PASSED"
+
+    if case.scorer is not None and response is not None:
+        # Same placement as the judge: inside the case timeout, gradeable runs only
+        # (non-gradeable runs returned above -- the scorer is skipped, not failed).
+        try:
+            result.score = await case.scorer.ascore(response, case.expected)
+        except Exception as exc:
+            _append_error(result, f"scorer: {type(exc).__name__}: {exc}")
 
 
 async def _arun_case(
