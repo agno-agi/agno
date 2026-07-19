@@ -1,7 +1,10 @@
 """Unit tests for agno.scorer: Score, CodeScorer, and the package-level rules."""
 
 import ast
+import importlib.util
 import pathlib
+import subprocess
+import sys
 
 import pytest
 
@@ -50,7 +53,7 @@ def test_no_lowercase_status_literals():
     # them to lowercase strings is correct code.
     import agno.scorer
 
-    lowercase_status_words = {"pending", "running", "completed", "paused", "cancelled", "error"}
+    lowercase_status_words = {"pending", "running", "completed", "paused", "cancelled", "error", "regenerated"}
     package_dir = pathlib.Path(agno.scorer.__file__).parent
     offenders = []
     for path in sorted(package_dir.rglob("*.py")):
@@ -128,12 +131,39 @@ async def test_code_scorer_awaits_coroutine_functions():
     assert result.passed is True
 
 
+class _AsyncCallable:
+    async def __call__(self, run, expected):
+        return run.content == expected
+
+
+async def test_code_scorer_ascore_awaits_async_callable_objects():
+    # iscoroutinefunction is False for the instance; the dispatch must look at __call__.
+    result = await CodeScorer(_AsyncCallable()).ascore(_run("yes"), "yes")
+    assert result.passed is True
+
+
+def test_code_scorer_score_awaits_async_callable_objects():
+    assert CodeScorer(_AsyncCallable()).score(_run("yes"), "yes").passed is True
+
+
+def test_code_scorer_accepts_int_returns():
+    # 0/1 from comparison-style functions are common; ints are treated as floats.
+    assert CodeScorer(lambda run, expected: 1).score(_run()).passed is True
+    assert CodeScorer(lambda run, expected: 0).score(_run()).passed is False
+    with pytest.raises(ValueError, match="must be in"):
+        CodeScorer(lambda run, expected: 2).score(_run())
+
+
 def test_code_scorer_digest_stable_and_sensitive():
     def scorer_a(run, expected):
         return run.content == expected
 
     def scorer_b(run, expected):
         return run.content != expected
+
+    # The __name__ attribute must not be the discriminator: with the names aligned,
+    # only a source-based digest still tells these apart.
+    scorer_b.__name__ = scorer_a.__name__
 
     # Same function, hashed twice: stable (source-based, no memory addresses).
     assert CodeScorer(scorer_a).digest() == CodeScorer(scorer_a).digest()
@@ -142,6 +172,25 @@ def test_code_scorer_digest_stable_and_sensitive():
     # A callable without retrievable source raises EnvFingerprintError.
     with pytest.raises(EnvFingerprintError):
         CodeScorer(len).digest()
+
+
+def test_code_scorer_digest_stable_across_processes():
+    # A digest embedding anything process-local -- a repr with a memory address --
+    # would report "environment drifted" forever between two identical envs.
+    fixture_dir = pathlib.Path(__file__).parent
+    spec = importlib.util.spec_from_file_location("digest_fixture", fixture_dir / "digest_fixture.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    local_digest = CodeScorer(module.fixture_scorer).digest()
+
+    code = (
+        f"import sys; sys.path.insert(0, {str(fixture_dir)!r}); "
+        "from digest_fixture import fixture_scorer; "
+        "from agno.scorer import CodeScorer; "
+        "print(CodeScorer(fixture_scorer).digest())"
+    )
+    remote = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, check=True)
+    assert local_digest == remote.stdout.strip()
 
 
 # ---------------------------------------------------------------------------
