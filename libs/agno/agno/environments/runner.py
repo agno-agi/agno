@@ -5,10 +5,10 @@ import copy
 import json
 import math
 import time
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, fields, is_dataclass, replace
 from pathlib import Path
 from statistics import mean
-from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
+from typing import Any, Dict, List, Optional, Sequence, Set, Tuple, Union
 from uuid import uuid4
 
 from agno.agent import Agent
@@ -260,6 +260,10 @@ class EnvRunResult:
         with open(Path(path), "w", encoding="utf-8", newline="") as handle:
             handle.write(text + "\n")
 
+    async def asave(self, path: Union[str, Path]) -> None:
+        """Async twin of save."""
+        await asyncio.to_thread(self.save, path)
+
     @classmethod
     def load(cls, path: Union[str, Path]) -> "EnvRunResult":
         payload = json.loads(Path(path).read_text(encoding="utf-8"))
@@ -296,6 +300,11 @@ class EnvRunResult:
             duration_seconds=payload["duration_seconds"],
             stopped_early=payload["stopped_early"],
         )
+
+    @classmethod
+    async def aload(cls, path: Union[str, Path]) -> "EnvRunResult":
+        """Async twin of load."""
+        return await asyncio.to_thread(cls.load, path)
 
     def __str__(self) -> str:
         rows = []
@@ -409,6 +418,180 @@ def _attempt_cost(attempt: AttemptResult) -> Optional[float]:
     return getattr(run.metrics, "cost", None)
 
 
+# The hermetic action for every field Agent.deep_copy shares by reference
+# (agno.agent._utils.SHARED_BY_REFERENCE_FIELDS), plus handled fields deep_copy
+# copies but whose copies still leak (a shallow-copied followup model, a config of
+# cache-bearing fallback models, a save path string, a sub-agent that re-shares its
+# own db). The drift test pins SHARED_BY_REFERENCE_FIELDS as a subset of this
+# mapping, so a field newly shared upstream fails CI until an action is chosen here.
+_HERMETIC_FIELD_ACTIONS: Dict[str, str] = {
+    "db": "fresh-inmemory-db",
+    "model": "cache-off-copy",
+    "reasoning_model": "cache-off-copy",
+    "parser_model": "cache-off-copy",
+    "output_model": "cache-off-copy",
+    "followup_model": "cache-off-copy",
+    "knowledge": "shared",  # reads survive: retrieval goes through knowledge.vector_db
+    "skills": "shared",  # loader-backed skill definitions: read-only, no db binding
+    "learning": "nulled",
+    "memory_manager": "nulled",  # a fresh user_id reads empty memories by design
+    "session_summary_manager": "nulled",
+    "culture_manager": "read-only-rebind",  # culture is global knowledge: reads survive
+    "compression_manager": "isolated-copy",
+    "fallback_config": "cache-off-copies",
+    "reasoning_agent": "recursive-hermetic",
+    "save_response_to_file": "nulled",
+}
+
+
+def _cache_off_copy(model_like: Any) -> Any:
+    # Shallow, so the HTTP client underneath stays shared; the flag lands on the
+    # copy, never on the caller's instance.
+    model_copy = copy.copy(model_like)
+    model_copy.cache_response = False
+    return model_copy
+
+
+def _field_names_of(agent: Any) -> List[str]:
+    if is_dataclass(agent):
+        return [f.name for f in fields(agent)]
+    return list(vars(agent))
+
+
+def _mcp_tool_names(agent: Any) -> List[str]:
+    tools = getattr(agent, "tools", None)
+    if not isinstance(tools, (list, tuple)):
+        return []
+    names = []
+    for tool in tools:
+        mro = getattr(type(tool), "__mro__", ())
+        if any(c.__name__ in ("MCPTools", "MultiMCPTools") for c in mro):
+            names.append(type(tool).__name__)
+    return names
+
+
+def _apply_hermetic_overrides(
+    agent: Any, model_override: Optional[Model] = None, _seen: Optional[Set[int]] = None
+) -> None:
+    """The hermetic override block, applied per attempt to a factory product or a
+    deep copy -- and recursively to a user-supplied reasoning agent, whose own
+    deep_copy re-shares its db and model.
+
+    What survives, deliberately: knowledge (reads go through knowledge.vector_db,
+    not agent.db), skills (read-only definitions), culture READS (culture is global
+    knowledge, not per-user state -- the manager is rebound to a copy holding the
+    caller's culture db while both write flags are off), and compression (it changes
+    what the model sees, so it stays on; the manager is isolated so attempt stats
+    and model bindings never land on the caller's). add_history_to_context is NOT
+    modified: a fresh session means empty history, the honest version of pinned.
+
+    Everything else that touches the caller's world is cut: db swapped for a fresh
+    InMemoryDb, fresh user id, memory capture / knowledge writes / learning /
+    cultural-knowledge writes off, session summaries off (an extra LLM call per
+    attempt, and attempt init would write the attempt's model onto a shared
+    manager), save_response_to_file nulled (K attempts would race-write the
+    caller's file), and every model slot -- primary, *_model fields, fallback
+    lists -- runs on a copy with the response cache off, because the cache is a
+    shared disk cache keyed by messages and a cached attempt is a replay, not a
+    sample.
+    """
+    seen = _seen if _seen is not None else set()
+    if id(agent) in seen:
+        return
+    seen.add(id(agent))
+    source_db = getattr(agent, "db", None)
+    # Whether the production configuration would put culture in context: read
+    # BEFORE the capture flags are forced off, because they feed the resolution.
+    wants_culture = bool(
+        getattr(agent, "add_culture_to_context", None)
+        or getattr(agent, "update_cultural_knowledge", False)
+        or getattr(agent, "enable_agentic_culture", False)
+        or getattr(agent, "culture_manager", None) is not None
+    )
+
+    attempt_model = model_override if model_override is not None else getattr(agent, "model", None)
+    if attempt_model is not None:
+        agent.model = _cache_off_copy(attempt_model)
+    for field_name in _field_names_of(agent):
+        if field_name == "model" or field_name.startswith("_"):
+            continue
+        value = getattr(agent, field_name, None)
+        if value is None:
+            continue
+        # Model-typed values by isinstance; *_model fields by name so duck-typed
+        # subjects (and their stub models) get the same treatment.
+        if isinstance(value, Model) or (field_name.endswith("_model") and hasattr(value, "cache_response")):
+            setattr(agent, field_name, _cache_off_copy(value))
+    fallback_config = getattr(agent, "fallback_config", None)
+    if fallback_config is not None:
+        config_copy = copy.copy(fallback_config)
+        for list_name in ("on_error", "on_rate_limit", "on_context_overflow"):
+            entries = getattr(config_copy, list_name, None)
+            if entries:
+                setattr(
+                    config_copy,
+                    list_name,
+                    [_cache_off_copy(entry) if hasattr(entry, "cache_response") else entry for entry in entries],
+                )
+        agent.fallback_config = config_copy
+
+    agent.db = InMemoryDb()
+    agent.user_id = f"rollout-user-{uuid4().hex}"
+    agent.update_memory_on_run = False
+    agent.enable_user_memories = False
+    agent.enable_agentic_memory = False
+    agent.update_knowledge = False
+    agent.learning = None
+    agent.update_cultural_knowledge = False
+    agent.enable_agentic_culture = False
+    agent.memory_manager = None
+    agent.session_summary_manager = None
+    agent.enable_session_summaries = False
+    agent.save_response_to_file = None
+
+    culture_manager = getattr(agent, "culture_manager", None)
+    if culture_manager is not None:
+        manager_copy = copy.copy(culture_manager)
+        if getattr(manager_copy, "db", None) is None and source_db is not None:
+            manager_copy.db = source_db
+        manager_model = getattr(manager_copy, "model", None)
+        if manager_model is not None and hasattr(manager_model, "cache_response"):
+            manager_copy.model = _cache_off_copy(manager_model)
+        agent.culture_manager = manager_copy
+    elif wants_culture and source_db is not None:
+        # Production reads came straight off agent.db; the attempt's db is fresh, so
+        # an explicit manager bound to the caller's db keeps the reads identical.
+        from agno.culture.manager import CultureManager
+
+        agent.culture_manager = CultureManager(db=source_db)
+
+    compression_manager = getattr(agent, "compression_manager", None)
+    if compression_manager is not None:
+        manager_copy = copy.copy(compression_manager)
+        if hasattr(manager_copy, "stats"):
+            manager_copy.stats = {}
+        manager_model = getattr(manager_copy, "model", None)
+        if manager_model is not None and hasattr(manager_model, "cache_response"):
+            manager_copy.model = _cache_off_copy(manager_model)
+        agent.compression_manager = manager_copy
+
+    # A manager this block has never seen is nulled loudly: managers bind db and
+    # model by pattern, and silently sharing one is the exact leak this function
+    # exists to stop.
+    for field_name in _field_names_of(agent):
+        if (
+            field_name.endswith("_manager")
+            and field_name not in _HERMETIC_FIELD_ACTIONS
+            and getattr(agent, field_name, None) is not None
+        ):
+            log_warning(f"hermetic overrides do not know agent.{field_name}; nulling it for isolation")
+            setattr(agent, field_name, None)
+
+    reasoning_agent = getattr(agent, "reasoning_agent", None)
+    if reasoning_agent is not None:
+        _apply_hermetic_overrides(reasoning_agent, _seen=seen)
+
+
 def _default_model_for(agent: Any) -> Optional[Model]:
     """The default model the run path installs on a model-less Agent, resolved on a
     shallow copy so the caller's agent is never mutated. None when resolution is
@@ -440,7 +623,28 @@ async def arun_rollouts(
     Every attempt runs on a fresh copy with a fresh in-memory db, fresh session and
     user ids, memory capture, knowledge writes and learning disabled, and the response
     cache off. Knowledge READS survive: retrieval goes through knowledge.vector_db,
-    not agent.db, so a RAG agent retrieves normally inside a rollout.
+    not agent.db, so a RAG agent retrieves normally inside a rollout -- and culture
+    reads survive the same way, through a read-only manager rebind. The full field
+    inventory lives on _apply_hermetic_overrides.
+
+    Two residuals the overrides cannot reach, stated honestly:
+
+    - env.timeout_seconds bounds when an attempt RETURNS, not when a sync scorer's
+      body stops: a sync scorer runs in a thread (asyncio.to_thread), cancellation
+      cannot interrupt it, and the abandoned thread runs to its natural end after
+      the attempt has already come back as a timeout.
+    - Tracing is process-global state, not an agent attribute: with setup_tracing
+      configured, attempts export trace and span rows into the caller's trace store
+      like any other run. They are identifiable there by their rollout-* session
+      and user ids. (Suppressing them via OTel context is not viable today: the
+      installed openinference-instrumentation-agno's suppressed fast-path breaks
+      streamed runs.)
+
+    A LIVE agent holding MCPTools is rejected at run start: deep_copy shares the
+    MCP session by reference, concurrent attempts connect and close that one shared
+    session mid-run, and the whole batch dies losing every attempt. Use a factory
+    env -- ``agent=lambda: Agent(..., tools=[MCPTools(...)])`` -- so each attempt
+    owns its connection.
     """
     if model is not None and not isinstance(model, Model):
         raise TypeError(
@@ -449,6 +653,16 @@ async def arun_rollouts(
         )
 
     resolved_tasks = tuple(replace(task, id=_resolved_task_id(task, index)) for index, task in enumerate(env.tasks))
+    # Declared duplicates are rejected at Env construction; the positional case (an
+    # explicit "t2" colliding with the second task's auto-id) only exists after
+    # resolution, so it is caught here -- diff() keyed on a duplicated id silently
+    # pairs rows with the wrong baseline task.
+    seen_ids: Set[str] = set()
+    for task in resolved_tasks:
+        task_id = str(task.id)
+        if task_id in seen_ids:
+            raise ValueError(f"duplicate resolved task id {task_id!r}; task ids must be unique (t1..tN are reserved)")
+        seen_ids.add(task_id)
     if tasks is None:
         selected = resolved_tasks
     else:
@@ -479,19 +693,34 @@ async def arun_rollouts(
         source_agent = _validated_agent(constructed)
     else:
         source_agent = env.agent
-    env_fingerprint: Optional[str] = None
-    try:
-        env_fingerprint = _env_fingerprint_of(env, source_agent)
-    except EnvFingerprintError as exc:
-        log_warning(f"env_fingerprint degraded to None: {exc}")
+        # Live path only: a factory constructs fresh MCP tools per attempt, which is
+        # exactly the workaround this error names. Raised before any connection or
+        # attempt exists.
+        mcp_names = _mcp_tool_names(source_agent)
+        if mcp_names:
+            raise RuntimeError(
+                f"env.agent holds {mcp_names[0]} by reference: every attempt would share one MCP "
+                "session, and concurrent attempts connect and close that shared session mid-run, "
+                "losing the whole batch. Use a factory env -- agent=lambda: Agent(..., "
+                "tools=[MCPTools(...)]) -- so each attempt owns its connection."
+            )
 
     # The stamped policy fingerprint is computed from the EFFECTIVE model actually
     # used -- stamping the env's declared model under a model= override would
     # mislabel every checkpoint-swap comparison. A model-less Agent runs on the
     # default the run path installs, so that default is what gets fingerprinted.
-    effective_model = model if model is not None else source_agent.model
+    # Resolved before the env fingerprint, whose model_prompt component reads the
+    # same effective model.
+    effective_model = model if model is not None else getattr(source_agent, "model", None)
     if effective_model is None:
         effective_model = _default_model_for(source_agent)
+
+    env_fingerprint: Optional[str] = None
+    try:
+        env_fingerprint = _env_fingerprint_of(env, source_agent, model=effective_model)
+    except EnvFingerprintError as exc:
+        log_warning(f"env_fingerprint degraded to None: {exc}")
+
     policy_fingerprint: Optional[str] = None
     if effective_model is None:
         log_warning("policy_fingerprint degraded to None: the agent has no model")
@@ -503,47 +732,7 @@ async def arun_rollouts(
 
     def build_attempt_agent() -> Any:
         agent = _validated_agent(env.agent()) if callable(env.agent) else env.agent.deep_copy()
-        # The model override is applied BEFORE the cache handling, and the cache rule
-        # is unconditional on the effective model: copy.copy per attempt (shallow, so
-        # the HTTP client underneath stays shared), cache_response=False on the copy,
-        # never on the caller's instance. In the other order, an override model with
-        # caching on would replay a shared disk cache across all K attempts.
-        attempt_model = model if model is not None else agent.model
-        if attempt_model is not None:
-            model_copy = copy.copy(attempt_model)
-            model_copy.cache_response = False
-            agent.model = model_copy
-        # The cache rule covers every model on the agent, not just the primary:
-        # deep_copy shares reasoning/parser/output models by reference, and a cached
-        # secondary call is a replay in exactly the same way.
-        for secondary_name in ("reasoning_model", "parser_model", "output_model"):
-            secondary = getattr(agent, secondary_name, None)
-            if secondary is not None:
-                secondary_copy = copy.copy(secondary)
-                secondary_copy.cache_response = False
-                setattr(agent, secondary_name, secondary_copy)
-        # Hermetic overrides. add_history_to_context is deliberately NOT modified: a
-        # fresh session means empty history, which is the honest version of pinned.
-        # agent.knowledge is deliberately NOT nulled: knowledge reads must survive.
-        agent.db = InMemoryDb()
-        agent.user_id = f"rollout-user-{uuid4().hex}"
-        agent.update_memory_on_run = False
-        agent.enable_user_memories = False
-        agent.enable_agentic_memory = False
-        agent.update_knowledge = False
-        # deep_copy shares a LearningMachine by reference and it resolves against its
-        # own db; left attached, a "hermetic" run would write learning updates to the
-        # caller's real store.
-        agent.learning = None
-        # The same leak through the other db-bound managers deep_copy shares by
-        # reference: CultureManager and MemoryManager bind agent.db at initialize
-        # time, so a shared manager keeps reading and writing the caller's real store
-        # from inside a "hermetic" run. Nulled, they are rebuilt against the
-        # attempt's InMemoryDb when a run needs them.
-        agent.update_cultural_knowledge = False
-        agent.enable_agentic_culture = False
-        agent.culture_manager = None
-        agent.memory_manager = None
+        _apply_hermetic_overrides(agent, model_override=model)
         return agent
 
     finished: List[AttemptResult] = []
@@ -634,8 +823,14 @@ def run_rollouts(
     model: Optional[Model] = None,
     concurrency: int = 4,
 ) -> EnvRunResult:
-    """Sync door over arun_rollouts (asyncio.run, so a timed-out attempt is actually
-    cancelled rather than abandoned)."""
+    """Sync door over arun_rollouts (asyncio.run).
+
+    Timeout semantics match the async door -- the attempt coroutine is cancelled at
+    env.timeout_seconds -- with one addition: a sync scorer body already running in
+    its thread cannot be interrupted, and asyncio.run joins that thread at loop
+    shutdown, so this door can block past the timeout until the scorer's body
+    finishes on its own.
+    """
     try:
         asyncio.get_running_loop()
     except RuntimeError:

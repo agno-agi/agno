@@ -11,7 +11,7 @@ without importing scorer.
 
 from agno.environments._engine import AttemptResult, StopReason
 from agno.environments.env import Env, EnvTask
-from agno.environments.exporters import ExportReport, to_sft_jsonl
+from agno.environments.exporters import ExportReport, ato_sft_jsonl, to_sft_jsonl
 from agno.environments.runner import EnvDiff, EnvRunResult, TaskResult, arun_rollouts, run_rollouts
 from agno.scorer import EnvFingerprintError, EnvMismatchError
 
@@ -27,6 +27,7 @@ __all__ = [
     "StopReason",
     "TaskResult",
     "arun_rollouts",
+    "ato_sft_jsonl",
     "run_rollouts",
     "to_sft_jsonl",
 ]

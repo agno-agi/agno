@@ -3,7 +3,16 @@
 import hashlib
 import json
 
-from agno.environments import Env, EnvRunResult, EnvTask, StopReason, TaskResult, arun_rollouts, to_sft_jsonl
+from agno.environments import (
+    Env,
+    EnvRunResult,
+    EnvTask,
+    StopReason,
+    TaskResult,
+    arun_rollouts,
+    ato_sft_jsonl,
+    to_sft_jsonl,
+)
 from agno.environments._engine import AttemptResult
 from agno.environments.exporters._validate import validate_sft_jsonl
 from agno.models.message import Message
@@ -49,6 +58,16 @@ def _result(*task_rows, env_fingerprint="env-fp", policy_fingerprint="policy-fp"
         task_results=task_results,
         duration_seconds=1.0,
     )
+
+
+async def test_ato_sft_jsonl_matches_sync(tmp_path):
+    result = _result([_attempt(_conversational_run("4"))])
+    sync_path = tmp_path / "sync.jsonl"
+    async_path = tmp_path / "async.jsonl"
+    sync_report = to_sft_jsonl(result, sync_path)
+    async_report = await ato_sft_jsonl(result, async_path)
+    assert async_report == sync_report
+    assert async_path.read_text(encoding="utf-8") == sync_path.read_text(encoding="utf-8")
 
 
 def test_export_passes_vendored_validator(tmp_path):

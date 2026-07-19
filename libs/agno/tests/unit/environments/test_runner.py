@@ -2,13 +2,20 @@
 
 import asyncio
 import json
+from uuid import uuid4
 
 import pytest
 
+from agno.agent import Agent
+from agno.agent._utils import SHARED_BY_REFERENCE_FIELDS
 from agno.db.in_memory import InMemoryDb
 from agno.environments import Env, EnvRunResult, EnvTask, StopReason, TaskResult, arun_rollouts, run_rollouts
 from agno.environments._engine import AttemptResult
+from agno.environments.runner import _HERMETIC_FIELD_ACTIONS
+from agno.models.base import Model
+from agno.models.message import Message
 from agno.models.openai import OpenAIChat
+from agno.models.response import ModelResponse
 from agno.run.agent import RunOutput
 from agno.run.base import RunStatus
 from agno.scorer import CodeScorer, EnvMismatchError, Score
@@ -36,6 +43,15 @@ class StubModel:
     def __init__(self, cache_response=False, id="stub-model"):
         self.cache_response = cache_response
         self.id = id
+
+
+class StubManager:
+    """Attribute-bearing manager stand-in: the hermetic rebind copies managers and
+    touches their db/model slots, so a plain object() cannot model one."""
+
+    def __init__(self, db=None, model=None):
+        self.db = db
+        self.model = model
 
 
 class StubRolloutAgent:
@@ -266,13 +282,14 @@ async def test_hermetic_identical_start():
 
 
 async def test_hermetic_live_agent_full_override_set():
-    # The live-agent branch with the reconciled override list: db-bound managers
-    # nulled, culture and memory capture off, secondary-model caches disabled on
-    # copies -- and the caller's instance untouched afterwards.
+    # The live-agent branch on STUB agents: db-bound state cut, culture rebound to a
+    # read-only copy, memory nulled, secondary-model caches disabled on copies --
+    # and the caller's instance untouched afterwards. The REAL-Agent twin below
+    # covers the fields this stub cannot model.
     recorder = Recorder()
     caller_db = object()
-    culture_manager = object()
-    memory_manager = object()
+    culture_manager = StubManager(db=object())
+    memory_manager = StubManager()
     live = StubRolloutAgent(
         recorder,
         model=StubModel(cache_response=True),
@@ -289,11 +306,15 @@ async def test_hermetic_live_agent_full_override_set():
     result = await arun_rollouts(env, k=3, concurrency=3)
 
     assert result.pass_rate == 1.0
+    assert len(recorder.snapshots) == 3  # non-vacuous: every attempt actually ran
     for snapshot in recorder.snapshots:
         assert snapshot["agent"] is not live
         assert isinstance(snapshot["db"], InMemoryDb)
         assert snapshot["learning"] is None
-        assert snapshot["culture_manager"] is None
+        # Culture READS survive: a manager copy, never the caller's object.
+        assert snapshot["culture_manager"] is not None
+        assert snapshot["culture_manager"] is not culture_manager
+        assert snapshot["culture_manager"].db is culture_manager.db
         assert snapshot["memory_manager"] is None
         assert snapshot["update_cultural_knowledge"] is False
         assert snapshot["enable_agentic_culture"] is False
@@ -643,15 +664,22 @@ def test_diff_flags_regressions():
 # ---------------------------------------------------------------------------
 
 
-async def test_hermetic_factory_culture_and_memory_managers_nulled():
-    # The factory branch gets the same reconciled override set as the live branch.
+async def test_hermetic_factory_culture_rebound_and_memory_nulled():
+    # The factory branch gets the same override set as the live branch: memory
+    # nulled, culture rebound to a read-only copy so reads survive.
     recorder = Recorder()
-    env = _stub_env(recorder, culture_manager=object(), memory_manager=object())
+    culture_manager = StubManager(db=object())
+    memory_manager = StubManager()
+    env = _stub_env(recorder, culture_manager=culture_manager, memory_manager=memory_manager)
 
-    await arun_rollouts(env, k=2, concurrency=2)
+    result = await arun_rollouts(env, k=2, concurrency=2)
 
+    assert result.pass_rate == 1.0
+    assert len(recorder.snapshots) == 2  # non-vacuous: the old assertions passed on zero snapshots
     for snapshot in recorder.snapshots:
-        assert snapshot["culture_manager"] is None
+        assert snapshot["culture_manager"] is not None
+        assert snapshot["culture_manager"] is not culture_manager
+        assert snapshot["culture_manager"].db is culture_manager.db
         assert snapshot["memory_manager"] is None
         assert snapshot["update_cultural_knowledge"] is False
         assert snapshot["enable_agentic_culture"] is False
@@ -807,3 +835,296 @@ def test_diff_names_unmatched_tasks():
     assert diff.unmatched_baseline == ("t3",)
     assert "not compared" in str(diff)
     assert diff.to_dict()["unmatched_current"] == ["t2"]
+
+
+# ---------------------------------------------------------------------------
+# Hermetic overrides on a REAL Agent (deep_copy path, end-to-end)
+#
+# The stub tests above mirror the override rules; these run the real Agent code so
+# a field the stubs do not model (session summaries, compression, reasoning_agent,
+# save_response_to_file, followup/fallback models) cannot pass vacuously.
+# ---------------------------------------------------------------------------
+
+
+class RecordingFakeModel(Model):
+    """Real Model subclass: completes, counts provider calls, records the message
+    list each call received. The runner's per-attempt copy.copy shares the mutable
+    records, so the caller-side lists see attempt traffic."""
+
+    def __init__(self, tag="fake", calls=None, seen_messages=None):
+        super().__init__(id=f"fake-{tag}", name=f"fake-{tag}", provider="test")
+        self.calls = calls if calls is not None else []
+        self.seen_messages = seen_messages if seen_messages is not None else []
+
+    def __deepcopy__(self, memo):
+        # Fallback resolution deepcopies models; keep sharing the records and the
+        # cache flag so tests can observe both across the copy.
+        clone = type(self)(tag=self.id.removeprefix("fake-"), calls=self.calls, seen_messages=self.seen_messages)
+        clone.cache_response = self.cache_response
+        return clone
+
+    def _record(self, kind, args, kwargs):
+        self.calls.append((self.id, kind, id(self), self.cache_response))
+        for value in list(args) + list(kwargs.values()):
+            if isinstance(value, list) and value and all(isinstance(m, Message) for m in value):
+                self.seen_messages.append(list(value))
+                break
+        return ModelResponse(role="assistant", content="The answer is 42.")
+
+    def invoke(self, *args, **kwargs):
+        return self._record("invoke", args, kwargs)
+
+    async def ainvoke(self, *args, **kwargs):
+        return self._record("ainvoke", args, kwargs)
+
+    def invoke_stream(self, *args, **kwargs):
+        yield self._record("invoke_stream", args, kwargs)
+
+    async def ainvoke_stream(self, *args, **kwargs):
+        yield self._record("ainvoke_stream", args, kwargs)
+
+    def _parse_provider_response(self, response, **kwargs):
+        return response
+
+    def _parse_provider_response_delta(self, response):
+        return response
+
+
+class VaryingErrorModel(Model):
+    """Raises RuntimeError with a colon-free, per-call-varying message: the storm
+    fallback's first-colon prefix is never stable, so only the structured
+    error_type path can detect the storm."""
+
+    def __init__(self):
+        super().__init__(id="varying-error", name="varying-error", provider="test")
+
+    def _boom(self):
+        raise RuntimeError(f"boom {uuid4().hex}")
+
+    def invoke(self, *args, **kwargs):
+        self._boom()
+
+    async def ainvoke(self, *args, **kwargs):
+        self._boom()
+
+    def invoke_stream(self, *args, **kwargs):
+        self._boom()
+        yield  # pragma: no cover
+
+    async def ainvoke_stream(self, *args, **kwargs):
+        self._boom()
+        yield  # pragma: no cover
+
+    def _parse_provider_response(self, response, **kwargs):
+        return response
+
+    def _parse_provider_response_delta(self, response):
+        return response
+
+
+def _real_env(agent, *, tasks=None):
+    return Env(
+        name="real-env",
+        tasks=tasks if tasks is not None else (EnvTask(input="hello"),),
+        scorer=CodeScorer(lambda run, expected: True),
+        agent=agent,
+    )
+
+
+def _spy_deep_copy(agent, sink):
+    original = agent.deep_copy
+
+    def spy(**kwargs):
+        attempt_copy = original(**kwargs)
+        sink.append(attempt_copy)
+        return attempt_copy
+
+    agent.deep_copy = spy
+    return agent
+
+
+async def test_error_storm_detected_by_error_type_on_real_agent():
+    # A real Agent swallows model exceptions into error events; before the
+    # error_type sweep those events were typeless and this exact run finished all
+    # 8 attempts with stopped_early=None.
+    env = _real_env(
+        Agent(model=VaryingErrorModel(), telemetry=False),
+        tasks=(EnvTask(input="one"), EnvTask(input="two")),
+    )
+    result = await arun_rollouts(env, k=4, concurrency=2)
+
+    assert result.stopped_early == "error-storm"
+    attempts = [attempt for task_result in result.task_results for attempt in task_result.attempts]
+    assert attempts
+    assert all(attempt.error_type == "RuntimeError" for attempt in attempts)
+
+
+async def test_hermetic_real_agent_full_override_set(tmp_path):
+    from agno.compression.manager import CompressionManager
+    from agno.culture.manager import CultureManager
+    from agno.session import SessionSummaryManager
+    from agno.skills.agent_skills import Skills
+
+    calls = []
+    main_model = RecordingFakeModel("main", calls=calls)
+    main_model.cache_response = True
+    reasoning_model = RecordingFakeModel("reasoning")
+    reasoning_model.cache_response = True
+    followup_model = RecordingFakeModel("followup")
+    followup_model.cache_response = True
+    fallback_model = RecordingFakeModel("fallback")
+    fallback_model.cache_response = True
+    sub_model = RecordingFakeModel("sub")
+    caller_db = InMemoryDb()
+    reasoning_db = InMemoryDb()
+    summary_manager = SessionSummaryManager()
+    compression_manager = CompressionManager()
+    culture_manager = CultureManager(db=InMemoryDb())
+    skills = Skills(loaders=[])
+    save_path = tmp_path / "response.txt"
+    caller = Agent(
+        model=main_model,
+        db=caller_db,
+        reasoning_model=reasoning_model,
+        followup_model=followup_model,
+        fallback_models=[fallback_model],
+        session_summary_manager=summary_manager,
+        compression_manager=compression_manager,
+        culture_manager=culture_manager,
+        skills=skills,
+        reasoning_agent=Agent(model=sub_model, db=reasoning_db, telemetry=False),
+        save_response_to_file=str(save_path),
+        telemetry=False,
+    )
+    attempt_agents = []
+    _spy_deep_copy(caller, attempt_agents)
+
+    result = await arun_rollouts(_real_env(caller), k=2, concurrency=2)
+
+    assert result.pass_rate == 1.0
+    assert len(attempt_agents) == 2
+    for attempt_agent in attempt_agents:
+        assert isinstance(attempt_agent.db, InMemoryDb) and attempt_agent.db is not caller_db
+        assert attempt_agent.model is not main_model and attempt_agent.model.cache_response is False
+        assert attempt_agent.reasoning_model is not reasoning_model
+        assert attempt_agent.reasoning_model.cache_response is False
+        assert attempt_agent.followup_model is not followup_model
+        assert attempt_agent.followup_model.cache_response is False
+        assert attempt_agent.fallback_config is not caller.fallback_config
+        assert all(entry.cache_response is False for entry in attempt_agent.fallback_config.on_error)
+        assert attempt_agent.session_summary_manager is None
+        assert attempt_agent.enable_session_summaries is False
+        assert attempt_agent.memory_manager is None
+        assert attempt_agent.compression_manager is not compression_manager
+        assert attempt_agent.compression_manager.stats == {}
+        assert attempt_agent.compression_manager.stats is not compression_manager.stats
+        assert attempt_agent.culture_manager is not culture_manager
+        assert attempt_agent.culture_manager.db is culture_manager.db
+        assert attempt_agent.reasoning_agent is not caller.reasoning_agent
+        assert isinstance(attempt_agent.reasoning_agent.db, InMemoryDb)
+        assert attempt_agent.reasoning_agent.db is not reasoning_db
+        assert attempt_agent.reasoning_agent.model is not sub_model
+        assert attempt_agent.reasoning_agent.model.cache_response is False
+        assert attempt_agent.save_response_to_file is None
+        assert attempt_agent.skills is skills  # read-only definitions stay shared
+    # The caller is untouched, in objects and in side effects.
+    assert caller.db is caller_db
+    assert caller.model is main_model and main_model.cache_response is True
+    assert summary_manager.model is None  # attempt init never wrote its model here
+    assert caller.fallback_config.on_error[0].cache_response is True
+    assert not save_path.exists()
+    # Exactly one provider call per attempt on the main model, none anywhere else:
+    # no summary call, no reasoning call, no memory call rode along.
+    assert [call[0] for call in calls] == ["fake-main", "fake-main"]
+
+
+async def test_culture_reads_survive_hermetic_attempts():
+    # Regression pin: nulling the culture manager silently swapped the caller's
+    # culture for the empty-culture boilerplate inside every attempt.
+    from agno.culture.manager import CultureManager
+    from agno.db.schemas.culture import CulturalKnowledge
+
+    seen_messages = []
+    recording_model = RecordingFakeModel("culture", seen_messages=seen_messages)
+    caller_db = InMemoryDb()
+    CultureManager(db=caller_db).add_cultural_knowledge(
+        CulturalKnowledge(name="Golden Rule", content="CULTURE-MARKER-XYZZY")
+    )
+    caller = Agent(model=recording_model, db=caller_db, add_culture_to_context=True, telemetry=False)
+
+    result = await arun_rollouts(_real_env(caller), k=1, concurrency=1)
+
+    assert result.pass_rate == 1.0
+    prompt_text = "\n".join(
+        str(message.content) for messages in seen_messages for message in messages if message.content
+    )
+    assert "CULTURE-MARKER-XYZZY" in prompt_text
+    assert "no cultural knowledge is currently available" not in prompt_text
+
+
+class MCPTools:
+    """Named exactly like the real class: the run-start guard matches on MRO class
+    names, mirroring the run path's own MCP detection -- so this stand-in triggers
+    it without a server."""
+
+
+async def test_live_agent_with_mcp_tools_rejected_at_run_start():
+    caller = Agent(model=RecordingFakeModel("mcp"), tools=[MCPTools()], telemetry=False)
+    with pytest.raises(RuntimeError, match="factory"):
+        await arun_rollouts(_real_env(caller), k=1)
+
+
+async def test_factory_env_with_mcp_tools_not_rejected():
+    # A factory constructs fresh MCP tools per attempt -- the documented workaround
+    # -- so the guard must not fire on the factory path.
+    recorder = Recorder()
+
+    def factory():
+        stub = StubRolloutAgent(recorder)
+        stub.tools = [MCPTools()]
+        return stub
+
+    env = Env(name="mcp-factory", tasks=(EnvTask(input="one"),), scorer=CodeScorer(lambda r, e: True), agent=factory)
+    result = await arun_rollouts(env, k=1, concurrency=1)
+    assert result.n_attempts == 1
+
+
+async def test_positional_task_id_collision_rejected_at_run_start():
+    # An explicit "t2" colliding with the second task's auto-id only exists after
+    # resolution; diff() keyed on the duplicate would pair rows with the wrong task.
+    env = _stub_env(tasks=(EnvTask(input="a", id="t2"), EnvTask(input="b")))
+    with pytest.raises(ValueError, match="duplicate resolved task id"):
+        await arun_rollouts(env, k=1)
+
+
+async def test_model_less_duck_subject_degrades_policy_fingerprint():
+    # A duck-typed factory product with NO model attribute degrades the policy
+    # fingerprint to None like a model-less Agent -- it must not crash preflight.
+    class ModelLessDuck:
+        async def arun(self, *, input, stream, stream_events, yield_run_output, session_id):
+            yield _output(content=f"echo:{input}")
+
+    env = Env(
+        name="duck",
+        tasks=(EnvTask(input="one"),),
+        scorer=CodeScorer(lambda run, expected: True),
+        agent=lambda: ModelLessDuck(),
+    )
+    result = await arun_rollouts(env, k=1, concurrency=1)
+    assert result.policy_fingerprint is None
+    assert result.pass_rate == 1.0
+
+
+def test_every_shared_field_has_a_hermetic_action():
+    # The drift alarm: a field added to deep_copy's shared-by-reference tuple
+    # without a mapped hermetic action fails here before it ships.
+    missing = set(SHARED_BY_REFERENCE_FIELDS) - set(_HERMETIC_FIELD_ACTIONS)
+    assert not missing, f"unmapped shared-by-reference fields: {sorted(missing)}"
+
+
+async def test_asave_aload_roundtrip(tmp_path):
+    result = await arun_rollouts(_stub_env(), k=2, concurrency=2)
+    target = tmp_path / "async-roundtrip.json"
+    await result.asave(target)
+    loaded = await EnvRunResult.aload(target)
+    assert loaded.summary() == result.summary()
