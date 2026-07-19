@@ -284,9 +284,9 @@ async def test_hermetic_identical_start():
 
 async def test_hermetic_live_agent_full_override_set():
     # The live-agent branch on STUB agents: db-bound state cut, culture rebound to a
-    # read-only copy, memory nulled, secondary-model caches disabled on copies --
-    # and the caller's instance untouched afterwards. The REAL-Agent twin below
-    # covers the fields this stub cannot model.
+    # read-only copy, memory rebound to the attempt's fresh db, secondary-model
+    # caches disabled on copies -- and the caller's instance untouched afterwards.
+    # The REAL-Agent twin below covers the fields this stub cannot model.
     recorder = Recorder()
     caller_db = object()
     culture_manager = StubManager(db=object())
@@ -316,7 +316,10 @@ async def test_hermetic_live_agent_full_override_set():
         assert snapshot["culture_manager"] is not None
         assert snapshot["culture_manager"] is not culture_manager
         assert snapshot["culture_manager"].db is culture_manager.db
-        assert snapshot["memory_manager"] is None
+        # Memory is per-user state: the manager copy reads the attempt's fresh db.
+        assert snapshot["memory_manager"] is not None
+        assert snapshot["memory_manager"] is not memory_manager
+        assert snapshot["memory_manager"].db is snapshot["db"]
         assert snapshot["update_cultural_knowledge"] is False
         assert snapshot["enable_agentic_culture"] is False
         assert snapshot["model_cache"] is False
@@ -665,9 +668,10 @@ def test_diff_flags_regressions():
 # ---------------------------------------------------------------------------
 
 
-async def test_hermetic_factory_culture_rebound_and_memory_nulled():
-    # The factory branch gets the same override set as the live branch: memory
-    # nulled, culture rebound to a read-only copy so reads survive.
+async def test_hermetic_factory_culture_and_memory_rebound():
+    # The factory branch gets the same override set as the live branch: culture
+    # rebound to a read-only copy so global reads survive, memory rebound to the
+    # attempt's fresh db so per-user reads are empty.
     recorder = Recorder()
     culture_manager = StubManager(db=object())
     memory_manager = StubManager()
@@ -681,7 +685,9 @@ async def test_hermetic_factory_culture_rebound_and_memory_nulled():
         assert snapshot["culture_manager"] is not None
         assert snapshot["culture_manager"] is not culture_manager
         assert snapshot["culture_manager"].db is culture_manager.db
-        assert snapshot["memory_manager"] is None
+        assert snapshot["memory_manager"] is not None
+        assert snapshot["memory_manager"] is not memory_manager
+        assert snapshot["memory_manager"].db is snapshot["db"]
         assert snapshot["update_cultural_knowledge"] is False
         assert snapshot["enable_agentic_culture"] is False
 
@@ -1024,11 +1030,21 @@ async def test_hermetic_real_agent_full_override_set(tmp_path):
         assert attempt_agent.followup_model.cache_response is False
         assert attempt_agent.fallback_config is not caller.fallback_config
         assert all(entry.cache_response is False for entry in attempt_agent.fallback_config.on_error)
-        assert attempt_agent.session_summary_manager is None
+        # The summary manager survives as an attempt-local copy: production's
+        # resolver binds the attempt model on it, the read flag resolves True (a
+        # fresh session has no summary to render), and only the WRITE is severed.
+        assert attempt_agent.session_summary_manager is not None
+        assert attempt_agent.session_summary_manager is not summary_manager
+        assert attempt_agent.session_summary_manager.model is not main_model
+        assert attempt_agent.session_summary_manager.model.id == "fake-main"
+        assert attempt_agent.session_summary_manager.model.cache_response is False
         assert attempt_agent.enable_session_summaries is False
         assert attempt_agent.memory_manager is None
-        assert attempt_agent.add_memories_to_context is False
-        assert attempt_agent.add_session_summary_to_context is False
+        # No memory signal on this caller, so production's resolver leaves the
+        # read flag unresolved -- exactly what a fresh production run would see.
+        assert attempt_agent.add_memories_to_context is None
+        assert attempt_agent.add_session_summary_to_context is True
+        assert attempt_agent.add_culture_to_context is True
         assert attempt_agent.compression_manager is not compression_manager
         assert attempt_agent.compression_manager.stats == {}
         assert attempt_agent.compression_manager.stats is not compression_manager.stats
@@ -1049,8 +1065,9 @@ async def test_hermetic_real_agent_full_override_set(tmp_path):
     assert summary_manager.model is None  # attempt init never wrote its model here
     assert caller.fallback_config.on_error[0].cache_response is True
     assert not save_path.exists()
-    # Exactly one provider call per attempt on the main model, none anywhere else:
-    # no summary call, no reasoning call, no memory call rode along.
+    # Exactly one provider call per attempt on the main model, none anywhere
+    # else: no summary or memory call rode along. (Reasoning is not enabled on
+    # this caller, so the reasoning slots are exercised as bindings only.)
     assert [call[0] for call in calls] == ["fake-main", "fake-main"]
 
 
@@ -1158,10 +1175,11 @@ async def test_hermetic_learning_extraction_never_fires():
 
 async def test_attempt_prompt_same_whether_caller_ran_before_handover():
     # add_memories_to_context / add_session_summary_to_context default to None and
-    # are resolved IN PLACE on the caller's first run: without the override forcing
-    # them off, an already-run caller handed its attempts a memory boilerplate
-    # block that a never-run caller's attempts did not get -- two prompts for the
-    # same Env and task.
+    # are resolved IN PLACE on the caller's first run. The override runs
+    # production's resolver against the swapped inputs, so a never-run caller's
+    # attempts resolve the same flags an already-run caller carries -- one prompt
+    # for the same Env and task, and it is production's fresh-user prompt: the
+    # memory empty-state paragraph is IN it, not severed with the block.
     from agno.memory import MemoryManager
 
     def build_caller(tag, seen_messages):
@@ -1186,7 +1204,7 @@ async def test_attempt_prompt_same_whether_caller_ran_before_handover():
     fresh_prompts = ["\n".join(str(m.content) for m in messages) for messages in seen_fresh]
     ran_prompts = ["\n".join(str(m.content) for m in messages) for messages in seen_ran]
     assert fresh_prompts and fresh_prompts == ran_prompts
-    assert "retain memories" not in "\n".join(ran_prompts)
+    assert "retain memories" in "\n".join(ran_prompts)
 
 
 class MCPTools:
@@ -1279,6 +1297,369 @@ def test_every_shared_field_has_a_hermetic_action():
     # without a mapped hermetic action fails here before it ships.
     missing = set(SHARED_BY_REFERENCE_FIELDS) - set(_HERMETIC_FIELD_ACTIONS)
     assert not missing, f"unmapped shared-by-reference fields: {sorted(missing)}"
+
+
+# ---------------------------------------------------------------------------
+# Read parity: for every context-shaping feature, the attempt system prompt is
+# byte-identical to the prompt a fresh production user gets from the same world.
+# The attempt runs FIRST, so equality also proves the attempt left the world
+# unchanged for the production run that follows.
+# ---------------------------------------------------------------------------
+
+
+def _system_text(seen_messages):
+    first_call = seen_messages[0]
+    return "\n".join(str(m.content) for m in first_call if getattr(m, "role", None) == "system")
+
+
+async def _parity_prompts(build_agent):
+    """build_agent(model) -> an Agent over a shared world. Returns the attempt
+    system prompt and the fresh-user production system prompt, in that order."""
+    attempt_seen = []
+    attempt_env = _real_env(build_agent(RecordingFakeModel("parity", seen_messages=attempt_seen)))
+    result = await arun_rollouts(attempt_env, k=1, concurrency=1)
+    assert result.pass_rate == 1.0  # non-vacuous: the attempt actually completed
+
+    production_seen = []
+    production_agent = build_agent(RecordingFakeModel("parity", seen_messages=production_seen))
+    try:
+        await production_agent.arun(
+            input="hello",
+            user_id=f"fresh-user-{uuid4().hex}",
+            session_id=f"fresh-session-{uuid4().hex}",
+        )
+    except Exception:
+        # Post-run write engines may choke on the fake model's canned response;
+        # the system prompt was captured at request time.
+        pass
+    assert production_seen, "production run never reached the model"
+    return _system_text(attempt_seen), _system_text(production_seen)
+
+
+async def test_read_parity_memory():
+    world_db = InMemoryDb()
+
+    def build(model):
+        return Agent(model=model, db=world_db, update_memory_on_run=True, telemetry=False)
+
+    attempt_prompt, production_prompt = await _parity_prompts(build)
+    assert "retain memories" in attempt_prompt  # the fresh-user empty state renders
+    assert attempt_prompt == production_prompt
+
+
+async def test_read_parity_culture():
+    from agno.culture.manager import CultureManager
+    from agno.db.schemas.culture import CulturalKnowledge
+
+    world_db = InMemoryDb()
+    CultureManager(db=world_db).add_cultural_knowledge(
+        CulturalKnowledge(name="Golden Rule", content="CULTURE-MARKER-XYZZY")
+    )
+
+    def build(model):
+        return Agent(model=model, db=world_db, add_culture_to_context=True, telemetry=False)
+
+    attempt_prompt, production_prompt = await _parity_prompts(build)
+    assert "CULTURE-MARKER-XYZZY" in attempt_prompt  # global culture reads survive
+    assert attempt_prompt == production_prompt
+
+
+async def test_read_parity_culture_write_flag_only_no_db():
+    # The gate's path 5a: a caller with only a culture WRITE flag and no db.
+    # Production resolves add_culture_to_context=True and renders the culture
+    # empty state; severing the write flag before resolution used to lose the
+    # whole block. Resolution now runs first, against the attempt's fresh db.
+    def build(model):
+        return Agent(model=model, update_cultural_knowledge=True, telemetry=False)
+
+    attempt_prompt, production_prompt = await _parity_prompts(build)
+    assert "no cultural knowledge is currently available" in attempt_prompt
+    assert attempt_prompt == production_prompt
+
+
+async def test_read_parity_learning():
+    from agno.learn import LearningMachine
+    from agno.learn.config import LearnedKnowledgeConfig
+
+    world_db = InMemoryDb()
+    knowledge = FakeLearnedKnowledge()
+
+    def build(model):
+        return Agent(
+            model=model,
+            db=world_db,
+            learning=LearningMachine(learned_knowledge=LearnedKnowledgeConfig(knowledge=knowledge)),
+            telemetry=False,
+        )
+
+    attempt_prompt, production_prompt = await _parity_prompts(build)
+    assert "<learning_system>" in attempt_prompt  # global learned knowledge renders
+    assert attempt_prompt == production_prompt
+
+
+async def test_read_parity_learning_true_default():
+    # learning=True is materialized into an explicit default machine so severing
+    # survives re-initialization; the prompt must still be what production's own
+    # learning=True renders for a fresh user.
+    world_db = InMemoryDb()
+
+    def build(model):
+        # The description keeps the system prompt non-empty, so equality is not
+        # a vacuous ""-vs-"" comparison.
+        return Agent(model=model, db=world_db, learning=True, description="Parity probe.", telemetry=False)
+
+    attempt_prompt, production_prompt = await _parity_prompts(build)
+    assert "Parity probe." in attempt_prompt
+    assert attempt_prompt == production_prompt
+
+
+async def test_read_parity_session_summary():
+    world_db = InMemoryDb()
+
+    def build(model):
+        # The description keeps the system prompt non-empty, so equality is not
+        # a vacuous ""-vs-"" comparison.
+        return Agent(
+            model=model, db=world_db, enable_session_summaries=True, description="Parity probe.", telemetry=False
+        )
+
+    attempt_prompt, production_prompt = await _parity_prompts(build)
+    assert "Parity probe." in attempt_prompt
+    assert "summary_of_previous_interactions" not in attempt_prompt  # fresh session: nothing to render
+    assert attempt_prompt == production_prompt
+
+
+class StubKnowledge:
+    """Duck-typed knowledge: enough surface for context building and the search
+    tool registration, with a marker the parity assertions can look for."""
+
+    def build_context(self, enable_agentic_filters=False):
+        return "<knowledge_instructions>KNOWLEDGE-MARKER-XYZZY</knowledge_instructions>"
+
+
+async def test_read_parity_knowledge():
+    world_db = InMemoryDb()
+    knowledge = StubKnowledge()
+
+    def build(model):
+        return Agent(model=model, db=world_db, knowledge=knowledge, telemetry=False)
+
+    attempt_prompt, production_prompt = await _parity_prompts(build)
+    assert "KNOWLEDGE-MARKER-XYZZY" in attempt_prompt  # shared knowledge reads survive
+    assert attempt_prompt == production_prompt
+
+
+class StubSkills:
+    """Duck-typed skills: the two methods the run path calls."""
+
+    def get_system_prompt_snippet(self):
+        return "SKILLS-MARKER-XYZZY"
+
+    def get_tools(self):
+        return []
+
+
+async def test_read_parity_skills():
+    world_db = InMemoryDb()
+    skills = StubSkills()
+
+    def build(model):
+        return Agent(model=model, db=world_db, skills=skills, telemetry=False)
+
+    attempt_prompt, production_prompt = await _parity_prompts(build)
+    assert "SKILLS-MARKER-XYZZY" in attempt_prompt  # shared skill definitions survive
+    assert attempt_prompt == production_prompt
+
+
+# ---------------------------------------------------------------------------
+# Write isolation: the deep-freeze check. Concurrent attempts on a maxed-out
+# caller must leave the caller's reachable object graph byte-identical.
+# ---------------------------------------------------------------------------
+
+# Test-double observation sinks that grow on deliberate READS; everything else
+# in the caller graph must be frozen.
+_SNAPSHOT_SINK_NAMES = {"calls", "seen_messages", "seen_tools", "search_calls"}
+
+
+def _graph_paths(root, keepalive):
+    """Flatten an object graph into {path: value-or-id} for before/after diffing.
+    `keepalive` pins visited objects so ids cannot be reused across snapshots."""
+    paths = {}
+
+    def record(path, value, depth, on_path_ids):
+        if isinstance(value, (str, int, float, bool, type(None))):
+            paths[path] = repr(value)
+            return
+        if id(value) in on_path_ids:
+            paths[path] = "<cycle>"
+            return
+        keepalive.append(value)
+        branch_ids = on_path_ids | {id(value)}
+        if isinstance(value, (list, tuple)):
+            paths[path + ".len"] = len(value)
+            if depth > 0:
+                for index, item in enumerate(value):
+                    record(f"{path}[{index}]", item, depth - 1, branch_ids)
+            return
+        if isinstance(value, (set, frozenset)):
+            paths[path + ".len"] = len(value)
+            if depth > 0:
+                for index, item in enumerate(sorted(value, key=repr)):
+                    record(f"{path}{{{index}}}", item, depth - 1, branch_ids)
+            return
+        if isinstance(value, dict):
+            paths[path + ".len"] = len(value)
+            if depth > 0:
+                for key in sorted(value, key=repr):
+                    record(f"{path}[{key!r}]", value[key], depth - 1, branch_ids)
+            return
+        paths[path + ".id"] = id(value)
+        if depth > 0 and hasattr(value, "__dict__"):
+            for name in sorted(vars(value)):
+                if name in _SNAPSHOT_SINK_NAMES or name.startswith("__"):
+                    continue
+                record(f"{path}.{name}", vars(value)[name], depth - 1, branch_ids)
+
+    record("caller", root, 6, frozenset())
+    return paths
+
+
+async def _drain_background_tasks():
+    current = asyncio.current_task()
+    pending = [task for task in asyncio.all_tasks() if task is not current]
+    if pending:
+        await asyncio.gather(*pending, return_exceptions=True)
+
+
+async def test_write_isolation_deep_freeze(tmp_path):
+    # k=3 concurrent attempts on a maxed-out caller -- every manager, seeded db,
+    # learning machine over a shared store, reasoning agent, fallback models,
+    # warm caches, save file. Snapshot the caller's reachable graph before and
+    # after; zero caller-side mutations, no save file, no cache replay.
+    from agno.compression.manager import CompressionManager
+    from agno.culture.manager import CultureManager
+    from agno.db.schemas.culture import CulturalKnowledge
+    from agno.learn import LearningMachine
+    from agno.learn.config import LearnedKnowledgeConfig, LearningMode
+    from agno.memory import MemoryManager
+    from agno.session import SessionSummaryManager
+
+    calls = []
+    main_model = RecordingFakeModel("main", calls=calls)
+    main_model.cache_response = True
+    reasoning_model = RecordingFakeModel("reasoning", calls=calls)
+    reasoning_model.cache_response = True
+    fallback_model = RecordingFakeModel("fallback", calls=calls)
+    fallback_model.cache_response = True
+    sub_model = RecordingFakeModel("sub", calls=calls)
+    sub_model.cache_response = True
+
+    world_db = InMemoryDb()
+    culture_db = InMemoryDb()
+    CultureManager(db=culture_db).add_cultural_knowledge(
+        CulturalKnowledge(name="Golden Rule", content="CULTURE-MARKER-XYZZY")
+    )
+    learned_store = FakeLearnedKnowledge()
+    save_path = tmp_path / "response.txt"
+
+    caller = Agent(
+        model=main_model,
+        db=world_db,
+        reasoning_model=reasoning_model,
+        fallback_models=[fallback_model],
+        memory_manager=MemoryManager(),
+        session_summary_manager=SessionSummaryManager(),
+        culture_manager=CultureManager(db=culture_db),
+        compression_manager=CompressionManager(),
+        learning=LearningMachine(
+            learned_knowledge=LearnedKnowledgeConfig(knowledge=learned_store, mode=LearningMode.ALWAYS)
+        ),
+        update_memory_on_run=True,
+        enable_agentic_memory=True,
+        enable_session_summaries=True,
+        update_knowledge=True,
+        update_cultural_knowledge=True,
+        enable_agentic_culture=True,
+        reasoning_agent=Agent(model=sub_model, db=InMemoryDb(), telemetry=False),
+        save_response_to_file=str(save_path),
+        skills=StubSkills(),
+        telemetry=False,
+    )
+
+    # Warm the caller: resolve flags in place, run lazy initializers, write the
+    # production rows the attempts must then never touch.
+    try:
+        await caller.arun(input="warmup", user_id="prod-user")
+    except Exception:
+        pass  # write engines may choke on the fake model's canned response
+    await _drain_background_tasks()
+    save_path.unlink(missing_ok=True)  # written by the warm run, legitimately
+    calls.clear()
+
+    keepalive = []
+    before = _graph_paths(caller, keepalive)
+    assert len(before) >= 200  # the freeze is only meaningful over a broad graph
+
+    result = await arun_rollouts(_real_env(caller), k=3, concurrency=3)
+    await _drain_background_tasks()
+
+    assert result.n_attempts == 3
+    after = _graph_paths(caller, keepalive)
+    diffs = {
+        path: (before.get(path), after.get(path))
+        for path in set(before) | set(after)
+        if before.get(path) != after.get(path)
+    }
+    assert not diffs, f"caller-side mutations after attempts: {dict(sorted(diffs.items())[:10])}"
+    assert not save_path.exists()
+    assert learned_store.writes == []
+    # No cross-attempt cache replay: every provider call the attempts made ran
+    # with the response cache off, on every model slot.
+    assert calls, "attempts made no provider calls"
+    assert all(call[3] is False for call in calls)
+
+
+# ---------------------------------------------------------------------------
+# Callable-instance hooks through the engine
+# ---------------------------------------------------------------------------
+
+
+class RecordingCallableHook:
+    """A hook with no __name__: only the type name identifies it."""
+
+    def __init__(self, sink):
+        self.sink = sink
+
+    def __call__(self, **kwargs):
+        self.sink.append(type(self).__name__)
+
+
+async def test_callable_instance_hooks_survive_attempts():
+    # The engine always streams with stream_events=True, and the hook-event
+    # builders read the hook's name on every path -- a callable instance used to
+    # fail 100% of attempts with AttributeError before get_hook_name.
+    fired = []
+    pre_hook = RecordingCallableHook(fired)
+    post_hook = RecordingCallableHook(fired)
+
+    env = Env(
+        name="callable-hooks",
+        tasks=(EnvTask(input="hello"),),
+        scorer=CodeScorer(lambda run, expected: True),
+        agent=lambda: Agent(
+            model=RecordingFakeModel("hooks"),
+            pre_hooks=[pre_hook],
+            post_hooks=[post_hook],
+            telemetry=False,
+        ),
+    )
+    result = await arun_rollouts(env, k=2, concurrency=2)
+
+    assert result.pass_rate == 1.0
+    attempts = [attempt for task_result in result.task_results for attempt in task_result.attempts]
+    assert all(attempt.stop_reason == StopReason.completed for attempt in attempts)
+    assert all(attempt.error is None for attempt in attempts)
+    assert fired.count("RecordingCallableHook") == 4  # pre and post, both attempts
 
 
 async def test_asave_aload_roundtrip(tmp_path):

@@ -13,7 +13,7 @@ from agno.scorer._model import model_identity_payload, model_prompt_payload
 from agno.scorer.base import AnyRunOutput, EnvFingerprintError, Score
 
 
-# Re-declared rather than imported from agno.eval: scorer must not import eval.
+# Local schema: agno.scorer must not import agno.eval.
 class NumericJudgeResponse(BaseModel):
     """Response schema for numeric scoring mode."""
 
@@ -81,8 +81,8 @@ def _build_judge_prompt(
 class JudgeScorer:
     """Run an LLM judge over a run's output.
 
-    `model` is required rather than defaulted, so the judge model is always a visible
-    choice. `threshold` is on the raw 1-10 scale (matching `AgentAsJudgeEval.threshold`)
+    `model` is required, so the judge model is always a visible choice. `threshold`
+    is on the raw 1-10 scale (matching `AgentAsJudgeEval.threshold`)
     and is read only in numeric mode: `passed = raw_score >= threshold`. Numeric mode
     normalizes `value = (score - 1) / 9` for exact endpoints -- judge 1 -> 0.0,
     judge 10 -> 1.0. The raw score lands in `Score.detail["raw_score"]`.
@@ -146,11 +146,11 @@ class JudgeScorer:
     def digest(self) -> str:
         """sha256 hex over criteria, mode, threshold and the judge model's identity.
 
-        The judge is part of the reward function: swapping it -- by id, provider,
+        The judge is part of the scoring rule: swapping it -- by id, provider,
         base_url, sampling params, or a model-level prompt, not just id -- is an
         environment change, so the model contributes the same identity payload the
         policy fingerprint uses, plus its prompt-shaped fields (which the policy
-        payload deliberately excludes -- for the judge they shape the reward).
+        payload deliberately excludes -- for the judge they shape the verdict).
         """
         payload = {
             "criteria": self.criteria,

@@ -83,9 +83,9 @@ class Env:
     detected there, not prevented here.
 
     A live `agent` is deep-copied per attempt; a callable is a factory, called per
-    attempt. The agent is held as a live reference rather than serialized config
-    because rehydrating a model through Agent.from_dict drops sampling params,
-    base_url, and credentials -- exactly the fields reproducibility depends on.
+    attempt. The agent reference must stay live: rehydrating a model through
+    Agent.from_dict drops sampling params, base_url, and credentials -- exactly the
+    fields reproducibility depends on.
     """
 
     name: str
@@ -116,8 +116,8 @@ class Env:
             Team = None  # type: ignore[assignment, misc]
         if Team is not None and isinstance(self.agent, Team):
             raise TypeError(
-                f"Env.agent does not accept a Team (got {received}) in 2.7.5; team environments "
-                "arrive in the team release with member-level hermetic semantics"
+                f"Env.agent does not accept a Team (got {received}); team environments "
+                "arrive in the team release with member-level isolation"
             )
         # Discrimination is callable(x): Agent defines no __call__. Anything else
         # raises at construction, naming the received type.
@@ -166,7 +166,7 @@ def _validated_agent(product: Any) -> Any:
     if Team is not None and isinstance(product, Team):
         raise TypeError(
             f"Env.agent factory returned a Team ({received}); team environments arrive "
-            "in the team release with member-level hermetic semantics"
+            "in the team release with member-level isolation"
         )
     if not callable(getattr(product, "arun", None)):
         raise TypeError(f"Env.agent factory must return an Agent, got {received}")

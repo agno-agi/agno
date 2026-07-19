@@ -1,7 +1,7 @@
 # Test Log: reliability
 
-Last run: 2026-07-19, with live `OPENAI_API_KEY`, against the 2.7.5 execution-matching
-rewrite of `ReliabilityEval` (expectations satisfied only by clean tool executions).
+Last run: 2026-07-19, with live `OPENAI_API_KEY`. `ReliabilityEval` matches tool
+executions: expectations are satisfied only by clean tool executions.
 
 ### db_logging.py
 
@@ -11,8 +11,8 @@ rewrite of `ReliabilityEval` (expectations satisfied only by clean tool executio
 
 **Result:** The evaluation itself reports PASSED under execution matching, but the db
 logging step cannot connect: the file hardcodes `localhost:5432` while the repo's
-`run_pgvector.sh` container maps `5532:5432`. Pre-existing port mismatch, unrelated to
-the 2.7.5 rewrite; fixing the cookbook's db_url is out of scope for this PR.
+`run_pgvector.sh` container maps `5532:5432`. Pre-existing port mismatch in this
+cookbook's db_url; the eval logic itself passes.
 
 ---
 

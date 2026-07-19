@@ -49,7 +49,7 @@ class ReliabilityResult:
 
     def assert_passed(self):
         # The result rides in the assert message: when CI goes red under execution
-        # matching (new in 2.7.5), the annotated entries say in one read whether the
+        # matching (new in 2.8.0), the annotated entries say in one read whether the
         # eval was wrong or the agent was.
         assert self.eval_status == "PASSED", f"ReliabilityEval failed: {self}"
 
@@ -112,7 +112,7 @@ class ReliabilityEval:
     def _evaluate(self) -> ReliabilityResult:
         """Core evaluation logic: tool evidence comes from executions, not requests.
 
-        New in 2.7.5: an expectation is satisfied only by a clean execution -- an entry
+        New in 2.8.0: an expectation is satisfied only by a clean execution -- an entry
         in `tools` whose `tool_call_error` is not true (`None` counts as clean; runs
         rehydrated from storage carry `None` for success). Request-side matching
         counted calls that were refused, errored, or given junk arguments, which made
@@ -207,8 +207,8 @@ class ReliabilityEval:
                         missing_tool_calls.append(expected_tool)
 
         # Argument checks read ToolExecution.tool_args -- already parsed, None -> {} --
-        # and are satisfied only by clean executions: leaving them on the message side
-        # would preserve the exact hole execution matching closes.
+        # and are satisfied only by clean executions: message-side requests can carry
+        # arguments for calls that never did work.
         if self.expected_tool_call_arguments:
             for arg_tool_name, expected_args_raw in self.expected_tool_call_arguments.items():
                 # Skip argument checks for tools already tracked as missing

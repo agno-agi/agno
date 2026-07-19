@@ -101,8 +101,9 @@ class Case:
     # inside the case timeout, and receives (result.response, case.expected) -- for a
     # team case that is the TeamRunOutput, so a scorer written against agent content
     # sees the leader's synthesis. `expected` is the value handed to the scorer.
-    # The new fields sit AFTER the 2.7.4 fields: these dataclasses are not kw_only,
-    # so inserting mid-class would silently reassign positional callers.
+    # Field order is load-bearing: these dataclasses are not kw_only, so new fields
+    # must be appended last -- inserting mid-class would silently reassign positional
+    # callers.
     scorer: Optional[Scorer] = None
     expected: Optional[Any] = None
 
@@ -153,8 +154,8 @@ class CaseResult:
     # Raw run output - full programmatic access to content, tool calls, metrics.
     # Excluded from to_dict(). A team case stores its TeamRunOutput.
     response: Optional[Union[RunOutput, TeamRunOutput]] = None
-    # Scorer verdict; None = check not configured. Appended after the 2.7.4 fields
-    # to keep positional construction stable (not kw_only).
+    # Scorer verdict; None = check not configured. Must stay the last field: not
+    # kw_only, so positional construction depends on field order.
     score: Optional[Score] = None
 
     @property
@@ -220,7 +221,7 @@ class SuiteResult:
                     "skipped": result.skipped,
                     "passed": result.passed,
                     "error": result.error,
-                    # Appended at the end of the case payload (2.7.5): purely additive
+                    # Appended at the end of the case payload (2.8.0): purely additive
                     # for CI consumers -- all three are null when no scorer is set.
                     "score_value": result.score.value if result.score is not None else None,
                     "score_passed": result.score.passed if result.score is not None else None,

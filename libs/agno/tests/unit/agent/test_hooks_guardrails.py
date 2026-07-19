@@ -552,3 +552,115 @@ class TestPIIGuardrailTypeSafety:
         run_input = RunInput(input_content="Contact user@example.com")
         with pytest.raises(InputCheckError, match="Potential PII detected"):
             guardrail.check(run_input)
+
+
+class RecordingCallableHook:
+    """A hook with no __name__: only the type name identifies it."""
+
+    def __init__(self):
+        self.calls = 0
+
+    def __call__(self, **kwargs: Any) -> None:
+        self.calls += 1
+
+
+class TestCallableInstanceHooks:
+    """stream_events=True builds started/completed events from the hook's name on
+    every path. A callable instance (no __name__) must run and be named by its
+    type -- not crash pre-try, and not be swallowed as a hook failure in-try."""
+
+    def test_pre_hook_callable_instance_streams_events(self):
+        from agno.agent._hooks import execute_pre_hooks
+        from agno.run.agent import RunOutput
+
+        agent = _make_agent(run_hooks_in_background=False)
+        hook = RecordingCallableHook()
+        events = list(
+            execute_pre_hooks(
+                agent=agent,
+                hooks=[hook],
+                run_response=RunOutput(),
+                run_input=_make_run_input(),
+                session=_make_session(),
+                run_context=_make_run_context(),
+                stream_events=True,
+            )
+        )
+        assert hook.calls == 1
+        assert [event.pre_hook_name for event in events] == ["RecordingCallableHook", "RecordingCallableHook"]
+
+    @pytest.mark.asyncio
+    async def test_async_pre_hook_callable_instance_streams_events(self):
+        from agno.agent._hooks import aexecute_pre_hooks
+        from agno.run.agent import RunOutput
+
+        agent = _make_agent(run_hooks_in_background=False)
+        hook = RecordingCallableHook()
+        events = []
+        async for event in aexecute_pre_hooks(
+            agent=agent,
+            hooks=[hook],
+            run_response=RunOutput(),
+            run_input=_make_run_input(),
+            session=_make_session(),
+            run_context=_make_run_context(),
+            stream_events=True,
+        ):
+            events.append(event)
+        assert hook.calls == 1
+        assert [event.pre_hook_name for event in events] == ["RecordingCallableHook", "RecordingCallableHook"]
+
+    def test_post_hook_callable_instance_streams_events(self):
+        from agno.agent._hooks import execute_post_hooks
+        from agno.run.agent import RunOutput
+
+        agent = _make_agent(run_hooks_in_background=False)
+        hook = RecordingCallableHook()
+        events = list(
+            execute_post_hooks(
+                agent=agent,
+                hooks=[hook],
+                run_output=RunOutput(),
+                session=_make_session(),
+                run_context=_make_run_context(),
+                stream_events=True,
+            )
+        )
+        assert hook.calls == 1
+        assert [event.post_hook_name for event in events] == ["RecordingCallableHook", "RecordingCallableHook"]
+
+    @pytest.mark.asyncio
+    async def test_async_post_hook_callable_instance_streams_events(self):
+        from agno.agent._hooks import aexecute_post_hooks
+        from agno.run.agent import RunOutput
+
+        agent = _make_agent(run_hooks_in_background=False)
+        hook = RecordingCallableHook()
+        events = []
+        async for event in aexecute_post_hooks(
+            agent=agent,
+            hooks=[hook],
+            run_output=RunOutput(),
+            session=_make_session(),
+            run_context=_make_run_context(),
+            stream_events=True,
+        ):
+            events.append(event)
+        assert hook.calls == 1
+        assert [event.post_hook_name for event in events] == ["RecordingCallableHook", "RecordingCallableHook"]
+
+    def test_background_guardrail_failure_logs_type_name(self):
+        # The background-guardrail loop logs the hook name on failure; a callable
+        # instance registered as a guardrail-shaped hook must not crash the log line.
+        agent = _make_agent(run_hooks_in_background=False)
+        hook = RecordingCallableHook()
+
+        from agno.utils.hooks import get_hook_name
+
+        assert get_hook_name(hook) == "RecordingCallableHook"
+
+        def named_hook(**kwargs):
+            pass
+
+        assert get_hook_name(named_hook) == "named_hook"
+        assert agent is not None

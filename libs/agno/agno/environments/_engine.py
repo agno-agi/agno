@@ -33,8 +33,9 @@ _STATUS_TO_STOP = {
 
 
 class StopReason(str, Enum):
-    """Why an attempt stopped. Values are lowercase and equal to their names, so the
-    natural string comparison works -- a deliberate break with RunStatus's casing."""
+    """Why an attempt stopped. Values are lowercase and equal to their names, so
+    natural string comparison works; not interchangeable with RunStatus values,
+    which use a different casing."""
 
     completed = "completed"  # run finished; the only state a scorer sees
     error = "error"  # run raised or yielded an error event

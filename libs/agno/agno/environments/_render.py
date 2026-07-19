@@ -1,8 +1,11 @@
-"""The rollout grid. Private: `summary()` is the programmatic contract, this is not.
+"""The rollout grid and the per-attempt report. Private: `summary()` is the
+programmatic contract, none of this is.
 
 K attempts is K glyphs: a full block for a pass, a light shade for a scored fail, a
 triangle for an unscored attempt. Rendered live through rich during a TTY run, and
-statically by `EnvRunResult.__str__`.
+statically by `EnvRunResult.__str__`. `build_report` is the layer underneath the
+glyphs: one text block per attempt -- verdict, score reason, tool executions, the
+answer -- so a red glyph is explainable without walking the result objects by hand.
 """
 
 from typing import Any, Dict, List, Optional, Sequence
@@ -33,8 +36,7 @@ def build_grid(
     learning_zone, n_unscored}."""
     header = f"{env_name}                 k={k} · {n_attempts} attempts · {round(duration_seconds)}s"
     if total_cost is not None:
-        # Only when a provider actually reported cost; a bundled price table would be
-        # silently wrong within a quarter.
+        # Only when a provider actually reported cost; no price table is bundled.
         header += f" · ${total_cost:.4f}"
 
     id_width = max([len(str(row["id"])) for row in rows], default=2)
@@ -55,6 +57,97 @@ def build_grid(
     if first_error:
         lines.append(f"  first error: {first_error}")
     return "\n".join(lines)
+
+
+def _clip(text: Any, limit: int) -> str:
+    """One line, whitespace collapsed, hard-capped at `limit` characters."""
+    flat = " ".join(str(text).split())
+    if len(flat) <= limit:
+        return flat
+    return flat[: limit - 3] + "..."
+
+
+def _attempt_lines(attempt: Any, index: int) -> List[str]:
+    """The report block for one attempt. `index` is 1-based, matching glyph order."""
+    score = attempt.score
+    verdict = "unscored" if score is None else ("PASS" if score.passed else "FAIL")
+    value = f"{score.value:.2f}" if score is not None else "-"
+    head = (
+        f"  attempt {index}: {verdict}   value={value}   "
+        f"stop={attempt.stop_reason.value}   {attempt.duration_seconds:.1f}s"
+    )
+    if attempt.tool_call_limit_hit:
+        head += "   tool-call limit hit"
+    lines = [head]
+    if attempt.error:
+        lines.append(f"    error: {_clip(attempt.error, 200)}")
+    if score is not None and score.reason:
+        lines.append(f"    reason: {_clip(score.reason, 200)}")
+    run = attempt.run
+    if run is None:
+        lines.append("    (no run captured)")
+        return lines
+    for tool in getattr(run, "tools", None) or []:
+        status = "error" if tool.tool_call_error else "ok"
+        lines.append(f"    tool: {tool.tool_name}({tool.tool_args}) -> {status}")
+    if run.content is not None:
+        lines.append(f"    answer: {_clip(run.content, 110)}")
+    metrics = getattr(run, "metrics", None)
+    if metrics is not None:
+        tokens = f"    tokens: in={metrics.input_tokens} out={metrics.output_tokens}"
+        cost = getattr(metrics, "cost", None)
+        if cost is not None:
+            tokens += f" cost=${cost:.4f}"
+        lines.append(tokens)
+    return lines
+
+
+def _is_reportable_failure(attempt: Any) -> bool:
+    """A "red": scored-and-failed, or any attempt that did not complete cleanly."""
+    if attempt.score is not None:
+        return not attempt.score.passed
+    return True  # unscored: error, timeout, cancellation, pause, or scorer crash
+
+
+def build_report(
+    task_results: Sequence[Any],
+    *,
+    only: str = "failed",
+    attempts: Optional[int] = None,
+) -> str:
+    """The per-attempt report. Presentation only -- the format is not a contract and
+    may change without notice; parse `summary()` or `save()` output, never this.
+
+    `only="failed"` (default) keeps the attempts a person investigates: scored fails
+    plus everything unscored (errors, timeouts, pauses). `only="all"` shows every
+    attempt. `attempts` caps the rows shown per task after filtering.
+    """
+    if only not in ("failed", "all"):
+        raise ValueError(f"only must be 'failed' or 'all', got {only!r}")
+    sections: List[str] = []
+    n_total = 0
+    for task_result in task_results:
+        n_total += len(task_result.attempts)
+        selected = [
+            (index, attempt)
+            for index, attempt in enumerate(task_result.attempts, start=1)
+            if only == "all" or _is_reportable_failure(attempt)
+        ]
+        hidden = 0
+        if attempts is not None and len(selected) > attempts:
+            hidden = len(selected) - attempts
+            selected = selected[:attempts]
+        if not selected:
+            continue
+        lines = [f"task {task_result.task.id}: {_clip(task_result.task.input, 90)}"]
+        for index, attempt in selected:
+            lines.extend(_attempt_lines(attempt, index))
+        if hidden:
+            lines.append(f"  ... {hidden} more (raise attempts= to see them)")
+        sections.append("\n".join(lines))
+    if not sections:
+        return f'all {n_total} attempts passed; nothing to report. print_report(only="all") shows every attempt.'
+    return "\n\n".join(sections)
 
 
 class LiveGrid:
