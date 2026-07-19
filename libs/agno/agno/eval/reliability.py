@@ -207,8 +207,8 @@ class ReliabilityEval:
                         missing_tool_calls.append(expected_tool)
 
         # Argument checks read ToolExecution.tool_args -- already parsed, None -> {} --
-        # and are satisfied only by clean executions: leaving them on the message side
-        # would preserve the exact hole execution matching closes.
+        # and are satisfied only by clean executions: message-side requests can carry
+        # arguments for calls that never did work.
         if self.expected_tool_call_arguments:
             for arg_tool_name, expected_args_raw in self.expected_tool_call_arguments.items():
                 # Skip argument checks for tools already tracked as missing
