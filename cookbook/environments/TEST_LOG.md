@@ -50,3 +50,29 @@ recorded in specs/agno/envs/notes/memory.md.
 **Result:** Clean exit through the empty-zone branch.
 
 ---
+
+## 2026-07-19 — re-run after the second fix round (derived hermetic overrides, MCP guard, enumerated fingerprint)
+
+### _01_first_env.py
+
+**Status:** PASS
+
+**Description:** Live re-run against the derived hermetic override set (culture read
+rebind, session-summary/compression isolation, reasoning-agent recursion) and the
+enumerated model-identity payload.
+
+**Result:** 16/16 scored, grid rendered, both fingerprints stamped non-None under the
+new payload. Both tasks 8/8 this run, learning zone empty (documented saturation
+behavior).
+
+### _02_export_sft.py
+
+**Status:** PASS
+
+**Description:** Live re-run, 24 attempts, no warnings or tracebacks.
+
+**Result:** All three tasks 8/8, so the graceful empty-zone branch fired and no
+train.jsonl was written this run; the export path (including the new ato_sft_jsonl
+twin) is pinned by the unit suite.
+
+---
