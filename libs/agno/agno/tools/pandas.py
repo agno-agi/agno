@@ -62,7 +62,7 @@ class PandasTools(Toolkit):
             log_debug(f"Created dataframe: {dataframe_name}")
             return dataframe_name
         except Exception as e:
-            logger.error(f"Error creating dataframe: {e}")
+            logger.exception("Error creating dataframe")
             return f"Error creating dataframe: {e}"
 
     def run_dataframe_operation(self, dataframe_name: str, operation: str, operation_parameters: Dict[str, Any]) -> str:
@@ -98,5 +98,5 @@ class PandasTools(Toolkit):
             except Exception:
                 return "Operation ran successfully"
         except Exception as e:
-            logger.error(f"Error running operation: {e}")
+            logger.exception("Error running operation")
             return f"Error running operation: {e}"

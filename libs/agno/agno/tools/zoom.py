@@ -2,12 +2,12 @@ import json
 from base64 import b64encode
 from datetime import datetime, timedelta
 from os import getenv
-from typing import Any, List, Optional
+from typing import Any, Dict, List, Optional
 
 import requests
 
 from agno.tools import Toolkit
-from agno.utils.log import log_debug, log_info, logger
+from agno.utils.log import log_debug, log_error, log_info, logger
 
 
 class ZoomTools(Toolkit):
@@ -16,6 +16,7 @@ class ZoomTools(Toolkit):
         account_id: Optional[str] = None,
         client_id: Optional[str] = None,
         client_secret: Optional[str] = None,
+        timeout: int = 30,
         **kwargs,
     ):
         """
@@ -25,6 +26,7 @@ class ZoomTools(Toolkit):
             account_id (str): The Zoom account ID for authentication. If not provided, will use ZOOM_ACCOUNT_ID env var.
             client_id (str): The client ID for authentication. If not provided, will use ZOOM_CLIENT_ID env var.
             client_secret (str): The client secret for authentication. If not provided, will use ZOOM_CLIENT_SECRET env var.
+            timeout (int): Per-request HTTP timeout in seconds. Default is 30.
             name (str): The name of the tool. Defaults to "zoom_tool".
         """
         # Get credentials from env vars if not provided
@@ -35,7 +37,7 @@ class ZoomTools(Toolkit):
         self.__token_expiry = None  # Track token expiration
 
         if not self.account_id or not self.client_id or not self.client_secret:
-            logger.error(
+            log_error(
                 "ZOOM_ACCOUNT_ID, ZOOM_CLIENT_ID, and ZOOM_CLIENT_SECRET must be set either through parameters or environment variables."
             )
 
@@ -49,7 +51,7 @@ class ZoomTools(Toolkit):
             self.get_meeting,
         ]
 
-        super().__init__(name="zoom_tool", tools=tools, **kwargs)
+        super().__init__(name="zoom_tool", tools=tools, timeout=timeout, **kwargs)
 
     def get_access_token(self) -> str:
         """
@@ -72,12 +74,12 @@ class ZoomTools(Toolkit):
             auth_string = b64encode(f"{self.client_id}:{self.client_secret}".encode()).decode()
             headers["Authorization"] = f"Basic {auth_string}"
 
-            data = {
+            data: Dict[str, Any] = {
                 "grant_type": "account_credentials",
                 "account_id": self.account_id,
             }
 
-            response = requests.post("https://zoom.us/oauth/token", headers=headers, data=data)
+            response = requests.post("https://zoom.us/oauth/token", headers=headers, data=data, timeout=self.timeout)
             response.raise_for_status()
 
             token_data = response.json()
@@ -88,8 +90,8 @@ class ZoomTools(Toolkit):
             log_debug("Successfully generated new Zoom access token")
             return self.__access_token  # type: ignore
 
-        except requests.RequestException as e:
-            logger.error(f"Failed to generate Zoom access token: {e}")
+        except requests.RequestException:
+            logger.exception("Failed to generate Zoom access token")
             self.__access_token = None
             self.__token_expiry = None
             return ""
@@ -111,12 +113,12 @@ class ZoomTools(Toolkit):
         log_debug(f"Attempting to schedule meeting: {topic} in timezone: {timezone}")
         token = self.get_access_token()
         if not token:
-            logger.error("Unable to obtain access token.")
+            log_error("Unable to obtain access token.")
             return json.dumps({"error": "Failed to obtain access token"})
 
         url = "https://api.zoom.us/v2/users/me/meetings"
         headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
-        data = {
+        data: Dict[str, Any] = {
             "topic": topic,
             "type": 2,
             "start_time": start_time,
@@ -134,7 +136,7 @@ class ZoomTools(Toolkit):
         }
 
         try:
-            response = requests.post(url, json=data, headers=headers)
+            response = requests.post(url, json=data, headers=headers, timeout=self.timeout)
             response.raise_for_status()
             meeting_info = response.json()
 
@@ -149,7 +151,7 @@ class ZoomTools(Toolkit):
             log_info(f"Meeting scheduled successfully. ID: {meeting_info['id']}")
             return json.dumps(result, indent=2)
         except requests.RequestException as e:
-            logger.error(f"Error scheduling meeting: {e}")
+            logger.exception("Error scheduling meeting")
             return json.dumps({"error": str(e)})
 
     def get_upcoming_meetings(self, user_id: str = "me") -> str:
@@ -166,7 +168,7 @@ class ZoomTools(Toolkit):
         log_debug(f"Fetching upcoming meetings for user: {user_id}")
         token = self.get_access_token()
         if not token:
-            logger.error("Unable to obtain access token.")
+            log_error("Unable to obtain access token.")
             return json.dumps({"error": "Failed to obtain access token"})
 
         url = f"https://api.zoom.us/v2/users/{user_id}/meetings"
@@ -174,7 +176,7 @@ class ZoomTools(Toolkit):
         params = {"type": "upcoming", "page_size": str(30)}
 
         try:
-            response = requests.get(url, headers=headers, params=params)  # type: ignore
+            response = requests.get(url, headers=headers, params=params, timeout=self.timeout)  # type: ignore
             response.raise_for_status()
             meetings = response.json()
 
@@ -182,7 +184,7 @@ class ZoomTools(Toolkit):
             log_info(f"Retrieved {len(result['meetings'])} upcoming meetings")
             return json.dumps(result, indent=2)
         except requests.RequestException as e:
-            logger.error(f"Error fetching upcoming meetings: {e}")
+            logger.exception("Error fetching upcoming meetings")
             return json.dumps({"error": str(e)})
 
     def list_meetings(self, user_id: str = "me", type: str = "scheduled") -> str:
@@ -205,7 +207,7 @@ class ZoomTools(Toolkit):
         log_debug(f"Fetching meetings for user: {user_id}")
         token = self.get_access_token()
         if not token:
-            logger.error("Unable to obtain access token.")
+            log_error("Unable to obtain access token.")
             return json.dumps({"error": "Failed to obtain access token"})
 
         url = f"https://api.zoom.us/v2/users/{user_id}/meetings"
@@ -213,7 +215,7 @@ class ZoomTools(Toolkit):
         params = {"type": type}
 
         try:
-            response = requests.get(url, headers=headers, params=params)
+            response = requests.get(url, headers=headers, params=params, timeout=self.timeout)
             response.raise_for_status()
             meetings = response.json()
 
@@ -228,7 +230,7 @@ class ZoomTools(Toolkit):
             log_info(f"Retrieved {len(result['meetings'])} meetings")
             return json.dumps(result, indent=2)
         except requests.RequestException as e:
-            logger.error(f"Error fetching meetings: {e}")
+            logger.exception("Error fetching meetings")
             return json.dumps({"error": str(e)})
 
     def get_meeting_recordings(
@@ -249,7 +251,7 @@ class ZoomTools(Toolkit):
         log_debug(f"Fetching recordings for meeting: {meeting_id}")
         token = self.get_access_token()
         if not token:
-            logger.error("Unable to obtain access token.")
+            log_error("Unable to obtain access token.")
             return json.dumps({"error": "Failed to obtain access token"})
 
         url = f"https://api.zoom.us/v2/meetings/{meeting_id}/recordings"
@@ -266,7 +268,7 @@ class ZoomTools(Toolkit):
                     logger.warning("Invalid TTL value. Must be between 0 and 604800 seconds.")
 
         try:
-            response = requests.get(url, headers=headers, params=params)
+            response = requests.get(url, headers=headers, params=params, timeout=self.timeout)
             response.raise_for_status()
             recordings = response.json()
 
@@ -286,7 +288,7 @@ class ZoomTools(Toolkit):
             log_info(f"Retrieved {result['recording_count']} recording files")
             return json.dumps(result, indent=2)
         except requests.RequestException as e:
-            logger.error(f"Error fetching meeting recordings: {e}")
+            logger.exception("Error fetching meeting recordings")
             return json.dumps({"error": str(e)})
 
     def delete_meeting(self, meeting_id: str, schedule_for_reminder: bool = True) -> str:
@@ -305,7 +307,7 @@ class ZoomTools(Toolkit):
         log_debug(f"Attempting to delete meeting: {meeting_id}")
         token = self.get_access_token()
         if not token:
-            logger.error("Unable to obtain access token.")
+            log_error("Unable to obtain access token.")
             return json.dumps({"error": "Failed to obtain access token"})
 
         url = f"https://api.zoom.us/v2/meetings/{meeting_id}"
@@ -313,7 +315,7 @@ class ZoomTools(Toolkit):
         params = {"schedule_for_reminder": schedule_for_reminder}
 
         try:
-            response = requests.delete(url, headers=headers, params=params)
+            response = requests.delete(url, headers=headers, params=params, timeout=self.timeout)
             response.raise_for_status()
 
             # Zoom returns 204 No Content for successful deletion
@@ -325,7 +327,7 @@ class ZoomTools(Toolkit):
 
             return json.dumps(result, indent=2)
         except requests.RequestException as e:
-            logger.error(f"Error deleting meeting: {e}")
+            logger.exception("Error deleting meeting")
             return json.dumps({"error": str(e)})
 
     def get_meeting(self, meeting_id: str) -> str:
@@ -342,14 +344,14 @@ class ZoomTools(Toolkit):
         log_debug(f"Fetching details for meeting: {meeting_id}")
         token = self.get_access_token()
         if not token:
-            logger.error("Unable to obtain access token.")
+            log_error("Unable to obtain access token.")
             return json.dumps({"error": "Failed to obtain access token"})
 
         url = f"https://api.zoom.us/v2/meetings/{meeting_id}"
         headers = {"Authorization": f"Bearer {token}"}
 
         try:
-            response = requests.get(url, headers=headers)
+            response = requests.get(url, headers=headers, timeout=self.timeout)
             response.raise_for_status()
             meeting_info = response.json()
 
@@ -369,7 +371,7 @@ class ZoomTools(Toolkit):
             log_info(f"Retrieved details for meeting ID: {meeting_id}")
             return json.dumps(result, indent=2)
         except requests.RequestException as e:
-            logger.error(f"Error fetching meeting details: {e}")
+            logger.exception("Error fetching meeting details")
             return json.dumps({"error": str(e)})
 
     def instructions(self) -> str:

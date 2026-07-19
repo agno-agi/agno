@@ -161,10 +161,10 @@ def create_knowledge(import_knowledge, redis_db):
     return knowledge
 
 
-def test_knowlwedge_add_content(create_knowledge):
+def test_knowlwedge_insert(create_knowledge):
     knowledge = create_knowledge
     try:
-        result = knowledge.add_content(
+        result = knowledge.insert(
             name="Recipes",
             url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf",
             metadata={"doc_type": "recipe_book"},
@@ -174,7 +174,7 @@ def test_knowlwedge_add_content(create_knowledge):
         assert result is None or result is not False
 
     except Exception as e:
-        pytest.fail(f"add_content raised an unexpected exception: {e}")
+        pytest.fail(f"insert raised an unexpected exception: {e}")
 
 
 def test_create_and_exists(redis_db):

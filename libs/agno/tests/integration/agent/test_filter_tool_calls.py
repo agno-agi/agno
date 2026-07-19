@@ -1,7 +1,11 @@
+import os
+
 import pytest
 
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
+
+pytestmark = pytest.mark.skipif(not os.getenv("OPENAI_API_KEY"), reason="OPENAI_API_KEY not set")
 
 
 @pytest.fixture
@@ -17,6 +21,7 @@ def agent(shared_db):
         db=shared_db,
         instructions="Get the weather for the requested city. Use the get_weather tool.",
         add_history_to_context=True,
+        store_history_messages=True,
         max_tool_calls_from_history=1,
     )
 
@@ -71,7 +76,7 @@ def test_tool_calls_in_db(agent):
     agent.run("What is the weather in Mumbai?")
 
     # Database should have all 4 runs
-    session_messages = agent.get_messages_for_session()
+    session_messages = agent.get_session_messages()
     assert session_messages is not None
 
     # Count all tool calls in database
@@ -91,6 +96,7 @@ def test_no_filtering(shared_db):
         db=shared_db,
         instructions="Get the weather for the requested city.",
         add_history_to_context=True,
+        store_history_messages=True,
     )
 
     # Run 4 times

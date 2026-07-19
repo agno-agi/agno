@@ -31,7 +31,7 @@ class RecursiveChunking(ChunkingStrategy):
         start = 0
         chunk_meta_data = document.meta_data
         chunk_number = 1
-        content = self.clean_text(document.content)
+        content = document.content
 
         while start < len(content):
             end = min(start + self.chunk_size, len(content))
@@ -43,12 +43,10 @@ class RecursiveChunking(ChunkingStrategy):
                         end = start + last_sep + 1
                         break
 
-            chunk = content[start:end]
+            chunk = self.clean_text(content[start:end])
             meta_data = chunk_meta_data.copy()
             meta_data["chunk"] = chunk_number
-            chunk_id = None
-            if document.id:
-                chunk_id = f"{document.id}_{chunk_number}"
+            chunk_id = self._generate_chunk_id(document, chunk_number, chunk)
             chunk_number += 1
             meta_data["chunk_size"] = len(chunk)
             chunks.append(Document(id=chunk_id, name=document.name, meta_data=meta_data, content=chunk))

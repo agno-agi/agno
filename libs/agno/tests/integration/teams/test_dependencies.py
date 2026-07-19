@@ -3,6 +3,7 @@ import json
 from agno.agent import Agent
 from agno.db.in_memory import InMemoryDb
 from agno.models.openai.chat import OpenAIChat
+from agno.run.base import RunContext
 from agno.team import Team, TeamRunOutput
 
 
@@ -277,3 +278,111 @@ def test_dependencies_on_run_pass_to_team_members():
         "If you are asked to write a story about a robot, always name the robot Anna"
         in response.member_responses[0].messages[0].content
     )
+
+
+def test_dependencies_function_with_run_context():
+    def get_robot_name(run_context: RunContext):
+        return f"Anna-{run_context.run_id[:8]}"
+
+    team = Team(
+        members=[],
+        model=OpenAIChat(id="gpt-4o-mini"),
+        dependencies={"robot_name": get_robot_name},
+        instructions="If you are asked to write a story about a robot, always name the robot {robot_name}",
+    )
+
+    # Run agent and return the response as a variable
+    response: TeamRunOutput = team.run("Tell me a 5 second short story about a robot named {robot_name}")
+
+    # Verify run_id was used (robot name should contain part of run_id)
+    assert response.run_id is not None
+    robot_name_with_id = f"Anna-{response.run_id[:8]}"
+    # Check the system message contains the resolved robot name
+    assert (
+        f"If you are asked to write a story about a robot, always name the robot {robot_name_with_id}"
+        in response.messages[0].content
+    )
+    # Check the user message contains the resolved robot name
+    assert f"Tell me a 5 second short story about a robot named {robot_name_with_id}" in response.messages[1].content
+
+
+async def test_dependencies_function_with_run_context_async():
+    async def get_robot_name(run_context: RunContext):
+        return f"Anna-{run_context.run_id[:8]}"
+
+    team = Team(
+        members=[],
+        model=OpenAIChat(id="gpt-4o-mini"),
+        dependencies={"robot_name": get_robot_name},
+        instructions="If you are asked to write a story about a robot, always name the robot {robot_name}",
+    )
+
+    # Run agent and return the response as a variable
+    response: TeamRunOutput = await team.arun("Tell me a 5 second short story about a robot named {robot_name}")
+
+    # Verify run_id was used (robot name should contain part of run_id)
+    assert response.run_id is not None
+    robot_name_with_id = f"Anna-{response.run_id[:8]}"
+    # Check the system message contains the resolved robot name
+    assert (
+        f"If you are asked to write a story about a robot, always name the robot {robot_name_with_id}"
+        in response.messages[0].content
+    )
+    # Check the user message contains the resolved robot name
+    assert f"Tell me a 5 second short story about a robot named {robot_name_with_id}" in response.messages[1].content
+
+
+def test_dependencies_function_with_run_context_on_run():
+    def get_robot_name(run_context: RunContext):
+        return f"Anna-{run_context.run_id[:8]}"
+
+    team = Team(
+        members=[],
+        model=OpenAIChat(id="gpt-4o-mini"),
+        instructions="If you are asked to write a story about a robot, always name the robot {robot_name}",
+    )
+
+    # Run agent and return the response as a variable
+    response: TeamRunOutput = team.run(
+        "Tell me a 5 second short story about a robot named {robot_name}",
+        dependencies={"robot_name": get_robot_name},
+    )
+
+    # Verify run_id was used
+    assert response.run_id is not None
+    robot_name_with_id = f"Anna-{response.run_id[:8]}"
+    # Check the system message contains the resolved robot name
+    assert (
+        f"If you are asked to write a story about a robot, always name the robot {robot_name_with_id}"
+        in response.messages[0].content
+    )
+    # Check the user message contains the resolved robot name
+    assert f"Tell me a 5 second short story about a robot named {robot_name_with_id}" in response.messages[1].content
+
+
+async def test_dependencies_function_with_run_context_on_run_async():
+    async def get_robot_name(run_context: RunContext):
+        return f"Anna-{run_context.run_id[:8]}"
+
+    team = Team(
+        members=[],
+        model=OpenAIChat(id="gpt-4o-mini"),
+        instructions="If you are asked to write a story about a robot, always name the robot {robot_name}",
+    )
+
+    # Run agent and return the response as a variable
+    response: TeamRunOutput = await team.arun(
+        "Tell me a 5 second short story about a robot named {robot_name}",
+        dependencies={"robot_name": get_robot_name},
+    )
+
+    # Verify run_id was used
+    assert response.run_id is not None
+    robot_name_with_id = f"Anna-{response.run_id[:8]}"
+    # Check the system message contains the resolved robot name
+    assert (
+        f"If you are asked to write a story about a robot, always name the robot {robot_name_with_id}"
+        in response.messages[0].content
+    )
+    # Check the user message contains the resolved robot name
+    assert f"Tell me a 5 second short story about a robot named {robot_name_with_id}" in response.messages[1].content

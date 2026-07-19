@@ -6,7 +6,7 @@ from pydantic import field_validator
 from pydantic_core.core_schema import ValidationInfo
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from agno.utils.log import logger
+from agno.utils.log import log_error
 
 
 class AgnoAPISettings(BaseSettings):
@@ -46,7 +46,7 @@ class AgnoAPISettings(BaseSettings):
 
     def gate_alpha_feature(self):
         if not self.alpha_features:
-            logger.error("This is an Alpha feature not for general use.\nPlease message the Agno team for access.")
+            log_error("This is an Alpha feature not for general use.\nPlease message the Agno team for access.")
             exit(1)
 
 

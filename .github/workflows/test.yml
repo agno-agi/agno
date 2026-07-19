@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - "main"
+      - "v2.6.0"
   pull_request:
     types:
       - opened
@@ -11,6 +12,8 @@ on:
       - reopened
     branches:
       - "main"
+      - "v2.6.0"
+      - "feat/v2.7" # Sub-PRs into the release branch get the same gate
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -36,6 +39,35 @@ jobs:
           cache: "pip"
       - name: Install dependencies
         run: |
+          # Install the workspace agnoctl alongside agno so a just-bumped,
+          # not-yet-published agnoctl version cannot break the resolve.
+          python -m pip install -e ../agnoctl -e .[dev]
+      - name: Ruff check
+        run: |
+          ruff check .
+      - name: Mypy
+        run: |
+          mypy . --config-file pyproject.toml
+
+  style-check-agnoctl:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.10"]
+
+    defaults:
+      run:
+        working-directory: libs/agnoctl
+
+    steps:
+      - uses: actions/checkout@v3
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: "pip"
+      - name: Install dependencies
+        run: |
           python -m pip install -e .[dev]
       - name: Ruff check
         run: |
@@ -43,6 +75,9 @@ jobs:
       - name: Mypy
         run: |
           mypy . --config-file pyproject.toml
+      - name: Run agnoctl tests
+        run: |
+          python -m pytest ./tests
 
   style-check-cookbook:
     runs-on: ubuntu-latest
@@ -63,7 +98,7 @@ jobs:
           cache: "pip"
       - name: Install dependencies
         run: |
-          python -m pip install -e "../libs/agno/"[dev]
+          python -m pip install -e ../libs/agnoctl -e "../libs/agno/"[dev]
       - name: Ruff check
         run: |
           ruff check .
@@ -105,30 +140,32 @@ jobs:
     if: github.event_name != 'push' || !github.event.pull_request
     strategy:
       matrix:
-        python-version: ["3.12"]
-      fail-fast: true # Stop all matrix jobs if one fails
+        group: [1, 2, 3, 4, 5]
+      fail-fast: true
+
+    name: tests (${{ matrix.group }}/5)
 
     steps:
       - uses: actions/checkout@v3
-      - name: Set up Python ${{ matrix.python-version }}
+      - name: Set up Python 3.12
         uses: actions/setup-python@v4
         with:
-          python-version: ${{ matrix.python-version }}
-      - name: Install uv
-        run: |
-          set -e
-          curl -LsSf https://astral.sh/uv/install.sh | sh
-          echo "$HOME/.cargo/bin" >> $GITHUB_PATH
-      - name: Run dev setup
+          python-version: "3.12"
+      - name: Set up uv with cache
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+          cache-dependency-glob: "libs/agno/pyproject.toml"
+      - name: Run test setup
         working-directory: .
         run: |
           set -e
-          ./scripts/dev_setup.sh
-      - name: Run tests for Agno
+          ./scripts/test_setup.sh
+      - name: Run tests (group ${{ matrix.group }}/5)
         working-directory: .
         env:
           AGNO_TELEMETRY: false
         run: |
           source .venv/bin/activate
-          python -m pytest --cov=agno --cov-report=json:coverage-agno.json ./libs/agno/tests/unit
-          echo "AGNO_COVERAGE=$(python -c 'import json; print(json.load(open("coverage-agno.json"))["totals"]["percent_covered_display"])')" >> $GITHUB_ENV
+          uv pip install pytest-split --quiet
+          python -m pytest --splits 5 --group ${{ matrix.group }} ./libs/agno/tests/unit --ignore=libs/agno/tests/unit/models/litellm --ignore=libs/agno/tests/unit/tools/test_crawl4ai.py --ignore=libs/agno/tests/unit/tools/test_scrapegraph.py

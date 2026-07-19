@@ -1,5 +1,5 @@
 import json
-from typing import Any, List
+from typing import Any, List, Optional
 
 from agno.tools import Toolkit
 from agno.utils.log import log_debug
@@ -13,24 +13,57 @@ except ImportError:
 class YFinanceTools(Toolkit):
     """
     YFinanceTools is a toolkit for getting financial data from Yahoo Finance.
-    Includes all available financial data tools.
+
+    Args:
+        enable_stock_price (bool): Enable the get_current_stock_price tool. Default: True.
+        enable_company_info (bool): Enable the get_company_info tool. Default: False.
+        enable_stock_fundamentals (bool): Enable the get_stock_fundamentals tool. Default: False.
+        enable_income_statements (bool): Enable the get_income_statements tool. Default: False.
+        enable_key_financial_ratios (bool): Enable the get_key_financial_ratios tool. Default: False.
+        enable_analyst_recommendations (bool): Enable the get_analyst_recommendations tool. Default: False.
+        enable_company_news (bool): Enable the get_company_news tool. Default: False.
+        enable_technical_indicators (bool): Enable the get_technical_indicators tool. Default: False.
+        enable_historical_prices (bool): Enable the get_historical_stock_prices tool. Default: False.
+        all (bool): Enable all tools. Overrides individual flags when True. Default: False.
+        session (Optional[Any]): Optional session for yfinance requests.
     """
 
     def __init__(
         self,
+        enable_stock_price: bool = True,
+        enable_company_info: bool = False,
+        enable_stock_fundamentals: bool = False,
+        enable_income_statements: bool = False,
+        enable_key_financial_ratios: bool = False,
+        enable_analyst_recommendations: bool = False,
+        enable_company_news: bool = False,
+        enable_technical_indicators: bool = False,
+        enable_historical_prices: bool = False,
+        all: bool = False,
+        session: Optional[Any] = None,
         **kwargs,
     ):
-        tools: List[Any] = [
-            self.get_current_stock_price,
-            self.get_company_info,
-            self.get_stock_fundamentals,
-            self.get_income_statements,
-            self.get_key_financial_ratios,
-            self.get_analyst_recommendations,
-            self.get_company_news,
-            self.get_technical_indicators,
-            self.get_historical_stock_prices,
-        ]
+        self.session = session
+
+        tools: List[Any] = []
+        if all or enable_stock_price:
+            tools.append(self.get_current_stock_price)
+        if all or enable_company_info:
+            tools.append(self.get_company_info)
+        if all or enable_stock_fundamentals:
+            tools.append(self.get_stock_fundamentals)
+        if all or enable_income_statements:
+            tools.append(self.get_income_statements)
+        if all or enable_key_financial_ratios:
+            tools.append(self.get_key_financial_ratios)
+        if all or enable_analyst_recommendations:
+            tools.append(self.get_analyst_recommendations)
+        if all or enable_company_news:
+            tools.append(self.get_company_news)
+        if all or enable_technical_indicators:
+            tools.append(self.get_technical_indicators)
+        if all or enable_historical_prices:
+            tools.append(self.get_historical_stock_prices)
 
         super().__init__(name="yfinance_tools", tools=tools, **kwargs)
 
@@ -46,7 +79,7 @@ class YFinanceTools(Toolkit):
         """
         try:
             log_debug(f"Fetching current price for {symbol}")
-            stock = yf.Ticker(symbol)
+            stock = yf.Ticker(symbol, session=self.session)
             # Use "regularMarketPrice" for regular market hours, or "currentPrice" for pre/post market
             current_price = stock.info.get("regularMarketPrice", stock.info.get("currentPrice"))
             return f"{current_price:.4f}" if current_price else f"Could not fetch current price for {symbol}"
@@ -63,7 +96,7 @@ class YFinanceTools(Toolkit):
             str: JSON containing company profile and overview.
         """
         try:
-            company_info_full = yf.Ticker(symbol).info
+            company_info_full = yf.Ticker(symbol, session=self.session).info
             if company_info_full is None:
                 return f"Could not fetch company info for {symbol}"
 
@@ -120,7 +153,7 @@ class YFinanceTools(Toolkit):
         """
         try:
             log_debug(f"Fetching historical prices for {symbol}")
-            stock = yf.Ticker(symbol)
+            stock = yf.Ticker(symbol, session=self.session)
             historical_price = stock.history(period=period, interval=interval)
             return historical_price.to_json(orient="index")
         except Exception as e:
@@ -150,7 +183,7 @@ class YFinanceTools(Toolkit):
         """
         try:
             log_debug(f"Fetching fundamentals for {symbol}")
-            stock = yf.Ticker(symbol)
+            stock = yf.Ticker(symbol, session=self.session)
             info = stock.info
             fundamentals = {
                 "symbol": symbol,
@@ -181,7 +214,7 @@ class YFinanceTools(Toolkit):
         """
         try:
             log_debug(f"Fetching income statements for {symbol}")
-            stock = yf.Ticker(symbol)
+            stock = yf.Ticker(symbol, session=self.session)
             financials = stock.financials
             return financials.to_json(orient="index")
         except Exception as e:
@@ -198,7 +231,7 @@ class YFinanceTools(Toolkit):
         """
         try:
             log_debug(f"Fetching key financial ratios for {symbol}")
-            stock = yf.Ticker(symbol)
+            stock = yf.Ticker(symbol, session=self.session)
             key_ratios = stock.info
             return json.dumps(key_ratios, indent=2)
         except Exception as e:
@@ -215,7 +248,7 @@ class YFinanceTools(Toolkit):
         """
         try:
             log_debug(f"Fetching analyst recommendations for {symbol}")
-            stock = yf.Ticker(symbol)
+            stock = yf.Ticker(symbol, session=self.session)
             recommendations = stock.recommendations
             return recommendations.to_json(orient="index")
         except Exception as e:
@@ -233,7 +266,7 @@ class YFinanceTools(Toolkit):
         """
         try:
             log_debug(f"Fetching company news for {symbol}")
-            news = yf.Ticker(symbol).news
+            news = yf.Ticker(symbol, session=self.session).news
             return json.dumps(news[:num_stories], indent=2)
         except Exception as e:
             return f"Error fetching company news for {symbol}: {e}"
@@ -251,7 +284,7 @@ class YFinanceTools(Toolkit):
         """
         try:
             log_debug(f"Fetching technical indicators for {symbol}")
-            indicators = yf.Ticker(symbol).history(period=period)
+            indicators = yf.Ticker(symbol, session=self.session).history(period=period)
             return indicators.to_json(orient="index")
         except Exception as e:
             return f"Error fetching technical indicators for {symbol}: {e}"

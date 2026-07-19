@@ -14,8 +14,8 @@ def test_team_telemetry():
     # Assert telemetry is active by default
     assert team.telemetry
 
-    # Mock the telemetry logging method
-    with patch.object(team, "_log_team_telemetry") as mock_log:
+    # Mock the telemetry logging method in the _telemetry module (called by _run.py)
+    with patch("agno.team._telemetry.log_team_telemetry") as mock_log:
         agent.model = MagicMock()
         team.model = MagicMock()
         team.run("This is a test run")
@@ -40,8 +40,8 @@ async def test_team_telemetry_async():
     # Assert telemetry is active by default
     assert team.telemetry
 
-    # Mock the async telemetry logging method
-    with patch.object(team, "_alog_team_telemetry") as mock_alog:
+    # Mock the async telemetry logging method in the _telemetry module (called by _run.py)
+    with patch("agno.team._telemetry.alog_team_telemetry") as mock_alog:
         mock_model = AsyncMock()
         mock_model.get_instructions_for_model = MagicMock(return_value=None)
         mock_model.get_system_message_for_model = MagicMock(return_value=None)

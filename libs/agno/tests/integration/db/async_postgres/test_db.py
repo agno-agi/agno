@@ -31,7 +31,7 @@ async def test_init_with_db_url():
 async def test_create_session_table_integration(async_postgres_db_real):
     """Test actual session table creation with PostgreSQL"""
     # Create table
-    await async_postgres_db_real._create_table("test_async_pg_sessions", "sessions", "test_schema")
+    await async_postgres_db_real._create_table("test_async_pg_sessions", "sessions")
 
     # Verify table exists in database with correct schema
     async with async_postgres_db_real.async_session_factory() as sess:
@@ -69,7 +69,7 @@ async def test_create_session_table_integration(async_postgres_db_real):
 @pytest.mark.asyncio
 async def test_create_metrics_table_with_constraints(async_postgres_db_real):
     """Test creating metrics table with unique constraints"""
-    await async_postgres_db_real._create_table("test_metrics", "metrics", "test_schema")
+    await async_postgres_db_real._create_table("test_metrics", "metrics")
 
     # Verify unique constraint exists
     async with async_postgres_db_real.async_session_factory() as sess:
@@ -89,7 +89,7 @@ async def test_create_metrics_table_with_constraints(async_postgres_db_real):
 @pytest.mark.asyncio
 async def test_create_table_with_indexes(async_postgres_db_real):
     """Test that indexes are created correctly"""
-    await async_postgres_db_real._create_table("test_memories", "memories", "test_schema")
+    await async_postgres_db_real._create_table("test_memories", "memories")
 
     # Verify indexes exist
     async with async_postgres_db_real.async_session_factory() as sess:
@@ -109,7 +109,7 @@ async def test_create_table_with_indexes(async_postgres_db_real):
 async def test_get_or_create_existing_table(async_postgres_db_real):
     """Test getting an existing table"""
     # First create the table
-    await async_postgres_db_real._create_table("test_async_pg_sessions", "sessions", "test_schema")
+    await async_postgres_db_real._create_table("test_async_pg_sessions", "sessions")
 
     # Clear the cached table attribute
     if hasattr(async_postgres_db_real, "session_table"):
@@ -117,7 +117,7 @@ async def test_get_or_create_existing_table(async_postgres_db_real):
 
     # Now get it again - should not recreate
     with patch.object(async_postgres_db_real, "_create_table", new=AsyncMock()) as mock_create:
-        table = await async_postgres_db_real._get_or_create_table("test_async_pg_sessions", "sessions", "test_schema")
+        table = await async_postgres_db_real._get_or_create_table("test_async_pg_sessions", "sessions")
 
         # Should not call create since table exists
         mock_create.assert_not_called()
@@ -129,8 +129,8 @@ async def test_get_or_create_existing_table(async_postgres_db_real):
 async def test_full_workflow(async_postgres_db_real):
     """Test a complete workflow of creating and using tables"""
     # Get tables (will create them)
-    session_table = await async_postgres_db_real._get_table("sessions")
-    await async_postgres_db_real._get_table("memories")
+    session_table = await async_postgres_db_real._get_table("sessions", create_table_if_not_found=True)
+    await async_postgres_db_real._get_table("memories", create_table_if_not_found=True)
 
     # Verify tables are cached
     assert hasattr(async_postgres_db_real, "session_table")

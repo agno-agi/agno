@@ -8,6 +8,7 @@ from agno.db.base import SessionType
 from agno.db.schemas.culture import CulturalKnowledge
 from agno.db.schemas.evals import EvalRunRecord
 from agno.db.schemas.knowledge import KnowledgeRow
+from agno.db.utils import get_sort_value
 from agno.session import Session
 from agno.utils.log import log_debug, log_error, log_info
 
@@ -153,7 +154,7 @@ def create_table_if_not_exists(dynamodb_client, table_name: str, schema: Dict[st
             return True
 
         except Exception as e:
-            log_error(f"Failed to create table {table_name}: {e}")
+            log_error(f"Failed to create table {table_name}: {str(e)}")
             return False
 
 
@@ -174,13 +175,35 @@ def apply_pagination(
 def apply_sorting(
     items: List[Dict[str, Any]], sort_by: Optional[str] = None, sort_order: Optional[str] = None
 ) -> List[Dict[str, Any]]:
-    """Apply sorting to a list of items."""
+    """Apply sorting to a list of items.
+
+    Args:
+        items: The list of dictionaries to sort
+        sort_by: The field to sort by (defaults to 'created_at')
+        sort_order: The sort order ('asc' or 'desc')
+
+    Returns:
+        The sorted list
+
+    Note:
+        If sorting by "updated_at", will fallback to "created_at" in case of None.
+    """
+    if not items:
+        return items
+
     if sort_by is None:
         sort_by = "created_at"
 
-    reverse = sort_order == "desc"
+    is_descending = sort_order == "desc"
 
-    return sorted(items, key=lambda x: x.get(sort_by, ""), reverse=reverse)
+    # Sort using the helper function that handles updated_at -> created_at fallback
+    sorted_records = sorted(
+        items,
+        key=lambda x: (get_sort_value(x, sort_by) is None, get_sort_value(x, sort_by)),
+        reverse=is_descending,
+    )
+
+    return sorted_records
 
 
 # -- Session utils --
@@ -268,40 +291,6 @@ def deserialize_session_result(
         return WorkflowSession.from_dict(serialized_session)
 
     return None
-
-
-def deserialize_session(session: Dict[str, Any]) -> Optional[Session]:
-    """Deserialize session data from DynamoDB format to Session object."""
-    try:
-        deserialized = session.copy()
-
-        # Handle JSON fields
-        json_fields = ["session_data", "memory", "tools", "functions", "additional_data"]
-        for field in json_fields:
-            if field in deserialized and deserialized[field] is not None:
-                if isinstance(deserialized[field], str):
-                    try:
-                        deserialized[field] = json.loads(deserialized[field])
-                    except json.JSONDecodeError:
-                        log_error(f"Failed to deserialize {field} field")
-                        deserialized[field] = None
-
-        # Handle timestamp fields
-        for field in ["created_at", "updated_at"]:
-            if field in deserialized and deserialized[field] is not None:
-                if isinstance(deserialized[field], (int, float)):
-                    deserialized[field] = datetime.fromtimestamp(deserialized[field], tz=timezone.utc)
-                elif isinstance(deserialized[field], str):
-                    try:
-                        deserialized[field] = datetime.fromisoformat(deserialized[field])
-                    except ValueError:
-                        deserialized[field] = datetime.fromtimestamp(float(deserialized[field]), tz=timezone.utc)
-
-        return Session.from_dict(deserialized)  # type: ignore
-
-    except Exception as e:
-        log_error(f"Failed to deserialize session: {e}")
-        return None
 
 
 # -- Metrics utils --
@@ -442,7 +431,7 @@ def fetch_all_sessions_data_by_type(
         expression_attribute_names = {}
         expression_attribute_values = {":session_type": {"S": session_type}}
 
-        if user_id:
+        if user_id is not None:
             filter_expression = "#user_id = :user_id"
             expression_attribute_names["#user_id"] = "user_id"
             expression_attribute_values[":user_id"] = {"S": user_id}
@@ -456,16 +445,6 @@ def fetch_all_sessions_data_by_type(
                 filter_expression += f" AND {component_filter}"
             else:
                 filter_expression = component_filter
-
-        if session_name:
-            name_filter = "#session_name = :session_name"
-            expression_attribute_names["#session_name"] = "session_name"
-            expression_attribute_values[":session_name"] = {"S": session_name}
-
-            if filter_expression:
-                filter_expression += f" AND {name_filter}"
-            else:
-                filter_expression = name_filter
 
         # Use GSI query for session_type (more efficient than scan)
         query_kwargs = {
@@ -491,7 +470,7 @@ def fetch_all_sessions_data_by_type(
             items.extend(response.get("Items", []))
 
     except Exception as e:
-        log_error(f"Failed to fetch sessions: {e}")
+        log_error(f"Failed to fetch sessions: {str(e)}")
 
     return items
 
@@ -513,7 +492,7 @@ def bulk_upsert_metrics(dynamodb_client, table_name: str, metrics_data: List[Dic
             dynamodb_client.batch_write_item(RequestItems=request_items)
 
     except Exception as e:
-        log_error(f"Failed to bulk upsert metrics: {e}")
+        log_error(f"Failed to bulk upsert metrics: {str(e)}")
 
 
 # -- Query utils --
@@ -680,7 +659,7 @@ def process_query_results(
             if item:
                 deserialized_items.append(item)
         except Exception as e:
-            log_error(f"Failed to deserialize item: {e}")
+            log_error(f"Failed to deserialize item: {str(e)}")
 
     return deserialized_items
 

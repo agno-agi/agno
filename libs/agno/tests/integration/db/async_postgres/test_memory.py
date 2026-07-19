@@ -57,7 +57,7 @@ def sample_user_memories() -> List[UserMemory]:
     return memories
 
 
-@pytest_asyncio.async_def
+@pytest.mark.asyncio
 async def test_upsert_user_memory(async_postgres_db_real: AsyncPostgresDb, sample_user_memory: UserMemory):
     """Test upserting a user memory"""
     # First insert
@@ -77,7 +77,7 @@ async def test_upsert_user_memory(async_postgres_db_real: AsyncPostgresDb, sampl
     assert updated_result.memory["updated"] is True
 
 
-@pytest_asyncio.async_def
+@pytest.mark.asyncio
 async def test_upsert_user_memory_auto_id(async_postgres_db_real: AsyncPostgresDb):
     """Test upserting a user memory without ID (should auto-generate)"""
     memory = UserMemory(
@@ -93,7 +93,7 @@ async def test_upsert_user_memory_auto_id(async_postgres_db_real: AsyncPostgresD
     assert len(result.memory_id) > 0
 
 
-@pytest_asyncio.async_def
+@pytest.mark.asyncio
 async def test_get_user_memory(async_postgres_db_real: AsyncPostgresDb, sample_user_memory: UserMemory):
     """Test getting a single user memory"""
     # First upsert the memory
@@ -109,7 +109,7 @@ async def test_get_user_memory(async_postgres_db_real: AsyncPostgresDb, sample_u
     assert result.memory["content"] == "This is a test memory"
 
 
-@pytest_asyncio.async_def
+@pytest.mark.asyncio
 async def test_get_user_memory_deserialize_false(
     async_postgres_db_real: AsyncPostgresDb, sample_user_memory: UserMemory
 ):
@@ -126,7 +126,7 @@ async def test_get_user_memory_deserialize_false(
     assert result["user_id"] == "test_user_1"
 
 
-@pytest_asyncio.async_def
+@pytest.mark.asyncio
 async def test_get_user_memories_all(async_postgres_db_real: AsyncPostgresDb, sample_user_memories: List[UserMemory]):
     """Test getting all user memories"""
     # Insert all memories
@@ -140,7 +140,7 @@ async def test_get_user_memories_all(async_postgres_db_real: AsyncPostgresDb, sa
     assert all(isinstance(memory, UserMemory) for memory in result)
 
 
-@pytest_asyncio.async_def
+@pytest.mark.asyncio
 async def test_get_user_memories_with_filters(
     async_postgres_db_real: AsyncPostgresDb, sample_user_memories: List[UserMemory]
 ):
@@ -168,7 +168,7 @@ async def test_get_user_memories_with_filters(
     assert result[0].memory_id == "test_memory_2"
 
 
-@pytest_asyncio.async_def
+@pytest.mark.asyncio
 async def test_get_user_memories_with_pagination(
     async_postgres_db_real: AsyncPostgresDb, sample_user_memories: List[UserMemory]
 ):
@@ -190,7 +190,7 @@ async def test_get_user_memories_with_pagination(
     assert total_count == 5
 
 
-@pytest_asyncio.async_def
+@pytest.mark.asyncio
 async def test_get_user_memories_with_sorting(
     async_postgres_db_real: AsyncPostgresDb, sample_user_memories: List[UserMemory]
 ):
@@ -208,7 +208,7 @@ async def test_get_user_memories_with_sorting(
     assert result[-1].memory_id == "test_memory_4"
 
 
-@pytest_asyncio.async_def
+@pytest.mark.asyncio
 async def test_delete_user_memory(async_postgres_db_real: AsyncPostgresDb, sample_user_memory: UserMemory):
     """Test deleting a single user memory"""
     # First insert the memory
@@ -226,7 +226,7 @@ async def test_delete_user_memory(async_postgres_db_real: AsyncPostgresDb, sampl
     assert result is None
 
 
-@pytest_asyncio.async_def
+@pytest.mark.asyncio
 async def test_delete_user_memories_bulk(
     async_postgres_db_real: AsyncPostgresDb, sample_user_memories: List[UserMemory]
 ):
@@ -251,7 +251,7 @@ async def test_delete_user_memories_bulk(
     assert "test_memory_3" in remaining_ids
 
 
-@pytest_asyncio.async_def
+@pytest.mark.asyncio
 async def test_clear_memories(async_postgres_db_real: AsyncPostgresDb, sample_user_memories: List[UserMemory]):
     """Test clearing all memories"""
     # Insert all memories
@@ -270,7 +270,7 @@ async def test_clear_memories(async_postgres_db_real: AsyncPostgresDb, sample_us
     assert len(memories) == 0
 
 
-@pytest_asyncio.async_def
+@pytest.mark.asyncio
 async def test_get_all_memory_topics(async_postgres_db_real: AsyncPostgresDb, sample_user_memories: List[UserMemory]):
     """Test getting all memory topics"""
     # Insert all memories
@@ -290,11 +290,12 @@ async def test_get_all_memory_topics(async_postgres_db_real: AsyncPostgresDb, sa
     assert len(topics) == 6  # "testing" + 5 unique "topic_N"
 
 
-@pytest_asyncio.async_def
-async def test_get_user_memory_stats(async_postgres_db_real: AsyncPostgresDb, sample_user_memories: List[UserMemory]):
+@pytest.mark.asyncio
+async def test_get_user_memory_stats(async_postgres_db_real: AsyncPostgresDb):
     """Test getting user memory statistics"""
     # Create memories for different users
     memories = []
+
     for user_i in range(3):
         for mem_i in range(2 if user_i == 0 else 1):  # User 0 gets 2 memories, others get 1
             memory = UserMemory(
@@ -313,6 +314,8 @@ async def test_get_user_memory_stats(async_postgres_db_real: AsyncPostgresDb, sa
     assert len(stats) == 3
     assert total_count == 3
 
+    print(stats)
+
     # Stats should be ordered by last_memory_updated_at desc
     # User 2 should be first (highest timestamp)
     assert stats[0]["user_id"] == "user_2"
@@ -323,7 +326,7 @@ async def test_get_user_memory_stats(async_postgres_db_real: AsyncPostgresDb, sa
     assert user_0_stats["total_memories"] == 2
 
 
-@pytest_asyncio.async_def
+@pytest.mark.asyncio
 async def test_get_user_memory_stats_with_pagination(async_postgres_db_real: AsyncPostgresDb):
     """Test getting user memory stats with pagination"""
     # Create memories for 5 different users
@@ -348,3 +351,56 @@ async def test_get_user_memory_stats_with_pagination(async_postgres_db_real: Asy
 
     assert len(stats) == 2
     assert total_count == 5
+
+
+@pytest.mark.asyncio
+async def test_get_all_memory_topics_with_user_id_filter(async_postgres_db_real: AsyncPostgresDb):
+    """Test get_all_memory_topics filters correctly by user_id (PR #7490 fix)"""
+    memories = [
+        UserMemory(memory_id="alice_topic_m1", memory="Alice memory 1", user_id="alice", topics=["work", "python"]),
+        UserMemory(memory_id="alice_topic_m2", memory="Alice memory 2", user_id="alice", topics=["travel"]),
+        UserMemory(memory_id="bob_topic_m1", memory="Bob memory", user_id="bob", topics=["gaming", "rust"]),
+    ]
+
+    for memory in memories:
+        await async_postgres_db_real.upsert_user_memory(memory)
+
+    alice_topics = await async_postgres_db_real.get_all_memory_topics(user_id="alice")
+    assert set(alice_topics) == {"work", "python", "travel"}
+
+    bob_topics = await async_postgres_db_real.get_all_memory_topics(user_id="bob")
+    assert set(bob_topics) == {"gaming", "rust"}
+
+
+@pytest.mark.asyncio
+async def test_get_all_memory_topics_unknown_user_returns_empty(async_postgres_db_real: AsyncPostgresDb):
+    """Test get_all_memory_topics returns empty list for unknown user"""
+    memory = UserMemory(memory_id="existing_topic_m", memory="Existing", user_id="existing_user", topics=["topic1"])
+    await async_postgres_db_real.upsert_user_memory(memory)
+
+    unknown_topics = await async_postgres_db_real.get_all_memory_topics(user_id="unknown_user")
+    assert unknown_topics == []
+
+
+@pytest.mark.asyncio
+async def test_get_all_memory_topics_tenant_isolation(async_postgres_db_real: AsyncPostgresDb):
+    """Test that user_id filtering provides proper tenant isolation"""
+    memories = [
+        UserMemory(
+            memory_id="iso_async_a", memory="Alice secret", user_id="alice_iso", topics=["confidential", "alice_only"]
+        ),
+        UserMemory(
+            memory_id="iso_async_b", memory="Bob secret", user_id="bob_iso", topics=["confidential", "bob_only"]
+        ),
+    ]
+
+    for memory in memories:
+        await async_postgres_db_real.upsert_user_memory(memory)
+
+    alice_topics = set(await async_postgres_db_real.get_all_memory_topics(user_id="alice_iso"))
+    bob_topics = set(await async_postgres_db_real.get_all_memory_topics(user_id="bob_iso"))
+
+    assert "alice_only" in alice_topics
+    assert "alice_only" not in bob_topics
+    assert "bob_only" in bob_topics
+    assert "bob_only" not in alice_topics

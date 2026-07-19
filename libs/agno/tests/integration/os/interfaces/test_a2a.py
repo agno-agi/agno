@@ -21,6 +21,7 @@ from agno.run.agent import (
     RunOutput,
     RunOutputEvent,
     RunStartedEvent,
+    RunStatus,
     ToolCallCompletedEvent,
     ToolCallStartedEvent,
 )
@@ -42,7 +43,10 @@ from agno.workflow import Workflow
 @pytest.fixture
 def test_agent():
     """Create a test agent for A2A."""
-    return Agent(name="test-a2a-agent", instructions="You are a helpful assistant.")
+    agent = Agent(name="test-a2a-agent", instructions="You are a helpful assistant.")
+    # Return same instance from deep_copy so arun patches work
+    agent.deep_copy = lambda **kwargs: agent
+    return agent
 
 
 @pytest.fixture
@@ -61,8 +65,9 @@ def test_a2a_interface_parameter():
 
     assert app is not None
     assert any([isinstance(interface, A2A) for interface in agent_os.interfaces])
-    assert "/a2a/message/send" in [route.path for route in app.routes]  # type: ignore
-    assert "/a2a/message/stream" in [route.path for route in app.routes]  # type: ignore
+    paths = [route.path for route in agent_os.get_routes() if hasattr(route, "path")]
+    assert "/a2a/agents/{id}/v1/message:send" in paths
+    assert "/a2a/agents/{id}/v1/message:stream" in paths
 
 
 def test_a2a_interface_in_interfaces_parameter():
@@ -74,8 +79,9 @@ def test_a2a_interface_in_interfaces_parameter():
 
     assert app is not None
     assert any([isinstance(interface, A2A) for interface in agent_os.interfaces])
-    assert "/a2a/message/send" in [route.path for route in app.routes]  # type: ignore
-    assert "/a2a/message/stream" in [route.path for route in app.routes]  # type: ignore
+    paths = [route.path for route in agent_os.get_routes() if hasattr(route, "path")]
+    assert "/a2a/agents/{id}/v1/message:send" in paths
+    assert "/a2a/agents/{id}/v1/message:stream" in paths
 
 
 def test_a2a(test_agent: Agent, test_client: TestClient):
@@ -87,6 +93,7 @@ def test_a2a(test_agent: Agent, test_client: TestClient):
         agent_id=test_agent.id,
         agent_name=test_agent.name,
         content="Hello! This is a test response.",
+        status=RunStatus.completed,
     )
 
     with patch.object(test_agent, "arun", new_callable=AsyncMock) as mock_arun:
@@ -101,13 +108,12 @@ def test_a2a(test_agent: Agent, test_client: TestClient):
                     "messageId": "msg-123",
                     "role": "user",
                     "contextId": "context-789",
-                    "agentId": test_agent.name,
                     "parts": [{"kind": "text", "text": "Hello, agent!"}],
                 }
             },
         }
 
-        response = test_client.post("/a2a/message/send", json=request_body)
+        response = test_client.post(f"/a2a/agents/{test_agent.id}/v1/message:send", json=request_body)
 
         assert response.status_code == 200
         data = response.json()
@@ -189,21 +195,24 @@ def test_a2a_streaming(test_agent: Agent, test_client: TestClient):
                     "messageId": "msg-123",
                     "role": "user",
                     "contextId": "context-789",
-                    "agentId": test_agent.name,
                     "parts": [{"kind": "text", "text": "Hello, agent!"}],
                 }
             },
         }
 
-        response = test_client.post("/a2a/message/stream", json=request_body)
+        response = test_client.post(f"/a2a/agents/{test_agent.id}/v1/message:stream", json=request_body)
 
         assert response.status_code == 200
-        assert response.headers["content-type"] == "application/x-ndjson"
+        assert response.headers["content-type"] == "text/event-stream; charset=utf-8"
 
+        # Parse SSE format: "event: EventType\ndata: JSON\n\n"
         events = []
-        for line in response.text.strip().split("\n"):
-            if line.strip():
-                events.append(json.loads(line))
+        for chunk in response.text.split("\n\n"):
+            if chunk.strip():
+                lines = chunk.strip().split("\n")
+                for line in lines:
+                    if line.startswith("data: "):
+                        events.append(json.loads(line[6:]))
 
         assert len(events) >= 5
 
@@ -299,21 +308,24 @@ def test_a2a_streaming_with_tools(test_agent: Agent, test_client: TestClient):
                     "messageId": "msg-123",
                     "role": "user",
                     "contextId": "context-789",
-                    "agentId": test_agent.name,
                     "parts": [{"kind": "text", "text": "What's the weather in SF?"}],
                 }
             },
         }
 
-        response = test_client.post("/a2a/message/stream", json=request_body)
+        response = test_client.post(f"/a2a/agents/{test_agent.id}/v1/message:stream", json=request_body)
 
         assert response.status_code == 200
-        assert response.headers["content-type"] == "application/x-ndjson"
+        assert response.headers["content-type"] == "text/event-stream; charset=utf-8"
 
+        # Parse SSE format: "event: EventType\ndata: JSON\n\n"
         events = []
-        for line in response.text.strip().split("\n"):
-            if line.strip():
-                events.append(json.loads(line))
+        for chunk in response.text.split("\n\n"):
+            if chunk.strip():
+                lines = chunk.strip().split("\n")
+                for line in lines:
+                    if line.startswith("data: "):
+                        events.append(json.loads(line[6:]))
 
         tool_started = [
             e for e in events if e["result"].get("metadata", {}).get("agno_event_type") == "tool_call_started"
@@ -415,21 +427,24 @@ def test_a2a_streaming_with_reasoning(test_agent: Agent, test_client: TestClient
                     "messageId": "msg-123",
                     "role": "user",
                     "contextId": "context-789",
-                    "agentId": test_agent.name,
                     "parts": [{"kind": "text", "text": "Help me think through this problem."}],
                 }
             },
         }
 
-        response = test_client.post("/a2a/message/stream", json=request_body)
+        response = test_client.post(f"/a2a/agents/{test_agent.id}/v1/message:stream", json=request_body)
 
         assert response.status_code == 200
-        assert response.headers["content-type"] == "application/x-ndjson"
+        assert response.headers["content-type"] == "text/event-stream; charset=utf-8"
 
+        # Parse SSE format: "event: EventType\ndata: JSON\n\n"
         events = []
-        for line in response.text.strip().split("\n"):
-            if line.strip():
-                events.append(json.loads(line))
+        for chunk in response.text.split("\n\n"):
+            if chunk.strip():
+                lines = chunk.strip().split("\n")
+                for line in lines:
+                    if line.startswith("data: "):
+                        events.append(json.loads(line[6:]))
 
         reasoning_started = [
             e for e in events if e["result"].get("metadata", {}).get("agno_event_type") == "reasoning_started"
@@ -514,7 +529,6 @@ def test_a2a_streaming_with_memory(test_agent: Agent, test_client: TestClient):
             agent_id=test_agent.id,
             agent_name=test_agent.name,
             run_id="test-run-123",
-            content="I've updated my memory with this information.",
         )
 
     with patch.object(test_agent, "arun") as mock_arun:
@@ -529,21 +543,24 @@ def test_a2a_streaming_with_memory(test_agent: Agent, test_client: TestClient):
                     "messageId": "msg-123",
                     "role": "user",
                     "contextId": "context-789",
-                    "agentId": test_agent.name,
                     "parts": [{"kind": "text", "text": "Remember this for later."}],
                 }
             },
         }
 
-        response = test_client.post("/a2a/message/stream", json=request_body)
+        response = test_client.post(f"/a2a/agents/{test_agent.id}/v1/message:stream", json=request_body)
 
         assert response.status_code == 200
-        assert response.headers["content-type"] == "application/x-ndjson"
+        assert response.headers["content-type"] == "text/event-stream; charset=utf-8"
 
+        # Parse SSE format: "event: EventType\ndata: JSON\n\n"
         events = []
-        for line in response.text.strip().split("\n"):
-            if line.strip():
-                events.append(json.loads(line))
+        for chunk in response.text.split("\n\n"):
+            if chunk.strip():
+                lines = chunk.strip().split("\n")
+                for line in lines:
+                    if line.startswith("data: "):
+                        events.append(json.loads(line[6:]))
 
         memory_started = [
             e for e in events if e["result"].get("metadata", {}).get("agno_event_type") == "memory_update_started"
@@ -578,7 +595,10 @@ def test_team():
     """Create a test team for A2A."""
     agent1 = Agent(name="agent1", instructions="You are agent 1.")
     agent2 = Agent(name="agent2", instructions="You are agent 2.")
-    return Team(name="test-a2a-team", members=[agent1, agent2], instructions="You are a helpful team.")
+    team = Team(name="test-a2a-team", members=[agent1, agent2], instructions="You are a helpful team.")
+    # Return same instance from deep_copy so arun patches work
+    team.deep_copy = lambda **kwargs: team
+    return team
 
 
 @pytest.fixture
@@ -598,6 +618,7 @@ def test_a2a_team(test_team: Team, test_team_client: TestClient):
         agent_id=test_team.id,
         agent_name=test_team.name,
         content="Hello! This is a test response from the team.",
+        status=RunStatus.completed,
     )
 
     with patch.object(test_team, "arun", new_callable=AsyncMock) as mock_arun:
@@ -612,13 +633,12 @@ def test_a2a_team(test_team: Team, test_team_client: TestClient):
                     "messageId": "msg-123",
                     "role": "user",
                     "contextId": "context-789",
-                    "agentId": test_team.name,
                     "parts": [{"kind": "text", "text": "Hello, team!"}],
                 }
             },
         }
 
-        response = test_team_client.post("/a2a/message/send", json=request_body)
+        response = test_team_client.post(f"/a2a/teams/{test_team.id}/v1/message:send", json=request_body)
 
         assert response.status_code == 200
         data = response.json()
@@ -700,21 +720,24 @@ def test_a2a_streaming_team(test_team: Team, test_team_client: TestClient):
                     "messageId": "msg-123",
                     "role": "user",
                     "contextId": "context-789",
-                    "agentId": test_team.name,
                     "parts": [{"kind": "text", "text": "Hello, team!"}],
                 }
             },
         }
 
-        response = test_team_client.post("/a2a/message/stream", json=request_body)
+        response = test_team_client.post(f"/a2a/teams/{test_team.id}/v1/message:stream", json=request_body)
 
         assert response.status_code == 200
-        assert response.headers["content-type"] == "application/x-ndjson"
+        assert response.headers["content-type"] == "text/event-stream; charset=utf-8"
 
+        # Parse SSE format: "event: EventType\ndata: JSON\n\n"
         events = []
-        for line in response.text.strip().split("\n"):
-            if line.strip():
-                events.append(json.loads(line))
+        for chunk in response.text.split("\n\n"):
+            if chunk.strip():
+                lines = chunk.strip().split("\n")
+                for line in lines:
+                    if line.startswith("data: "):
+                        events.append(json.loads(line[6:]))
 
         assert len(events) >= 5
 
@@ -777,13 +800,14 @@ def test_a2a_user_id_from_header(test_agent: Agent, test_client: TestClient):
                 "message": {
                     "messageId": "msg-123",
                     "role": "user",
-                    "agentId": test_agent.name,
                     "parts": [{"kind": "text", "text": "Hello!"}],
                 }
             },
         }
 
-        response = test_client.post("/a2a/message/send", json=request_body, headers={"X-User-ID": "user-456"})
+        response = test_client.post(
+            f"/a2a/agents/{test_agent.id}/v1/message:send", json=request_body, headers={"X-User-ID": "user-456"}
+        )
 
         assert response.status_code == 200
         mock_arun.assert_called_once()
@@ -812,14 +836,13 @@ def test_a2a_user_id_from_metadata(test_agent: Agent, test_client: TestClient):
                 "message": {
                     "messageId": "msg-123",
                     "role": "user",
-                    "agentId": test_agent.name,
                     "metadata": {"userId": "user-789"},
                     "parts": [{"kind": "text", "text": "Hello!"}],
                 }
             },
         }
 
-        response = test_client.post("/a2a/message/send", json=request_body)
+        response = test_client.post(f"/a2a/agents/{test_agent.id}/v1/message:send", json=request_body)
 
         assert response.status_code == 200
         mock_arun.assert_called_once()
@@ -842,13 +865,12 @@ def test_a2a_error_handling_non_streaming(test_agent: Agent, test_client: TestCl
                     "messageId": "msg-123",
                     "role": "user",
                     "contextId": "context-789",
-                    "agentId": test_agent.name,
                     "parts": [{"kind": "text", "text": "Hello!"}],
                 }
             },
         }
 
-        response = test_client.post("/a2a/message/send", json=request_body)
+        response = test_client.post(f"/a2a/agents/{test_agent.id}/v1/message:send", json=request_body)
 
         assert response.status_code == 200
         data = response.json()
@@ -904,21 +926,24 @@ def test_a2a_streaming_with_media_artifacts(test_agent: Agent, test_client: Test
                     "messageId": "msg-123",
                     "role": "user",
                     "contextId": "context-789",
-                    "agentId": test_agent.name,
                     "parts": [{"kind": "text", "text": "Generate media"}],
                 }
             },
         }
 
-        response = test_client.post("/a2a/message/stream", json=request_body)
+        response = test_client.post(f"/a2a/agents/{test_agent.id}/v1/message:stream", json=request_body)
 
         assert response.status_code == 200
-        assert response.headers["content-type"] == "application/x-ndjson"
+        assert response.headers["content-type"] == "text/event-stream; charset=utf-8"
 
+        # Parse SSE format: "event: EventType\ndata: JSON\n\n"
         events = []
-        for line in response.text.strip().split("\n"):
-            if line.strip():
-                events.append(json.loads(line))
+        for chunk in response.text.split("\n\n"):
+            if chunk.strip():
+                lines = chunk.strip().split("\n")
+                for line in lines:
+                    if line.startswith("data: "):
+                        events.append(json.loads(line[6:]))
 
         final_task = events[-1]
         assert final_task["result"]["kind"] == "task"
@@ -983,21 +1008,24 @@ def test_a2a_streaming_with_cancellation(test_agent: Agent, test_client: TestCli
                     "messageId": "msg-123",
                     "role": "user",
                     "contextId": "context-789",
-                    "agentId": test_agent.name,
                     "parts": [{"kind": "text", "text": "Start processing"}],
                 }
             },
         }
 
-        response = test_client.post("/a2a/message/stream", json=request_body)
+        response = test_client.post(f"/a2a/agents/{test_agent.id}/v1/message:stream", json=request_body)
 
         assert response.status_code == 200
-        assert response.headers["content-type"] == "application/x-ndjson"
+        assert response.headers["content-type"] == "text/event-stream; charset=utf-8"
 
+        # Parse SSE format: "event: EventType\ndata: JSON\n\n"
         events = []
-        for line in response.text.strip().split("\n"):
-            if line.strip():
-                events.append(json.loads(line))
+        for chunk in response.text.split("\n\n"):
+            if chunk.strip():
+                lines = chunk.strip().split("\n")
+                for line in lines:
+                    if line.startswith("data: "):
+                        events.append(json.loads(line[6:]))
 
         content_messages = [
             e
@@ -1049,13 +1077,14 @@ def test_a2a_user_id_in_response_metadata(test_agent: Agent, test_client: TestCl
                 "message": {
                     "messageId": "msg-123",
                     "role": "user",
-                    "agentId": test_agent.name,
                     "parts": [{"kind": "text", "text": "Hello!"}],
                 }
             },
         }
 
-        response = test_client.post("/a2a/message/send", json=request_body, headers={"X-User-ID": "user-456"})
+        response = test_client.post(
+            f"/a2a/agents/{test_agent.id}/v1/message:send", json=request_body, headers={"X-User-ID": "user-456"}
+        )
 
         assert response.status_code == 200
         data = response.json()
@@ -1075,6 +1104,8 @@ def test_workflow():
         return f"Workflow echo: {input}"
 
     workflow = Workflow(name="test-a2a-workflow", steps=[echo_step])
+    # Return same instance from deep_copy so arun patches work
+    workflow.deep_copy = lambda **kwargs: workflow
     return workflow
 
 
@@ -1095,6 +1126,7 @@ def test_a2a_workflow(test_workflow: Workflow, test_workflow_client: TestClient)
         workflow_id=test_workflow.id,
         workflow_name=test_workflow.name,
         content="Workflow echo: Hello from workflow!",
+        status=RunStatus.completed,
     )
 
     with patch.object(test_workflow, "arun", new_callable=AsyncMock) as mock_arun:
@@ -1109,13 +1141,12 @@ def test_a2a_workflow(test_workflow: Workflow, test_workflow_client: TestClient)
                     "messageId": "msg-123",
                     "role": "user",
                     "contextId": "context-789",
-                    "agentId": test_workflow.name,
                     "parts": [{"kind": "text", "text": "Hello, workflow!"}],
                 }
             },
         }
 
-        response = test_workflow_client.post("/a2a/message/send", json=request_body)
+        response = test_workflow_client.post(f"/a2a/workflows/{test_workflow.id}/v1/message:send", json=request_body)
 
         assert response.status_code == 200
         data = response.json()
@@ -1188,21 +1219,24 @@ def test_a2a_streaming_workflow(test_workflow: Workflow, test_workflow_client: T
                     "messageId": "msg-123",
                     "role": "user",
                     "contextId": "context-789",
-                    "agentId": test_workflow.name,
                     "parts": [{"kind": "text", "text": "Hello, workflow!"}],
                 }
             },
         }
 
-        response = test_workflow_client.post("/a2a/message/stream", json=request_body)
+        response = test_workflow_client.post(f"/a2a/workflows/{test_workflow.id}/v1/message:stream", json=request_body)
 
         assert response.status_code == 200
-        assert response.headers["content-type"] == "application/x-ndjson"
+        assert response.headers["content-type"] == "text/event-stream; charset=utf-8"
 
+        # Parse SSE format: "event: EventType\ndata: JSON\n\n"
         events = []
-        for line in response.text.strip().split("\n"):
-            if line.strip():
-                events.append(json.loads(line))
+        for chunk in response.text.split("\n\n"):
+            if chunk.strip():
+                lines = chunk.strip().split("\n")
+                for line in lines:
+                    if line.startswith("data: "):
+                        events.append(json.loads(line[6:]))
 
         assert len(events) >= 2
 

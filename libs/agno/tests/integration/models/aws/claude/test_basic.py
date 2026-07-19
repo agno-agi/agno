@@ -85,7 +85,7 @@ def test_with_memory():
     assert "John Smith" in response2.content
 
     # Verify memories were created
-    messages = agent.get_messages_for_session()
+    messages = agent.get_session_messages()
     assert messages is not None
     assert len(messages) == 5
     assert [m.role for m in messages] == ["system", "user", "assistant", "user", "assistant"]
@@ -142,6 +142,7 @@ def test_history():
         model=Claude(id="anthropic.claude-3-sonnet-20240229-v1:0"),
         db=SqliteDb(db_file="tmp/aws-claude/test_basic.db"),
         add_history_to_context=True,
+        store_history_messages=True,
         telemetry=False,
     )
     run_output = agent.run("Hello")
