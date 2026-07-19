@@ -30,3 +30,23 @@ sidecar written. The exported file was fed through the real external consumer lo
 recorded in specs/agno/envs/notes/memory.md.
 
 ---
+
+## 2026-07-19 — re-run after the review-fix commits (Claude + Codex review pass)
+
+### _01_first_env.py
+
+**Status:** PASS
+
+**Description:** Live re-run against the fixed runner (manager nulling, secondary-model cache copies, validated factory products, default-model fingerprinting). Grid rendered, 16/16 scored, both fingerprints stamped, no warnings.
+
+**Result:** Both tasks 8/8 this run, so the learning zone was empty (known behavior of a saturating fixed-arithmetic task; documented above).
+
+### _02_export_sft.py
+
+**Status:** PASS
+
+**Description:** Live re-run, 24 attempts, no warnings or tracebacks. All three tasks 8/8, so the graceful empty-zone path fired and no train.jsonl was written this run; the export path itself is pinned by the unit suite (skip-order precedence, only_passed=False, sidecar).
+
+**Result:** Clean exit through the empty-zone branch.
+
+---
