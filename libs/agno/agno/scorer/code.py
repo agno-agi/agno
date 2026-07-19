@@ -13,9 +13,10 @@ class CodeScorer:
     """Score runs with any callable `(run, expected) -> bool | float | Score`.
 
     A `bool` becomes `Score(1.0, True)` / `Score(0.0, False)` -- `pass_threshold` is not
-    consulted. A `float` is passed through with `passed = value >= pass_threshold`; a
-    value outside [0, 1] raises rather than clamping. A `Score` is used verbatim. Sync
-    callables run via `asyncio.to_thread`; coroutine functions are awaited.
+    consulted. A `float` is passed through with `passed = value >= pass_threshold`; an
+    `int` is accepted and treated as a float; a value outside [0, 1] raises rather than
+    clamping. A `Score` is used verbatim. Sync callables run via `asyncio.to_thread`;
+    coroutine functions, and callable objects whose `__call__` is async, are awaited.
 
     `run.content` is `Any`, not `str`: under `output_schema` it is a pydantic model, and
     comparing a typed field against the expected value is the recommended shape.
@@ -25,6 +26,10 @@ class CodeScorer:
     def __init__(self, fn: Callable[[AnyRunOutput, Any], Any], *, pass_threshold: float = 0.5) -> None:
         self.fn = fn
         self.pass_threshold = pass_threshold
+
+    def _is_async(self) -> bool:
+        # iscoroutinefunction is False for an instance whose __call__ is async.
+        return inspect.iscoroutinefunction(self.fn) or inspect.iscoroutinefunction(getattr(self.fn, "__call__", None))
 
     def _to_score(self, result: Union[bool, float, Score]) -> Score:
         if isinstance(result, Score):
@@ -40,14 +45,14 @@ class CodeScorer:
         )
 
     def score(self, run: AnyRunOutput, expected: Any = None) -> Score:
-        if inspect.iscoroutinefunction(self.fn):
+        if self._is_async():
             result = asyncio.run(self.fn(run, expected))
         else:
             result = self.fn(run, expected)
         return self._to_score(result)
 
     async def ascore(self, run: AnyRunOutput, expected: Any = None) -> Score:
-        if inspect.iscoroutinefunction(self.fn):
+        if self._is_async():
             result = await self.fn(run, expected)
         else:
             result = await asyncio.to_thread(self.fn, run, expected)

@@ -9,7 +9,8 @@ from pydantic import BaseModel, Field
 from agno.agent import Agent
 from agno.models.base import Model
 from agno.scorer._fence import fence_untrusted
-from agno.scorer.base import AnyRunOutput, Score
+from agno.scorer._model import model_identity_payload
+from agno.scorer.base import AnyRunOutput, EnvFingerprintError, Score
 
 
 # Re-declared rather than imported from agno.eval: scorer must not import eval.
@@ -143,15 +144,20 @@ class JudgeScorer:
         return self._to_score(response.content)
 
     def digest(self) -> str:
-        """sha256 hex over criteria, mode, threshold and the judge model's id.
+        """sha256 hex over criteria, mode, threshold and the judge model's identity.
 
-        The judge is part of the reward function: swapping it is an environment change.
+        The judge is part of the reward function: swapping it -- by id, provider,
+        base_url, or sampling params, not just id -- is an environment change, so the
+        model contributes the same identity payload the policy fingerprint uses.
         """
         payload = {
             "criteria": self.criteria,
             "mode": self.mode,
             "threshold": self.threshold,
-            "model_id": self.model.id,
+            "model": model_identity_payload(self.model),
         }
-        canonical = json.dumps(payload, sort_keys=True, ensure_ascii=True, separators=(",", ":"))
+        try:
+            canonical = json.dumps(payload, sort_keys=True, ensure_ascii=True, separators=(",", ":"))
+        except (TypeError, ValueError) as exc:
+            raise EnvFingerprintError(f"JudgeScorer identity is not JSON-serializable: {exc}") from exc
         return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
