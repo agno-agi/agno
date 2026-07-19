@@ -231,7 +231,7 @@ class XTools(Toolkit):
                 max_results=max_results, tweet_fields=["created_at", "public_metrics"]
             )
             timeline = []
-            for tweet in tweets.data:
+            for tweet in tweets.data or []:
                 timeline.append(
                     {
                         "id": tweet.id,
