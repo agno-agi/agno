@@ -49,7 +49,7 @@ class ToolCallScorer:
     carry tools the `Score.reason` names the limitation.
 
     Name-only matching remains satisfiable by a successful call with junk arguments.
-    For reward use, set `arguments`.
+    For a strict check, set `arguments`.
     """
 
     def __init__(
