@@ -321,6 +321,19 @@ async def test_factory_path_disables_response_cache():
     assert len({model_id for model_id, _ in tracker.model_snapshots}) == 3
 
 
+async def test_factory_closure_shared_model_not_mutated():
+    # A factory closure may hand the same model object to every product; the cache
+    # flag must be flipped on a per-attempt copy, never on the shared instance.
+    shared_model = StubModel(cache_response=True)
+    tracker = Tracker()
+
+    await arun_batch(lambda: StubAgent(tracker, model=shared_model), ["q"], k=3, concurrency=3)
+
+    assert shared_model.cache_response is True
+    assert all(cache is False for _, cache in tracker.model_snapshots)
+    assert id(shared_model) not in {model_id for model_id, _ in tracker.model_snapshots}
+
+
 async def test_live_agent_attempt_isolation():
     tracker = Tracker()
     agent = StubAgent(tracker, model=StubModel())
