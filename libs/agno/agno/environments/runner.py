@@ -32,8 +32,8 @@ from agno.utils.log import log_warning
 
 _FORMAT_VERSION = 1
 
-# The learning-zone tolerance: isclose rather than == because float judges otherwise
-# manufacture variance; no statistical variance is computed and no epsilon invented.
+# Learning-zone tolerance: float judge values that differ only by rounding noise
+# count as agreeing.
 _REL_TOL = 1e-9
 _ABS_TOL = 1e-9
 
@@ -475,7 +475,7 @@ def _attempt_cost(attempt: AttemptResult) -> Optional[float]:
     return getattr(run.metrics, "cost", None)
 
 
-# The hermetic action for every field Agent.deep_copy shares by reference
+# The isolation action for every field Agent.deep_copy shares by reference
 # (agno.agent._utils.SHARED_BY_REFERENCE_FIELDS), plus handled fields deep_copy
 # copies but whose copies still leak (a shallow-copied followup model, a config of
 # cache-bearing fallback models, a save path string, a sub-agent that re-shares its
@@ -496,7 +496,7 @@ _HERMETIC_FIELD_ACTIONS: Dict[str, str] = {
     "culture_manager": "read-only-rebind",  # culture is global knowledge: reads survive
     "compression_manager": "isolated-copy",
     "fallback_config": "cache-off-copies",
-    "reasoning_agent": "recursive-hermetic",
+    "reasoning_agent": "recursive-isolate",
     "save_response_to_file": "nulled",
 }
 
@@ -601,7 +601,7 @@ def _read_only_learning_machine(machine: Any, source_db: Any) -> Any:
             setattr(machine_copy, field_name, _writes_off_learning_config(value))
 
     if getattr(machine_copy, "custom_stores", None):
-        log_warning("hermetic overrides cannot make custom learning stores read-only; dropping them for isolation")
+        log_warning("rollout isolation cannot make custom learning stores read-only; dropping them")
         machine_copy.custom_stores = None
 
     def _noop_process(*args: Any, **kwargs: Any) -> None:
@@ -610,6 +610,11 @@ def _read_only_learning_machine(machine: Any, source_db: Any) -> Any:
     async def _noop_aprocess(*args: Any, **kwargs: Any) -> None:
         return None
 
+    # SAFETY-CRITICAL: this machine copy keeps the caller's db so global
+    # learned-knowledge reads survive the attempt. These noops (together with the
+    # write flags severed in _isolate_attempt) are therefore the ONLY barrier
+    # against a learning write reaching the caller's real store. Do not remove
+    # them in any refactor.
     machine_copy.process = _noop_process
     machine_copy.aprocess = _noop_aprocess
     return machine_copy
@@ -622,7 +627,7 @@ def _field_names_of(agent: Any) -> List[str]:
 
 
 def _mcp_tool_names(agent: Any, _seen: Optional[Set[int]] = None) -> List[str]:
-    """MCP tool class names on this agent or any nested agent the hermetic walk
+    """MCP tool class names on this agent or any nested agent the isolation walk
     reaches: deep_copy shares a reasoning agent's tools by reference exactly like
     top-level ones, so a nested MCPTools corrupts attempts the same way."""
     seen = _seen if _seen is not None else set()
@@ -642,10 +647,8 @@ def _mcp_tool_names(agent: Any, _seen: Optional[Set[int]] = None) -> List[str]:
     return names
 
 
-def _apply_hermetic_overrides(
-    agent: Any, model_override: Optional[Model] = None, _seen: Optional[Set[int]] = None
-) -> None:
-    """Hermetic isolation by INPUT swap, applied per attempt to a factory product
+def _isolate_attempt(agent: Any, model_override: Optional[Model] = None, _seen: Optional[Set[int]] = None) -> None:
+    """Attempt isolation by INPUT swap, applied per attempt to a factory product
     or a deep copy -- and recursively to a user-supplied reasoning agent, whose
     own deep_copy re-shares its db and model.
 
@@ -769,8 +772,7 @@ def _apply_hermetic_overrides(
             agent.learning = _read_only_learning_machine(learning, source_db)
         else:
             log_warning(
-                f"hermetic overrides cannot sever writes on a {type(learning).__name__} "
-                "learning value; nulling it for isolation"
+                f"rollout isolation cannot sever writes on a {type(learning).__name__} learning value; nulling it"
             )
             agent.learning = None
 
@@ -787,7 +789,7 @@ def _apply_hermetic_overrides(
             and field_name not in _HERMETIC_FIELD_ACTIONS
             and getattr(agent, field_name, None) is not None
         ):
-            log_warning(f"hermetic overrides do not know agent.{field_name}; nulling it for isolation")
+            log_warning(f"rollout isolation does not know agent.{field_name}; nulling it")
             setattr(agent, field_name, None)
 
     # -- production's own resolver, unchanged, against the swapped inputs ---
@@ -798,6 +800,12 @@ def _apply_hermetic_overrides(
         agent.initialize_agent()
 
     # -- sever write and side-effect paths ----------------------------------
+    # SAFETY-CRITICAL: the culture and learning read paths above DELIBERATELY
+    # share the caller's db, so the flags severed here (update_cultural_knowledge,
+    # enable_agentic_culture) and the learning process/aprocess noops in
+    # _read_only_learning_machine are the ONLY barrier between an attempt and a
+    # write into the caller's real store. The shared-db read path depends on
+    # these severs; do not remove them in any future refactor.
     agent.update_memory_on_run = False  # the post-run memory extraction call
     agent.enable_user_memories = False  # deprecated alias of update_memory_on_run
     agent.enable_agentic_memory = False  # the update_user_memory tool and its prompt block
@@ -809,7 +817,7 @@ def _apply_hermetic_overrides(
 
     reasoning_agent = getattr(agent, "reasoning_agent", None)
     if reasoning_agent is not None:
-        _apply_hermetic_overrides(reasoning_agent, _seen=seen)
+        _isolate_attempt(reasoning_agent, _seen=seen)
 
 
 def _default_model_for(agent: Any) -> Optional[Model]:
@@ -836,13 +844,15 @@ async def arun_rollouts(
     model: Optional[Model] = None,
     concurrency: int = 4,
 ) -> EnvRunResult:
-    """Run every task K times, hermetically, and score every attempt.
+    """Run every task K times, each attempt isolated, and score every attempt.
 
-    Rollouts are hermetic and there is no knob: contaminated statistics answer "does
-    my agent work" wrongly, and contaminated trajectories poison the training set.
-    Every attempt runs on a fresh copy whose INPUTS are swapped -- a fresh in-memory
-    db, fresh session and user ids, the response cache off -- and then production's
-    own resolver runs unchanged against those inputs, so the attempt's prompt is the
+    Isolation is unconditional and there is no knob: each attempt runs against a
+    fresh in-memory store and a fresh user id, so attempts can't contaminate each
+    other or your real data -- contaminated statistics answer "does my agent work"
+    wrongly, and contaminated trajectories poison the training set. Every attempt
+    runs on a fresh copy whose INPUTS are swapped -- a fresh in-memory db, fresh
+    session and user ids, the response cache off -- and then production's own
+    resolver runs unchanged against those inputs, so the attempt's prompt is the
     prompt a fresh production user would get, by construction. Only write paths are
     severed afterwards: memory capture, knowledge/culture/learning writes, the
     session-summary write, save_response_to_file. Knowledge READS survive: retrieval
@@ -852,7 +862,7 @@ async def arun_rollouts(
     LearningMachine that keep the caller's db. Memory READS resolve against the
     attempt's empty db under a fresh rollout user, so they render production's own
     fresh-user empty states -- per-user state from the caller's world must not leak
-    into a sample. The full field inventory lives on _apply_hermetic_overrides.
+    into a sample. The full field inventory lives on _isolate_attempt.
 
     Three residuals the overrides cannot reach, stated honestly:
 
@@ -964,7 +974,7 @@ async def arun_rollouts(
 
     def build_attempt_agent() -> Any:
         agent = _validated_agent(env.agent()) if callable(env.agent) else env.agent.deep_copy()
-        _apply_hermetic_overrides(agent, model_override=model)
+        _isolate_attempt(agent, model_override=model)
         return agent
 
     finished: List[AttemptResult] = []

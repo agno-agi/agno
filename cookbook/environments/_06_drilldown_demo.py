@@ -1,22 +1,15 @@
 """
-Tool Reliability: Did the Agent Actually Use the Tool?
-======================================================
-A support agent that answers order questions from its own head instead of the
-lookup tool is hallucinating politely. One clean transcript proves nothing --
-the interesting question is: out of K attempts, how often did the lookup
-actually RUN?
+Reading the Evidence
+====================
+The grid gives you numbers; this file is about what to do when a number needs
+investigating. Same environment as _03_tool_reliability.py -- an order-support
+agent that must answer from its lookup tool -- but the point here is the
+drill-down: errors(), print_report(), and print_attempt().
 
-ToolCallScorer counts tool EXECUTIONS -- entries in RunOutput.tools whose
-tool_call_error is not set. A call the model merely requested, one refused by
-the tool-call limit, or one that errored in the tool never satisfies an
-expectation. So the pass rate below reads as "the fraction of attempts where
-the tool did real work", not "where the model said it would call it".
-
-Note on scope: expectations live on the scorer, one set for the whole
-environment -- every task here requires the same lookup, which is the shape
-this scorer fits. Name-only matching is still satisfiable by a successful
-call with wrong arguments; for reward use, pin them with the `arguments=`
-spec.
+The report shows, per attempt, the verdict, the score's reason, every tool
+EXECUTION with its parsed arguments, the answer, and the token bill. One
+attempt can then be rendered in full: the scorer's uncut reasoning plus the
+whole transcript -- exactly the messages to_sft_jsonl would export.
 """
 
 import json
@@ -129,3 +122,13 @@ if __name__ == "__main__":
     # results.task_results[i].attempts[j].run / .score / .stop_reason -- stay
     # available for anything custom, and results.save("rollouts.json") writes
     # the whole artifact (transcripts, scores, fingerprints) as one JSON file.
+
+    # -----------------------------------------------------------------------
+    # Where this goes next
+    # -----------------------------------------------------------------------
+    # Everything above is verification and dataset generation: run K times,
+    # score every attempt, read the evidence, export what passed
+    # (_02_export_sft.py) for supervised fine-tuning. Nothing talks back to
+    # the agent mid-run. The next step -- not in this release -- is the live
+    # loop: an environment that responds to each agent turn and scores during
+    # the interaction, so the scores can drive training directly.

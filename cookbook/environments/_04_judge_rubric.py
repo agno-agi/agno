@@ -7,10 +7,9 @@ every attempt with your rubric, so subjective quality becomes a pass rate
 you can track across prompt edits.
 
 What the pass rate measures here is the gap between your INSTRUCTIONS and
-your RUBRIC: the first version of this file shipped vaguer instructions and
-scored 0% (see the comment on the agent below). Closing that gap -- edit
-instructions, re-run, compare -- is the iteration loop this environment
-exists to make cheap.
+your RUBRIC: with vague instructions this same rubric measures 0% (see the
+comment on the agent below). Closing that gap -- edit instructions, re-run,
+compare -- is the iteration loop this environment exists to make cheap.
 
 Two decisions this file makes explicit:
 
@@ -36,13 +35,13 @@ from agno.scorer import JudgeScorer
 # Create Environment
 # ---------------------------------------------------------------------------
 
-# These instructions were tuned against the rubric below. The first draft --
-# "be professional and empathetic, keep it under 120 words" -- measured 0/12
-# at threshold 8 (mean raw score 5.2): the judge kept docking replies that
-# never acknowledged frustration, never apologized, and closed with "thanks
-# for your patience" instead of a next step. The pass rate is measuring the
-# gap between your instructions and your rubric; when it is low, this is the
-# knob you turn.
+# These instructions are tuned to the rubric below. Swap them for a vague
+# draft -- "be professional and empathetic, keep it under 120 words" -- and
+# this file measures 0/12 at threshold 8 (mean raw score ~5.2): the judge
+# docks replies that never acknowledge frustration, never apologize, and
+# close with "thanks for your patience" instead of a next step. The pass rate
+# measures the gap between your instructions and your rubric; when it is low,
+# this is the knob you turn.
 agent = Agent(
     model=OpenAIResponses(id="gpt-5.5"),
     instructions=(
@@ -124,3 +123,9 @@ if __name__ == "__main__":
     # compare summaries.
     zone_ids = [task["id"] for task in summary["tasks"] if task["learning_zone"]]
     print(f"learning zone tasks: {zone_ids}")
+
+    # The judge's reasons, on demand: by default only the attempts worth
+    # investigating (scored fails plus anything unscored), each with its
+    # score reason and the reply that earned it.
+    print()
+    results.print_report()

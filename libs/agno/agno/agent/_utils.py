@@ -111,8 +111,8 @@ def convert_dependencies_to_string(agent: Agent, context: Dict[str, Any]) -> str
 # Fields deep_copy shares by reference: they maintain connections/pools (db, models,
 # knowledge) or bind them (managers, learning), so duplicating them per copy would be
 # wrong or expensive. Consumers that need per-copy isolation (agno.environments'
-# hermetic rollout attempts) derive their override set from this tuple; a field added
-# here without a mapped hermetic action fails that module's drift test.
+# isolated rollout attempts) derive their override set from this tuple; a field added
+# here without a mapped isolation action fails that module's drift test.
 SHARED_BY_REFERENCE_FIELDS = (
     "db",
     "model",

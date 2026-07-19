@@ -1,14 +1,14 @@
 """Model identity payload -- private; shared with agno.environments.
 
-The judge is part of the reward function, and the policy fingerprint identifies the
+The judge is part of the scoring rule, and the policy fingerprint identifies the
 model under test: both need the same answer to "which model is this?", so the payload
 is built once here. agno.environments imports it -- the allowed direction; scorer
 imports neither eval nor environments.
 
 The payload enumerates the model's public attributes and excludes what provably is
-not policy, rather than allowlisting known sampling params: ~50 provider classes
-each carry their own request-shaping fields (verbosity, logit_bias, reasoning, ...),
-and an allowlist goes stale the day a provider adds one. The exclusion groups below
+not policy: ~50 provider classes each carry their own request-shaping fields
+(verbosity, logit_bias, reasoning, ...), an open set no fixed allowlist can track.
+The exclusion groups below
 are pinned by a drift test over the shipped OpenAI classes, so a new upstream field
 must be classified before it ships.
 """

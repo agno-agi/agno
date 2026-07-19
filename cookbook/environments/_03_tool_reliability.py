@@ -15,8 +15,8 @@ the tool did real work", not "where the model said it would call it".
 Note on scope: expectations live on the scorer, one set for the whole
 environment -- every task here requires the same lookup, which is the shape
 this scorer fits. Name-only matching is still satisfiable by a successful
-call with wrong arguments; for reward use, pin them with the `arguments=`
-spec.
+call with wrong arguments; for a strict check, pin them with the
+`arguments=` spec.
 """
 
 import json

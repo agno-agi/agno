@@ -146,11 +146,11 @@ class JudgeScorer:
     def digest(self) -> str:
         """sha256 hex over criteria, mode, threshold and the judge model's identity.
 
-        The judge is part of the reward function: swapping it -- by id, provider,
+        The judge is part of the scoring rule: swapping it -- by id, provider,
         base_url, sampling params, or a model-level prompt, not just id -- is an
         environment change, so the model contributes the same identity payload the
         policy fingerprint uses, plus its prompt-shaped fields (which the policy
-        payload deliberately excludes -- for the judge they shape the reward).
+        payload deliberately excludes -- for the judge they shape the verdict).
         """
         payload = {
             "criteria": self.criteria,

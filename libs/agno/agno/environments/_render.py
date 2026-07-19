@@ -36,8 +36,7 @@ def build_grid(
     learning_zone, n_unscored}."""
     header = f"{env_name}                 k={k} · {n_attempts} attempts · {round(duration_seconds)}s"
     if total_cost is not None:
-        # Only when a provider actually reported cost; a bundled price table would be
-        # silently wrong within a quarter.
+        # Only when a provider actually reported cost; no price table is bundled.
         header += f" · ${total_cost:.4f}"
 
     id_width = max([len(str(row["id"])) for row in rows], default=2)
