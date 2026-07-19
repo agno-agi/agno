@@ -102,3 +102,6 @@ CLAUDE_PRIVATE.md
 pyrightconfig.json
 .python-version
 CLAUDE_PRIVATE.md
+
+# generated synthetic-data outputs from data_labeling cookbooks (never committed)
+cookbook/data_labeling/*/data/generated/
