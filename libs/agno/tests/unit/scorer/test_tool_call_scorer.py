@@ -134,6 +134,21 @@ def test_tool_call_scorer_team_top_level_only():
     assert "member" in (result.reason or "")
 
 
+def test_tool_call_scorer_nested_team_members_named_in_reason():
+    # A member can itself be a sub-team whose leader ran no tools while its own
+    # members did; the limitation note must fire for that nesting too.
+    grand_member = RunOutput(content="42", tools=[ToolExecution(tool_name="multiply")])
+    sub_team = TeamRunOutput(content="42", tools=None, member_responses=[grand_member])
+    team_run = TeamRunOutput(
+        content="42",
+        tools=[ToolExecution(tool_name="delegate_task_to_member")],
+        member_responses=[sub_team],
+    )
+    result = ToolCallScorer(["multiply"]).score(team_run)
+    assert result.passed is False
+    assert "member" in (result.reason or "")
+
+
 def test_tool_call_scorer_requires_a_check():
     with pytest.raises(ValueError, match="expected_tools"):
         ToolCallScorer([])

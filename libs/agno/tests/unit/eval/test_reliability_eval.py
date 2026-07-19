@@ -524,3 +524,30 @@ def test_strict_mode_fails_on_refused_additional_call():
     lenient = _run_eval(agent_response=response, expected_tool_calls=["search"], allow_additional_tool_calls=True)
     assert lenient.eval_status == "PASSED"
     assert "delete_db" in lenient.additional_tool_calls
+
+
+# ---------------------------------------------------------------------------
+# Preserved semantics pinned explicitly (plan R4: duplicates and per-call shape)
+# ---------------------------------------------------------------------------
+
+
+def test_duplicate_expected_names_satisfied_by_one_call():
+    # Set semantics, preserved from the request-matching era: expecting the same
+    # name twice is satisfied by a single clean execution.
+    result = _run_eval(
+        agent_response=_make_response(_make_execution("search")),
+        expected_tool_calls=["search", "search"],
+    )
+    assert result.eval_status == "PASSED"
+    assert result.passed_tool_calls == ["search"]
+
+
+def test_passed_tool_calls_keeps_one_entry_per_execution():
+    # The per-call shape is a db contract (the asdict payload is logged): two clean
+    # executions of one expected name yield two entries, not a deduped set.
+    result = _run_eval(
+        agent_response=_make_response(_make_execution("search"), _make_execution("search")),
+        expected_tool_calls=["search"],
+    )
+    assert result.eval_status == "PASSED"
+    assert result.passed_tool_calls == ["search", "search"]
