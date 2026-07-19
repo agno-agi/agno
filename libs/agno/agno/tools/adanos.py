@@ -180,7 +180,7 @@ class AdanosTools(Toolkit):
         start_date: Optional[str] = None,
         end_date: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """Get trending stocks or cryptocurrencies ranked by attention and sentiment.
+        """Get trending stocks or cryptocurrencies ranked by buzz score with sentiment data.
 
         Args:
             asset_type: Asset universe: stocks or crypto.
@@ -203,7 +203,7 @@ class AdanosTools(Toolkit):
         start_date: Optional[str] = None,
         end_date: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """Asynchronously get trending stocks or cryptocurrencies."""
+        """Asynchronously get trending stocks or cryptocurrencies ranked by buzz score with sentiment data."""
         path = self._asset_path(asset_type, source)
         if isinstance(path, dict):
             return path
