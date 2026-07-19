@@ -66,6 +66,7 @@ from agno.workflow.types import (
     StepRequirement,
     StepType,
     UserInputField,
+    warn_session_state_param_deprecated,
 )
 
 if TYPE_CHECKING:
@@ -705,6 +706,7 @@ class Step:
             kwargs["run_context"] = run_context
         if session_state is not None and self._function_has_session_state_param():
             kwargs["session_state"] = session_state
+            warn_session_state_param_deprecated(func, "custom function steps")
 
         return func(step_input, **kwargs)
 
@@ -722,6 +724,7 @@ class Step:
             kwargs["run_context"] = run_context
         if session_state is not None and self._function_has_session_state_param():
             kwargs["session_state"] = session_state
+            warn_session_state_param_deprecated(func, "custom function steps")
 
         if _is_async_generator_function(func):
             return func(step_input, **kwargs)
