@@ -117,6 +117,21 @@ def test_fingerprint_is_model_independent():
     assert one.env_fingerprint() == two.env_fingerprint()
 
 
+def test_model_level_prompt_is_env_not_policy():
+    # system_prompt/instructions on the MODEL are prompt-shaped: they flip the env
+    # fingerprint (like agent instructions) and leave the policy fingerprint alone.
+    plain = _env(agent=Agent(model=OpenAIChat(id="gpt-5-mini"), instructions="Answer tersely.", tools=[search_tool]))
+    prompted = _env(
+        agent=Agent(
+            model=OpenAIChat(id="gpt-5-mini", system_prompt="You are a pirate."),
+            instructions="Answer tersely.",
+            tools=[search_tool],
+        )
+    )
+    assert prompted.env_fingerprint() != plain.env_fingerprint()
+    assert prompted.policy_fingerprint() == plain.policy_fingerprint()
+
+
 def test_fingerprint_does_not_mutate_agent():
     env = _env()
     before = env.agent.__dict__.get("_tool_instructions")
@@ -226,6 +241,26 @@ def test_env_agent_validation():
         _env(agent="my-agent")
     with pytest.raises(TypeError, match="OpenAIChat"):
         _env(agent=OpenAIChat(id="gpt-5-mini"))
+
+
+def test_team_agent_hybrid_rejected():
+    # A class subclassing BOTH Team and Agent is a Team: the Team check runs before
+    # the Agent accept, in construction and in factory-product validation alike.
+    from agno.team.team import Team
+
+    class Hybrid(Team, Agent):
+        pass
+
+    hybrid = Hybrid(members=[Agent(id="member")])
+    with pytest.raises(TypeError, match="team release"):
+        _env(agent=hybrid)
+    with pytest.raises(TypeError, match="team release"):
+        _env(agent=lambda: hybrid).env_fingerprint()
+
+
+def test_duplicate_declared_task_ids_rejected():
+    with pytest.raises(ValueError, match="duplicate task id"):
+        _env(tasks=(EnvTask(input="a", id="dup"), EnvTask(input="b", id="dup")))
 
 
 def test_factory_product_validated():

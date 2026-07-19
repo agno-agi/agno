@@ -9,6 +9,7 @@ extra key breaks every consumer at once. Scores and fingerprints ride in the
 `<path>.meta.json` sidecar, because provenance has nowhere else to live.
 """
 
+import asyncio
 import json
 from dataclasses import dataclass
 from pathlib import Path
@@ -138,6 +139,11 @@ def to_sft_jsonl(result: EnvRunResult, path: Union[str, Path], *, only_passed: b
     with open(str(output_path) + ".meta.json", "w", encoding="utf-8", newline="") as handle:
         handle.write(json.dumps(sidecar, ensure_ascii=False, indent=2) + "\n")
     return report
+
+
+async def ato_sft_jsonl(result: EnvRunResult, path: Union[str, Path], *, only_passed: bool = True) -> ExportReport:
+    """Async twin of to_sft_jsonl."""
+    return await asyncio.to_thread(to_sft_jsonl, result, path, only_passed=only_passed)
 
 
 def _classify(attempt: AttemptResult, *, only_passed: bool, report: ExportReport) -> Optional[List[Dict[str, str]]]:

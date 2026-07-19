@@ -10,7 +10,7 @@ from typing import Any, Callable, Dict, List, Mapping, Optional, Tuple, Union
 from agno.agent import Agent
 from agno.models.base import Model
 from agno.scorer import EnvFingerprintError, Scorer
-from agno.scorer._model import model_identity_payload
+from agno.scorer._model import model_identity_payload, model_prompt_payload
 from agno.tools.function import Function
 from agno.tools.toolkit import Toolkit
 
@@ -96,14 +96,20 @@ class Env:
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "tasks", tuple(self.tasks))
+        declared_ids: set = set()
         for index, task in enumerate(self.tasks):
             if not isinstance(task, EnvTask):
                 raise TypeError(f"tasks[{index}] must be an EnvTask, got {type(task).__name__}")
-        # Discrimination is callable(x): Agent defines no __call__. Anything else
-        # raises at construction, naming the received type.
-        if isinstance(self.agent, Agent) or callable(self.agent):
-            return
+            if task.id is not None:
+                # A duplicated id makes diff() silently pair rows with the wrong
+                # baseline task; positional collisions with auto-ids are caught at
+                # run start, where t1..tN resolution happens.
+                if task.id in declared_ids:
+                    raise ValueError(f"duplicate task id {task.id!r}; task ids must be unique")
+                declared_ids.add(task.id)
         received = type(self.agent).__name__
+        # The Team check runs before the Agent accept: a hybrid subclassing both must
+        # not slip through as an Agent.
         try:
             from agno.team.team import Team
         except ImportError:
@@ -113,6 +119,10 @@ class Env:
                 f"Env.agent does not accept a Team (got {received}) in 2.7.5; team environments "
                 "arrive in the team release with member-level hermetic semantics"
             )
+        # Discrimination is callable(x): Agent defines no __call__. Anything else
+        # raises at construction, naming the received type.
+        if isinstance(self.agent, Agent) or callable(self.agent):
+            return
         raise TypeError(f"Env.agent must be an Agent or a zero-arg factory returning one, got {received}")
 
     def _source_agent(self) -> Agent:
@@ -144,11 +154,10 @@ class Env:
 def _validated_agent(product: Any) -> Any:
     """A factory product is validated where it is materialized: the Team exclusion
     would otherwise be bypassed by wrapping the Team in a lambda. A Team is rejected
-    by type (it has `arun`, so the duck check cannot catch it); anything that cannot
+    by type BEFORE the Agent accept (a hybrid subclassing both must not slip through;
+    it has `arun`, so the duck check cannot catch it either); anything that cannot
     run at all is rejected by the duck check, which deliberately still admits
     agent-shaped stand-ins -- the engine's subject contract is duck-typed."""
-    if isinstance(product, Agent):
-        return product
     received = type(product).__name__
     try:
         from agno.team.team import Team
@@ -238,15 +247,24 @@ def _prompt_component(value: Any, label: str) -> Any:
     raise EnvFingerprintError(f"agent.{label} is {type(value).__name__}; only strings and lists fingerprint")
 
 
-def _env_fingerprint_of(env: "Env", agent: Agent) -> str:
+def _env_fingerprint_of(env: "Env", agent: Agent, model: Optional[Model] = None) -> str:
     """sha256 over the environment identity: tasks, scorer, declared tools, prompt
-    strings, declared session_state, and termination settings.
+    strings (agent-level and model-level), declared session_state, and termination
+    settings.
+
+    Model-level system_prompt/instructions are prompt-shaped and therefore
+    environment, not policy: they enter here and are excluded from the policy
+    payload. `model` is the model whose prompt fields count -- the runner passes the
+    EFFECTIVE model so a prompt-bearing override reads as an environment change;
+    callers that omit it get the agent's declared model.
 
     Every component failure surfaces as EnvFingerprintError -- including exceptions
     raised while BUILDING the payload (a sourceless scorer, a schema builder choking
     on an exotic tool) -- so the runner's catch-and-degrade-to-None is complete and a
     fingerprint can never crash a run.
     """
+    if model is None:
+        model = getattr(agent, "model", None)
     try:
         payload = {
             "tasks": [
@@ -257,6 +275,7 @@ def _env_fingerprint_of(env: "Env", agent: Agent) -> str:
             "instructions": _prompt_component(getattr(agent, "instructions", None), "instructions"),
             "description": _prompt_component(getattr(agent, "description", None), "description"),
             "system_message": _prompt_component(getattr(agent, "system_message", None), "system_message"),
+            "model_prompt": model_prompt_payload(model),
             "session_state": getattr(agent, "session_state", None),
             "termination": {
                 "timeout_seconds": env.timeout_seconds,
@@ -271,9 +290,10 @@ def _env_fingerprint_of(env: "Env", agent: Agent) -> str:
 
 
 def _policy_fingerprint_of(model: Model) -> str:
-    """sha256 over the policy identity: model class, id, provider, base_url, and the
-    named sampling params. The id is in the list: gpt-5.5 and gpt-5.5-mini must not
-    hash identically -- that is exactly the drift the split exists to catch."""
+    """sha256 over the policy identity: model class, id, provider, base_url, and
+    every enumerated request-shaping param (see agno.scorer._model). The id is in
+    the payload: gpt-5.5 and gpt-5.5-mini must not hash identically -- that is
+    exactly the drift the split exists to catch."""
     try:
         payload: Dict[str, Any] = model_identity_payload(model)
     except EnvFingerprintError:

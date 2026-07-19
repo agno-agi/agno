@@ -9,7 +9,7 @@ from pydantic import BaseModel, Field
 from agno.agent import Agent
 from agno.models.base import Model
 from agno.scorer._fence import fence_untrusted
-from agno.scorer._model import model_identity_payload
+from agno.scorer._model import model_identity_payload, model_prompt_payload
 from agno.scorer.base import AnyRunOutput, EnvFingerprintError, Score
 
 
@@ -147,14 +147,17 @@ class JudgeScorer:
         """sha256 hex over criteria, mode, threshold and the judge model's identity.
 
         The judge is part of the reward function: swapping it -- by id, provider,
-        base_url, or sampling params, not just id -- is an environment change, so the
-        model contributes the same identity payload the policy fingerprint uses.
+        base_url, sampling params, or a model-level prompt, not just id -- is an
+        environment change, so the model contributes the same identity payload the
+        policy fingerprint uses, plus its prompt-shaped fields (which the policy
+        payload deliberately excludes -- for the judge they shape the reward).
         """
         payload = {
             "criteria": self.criteria,
             "mode": self.mode,
             "threshold": self.threshold,
             "model": model_identity_payload(self.model),
+            "model_prompt": model_prompt_payload(self.model),
         }
         try:
             canonical = json.dumps(payload, sort_keys=True, ensure_ascii=True, separators=(",", ":"))
