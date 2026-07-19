@@ -76,7 +76,7 @@ class OpenAIModerationGuardrail(BaseGuardrail):
 
         if result.flagged:
             moderation_result = {
-                "categories": result.categories.model_dump(),
+                "categories": result.categories.model_dump(by_alias=True),
                 "category_scores": result.category_scores.model_dump(),
             }
 
@@ -122,7 +122,7 @@ class OpenAIModerationGuardrail(BaseGuardrail):
 
         if result.flagged:
             moderation_result = {
-                "categories": result.categories.model_dump(),
+                "categories": result.categories.model_dump(by_alias=True),
                 "category_scores": result.category_scores.model_dump(),
             }
 
