@@ -78,6 +78,30 @@ def test_judge_scorer_validates_mode_and_threshold():
         JudgeScorer(_JUDGE_MODEL, "c", mode="numeric", threshold=11)
 
 
+def test_judge_scorer_digest_sensitivity():
+    # The judge is part of the reward function: every identity component -- criteria,
+    # mode, threshold, and the judge model (id, provider/class, sampling params) --
+    # must flip the digest, and an identical config must not.
+    def digest(**overrides):
+        config = {"criteria": "Is it right?", "mode": "numeric", "threshold": 7}
+        config.update({k: v for k, v in overrides.items() if k in config})
+        model = overrides.get("model", OpenAIChat(id="gpt-5-mini"))
+        return JudgeScorer(model, config["criteria"], mode=config["mode"], threshold=config["threshold"]).digest()
+
+    baseline = digest()
+    assert baseline == digest()  # identical config: stable
+    assert baseline != digest(criteria="Is it wrong?")
+    assert baseline != digest(mode="binary")
+    assert baseline != digest(threshold=8)
+    assert baseline != digest(model=OpenAIChat(id="gpt-5-nano"))
+    # Same id, different identity: class/provider and sampling params count too.
+    from agno.models.openai import OpenAIResponses
+
+    assert baseline != digest(model=OpenAIResponses(id="gpt-5-mini"))
+    assert baseline != digest(model=OpenAIChat(id="gpt-5-mini", temperature=0.0))
+    assert baseline != digest(model=OpenAIChat(id="gpt-5-mini", base_url="https://proxy.internal/v1"))
+
+
 def test_judge_scorer_fences_output_and_expected():
     # The judged output and the expected reference are each behind their own nonce
     # fence; the criteria and instructions stay outside.
@@ -103,16 +127,21 @@ class _CaptureEvaluator:
     """Duck-typed evaluator_agent for AgentAsJudgeEval, capturing prompts."""
 
     def __init__(self):
+        # The eval module's own response class: the scorer package's twin would fail
+        # agent_as_judge's isinstance validation and silently skip the verdict path.
+        from agno.eval.agent_as_judge import BinaryJudgeResponse as EvalBinaryJudgeResponse
+
+        self._response = EvalBinaryJudgeResponse(passed=True, reason="ok")
         self.prompts = []
         self.output_schema = None
 
     def run(self, prompt, stream=False):
         self.prompts.append(prompt)
-        return RunOutput(content=BinaryJudgeResponse(passed=True, reason="ok"))
+        return RunOutput(content=self._response)
 
     async def arun(self, prompt, stream=False):
         self.prompts.append(prompt)
-        return RunOutput(content=BinaryJudgeResponse(passed=True, reason="ok"))
+        return RunOutput(content=self._response)
 
 
 def _assert_fenced(prompt: str, payload: str) -> str:
@@ -149,11 +178,15 @@ def test_fence_contains_injection():
     judge = AgentAsJudgeEval(criteria="Is it right?", evaluator_agent=evaluator, telemetry=False, show_spinner=False)
 
     # Site 1: the sync path (_evaluate, via run()).
-    judge.run(input="What is 2+2?", output=payload)
+    sync_result = judge.run(input="What is 2+2?", output=payload)
     # Site 2: the async path (_aevaluate, via arun()) -- the only site the suite reaches.
-    asyncio.run(judge.arun(input="What is 2+2?", output=payload))
+    async_result = asyncio.run(judge.arun(input="What is 2+2?", output=payload))
 
     assert len(evaluator.prompts) == 2
+    # Both sites produced a real verdict from the stub, not a logged validation
+    # failure: the stub returns the eval module's own response class.
+    assert sync_result is not None and sync_result.results and sync_result.results[0].passed is True
+    assert async_result is not None and async_result.results and async_result.results[0].passed is True
     sync_nonce = _assert_fenced(evaluator.prompts[0], payload)
     async_nonce = _assert_fenced(evaluator.prompts[1], payload)
     # The nonce is random per call, so a payload fixed in a dataset cannot embed it.

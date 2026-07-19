@@ -9,6 +9,20 @@ from agno.run.team import TeamRunOutput
 from agno.scorer.base import AnyRunOutput, EnvFingerprintError, Score
 
 
+def _members_carry_tools(response: Any) -> bool:
+    """True when any member -- at any nesting depth -- carries tool executions.
+
+    A member can itself be a TeamRunOutput whose leader ran no tools while its own
+    members did; the limitation note must fire for that shape too.
+    """
+    for member in getattr(response, "member_responses", None) or []:
+        if getattr(member, "tools", None):
+            return True
+        if _members_carry_tools(member):
+            return True
+    return False
+
+
 class ToolCallScorer:
     """Check tool calls against `RunOutput.tools` -- the executions, not the requests.
 
@@ -108,7 +122,7 @@ class ToolCallScorer:
 
         if not executions:
             notes.insert(0, "run has no tool executions")
-        if isinstance(run, TeamRunOutput) and any(member.tools for member in run.member_responses or []):
+        if isinstance(run, TeamRunOutput) and _members_carry_tools(run):
             notes.append("member tool executions were not inspected (member matching is out of scope for 2.7.5)")
 
         # The constructor guarantees at least one check.
