@@ -1,18 +1,20 @@
 # Test Log: environments
 
-Last run: 2026-07-19, live with `OPENAI_API_KEY`, `.venvs/demo/bin/python`.
+Last run: 2026-07-20, live with `OPENAI_API_KEY`, `.venvs/demo/bin/python`. All six
+files executed end to end. Logs from the earlier build and fix rounds live in git
+history.
 
 ### _01_first_env.py
 
 **Status:** PASS
 
-**Description:** The flagship: Env over two mental-math tasks, typed CodeScorer,
-run_rollouts at k=8, the grid, summary() with fingerprints and learning-zone ids.
+**Description:** Env over two mental-math tasks, typed CodeScorer, run_rollouts at
+k=8, the grid, summary() with fingerprints and learning-zone ids.
 
-**Result:** 16 attempts, all scored, grid rendered, both fingerprints stamped
-non-None. Note: the hard task sits at the edge of gpt-5.5's ability (7/8 on some
-runs, 8/8 on others), so the learning zone is sometimes empty on this file's run --
-the printed zone list reports whichever happened honestly.
+**Result:** 16 attempts in 55s, 16/16 scored, both fingerprints stamped non-None.
+Both tasks 8/8 this run, so the learning zone was empty: the hard task sits at the
+edge of gpt-5.5's ability (7/8 on some runs, 8/8 on others) and the printed zone
+list reports whichever happened.
 
 ---
 
@@ -20,130 +22,78 @@ the printed zone list reports whichever happened honestly.
 
 **Status:** PASS
 
-**Description:** learning_zone() selection, to_sft_jsonl export, the report counters,
-and the provenance sidecar.
+**Description:** learning_zone() selection, to_sft_jsonl export, the report
+counters, and the provenance sidecar.
 
-**Result:** 24 attempts; t2 landed at 7/8 (learning zone), t1/t3 saturated at 8/8.
-Exported 7 conversations to data/generated/train.jsonl, 1 failed attempt skipped,
-sidecar written. The exported file was fed through the real external consumer loader
-(rl-tutor TinkerTools._parse_conversations): 7 conversations parsed, no errors --
-recorded in specs/agno/envs/notes/memory.md.
-
----
-
-## 2026-07-19 — re-run after the review-fix commits (Claude + Codex review pass)
-
-### _01_first_env.py
-
-**Status:** PASS
-
-**Description:** Live re-run against the fixed runner (manager nulling, secondary-model cache copies, validated factory products, default-model fingerprinting). Grid rendered, 16/16 scored, both fingerprints stamped, no warnings.
-
-**Result:** Both tasks 8/8 this run, so the learning zone was empty (known behavior of a saturating fixed-arithmetic task; documented above).
-
-### _02_export_sft.py
-
-**Status:** PASS
-
-**Description:** Live re-run, 24 attempts, no warnings or tracebacks. All three tasks 8/8, so the graceful empty-zone path fired and no train.jsonl was written this run; the export path itself is pinned by the unit suite (skip-order precedence, only_passed=False, sidecar).
-
-**Result:** Clean exit through the empty-zone branch.
+**Result:** 24 attempts in 103s, all three tasks 8/8, so the graceful empty-zone
+branch fired and no train.jsonl was written this run. The export path itself
+(skip-order precedence, only_passed=False, the sidecar, the ato_sft_jsonl twin) is
+pinned by the unit suite, and an earlier live run's export was parsed clean by the
+external rl-tutor loader (recorded in specs/agno/envs/notes/memory.md).
 
 ---
-
-## 2026-07-19 — re-run after the second fix round (derived hermetic overrides, MCP guard, enumerated fingerprint)
-
-### _01_first_env.py
-
-**Status:** PASS
-
-**Description:** Live re-run against the derived hermetic override set (culture read
-rebind, session-summary/compression isolation, reasoning-agent recursion) and the
-enumerated model-identity payload.
-
-**Result:** 16/16 scored, grid rendered, both fingerprints stamped non-None under the
-new payload. Both tasks 8/8 this run, learning zone empty (documented saturation
-behavior).
-
-### _02_export_sft.py
-
-**Status:** PASS
-
-**Description:** Live re-run, 24 attempts, no warnings or tracebacks.
-
-**Result:** All three tasks 8/8, so the graceful empty-zone branch fired and no
-train.jsonl was written this run; the export path (including the new ato_sft_jsonl
-twin) is pinned by the unit suite.
-
----
-
-## 2026-07-19 — re-run after the input-isolation rewrite of the hermetic override
-
-### _01_first_env.py
-
-**Status:** PASS
-
-**Description:** Live re-run against the rewritten override: inputs swapped
-(fresh db, fresh rollout user, manager copies), production's resolver run
-unchanged, only write paths severed. Read parity across
-memory/culture/learning/summary/knowledge/skills is byte-identical to the
-fresh-user production prompt (pinned by the unit parity matrix).
-
-**Result:** 16/16 scored, grid rendered, both fingerprints stamped non-None.
-Both tasks 8/8 this run, learning zone empty (documented saturation behavior).
-
-### _02_export_sft.py
-
-**Status:** PASS
-
-**Description:** Live re-run, 24 attempts, no tracebacks.
-
-**Result:** All three tasks 8/8; the graceful empty-zone branch fired and no
-train.jsonl was written this run. Export path pinned by the unit suite.
-## 2026-07-19 — three new use-case cookbooks (_03/_04/_05), all executed live
 
 ### _03_tool_reliability.py
 
 **Status:** PASS
 
 **Description:** ToolCallScorer over an order-support agent with a read-only lookup
-tool; three tasks including a tempting-assertion trap (customer asserts a status in
-the question) and an unknown-order id. Measures the fraction of attempts where the
-lookup actually EXECUTED.
+tool; three tasks including a tempting-assertion trap and an unknown-order id.
+Measures the fraction of attempts where the lookup actually executed. Ends with
+print_report().
 
-**Result:** 24 attempts in 26s, grounding rate 1.0 on every task — gpt-5.5 with
-explicit grounding instructions executes the lookup on all 8 attempts of all three
-tasks, including the trap and the not-found path.
+**Result:** 24 attempts in 21s, grounding rate 1.0 on every task including the trap
+and the not-found path. All attempts passed, so print_report printed its one-line
+all-clear.
+
+---
 
 ### _04_judge_rubric.py
 
-**Status:** PASS (after one documented calibration round)
+**Status:** PASS
 
-**Description:** JudgeScorer in numeric mode (threshold 8) with a five-point support
-rubric over a reply-rewriting agent. The file deliberately documents its own
-iteration loop: the first-draft instructions ("be professional and empathetic")
-measured 0/12 at threshold 8 with mean raw score ~5.2 (judge reasons: no
-acknowledgment of frustration, no apology, no concrete next step); instructions were
-tuned against the rubric and the run repeated.
+**Description:** JudgeScorer in numeric mode (threshold 8) with a five-point
+support rubric over a reply-rewriting agent, followed by print_report() for the
+judge's reasons.
 
-**Result:** Before: 0/12, mean value 0.46. After: 12/12 in 45s, mean value 0.96. Both
-endpoints recorded in the file's comments as the measured instructions-vs-rubric gap.
+**Result:** 12 attempts in 40s, 12/12 at threshold 8, mean normalized value 0.95.
+Two tasks landed in the learning zone (all attempts passed but raw judge scores
+disagreed), which is the intended signal for a rubric with graded levels.
+
+---
 
 ### _05_compare_models.py
 
-**Status:** PASS (with one observed teardown artifact)
+**Status:** PASS (after restoring a file missing from the branch)
 
-**Description:** EnvTask.from_jsonl over tasks/support_triage.jsonl (5 triage tasks,
-one deliberately ambiguous), CodeScorer on a typed output_schema field, baseline run
-on gpt-5.5, candidate via the model= override on gpt-5-mini, save/load round-trip,
-and candidate.diff(baseline).
+**Description:** EnvTask.from_jsonl over tasks/support_triage.jsonl (5 triage
+tasks, one deliberately ambiguous), CodeScorer on a typed output_schema field,
+baseline on gpt-5.5, candidate via model= override on gpt-5-mini, save/load
+round-trip, candidate.diff(baseline).
 
-**Result:** 80 attempts total (40 + 40), both models 8/8 on all five tasks including
-the ambiguous crash-then-charge row; baseline saved and reloaded; diff printed
-"(env identical, policy changed)" with +0.00 on every row — the cheap-model question
-answered "yes" for this task set. Observed: a RuntimeError("Event loop is closed")
-traceback from httpcore transport cleanup between the two runs (exit code still 0) —
-consistent with the known sync-door loop-shutdown residual and the unclosed
-per-attempt HTTP clients noted in review.
+**Result:** First run FAILED with FileNotFoundError: tasks/support_triage.jsonl had
+never been committed (an earlier session ran it from a local file that never made
+it into git). The task set was reconstructed to the documented shape and checked
+in; the re-run passed: 80 attempts (40 + 40) in 66s, baseline 1.0 on all five
+tasks; the candidate dropped the ambiguous crash-then-charge row to 7/8, so the
+diff printed a real "-0.12 regressed" line and "(env identical, policy changed)".
+Baseline saved, reloaded, diffed — the cheap-model question answered "almost, and
+here is the row to look at".
+
+---
+
+### _06_drilldown_demo.py
+
+**Status:** PASS
+
+**Description:** The closing example: same environment as _03, focused on reading
+the evidence — errors(), print_report() (default and only="all" with attempts=2),
+and print_attempt() for one full transcript — then the note on where this goes
+next.
+
+**Result:** 24 attempts in 20s, all passed. The report rendered per-attempt
+verdicts, tool executions with parsed arguments, answers, and token counts; the
+attempts=2 cap and the "... 6 more" elision worked; print_attempt rendered the
+scorer verdict plus the full transcript via pprint_run_response.
 
 ---
