@@ -41,10 +41,10 @@ def _build_judge_prompt(input: str, output: str) -> str:
     """The prompt for one input/output evaluation, shared by the sync and async judge
     sites so they cannot drift apart.
 
-    The judged output is untrusted: it is fenced behind a per-call random nonce, with
-    the untrusted-data instruction inside the prompt itself rather than in agent
-    instructions -- a caller-supplied evaluator_agent bypasses instruction building,
-    and the protection must hold there too.
+    The judged output is untrusted: it is fenced behind a per-call random nonce, and
+    the untrusted-data instruction lives inside the prompt itself -- a caller-supplied
+    evaluator_agent bypasses instruction building, so prompt-carried protection is the
+    only kind that holds there.
     """
     # Function-level import: pulling agno.scorer at module scope would re-enter the
     # Agent import cycle the eval package's lazy __getattr__ exists to avoid.
