@@ -30,16 +30,12 @@ from agno.run.base import RunStatus
 from agno.run.team import RunErrorEvent as TeamRunErrorEvent
 from agno.run.team import TeamRunOutput
 from agno.run.workflow import WorkflowErrorEvent
+from agno.scorer.base import Score, Scorer
 from agno.team.team import Team
 
 if TYPE_CHECKING:
     from rich.console import Console
     from rich.status import Status
-
-    # TYPE_CHECKING only: a module-scope `from agno.scorer import ...` would eagerly
-    # execute agno/scorer/__init__.py, whose JudgeScorer constructs an Agent -- a new
-    # edge into exactly the circular import this package's lazy __getattr__ avoids.
-    from agno.scorer import Score, Scorer
 
 __all__ = [
     "Case",
@@ -92,14 +88,6 @@ class Case:
     expected_tool_calls: Optional[Tuple[str, ...]] = None
     allow_additional_tool_calls: bool = True
 
-    # Scorer check - set `scorer` to score the run in-process (agno.scorer protocol:
-    # anything with `async ascore(run, expected)`). Runs only on gradeable runs,
-    # inside the case timeout, and receives (result.response, case.expected) -- for a
-    # team case that is the TeamRunOutput, so a scorer written against agent content
-    # sees the leader's synthesis. `expected` is the value handed to the scorer.
-    scorer: Optional["Scorer"] = None
-    expected: Optional[Any] = None
-
     # Lifecycle hooks. setup runs before the run (outside the timeout); its return
     # value ("context") is passed to teardown. teardown always runs once setup has
     # completed (pass, fail, error, timeout) and receives (context, result) so it can
@@ -107,6 +95,16 @@ class Case:
     # asyncio.to_thread; async callables are awaited.
     setup: Optional[Callable[[], Any]] = None
     teardown: Optional[Callable[[Any, "CaseResult"], Any]] = None
+
+    # Scorer check - set `scorer` to score the run in-process (agno.scorer protocol:
+    # anything with `async ascore(run, expected)`). Runs only on gradeable runs,
+    # inside the case timeout, and receives (result.response, case.expected) -- for a
+    # team case that is the TeamRunOutput, so a scorer written against agent content
+    # sees the leader's synthesis. `expected` is the value handed to the scorer.
+    # The new fields sit AFTER the 2.7.4 fields: these dataclasses are not kw_only,
+    # so inserting mid-class would silently reassign positional callers.
+    scorer: Optional[Scorer] = None
+    expected: Optional[Any] = None
 
     def __post_init__(self) -> None:
         # Exactly one of agent/team: neither has anything to run, both is ambiguous.
@@ -145,7 +143,6 @@ class CaseResult:
     judge_reason: Optional[str] = None  # the judge's stated reason, when available
     judge_score: Optional[int] = None  # numeric-mode score (1-10); None in binary mode
     reliability_passed: Optional[bool] = None  # None = check not configured
-    score: Optional["Score"] = None  # scorer verdict; None = check not configured
     output: Optional[str] = None  # response text - what the judge graded
     tools_called: Tuple[str, ...] = ()  # tool names fired during the run, in order
     timed_out: bool = False
@@ -156,6 +153,9 @@ class CaseResult:
     # Raw run output - full programmatic access to content, tool calls, metrics.
     # Excluded from to_dict(). A team case stores its TeamRunOutput.
     response: Optional[Union[RunOutput, TeamRunOutput]] = None
+    # Scorer verdict; None = check not configured. Appended after the 2.7.4 fields
+    # to keep positional construction stable (not kw_only).
+    score: Optional[Score] = None
 
     @property
     def passed(self) -> bool:

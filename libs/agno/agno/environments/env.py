@@ -1,5 +1,6 @@
 """Env and EnvTask: the task set, the scorer, and the two fingerprints."""
 
+import asyncio
 import hashlib
 import json
 from dataclasses import dataclass, field
@@ -9,24 +10,9 @@ from typing import Any, Callable, Dict, List, Mapping, Optional, Tuple, Union
 from agno.agent import Agent
 from agno.models.base import Model
 from agno.scorer import EnvFingerprintError, Scorer
+from agno.scorer._model import model_identity_payload
 from agno.tools.function import Function
 from agno.tools.toolkit import Toolkit
-
-# Read via getattr with None-skip: most sampling params live on provider subclasses,
-# not the Model base class. api_key, headers, and client objects are excluded on
-# purpose -- key rotation is not policy drift.
-_SAMPLING_PARAMS = (
-    "temperature",
-    "top_p",
-    "max_tokens",
-    "max_output_tokens",
-    "max_completion_tokens",
-    "frequency_penalty",
-    "presence_penalty",
-    "reasoning_effort",
-    "seed",
-    "stop",
-)
 
 _TASK_KEYS = {"input", "expected", "id", "metadata"}
 
@@ -80,6 +66,11 @@ class EnvTask:
             tasks.append(cls(input=row["input"], expected=row.get("expected"), id=row_id, metadata=metadata))
         return tuple(tasks)
 
+    @classmethod
+    async def afrom_jsonl(cls, path: Union[str, Path]) -> Tuple["EnvTask", ...]:
+        """Async twin of from_jsonl."""
+        return await asyncio.to_thread(cls.from_jsonl, path)
+
 
 @dataclass(frozen=True, eq=False)
 class Env:
@@ -131,17 +122,17 @@ class Env:
         first instance it constructs at run start."""
         if isinstance(self.agent, Agent):
             return self.agent
-        return self.agent()
+        return _validated_agent(self.agent())
 
     def env_fingerprint(self) -> str:
-        return env_fingerprint_of(self, self._source_agent())
+        return _env_fingerprint_of(self, self._source_agent())
 
     def policy_fingerprint(self) -> str:
         agent = self._source_agent()
         model = getattr(agent, "model", None)
         if model is None:
             raise EnvFingerprintError("policy_fingerprint needs a model; the agent has none")
-        return policy_fingerprint_of(model)
+        return _policy_fingerprint_of(model)
 
     def env_matches(self, other: Any) -> bool:
         """False when either side's env fingerprint is None -- a plain == would pass
@@ -150,7 +141,30 @@ class Env:
         return _fingerprints_match(_env_fingerprint_or_none(self), _env_fingerprint_or_none(other))
 
 
-def resolved_task_id(task: EnvTask, index: int) -> str:
+def _validated_agent(product: Any) -> Any:
+    """A factory product is validated where it is materialized: the Team exclusion
+    would otherwise be bypassed by wrapping the Team in a lambda. A Team is rejected
+    by type (it has `arun`, so the duck check cannot catch it); anything that cannot
+    run at all is rejected by the duck check, which deliberately still admits
+    agent-shaped stand-ins -- the engine's subject contract is duck-typed."""
+    if isinstance(product, Agent):
+        return product
+    received = type(product).__name__
+    try:
+        from agno.team.team import Team
+    except ImportError:
+        Team = None  # type: ignore[assignment, misc]
+    if Team is not None and isinstance(product, Team):
+        raise TypeError(
+            f"Env.agent factory returned a Team ({received}); team environments arrive "
+            "in the team release with member-level hermetic semantics"
+        )
+    if not callable(getattr(product, "arun", None)):
+        raise TypeError(f"Env.agent factory must return an Agent, got {received}")
+    return product
+
+
+def _resolved_task_id(task: EnvTask, index: int) -> str:
     """The display/selection id: the declared one, or t1..tN positionally."""
     return task.id if task.id is not None else f"t{index + 1}"
 
@@ -207,7 +221,10 @@ def _declared_tool_schemas(agent: Agent) -> List[Dict[str, Any]]:
             schemas.append(Function.from_callable(tool).to_dict())
         else:
             raise EnvFingerprintError(f"cannot fingerprint tool of type {type(tool).__name__}")
-    return sorted(schemas, key=lambda schema: str(schema.get("name", "")))
+    # Name-less dict tools (provider builtins like {"type": "file_search"}) would all
+    # sort under "" and leak declaration order into the hash; the canonical-JSON
+    # tiebreak keeps the fingerprint order-insensitive for them too.
+    return sorted(schemas, key=lambda schema: (str(schema.get("name", "")), _canonical(schema)))
 
 
 def _prompt_component(value: Any, label: str) -> Any:
@@ -221,7 +238,7 @@ def _prompt_component(value: Any, label: str) -> Any:
     raise EnvFingerprintError(f"agent.{label} is {type(value).__name__}; only strings and lists fingerprint")
 
 
-def env_fingerprint_of(env: "Env", agent: Agent) -> str:
+def _env_fingerprint_of(env: "Env", agent: Agent) -> str:
     """sha256 over the environment identity: tasks, scorer, declared tools, prompt
     strings, declared session_state, and termination settings.
 
@@ -233,7 +250,7 @@ def env_fingerprint_of(env: "Env", agent: Agent) -> str:
     try:
         payload = {
             "tasks": [
-                [resolved_task_id(task, index), task.input, task.expected] for index, task in enumerate(env.tasks)
+                [_resolved_task_id(task, index), task.input, task.expected] for index, task in enumerate(env.tasks)
             ],
             "scorer": _scorer_digest(env.scorer),
             "tools": _declared_tool_schemas(agent),
@@ -253,21 +270,12 @@ def env_fingerprint_of(env: "Env", agent: Agent) -> str:
     return _sha256(payload)
 
 
-def policy_fingerprint_of(model: Model) -> str:
+def _policy_fingerprint_of(model: Model) -> str:
     """sha256 over the policy identity: model class, id, provider, base_url, and the
     named sampling params. The id is in the list: gpt-5.5 and gpt-5.5-mini must not
     hash identically -- that is exactly the drift the split exists to catch."""
     try:
-        payload: Dict[str, Any] = {
-            "class": type(model).__qualname__,
-            "id": model.id,
-            "provider": model.provider,
-            "base_url": str(getattr(model, "base_url", None)),
-        }
-        for param in _SAMPLING_PARAMS:
-            value = getattr(model, param, None)
-            if value is not None:
-                payload[param] = value
+        payload: Dict[str, Any] = model_identity_payload(model)
     except EnvFingerprintError:
         raise
     except Exception as exc:

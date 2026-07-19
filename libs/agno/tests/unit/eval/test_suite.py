@@ -7,7 +7,7 @@ from types import SimpleNamespace
 import pytest
 
 from agno.eval import suite
-from agno.eval.suite import Case, JudgeMode, SuiteResult, acli, arun_cases, cli, run_cases
+from agno.eval.suite import Case, CaseResult, JudgeMode, SuiteResult, acli, arun_cases, cli, run_cases
 from agno.models.response import ToolExecution
 from agno.run.agent import RunErrorEvent, RunOutput, ToolCallCompletedEvent, ToolCallStartedEvent
 from agno.run.base import RunStatus
@@ -1495,3 +1495,70 @@ def test_setup_teardown_ordering_unchanged(monkeypatch):
     )
     assert run_cases([skipped]).results[0].passed is False
     assert events == []
+
+
+def test_case_positional_construction_unchanged():
+    # The 2.7.4 positional signature must keep binding the same fields: the new
+    # scorer/expected sit after teardown, so a caller passing setup/teardown
+    # positionally does not silently hand its hooks to the scorer seam.
+    def setup_fn():
+        return "ctx"
+
+    def teardown_fn(context, result):
+        return None
+
+    agent = StubAgent()
+    case = Case(
+        "positional",  # name
+        "q",  # input
+        agent,
+        None,  # team
+        ("tag",),
+        30,  # timeout_seconds
+        "criteria",
+        None,  # judge_model
+        JudgeMode.BINARY,
+        7,  # judge_threshold
+        ("search",),  # expected_tool_calls
+        True,  # allow_additional_tool_calls
+        setup_fn,
+        teardown_fn,
+    )
+    assert case.setup is setup_fn
+    assert case.teardown is teardown_fn
+    assert case.scorer is None and case.expected is None
+
+
+def test_case_result_positional_construction_unchanged():
+    # Same guarantee for CaseResult: score is appended after response.
+    output = _output(content="42")
+    result = CaseResult(
+        "positional",  # name
+        (),  # tags
+        "agent-1",
+        None,  # team_id
+        "session-1",
+        1.5,  # duration_seconds
+        True,  # judge_passed
+        "reason",
+        9,  # judge_score
+        None,  # reliability_passed
+        "42",  # output
+        ("search",),  # tools_called
+        False,  # timed_out
+        False,  # skipped
+        None,  # error
+        output,  # response
+    )
+    assert result.output == "42"
+    assert result.response is output
+    assert result.score is None
+
+
+def test_case_and_case_result_type_hints_resolve():
+    # Score/Scorer are imported at module scope (from agno.scorer.base): runtime
+    # introspection over the public dataclasses must not NameError on forward refs.
+    import typing
+
+    assert typing.get_type_hints(Case)["scorer"] is not None
+    assert typing.get_type_hints(CaseResult)["score"] is not None

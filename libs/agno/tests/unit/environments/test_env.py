@@ -1,12 +1,14 @@
 """Unit tests for Env, EnvTask, and the two fingerprints (offline)."""
 
+import logging
 import pathlib
+from contextlib import contextmanager
 
 import pytest
 
 from agno.agent import Agent
 from agno.environments import Env, EnvFingerprintError, EnvTask
-from agno.environments.env import policy_fingerprint_of
+from agno.environments.env import _policy_fingerprint_of as policy_fingerprint_of
 from agno.models.openai import OpenAIChat
 from agno.scorer import CodeScorer, JudgeScorer
 
@@ -31,6 +33,28 @@ def search_tool_redocumented(query: str) -> str:
 
 # from_callable keys the schema on __name__: same declared tool, edited docstring.
 search_tool_redocumented.__name__ = "search_tool"
+
+
+@contextmanager
+def _capture_agno_warnings():
+    """caplog can miss the agno logger's records depending on its configuration; a
+    handler attached directly to the logger cannot."""
+    records = []
+
+    class _Collector(logging.Handler):
+        def emit(self, record):
+            records.append(record)
+
+    logger = logging.getLogger("agno")
+    handler = _Collector(level=logging.WARNING)
+    previous_level = logger.level
+    logger.addHandler(handler)
+    logger.setLevel(logging.WARNING)
+    try:
+        yield records
+    finally:
+        logger.removeHandler(handler)
+        logger.setLevel(previous_level)
 
 
 def _env(**overrides) -> Env:
@@ -137,9 +161,12 @@ def test_fingerprint_rejects_unserializable_expected():
         scorer=CodeScorer(lambda run, expected: Score(value=1.0, passed=True)),
         agent=lambda: StubFingerprintAgent(),
     )
-    result = asyncio.run(arun_rollouts(stub_env, k=1))
+    with _capture_agno_warnings() as records:
+        result = asyncio.run(arun_rollouts(stub_env, k=1))
     assert result.env_fingerprint is None
     assert result.pass_rate == 1.0
+    # The warn is part of the contract: degradation must be loud, not silent.
+    assert any("env_fingerprint degraded to None" in record.getMessage() for record in records)
 
 
 def test_fingerprint_component_failures_become_env_fingerprint_error():
@@ -201,6 +228,32 @@ def test_env_agent_validation():
         _env(agent=OpenAIChat(id="gpt-5-mini"))
 
 
+def test_factory_product_validated():
+    # The Team exclusion cannot be bypassed by wrapping the Team in a lambda: the
+    # factory product is validated where it is first materialized.
+    from agno.team.team import Team
+
+    team = Team(members=[Agent(id="member")])
+    env = _env(agent=lambda: team)  # construction cannot see through the callable
+    with pytest.raises(TypeError, match="team release"):
+        env.env_fingerprint()
+    with pytest.raises(TypeError, match="must return an Agent"):
+        _env(agent=lambda: "not an agent").env_fingerprint()
+
+
+def test_fingerprint_order_insensitive_for_nameless_dict_tools():
+    # Provider-builtin dict tools carry no "name" key; without a content tiebreak
+    # they would all sort under "" and leak declaration order into env_fingerprint.
+    def _with_tools(tools):
+        return _env(agent=Agent(model=OpenAIChat(id="gpt-5-mini"), instructions="Answer tersely.", tools=tools))
+
+    dict_a = {"type": "file_search"}
+    dict_b = {"type": "web_search_preview"}
+    assert _with_tools([dict_a, dict_b]).env_fingerprint() == _with_tools([dict_b, dict_a]).env_fingerprint()
+    # A different builtin set still flips the hash.
+    assert _with_tools([dict_a, dict_b]).env_fingerprint() != _with_tools([dict_a]).env_fingerprint()
+
+
 def test_env_not_silently_unhashable():
     # eq=False keeps identity hashing: the auto-generated __hash__ would raise the
     # first time an Env or EnvTask sat in a set (metadata is a mapping).
@@ -230,6 +283,15 @@ def test_from_jsonl_roundtrip(tmp_path):
     assert tasks[1].id == "capitals-1"
     assert tasks[2].expected is None
     assert tasks[2].metadata == {"difficulty": "hard"}
+
+
+async def test_afrom_jsonl_matches_sync(tmp_path):
+    path = tmp_path / "tasks.jsonl"
+    path.write_text('{"input": "What is 2+2?", "expected": 4}\n', encoding="utf-8")
+    tasks = await EnvTask.afrom_jsonl(path)
+    assert len(tasks) == 1
+    assert tasks[0].input == "What is 2+2?"
+    assert tasks[0].expected == 4
 
 
 def test_from_jsonl_rejects_unknown_keys(tmp_path):

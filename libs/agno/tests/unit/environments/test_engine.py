@@ -3,6 +3,7 @@
 import ast
 import asyncio
 import copy
+import os
 import pathlib
 import time
 
@@ -118,6 +119,21 @@ async def test_batch_preserves_input_order():
         for attempt in attempts:
             assert attempt.stop_reason == "completed"
             assert attempt.run.content == f"echo:{value}"
+
+
+async def test_batch_preserves_attempt_order():
+    # The inner tuple is in attempt order even when later attempts finish first.
+    # Each factory product stamps its construction index into the content and sleeps
+    # inversely to it, so completion order is the reverse of attempt order.
+    counter = {"n": 0}
+
+    def factory():
+        index = counter["n"]
+        counter["n"] += 1
+        return StubAgent(respond=lambda value, i=index: _output(content=f"attempt:{i}"), tail_delay=0.05 * (3 - index))
+
+    results = await arun_batch(factory, ["a"], k=3, concurrency=3)
+    assert [attempt.run.content for attempt in results[0]] == ["attempt:0", "attempt:1", "attempt:2"]
 
 
 async def test_batch_captures_failures():
@@ -402,6 +418,10 @@ def bench_agent_construction_share():
     )
 
 
+@pytest.mark.skipif(
+    not os.environ.get("AGNO_RUN_BENCH"),
+    reason="benchmark, not a gate (plan R2): a wall-clock threshold must not fail CI on a loaded runner; set AGNO_RUN_BENCH=1 to run",
+)
 def test_bench_agent_construction_share():
     # pytest only collects test_*; this wrapper runs the named bench.
     bench_agent_construction_share()
@@ -436,3 +456,17 @@ async def test_engine_validates_bounds():
         await arun_batch(StubAgent(), "abc")
     with pytest.raises(TypeError, match="bare string"):
         await arun_batch(StubAgent(), ["abc"], expected="x")
+
+
+async def test_error_type_is_structured():
+    # The raise path knows the exception class; a typeless error event leaves the
+    # field None (the storm check then falls back to its string heuristic).
+    raising = StubAgent(error=RuntimeError("boom"))
+    results = await arun_batch(raising, ["a"], k=1)
+    assert results[0][0].error_type == "RuntimeError"
+
+    event_only = StubAgent(fail_inputs=("a",))
+    results = await arun_batch(event_only, ["a"], k=1)
+    attempt = results[0][0]
+    assert attempt.stop_reason == "error"
+    assert attempt.error_type is None

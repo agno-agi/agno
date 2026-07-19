@@ -55,6 +55,11 @@ class StubRolloutAgent:
         db=None,
         knowledge=None,
         learning=None,
+        culture_manager=None,
+        memory_manager=None,
+        reasoning_model=None,
+        parser_model=None,
+        output_model=None,
     ):
         self.recorder = recorder if recorder is not None else Recorder()
         self._respond = respond if respond is not None else (lambda value: _output(content=f"echo:{value}"))
@@ -66,6 +71,11 @@ class StubRolloutAgent:
         self.db = db
         self.knowledge = knowledge
         self.learning = learning
+        self.culture_manager = culture_manager
+        self.memory_manager = memory_manager
+        self.reasoning_model = reasoning_model
+        self.parser_model = parser_model
+        self.output_model = output_model
         self.user_id = None
         self.session_state = {"seed": 1}
         self.instructions = "Answer tersely."
@@ -73,6 +83,15 @@ class StubRolloutAgent:
         self.enable_user_memories = True
         self.enable_agentic_memory = True
         self.update_knowledge = True
+        self.update_cultural_knowledge = True
+        self.enable_agentic_culture = True
+
+    def deep_copy(self):
+        # Mirrors Agent.deep_copy's sharing rule for what matters here: db, models,
+        # managers, knowledge and learning stay shared by reference on the copy.
+        import copy
+
+        return copy.copy(self)
 
     async def arun(self, *, input, stream, stream_events, yield_run_output, session_id):
         call_index = len(self.recorder.snapshots)
@@ -86,11 +105,18 @@ class StubRolloutAgent:
                 "model_cache": self.model.cache_response if self.model is not None else None,
                 "knowledge": self.knowledge,
                 "learning": self.learning,
+                "culture_manager": self.culture_manager,
+                "memory_manager": self.memory_manager,
+                "reasoning_model": self.reasoning_model,
+                "parser_model": self.parser_model,
+                "output_model": self.output_model,
                 "user_id": self.user_id,
                 "update_memory_on_run": self.update_memory_on_run,
                 "enable_user_memories": self.enable_user_memories,
                 "enable_agentic_memory": self.enable_agentic_memory,
                 "update_knowledge": self.update_knowledge,
+                "update_cultural_knowledge": self.update_cultural_knowledge,
+                "enable_agentic_culture": self.enable_agentic_culture,
                 "session_state": dict(self.session_state or {}),
                 "instructions": self.instructions,
             }
@@ -181,27 +207,108 @@ async def test_hermetic_knowledge_reads_still_work():
     assert all(snapshot["knowledge"] is shared_knowledge for snapshot in recorder.snapshots)
 
 
+def _live_env(live_agent) -> Env:
+    """An Env whose agent is a LIVE duck-typed stub, to drive the runner's deep_copy
+    branch offline. Env's front door correctly rejects a non-Agent live value, so the
+    stub is installed past validation -- the branch under test is the runner's, and a
+    real Agent cannot run without a live model."""
+    env = Env(
+        name="live-env",
+        tasks=(EnvTask(input="one", expected="echo:one"),),
+        scorer=CodeScorer(echo_scorer),
+        agent=lambda: None,
+    )
+    object.__setattr__(env, "agent", live_agent)
+    return env
+
+
+def _masked_start(run_input, snapshot):
+    """The full first-call payload with per-attempt identities masked to their shape:
+    ids are fresh by design, everything else must be identical across attempts."""
+    return {
+        "input": run_input,
+        "session_state": snapshot["session_state"],
+        "instructions": snapshot["instructions"],
+        "db_type": type(snapshot["db"]).__name__,
+        "model": None if snapshot["model"] is None else (snapshot["model"].id, snapshot["model"].cache_response),
+        "knowledge": snapshot["knowledge"],
+        "learning": snapshot["learning"],
+        "culture_manager": snapshot["culture_manager"],
+        "memory_manager": snapshot["memory_manager"],
+        "update_memory_on_run": snapshot["update_memory_on_run"],
+        "enable_user_memories": snapshot["enable_user_memories"],
+        "enable_agentic_memory": snapshot["enable_agentic_memory"],
+        "update_knowledge": snapshot["update_knowledge"],
+        "update_cultural_knowledge": snapshot["update_cultural_knowledge"],
+        "enable_agentic_culture": snapshot["enable_agentic_culture"],
+    }
+
+
 async def test_hermetic_identical_start():
-    # Each attempt's first-call payload, with session/user ids masked, is identical.
+    # Each attempt's first-call payload, ids masked, is identical -- on the LIVE
+    # subject path (deep_copy), where cross-attempt contamination is possible at all.
     recorder = Recorder()
-    env = _stub_env(recorder)
+    live = StubRolloutAgent(recorder, model=StubModel(cache_response=True), db=object(), learning=object())
+    env = _live_env(live)
 
     await arun_rollouts(env, k=4, concurrency=4)
 
     masked = [
-        {
-            "input": run_input,
-            "session_state": snapshot["session_state"],
-            "instructions": snapshot["instructions"],
-            "db_type": type(snapshot["db"]).__name__,
-        }
-        for run_input, snapshot in zip(recorder.run_inputs, recorder.snapshots)
+        _masked_start(run_input, snapshot) for run_input, snapshot in zip(recorder.run_inputs, recorder.snapshots)
     ]
+    assert len(masked) == 4
     assert all(payload == masked[0] for payload in masked)
-    # The ids themselves are fresh per attempt.
+    # No attempt ran on the caller's instance, and the ids are fresh per attempt.
+    assert all(snapshot["agent"] is not live for snapshot in recorder.snapshots)
     assert len(set(recorder.session_ids)) == 4
     assert len({snapshot["user_id"] for snapshot in recorder.snapshots}) == 4
     assert all(snapshot["user_id"] for snapshot in recorder.snapshots)
+
+
+async def test_hermetic_live_agent_full_override_set():
+    # The live-agent branch with the reconciled override list: db-bound managers
+    # nulled, culture and memory capture off, secondary-model caches disabled on
+    # copies -- and the caller's instance untouched afterwards.
+    recorder = Recorder()
+    caller_db = object()
+    culture_manager = object()
+    memory_manager = object()
+    live = StubRolloutAgent(
+        recorder,
+        model=StubModel(cache_response=True),
+        db=caller_db,
+        learning=object(),
+        culture_manager=culture_manager,
+        memory_manager=memory_manager,
+        reasoning_model=StubModel(cache_response=True, id="reasoning"),
+        parser_model=StubModel(cache_response=True, id="parser"),
+        output_model=StubModel(cache_response=True, id="output"),
+    )
+    env = _live_env(live)
+
+    result = await arun_rollouts(env, k=3, concurrency=3)
+
+    assert result.pass_rate == 1.0
+    for snapshot in recorder.snapshots:
+        assert snapshot["agent"] is not live
+        assert isinstance(snapshot["db"], InMemoryDb)
+        assert snapshot["learning"] is None
+        assert snapshot["culture_manager"] is None
+        assert snapshot["memory_manager"] is None
+        assert snapshot["update_cultural_knowledge"] is False
+        assert snapshot["enable_agentic_culture"] is False
+        assert snapshot["model_cache"] is False
+        for secondary_name in ("reasoning_model", "parser_model", "output_model"):
+            secondary = snapshot[secondary_name]
+            assert secondary.cache_response is False
+            assert secondary is not getattr(live, secondary_name)
+    # The caller's live agent keeps its configuration.
+    assert live.db is caller_db
+    assert live.culture_manager is culture_manager
+    assert live.memory_manager is memory_manager
+    assert live.model.cache_response is True
+    assert live.reasoning_model.cache_response is True
+    assert live.update_cultural_knowledge is True
 
 
 # ---------------------------------------------------------------------------
@@ -278,7 +385,7 @@ async def test_model_override_flips_policy_only():
 
 
 async def test_model_override_stamps_effective_fingerprint():
-    from agno.environments.env import policy_fingerprint_of
+    from agno.environments.env import _policy_fingerprint_of as policy_fingerprint_of
 
     override = OpenAIChat(id="gpt-5")
     env = _stub_env(model=StubModel(id="declared-model"))
@@ -529,3 +636,174 @@ def test_diff_flags_regressions():
     assert diff.regressed == ("t1",)
     assert diff.improved == ()
     assert "regressed" in str(diff)
+
+
+# ---------------------------------------------------------------------------
+# Review fixes: factory lifecycle, culture/memory hermeticity, storm resilience
+# ---------------------------------------------------------------------------
+
+
+async def test_hermetic_factory_culture_and_memory_managers_nulled():
+    # The factory branch gets the same reconciled override set as the live branch.
+    recorder = Recorder()
+    env = _stub_env(recorder, culture_manager=object(), memory_manager=object())
+
+    await arun_rollouts(env, k=2, concurrency=2)
+
+    for snapshot in recorder.snapshots:
+        assert snapshot["culture_manager"] is None
+        assert snapshot["memory_manager"] is None
+        assert snapshot["update_cultural_knowledge"] is False
+        assert snapshot["enable_agentic_culture"] is False
+
+
+async def test_factory_preflight_error_names_the_factory():
+    # A factory broken at time zero raises at call time -- like the other preflight
+    # rejections -- with a message naming where it happened, not a bare traceback.
+    def broken():
+        raise KeyError("no such config")
+
+    env = Env(
+        name="broken",
+        tasks=(EnvTask(input="x"),),
+        scorer=CodeScorer(echo_scorer),
+        agent=broken,
+    )
+    with pytest.raises(RuntimeError, match="run-start construction"):
+        await arun_rollouts(env, k=2)
+
+
+async def test_factory_returning_non_agent_rejected_at_run_start():
+    env = Env(
+        name="bypass",
+        tasks=(EnvTask(input="x"),),
+        scorer=CodeScorer(echo_scorer),
+        agent=lambda: "not an agent",
+    )
+    with pytest.raises(TypeError, match="must return an Agent"):
+        await arun_rollouts(env, k=1)
+
+
+def test_default_model_resolved_for_fingerprint():
+    # A model-less Agent runs on the installed default, so the fingerprint resolves
+    # that same default -- on a copy, never mutating the caller's agent.
+    from agno.agent import Agent
+    from agno.environments.runner import _default_model_for
+
+    agent = Agent()
+    resolved = _default_model_for(agent)
+    assert resolved is not None
+    assert resolved.id == "gpt-5.4"
+    assert agent.model is None
+    # Duck-typed subjects degrade to None (and the fingerprint warns), not crash.
+    assert _default_model_for(StubRolloutAgent(Recorder())) is None
+
+
+async def test_error_storm_survives_grid_failure(monkeypatch):
+    # The storm check and the grid share the engine callback; a rendering bug must
+    # not take storm detection down with it.
+    import agno.environments.runner as runner_module
+
+    class RenderBugGrid:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc_info):
+            return False
+
+        def on_attempt(self, *args):
+            raise ValueError("render bug")
+
+    monkeypatch.setattr(runner_module, "LiveGrid", RenderBugGrid)
+    monkeypatch.setattr("rich.console.Console.is_terminal", property(lambda self: True))
+
+    env = _stub_env(tasks=(EnvTask(input="one"), EnvTask(input="two")), error=RuntimeError("bad api key"))
+    result = await arun_rollouts(env, k=4, concurrency=2)
+
+    assert result.stopped_early == "error-storm"
+    assert result.n_attempts == 2
+
+
+async def test_error_storm_uses_structured_error_type(monkeypatch):
+    # Two attempts failing with the same exception class but different message text
+    # before the first colon still count as one storm kind.
+    class WeirdError(RuntimeError):
+        pass
+
+    recorder = Recorder()
+    calls = {"n": 0}
+
+    def varying_error_factory():
+        calls["n"] += 1
+        return StubRolloutAgent(recorder, error=WeirdError(f"request {calls['n']} failed; retry later"))
+
+    env = Env(
+        name="storm",
+        tasks=(EnvTask(input="one"), EnvTask(input="two")),
+        scorer=CodeScorer(echo_scorer),
+        agent=varying_error_factory,
+    )
+    result = await arun_rollouts(env, k=4, concurrency=2)
+    assert result.stopped_early == "error-storm"
+
+
+async def test_timeout_unscored_at_runner_level():
+    # The runner threads Env.timeout_seconds into the engine: a timed-out attempt is
+    # unscored and excluded from statistics, never counted as 0.0.
+    recorder = Recorder()
+    env = _stub_env(recorder, delay=1.5, timeout_seconds=1)
+
+    result = await arun_rollouts(env, k=2, concurrency=2)
+
+    assert result.n_scored == 0
+    assert result.n_unscored == 2
+    assert result.pass_rate is None
+    attempts = result.task_results[0].attempts
+    assert all(attempt.stop_reason == StopReason.timeout for attempt in attempts)
+
+
+def test_save_failure_names_task_and_preserves_existing_file(tmp_path):
+    # A non-JSON expected is a legal run-time state (fingerprint degrades with a
+    # warning), so save() must fail cleanly: serialize before truncating, and name
+    # the task and field instead of a bare json TypeError.
+    class Weird:
+        pass
+
+    task = EnvTask(input="x", expected=Weird(), id="t1")
+    result = EnvRunResult(
+        env_name="e",
+        k=1,
+        env_fingerprint=None,
+        policy_fingerprint=None,
+        task_results=(
+            TaskResult(
+                task=task,
+                attempts=(AttemptResult(run=None, score=None, stop_reason=StopReason.error, duration_seconds=0.0),),
+            ),
+        ),
+        duration_seconds=0.1,
+    )
+    target = tmp_path / "baseline.json"
+    target.write_text("precious baseline", encoding="utf-8")
+
+    with pytest.raises(TypeError, match=r"'t1'.*'expected'"):
+        result.save(target)
+    assert target.read_text(encoding="utf-8") == "precious baseline"
+
+
+def test_diff_names_unmatched_tasks():
+    # Same fingerprint, different task subset (learning_zone(), tasks=) is legal, so
+    # unmatched tasks must be visible in the diff, never silently dropped.
+    current = _result_with("aaa", "p1", {"t1": (8, 0), "t2": (6, 2)})
+    baseline = _result_with("aaa", "p1", {"t1": (8, 0), "t3": (5, 3)})
+
+    diff = current.diff(baseline)
+
+    assert [row["id"] for row in diff.rows] == ["t1"]
+    assert diff.unmatched_current == ("t2",)
+    assert diff.unmatched_baseline == ("t3",)
+    assert "not compared" in str(diff)
+    assert diff.to_dict()["unmatched_current"] == ["t2"]
