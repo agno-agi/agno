@@ -1,7 +1,32 @@
-"""agno.environments: run an agent many times against a set of tasks and score every attempt.
+"""agno.environments: run an agent many times against a set of tasks, score every
+attempt, and do something useful with the result.
 
-The public surface (`Env`, `EnvTask`, `run_rollouts`, exporters) lands in a later PR;
-this package currently holds only the private engine. The `__init__.py` exists from the
-start because packaging uses `[tool.setuptools.packages.find]`, under which a directory
-without one silently does not ship.
+Two questions, in this order: does my agent actually work (run each task K times and
+count -- a real pass rate, not one sampled run), and can I train on the runs that
+worked (the passing attempts are, with no further labelling, an SFT dataset).
+
+The fingerprint errors are re-exported from agno.scorer so callers can catch them
+without importing scorer.
 """
+
+from agno.environments._engine import AttemptResult, StopReason
+from agno.environments.env import Env, EnvTask
+from agno.environments.exporters import ExportReport, to_sft_jsonl
+from agno.environments.runner import EnvDiff, EnvRunResult, TaskResult, arun_rollouts, run_rollouts
+from agno.scorer import EnvFingerprintError, EnvMismatchError
+
+__all__ = [
+    "AttemptResult",
+    "Env",
+    "EnvDiff",
+    "EnvFingerprintError",
+    "EnvMismatchError",
+    "EnvRunResult",
+    "EnvTask",
+    "ExportReport",
+    "StopReason",
+    "TaskResult",
+    "arun_rollouts",
+    "run_rollouts",
+    "to_sft_jsonl",
+]
