@@ -12,13 +12,17 @@ from agno.os.routers.health import get_health_router
 from agno.tools.websearch import WebSearchTools
 from fastapi import FastAPI
 
+# ---------------------------------------------------------------------------
+# Create Example
+# ---------------------------------------------------------------------------
+
 # Setup the database
 db = PostgresDb(db_url="postgresql+psycopg://ai:ai@localhost:5532/ai")
 
 web_research_agent = Agent(
     id="web-research-agent",
     name="Web Research Agent",
-    model=Claude(id="claude-sonnet-4-0"),
+    model=Claude(id="claude-sonnet-4-5"),
     db=db,
     tools=[WebSearchTools()],
     add_history_to_context=True,
@@ -47,6 +51,10 @@ agent_os = AgentOS(
 )
 
 app = agent_os.get_app()
+
+# ---------------------------------------------------------------------------
+# Run Example
+# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     """Run your AgentOS.

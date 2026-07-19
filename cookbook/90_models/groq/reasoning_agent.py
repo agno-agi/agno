@@ -1,5 +1,16 @@
+"""
+Groq Reasoning Agent
+====================
+
+Cookbook example for `groq/reasoning_agent.py`.
+"""
+
 from agno.agent import Agent
 from agno.models.groq import Groq
+
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
 
 # Create a reasoning agent that uses:
 # - `deepseek-r1-distill-llama-70b` as the reasoning model
@@ -13,3 +24,10 @@ reasoning_agent = Agent(
 
 # Prompt the agent to solve the problem
 reasoning_agent.print_response("Is 9.11 bigger or 9.9?", stream=True)
+
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+
+if __name__ == "__main__":
+    pass

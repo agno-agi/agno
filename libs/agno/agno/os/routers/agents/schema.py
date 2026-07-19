@@ -1,7 +1,12 @@
-from typing import Any, Dict, Optional
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, Any, Dict, Optional
 from uuid import uuid4
 
 from pydantic import BaseModel
+
+if TYPE_CHECKING:
+    from agno.agent.factory import AgentFactory
 
 from agno.agent import Agent
 from agno.models.message import Message
@@ -21,6 +26,7 @@ class AgentResponse(BaseModel):
     db_id: Optional[str] = None
     description: Optional[str] = None
     role: Optional[str] = None
+    is_factory: bool = False
     model: Optional[ModelResponse] = None
     tools: Optional[Dict[str, Any]] = None
     sessions: Optional[Dict[str, Any]] = None
@@ -35,9 +41,37 @@ class AgentResponse(BaseModel):
     streaming: Optional[Dict[str, Any]] = None
     metadata: Optional[Dict[str, Any]] = None
     input_schema: Optional[Dict[str, Any]] = None
+    factory_input_schema: Optional[Dict[str, Any]] = None  # JSON Schema for factory_input
+    is_component: bool = False
+    current_version: Optional[int] = None
+    stage: Optional[str] = None
 
     @classmethod
-    async def from_agent(cls, agent: Agent) -> "AgentResponse":
+    def from_factory(cls, factory: AgentFactory) -> AgentResponse:
+        """Create an AgentResponse from an AgentFactory for /config discovery."""
+        factory_input_schema = None
+        if factory.input_schema is not None:
+            try:
+                factory_input_schema = factory.input_schema.model_json_schema()
+            except Exception:
+                pass
+
+        return cls(
+            id=factory.id,
+            name=factory.name,
+            description=factory.description,
+            db_id=factory.db.id if factory.db else None,
+            is_factory=True,
+            input_schema=factory_input_schema,
+            factory_input_schema=factory_input_schema,
+        )
+
+    @classmethod
+    async def from_agent(
+        cls,
+        agent: Agent,
+        is_component: bool = False,
+    ) -> "AgentResponse":
         def filter_meaningful_config(d: Dict[str, Any], defaults: Dict[str, Any]) -> Optional[Dict[str, Any]]:
             """Filter out fields that match their default values, keeping only meaningful user configurations"""
             filtered = {}
@@ -57,7 +91,7 @@ class AgentResponse(BaseModel):
             "add_history_to_context": False,
             "num_history_runs": 3,
             "enable_session_summaries": False,
-            "search_session_history": False,
+            "search_past_sessions": False,
             "cache_session": False,
             # Knowledge defaults
             "add_references": False,
@@ -133,7 +167,12 @@ class AgentResponse(BaseModel):
             _agent_model_data["provider"] = model_provider
 
         session_table = agent.db.session_table_name if agent.db else None
-        knowledge_table = agent.db.knowledge_table_name if agent.db and agent.knowledge else None
+        contents_db = getattr(agent.knowledge, "contents_db", None) if agent.knowledge else None
+        knowledge_table = (
+            contents_db.knowledge_table_name
+            if contents_db
+            else (agent.db.knowledge_table_name if agent.db and agent.knowledge else None)
+        )
 
         tools_info = {
             "tools": formatted_tools,
@@ -146,17 +185,20 @@ class AgentResponse(BaseModel):
             "add_history_to_context": agent.add_history_to_context,
             "enable_session_summaries": agent.enable_session_summaries,
             "num_history_runs": agent.num_history_runs,
-            "search_session_history": agent.search_session_history,
-            "num_history_sessions": agent.num_history_sessions,
+            "search_past_sessions": agent.search_past_sessions,
+            "num_past_sessions_to_search": agent.num_past_sessions_to_search,
+            "num_past_session_runs_in_search": agent.num_past_session_runs_in_search,
             "cache_session": agent.cache_session,
         }
-
-        contents_db = getattr(agent.knowledge, "contents_db", None) if agent.knowledge else None
         knowledge_info = {
             "db_id": contents_db.id if contents_db else None,
             "knowledge_table": knowledge_table,
             "enable_agentic_knowledge_filters": agent.enable_agentic_knowledge_filters,
-            "knowledge_filters": agent.knowledge_filters,
+            "knowledge_filters": (
+                [f.to_dict() if hasattr(f, "to_dict") else f for f in agent.knowledge_filters]
+                if isinstance(agent.knowledge_filters, list)
+                else agent.knowledge_filters
+            ),
             "references_format": agent.references_format,
         }
 
@@ -285,4 +327,7 @@ class AgentResponse(BaseModel):
             introduction=agent.introduction,
             metadata=agent.metadata,
             input_schema=input_schema_dict,
+            is_component=is_component,
+            current_version=getattr(agent, "_version", None),
+            stage=getattr(agent, "_stage", None),
         )

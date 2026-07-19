@@ -11,15 +11,19 @@ Prerequisites:
        export GOOGLE_API_KEY=your_key
 
     3. Start Google ADK server:
-       python cookbook/06_agent_os/client_a2a/servers/google_adk_server.py
+       python cookbook/05_agent_os/client_a2a/servers/google_adk_server.py
 
     4. Run this script:
-       python cookbook/06_agent_os/client_a2a/05_connect_to_google_adk.py
+       python cookbook/05_agent_os/client_a2a/05_connect_to_google_adk.py
 """
 
 import asyncio
 
 from agno.client.a2a import A2AClient
+
+# ---------------------------------------------------------------------------
+# Create Example
+# ---------------------------------------------------------------------------
 
 # Google ADK server URL
 ADK_SERVER_URL = "http://localhost:8001/"
@@ -92,6 +96,10 @@ async def main():
     await with_user_id()
     await get_agent_info()
 
+
+# ---------------------------------------------------------------------------
+# Run Example
+# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     asyncio.run(main())

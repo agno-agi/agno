@@ -139,6 +139,7 @@ def test_history():
         model=DashScope(id="qwen-plus"),
         db=SqliteDb(db_file="tmp/dashscope/test_history.db"),
         add_history_to_context=True,
+        store_history_messages=True,
         telemetry=False,
     )
 

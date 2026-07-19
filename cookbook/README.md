@@ -6,7 +6,7 @@ Hundreds of examples. Copy, paste, run.
 
 **New to Agno?** Start with [00_quickstart](./00_quickstart) — it walks you through the fundamentals, with each cookbook building on the last.
 
-**Want to see something real?** Jump to [01_showcase](./01_showcase) — advanced use cases. Run the examples, break them, learn from them.
+**Want to see something real?** Jump to [01_demo](./01_demo) — advanced use cases. Run the examples, break them, learn from them.
 
 **Want to explore a particular topic?** Find your use case below.
 
@@ -31,7 +31,7 @@ Hundreds of examples. Copy, paste, run.
 ## Deep Dives
 
 ### Storage
-[06_storage](./06_storage) — Give your agents persistent storage. Postgres and SQLite recommended. Also supports DynamoDB, Firestore, MongoDB, Redis, SingleStore, SurrealDB, and more.
+[06_storage](./06_storage) — Give your agents persistent storage. Postgres and SQLite recommended. Also supports DynamoDB, Firestore, MongoDB, Redis, SingleStore, SurrealDB, Valkey, and more.
 
 ### Knowledge & RAG
 [07_knowledge](./07_knowledge) — Give your agents information to search at runtime. Covers chunking strategies (semantic, recursive, agentic), embedders, vector databases, hybrid search, and loading from URLs, S3, GCS, YouTube, PDFs, and more.
@@ -49,7 +49,7 @@ Hundreds of examples. Copy, paste, run.
 - **Reasoning harness** — Set `reasoning=True` for chain-of-thought with tool use
 
 ### Memory
-[80_memory](./80_memory) — Agents that remember. Store insights and facts about users across conversations for personalized responses.
+[11_memory](./11_memory) — Agents that remember. Store insights and facts about users across conversations for personalized responses.
 
 ### Models
 [90_models](./90_models) — 40+ model providers. Gemini, Claude, GPT, Llama, Mistral, DeepSeek, Groq, Ollama, vLLM — if it exists, we probably support it.
@@ -58,10 +58,46 @@ Hundreds of examples. Copy, paste, run.
 [91_tools](./91_tools) — Extend what agents can do. Web search, SQL, email, APIs, MCP, Discord, Slack, Docker, and custom tools with the `@tool` decorator.
 
 ### Integrations
-[92_integrations](./92_integrations) — Connect to Discord, observability tools (Langfuse, Arize Phoenix, AgentOps, LangSmith), memory providers, and A2A protocol.
+[integrations](./integrations) — Partner integrations. [Parallel](https://parallel.ai) for web-scale search, extraction, and deep research; SurrealDB for agent memory.
+
+### Observability
+[observability](./observability) — Trace and monitor agents, teams, and workflows: Langfuse, Arize Phoenix, AgentOps, LangSmith, MLflow, Weave, Logfire, and more (via OpenInference, OpenLIT, and autolog).
+
+## Quality Standard
+
+For every cookbook folder that contains runnable Python examples, include:
+
+- `README.md` explaining intent, prerequisites, and run commands
+- `TEST_LOG.md` recording run status and observations
+
+Use `cookbook/STYLE_GUIDE.md`
+
+Enforce in checks (fails on missing metadata):
+
+```bash
+python3 cookbook/scripts/audit_cookbook_metadata.py --scope direct --fail-on-missing
+```
+
+Check cookbook Python structure pattern:
+
+```bash
+python3 cookbook/scripts/check_cookbook_pattern.py --base-dir cookbook/00_quickstart
+```
+
+Run cookbooks in non-interactive batch mode with demo environment defaults:
+
+```bash
+python3 cookbook/scripts/cookbook_runner.py cookbook/00_quickstart --batch --python-bin .venvs/demo/bin/python
+```
+
+Write machine-readable run report:
+
+```bash
+python3 cookbook/scripts/cookbook_runner.py cookbook/00_quickstart --batch --json-report .context/cookbook-run.json
+```
 
 ---
 
 ## Contributing
 
-We're always adding new cookbooks. Want to contribute? See [CONTRIBUTING.md](./CONTRIBUTING.md).
+We're always adding new cookbooks. Want to contribute? See [CONTRIBUTING.md](../CONTRIBUTING.md).

@@ -1,6 +1,18 @@
+"""
+Giphy Tools
+=============================
+
+Demonstrates giphy tools.
+"""
+
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.tools.giphy import GiphyTools
+
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
+
 
 """Create an agent specialized in creating gifs using Giphy """
 
@@ -27,4 +39,8 @@ gif_agent_all = Agent(
     ],
 )
 
-gif_agent.print_response("I want a gif to send to a friend for their birthday.")
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+if __name__ == "__main__":
+    gif_agent.print_response("I want a gif to send to a friend for their birthday.")

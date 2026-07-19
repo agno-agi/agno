@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from functools import partial
+from functools import partial, wraps
 from importlib.metadata import version
 from typing import Any, Callable, Dict, List, Literal, Optional, Sequence, Type, TypeVar, get_type_hints
 
@@ -7,10 +7,10 @@ from docstring_parser import parse
 from packaging.version import Version
 from pydantic import BaseModel, Field, validate_call
 
-from agno.exceptions import AgentRunException
+from agno.exceptions import AgentRunException, RunCancelledException
 from agno.media import Audio, File, Image, Video
 from agno.run import RunContext
-from agno.utils.log import log_debug, log_error, log_exception, log_warning
+from agno.utils.log import log_debug, log_exception, log_warning
 
 T = TypeVar("T")
 
@@ -70,6 +70,65 @@ class UserInputField:
         )
 
 
+@dataclass
+class UserFeedbackOption:
+    """An option for a user feedback question."""
+
+    label: str
+    description: Optional[str] = None
+    selected: bool = False
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "label": self.label,
+            "description": self.description,
+            "selected": self.selected,
+        }
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "UserFeedbackOption":
+        return cls(
+            label=data["label"],
+            description=data.get("description"),
+            selected=data.get("selected", False),
+        )
+
+
+@dataclass
+class UserFeedbackQuestion:
+    """A structured question with predefined options for user feedback."""
+
+    question: str
+    header: Optional[str] = None
+    options: Optional[List["UserFeedbackOption"]] = None
+    multi_select: bool = False
+    selected_options: Optional[List[str]] = None
+
+    def to_dict(self) -> Dict[str, Any]:
+        result: Dict[str, Any] = {
+            "question": self.question,
+            "header": self.header,
+            "multi_select": self.multi_select,
+            "selected_options": self.selected_options,
+        }
+        if self.options is not None:
+            result["options"] = [opt.to_dict() for opt in self.options]
+        return result
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "UserFeedbackQuestion":
+        options = None
+        if data.get("options") is not None:
+            options = [UserFeedbackOption.from_dict(opt) if isinstance(opt, dict) else opt for opt in data["options"]]
+        return cls(
+            question=data["question"],
+            header=data.get("header"),
+            options=options,
+            multi_select=data.get("multi_select", False),
+            selected_options=data.get("selected_options"),
+        )
+
+
 class Function(BaseModel):
     """Model for storing functions that can be called by an agent."""
 
@@ -121,6 +180,13 @@ class Function(BaseModel):
     # If True, the function will be executed outside the agent's control.
     external_execution: Optional[bool] = None
 
+    # If True (and external_execution=True), the function will not produce verbose paused messages (e.g., "I have tools to execute...")
+    external_execution_silent: Optional[bool] = None
+
+    # Approval type: "required" (blocking) or "audit" (non-blocking audit trail).
+    # Set via the @approval decorator, not directly via @tool().
+    approval_type: Optional[str] = None
+
     # Caching configuration
     cache_results: bool = False
     cache_dir: Optional[str] = None
@@ -143,7 +209,15 @@ class Function(BaseModel):
     def to_dict(self) -> Dict[str, Any]:
         return self.model_dump(
             exclude_none=True,
-            include={"name", "description", "parameters", "strict", "requires_confirmation", "external_execution"},
+            include={
+                "name",
+                "description",
+                "parameters",
+                "strict",
+                "requires_confirmation",
+                "external_execution",
+                "approval_type",
+            },
         )
 
     @classmethod
@@ -157,6 +231,7 @@ class Function(BaseModel):
             strict=data.get("strict"),
             requires_confirmation=data.get("requires_confirmation", False),
             external_execution=data.get("external_execution", False),
+            approval_type=data.get("approval_type"),
         )
 
     def model_copy(self, *, deep: bool = False) -> "Function":
@@ -307,7 +382,7 @@ class Function(BaseModel):
 
             # log_debug(f"JSON schema for {function_name}: {parameters}")
         except Exception as e:
-            log_warning(f"Could not parse args for {function_name}: {e}", exc_info=True)
+            log_warning(f"Could not parse args for {function_name}: {str(e)}")
 
         entrypoint = cls._wrap_callable(c)
 
@@ -361,7 +436,6 @@ class Function(BaseModel):
                 del type_hints["audios"]
             if "files" in sig.parameters and "files" in type_hints:
                 del type_hints["files"]
-            # log_info(f"Type hints for {self.name}: {type_hints}")
 
             # Filter out return type and only process parameters
             excluded_params = [
@@ -375,6 +449,26 @@ class Function(BaseModel):
                 "audios",
                 "files",
             ]
+
+            # Also exclude parameters whose types are framework-injected,
+            # even if the parameter name differs (e.g. my_agent: Agent). See issue #6344.
+            try:
+                from agno.agent.agent import Agent
+                from agno.team.team import Team
+
+                framework_types = (Agent, Team, RunContext, Image, Video, Audio, File)
+                for param_name, hint in list(type_hints.items()):
+                    if isinstance(hint, type) and issubclass(hint, framework_types):
+                        del type_hints[param_name]
+                        excluded_params.append(param_name)
+            except Exception:
+                pass
+
+            # Snapshot excluded_params before user_input_fields are added,
+            # so we can use it to filter user_input_schema later.
+            if self.requires_user_input:
+                _excluded_framework_params = list(excluded_params)
+
             if self.requires_user_input and self.user_input_fields:
                 if len(self.user_input_fields) == 0:
                     excluded_params.extend(list(type_hints.keys()))
@@ -396,12 +490,15 @@ class Function(BaseModel):
                         param_name = param.arg_name
                         param_type = param.type_name
 
-                        # TODO: We should use type hints first, then map param types in docs to json schema types.
-                        # This is temporary to not lose information
-                        param_descriptions[param_name] = f"({param_type}) {param.description}"
-                        param_descriptions_clean[param_name] = param.description
+                        if param_type:
+                            param_descriptions[param_name] = f"({param_type}) {param.description or ''}"
+                        else:
+                            param_descriptions[param_name] = param.description or ""
+                        param_descriptions_clean[param_name] = param.description or ""
 
-            # If the function requires user input, we should set the user_input_schema to all parameters. The arguments provided by the model are filled in later.
+            # If the function requires user input, set user_input_schema to all parameters
+            # except framework-injected ones (using the snapshot taken before user_input_fields
+            # were added to excluded_params, since those should remain in the schema).
             if self.requires_user_input:
                 self.user_input_schema = [
                     UserInputField(
@@ -410,6 +507,7 @@ class Function(BaseModel):
                         field_type=type_hints.get(name, str),
                     )
                     for name in sig.parameters
+                    if name not in _excluded_framework_params
                 ]
 
             # Get JSON schema for parameters only
@@ -447,7 +545,7 @@ class Function(BaseModel):
 
             # log_debug(f"JSON schema for {self.name}: {parameters}")
         except Exception as e:
-            log_warning(f"Could not parse args for {self.name}: {e}", exc_info=True)
+            log_warning(f"Could not parse args for {self.name}: {str(e)}")
 
         if not params_set_by_user:
             self.parameters = parameters
@@ -458,7 +556,7 @@ class Function(BaseModel):
         try:
             self.entrypoint = self._wrap_callable(self.entrypoint)
         except Exception as e:
-            log_warning(f"Failed to add validate decorator to entrypoint: {e}")
+            log_warning(f"Failed to add validate decorator to entrypoint: {str(e)}")
 
     @staticmethod
     def _wrap_callable(func: Callable) -> Callable:
@@ -467,9 +565,28 @@ class Function(BaseModel):
 
         pydantic_version = Version(version("pydantic"))
 
-        # Don't wrap async generators validate_call
+        # Async generators need special handling: validate_call turns an `async def ... yield`
+        # into a plain function that returns an async_generator, which makes
+        # inspect.isasyncgenfunction return False. Downstream dispatch (models/base.py,
+        # FunctionCall.aexecute) uses that predicate to route the call, so we wrap the
+        # validated callable in an outer `async def ... yield` shim that preserves the
+        # async-generator identity while still coercing arguments through Pydantic.
         if isasyncgenfunction(func):
-            return func
+            if getattr(func, "_wrapped_for_validation", False):
+                return func
+            validated = validate_call(func, config=dict(arbitrary_types_allowed=True))  # type: ignore
+
+            @wraps(func)
+            async def async_gen_wrapper(*args, **kwargs):
+                inner = validated(*args, **kwargs)
+                try:
+                    async for item in inner:
+                        yield item
+                finally:
+                    await inner.aclose()
+
+            async_gen_wrapper._wrapped_for_validation = True  # type: ignore[attr-defined]
+            return async_gen_wrapper
 
         # Don't wrap coroutines with validate_call if pydantic version is less than 2.10.0
         if iscoroutinefunction(func) and pydantic_version < Version("2.10.0"):
@@ -490,11 +607,26 @@ class Function(BaseModel):
         if framework_params & set(sig.parameters.keys()):
             return func
 
+        # Also skip validation when parameter types include Agent or Team,
+        # even if the parameter name differs (e.g. my_agent: Agent).
+        # validate_call uses get_type_hints() which fails to resolve types
+        # from Agent/Team class hierarchies (like BaseDb) in the user's module globals.
+        try:
+            hints = get_type_hints(func)
+            from agno.agent.agent import Agent
+            from agno.team.team import Team
+
+            framework_types = (Agent, Team)
+            for hint in hints.values():
+                if isinstance(hint, type) and issubclass(hint, framework_types):
+                    return func
+        except Exception:
+            pass
+
         # Wrap the callable with validate_call
-        else:
-            wrapped = validate_call(func, config=dict(arbitrary_types_allowed=True))  # type: ignore
-            wrapped._wrapped_for_validation = True  # Mark as wrapped to avoid infinite recursion
-            return wrapped
+        wrapped = validate_call(func, config=dict(arbitrary_types_allowed=True))  # type: ignore
+        wrapped._wrapped_for_validation = True  # Mark as wrapped to avoid infinite recursion
+        return wrapped
 
     def process_schema_for_strict(self):
         """Process the schema to make it strict mode compliant."""
@@ -612,8 +744,8 @@ class Function(BaseModel):
 
             # Remove expired entry
             cache_path.unlink()
-        except Exception as e:
-            log_error(f"Error reading cache: {e}")
+        except Exception:
+            log_exception("Error reading cache")
 
         return None
 
@@ -623,10 +755,11 @@ class Function(BaseModel):
         from time import time
 
         try:
+            serializable_result = result.model_dump() if isinstance(result, BaseModel) else result
             with open(cache_file, "w") as f:
-                json.dump({"timestamp": time(), "result": result}, f)
-        except Exception as e:
-            log_error(f"Error writing cache: {e}")
+                json.dump({"timestamp": time(), "result": serializable_result}, f)
+        except Exception:
+            log_exception("Error writing cache")
 
 
 class FunctionExecutionResult(BaseModel):
@@ -684,6 +817,39 @@ class FunctionCall(BaseModel):
 
         return call_str
 
+    def _safe_hook_call(self, hook: Callable, hook_args: Dict[str, Any]) -> Any:
+        """Call a hook with list-structure-safe messages.
+
+        Temporarily replaces run_context.messages with a shallow copy so the
+        hook cannot corrupt the live message list (e.g. .clear(), .append()).
+        Individual Message objects are still shared references — this protects
+        list structure only, not message contents. The live reference is
+        restored after the hook returns (or raises).
+        """
+        rc = self.function._run_context
+        if rc is not None and rc.messages is not None:
+            live_ref = rc.messages
+            rc.messages = list(live_ref)
+            try:
+                return hook(**hook_args)
+            finally:
+                rc.messages = live_ref
+        else:
+            return hook(**hook_args)
+
+    async def _safe_hook_call_async(self, hook: Callable, hook_args: Dict[str, Any]) -> Any:
+        """Async variant of _safe_hook_call."""
+        rc = self.function._run_context
+        if rc is not None and rc.messages is not None:
+            live_ref = rc.messages
+            rc.messages = list(live_ref)
+            try:
+                return await hook(**hook_args)
+            finally:
+                rc.messages = live_ref
+        else:
+            return await hook(**hook_args)
+
     def _handle_pre_hook(self):
         """Handles the pre-hook for the function call."""
         if self.function.pre_hook is not None:
@@ -703,13 +869,15 @@ class FunctionCall(BaseModel):
                 # Check if the pre-hook has an fc argument
                 if "fc" in signature(self.function.pre_hook).parameters:
                     pre_hook_args["fc"] = self
-                self.function.pre_hook(**pre_hook_args)
+                self._safe_hook_call(self.function.pre_hook, pre_hook_args)
             except AgentRunException as e:
                 log_debug(f"{e.__class__.__name__}: {e}")
                 self.error = str(e)
                 raise
+            except RunCancelledException:
+                raise
             except Exception as e:
-                log_warning(f"Error in pre-hook callback: {e}")
+                log_warning(f"Error in pre-hook callback: {str(e)}")
                 log_exception(e)
 
     def _handle_post_hook(self):
@@ -731,42 +899,76 @@ class FunctionCall(BaseModel):
                 # Check if the post-hook has an fc argument
                 if "fc" in signature(self.function.post_hook).parameters:
                     post_hook_args["fc"] = self
-                self.function.post_hook(**post_hook_args)
+                self._safe_hook_call(self.function.post_hook, post_hook_args)
             except AgentRunException as e:
                 log_debug(f"{e.__class__.__name__}: {e}")
                 self.error = str(e)
                 raise
+            except RunCancelledException:
+                raise
             except Exception as e:
-                log_warning(f"Error in post-hook callback: {e}")
+                log_warning(f"Error in post-hook callback: {str(e)}")
                 log_exception(e)
 
     def _build_entrypoint_args(self) -> Dict[str, Any]:
         """Builds the arguments for the entrypoint."""
         from inspect import signature
 
+        sig = signature(self.function.entrypoint)  # type: ignore
         entrypoint_args = {}
-        # Check if the entrypoint has an agent argument
-        if "agent" in signature(self.function.entrypoint).parameters:  # type: ignore
+
+        # Check if the entrypoint has an agent argument (by name)
+        if "agent" in sig.parameters:
             entrypoint_args["agent"] = self.function._agent
-        # Check if the entrypoint has a team argument
-        if "team" in signature(self.function.entrypoint).parameters:  # type: ignore
+        # Check if the entrypoint has a team argument (by name)
+        if "team" in sig.parameters:
             entrypoint_args["team"] = self.function._team
         # Check if the entrypoint has a run_context argument
-        if "run_context" in signature(self.function.entrypoint).parameters:  # type: ignore
+        if "run_context" in sig.parameters:
             entrypoint_args["run_context"] = self.function._run_context
         # Check if the entrypoint has an fc argument
-        if "fc" in signature(self.function.entrypoint).parameters:  # type: ignore
+        if "fc" in sig.parameters:
             entrypoint_args["fc"] = self
 
+        # `_agno_`-prefixed variants are used by internal wrappers so framework
+        # objects can be injected without colliding with user-facing tool
+        # arguments that happen to be named "agent", "team" and "run_context".
+        if "_agno_agent" in sig.parameters:
+            entrypoint_args["_agno_agent"] = self.function._agent
+        if "_agno_team" in sig.parameters:
+            entrypoint_args["_agno_team"] = self.function._team
+        if "_agno_run_context" in sig.parameters:
+            entrypoint_args["_agno_run_context"] = self.function._run_context
+
         # Check if the entrypoint has media arguments
-        if "images" in signature(self.function.entrypoint).parameters:  # type: ignore
+        if "images" in sig.parameters:
             entrypoint_args["images"] = self.function._images
-        if "videos" in signature(self.function.entrypoint).parameters:  # type: ignore
+        if "videos" in sig.parameters:
             entrypoint_args["videos"] = self.function._videos
-        if "audios" in signature(self.function.entrypoint).parameters:  # type: ignore
+        if "audios" in sig.parameters:
             entrypoint_args["audios"] = self.function._audios
-        if "files" in signature(self.function.entrypoint).parameters:  # type: ignore
+        if "files" in sig.parameters:
             entrypoint_args["files"] = self.function._files
+
+        # Also inject Agent/Team instances based on TYPE, not just name.
+        # This handles cases like `my_agent: Agent` or `custom_team: Team`.
+        # See issue #6344.
+        try:
+            from agno.agent.agent import Agent
+            from agno.team.team import Team
+
+            hints = get_type_hints(self.function.entrypoint)  # type: ignore
+            for param_name, hint in hints.items():
+                if param_name in entrypoint_args:
+                    continue  # Already handled by name-based injection
+                if isinstance(hint, type):
+                    if issubclass(hint, Agent) and self.function._agent is not None:
+                        entrypoint_args[param_name] = self.function._agent
+                    elif issubclass(hint, Team) and self.function._team is not None:
+                        entrypoint_args[param_name] = self.function._team
+        except Exception:
+            pass
+
         return entrypoint_args
 
     def _build_hook_args(self, hook: Callable, name: str, func: Callable, args: Dict[str, Any]) -> Dict[str, Any]:
@@ -830,7 +1032,7 @@ class FunctionCall(BaseModel):
 
                 hook_args = self._build_hook_args(hook, name, next_func, args)
 
-                return hook(**hook_args)
+                return self._safe_hook_call(hook, hook_args)
 
             return wrapper
 
@@ -920,8 +1122,10 @@ class FunctionCall(BaseModel):
             self.error = str(e)
             exception_to_raise = e
             execution_result = FunctionExecutionResult(status="failure", error=str(e))
+        except RunCancelledException:
+            raise
         except Exception as e:
-            log_warning(f"Could not run function {self.get_call_str()}")
+            log_warning(f"Could not run function {self.get_call_str()}: {str(e)}")
             log_exception(e)
             self.error = str(e)
             execution_result = FunctionExecutionResult(status="failure", error=str(e))
@@ -954,13 +1158,15 @@ class FunctionCall(BaseModel):
                 if "fc" in signature(self.function.pre_hook).parameters:
                     pre_hook_args["fc"] = self
 
-                await self.function.pre_hook(**pre_hook_args)
+                await self._safe_hook_call_async(self.function.pre_hook, pre_hook_args)
             except AgentRunException as e:
                 log_debug(f"{e.__class__.__name__}: {e}")
                 self.error = str(e)
                 raise
+            except RunCancelledException:
+                raise
             except Exception as e:
-                log_warning(f"Error in pre-hook callback: {e}")
+                log_warning(f"Error in pre-hook callback: {str(e)}")
                 log_exception(e)
 
     async def _handle_post_hook_async(self):
@@ -983,13 +1189,15 @@ class FunctionCall(BaseModel):
                 if "fc" in signature(self.function.post_hook).parameters:
                     post_hook_args["fc"] = self
 
-                await self.function.post_hook(**post_hook_args)
+                await self._safe_hook_call_async(self.function.post_hook, post_hook_args)
             except AgentRunException as e:
                 log_debug(f"{e.__class__.__name__}: {e}")
                 self.error = str(e)
                 raise
+            except RunCancelledException:
+                raise
             except Exception as e:
-                log_warning(f"Error in post-hook callback: {e}")
+                log_warning(f"Error in post-hook callback: {str(e)}")
                 log_exception(e)
 
     async def _build_nested_execution_chain_async(self, entrypoint_args: Dict[str, Any]):
@@ -1018,9 +1226,9 @@ class FunctionCall(BaseModel):
                 arguments.update(self.arguments)
             return self.function.entrypoint(**arguments)  # type: ignore
 
-        # If no hooks, just return the entrypoint execution function
+        # If no hooks, just return the async entrypoint execution function
         if not self.function.tool_hooks:
-            return execute_entrypoint
+            return execute_entrypoint_async
 
         def create_hook_wrapper(inner_func, hook):
             """Create a nested wrapper for the hook."""
@@ -1039,9 +1247,9 @@ class FunctionCall(BaseModel):
                 hook_args = self._build_hook_args(hook, name, next_func, args)
 
                 if iscoroutinefunction(hook):
-                    return await hook(**hook_args)
+                    return await self._safe_hook_call_async(hook, hook_args)
                 else:
-                    return hook(**hook_args)
+                    return self._safe_hook_call(hook, hook_args)
 
             return wrapper
 
@@ -1140,8 +1348,10 @@ class FunctionCall(BaseModel):
             self.error = str(e)
             exception_to_raise = e
             execution_result = FunctionExecutionResult(status="failure", error=str(e))
+        except RunCancelledException:
+            raise
         except Exception as e:
-            log_warning(f"Could not run function {self.get_call_str()}")
+            log_warning(f"Could not run function {self.get_call_str()}: {str(e)}")
             log_exception(e)
             self.error = str(e)
             execution_result = FunctionExecutionResult(status="failure", error=str(e))
@@ -1162,6 +1372,8 @@ class ToolResult(BaseModel):
     """Result from a tool that can include media artifacts."""
 
     content: str
+    # Holds extra MCP tool data, stored as "meta" and "structured_content". Can be used for any other provider's extra data.
+    metadata: Optional[Dict[str, Any]] = None
     images: Optional[List[Image]] = None
     videos: Optional[List[Video]] = None
     audios: Optional[List[Audio]] = None

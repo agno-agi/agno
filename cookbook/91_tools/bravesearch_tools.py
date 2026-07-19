@@ -1,5 +1,17 @@
+"""
+Bravesearch Tools
+=============================
+
+Demonstrates bravesearch tools.
+"""
+
 from agno.agent import Agent
 from agno.tools.bravesearch import BraveSearchTools
+
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
+
 
 # Example 1: Enable specific Brave Search functions
 agent = Agent(
@@ -19,4 +31,9 @@ agent_all = Agent(
         "Provide relevant and up-to-date information on any topic.",
     ],
 )
-agent.print_response("AI Agents", markdown=True)
+
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+if __name__ == "__main__":
+    agent.print_response("AI Agents", markdown=True)

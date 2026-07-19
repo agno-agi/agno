@@ -122,11 +122,13 @@ class GitHubContent:
         file_path: Optional[str] = None,
         folder_path: Optional[str] = None,
         branch: Optional[str] = None,
+        repo: Optional[str] = None,
     ):
         self.config_id = config_id
         self.file_path = file_path
         self.folder_path = folder_path
         self.branch = branch
+        self.repo = repo
 
         if self.file_path is None and self.folder_path is None:
             raise ValueError("Either file_path or folder_path must be provided")
@@ -139,7 +141,39 @@ class GitHubContent:
             "file_path": self.file_path,
             "folder_path": self.folder_path,
             "branch": self.branch,
+            "repo": self.repo,
         }
 
 
-RemoteContent = Union[S3Content, GCSContent, SharePointContent, GitHubContent]
+@dataclass
+class AzureBlobContent:
+    """Content reference for Azure Blob Storage files.
+
+    Used with AzureBlobConfig to load files from Azure Blob Storage containers.
+    Supports loading single blobs or entire prefixes (folders).
+    """
+
+    def __init__(
+        self,
+        config_id: str,
+        blob_name: Optional[str] = None,
+        prefix: Optional[str] = None,
+    ):
+        self.config_id = config_id
+        self.blob_name = blob_name
+        self.prefix = prefix
+
+        if self.blob_name is None and self.prefix is None:
+            raise ValueError("Either blob_name or prefix must be provided")
+        if self.blob_name is not None and self.prefix is not None:
+            raise ValueError("Provide either blob_name or prefix, not both")
+
+    def get_config(self):
+        return {
+            "config_id": self.config_id,
+            "blob_name": self.blob_name,
+            "prefix": self.prefix,
+        }
+
+
+RemoteContent = Union[S3Content, GCSContent, SharePointContent, GitHubContent, AzureBlobContent]

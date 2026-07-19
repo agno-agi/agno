@@ -1,3 +1,10 @@
+"""
+Include Tools
+=============================
+
+Demonstrates include tools.
+"""
+
 import asyncio
 from pathlib import Path
 from textwrap import dedent
@@ -5,6 +12,10 @@ from textwrap import dedent
 from agno.agent import Agent
 from agno.models.groq import Groq
 from agno.tools.mcp import MCPTools
+
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
 
 
 async def run_agent(message: str) -> None:
@@ -36,5 +47,9 @@ async def run_agent(message: str) -> None:
 
 
 # Example usage
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+
 if __name__ == "__main__":
     asyncio.run(run_agent("What is the license for this project?"))

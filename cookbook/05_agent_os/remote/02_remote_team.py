@@ -8,6 +8,10 @@ import asyncio
 
 from agno.team import RemoteTeam
 
+# ---------------------------------------------------------------------------
+# Create Example
+# ---------------------------------------------------------------------------
+
 
 async def remote_agent_example():
     """Call a remote agent hosted on another AgentOS instance."""
@@ -57,6 +61,10 @@ async def main():
     print("\n2. Remote Streaming Example:")
     await remote_streaming_example()
 
+
+# ---------------------------------------------------------------------------
+# Run Example
+# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     asyncio.run(main())

@@ -10,6 +10,10 @@ from agno.models.anthropic import Claude
 from agno.os import AgentOS
 from agno.utils.log import log_info
 
+# ---------------------------------------------------------------------------
+# Create Example
+# ---------------------------------------------------------------------------
+
 # Setup the database
 db = PostgresDb(db_url="postgresql+psycopg://ai:ai@localhost:5532/ai")
 
@@ -17,7 +21,7 @@ db = PostgresDb(db_url="postgresql+psycopg://ai:ai@localhost:5532/ai")
 agno_support_agent = Agent(
     id="example-agent",
     name="Example Agent",
-    model=Claude(id="claude-sonnet-4-0"),
+    model=Claude(id="claude-sonnet-4-5"),
     db=db,
     markdown=True,
 )
@@ -38,6 +42,10 @@ agent_os = AgentOS(
 
 
 app = agent_os.get_app()
+
+# ---------------------------------------------------------------------------
+# Run Example
+# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     """Run your AgentOS.

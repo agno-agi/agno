@@ -6,6 +6,10 @@ import asyncio
 from agno.agent.agent import Agent
 from agno.tools.mcp import MCPTools
 
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
+
 
 async def run_agent():
     # Development environment tools
@@ -22,6 +26,10 @@ async def run_agent():
 
     await dev_tools.close()
 
+
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     asyncio.run(run_agent())

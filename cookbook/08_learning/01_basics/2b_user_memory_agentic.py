@@ -19,16 +19,16 @@ from agno.db.postgres import PostgresDb
 from agno.learn import LearningMachine, LearningMode, UserMemoryConfig
 from agno.models.openai import OpenAIResponses
 
-# ============================================================================
-# Setup
-# ============================================================================
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
 
 db = PostgresDb(db_url="postgresql+psycopg://ai:ai@localhost:5532/ai")
 
 # AGENTIC mode: Agent gets memory tools and decides when to use them.
 # You'll see tool calls like "update_user_memory" in responses.
 agent = Agent(
-    model=OpenAIResponses(id="gpt-5.2"),
+    model=OpenAIResponses(id="gpt-5.5"),
     db=db,
     learning=LearningMachine(
         user_memory=UserMemoryConfig(
@@ -38,9 +38,9 @@ agent = Agent(
     markdown=True,
 )
 
-# ============================================================================
-# Demo
-# ============================================================================
+# ---------------------------------------------------------------------------
+# Run Demo
+# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     user_id = "bob@example.com"
@@ -57,7 +57,7 @@ if __name__ == "__main__":
         session_id="session_1",
         stream=True,
     )
-    agent.get_learning_machine().user_memory_store.print(user_id=user_id)
+    agent.learning_machine.user_memory_store.print(user_id=user_id)
 
     # Session 2: Agent uses stored memories
     print("\n" + "=" * 60)
@@ -70,4 +70,4 @@ if __name__ == "__main__":
         session_id="session_2",
         stream=True,
     )
-    agent.get_learning_machine().user_memory_store.print(user_id=user_id)
+    agent.learning_machine.user_memory_store.print(user_id=user_id)

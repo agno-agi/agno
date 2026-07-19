@@ -8,6 +8,10 @@ from agno.models.anthropic import Claude
 from agno.tools import Function
 from pydantic import BaseModel
 
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
+
 
 class WeatherInfo(BaseModel):
     """Structured output schema for weather information."""
@@ -57,3 +61,10 @@ agent = Agent(
 
 # The agent will use strict tool validation and return structured output
 agent.print_response("What's the weather like in San Francisco?")
+
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+
+if __name__ == "__main__":
+    pass

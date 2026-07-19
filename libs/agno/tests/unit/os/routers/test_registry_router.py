@@ -2,7 +2,7 @@
 Unit tests for the Registry router.
 
 Tests cover:
-- GET /registry - List registry components (tools, toolkits, models, dbs, vector_dbs, schemas)
+- GET /registry - List registry components (tools, models, dbs, vector_dbs, schemas, functions)
 """
 
 from unittest.mock import MagicMock
@@ -139,13 +139,13 @@ class TestListRegistryWithTools:
         assert data["meta"]["total_count"] >= 1
 
         # Find the tool in the response
-        tools = [c for c in data["data"] if c["component_type"] == "tool"]
+        tools = [c for c in data["data"] if c["type"] == "tool"]
         assert len(tools) >= 1
         tool_names = [t["name"] for t in tools]
         assert "my_tool" in tool_names
 
     def test_list_registry_with_toolkit(self, settings):
-        """Test list_registry includes Toolkit and its functions."""
+        """Test list_registry includes Toolkit with embedded functions."""
 
         class MyToolkit(Toolkit):
             def __init__(self):
@@ -175,16 +175,18 @@ class TestListRegistryWithTools:
         assert response.status_code == 200
         data = response.json()
 
-        # Should have the toolkit and its functions
-        toolkits = [c for c in data["data"] if c["component_type"] == "toolkit"]
-        assert len(toolkits) == 1
-        assert toolkits[0]["name"] == "my_toolkit"
+        # Toolkit is returned as type="tool" with is_toolkit=True
+        tools = [c for c in data["data"] if c["type"] == "tool"]
+        assert len(tools) == 1
+        assert tools[0]["name"] == "my_toolkit"
+        assert tools[0]["metadata"]["is_toolkit"] is True
 
-        # Individual functions should also be listed
-        tools = [c for c in data["data"] if c["component_type"] == "tool"]
-        tool_names = [t["name"] for t in tools]
-        assert "tool_one" in tool_names
-        assert "tool_two" in tool_names
+        # Functions are embedded in metadata
+        functions = tools[0]["metadata"]["functions"]
+        assert len(functions) == 2
+        func_names = [f["name"] for f in functions]
+        assert "tool_one" in func_names
+        assert "tool_two" in func_names
 
     def test_list_registry_with_callable(self, settings):
         """Test list_registry includes callable tools."""
@@ -205,7 +207,7 @@ class TestListRegistryWithTools:
         assert response.status_code == 200
         data = response.json()
 
-        tools = [c for c in data["data"] if c["component_type"] == "tool"]
+        tools = [c for c in data["data"] if c["type"] == "tool"]
         assert len(tools) >= 1
         tool_names = [t["name"] for t in tools]
         assert "simple_function" in tool_names
@@ -238,7 +240,7 @@ class TestListRegistryWithModels:
         assert response.status_code == 200
         data = response.json()
 
-        models = [c for c in data["data"] if c["component_type"] == "model"]
+        models = [c for c in data["data"] if c["type"] == "model"]
         assert len(models) == 1
         assert models[0]["name"] == "gpt-4"
         assert models[0]["metadata"]["provider"] == "OpenAI"
@@ -258,7 +260,6 @@ class TestListRegistryWithDatabases:
         db = MockDbClass()
         db.id = "main-db"
         db.name = "Main Database"
-        db.table_name = "sessions"
 
         registry = Registry(dbs=[db])
 
@@ -272,7 +273,7 @@ class TestListRegistryWithDatabases:
         assert response.status_code == 200
         data = response.json()
 
-        dbs = [c for c in data["data"] if c["component_type"] == "db"]
+        dbs = [c for c in data["data"] if c["type"] == "db"]
         assert len(dbs) == 1
         assert dbs[0]["name"] == "Main Database"
         assert dbs[0]["metadata"]["db_id"] == "main-db"
@@ -297,7 +298,7 @@ class TestListRegistryWithDatabases:
         assert response.status_code == 200
         data = response.json()
 
-        vdbs = [c for c in data["data"] if c["component_type"] == "vector_db"]
+        vdbs = [c for c in data["data"] if c["type"] == "vector_db"]
         assert len(vdbs) == 1
         assert vdbs[0]["name"] == "Vectors"
         assert vdbs[0]["metadata"]["collection"] == "embeddings"
@@ -330,7 +331,7 @@ class TestListRegistryWithSchemas:
         assert response.status_code == 200
         data = response.json()
 
-        schemas = [c for c in data["data"] if c["component_type"] == "schema"]
+        schemas = [c for c in data["data"] if c["type"] == "schema"]
         assert len(schemas) == 1
         assert schemas[0]["name"] == "UserInput"
 
@@ -353,7 +354,7 @@ class TestListRegistryWithSchemas:
         assert response.status_code == 200
         data = response.json()
 
-        schemas = [c for c in data["data"] if c["component_type"] == "schema"]
+        schemas = [c for c in data["data"] if c["type"] == "schema"]
         assert len(schemas) == 1
         assert "schema" in schemas[0]["metadata"]
         assert "properties" in schemas[0]["metadata"]["schema"]
@@ -368,7 +369,7 @@ class TestListRegistryFiltering:
     """Tests for GET /registry endpoint filtering."""
 
     def test_list_registry_filter_by_type(self, settings):
-        """Test list_registry filters by component_type."""
+        """Test list_registry filters by resource_type."""
 
         def my_tool():
             pass
@@ -385,13 +386,13 @@ class TestListRegistryFiltering:
         app.include_router(router)
         client = TestClient(app)
 
-        response = client.get("/registry?component_type=db")
+        response = client.get("/registry?resource_type=db")
 
         assert response.status_code == 200
         data = response.json()
 
         # Should only return db components
-        assert all(c["component_type"] == "db" for c in data["data"])
+        assert all(c["type"] == "db" for c in data["data"])
         assert data["meta"]["total_count"] == 1
 
     def test_list_registry_filter_by_name(self, settings):
@@ -525,7 +526,7 @@ class TestListRegistryMixed:
         data = response.json()
 
         # Should have all component types
-        component_types = set(c["component_type"] for c in data["data"])
+        component_types = set(c["type"] for c in data["data"])
         assert "tool" in component_types
         assert "model" in component_types
         assert "db" in component_types
@@ -560,5 +561,201 @@ class TestListRegistryMixed:
 
         # Results should be sorted by (component_type, name)
         # db comes before tool alphabetically
-        types = [c["component_type"] for c in data["data"]]
+        types = [c["type"] for c in data["data"]]
         assert types == sorted(types)
+
+
+# =============================================================================
+# List Registry Tests - With Knowledge
+# =============================================================================
+
+
+class TestListRegistryWithKnowledge:
+    """Tests for GET /registry endpoint with knowledge instances."""
+
+    def test_list_registry_with_knowledge(self, settings):
+        """Test list_registry includes knowledge instances."""
+        kb = MagicMock()
+        kb.name = "Docs KB"
+        kb.description = "Documentation knowledge base"
+        kb.max_results = 7
+        kb.readers = {"pdf": MagicMock(), "text": MagicMock()}
+        kb.vector_db = MagicMock()
+        kb.contents_db = MagicMock()
+
+        registry = Registry(knowledge=[kb])
+
+        app = FastAPI()
+        router = get_registry_router(registry=registry, settings=settings)
+        app.include_router(router)
+        client = TestClient(app)
+
+        response = client.get("/registry")
+
+        assert response.status_code == 200
+        data = response.json()
+
+        knowledge = [c for c in data["data"] if c["type"] == "knowledge"]
+        assert len(knowledge) == 1
+        assert knowledge[0]["name"] == "Docs KB"
+        assert knowledge[0]["description"] == "Documentation knowledge base"
+        assert knowledge[0]["metadata"]["max_results"] == 7
+        assert knowledge[0]["metadata"]["num_readers"] == 2
+
+    def test_list_registry_filter_by_knowledge(self, settings):
+        """Test filtering registry by knowledge resource type."""
+        kb = MagicMock()
+        kb.name = "Docs KB"
+        kb.description = None
+        kb.readers = None
+        kb.vector_db = None
+        kb.contents_db = None
+
+        def my_tool():
+            pass
+
+        registry = Registry(knowledge=[kb], tools=[my_tool])
+
+        app = FastAPI()
+        router = get_registry_router(registry=registry, settings=settings)
+        app.include_router(router)
+        client = TestClient(app)
+
+        response = client.get("/registry?resource_type=knowledge")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert all(c["type"] == "knowledge" for c in data["data"])
+        assert data["meta"]["total_count"] == 1
+
+    def test_num_readers_counts_list_readers(self, settings):
+        """num_readers is computed when readers is a list (not only a dict)."""
+        kb = MagicMock()
+        kb.name = "List Readers KB"
+        kb.description = None
+        kb.readers = [MagicMock(), MagicMock(), MagicMock()]
+        kb.vector_db = None
+        kb.contents_db = None
+        kb.max_results = None
+
+        registry = Registry(knowledge=[kb])
+
+        app = FastAPI()
+        router = get_registry_router(registry=registry, settings=settings)
+        app.include_router(router)
+        client = TestClient(app)
+
+        response = client.get("/registry?resource_type=knowledge")
+
+        assert response.status_code == 200
+        data = response.json()
+        knowledge = [c for c in data["data"] if c["type"] == "knowledge"]
+        assert len(knowledge) == 1
+        assert knowledge[0]["metadata"]["num_readers"] == 3
+
+    def test_num_readers_unexpected_type_does_not_crash(self, settings):
+        """An unexpected non-sized readers value yields no num_readers (no crash)."""
+        kb = MagicMock()
+        kb.name = "Weird Readers KB"
+        kb.description = None
+        kb.readers = 42  # not a dict or list, and not sized
+        kb.vector_db = None
+        kb.contents_db = None
+        kb.max_results = None
+
+        registry = Registry(knowledge=[kb])
+
+        app = FastAPI()
+        router = get_registry_router(registry=registry, settings=settings)
+        app.include_router(router)
+        client = TestClient(app)
+
+        response = client.get("/registry?resource_type=knowledge")
+
+        assert response.status_code == 200
+        data = response.json()
+        knowledge = [c for c in data["data"] if c["type"] == "knowledge"]
+        assert len(knowledge) == 1
+        # num_readers omitted (None excluded by model_dump(exclude_none=True))
+        assert "num_readers" not in knowledge[0]["metadata"]
+
+
+# =============================================================================
+# List Registry Tests - With Managers
+# =============================================================================
+
+
+class TestListRegistryWithManagers:
+    """Tests for GET /registry endpoint with memory/session summary managers."""
+
+    def test_list_registry_with_memory_manager(self, settings):
+        """Test list_registry includes memory managers with metadata."""
+        from agno.memory.manager import MemoryManager
+
+        mm = MemoryManager(id="mm-1", name="My Memory", add_memories=True)
+
+        registry = Registry(memory_managers=[mm])
+
+        app = FastAPI()
+        router = get_registry_router(registry=registry, settings=settings)
+        app.include_router(router)
+        client = TestClient(app)
+
+        response = client.get("/registry")
+
+        assert response.status_code == 200
+        data = response.json()
+
+        managers = [c for c in data["data"] if c["type"] == "memory_manager"]
+        assert len(managers) == 1
+        assert managers[0]["id"] == "mm-1"
+        assert managers[0]["name"] == "My Memory"
+        assert managers[0]["metadata"]["add_memories"] is True
+
+    def test_list_registry_with_session_summary_manager(self, settings):
+        """Test list_registry includes session summary managers with metadata."""
+        from agno.session.summary import SessionSummaryManager
+
+        sm = SessionSummaryManager(id="sm-1", name="Concise", last_n_runs=10)
+
+        registry = Registry(session_summary_managers=[sm])
+
+        app = FastAPI()
+        router = get_registry_router(registry=registry, settings=settings)
+        app.include_router(router)
+        client = TestClient(app)
+
+        response = client.get("/registry")
+
+        assert response.status_code == 200
+        data = response.json()
+
+        managers = [c for c in data["data"] if c["type"] == "session_summary_manager"]
+        assert len(managers) == 1
+        assert managers[0]["id"] == "sm-1"
+        assert managers[0]["name"] == "Concise"
+        assert managers[0]["metadata"]["last_n_runs"] == 10
+
+    def test_two_session_summary_managers_have_distinct_ids(self, settings):
+        """Test that two managers without explicit id are not collapsed (duplicate-id fix)."""
+        from agno.session.summary import SessionSummaryManager
+
+        sm1 = SessionSummaryManager(last_n_runs=10)
+        sm2 = SessionSummaryManager(conversation_limit=50)
+
+        registry = Registry(session_summary_managers=[sm1, sm2])
+
+        app = FastAPI()
+        router = get_registry_router(registry=registry, settings=settings)
+        app.include_router(router)
+        client = TestClient(app)
+
+        response = client.get("/registry?resource_type=session_summary_manager")
+
+        assert response.status_code == 200
+        data = response.json()
+
+        managers = [c for c in data["data"] if c["type"] == "session_summary_manager"]
+        assert len(managers) == 2
+        ids = {m["id"] for m in managers}
+        assert len(ids) == 2

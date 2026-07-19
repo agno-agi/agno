@@ -1,4 +1,9 @@
-"""This example shows how to run a Reliability evaluation asynchronously."""
+"""
+Asynchronous Reliability Evaluation
+==================================
+
+Demonstrates running reliability checks with asynchronous evaluation.
+"""
 
 import asyncio
 from typing import Optional
@@ -10,6 +15,9 @@ from agno.run.agent import RunOutput
 from agno.tools.calculator import CalculatorTools
 
 
+# ---------------------------------------------------------------------------
+# Create Evaluation Function
+# ---------------------------------------------------------------------------
 def factorial():
     agent = Agent(
         model=OpenAIChat(id="gpt-5.2"),
@@ -29,5 +37,8 @@ def factorial():
         result.assert_passed()
 
 
+# ---------------------------------------------------------------------------
+# Run Evaluation
+# ---------------------------------------------------------------------------
 if __name__ == "__main__":
     factorial()

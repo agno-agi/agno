@@ -1,9 +1,20 @@
+"""
+Cerebras Structured Output
+==========================
+
+Cookbook example for `cerebras/structured_output.py`.
+"""
+
 from typing import List
 
 from agno.agent import Agent, RunOutput  # noqa
 from agno.models.cerebras import Cerebras
 from pydantic import BaseModel, Field
 from rich.pretty import pprint  # noqa
+
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
 
 
 class MovieScript(BaseModel):
@@ -32,7 +43,6 @@ structured_output_agent = Agent(
     output_schema=MovieScript,
 )
 
-
 # Agent with strict_output=False (guided mode)
 guided_output_agent = Agent(
     model=Cerebras(id="qwen-3-32b", strict_output=False),
@@ -40,11 +50,16 @@ guided_output_agent = Agent(
     output_schema=MovieScript,
 )
 
-
 # Get the response in a variable
 # structured_output_response: RunOutput = structured_output_agent.run("New York")
 # pprint(structured_output_response.content)
 
-
 structured_output_agent.print_response("New York")
 guided_output_agent.print_response("New York")
+
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+
+if __name__ == "__main__":
+    pass

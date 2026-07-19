@@ -12,6 +12,10 @@ from agno.models.anthropic import Claude
 from agno.os import AgentOS
 from agno.tools.mcp import MCPTools  # noqa: F401
 
+# ---------------------------------------------------------------------------
+# Create Example
+# ---------------------------------------------------------------------------
+
 # Setup the database
 db = SqliteDb(db_file="tmp/agentos.db")
 
@@ -39,7 +43,7 @@ brave_mcp_tools = MCPTools(
 ai_framework_agent = Agent(
     id="agno-support-agent",
     name="Agno Support Agent",
-    model=Claude(id="claude-sonnet-4-0"),
+    model=Claude(id="claude-sonnet-4-5"),
     db=db,
     tools=[brave_mcp_tools, agno_mcp_tools],
     add_history_to_context=True,
@@ -54,6 +58,10 @@ agent_os = AgentOS(
 
 
 app = agent_os.get_app()
+
+# ---------------------------------------------------------------------------
+# Run Example
+# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     """Run your AgentOS.

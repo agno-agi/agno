@@ -1,16 +1,23 @@
 """
-This cookbook demonstrates how to use a registry with the AgentOS app.
+AgentOS Registry App
+====================
+
+Demonstrates configuring AgentOS with a Registry and serving the app.
 """
 
 from agno.agent.agent import Agent
 from agno.db.postgres import PostgresDb
 from agno.models.anthropic import Claude
+from agno.models.azure import AzureOpenAI
 from agno.models.openai import OpenAIChat
 from agno.os import AgentOS
 from agno.registry import Registry
 from agno.tools.calculator import CalculatorTools
 from agno.tools.duckduckgo import DuckDuckGoTools
 
+# ---------------------------------------------------------------------------
+# Setup
+# ---------------------------------------------------------------------------
 db = PostgresDb(db_url="postgresql+psycopg://ai:ai@localhost:5532/ai", id="postgres_db")
 
 
@@ -18,6 +25,9 @@ def sample_tool():
     return "Hello, world!"
 
 
+# ---------------------------------------------------------------------------
+# Create Registry
+# ---------------------------------------------------------------------------
 registry = Registry(
     name="Agno Registry",
     tools=[DuckDuckGoTools(), sample_tool, CalculatorTools()],
@@ -25,10 +35,14 @@ registry = Registry(
         OpenAIChat(id="gpt-5-mini"),
         OpenAIChat(id="gpt-5"),
         Claude(id="claude-sonnet-4-5"),
+        AzureOpenAI(id="gpt-5-mini"),
     ],
     dbs=[db],
 )
 
+# ---------------------------------------------------------------------------
+# Create AgentOS App
+# ---------------------------------------------------------------------------
 agent = Agent(
     id="registry-agent",
     model=Claude(id="claude-sonnet-4-5"),
@@ -44,5 +58,8 @@ agent_os = AgentOS(
 
 app = agent_os.get_app()
 
+# ---------------------------------------------------------------------------
+# Run AgentOS App
+# ---------------------------------------------------------------------------
 if __name__ == "__main__":
     agent_os.serve(app="agent_os_registry:app", reload=True)

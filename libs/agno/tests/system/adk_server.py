@@ -16,7 +16,7 @@ from google.adk.tools import google_search
 
 agent = Agent(
     name="facts_agent",
-    model="gemini-2.5-flash-lite",
+    model="gemini-3.5-flash",
     description="Agent that provides interesting facts.",
     instruction="You are a helpful agent who provides interesting facts.",
     tools=[google_search],

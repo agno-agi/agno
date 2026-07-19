@@ -17,16 +17,16 @@ from agno.db.postgres import PostgresDb
 from agno.learn import EntityMemoryConfig, LearningMachine, LearningMode
 from agno.models.openai import OpenAIResponses
 
-# ============================================================================
-# Setup
-# ============================================================================
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
 
 db = PostgresDb(db_url="postgresql+psycopg://ai:ai@localhost:5532/ai")
 
 # ALWAYS mode: Entities are extracted automatically after responses.
 # The agent doesn't see memory tools - extraction happens invisibly.
 agent = Agent(
-    model=OpenAIResponses(id="gpt-5.2"),
+    model=OpenAIResponses(id="gpt-5.5"),
     db=db,
     instructions="You're a sales assistant. Acknowledge notes briefly.",
     learning=LearningMachine(
@@ -37,9 +37,9 @@ agent = Agent(
     markdown=True,
 )
 
-# ============================================================================
-# Demo
-# ============================================================================
+# ---------------------------------------------------------------------------
+# Run Demo
+# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     from rich.pretty import pprint
@@ -60,9 +60,7 @@ if __name__ == "__main__":
     )
 
     print("\n--- Extracted Entities ---")
-    entities = agent.get_learning_machine().entity_memory_store.search(
-        query="acme", limit=10
-    )
+    entities = agent.learning_machine.entity_memory_store.search(query="acme", limit=10)
     pprint(entities)
 
     # Session 2: Add more info about same entity
@@ -79,7 +77,5 @@ if __name__ == "__main__":
     )
 
     print("\n--- Updated Entities ---")
-    entities = agent.get_learning_machine().entity_memory_store.search(
-        query="acme", limit=10
-    )
+    entities = agent.learning_machine.entity_memory_store.search(query="acme", limit=10)
     pprint(entities)

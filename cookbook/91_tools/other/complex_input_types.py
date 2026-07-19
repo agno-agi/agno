@@ -14,6 +14,10 @@ from agno.agent import Agent
 from agno.tools.decorator import tool
 from pydantic import BaseModel, Field
 
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
+
 
 # Define Pydantic models for our tools
 class UserProfile(BaseModel):
@@ -76,6 +80,10 @@ agent = Agent(
 )
 
 # Example usage
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+
 if __name__ == "__main__":
     # Example 1: Create a user
     agent.print_response(

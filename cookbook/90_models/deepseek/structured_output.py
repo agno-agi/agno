@@ -1,9 +1,19 @@
+"""
+Deepseek Structured Output
+==========================
+
+Cookbook example for `deepseek/structured_output.py`.
+"""
+
 from typing import List
 
 from agno.agent import Agent, RunOutput  # noqa
 from agno.models.deepseek import DeepSeek
 from pydantic import BaseModel, Field
-from rich.pretty import pprint  # noqa
+
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
 
 
 class MovieScript(BaseModel):
@@ -25,15 +35,28 @@ class MovieScript(BaseModel):
     )
 
 
+# Agent that uses JSON mode (recommended for DeepSeek).
+# DeepSeek supports JSON mode (response_format={"type": "json_object"}) but not
+# native/json_schema structured outputs, so use_json_mode=True is the reliable path.
 json_mode_agent = Agent(
-    model=DeepSeek(id="deepseek-chat"),
+    model=DeepSeek(id="deepseek-v4-flash"),
     description="You help people write movie scripts.",
     output_schema=MovieScript,
     use_json_mode=True,
 )
 
-# Get the response in a variable
-json_mode_response: RunOutput = json_mode_agent.run("New York")
-pprint(json_mode_response.content)
+# Agent that uses native structured outputs (output_schema without JSON mode).
+structured_output_agent = Agent(
+    model=DeepSeek(id="deepseek-v4-flash"),
+    description="You help people write movie scripts.",
+    output_schema=MovieScript,
+)
 
-# json_mode_agent.print_response("New York")
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+
+if __name__ == "__main__":
+    json_mode_agent.print_response("New York")
+
+    structured_output_agent.print_response("New York")

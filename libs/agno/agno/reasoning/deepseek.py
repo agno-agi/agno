@@ -1,39 +1,55 @@
 from __future__ import annotations
 
-from typing import AsyncIterator, Iterator, List, Optional, Tuple
+from typing import TYPE_CHECKING, AsyncIterator, Iterator, List, Optional, Tuple
 
 from agno.models.base import Model
 from agno.models.message import Message
-from agno.utils.log import logger
+from agno.utils.log import log_warning
+
+if TYPE_CHECKING:
+    from agno.metrics import RunMetrics
 
 
 def is_deepseek_reasoning_model(reasoning_model: Model) -> bool:
     """Check if the model is a DeepSeek reasoning model.
 
     Matches:
-    - deepseek-reasoner
-    - deepseek-r1 and variants (deepseek-r1-distill-*, etc.)
+    - Dedicated reasoning models: deepseek-reasoner, deepseek-r1 and variants
+      (deepseek-r1-zero, deepseek-r1-0528, deepseek-r1-distill-*, etc.)
+    - Hybrid models that run with thinking mode enabled by default: deepseek-v4-*,
+      deepseek-v3.1 (incl. -terminus), deepseek-v3.2 (incl. -exp, -speciale).
+
+    Non-reasoning models return False: deepseek-chat, the base deepseek-v3
+    (incl. deepseek-v3-0324), deepseek-v2 and earlier.
     """
     if reasoning_model.__class__.__name__ != "DeepSeek":
         return False
 
     model_id = reasoning_model.id.lower()
-    return "reasoner" in model_id or "r1" in model_id
+    return "reasoner" in model_id or "r1" in model_id or "v4" in model_id or "v3.1" in model_id or "v3.2" in model_id
 
 
-def get_deepseek_reasoning(reasoning_agent: "Agent", messages: List[Message]) -> Optional[Message]:  # type: ignore  # noqa: F821
-    from agno.run.agent import RunOutput
-
+def get_deepseek_reasoning(
+    reasoning_agent: "Agent",  # type: ignore[name-defined]  # noqa: F821
+    messages: List[Message],
+    run_metrics: Optional["RunMetrics"] = None,
+) -> Optional[Message]:
     # Update system message role to "system"
     for message in messages:
         if message.role == "developer":
             message.role = "system"
 
     try:
-        reasoning_agent_response: RunOutput = reasoning_agent.run(input=messages)
+        reasoning_agent_response = reasoning_agent.run(input=messages)
     except Exception as e:
-        logger.warning(f"Reasoning error: {e}")
+        log_warning(f"Reasoning error: {str(e)}")
         return None
+
+    # Accumulate reasoning agent metrics into the parent run_metrics
+    if run_metrics is not None:
+        from agno.metrics import accumulate_eval_metrics
+
+        accumulate_eval_metrics(reasoning_agent_response.metrics, run_metrics, prefix="reasoning")
 
     reasoning_content: str = ""
     if reasoning_agent_response.messages is not None:
@@ -79,7 +95,7 @@ def get_deepseek_reasoning_stream(
                 elif event.event == RunEvent.run_completed:
                     pass
     except Exception as e:
-        logger.warning(f"Reasoning error: {e}")
+        log_warning(f"Reasoning error: {str(e)}")
         return
 
     # Yield final message
@@ -92,19 +108,27 @@ def get_deepseek_reasoning_stream(
         yield (None, final_message)
 
 
-async def aget_deepseek_reasoning(reasoning_agent: "Agent", messages: List[Message]) -> Optional[Message]:  # type: ignore  # noqa: F821
-    from agno.run.agent import RunOutput
-
+async def aget_deepseek_reasoning(
+    reasoning_agent: "Agent",  # type: ignore[name-defined]  # noqa: F821
+    messages: List[Message],
+    run_metrics: Optional["RunMetrics"] = None,
+) -> Optional[Message]:
     # Update system message role to "system"
     for message in messages:
         if message.role == "developer":
             message.role = "system"
 
     try:
-        reasoning_agent_response: RunOutput = await reasoning_agent.arun(input=messages)
+        reasoning_agent_response = await reasoning_agent.arun(input=messages)
     except Exception as e:
-        logger.warning(f"Reasoning error: {e}")
+        log_warning(f"Reasoning error: {str(e)}")
         return None
+
+    # Accumulate reasoning agent metrics into the parent run_metrics
+    if run_metrics is not None:
+        from agno.metrics import accumulate_eval_metrics
+
+        accumulate_eval_metrics(reasoning_agent_response.metrics, run_metrics, prefix="reasoning")
 
     reasoning_content: str = ""
     if reasoning_agent_response.messages is not None:
@@ -150,7 +174,7 @@ async def aget_deepseek_reasoning_stream(
                 elif event.event == RunEvent.run_completed:
                     pass
     except Exception as e:
-        logger.warning(f"Reasoning error: {e}")
+        log_warning(f"Reasoning error: {str(e)}")
         return
 
     # Yield final message

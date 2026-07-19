@@ -1,4 +1,4 @@
-"""🔧 Example: Using the GeminiTools Toolkit for Image Generation
+"""Example: Using the GeminiTools Toolkit for Image Generation
 
 Make sure you have set the GOOGLE_API_KEY environment variable.
 Example prompts to try:
@@ -15,6 +15,10 @@ from agno.models.openai import OpenAIChat
 from agno.tools.models.gemini import GeminiTools
 from agno.utils.media import save_base64_data
 
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
+
 agent = Agent(
     model=OpenAIChat(id="gpt-4o"),
     tools=[GeminiTools()],
@@ -26,3 +30,10 @@ agent.print_response(
 response = agent.run_response
 if response and response.images:
     save_base64_data(str(response.images[0].content), "tmp/cyberpunk_samurai.png")
+
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+
+if __name__ == "__main__":
+    pass

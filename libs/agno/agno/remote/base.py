@@ -50,6 +50,7 @@ class RemoteDb:
     session_table_name: Optional[str] = None
     knowledge_table_name: Optional[str] = None
     memory_table_name: Optional[str] = None
+    learnings_table_name: Optional[str] = None
     metrics_table_name: Optional[str] = None
     eval_table_name: Optional[str] = None
     traces_table_name: Optional[str] = None
@@ -77,6 +78,7 @@ class RemoteDb:
         session_table_name = None
         knowledge_table_name = None
         memory_table_name = None
+        learnings_table_name = None
         metrics_table_name = None
         eval_table_name = None
         traces_table_name = None
@@ -92,6 +94,10 @@ class RemoteDb:
         if config and config.memory and config.memory.dbs is not None:
             memory_dbs = [db for db in config.memory.dbs if db.db_id == db_id]
             memory_table_name = memory_dbs[0].tables[0] if memory_dbs and memory_dbs[0].tables else None
+
+        if config and config.learning and config.learning.dbs is not None:
+            learning_dbs = [db for db in config.learning.dbs if db.db_id == db_id]
+            learnings_table_name = learning_dbs[0].tables[0] if learning_dbs and learning_dbs[0].tables else None
 
         if config and config.metrics and config.metrics.dbs is not None:
             metrics_dbs = [db for db in config.metrics.dbs if db.db_id == db_id]
@@ -111,6 +117,7 @@ class RemoteDb:
             session_table_name=session_table_name,
             knowledge_table_name=knowledge_table_name,
             memory_table_name=memory_table_name,
+            learnings_table_name=learnings_table_name,
             metrics_table_name=metrics_table_name,
             eval_table_name=eval_table_name,
             traces_table_name=traces_table_name,
@@ -165,7 +172,7 @@ class RemoteDb:
         return await self.client.rename_session(session_id, session_name, **kwargs)
 
     async def update_session(
-        self, session_id: str, session_type: SessionType, **kwargs: Any
+        self, session_id: str, session_type: Optional[SessionType] = None, **kwargs: Any
     ) -> Union["AgentSessionDetailSchema", "TeamSessionDetailSchema", "WorkflowSessionDetailSchema"]:
         return await self.client.update_session(session_id=session_id, session_type=session_type, **kwargs)
 
@@ -213,6 +220,11 @@ class RemoteDb:
     async def get_trace_session_stats(self, **kwargs: Any) -> "PaginatedResponse[TraceSessionStats]":
         return await self.client.get_trace_session_stats(**kwargs)
 
+    async def search_traces(
+        self, **kwargs: Any
+    ) -> Union["PaginatedResponse[TraceDetail]", "PaginatedResponse[TraceSessionStats]"]:
+        return await self.client.search_traces(**kwargs)
+
     # EVALS
     async def get_eval_runs(self, **kwargs: Any) -> "PaginatedResponse[EvalSchema]":
         return await self.client.list_eval_runs(**kwargs)
@@ -253,14 +265,18 @@ class RemoteDb:
 class RemoteKnowledge:
     client: "AgentOSClient"
     contents_db: Optional[RemoteDb] = None
+    knowledge_id: Optional[str] = None
+
+    def _get_db_id(self) -> Optional[str]:
+        return self.contents_db.id if self.contents_db else None
 
     async def get_config(self, headers: Optional[Dict[str, str]] = None) -> "ConfigResponseSchema":
-        return await self.client.get_knowledge_config(
-            db_id=self.contents_db.id if self.contents_db else None, headers=headers
-        )
+        return await self.client.get_knowledge_config(db_id=self._get_db_id(), headers=headers)
 
     async def search_knowledge(self, query: str, **kwargs: Any) -> "PaginatedResponse[VectorSearchResult]":
-        return await self.client.search_knowledge(query, **kwargs)
+        return await self.client.search_knowledge(
+            query, db_id=self._get_db_id(), knowledge_id=self.knowledge_id, **kwargs
+        )
 
     async def upload_content(
         self,
@@ -274,7 +290,6 @@ class RemoteKnowledge:
         chunker: Optional[str] = None,
         chunk_size: Optional[int] = None,
         chunk_overlap: Optional[int] = None,
-        db_id: Optional[str] = None,
         **kwargs: Any,
     ) -> "ContentResponseSchema":
         return await self.client.upload_knowledge_content(
@@ -288,7 +303,8 @@ class RemoteKnowledge:
             chunker=chunker,
             chunk_size=chunk_size,
             chunk_overlap=chunk_overlap,
-            db_id=db_id,
+            db_id=self._get_db_id(),
+            knowledge_id=self.knowledge_id,
             **kwargs,
         )
 
@@ -299,7 +315,6 @@ class RemoteKnowledge:
         description: Optional[str] = None,
         metadata: Optional[Dict[str, Any]] = None,
         reader_id: Optional[str] = None,
-        db_id: Optional[str] = None,
         **kwargs: Any,
     ) -> "ContentResponseSchema":
         return await self.client.update_knowledge_content(
@@ -308,7 +323,8 @@ class RemoteKnowledge:
             description=description,
             metadata=metadata,
             reader_id=reader_id,
-            db_id=db_id,
+            db_id=self._get_db_id(),
+            knowledge_id=self.knowledge_id,
             **kwargs,
         )
 
@@ -318,28 +334,37 @@ class RemoteKnowledge:
         page: Optional[int] = None,
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
-        db_id: Optional[str] = None,
         **kwargs: Any,
     ) -> "PaginatedResponse[ContentResponseSchema]":
         return await self.client.list_knowledge_content(
-            limit=limit, page=page, sort_by=sort_by, sort_order=sort_order, db_id=db_id, **kwargs
+            limit=limit,
+            page=page,
+            sort_by=sort_by,
+            sort_order=sort_order,
+            db_id=self._get_db_id(),
+            knowledge_id=self.knowledge_id,
+            **kwargs,
         )
 
-    async def get_content_by_id(
-        self, content_id: str, db_id: Optional[str] = None, **kwargs: Any
-    ) -> "ContentResponseSchema":
-        return await self.client.get_knowledge_content(content_id=content_id, db_id=db_id, **kwargs)
+    async def get_content_by_id(self, content_id: str, **kwargs: Any) -> "ContentResponseSchema":
+        return await self.client.get_knowledge_content(
+            content_id=content_id, db_id=self._get_db_id(), knowledge_id=self.knowledge_id, **kwargs
+        )
 
-    async def delete_content_by_id(self, content_id: str, db_id: Optional[str] = None, **kwargs: Any) -> None:
-        await self.client.delete_knowledge_content(content_id=content_id, db_id=db_id, **kwargs)
+    async def delete_content_by_id(self, content_id: str, **kwargs: Any) -> None:
+        await self.client.delete_knowledge_content(
+            content_id=content_id, db_id=self._get_db_id(), knowledge_id=self.knowledge_id, **kwargs
+        )
 
-    async def delete_all_content(self, db_id: Optional[str] = None, **kwargs: Any) -> None:
-        await self.client.delete_all_knowledge_content(db_id=db_id, **kwargs)
+    async def delete_all_content(self, **kwargs: Any) -> None:
+        await self.client.delete_all_knowledge_content(
+            db_id=self._get_db_id(), knowledge_id=self.knowledge_id, **kwargs
+        )
 
-    async def get_content_status(
-        self, content_id: str, db_id: Optional[str] = None, **kwargs: Any
-    ) -> "ContentStatusResponse":
-        return await self.client.get_knowledge_content_status(content_id=content_id, db_id=db_id, **kwargs)
+    async def get_content_status(self, content_id: str, **kwargs: Any) -> "ContentStatusResponse":
+        return await self.client.get_knowledge_content_status(
+            content_id=content_id, db_id=self._get_db_id(), knowledge_id=self.knowledge_id, **kwargs
+        )
 
 
 @dataclass

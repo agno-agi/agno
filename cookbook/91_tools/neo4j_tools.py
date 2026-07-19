@@ -77,65 +77,74 @@ from agno.models.openai import OpenAIChat
 from agno.tools.neo4j import Neo4jTools
 from dotenv import load_dotenv
 
-load_dotenv()
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
 
-# Optionally load from environment or hardcode here
-uri = os.getenv("NEO4J_URI", "bolt://localhost:7687")
-user = os.getenv("NEO4J_USERNAME", "neo4j")
-password = os.getenv("NEO4J_PASSWORD", "password")
 
-# Example 1: All functions enabled (default)
-neo4j_toolkit_all = Neo4jTools(
-    uri=uri,
-    user=user,
-    password=password,
-    all=True,
-)
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+if __name__ == "__main__":
+    load_dotenv()
 
-# Example 2: Specific functions only
-neo4j_toolkit_specific = Neo4jTools(
-    uri=uri,
-    user=user,
-    password=password,
-    enable_list_labels=True,
-    enable_get_schema=True,
-    enable_list_relationships=False,
-    enable_run_cypher=False,
-)
+    # Optionally load from environment or hardcode here
+    uri = os.getenv("NEO4J_URI", "bolt://localhost:7687")
+    user = os.getenv("NEO4J_USERNAME", "neo4j")
+    password = os.getenv("NEO4J_PASSWORD", "password")
 
-# Example 3: Default behavior
-neo4j_toolkit = Neo4jTools(
-    uri=uri,
-    user=user,
-    password=password,
-)
+    # Example 1: All functions enabled (default)
+    neo4j_toolkit_all = Neo4jTools(
+        uri=uri,
+        user=user,
+        password=password,
+        all=True,
+    )
 
-description = """You are a Neo4j expert assistant who can help with all operations in a Neo4j database by understanding natural language context and translating it into Cypher queries."""
+    # Example 2: Specific functions only
+    neo4j_toolkit_specific = Neo4jTools(
+        uri=uri,
+        user=user,
+        password=password,
+        enable_list_labels=True,
+        enable_get_schema=True,
+        enable_list_relationships=False,
+        enable_run_cypher=False,
+    )
 
-instructions = [
-    "Analyze the user's context and convert it into Cypher queries that respect the database's current schema.",
-    "Before performing any operation, query the current schema (e.g., check for existing nodes or relationships).",
-    "If the necessary schema elements are missing, dynamically create or extend the schema using best practices, ensuring data integrity and consistency.",
-    "If properties are required or provided for nodes or relationships, ensure that they are added correctly do not overwrite existing ones and do not create duplicates and do not create extra nodes.",
-    "Optionally, use or implement a dedicated function to retrieve the current schema (e.g., via a 'get_schema' function).",
-    "Ensure that all operations maintain data integrity and follow best practices.",
-    "Intelligently create relationships if bi-directional relationships are required, and understand the users intent and create relationships accordingly.",
-    "Intelligently handle queries that involve multiple nodes and relationships, understand has to be nodes, properties, and relationships and maintain best practices.",
-    "Handle errors gracefully and provide clear feedback to the user.",
-]
+    # Example 3: Default behavior
+    neo4j_toolkit = Neo4jTools(
+        uri=uri,
+        user=user,
+        password=password,
+    )
 
-# Example: Use with AGNO Agent
-agent = Agent(
-    model=OpenAIChat(id="o3-mini"),
-    tools=[neo4j_toolkit],
-    markdown=True,
-    description=description,
-    instructions=instructions,
-)
+    description = """You are a Neo4j expert assistant who can help with all operations in a Neo4j database by understanding natural language context and translating it into Cypher queries."""
 
-# Agent handles tool usage automatically via LLM reasoning
-agent.print_response(
-    "Add some nodes in my graph to represent a person with the name John Doe and a person with the name Jane Doe, and they belong to company 'X' and they are friends."
-)
+    instructions = [
+        "Analyze the user's context and convert it into Cypher queries that respect the database's current schema.",
+        "Before performing any operation, query the current schema (e.g., check for existing nodes or relationships).",
+        "If the necessary schema elements are missing, dynamically create or extend the schema using best practices, ensuring data integrity and consistency.",
+        "If properties are required or provided for nodes or relationships, ensure that they are added correctly do not overwrite existing ones and do not create duplicates and do not create extra nodes.",
+        "Optionally, use or implement a dedicated function to retrieve the current schema (e.g., via a 'get_schema' function).",
+        "Ensure that all operations maintain data integrity and follow best practices.",
+        "Intelligently create relationships if bi-directional relationships are required, and understand the users intent and create relationships accordingly.",
+        "Intelligently handle queries that involve multiple nodes and relationships, understand has to be nodes, properties, and relationships and maintain best practices.",
+        "Handle errors gracefully and provide clear feedback to the user.",
+    ]
 
-agent.print_response("What is the schema of my graph?")
+    # Example: Use with AGNO Agent
+    agent = Agent(
+        model=OpenAIChat(id="o3-mini"),
+        tools=[neo4j_toolkit],
+        markdown=True,
+        description=description,
+        instructions=instructions,
+    )
+
+    # Agent handles tool usage automatically via LLM reasoning
+    agent.print_response(
+        "Add some nodes in my graph to represent a person with the name John Doe and a person with the name Jane Doe, and they belong to company 'X' and they are friends."
+    )
+
+    agent.print_response("What is the schema of my graph?")

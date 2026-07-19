@@ -12,6 +12,10 @@ from agno.media import File
 from agno.models.google import Gemini
 from google import genai
 
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
+
 pdf_path = Path(__file__).parent.joinpath("ThaiRecipes.pdf")
 
 client = genai.Client()
@@ -38,7 +42,7 @@ while retrieved_file is None and retries < 3:
 
 if retrieved_file is not None:
     agent = Agent(
-        model=Gemini(id="gemini-3-flash-preview"),
+        model=Gemini(id="gemini-3.5-flash"),
         markdown=True,
         add_history_to_context=True,
     )
@@ -53,3 +57,10 @@ if retrieved_file is not None:
     )
 else:
     print("Error: File was not ready after multiple attempts.")
+
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+
+if __name__ == "__main__":
+    pass

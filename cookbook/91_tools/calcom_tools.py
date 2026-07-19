@@ -1,8 +1,20 @@
+"""
+Calcom Tools
+=============================
+
+Demonstrates calcom tools.
+"""
+
 from datetime import datetime
 
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.tools.calcom import CalComTools
+
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
+
 
 """
 Example showing how to use the Cal.com Tools with Agno.
@@ -67,4 +79,9 @@ agent = Agent(
 )
 
 # Example usage
-agent.print_response("What are my bookings for tomorrow?")
+
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+if __name__ == "__main__":
+    agent.print_response("What are my bookings for tomorrow?")

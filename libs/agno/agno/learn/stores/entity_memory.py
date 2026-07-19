@@ -39,17 +39,22 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from os import getenv
 from textwrap import dedent
-from typing import Any, Callable, Dict, List, Optional, Union
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Union, cast
 
 from agno.learn.config import EntityMemoryConfig, LearningMode
 from agno.learn.schemas import EntityMemory
 from agno.learn.stores.protocol import LearningStore
+from agno.learn.utils import build_learning_id
 from agno.utils.log import (
     log_debug,
     log_warning,
     set_log_level_to_debug,
     set_log_level_to_info,
 )
+from agno.utils.message import get_conversation_text
+
+if TYPE_CHECKING:
+    from agno.metrics import RunMetrics
 
 try:
     from agno.db.base import AsyncBaseDb, BaseDb
@@ -194,6 +199,7 @@ class EntityMemoryStore(LearningStore):
             agent_id=agent_id,
             team_id=team_id,
             namespace=effective_namespace,
+            run_metrics=kwargs.get("run_metrics"),
         )
 
     async def aprocess(
@@ -219,6 +225,7 @@ class EntityMemoryStore(LearningStore):
             agent_id=agent_id,
             team_id=team_id,
             namespace=effective_namespace,
+            run_metrics=kwargs.get("run_metrics"),
         )
 
     def build_context(self, data: Any) -> str:
@@ -2634,6 +2641,7 @@ class EntityMemoryStore(LearningStore):
         agent_id: Optional[str] = None,
         team_id: Optional[str] = None,
         namespace: Optional[str] = None,
+        run_metrics: Optional["RunMetrics"] = None,
     ) -> None:
         """Extract entities from messages (sync)."""
         if not self.model or not self.db:
@@ -2642,7 +2650,7 @@ class EntityMemoryStore(LearningStore):
         try:
             from agno.models.message import Message
 
-            conversation_text = self._messages_to_text(messages=messages)
+            conversation_text = get_conversation_text(messages)
 
             tools = self._get_extraction_tools(
                 user_id=user_id,
@@ -2664,12 +2672,17 @@ class EntityMemoryStore(LearningStore):
                 tools=functions,
             )
 
+            if run_metrics is not None and response.response_usage is not None:
+                from agno.metrics import ModelType, accumulate_model_metrics
+
+                accumulate_model_metrics(response, model_copy, ModelType.LEARNING_MODEL, run_metrics)
+
             if response.tool_executions:
                 self.entity_updated = True
                 log_debug("EntityMemoryStore: Extraction saved entities")
 
         except Exception as e:
-            log_warning(f"EntityMemoryStore.extract_and_save failed: {e}")
+            log_warning(f"EntityMemoryStore.extract_and_save failed: {str(e)}")
 
     async def aextract_and_save(
         self,
@@ -2678,13 +2691,14 @@ class EntityMemoryStore(LearningStore):
         agent_id: Optional[str] = None,
         team_id: Optional[str] = None,
         namespace: Optional[str] = None,
+        run_metrics: Optional["RunMetrics"] = None,
     ) -> None:
         """Extract entities from messages (async)."""
         if not self.model or not self.db:
             return
 
         try:
-            conversation_text = self._messages_to_text(messages=messages)
+            conversation_text = get_conversation_text(messages)
 
             tools = self._aget_extraction_tools(
                 user_id=user_id,
@@ -2706,12 +2720,17 @@ class EntityMemoryStore(LearningStore):
                 tools=functions,
             )
 
+            if run_metrics is not None and response.response_usage is not None:
+                from agno.metrics import ModelType, accumulate_model_metrics
+
+                accumulate_model_metrics(response, model_copy, ModelType.LEARNING_MODEL, run_metrics)
+
             if response.tool_executions:
                 self.entity_updated = True
                 log_debug("EntityMemoryStore: Extraction saved entities")
 
         except Exception as e:
-            log_warning(f"EntityMemoryStore.aextract_and_save failed: {e}")
+            log_warning(f"EntityMemoryStore.aextract_and_save failed: {str(e)}")
 
     def _get_extraction_system_message(self) -> "Message":
         """Get system message for extraction."""
@@ -3062,23 +3081,9 @@ class EntityMemoryStore(LearningStore):
                 func.strict = True
                 functions.append(func)
             except Exception as e:
-                log_warning(f"Could not add function {tool}: {e}")
+                log_warning(f"Could not add function {tool}: {str(e)}")
 
         return functions
-
-    def _messages_to_text(self, messages: List[Any]) -> str:
-        """Convert messages to text for extraction."""
-        parts = []
-        for msg in messages:
-            if msg.role == "user":
-                content = msg.get_content_string() if hasattr(msg, "get_content_string") else str(msg.content)
-                if content and content.strip():
-                    parts.append(f"User: {content}")
-            elif msg.role in ["assistant", "model"]:
-                content = msg.get_content_string() if hasattr(msg, "get_content_string") else str(msg.content)
-                if content and content.strip():
-                    parts.append(f"Assistant: {content}")
-        return "\n".join(parts)
 
     # =========================================================================
     # Private Helpers
@@ -3091,7 +3096,10 @@ class EntityMemoryStore(LearningStore):
         namespace: str,
     ) -> str:
         """Build unique DB ID for entity."""
-        return f"entity_{namespace}_{entity_type}_{entity_id}"
+        return cast(
+            str,
+            build_learning_id("entity_memory", entity_id=entity_id, entity_type=entity_type, namespace=namespace),
+        )
 
     def _format_entity_basic(self, entity: Any) -> str:
         """Basic entity formatting fallback."""

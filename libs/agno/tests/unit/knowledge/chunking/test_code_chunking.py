@@ -7,6 +7,12 @@ import pytest
 from agno.knowledge.chunking.code import CodeChunking
 from agno.knowledge.document.base import Document
 
+# Skip all tests in this module if tree-sitter is not installed
+try:
+    import tree_sitter_language_pack  # noqa: F401
+except ImportError:
+    pytestmark = pytest.mark.skip(reason="tree-sitter-language-pack not installed")
+
 
 @pytest.fixture
 def sample_python_code():
@@ -72,10 +78,15 @@ def test_code_chunking_word_tokenizer(sample_python_code):
 
 def test_code_chunking_gpt2_tokenizer(sample_python_code):
     """Test with gpt2 tokenizer."""
+    from chonkie.tokenizer import InvalidTokenizerError
+
     chunker = CodeChunking(tokenizer="gpt2", chunk_size=30, language="python")
     doc = Document(content=sample_python_code, name="test.py")
 
-    chunks = chunker.chunk(doc)
+    try:
+        chunks = chunker.chunk(doc)
+    except InvalidTokenizerError as e:
+        pytest.skip(f"Tokenizer could not be downloaded: {e}")
 
     assert len(chunks) > 0
     assert all(chunk.content for chunk in chunks)
@@ -83,10 +94,15 @@ def test_code_chunking_gpt2_tokenizer(sample_python_code):
 
 def test_code_chunking_cl100k_tokenizer(sample_python_code):
     """Test with cl100k_base tokenizer."""
+    from chonkie.tokenizer import InvalidTokenizerError
+
     chunker = CodeChunking(tokenizer="cl100k_base", chunk_size=30, language="python")
     doc = Document(content=sample_python_code, name="test.py")
 
-    chunks = chunker.chunk(doc)
+    try:
+        chunks = chunker.chunk(doc)
+    except InvalidTokenizerError as e:
+        pytest.skip(f"Tokenizer could not be downloaded: {e}")
 
     assert len(chunks) > 0
     assert all(chunk.content for chunk in chunks)
@@ -324,15 +340,15 @@ def test_code_chunking_custom_tokenizer_subclass(sample_python_code):
 
 
 def test_code_chunking_no_document_id(sample_python_code):
-    """Test chunking document without id."""
+    """Test chunking document without id uses name as fallback."""
     chunker = CodeChunking(language="python")
-    doc = Document(content=sample_python_code, name="test.py")  # No id
+    doc = Document(content=sample_python_code, name="test.py")  # No id, but has name
 
     chunks = chunker.chunk(doc)
 
     assert len(chunks) > 0
-    # Chunks should have None id
-    assert all(chunk.id is None for chunk in chunks)
+    # Chunks should have name-based IDs when document has name but no id
+    assert all(chunk.id is not None and chunk.id.startswith("test.py_") for chunk in chunks)
 
 
 def test_code_chunking_lazy_initialization(sample_python_code):

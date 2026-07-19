@@ -1,12 +1,25 @@
+"""
+Reasoning Agent
+===============
+
+Demonstrates reasoning agent.
+"""
+
 from agno.agent.agent import Agent
-from agno.models.openai import OpenAIChat
+from agno.db.sqlite import SqliteDb
+from agno.models.openai import OpenAIResponses
 from agno.os import AgentOS
 from agno.os.interfaces.agui import AGUI
 from agno.tools.websearch import WebSearchTools
 
+# ---------------------------------------------------------------------------
+# Create Example
+# ---------------------------------------------------------------------------
+
 chat_agent = Agent(
     name="Assistant",
-    model=OpenAIChat(id="o4-mini"),
+    model=OpenAIResponses(id="o4-mini"),
+    db=SqliteDb(db_file="/tmp/agui_reasoning_agent.db"),
     instructions="You are a helpful AI assistant.",
     add_datetime_to_context=True,
     add_history_to_context=True,
@@ -23,6 +36,10 @@ agent_os = AgentOS(
 )
 app = agent_os.get_app()
 
+
+# ---------------------------------------------------------------------------
+# Run Example
+# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     """Run your AgentOS.

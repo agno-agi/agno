@@ -12,6 +12,10 @@ from os import getenv
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
+
 # Using these Mistral model and url as an example.
 model_id = "mistral-medium-2505"
 base_url = "https://api.mistral.ai/v1"
@@ -36,3 +40,10 @@ agent = Agent(model=model, markdown=True)
 
 # Running the agent with a custom role map.
 res = agent.print_response("Hey, how are you doing?")
+
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+
+if __name__ == "__main__":
+    pass

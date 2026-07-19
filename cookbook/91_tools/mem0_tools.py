@@ -14,6 +14,11 @@ from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.tools.mem0 import Mem0Tools
 
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
+
+
 USER_ID = "jane_doe"
 SESSION_ID = "agno_session"
 
@@ -85,25 +90,32 @@ agent = Agent(
 )
 
 # Example usage with all functions enabled
-print("=== Example 1: Using all Mem0 functions ===")
-agent_all.print_response("I live in NYC and work as a software engineer")
-agent_all.print_response("Summarize all my memories and delete outdated ones if needed")
 
-# Example usage with specific functions only
-print("\n=== Example 2: Using specific Mem0 functions (add + search only) ===")
-agent_specific.print_response("I love Italian food, especially pasta")
-agent_specific.print_response("What do you remember about my food preferences?")
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+if __name__ == "__main__":
+    print("=== Example 1: Using all Mem0 functions ===")
+    agent_all.print_response("I live in NYC and work as a software engineer")
+    agent_all.print_response(
+        "Summarize all my memories and delete outdated ones if needed"
+    )
 
-# Example usage with default configuration
-print("\n=== Example 3: Default Mem0 agent usage ===")
-agent.print_response("I live in NYC")
-agent.print_response("I lived in San Francisco for 5 years previously")
-agent.print_response("I'm going to a Taylor Swift concert tomorrow")
+    # Example usage with specific functions only
+    print("\n=== Example 2: Using specific Mem0 functions (add + search only) ===")
+    agent_specific.print_response("I love Italian food, especially pasta")
+    agent_specific.print_response("What do you remember about my food preferences?")
 
-agent.print_response("Summarize all the details of the conversation")
+    # Example usage with default configuration
+    print("\n=== Example 3: Default Mem0 agent usage ===")
+    agent.print_response("I live in NYC")
+    agent.print_response("I lived in San Francisco for 5 years previously")
+    agent.print_response("I'm going to a Taylor Swift concert tomorrow")
 
-# More examples:
-# agent.print_response("NYC has a famous Brooklyn Bridge")
-# agent.print_response("Delete all my memories")
-# agent.print_response("I moved to LA")
-# agent.print_response("What is the name of the concert I am going to?")
+    agent.print_response("Summarize all the details of the conversation")
+
+    # More examples:
+    # agent.print_response("NYC has a famous Brooklyn Bridge")
+    # agent.print_response("Delete all my memories")
+    # agent.print_response("I moved to LA")
+    # agent.print_response("What is the name of the concert I am going to?")

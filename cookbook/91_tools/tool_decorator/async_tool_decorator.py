@@ -1,3 +1,10 @@
+"""
+Async Tool Decorator
+=============================
+
+Demonstrates async tool decorator.
+"""
+
 import asyncio
 import json
 from typing import AsyncIterator
@@ -5,6 +12,10 @@ from typing import AsyncIterator
 import httpx
 from agno.agent import Agent
 from agno.tools import tool
+
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
 
 
 @tool(show_result=True)
@@ -36,6 +47,10 @@ agent = Agent(
     tools=[get_top_hackernews_stories],
     markdown=True,
 )
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+
 if __name__ == "__main__":
     asyncio.run(
         agent.aprint_response("What are the top hackernews stories?", stream=True)

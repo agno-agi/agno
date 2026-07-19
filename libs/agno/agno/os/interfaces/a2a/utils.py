@@ -1,5 +1,5 @@
 import json
-from typing import Any, Dict, cast
+from typing import Any, Dict, Optional, cast
 from uuid import uuid4
 
 from fastapi import HTTPException
@@ -80,6 +80,7 @@ from agno.run.agent import (
     ToolCallCompletedEvent,
     ToolCallStartedEvent,
 )
+from agno.run.base import RunStatus
 
 
 async def map_a2a_request_to_run_input(request_body: dict, stream: bool = True) -> RunInput:
@@ -174,6 +175,21 @@ async def map_a2a_request_to_run_input(request_body: dict, stream: bool = True) 
         audios=audios if audios else None,
         files=files if files else None,
     )
+
+
+def _map_run_status_to_task_state(status: Optional[RunStatus]) -> TaskState:
+    """Map Agno RunStatus to A2A TaskState."""
+    if status is None:
+        return TaskState.completed
+    _mapping = {
+        RunStatus.pending: TaskState.submitted,
+        RunStatus.running: TaskState.working,
+        RunStatus.completed: TaskState.completed,
+        RunStatus.error: TaskState.failed,
+        RunStatus.cancelled: TaskState.canceled,
+        RunStatus.paused: TaskState.working,
+    }
+    return _mapping.get(status, TaskState.completed)
 
 
 def map_run_output_to_a2a_task(run_output: Union[RunOutput, WorkflowRunOutput]) -> Task:
@@ -274,10 +290,12 @@ def map_run_output_to_a2a_task(run_output: Union[RunOutput, WorkflowRunOutput]) 
     # 4. Build and return the A2A task
     run_id = cast(str, run_output.run_id) if run_output.run_id else str(uuid4())
     session_id = cast(str, run_output.session_id) if run_output.session_id else str(uuid4())
+    run_status = getattr(run_output, "status", None)
+    task_state = _map_run_status_to_task_state(run_status)
     return Task(
         id=run_id,
         context_id=session_id,
-        status=TaskStatus(state=TaskState.completed),
+        status=TaskStatus(state=task_state),
         history=[agent_message],
         artifacts=artifacts if artifacts else None,
     )
@@ -330,11 +348,21 @@ async def stream_a2a_response(
 
         # Send content events
         elif isinstance(event, (RunContentEvent, TeamRunContentEvent)) and event.content:
-            accumulated_content += event.content
+            # Serialize content to str: Pydantic models (from output_schema) must be
+            # converted before str-concatenation or TextPart construction, otherwise
+            # "TypeError: can only concatenate str (not <Model>) to str" is raised.
+            raw_content = event.content
+            if hasattr(raw_content, "model_dump_json"):
+                content_str = raw_content.model_dump_json()
+            elif not isinstance(raw_content, str):
+                content_str = str(raw_content)
+            else:
+                content_str = raw_content
+            accumulated_content += content_str
             message = A2AMessage(
                 message_id=message_id,
                 role=Role.agent,
-                parts=[Part(root=TextPart(text=event.content))],
+                parts=[Part(root=TextPart(text=content_str))],
                 context_id=context_id,
                 task_id=task_id,
                 metadata={"agno_content_category": "content"},

@@ -3,16 +3,16 @@ from enum import Enum
 from time import time
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Sequence, Union
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from agno.media import Audio, File, Image, Video
 from agno.models.message import Citations, Message
-from agno.models.metrics import Metrics
+from agno.models.metrics import RunMetrics
 from agno.models.response import ToolExecution
 from agno.reasoning.step import ReasoningStep
 from agno.run.base import BaseRunOutputEvent, MessageReferences, RunStatus
 from agno.run.requirement import RunRequirement
-from agno.utils.log import logger
+from agno.utils.log import log_error
 from agno.utils.media import (
     reconstruct_audio_list,
     reconstruct_files,
@@ -23,6 +23,15 @@ from agno.utils.media import (
 
 if TYPE_CHECKING:
     from agno.session.summary import SessionSummary
+
+
+class Followups(BaseModel):
+    """Followup prompts generated after the main response."""
+
+    suggestions: List[str] = Field(
+        ...,
+        description="Short action-oriented followup prompts (5-10 words each)",
+    )
 
 
 @dataclass
@@ -54,10 +63,10 @@ class RunInput:
         elif isinstance(self.input_content, BaseModel):
             return self.input_content.model_dump_json(exclude_none=True)
         elif isinstance(self.input_content, Message):
-            return json.dumps(self.input_content.to_dict())
+            return json.dumps(self.input_content.to_dict(), ensure_ascii=False)
         elif isinstance(self.input_content, list):
             try:
-                return json.dumps(self.to_dict().get("input_content"))
+                return json.dumps(self.to_dict().get("input_content"), ensure_ascii=False)
             except Exception:
                 return str(self.input_content)
         else:
@@ -178,6 +187,9 @@ class RunEvent(str, Enum):
     compression_started = "CompressionStarted"
     compression_completed = "CompressionCompleted"
 
+    followups_started = "FollowupsStarted"
+    followups_completed = "FollowupsCompleted"
+
     custom_event = "CustomEvent"
 
 
@@ -197,6 +209,8 @@ class BaseAgentRunEvent(BaseRunOutputEvent):
     step_id: Optional[str] = None
     step_name: Optional[str] = None
     step_index: Optional[int] = None
+    # Nesting depth: 0 = top-level workflow, 1 = first nested, 2 = nested-in-nested, etc.
+    nested_depth: int = 0
     tools: Optional[List[ToolExecution]] = None
 
     # For backwards compatibility
@@ -268,13 +282,14 @@ class RunCompletedEvent(BaseAgentRunEvent):
     images: Optional[List[Image]] = None  # Images attached to the response
     videos: Optional[List[Video]] = None  # Videos attached to the response
     audio: Optional[List[Audio]] = None  # Audio attached to the response
+    files: Optional[List[File]] = None  # Files attached to the response
     response_audio: Optional[Audio] = None  # Model audio response
     references: Optional[List[MessageReferences]] = None
     additional_input: Optional[List[Message]] = None
     reasoning_steps: Optional[List[ReasoningStep]] = None
     reasoning_messages: Optional[List[Message]] = None
     metadata: Optional[Dict[str, Any]] = None
-    metrics: Optional[Metrics] = None
+    metrics: Optional[RunMetrics] = None
     session_state: Optional[Dict[str, Any]] = None
 
 
@@ -411,6 +426,7 @@ class ToolCallCompletedEvent(BaseAgentRunEvent):
     images: Optional[List[Image]] = None  # Images produced by the tool call
     videos: Optional[List[Video]] = None  # Videos produced by the tool call
     audio: Optional[List[Audio]] = None  # Audio produced by the tool call
+    files: Optional[List[File]] = None  # Files produced by the tool call
 
 
 @dataclass
@@ -483,6 +499,17 @@ class CompressionCompletedEvent(BaseAgentRunEvent):
 
 
 @dataclass
+class FollowupsStartedEvent(BaseAgentRunEvent):
+    event: str = RunEvent.followups_started.value
+
+
+@dataclass
+class FollowupsCompletedEvent(BaseAgentRunEvent):
+    event: str = RunEvent.followups_completed.value
+    followups: Optional[List[str]] = None
+
+
+@dataclass
 class CustomEvent(BaseAgentRunEvent):
     event: str = RunEvent.custom_event.value
     # tool_call_id for ToolExecution
@@ -527,6 +554,8 @@ RunOutputEvent = Union[
     ModelRequestCompletedEvent,
     CompressionStartedEvent,
     CompressionCompletedEvent,
+    FollowupsStartedEvent,
+    FollowupsCompletedEvent,
     CustomEvent,
 ]
 
@@ -565,6 +594,8 @@ RUN_EVENT_TYPE_REGISTRY = {
     RunEvent.model_request_completed.value: ModelRequestCompletedEvent,
     RunEvent.compression_started.value: CompressionStartedEvent,
     RunEvent.compression_completed.value: CompressionCompletedEvent,
+    RunEvent.followups_started.value: FollowupsStartedEvent,
+    RunEvent.followups_completed.value: FollowupsCompletedEvent,
     RunEvent.custom_event.value: CustomEvent,
 }
 
@@ -604,7 +635,7 @@ class RunOutput:
     model: Optional[str] = None
     model_provider: Optional[str] = None
     messages: Optional[List[Message]] = None
-    metrics: Optional[Metrics] = None
+    metrics: Optional[RunMetrics] = None
     additional_input: Optional[List[Message]] = None
 
     tools: Optional[List[ToolExecution]] = None
@@ -618,6 +649,8 @@ class RunOutput:
     citations: Optional[Citations] = None
     references: Optional[List[MessageReferences]] = None
 
+    followups: Optional[List[str]] = None
+
     metadata: Optional[Dict[str, Any]] = None
     session_state: Optional[Dict[str, Any]] = None
 
@@ -629,6 +662,23 @@ class RunOutput:
 
     # User control flow (HITL) requirements to continue a run when paused, in order of arrival
     requirements: Optional[list[RunRequirement]] = None
+
+    # Checkpoint coordinate: index into messages at the most recent checkpoint write.
+    # Set when checkpoint="tool-batch" (or any future non-default level) persists mid-run state.
+    last_checkpoint_at_message_index: Optional[int] = None
+
+    # Fork lineage. Distinct from parent_run_id (which carries team-member / workflow-step
+    # parentage); see ADR-007 in specs/agno/features/checkpointing/decisions.md.
+    forked_from_run_id: Optional[str] = None
+    forked_from_message_index: Optional[int] = None
+
+    # Branching lineage: the source session_id this run was originally created in
+    # (set when a session is forked; preserved across nested forks).
+    forked_from_session_id: Optional[str] = None
+
+    # Regeneration lineage: the run_id of the immediate predecessor this run was
+    # regenerated from. Walk the chain via repeated lookups if you need full history.
+    regenerated_from: Optional[str] = None
 
     # === FOREIGN KEY RELATIONSHIPS ===
     # These fields establish relationships to parent workflow/step structures
@@ -685,11 +735,12 @@ class RunOutput:
                 "reasoning_messages",
                 "references",
                 "requirements",
+                "followups",
             ]
         }
 
         if self.metrics is not None:
-            _dict["metrics"] = self.metrics.to_dict() if isinstance(self.metrics, Metrics) else self.metrics
+            _dict["metrics"] = self.metrics.to_dict() if isinstance(self.metrics, RunMetrics) else self.metrics
 
         if self.events is not None:
             _dict["events"] = [e.to_dict() for e in self.events]
@@ -714,6 +765,9 @@ class RunOutput:
 
         if self.references is not None:
             _dict["references"] = [r.model_dump() for r in self.references]
+
+        if self.followups is not None:
+            _dict["followups"] = self.followups
 
         if self.images is not None:
             _dict["images"] = []
@@ -783,8 +837,8 @@ class RunOutput:
 
         try:
             _dict = self.to_dict()
-        except Exception:
-            logger.error("Failed to convert response to json", exc_info=True)
+        except Exception as e:
+            log_error(f"Failed to convert response to json: {str(e)}")
             raise
 
         if indent is None:
@@ -844,7 +898,7 @@ class RunOutput:
 
         metrics = data.pop("metrics", None)
         if metrics:
-            metrics = Metrics(**metrics)
+            metrics = RunMetrics.from_dict(metrics)
 
         additional_input = data.pop("additional_input", None)
 
@@ -899,4 +953,5 @@ class RunOutput:
         elif isinstance(self.content, BaseModel):
             return self.content.model_dump_json(exclude_none=True, **kwargs)
         else:
+            kwargs.setdefault("ensure_ascii", False)
             return json.dumps(self.content, **kwargs)

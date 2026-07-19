@@ -5,13 +5,13 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from agno.tools.google_bigquery import GoogleBigQueryTools, _clean_sql
+from agno.tools.google.bigquery import GoogleBigQueryTools, _clean_sql
 
 
 @pytest.fixture
 def mock_bq_client():
     """Mock BigQuery Client used by BQTools."""
-    with patch("agno.tools.google_bigquery.bigquery.Client", autospec=True) as MockClientConstructor:
+    with patch("agno.tools.google.bigquery.bigquery.Client", autospec=True) as MockClientConstructor:
         yield MockClientConstructor.return_value
 
 

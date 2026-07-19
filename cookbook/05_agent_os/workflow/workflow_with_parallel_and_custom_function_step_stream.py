@@ -1,3 +1,10 @@
+"""
+Workflow With Parallel And Custom Function Step Stream
+======================================================
+
+Demonstrates workflow with parallel and custom function step stream.
+"""
+
 from typing import AsyncIterator, Union
 
 from agno.agent import Agent
@@ -11,6 +18,10 @@ from agno.tools.websearch import WebSearchTools
 from agno.workflow.parallel import Parallel
 from agno.workflow.step import Step, StepInput, StepOutput
 from agno.workflow.workflow import Workflow
+
+# ---------------------------------------------------------------------------
+# Create Example
+# ---------------------------------------------------------------------------
 
 # Define agents for use in custom functions
 hackernews_agent = Agent(
@@ -283,6 +294,10 @@ agent_os = AgentOS(
     workflows=[streaming_content_workflow],
 )
 app = agent_os.get_app()
+
+# ---------------------------------------------------------------------------
+# Run Example
+# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     agent_os.serve(

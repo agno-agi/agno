@@ -1,6 +1,18 @@
+"""
+Server
+=============================
+
+Demonstrates server.
+"""
+
 from fastmcp import FastMCP
 from fastmcp.server import Context
 from fastmcp.server.dependencies import get_http_request
+
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
+
 
 mcp = FastMCP("My Server")
 
@@ -22,6 +34,10 @@ async def greet(name: str, ctx: Context) -> str:
 
     return f"Hello, {name}! (User: {user_id}, Tenant: {tenant_id})"
 
+
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     mcp.run(transport="streamable-http", port=8000)

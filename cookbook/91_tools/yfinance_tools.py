@@ -2,8 +2,7 @@
 YFinance Tools - Stock Market Analysis and Financial Data
 
 This example demonstrates how to use YFinanceTools for financial analysis,
-showing include_tools/exclude_tools patterns for selective function access.
-YFinanceTools is a large tool (≥6 functions) so it uses include_tools/exclude_tools.
+showing different patterns for selective function access using boolean flags.
 
 Run: `uv pip install yfinance` to install the dependencies
 """
@@ -12,9 +11,14 @@ from agno.agent import Agent
 from agno.tools.yfinance import YFinanceTools
 from curl_cffi.requests import Session
 
-# Example 1: All financial functions available (default behavior)
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
+
+
+# Example 1: All financial functions available
 agent_full = Agent(
-    tools=[YFinanceTools()],  # All functions enabled by default
+    tools=[YFinanceTools(all=True)],  # All functions enabled
     description="You are a comprehensive investment analyst with access to all financial data functions.",
     instructions=[
         "Use any financial function as needed for investment analysis",
@@ -25,15 +29,13 @@ agent_full = Agent(
     markdown=True,
 )
 
-# Example 2: Include only basic stock information
+# Example 2: Enable only basic stock information
 agent_basic = Agent(
     tools=[
         YFinanceTools(
-            include_tools=[
-                "get_current_stock_price",
-                "get_company_info",
-                "get_historical_stock_prices",
-            ]
+            enable_stock_price=True,
+            enable_company_info=True,
+            enable_historical_prices=True,
         )
     ],
     description="You are a basic stock information specialist focused on price and historical data.",
@@ -46,14 +48,18 @@ agent_basic = Agent(
     markdown=True,
 )
 
-# Example 3: Exclude complex financial analysis functions
+# Example 3: Enable most tools except complex financial analysis functions
 agent_simple = Agent(
     tools=[
         YFinanceTools(
-            exclude_tools=[
-                "get_income_statements",  # Complex financial statements
-                "get_key_financial_ratios",  # Detailed financial ratios
-            ]
+            enable_stock_price=True,
+            enable_company_info=True,
+            enable_stock_fundamentals=True,
+            enable_analyst_recommendations=True,
+            enable_company_news=True,
+            enable_technical_indicators=True,
+            enable_historical_prices=True,
+            # Excluding: enable_income_statements and enable_key_financial_ratios
         )
     ],
     description="You are a stock analyst focused on market data without complex financial statements.",
@@ -66,15 +72,13 @@ agent_simple = Agent(
     markdown=True,
 )
 
-# Example 4: Include only analysis and recommendation functions
+# Example 4: Enable only analysis and recommendation functions
 agent_analyst = Agent(
     tools=[
         YFinanceTools(
-            include_tools=[
-                "get_analyst_recommendations",
-                "get_company_news",
-                "get_current_stock_price",
-            ]
+            enable_stock_price=True,
+            enable_analyst_recommendations=True,
+            enable_company_news=True,
         )
     ],
     description="You are an equity research analyst focused on recommendations and market sentiment.",
@@ -91,9 +95,9 @@ agent_analyst = Agent(
 # If you want to disable SSL verification, you can do it like this:
 session = Session()
 session.verify = False  # Disable SSL verification (use with caution)
-yfinance_tools = YFinanceTools(session=session)
+yfinance_tools = YFinanceTools(all=True, session=session)
 agent_ssl_disabled = Agent(
-    tools=[yfinance_tools],  # All functions enabled by default
+    tools=[yfinance_tools],  # All functions enabled
     description="You are a comprehensive investment analyst with access to all financial data functions.",
     instructions=[
         "Use any financial function as needed for investment analysis",
@@ -105,30 +109,35 @@ agent_ssl_disabled = Agent(
 )
 
 # Using the basic agent for the main example
-print("=== Basic Stock Analysis Example ===")
-agent_basic.print_response(
-    "Share the NVDA stock price and recent historical performance", markdown=True
-)
 
-print("\n=== Analyst Recommendations Example ===")
-agent_analyst.print_response(
-    "Get analyst recommendations and recent news for AAPL", markdown=True
-)
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+if __name__ == "__main__":
+    print("=== Basic Stock Analysis Example ===")
+    agent_basic.print_response(
+        "Share the NVDA stock price and recent historical performance", markdown=True
+    )
 
-print("\n=== Full Analysis Example ===")
-agent_full.print_response(
-    "Provide a comprehensive analysis of TSLA including price, fundamentals, and analyst views",
-    markdown=True,
-)
+    print("\n=== Analyst Recommendations Example ===")
+    agent_analyst.print_response(
+        "Get analyst recommendations and recent news for AAPL", markdown=True
+    )
 
-print("\n=== Full Analysis Example ===")
-agent_simple.print_response(
-    "Provide a comprehensive analysis of TSLA including price, fundamentals, and analyst views",
-    markdown=True,
-)
+    print("\n=== Full Analysis Example ===")
+    agent_full.print_response(
+        "Provide a comprehensive analysis of TSLA including price, fundamentals, and analyst views",
+        markdown=True,
+    )
 
-print("\n=== SSL Disabled Example ===")
-agent_ssl_disabled.print_response(
-    "What is the stock price of TSLA?",
-    markdown=True,
-)
+    print("\n=== Full Analysis Example ===")
+    agent_simple.print_response(
+        "Provide a comprehensive analysis of TSLA including price, fundamentals, and analyst views",
+        markdown=True,
+    )
+
+    print("\n=== SSL Disabled Example ===")
+    agent_ssl_disabled.print_response(
+        "What is the stock price of TSLA?",
+        markdown=True,
+    )

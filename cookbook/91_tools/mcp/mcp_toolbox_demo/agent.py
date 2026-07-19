@@ -9,6 +9,11 @@ from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.tools.mcp_toolbox import MCPToolbox
 
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
+
+
 url = "http://127.0.0.1:5001"
 
 
@@ -79,11 +84,14 @@ async def run_agent_manual_loading(message: str) -> None:
             ),
             markdown=True,
             add_history_to_context=True,
-            debug_mode=True,
         )
 
         await agent.acli_app(input=message, stream=True)
 
+
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     # Use the original approach

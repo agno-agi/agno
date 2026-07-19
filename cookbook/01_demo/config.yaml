@@ -1,0 +1,21 @@
+chat:
+  quick_prompts:
+    local-wiki:
+      - "Add https://docs.agno.com/ to the wiki"
+      - "Attach an image or PDF, then digest and file it"
+      - "What's in the wiki?"
+
+    git-wiki:
+      - "Add https://docs.agno.com/ to the wiki"
+      - "Attach an image or PDF, then digest and file it"
+      - "What's in the wiki?"
+
+    notion-wiki:
+      - "Add https://docs.agno.com/ to the wiki"
+      - "Attach an image or PDF, then digest and file it"
+      - "What's in the wiki?"
+
+    code-search:
+      - "What agents are registered in this AgentOS demo?"
+      - "Where is the Agent class defined?"
+      - "How does the WikiContextProvider work?"

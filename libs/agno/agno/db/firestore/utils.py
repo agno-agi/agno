@@ -43,7 +43,7 @@ def create_collection_indexes(client: Client, collection_name: str, collection_t
             log_debug(f"Collection '{collection_name}' initialized")
 
     except Exception as e:
-        log_warning(f"Error processing indexes for {collection_type} collection: {e}")
+        log_warning(f"Error processing indexes for {collection_type} collection: {str(e)}")
 
 
 def _create_composite_indexes(client: Client, collection_name: str, composite_indexes: List[Dict[str, Any]]) -> None:
@@ -92,10 +92,10 @@ def _create_composite_indexes(client: Client, collection_name: str, composite_in
                 if "already exists" in str(e).lower():
                     continue
                 else:
-                    log_error(f"Error creating composite index: {e}")
+                    log_error(f"Error creating composite index: {str(e)}")
 
     except Exception as e:
-        log_warning(f"Error initializing Firestore Admin client for composite indexes: {e}")
+        log_warning(f"Error initializing Firestore Admin client for composite indexes: {str(e)}")
         log_info("Fallback: You can create composite indexes manually via Firebase Console or gcloud CLI")
 
 
@@ -155,7 +155,7 @@ def apply_sorting_to_records(
 
         return sorted_records
     except Exception as e:
-        log_warning(f"Error sorting Firestore records: {e}")
+        log_warning(f"Error sorting Firestore records: {str(e)}")
         return records
 
 
@@ -319,7 +319,7 @@ def bulk_upsert_metrics(collection_ref, metrics_records: List[Dict[str, Any]]) -
                 batch = collection_ref._client.batch()
 
         except Exception as e:
-            log_error(f"Error preparing metrics record for batch: {e}")
+            log_error(f"Error preparing metrics record for batch: {str(e)}")
             continue
 
     # Commit remaining operations
@@ -327,7 +327,7 @@ def bulk_upsert_metrics(collection_ref, metrics_records: List[Dict[str, Any]]) -
         try:
             batch.commit()
         except Exception as e:
-            log_error(f"Error committing metrics batch: {e}")
+            log_error(f"Error committing metrics batch: {str(e)}")
 
     return results
 

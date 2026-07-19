@@ -9,6 +9,10 @@ from agno.models.openai import OpenAIChat
 from agno.run.agent import CustomEvent
 from agno.tools import tool
 
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
+
 
 # Our custom event, extending the CustomEvent class
 @dataclass
@@ -50,4 +54,8 @@ async def run_agent():
             print(f"Custom event emitted: {event}")
 
 
-asyncio.run(run_agent())
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+if __name__ == "__main__":
+    asyncio.run(run_agent())

@@ -15,6 +15,10 @@ from agno.os import AgentOS
 from agno.tools.mcp import MCPTools
 from agno.utils.log import log_info
 
+# ---------------------------------------------------------------------------
+# Create Example
+# ---------------------------------------------------------------------------
+
 # Setup the database
 db = SqliteDb(db_file="tmp/agentos.db")
 
@@ -24,7 +28,7 @@ mcp_tools = MCPTools(transport="streamable-http", url="https://docs.agno.com/mcp
 agno_support_agent = Agent(
     id="agno-support-agent",
     name="Agno Support Agent",
-    model=Claude(id="claude-sonnet-4-0"),
+    model=Claude(id="claude-sonnet-4-5"),
     db=db,
     tools=[mcp_tools],
     add_history_to_context=True,
@@ -43,12 +47,16 @@ async def lifespan(app):
 agent_os = AgentOS(
     description="Example app with MCP Tools",
     agents=[agno_support_agent],
-    enable_mcp_server=True,
+    mcp_server=True,
     lifespan=lifespan,
 )
 
 
 app = agent_os.get_app()
+
+# ---------------------------------------------------------------------------
+# Run Example
+# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     """Run your AgentOS.

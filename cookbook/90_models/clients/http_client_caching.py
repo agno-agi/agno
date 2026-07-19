@@ -23,6 +23,10 @@ from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.utils.http import set_default_sync_client
 
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
+
 # ----------------------------------------------------------------------------
 # Logging Setup
 # ----------------------------------------------------------------------------
@@ -31,7 +35,6 @@ logging.basicConfig(
     level=logging.DEBUG, format="%(asctime)s [%(levelname)s] %(message)s"
 )
 logger = logging.getLogger("agno.http")
-
 
 # ----------------------------------------------------------------------------
 # Example 1 — Request ID Injection
@@ -60,7 +63,6 @@ set_default_sync_client(request_id_client)
 
 agent = Agent(model=OpenAIChat(id="gpt-5.2"), name="Request-ID Agent")
 agent.run("Hello!", stream=False)
-
 
 # ----------------------------------------------------------------------------
 # Example 2 — Global Company Headers
@@ -97,7 +99,6 @@ agent = Agent(model=OpenAIChat(id="gpt-5.2"), name="Header Agent")
 agent.run("Inject company headers", stream=False)
 
 print("Look at the httpx debug logs to see your headers added!")
-
 
 # ----------------------------------------------------------------------------
 # Example 3 — Production-Ready Combined Transport
@@ -158,3 +159,10 @@ prod_agents = [
 
 for agent in prod_agents:
     agent.run(f"Production request via {agent.name}", stream=False)
+
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+
+if __name__ == "__main__":
+    pass

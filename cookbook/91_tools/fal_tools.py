@@ -1,6 +1,18 @@
+"""
+Fal Tools
+=============================
+
+Demonstrates fal tools.
+"""
+
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.tools.fal import FalTools
+
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
+
 
 fal_agent = Agent(
     name="Fal Video Generator Agent",
@@ -20,4 +32,8 @@ fal_agent = Agent(
     markdown=True,
 )
 
-fal_agent.print_response("Generate video of balloon in the ocean")
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+if __name__ == "__main__":
+    fal_agent.print_response("Generate video of balloon in the ocean")

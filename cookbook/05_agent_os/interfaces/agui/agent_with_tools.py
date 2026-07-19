@@ -1,11 +1,23 @@
+"""
+Agent With Tools
+================
+
+Demonstrates agent with tools.
+"""
+
 from typing import List
 
 from agno.agent.agent import Agent
-from agno.models.openai import OpenAIChat
+from agno.db.sqlite import SqliteDb
+from agno.models.openai import OpenAIResponses
 from agno.os import AgentOS
 from agno.os.interfaces.agui import AGUI
 from agno.tools import tool
 from agno.tools.websearch import WebSearchTools
+
+# ---------------------------------------------------------------------------
+# Create Example
+# ---------------------------------------------------------------------------
 
 
 # Frontend Tools
@@ -18,12 +30,13 @@ def generate_haiku(
 
 
 agent = Agent(
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIResponses(id="gpt-5.4"),
+    db=SqliteDb(db_file="/tmp/agui_agent_with_tools.db"),
     tools=[
         WebSearchTools(),
         generate_haiku,
     ],
-    description="You are a helpful AI assistant with both backend and frontend capabilities. You can search the web, create beautiful haikus, modify the UI, ask for user confirmations, and create visualizations.",
+    description="You are a helpful AI assistant with backend and frontend tools. You can search the web and create haikus that render in the frontend.",
     instructions="""
     You are a versatile AI assistant with the following capabilities:
 
@@ -37,7 +50,6 @@ agent = Agent(
     add_location_to_context=True,
     timezone_identifier="Etc/UTC",
     markdown=True,
-    debug_mode=True,
 )
 
 
@@ -48,6 +60,10 @@ agent_os = AgentOS(
 )
 app = agent_os.get_app()
 
+
+# ---------------------------------------------------------------------------
+# Run Example
+# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     """Run your AgentOS.

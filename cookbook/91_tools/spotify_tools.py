@@ -13,6 +13,11 @@ from agno.agent import Agent
 from agno.models.anthropic import Claude
 from agno.tools.spotify import SpotifyTools
 
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
+
+
 # Your Spotify access token (get one from https://developer.spotify.com)
 SPOTIFY_TOKEN = getenv("SPOTIFY_TOKEN")
 
@@ -40,6 +45,10 @@ agent = Agent(
 )
 
 # Example usage
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+
 if __name__ == "__main__":
     # Example 1: Create a playlist with happy songs from specific artists
     response = agent.run(

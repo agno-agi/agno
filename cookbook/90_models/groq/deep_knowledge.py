@@ -10,7 +10,7 @@ Key Features:
 - Iteratively searches a knowledge base
 - Source attribution and citations
 
-Run `uv pip install openai lancedb tantivy inquirer agno groq` to install dependencies.
+Run `uv pip install openai lancedb inquirer agno groq` to install dependencies.
 """
 
 from textwrap import dedent
@@ -25,6 +25,10 @@ from agno.knowledge.knowledge import Knowledge
 from agno.models.groq import Groq
 from agno.vectordb.lancedb import LanceDb, SearchType
 from rich import print
+
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
 
 
 def initialize_knowledge_base():
@@ -196,6 +200,10 @@ def deep_knowledge_agent():
 
     run_interactive_loop(agent)
 
+
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     typer.run(deep_knowledge_agent)

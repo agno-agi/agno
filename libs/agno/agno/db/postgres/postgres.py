@@ -6,6 +6,7 @@ from uuid import uuid4
 if TYPE_CHECKING:
     from agno.tracing.schemas import Span, Trace
 
+from agno.db import mcp_oauth_store
 from agno.db.base import BaseDb, ComponentType, SessionType
 from agno.db.migrations.manager import MigrationManager
 from agno.db.postgres.schemas import get_table_schema_definition
@@ -24,7 +25,21 @@ from agno.db.postgres.utils import (
 from agno.db.schemas.culture import CulturalKnowledge
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
+from agno.db.schemas.mcp_oauth import (
+    MCP_OAUTH_CLIENTS,
+    MCP_OAUTH_CODES,
+    MCP_OAUTH_KEYS,
+    MCP_OAUTH_REFRESH_TOKENS,
+    MCP_OAUTH_TABLE_NAME_ATTRS,
+    MCP_OAUTH_TRANSACTIONS,
+)
 from agno.db.schemas.memory import UserMemory
+from agno.db.schemas.service_accounts import (
+    resolve_service_account_sort_column,
+    validate_service_account_update,
+)
+from agno.db.utils import deserialize_session, deserialize_sessions, json_serializer
+from agno.run.base import RunStatus
 from agno.session import AgentSession, Session, TeamSession, WorkflowSession
 from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.utils.string import generate_id, sanitize_postgres_string, sanitize_postgres_strings
@@ -74,6 +89,16 @@ class PostgresDb(BaseDb):
         component_configs_table: Optional[str] = None,
         component_links_table: Optional[str] = None,
         learnings_table: Optional[str] = None,
+        schedules_table: Optional[str] = None,
+        schedule_runs_table: Optional[str] = None,
+        approvals_table: Optional[str] = None,
+        auth_tokens_table: Optional[str] = None,
+        service_accounts_table: Optional[str] = None,
+        mcp_oauth_clients_table: Optional[str] = None,
+        mcp_oauth_transactions_table: Optional[str] = None,
+        mcp_oauth_codes_table: Optional[str] = None,
+        mcp_oauth_refresh_tokens_table: Optional[str] = None,
+        mcp_oauth_keys_table: Optional[str] = None,
         id: Optional[str] = None,
         create_schema: bool = True,
     ):
@@ -102,6 +127,13 @@ class PostgresDb(BaseDb):
             component_configs_table (Optional[str]): Name of the table to store component configurations.
             component_links_table (Optional[str]): Name of the table to store component references.
             learnings_table (Optional[str]): Name of the table to store learnings.
+            schedules_table (Optional[str]): Name of the table to store cron schedules.
+            schedule_runs_table (Optional[str]): Name of the table to store schedule run history.
+            mcp_oauth_clients_table (Optional[str]): Name of the table to store MCP OAuth client registrations.
+            mcp_oauth_transactions_table (Optional[str]): Name of the table to store MCP OAuth transactions.
+            mcp_oauth_codes_table (Optional[str]): Name of the table to store MCP OAuth authorization codes.
+            mcp_oauth_refresh_tokens_table (Optional[str]): Name of the table to store MCP OAuth refresh tokens.
+            mcp_oauth_keys_table (Optional[str]): Name of the table to store MCP OAuth signing keys.
             id (Optional[str]): ID of the database.
             create_schema (bool): Whether to automatically create the database schema if it doesn't exist.
                 Set to False if schema is managed externally (e.g., via migrations). Defaults to True.
@@ -116,6 +148,7 @@ class PostgresDb(BaseDb):
                 db_url,
                 pool_pre_ping=True,
                 pool_recycle=3600,
+                json_serializer=json_serializer,
             )
         if _engine is None:
             raise ValueError("One of db_url or db_engine must be provided")
@@ -144,6 +177,16 @@ class PostgresDb(BaseDb):
             component_configs_table=component_configs_table,
             component_links_table=component_links_table,
             learnings_table=learnings_table,
+            schedules_table=schedules_table,
+            schedule_runs_table=schedule_runs_table,
+            approvals_table=approvals_table,
+            auth_tokens_table=auth_tokens_table,
+            service_accounts_table=service_accounts_table,
+            mcp_oauth_clients_table=mcp_oauth_clients_table,
+            mcp_oauth_transactions_table=mcp_oauth_transactions_table,
+            mcp_oauth_codes_table=mcp_oauth_codes_table,
+            mcp_oauth_refresh_tokens_table=mcp_oauth_refresh_tokens_table,
+            mcp_oauth_keys_table=mcp_oauth_keys_table,
         )
 
         self.db_schema: str = db_schema if db_schema is not None else "ai"
@@ -182,6 +225,11 @@ class PostgresDb(BaseDb):
             components_table=data.get("components_table"),
             component_configs_table=data.get("component_configs_table"),
             component_links_table=data.get("component_links_table"),
+            learnings_table=data.get("learnings_table"),
+            schedules_table=data.get("schedules_table"),
+            schedule_runs_table=data.get("schedule_runs_table"),
+            approvals_table=data.get("approvals_table"),
+            service_accounts_table=data.get("service_accounts_table"),
             id=data.get("id"),
         )
 
@@ -220,6 +268,10 @@ class PostgresDb(BaseDb):
             (self.component_configs_table_name, "component_configs"),
             (self.component_links_table_name, "component_links"),
             (self.learnings_table_name, "learnings"),
+            (self.schedules_table_name, "schedules"),
+            (self.schedule_runs_table_name, "schedule_runs"),
+            (self.approvals_table_name, "approvals"),
+            (self.service_accounts_table_name, "service_accounts"),
         ]
 
         for table_name, table_type in tables_to_create:
@@ -236,9 +288,12 @@ class PostgresDb(BaseDb):
         - column-level foreign_key: "logical_table.column" (resolved via _resolve_* helpers)
         """
         try:
-            # Pass traces_table_name and db_schema for spans table foreign key resolution
+            # Pass table names and db_schema for foreign key resolution
             table_schema = get_table_schema_definition(
-                table_type, traces_table_name=self.trace_table_name, db_schema=self.db_schema
+                table_type,
+                traces_table_name=self.trace_table_name,
+                db_schema=self.db_schema,
+                schedules_table_name=self.schedules_table_name,
             ).copy()
 
             columns: List[Column] = []
@@ -248,6 +303,8 @@ class PostgresDb(BaseDb):
             schema_unique_constraints = table_schema.pop("_unique_constraints", [])
             schema_primary_key = table_schema.pop("__primary_key__", None)
             schema_foreign_keys = table_schema.pop("__foreign_keys__", [])
+            schema_composite_indexes = table_schema.pop("__composite_indexes__", [])
+            schema_partial_unique_indexes = table_schema.pop("_partial_unique_indexes", [])
 
             # Build columns
             for col_name, col_config in table_schema.items():
@@ -273,7 +330,10 @@ class PostgresDb(BaseDb):
                 # Single-column FK
                 if "foreign_key" in col_config:
                     fk_ref = self._resolve_fk_reference(col_config["foreign_key"])
-                    column_args.append(ForeignKey(fk_ref))
+                    fk_kwargs: Dict[str, Any] = {}
+                    if "ondelete" in col_config:
+                        fk_kwargs["ondelete"] = col_config["ondelete"]
+                    column_args.append(ForeignKey(fk_ref, **fk_kwargs))
 
                 columns.append(Column(*column_args, **column_kwargs))
 
@@ -336,6 +396,27 @@ class PostgresDb(BaseDb):
                 idx_name = f"idx_{table_name}_{idx_col}"
                 Index(idx_name, table.c[idx_col])  # Correct way; do NOT append as constraint
 
+            # Composite indexes
+            for idx_config in schema_composite_indexes:
+                idx_name = f"idx_{table_name}_{'_'.join(idx_config['columns'])}"
+                idx_cols = [table.c[c] for c in idx_config["columns"]]
+                Index(idx_name, *idx_cols)
+
+            # Partial unique indexes
+            for idx_config in schema_partial_unique_indexes:
+                idx_columns = idx_config["columns"]
+                missing = [c for c in idx_columns if c not in table.c]
+                if missing:
+                    raise ValueError(f"Partial unique index references missing columns in {table_name}: {missing}")
+
+                idx_name = f"{table_name}_{idx_config['name']}"
+                Index(
+                    idx_name,
+                    *[table.c[c] for c in idx_columns],
+                    unique=True,
+                    postgresql_where=text(idx_config["where"]),
+                )
+
             # Create schema if requested
             if self.create_schema:
                 with self.Session() as sess, sess.begin():
@@ -371,7 +452,7 @@ class PostgresDb(BaseDb):
                     log_debug(f"Created index: {idx.name} for table {self.db_schema}.{table_name}")
 
                 except Exception as e:
-                    log_error(f"Error creating index {idx.name}: {e}")
+                    log_error(f"Error creating index {idx.name}: {str(e)}")
 
             # Store the schema version for the created table
             if table_name != self.versions_table_name and table_created:
@@ -381,7 +462,7 @@ class PostgresDb(BaseDb):
             return table
 
         except Exception as e:
-            log_error(f"Could not create table {self.db_schema}.{table_name}: {e}")
+            log_error(f"Could not create table {self.db_schema}.{table_name}: {str(e)}")
             raise
 
     def _resolve_fk_reference(self, fk_ref: str) -> str:
@@ -526,6 +607,53 @@ class PostgresDb(BaseDb):
             )
             return self.learnings_table
 
+        if table_type == "schedules":
+            self.schedules_table = self._get_or_create_table(
+                table_name=self.schedules_table_name,
+                table_type="schedules",
+                create_table_if_not_found=create_table_if_not_found,
+            )
+            return self.schedules_table
+
+        if table_type == "schedule_runs":
+            self.schedule_runs_table = self._get_or_create_table(
+                table_name=self.schedule_runs_table_name,
+                table_type="schedule_runs",
+                create_table_if_not_found=create_table_if_not_found,
+            )
+            return self.schedule_runs_table
+
+        if table_type == "approvals":
+            self.approvals_table = self._get_or_create_table(
+                table_name=self.approvals_table_name,
+                table_type="approvals",
+                create_table_if_not_found=create_table_if_not_found,
+            )
+            return self.approvals_table
+
+        if table_type == "auth_tokens":
+            self.auth_tokens_table = self._get_or_create_table(
+                table_name=self.auth_tokens_table_name,
+                table_type="auth_tokens",
+                create_table_if_not_found=create_table_if_not_found,
+            )
+            return self.auth_tokens_table
+
+        if table_type == "service_accounts":
+            self.service_accounts_table = self._get_or_create_table(
+                table_name=self.service_accounts_table_name,
+                table_type="service_accounts",
+                create_table_if_not_found=create_table_if_not_found,
+            )
+            return self.service_accounts_table
+
+        if table_type in MCP_OAUTH_TABLE_NAME_ATTRS:
+            return self._get_or_create_table(
+                table_name=getattr(self, MCP_OAUTH_TABLE_NAME_ATTRS[table_type]),
+                table_type=table_type,
+                create_table_if_not_found=create_table_if_not_found,
+            )
+
         raise ValueError(f"Unknown table type: {table_type}")
 
     def _get_or_create_table(
@@ -563,7 +691,7 @@ class PostgresDb(BaseDb):
             return table
 
         except Exception as e:
-            log_error(f"Error loading existing table {self.db_schema}.{table_name}: {e}")
+            log_error(f"Error loading existing table {self.db_schema}.{table_name}: {str(e)}")
             raise
 
     def get_latest_schema_version(self, table_name: str):
@@ -603,12 +731,13 @@ class PostgresDb(BaseDb):
             sess.execute(stmt)
 
     # -- Session methods --
-    def delete_session(self, session_id: str) -> bool:
+    def delete_session(self, session_id: str, user_id: Optional[str] = None) -> bool:
         """
         Delete a session from the database.
 
         Args:
             session_id (str): ID of the session to delete
+            user_id (Optional[str]): User ID to filter by. Defaults to None.
 
         Returns:
             bool: True if the session was deleted, False otherwise.
@@ -623,6 +752,8 @@ class PostgresDb(BaseDb):
 
             with self.Session() as sess, sess.begin():
                 delete_stmt = table.delete().where(table.c.session_id == session_id)
+                if user_id is not None:
+                    delete_stmt = delete_stmt.where(table.c.user_id == user_id)
                 result = sess.execute(delete_stmt)
 
                 if result.rowcount == 0:
@@ -634,15 +765,16 @@ class PostgresDb(BaseDb):
                     return True
 
         except Exception as e:
-            log_error(f"Error deleting session: {e}")
+            log_error(f"Error deleting session: {str(e)}")
             raise e
 
-    def delete_sessions(self, session_ids: List[str]) -> None:
+    def delete_sessions(self, session_ids: List[str], user_id: Optional[str] = None) -> None:
         """Delete all given sessions from the database.
         Can handle multiple session types in the same run.
 
         Args:
             session_ids (List[str]): The IDs of the sessions to delete.
+            user_id (Optional[str]): User ID to filter by. Defaults to None.
 
         Raises:
             Exception: If an error occurs during deletion.
@@ -654,18 +786,20 @@ class PostgresDb(BaseDb):
 
             with self.Session() as sess, sess.begin():
                 delete_stmt = table.delete().where(table.c.session_id.in_(session_ids))
+                if user_id is not None:
+                    delete_stmt = delete_stmt.where(table.c.user_id == user_id)
                 result = sess.execute(delete_stmt)
 
             log_debug(f"Successfully deleted {result.rowcount} sessions")
 
         except Exception as e:
-            log_error(f"Error deleting sessions: {e}")
+            log_error(f"Error deleting sessions: {str(e)}")
             raise e
 
     def get_session(
         self,
         session_id: str,
-        session_type: SessionType,
+        session_type: Optional[SessionType] = None,
         user_id: Optional[str] = None,
         deserialize: Optional[bool] = True,
     ) -> Optional[Union[Session, Dict[str, Any]]]:
@@ -697,10 +831,6 @@ class PostgresDb(BaseDb):
                 if user_id is not None:
                     stmt = stmt.where(table.c.user_id == user_id)
 
-                # Filter by session_type to ensure we get the correct session type
-                session_type_value = session_type.value if isinstance(session_type, SessionType) else session_type
-                stmt = stmt.where(table.c.session_type == session_type_value)
-
                 result = sess.execute(stmt).fetchone()
                 if result is None:
                     return None
@@ -710,17 +840,10 @@ class PostgresDb(BaseDb):
             if not deserialize:
                 return session
 
-            if session_type == SessionType.AGENT:
-                return AgentSession.from_dict(session)
-            elif session_type == SessionType.TEAM:
-                return TeamSession.from_dict(session)
-            elif session_type == SessionType.WORKFLOW:
-                return WorkflowSession.from_dict(session)
-            else:
-                raise ValueError(f"Invalid session type: {session_type}")
+            return deserialize_session(session_type, session)
 
         except Exception as e:
-            log_error(f"Exception reading from session table: {e}")
+            log_error(f"Exception reading from session table: {str(e)}")
             raise e
 
     def get_sessions(
@@ -779,6 +902,12 @@ class PostgresDb(BaseDb):
                         stmt = stmt.where(table.c.team_id == component_id)
                     elif session_type == SessionType.WORKFLOW:
                         stmt = stmt.where(table.c.workflow_id == component_id)
+                    elif session_type is None:
+                        stmt = stmt.where(
+                            (table.c.agent_id == component_id)
+                            | (table.c.team_id == component_id)
+                            | (table.c.workflow_id == component_id)
+                        )
                 if start_timestamp is not None:
                     stmt = stmt.where(table.c.created_at >= start_timestamp)
                 if end_timestamp is not None:
@@ -792,7 +921,7 @@ class PostgresDb(BaseDb):
                     stmt = stmt.where(table.c.session_type == session_type_value)
 
                 count_stmt = select(func.count()).select_from(stmt.alias())
-                total_count = sess.execute(count_stmt).scalar()
+                total_count = sess.execute(count_stmt).scalar() or 0
 
                 # Sorting
                 stmt = apply_sorting(stmt, table, sort_by, sort_order)
@@ -811,29 +940,28 @@ class PostgresDb(BaseDb):
                 if not deserialize:
                     return session, total_count
 
-            if session_type == SessionType.AGENT:
-                return [AgentSession.from_dict(record) for record in session]  # type: ignore
-            elif session_type == SessionType.TEAM:
-                return [TeamSession.from_dict(record) for record in session]  # type: ignore
-            elif session_type == SessionType.WORKFLOW:
-                return [WorkflowSession.from_dict(record) for record in session]  # type: ignore
-            else:
-                raise ValueError(f"Invalid session type: {session_type}")
+            return deserialize_sessions(session_type, session)
 
         except Exception as e:
-            log_error(f"Exception reading from session table: {e}")
+            log_error(f"Exception reading from session table: {str(e)}")
             raise e
 
     def rename_session(
-        self, session_id: str, session_type: SessionType, session_name: str, deserialize: Optional[bool] = True
+        self,
+        session_id: str,
+        session_type: Optional[SessionType],
+        session_name: str,
+        user_id: Optional[str] = None,
+        deserialize: Optional[bool] = True,
     ) -> Optional[Union[Session, Dict[str, Any]]]:
         """
         Rename a session in the database.
 
         Args:
             session_id (str): The ID of the session to rename.
-            session_type (SessionType): The type of session to rename.
+            session_type (Optional[SessionType]): The type of session to rename. Defaults to None.
             session_name (str): The new name for the session.
+            user_id (Optional[str]): User ID to filter by. Defaults to None.
             deserialize (Optional[bool]): Whether to serialize the session. Defaults to True.
 
         Returns:
@@ -855,7 +983,6 @@ class PostgresDb(BaseDb):
                 stmt = (
                     update(table)
                     .where(table.c.session_id == session_id)
-                    .where(table.c.session_type == session_type.value)
                     .values(
                         session_data=func.cast(
                             func.jsonb_set(
@@ -868,6 +995,10 @@ class PostgresDb(BaseDb):
                     )
                     .returning(*table.c)
                 )
+                if session_type is not None:
+                    stmt = stmt.where(table.c.session_type == session_type.value)
+                if user_id is not None:
+                    stmt = stmt.where(table.c.user_id == user_id)
                 result = sess.execute(stmt)
                 row = result.fetchone()
                 if not row:
@@ -879,18 +1010,10 @@ class PostgresDb(BaseDb):
             if not deserialize:
                 return session
 
-            # Return the appropriate session type
-            if session_type == SessionType.AGENT:
-                return AgentSession.from_dict(session)
-            elif session_type == SessionType.TEAM:
-                return TeamSession.from_dict(session)
-            elif session_type == SessionType.WORKFLOW:
-                return WorkflowSession.from_dict(session)
-            else:
-                raise ValueError(f"Invalid session type: {session_type}")
+            return deserialize_session(session_type, session)
 
         except Exception as e:
-            log_error(f"Exception renaming session: {e}")
+            log_error(f"Exception renaming session: {str(e)}")
             raise e
 
     def upsert_session(
@@ -960,9 +1083,12 @@ class PostgresDb(BaseDb):
                             runs=session_dict.get("runs"),
                             updated_at=int(time.time()),
                         ),
+                        where=(table.c.user_id == session_dict.get("user_id")) | (table.c.user_id.is_(None)),
                     ).returning(table)
                     result = sess.execute(stmt)
                     row = result.fetchone()
+                    if row is None:
+                        return None
                     session_dict = dict(row._mapping)
 
                     if session_dict is None or not deserialize:
@@ -996,9 +1122,12 @@ class PostgresDb(BaseDb):
                             runs=session_dict.get("runs"),
                             updated_at=int(time.time()),
                         ),
+                        where=(table.c.user_id == session_dict.get("user_id")) | (table.c.user_id.is_(None)),
                     ).returning(table)
                     result = sess.execute(stmt)
                     row = result.fetchone()
+                    if row is None:
+                        return None
                     session_dict = dict(row._mapping)
 
                     if session_dict is None or not deserialize:
@@ -1032,9 +1161,12 @@ class PostgresDb(BaseDb):
                             runs=session_dict.get("runs"),
                             updated_at=int(time.time()),
                         ),
+                        where=(table.c.user_id == session_dict.get("user_id")) | (table.c.user_id.is_(None)),
                     ).returning(table)
                     result = sess.execute(stmt)
                     row = result.fetchone()
+                    if row is None:
+                        return None
                     session_dict = dict(row._mapping)
 
                     if session_dict is None or not deserialize:
@@ -1045,7 +1177,7 @@ class PostgresDb(BaseDb):
                 raise ValueError(f"Invalid session type: {session.session_type}")
 
         except Exception as e:
-            log_error(f"Exception upserting into sessions table: {e}")
+            log_error(f"Exception upserting into sessions table: {str(e)}")
             raise e
 
     def upsert_sessions(
@@ -1122,9 +1254,11 @@ class PostgresDb(BaseDb):
                         for col in table.columns
                         if col.name not in ["id", "session_id", "created_at"]
                     }
-                    stmt = stmt.on_conflict_do_update(index_elements=["session_id"], set_=update_columns).returning(
-                        table
-                    )
+                    stmt = stmt.on_conflict_do_update(
+                        index_elements=["session_id"],
+                        set_=update_columns,
+                        where=(table.c.user_id == stmt.excluded.user_id) | (table.c.user_id.is_(None)),
+                    ).returning(table)
 
                     result = sess.execute(stmt, session_records)
                     for row in result.fetchall():
@@ -1179,9 +1313,11 @@ class PostgresDb(BaseDb):
                         for col in table.columns
                         if col.name not in ["id", "session_id", "created_at"]
                     }
-                    stmt = stmt.on_conflict_do_update(index_elements=["session_id"], set_=update_columns).returning(
-                        table
-                    )
+                    stmt = stmt.on_conflict_do_update(
+                        index_elements=["session_id"],
+                        set_=update_columns,
+                        where=(table.c.user_id == stmt.excluded.user_id) | (table.c.user_id.is_(None)),
+                    ).returning(table)
 
                     result = sess.execute(stmt, session_records)
                     for row in result.fetchall():
@@ -1236,9 +1372,11 @@ class PostgresDb(BaseDb):
                         for col in table.columns
                         if col.name not in ["id", "session_id", "created_at"]
                     }
-                    stmt = stmt.on_conflict_do_update(index_elements=["session_id"], set_=update_columns).returning(
-                        table
-                    )
+                    stmt = stmt.on_conflict_do_update(
+                        index_elements=["session_id"],
+                        set_=update_columns,
+                        where=(table.c.user_id == stmt.excluded.user_id) | (table.c.user_id.is_(None)),
+                    ).returning(table)
 
                     result = sess.execute(stmt, session_records)
                     for row in result.fetchall():
@@ -1254,7 +1392,7 @@ class PostgresDb(BaseDb):
             return results
 
         except Exception as e:
-            log_error(f"Exception bulk upserting sessions: {e}")
+            log_error(f"Exception bulk upserting sessions: {str(e)}")
             return []
 
     # -- Memory methods --
@@ -1291,7 +1429,7 @@ class PostgresDb(BaseDb):
                     log_debug(f"No user memory found with id: {memory_id}")
 
         except Exception as e:
-            log_error(f"Error deleting user memory: {e}")
+            log_error(f"Error deleting user memory: {str(e)}")
             raise e
 
     def delete_user_memories(self, memory_ids: List[str], user_id: Optional[str] = None) -> None:
@@ -1323,11 +1461,14 @@ class PostgresDb(BaseDb):
                     log_debug(f"Successfully deleted {result.rowcount} user memories")
 
         except Exception as e:
-            log_error(f"Error deleting user memories: {e}")
+            log_error(f"Error deleting user memories: {str(e)}")
             raise e
 
-    def get_all_memory_topics(self) -> List[str]:
+    def get_all_memory_topics(self, user_id: Optional[str] = None) -> List[str]:
         """Get all memory topics from the database.
+
+        Args:
+            user_id (Optional[str]): The ID of the user to filter by.
 
         Returns:
             List[str]: List of memory topics.
@@ -1344,6 +1485,8 @@ class PostgresDb(BaseDb):
                     table.c.topics.is_not(None),
                     func.jsonb_typeof(table.c.topics) == "array",
                 ]
+                if user_id is not None:
+                    conditions.append(table.c.user_id == user_id)
 
                 try:
                     # jsonb_array_elements_text is a set-returning function that must be used with select_from
@@ -1359,6 +1502,8 @@ class PostgresDb(BaseDb):
                         table.c.topics.is_not(None),
                         func.json_typeof(table.c.topics) == "array",
                     ]
+                    if user_id is not None:
+                        json_conditions.append(table.c.user_id == user_id)
                     stmt = select(func.json_array_elements_text(table.c.topics).label("topic"))
                     stmt = stmt.select_from(table)
                     stmt = stmt.where(and_(*json_conditions))
@@ -1369,7 +1514,7 @@ class PostgresDb(BaseDb):
                 return list(set(topics))
 
         except Exception as e:
-            log_error(f"Exception reading from memory table: {e}")
+            log_error(f"Exception reading from memory table: {str(e)}")
             return []
 
     def get_user_memory(
@@ -1412,7 +1557,7 @@ class PostgresDb(BaseDb):
             return UserMemory.from_dict(memory_raw)
 
         except Exception as e:
-            log_error(f"Exception reading from memory table: {e}")
+            log_error(f"Exception reading from memory table: {str(e)}")
             raise e
 
     def get_user_memories(
@@ -1495,7 +1640,7 @@ class PostgresDb(BaseDb):
             return [UserMemory.from_dict(record) for record in memories_raw]
 
         except Exception as e:
-            log_error(f"Exception reading from memory table: {e}")
+            log_error(f"Exception reading from memory table: {str(e)}")
             raise e
 
     def clear_memories(self) -> None:
@@ -1513,7 +1658,7 @@ class PostgresDb(BaseDb):
                 sess.execute(table.delete())
 
         except Exception as e:
-            log_error(f"Exception deleting all memories: {e}")
+            log_error(f"Exception deleting all memories: {str(e)}")
             raise e
 
     def get_user_memory_stats(
@@ -1582,7 +1727,7 @@ class PostgresDb(BaseDb):
                 ], total_count
 
         except Exception as e:
-            log_error(f"Exception getting user memory stats: {e}")
+            log_error(f"Exception getting user memory stats: {str(e)}")
             raise e
 
     def upsert_user_memory(
@@ -1657,7 +1802,7 @@ class PostgresDb(BaseDb):
             return UserMemory.from_dict(memory_raw)
 
         except Exception as e:
-            log_error(f"Exception upserting user memory: {e}")
+            log_error(f"Exception upserting user memory: {str(e)}")
             raise e
 
     def upsert_memories(
@@ -1743,7 +1888,7 @@ class PostgresDb(BaseDb):
             return results
 
         except Exception as e:
-            log_error(f"Exception bulk upserting memories: {e}")
+            log_error(f"Exception bulk upserting memories: {str(e)}")
             return []
 
     # -- Metrics methods --
@@ -1787,7 +1932,7 @@ class PostgresDb(BaseDb):
                 return [record._mapping for record in result]
 
         except Exception as e:
-            log_error(f"Exception reading from sessions table: {e}")
+            log_error(f"Exception reading from sessions table: {str(e)}")
             raise e
 
     def _get_metrics_calculation_starting_date(self, table: Table) -> Optional[date]:
@@ -1894,7 +2039,7 @@ class PostgresDb(BaseDb):
             return results
 
         except Exception as e:
-            log_error(f"Exception refreshing metrics: {e}")
+            log_error(f"Exception refreshing metrics: {str(e)}")
             raise e
 
     def get_metrics(
@@ -1936,7 +2081,7 @@ class PostgresDb(BaseDb):
             return [row._mapping for row in result], latest_updated_at
 
         except Exception as e:
-            log_error(f"Exception getting metrics: {e}")
+            log_error(f"Exception getting metrics: {str(e)}")
             raise e
 
     # -- Knowledge methods --
@@ -1956,7 +2101,7 @@ class PostgresDb(BaseDb):
                 sess.execute(stmt)
 
         except Exception as e:
-            log_error(f"Exception deleting knowledge content: {e}")
+            log_error(f"Exception deleting knowledge content: {str(e)}")
             raise e
 
     def get_knowledge_content(self, id: str) -> Optional[KnowledgeRow]:
@@ -1982,7 +2127,7 @@ class PostgresDb(BaseDb):
                 return KnowledgeRow.model_validate(result._mapping)
 
         except Exception as e:
-            log_error(f"Exception getting knowledge content: {e}")
+            log_error(f"Exception getting knowledge content: {str(e)}")
             raise e
 
     def get_knowledge_contents(
@@ -1991,6 +2136,7 @@ class PostgresDb(BaseDb):
         page: Optional[int] = None,
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
+        linked_to: Optional[str] = None,
     ) -> Tuple[List[KnowledgeRow], int]:
         """Get all knowledge contents from the database.
 
@@ -1999,7 +2145,7 @@ class PostgresDb(BaseDb):
             page (Optional[int]): The page number.
             sort_by (Optional[str]): The column to sort by.
             sort_order (Optional[str]): The order to sort by.
-            create_table_if_not_found (Optional[bool]): Whether to create the table if it doesn't exist.
+            linked_to (Optional[str]): Filter by linked_to value (knowledge instance name).
 
         Returns:
             List[KnowledgeRow]: The knowledge contents.
@@ -2014,6 +2160,10 @@ class PostgresDb(BaseDb):
 
             with self.Session() as sess, sess.begin():
                 stmt = select(table)
+
+                # Apply linked_to filter if provided
+                if linked_to is not None:
+                    stmt = stmt.where(table.c.linked_to == linked_to)
 
                 # Apply sorting
                 stmt = apply_sorting(stmt, table, sort_by, sort_order)
@@ -2032,7 +2182,7 @@ class PostgresDb(BaseDb):
                 return [KnowledgeRow.model_validate(record._mapping) for record in result], total_count
 
         except Exception as e:
-            log_error(f"Exception getting knowledge contents: {e}")
+            log_error(f"Exception getting knowledge contents: {str(e)}")
             raise e
 
     def upsert_knowledge_content(self, knowledge_row: KnowledgeRow):
@@ -2119,7 +2269,7 @@ class PostgresDb(BaseDb):
             return knowledge_row
 
         except Exception as e:
-            log_error(f"Error upserting knowledge row: {e}")
+            log_error(f"Error upserting knowledge row: {str(e)}")
             raise e
 
     # -- Eval methods --
@@ -2166,7 +2316,7 @@ class PostgresDb(BaseDb):
             return eval_run
 
         except Exception as e:
-            log_error(f"Error creating eval run: {e}")
+            log_error(f"Error creating eval run: {str(e)}")
             raise e
 
     def delete_eval_run(self, eval_run_id: str) -> None:
@@ -2190,7 +2340,7 @@ class PostgresDb(BaseDb):
                     log_debug(f"Deleted eval run with ID: {eval_run_id}")
 
         except Exception as e:
-            log_error(f"Error deleting eval run {eval_run_id}: {e}")
+            log_error(f"Error deleting eval run {eval_run_id}: {str(e)}")
             raise e
 
     def delete_eval_runs(self, eval_run_ids: List[str]) -> None:
@@ -2214,7 +2364,7 @@ class PostgresDb(BaseDb):
                     log_debug(f"Deleted {result.rowcount} eval runs")
 
         except Exception as e:
-            log_error(f"Error deleting eval runs {eval_run_ids}: {e}")
+            log_error(f"Error deleting eval runs {eval_run_ids}: {str(e)}")
             raise e
 
     def get_eval_run(
@@ -2252,7 +2402,7 @@ class PostgresDb(BaseDb):
                 return EvalRunRecord.model_validate(eval_run_raw)
 
         except Exception as e:
-            log_error(f"Exception getting eval run {eval_run_id}: {e}")
+            log_error(f"Exception getting eval run {eval_run_id}: {str(e)}")
             raise e
 
     def get_eval_runs(
@@ -2347,7 +2497,7 @@ class PostgresDb(BaseDb):
                 return [EvalRunRecord.model_validate(row) for row in eval_runs_raw]
 
         except Exception as e:
-            log_error(f"Exception getting eval runs: {e}")
+            log_error(f"Exception getting eval runs: {str(e)}")
             raise e
 
     def rename_eval_run(
@@ -2387,7 +2537,7 @@ class PostgresDb(BaseDb):
             return EvalRunRecord.model_validate(eval_run_raw)
 
         except Exception as e:
-            log_error(f"Error upserting eval run name {eval_run_id}: {e}")
+            log_error(f"Error upserting eval run name {eval_run_id}: {str(e)}")
             raise e
 
     # -- Culture methods --
@@ -2407,7 +2557,7 @@ class PostgresDb(BaseDb):
                 sess.execute(table.delete())
 
         except Exception as e:
-            log_warning(f"Exception deleting all cultural knowledge: {e}")
+            log_warning(f"Exception deleting all cultural knowledge: {str(e)}")
             raise e
 
     def delete_cultural_knowledge(self, id: str) -> None:
@@ -2435,7 +2585,7 @@ class PostgresDb(BaseDb):
                     log_debug(f"No cultural knowledge found with id: {id}")
 
         except Exception as e:
-            log_error(f"Error deleting cultural knowledge: {e}")
+            log_error(f"Error deleting cultural knowledge: {str(e)}")
             raise e
 
     def get_cultural_knowledge(
@@ -2471,7 +2621,7 @@ class PostgresDb(BaseDb):
             return deserialize_cultural_knowledge(db_row)
 
         except Exception as e:
-            log_error(f"Exception reading from cultural knowledge table: {e}")
+            log_error(f"Exception reading from cultural knowledge table: {str(e)}")
             raise e
 
     def get_all_cultural_knowledge(
@@ -2545,7 +2695,7 @@ class PostgresDb(BaseDb):
             return [deserialize_cultural_knowledge(row) for row in db_rows]
 
         except Exception as e:
-            log_error(f"Error reading from cultural knowledge table: {e}")
+            log_error(f"Error reading from cultural knowledge table: {str(e)}")
             raise e
 
     def upsert_cultural_knowledge(
@@ -2626,7 +2776,7 @@ class PostgresDb(BaseDb):
             return deserialize_cultural_knowledge(db_row)
 
         except Exception as e:
-            log_error(f"Error upserting cultural knowledge: {e}")
+            log_error(f"Error upserting cultural knowledge: {str(e)}")
             raise e
 
     # -- Migrations --
@@ -2820,19 +2970,23 @@ class PostgresDb(BaseDb):
                             (new_level > existing_level, insert_stmt.excluded.name),
                             else_=table.c.name,
                         ),
-                        # Preserve existing non-null context values using COALESCE
-                        "run_id": func.coalesce(insert_stmt.excluded.run_id, table.c.run_id),
-                        "session_id": func.coalesce(insert_stmt.excluded.session_id, table.c.session_id),
-                        "user_id": func.coalesce(insert_stmt.excluded.user_id, table.c.user_id),
-                        "agent_id": func.coalesce(insert_stmt.excluded.agent_id, table.c.agent_id),
-                        "team_id": func.coalesce(insert_stmt.excluded.team_id, table.c.team_id),
-                        "workflow_id": func.coalesce(insert_stmt.excluded.workflow_id, table.c.workflow_id),
+                        # Preserve existing non-null context values: COALESCE returns
+                        # the first non-null arg, so put the existing column first.
+                        # Otherwise a later upsert from a child span (e.g. a post-hook
+                        # agent's run with a different session_id) would overwrite
+                        # the trace's already-correct context.
+                        "run_id": func.coalesce(table.c.run_id, insert_stmt.excluded.run_id),
+                        "session_id": func.coalesce(table.c.session_id, insert_stmt.excluded.session_id),
+                        "user_id": func.coalesce(table.c.user_id, insert_stmt.excluded.user_id),
+                        "agent_id": func.coalesce(table.c.agent_id, insert_stmt.excluded.agent_id),
+                        "team_id": func.coalesce(table.c.team_id, insert_stmt.excluded.team_id),
+                        "workflow_id": func.coalesce(table.c.workflow_id, insert_stmt.excluded.workflow_id),
                     },
                 )
                 sess.execute(upsert_stmt)
 
         except Exception as e:
-            log_error(f"Error creating trace: {e}")
+            log_error(f"Error creating trace: {str(e)}")
             # Don't raise - tracing should not break the main application flow
 
     def get_trace(
@@ -2884,7 +3038,7 @@ class PostgresDb(BaseDb):
                 return None
 
         except Exception as e:
-            log_error(f"Error getting trace: {e}")
+            log_error(f"Error getting trace: {str(e)}")
             return None
 
     def get_traces(
@@ -2900,6 +3054,7 @@ class PostgresDb(BaseDb):
         end_time: Optional[datetime] = None,
         limit: Optional[int] = 20,
         page: Optional[int] = 1,
+        filter_expr: Optional[Dict[str, Any]] = None,
     ) -> tuple[List, int]:
         """Get traces matching the provided filters with pagination.
 
@@ -2915,6 +3070,7 @@ class PostgresDb(BaseDb):
             end_time: Filter traces ending before this datetime.
             limit: Maximum number of traces to return per page.
             page: Page number (1-indexed).
+            filter_expr: Advanced filter expression dict (from FilterExpr.to_dict()).
 
         Returns:
             tuple[List[Trace], int]: Tuple of (list of matching traces, total count).
@@ -2939,7 +3095,7 @@ class PostgresDb(BaseDb):
                     base_stmt = base_stmt.where(table.c.run_id == run_id)
                 if session_id:
                     base_stmt = base_stmt.where(table.c.session_id == session_id)
-                if user_id:
+                if user_id is not None:
                     base_stmt = base_stmt.where(table.c.user_id == user_id)
                 if agent_id:
                     base_stmt = base_stmt.where(table.c.agent_id == agent_id)
@@ -2956,6 +3112,20 @@ class PostgresDb(BaseDb):
                     # Convert datetime to ISO string for comparison
                     base_stmt = base_stmt.where(table.c.end_time <= end_time.isoformat())
 
+                # Apply advanced filter expression
+                if filter_expr:
+                    try:
+                        from agno.db.filter_converter import TRACE_COLUMNS, filter_expr_to_sqlalchemy
+
+                        base_stmt = base_stmt.where(
+                            filter_expr_to_sqlalchemy(filter_expr, table, allowed_columns=TRACE_COLUMNS)
+                        )
+                    except ValueError:
+                        # Re-raise ValueError for proper 400 response at API layer
+                        raise
+                    except (KeyError, TypeError) as e:
+                        raise ValueError(f"Invalid filter expression: {e}") from e
+
                 # Get total count
                 count_stmt = select(func.count()).select_from(base_stmt.alias())
                 total_count = sess.execute(count_stmt).scalar() or 0
@@ -2970,7 +3140,7 @@ class PostgresDb(BaseDb):
                 return traces, total_count
 
         except Exception as e:
-            log_error(f"Error getting traces: {e}")
+            log_error(f"Error getting traces: {str(e)}")
             return [], 0
 
     def get_trace_stats(
@@ -2983,6 +3153,7 @@ class PostgresDb(BaseDb):
         end_time: Optional[datetime] = None,
         limit: Optional[int] = 20,
         page: Optional[int] = 1,
+        filter_expr: Optional[Dict[str, Any]] = None,
     ) -> tuple[List[Dict[str, Any]], int]:
         """Get trace statistics grouped by session.
 
@@ -2995,6 +3166,7 @@ class PostgresDb(BaseDb):
             end_time: Filter sessions with traces created before this datetime.
             limit: Maximum number of sessions to return per page.
             page: Page number (1-indexed).
+            filter_expr: Advanced filter expression dict (from FilterExpr.to_dict()).
 
         Returns:
             tuple[List[Dict], int]: Tuple of (list of session stats dicts, total count).
@@ -3012,22 +3184,20 @@ class PostgresDb(BaseDb):
                 base_stmt = (
                     select(
                         table.c.session_id,
-                        table.c.user_id,
-                        table.c.agent_id,
-                        table.c.team_id,
-                        table.c.workflow_id,
+                        func.max(table.c.user_id).label("user_id"),
+                        func.max(table.c.agent_id).label("agent_id"),
+                        func.max(table.c.team_id).label("team_id"),
+                        func.max(table.c.workflow_id).label("workflow_id"),
                         func.count(table.c.trace_id).label("total_traces"),
                         func.min(table.c.created_at).label("first_trace_at"),
                         func.max(table.c.created_at).label("last_trace_at"),
                     )
                     .where(table.c.session_id.isnot(None))  # Only sessions with session_id
-                    .group_by(
-                        table.c.session_id, table.c.user_id, table.c.agent_id, table.c.team_id, table.c.workflow_id
-                    )
+                    .group_by(table.c.session_id)
                 )
 
                 # Apply filters
-                if user_id:
+                if user_id is not None:
                     base_stmt = base_stmt.where(table.c.user_id == user_id)
                 if workflow_id:
                     base_stmt = base_stmt.where(table.c.workflow_id == workflow_id)
@@ -3041,6 +3211,20 @@ class PostgresDb(BaseDb):
                 if end_time:
                     # Convert datetime to ISO string for comparison
                     base_stmt = base_stmt.where(table.c.created_at <= end_time.isoformat())
+
+                # Apply advanced filter expression
+                if filter_expr:
+                    try:
+                        from agno.db.filter_converter import TRACE_COLUMNS, filter_expr_to_sqlalchemy
+
+                        base_stmt = base_stmt.where(
+                            filter_expr_to_sqlalchemy(filter_expr, table, allowed_columns=TRACE_COLUMNS)
+                        )
+                    except ValueError:
+                        # Re-raise ValueError for proper 400 response at API layer
+                        raise
+                    except (KeyError, TypeError) as e:
+                        raise ValueError(f"Invalid filter expression: {e}") from e
 
                 # Get total count of sessions
                 count_stmt = select(func.count()).select_from(base_stmt.alias())
@@ -3079,7 +3263,7 @@ class PostgresDb(BaseDb):
                 return stats_list, total_count
 
         except Exception as e:
-            log_error(f"Error getting trace stats: {e}")
+            log_error(f"Error getting trace stats: {str(e)}")
             return [], 0
 
     # --- Spans ---
@@ -3107,7 +3291,7 @@ class PostgresDb(BaseDb):
                 sess.execute(stmt)
 
         except Exception as e:
-            log_error(f"Error creating span: {e}")
+            log_error(f"Error creating span: {str(e)}")
 
     def create_spans(self, spans: List) -> None:
         """Create multiple spans in the database as a batch.
@@ -3137,7 +3321,7 @@ class PostgresDb(BaseDb):
                     sess.execute(stmt)
 
         except Exception as e:
-            log_error(f"Error creating spans batch: {e}")
+            log_error(f"Error creating spans batch: {str(e)}")
 
     def get_span(self, span_id: str):
         """Get a single span by its span_id.
@@ -3163,7 +3347,7 @@ class PostgresDb(BaseDb):
                 return None
 
         except Exception as e:
-            log_error(f"Error getting span: {e}")
+            log_error(f"Error getting span: {str(e)}")
             return None
 
     def get_spans(
@@ -3205,7 +3389,7 @@ class PostgresDb(BaseDb):
                 return [Span.from_dict(dict(row._mapping)) for row in results]
 
         except Exception as e:
-            log_error(f"Error getting spans: {e}")
+            log_error(f"Error getting spans: {str(e)}")
             return []
 
     # --- Components ---
@@ -3232,7 +3416,7 @@ class PostgresDb(BaseDb):
                 return dict(row) if row else None
 
         except Exception as e:
-            log_error(f"Error getting component: {e}")
+            log_error(f"Error getting component: {str(e)}")
             raise
 
     def upsert_component(
@@ -3241,6 +3425,7 @@ class PostgresDb(BaseDb):
         component_type: Optional[ComponentType] = None,
         name: Optional[str] = None,
         description: Optional[str] = None,
+        current_version: Optional[int] = None,
         metadata: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """Create or update a component.
@@ -3250,6 +3435,7 @@ class PostgresDb(BaseDb):
             component_type: Type (agent|team|workflow). Required for create, optional for update.
             name: Display name.
             description: Optional description.
+            current_version: Optional current version.
             metadata: Optional metadata dict.
 
         Returns:
@@ -3317,6 +3503,8 @@ class PostgresDb(BaseDb):
                         updates["name"] = name
                     if description is not None:
                         updates["description"] = description
+                    if current_version is not None:
+                        updates["current_version"] = current_version
                     if metadata is not None:
                         updates["metadata"] = metadata
 
@@ -3329,7 +3517,7 @@ class PostgresDb(BaseDb):
             return result
 
         except Exception as e:
-            log_error(f"Error upserting component: {e}")
+            log_error(f"Error upserting component: {str(e)}")
             raise
 
     def delete_component(
@@ -3393,7 +3581,7 @@ class PostgresDb(BaseDb):
             return True
 
         except Exception as e:
-            log_error(f"Error deleting component: {e}")
+            log_error(f"Error deleting component: {str(e)}")
             raise
 
     def list_components(
@@ -3402,6 +3590,7 @@ class PostgresDb(BaseDb):
         include_deleted: bool = False,
         limit: int = 20,
         offset: int = 0,
+        exclude_component_ids: Optional[Set[str]] = None,
     ) -> Tuple[List[Dict[str, Any]], int]:
         """List components with pagination.
 
@@ -3410,6 +3599,7 @@ class PostgresDb(BaseDb):
             include_deleted: Include soft-deleted components.
             limit: Maximum number of items to return.
             offset: Number of items to skip.
+            exclude_component_ids: Component IDs to exclude from results.
 
         Returns:
             Tuple of (list of component dicts, total count).
@@ -3426,6 +3616,8 @@ class PostgresDb(BaseDb):
                     where_clauses.append(table.c.component_type == component_type.value)
                 if not include_deleted:
                     where_clauses.append(table.c.deleted_at.is_(None))
+                if exclude_component_ids:
+                    where_clauses.append(table.c.component_id.notin_(exclude_component_ids))
 
                 # Get total count
                 count_stmt = select(func.count()).select_from(table)
@@ -3446,7 +3638,7 @@ class PostgresDb(BaseDb):
                 return [dict(r) for r in rows], total_count
 
         except Exception as e:
-            log_error(f"Error listing components: {e}")
+            log_error(f"Error listing components: {str(e)}")
             raise
 
     def create_component_with_config(
@@ -3579,7 +3771,7 @@ class PostgresDb(BaseDb):
             return component, config_result
 
         except Exception as e:
-            log_error(f"Error creating component with config: {e}")
+            log_error(f"Error creating component with config: {str(e)}")
             raise
 
     # --- Component Configs ---
@@ -3653,7 +3845,7 @@ class PostgresDb(BaseDb):
                 return dict(row) if row else None
 
         except Exception as e:
-            log_error(f"Error getting config: {e}")
+            log_error(f"Error getting config: {str(e)}")
             raise
 
     def upsert_config(
@@ -3693,8 +3885,8 @@ class PostgresDb(BaseDb):
             raise ValueError(f"Invalid stage: {stage}")
 
         try:
-            configs_table = self._get_table(table_type="component_configs", create_table_if_not_found=True)
             components_table = self._get_table(table_type="components")
+            configs_table = self._get_table(table_type="component_configs", create_table_if_not_found=True)
             links_table = self._get_table(table_type="component_links", create_table_if_not_found=True)
 
             if components_table is None:
@@ -3838,7 +4030,7 @@ class PostgresDb(BaseDb):
             return result
 
         except Exception as e:
-            log_error(f"Error upserting config: {e}")
+            log_error(f"Error upserting config: {str(e)}")
             raise
 
     def delete_config(
@@ -3881,10 +4073,6 @@ class PostgresDb(BaseDb):
                 if config_row is None:
                     return False
 
-                # Cannot delete published configs
-                if config_row == "published":
-                    raise ValueError(f"Cannot delete published config {component_id} v{version}")
-
                 # Check if it's current version
                 current = sess.execute(
                     select(components_table.c.current_version).where(components_table.c.component_id == component_id)
@@ -3913,7 +4101,7 @@ class PostgresDb(BaseDb):
             return True
 
         except Exception as e:
-            log_error(f"Error deleting config: {e}")
+            log_error(f"Error deleting config: {str(e)}")
             raise
 
     def list_configs(
@@ -3970,7 +4158,7 @@ class PostgresDb(BaseDb):
                 return [dict(row) for row in results]
 
         except Exception as e:
-            log_error(f"Error listing configs: {e}")
+            log_error(f"Error listing configs: {str(e)}")
             raise
 
     def set_current_version(
@@ -4045,7 +4233,7 @@ class PostgresDb(BaseDb):
             return True
 
         except Exception as e:
-            log_error(f"Error setting current version: {e}")
+            log_error(f"Error setting current version: {str(e)}")
             raise
 
     # --- Component Links ---
@@ -4086,7 +4274,7 @@ class PostgresDb(BaseDb):
                 return [dict(r) for r in rows]
 
         except Exception as e:
-            log_error(f"Error getting links: {e}")
+            log_error(f"Error getting links: {str(e)}")
             raise
 
     def get_dependents(
@@ -4117,7 +4305,7 @@ class PostgresDb(BaseDb):
                 return [dict(r) for r in rows]
 
         except Exception as e:
-            log_error(f"Error getting dependents: {e}")
+            log_error(f"Error getting dependents: {str(e)}")
             raise
 
     def _resolve_version(
@@ -4151,7 +4339,7 @@ class PostgresDb(BaseDb):
                 ).scalar_one_or_none()
 
         except Exception as e:
-            log_error(f"Error resolving version: {e}")
+            log_error(f"Error resolving version: {str(e)}")
             raise
 
     def load_component_graph(
@@ -4252,7 +4440,7 @@ class PostgresDb(BaseDb):
             }
 
         except Exception as e:
-            log_error(f"Error loading component graph: {e}")
+            log_error(f"Error loading component graph: {str(e)}")
             raise
 
     # -- Learning methods --
@@ -4328,7 +4516,6 @@ class PostgresDb(BaseDb):
         user_id: Optional[str] = None,
         agent_id: Optional[str] = None,
         team_id: Optional[str] = None,
-        workflow_id: Optional[str] = None,
         session_id: Optional[str] = None,
         namespace: Optional[str] = None,
         entity_id: Optional[str] = None,
@@ -4344,7 +4531,6 @@ class PostgresDb(BaseDb):
             user_id: Associated user ID.
             agent_id: Associated agent ID.
             team_id: Associated team ID.
-            workflow_id: Associated workflow ID.
             session_id: Associated session ID.
             namespace: Namespace for scoping ('user', 'global', or custom).
             entity_id: Associated entity ID (for entity-specific learnings).
@@ -4366,7 +4552,6 @@ class PostgresDb(BaseDb):
                     user_id=user_id,
                     agent_id=agent_id,
                     team_id=team_id,
-                    workflow_id=workflow_id,
                     session_id=session_id,
                     entity_id=entity_id,
                     entity_type=entity_type,
@@ -4412,6 +4597,42 @@ class PostgresDb(BaseDb):
         except Exception as e:
             log_debug(f"Error deleting learning: {e}")
             return False
+
+    def update_learning(self, id: str, content: Dict[str, Any], metadata: Optional[Dict[str, Any]] = None) -> bool:
+        try:
+            table = self._get_table(table_type="learnings")
+            if table is None:
+                return False
+
+            with self.Session() as sess, sess.begin():
+                stmt = (
+                    table.update()
+                    .where(table.c.learning_id == id)
+                    .values(content=content, metadata=metadata, updated_at=int(time.time()))
+                )
+                result = sess.execute(stmt)
+                return (result.rowcount or 0) > 0
+
+        except Exception as e:
+            log_error(f"Error updating learning: {e}")
+            raise e
+
+    def delete_user_learnings(self, user_id: str, learning_type: Optional[str] = None) -> int:
+        try:
+            table = self._get_table(table_type="learnings")
+            if table is None:
+                return 0
+
+            with self.Session() as sess, sess.begin():
+                stmt = table.delete().where(table.c.user_id == user_id)
+                if learning_type is not None:
+                    stmt = stmt.where(table.c.learning_type == learning_type)
+                result = sess.execute(stmt)
+                return result.rowcount or 0
+
+        except Exception as e:
+            log_error(f"Error deleting user learnings: {e}")
+            raise e
 
     def get_learnings(
         self,
@@ -4481,3 +4702,811 @@ class PostgresDb(BaseDb):
         except Exception as e:
             log_debug(f"Error getting learnings: {e}")
             return []
+
+    def get_learning_by_id(self, id: str) -> Optional[Dict[str, Any]]:
+        try:
+            table = self._get_table(table_type="learnings")
+            if table is None:
+                return None
+            with self.Session() as sess:
+                result = sess.execute(select(table).where(table.c.learning_id == id)).fetchone()
+                return dict(result._mapping) if result else None
+        except Exception as e:
+            log_error(f"Error getting learning by id: {e}")
+            raise e
+
+    def list_learnings(
+        self,
+        learning_type: Optional[str] = None,
+        user_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+        namespace: Optional[str] = None,
+        entity_id: Optional[str] = None,
+        entity_type: Optional[str] = None,
+        include_global: bool = False,
+        limit: int = 100,
+        page: int = 1,
+        sort_by: Optional[str] = None,
+        sort_order: Optional[str] = None,
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        try:
+            table = self._get_table(table_type="learnings")
+            if table is None:
+                return [], 0
+
+            with self.Session() as sess:
+                stmt = select(table)
+                if learning_type is not None:
+                    stmt = stmt.where(table.c.learning_type == learning_type)
+                if user_id is not None:
+                    if include_global:
+                        stmt = stmt.where((table.c.user_id == user_id) | (table.c.user_id.is_(None)))
+                    else:
+                        stmt = stmt.where(table.c.user_id == user_id)
+                if agent_id is not None:
+                    stmt = stmt.where(table.c.agent_id == agent_id)
+                if team_id is not None:
+                    stmt = stmt.where(table.c.team_id == team_id)
+                if session_id is not None:
+                    stmt = stmt.where(table.c.session_id == session_id)
+                if namespace is not None:
+                    stmt = stmt.where(table.c.namespace == namespace)
+                if entity_id is not None:
+                    stmt = stmt.where(table.c.entity_id == entity_id)
+                if entity_type is not None:
+                    stmt = stmt.where(table.c.entity_type == entity_type)
+
+                count_stmt = select(func.count()).select_from(stmt.subquery())
+                total_count = sess.execute(count_stmt).scalar() or 0
+
+                stmt = apply_sorting(stmt, table, sort_by or "updated_at", sort_order or "desc")
+                stmt = stmt.limit(limit).offset((page - 1) * limit)
+                result = sess.execute(stmt).fetchall()
+                return [dict(row._mapping) for row in result], int(total_count)
+
+        except Exception as e:
+            log_error(f"Error listing learnings: {e}")
+            raise e
+
+    def get_learnings_user_stats(
+        self,
+        learning_type: Optional[str] = None,
+        limit: Optional[int] = None,
+        page: Optional[int] = None,
+        user_id: Optional[str] = None,
+        sort_by: Optional[str] = None,
+        sort_order: Optional[str] = None,
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        try:
+            table = self._get_table(table_type="learnings")
+            if table is None:
+                return [], 0
+
+            with self.Session() as sess:
+                last_updated_col = func.max(table.c.updated_at)
+                stmt = select(
+                    table.c.user_id,
+                    last_updated_col.label("last_learning_updated_at"),
+                )
+                if learning_type is not None:
+                    stmt = stmt.where(table.c.learning_type == learning_type)
+                if user_id is not None:
+                    stmt = stmt.where(table.c.user_id == user_id)
+                else:
+                    stmt = stmt.where(table.c.user_id.is_not(None))
+                stmt = stmt.group_by(table.c.user_id)
+
+                sort_columns = {
+                    "user_id": table.c.user_id,
+                    "last_learning_updated_at": last_updated_col,
+                }
+                sort_col = sort_columns.get(sort_by or "last_learning_updated_at", last_updated_col)
+                stmt = stmt.order_by(sort_col.asc() if sort_order == "asc" else sort_col.desc())
+
+                count_stmt = select(func.count()).select_from(stmt.subquery())
+                total_count = sess.execute(count_stmt).scalar() or 0
+
+                if limit is not None:
+                    stmt = stmt.limit(limit)
+                    if page is not None:
+                        stmt = stmt.offset((page - 1) * limit)
+
+                result = sess.execute(stmt).fetchall()
+                return [
+                    {
+                        "user_id": row.user_id,
+                        "last_learning_updated_at": row.last_learning_updated_at,
+                    }
+                    for row in result
+                ], int(total_count)
+
+        except Exception as e:
+            log_error(f"Error getting learning user stats: {e}")
+            raise e
+
+    # -- Schedule methods --
+    def get_schedule(self, schedule_id: str) -> Optional[Dict[str, Any]]:
+        try:
+            table = self._get_table(table_type="schedules")
+            if table is None:
+                return None
+            with self.Session() as sess:
+                result = sess.execute(select(table).where(table.c.id == schedule_id)).fetchone()
+                return dict(result._mapping) if result else None
+        except Exception as e:
+            log_debug(f"Error getting schedule: {e}")
+            return None
+
+    def get_schedule_by_name(self, name: str) -> Optional[Dict[str, Any]]:
+        try:
+            table = self._get_table(table_type="schedules")
+            if table is None:
+                return None
+            with self.Session() as sess:
+                result = sess.execute(select(table).where(table.c.name == name)).fetchone()
+                return dict(result._mapping) if result else None
+        except Exception as e:
+            log_debug(f"Error getting schedule by name: {e}")
+            return None
+
+    def get_schedules(
+        self,
+        enabled: Optional[bool] = None,
+        limit: int = 100,
+        page: int = 1,
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        try:
+            table = self._get_table(table_type="schedules")
+            if table is None:
+                return [], 0
+            with self.Session() as sess:
+                # Build base query with filters
+                base_query = select(table)
+                if enabled is not None:
+                    base_query = base_query.where(table.c.enabled == enabled)
+
+                # Get total count
+                count_stmt = select(func.count()).select_from(base_query.alias())
+                total_count = sess.execute(count_stmt).scalar() or 0
+
+                # Calculate offset from page
+                offset = (page - 1) * limit
+
+                # Get paginated results
+                stmt = base_query.order_by(table.c.created_at.desc()).limit(limit).offset(offset)
+                results = sess.execute(stmt).fetchall()
+                return [dict(row._mapping) for row in results], total_count
+        except Exception as e:
+            log_debug(f"Error listing schedules: {e}")
+            return [], 0
+
+    def create_schedule(self, schedule_data: Dict[str, Any]) -> Dict[str, Any]:
+        try:
+            table = self._get_table(table_type="schedules", create_table_if_not_found=True)
+            if table is None:
+                raise RuntimeError("Failed to get or create schedules table")
+            with self.Session() as sess, sess.begin():
+                sess.execute(table.insert().values(**schedule_data))
+            return schedule_data
+        except Exception as e:
+            log_error(f"Error creating schedule: {str(e)}")
+            raise
+
+    def update_schedule(self, schedule_id: str, **kwargs: Any) -> Optional[Dict[str, Any]]:
+        try:
+            table = self._get_table(table_type="schedules")
+            if table is None:
+                return None
+            kwargs["updated_at"] = int(time.time())
+            with self.Session() as sess, sess.begin():
+                sess.execute(table.update().where(table.c.id == schedule_id).values(**kwargs))
+            return self.get_schedule(schedule_id)
+        except Exception as e:
+            log_debug(f"Error updating schedule: {e}")
+            return None
+
+    def delete_schedule(self, schedule_id: str) -> bool:
+        try:
+            table = self._get_table(table_type="schedules")
+            if table is None:
+                return False
+            runs_table = self._get_table(table_type="schedule_runs")
+            with self.Session() as sess, sess.begin():
+                if runs_table is not None:
+                    sess.execute(runs_table.delete().where(runs_table.c.schedule_id == schedule_id))
+                result = sess.execute(table.delete().where(table.c.id == schedule_id))
+                return result.rowcount > 0
+        except Exception as e:
+            log_debug(f"Error deleting schedule: {e}")
+            return False
+
+    def claim_due_schedule(self, worker_id: str, lock_grace_seconds: int = 300) -> Optional[Dict[str, Any]]:
+        try:
+            table = self._get_table(table_type="schedules")
+            if table is None:
+                return None
+            now = int(time.time())
+            stale_lock_threshold = now - lock_grace_seconds
+
+            with self.Session() as sess, sess.begin():
+                # Atomic UPDATE...RETURNING with subquery for TOCTOU safety
+                subq = (
+                    select(table.c.id)
+                    .where(
+                        table.c.enabled == True,  # noqa: E712
+                        table.c.next_run_at <= now,
+                        or_(
+                            table.c.locked_by.is_(None),
+                            table.c.locked_at <= stale_lock_threshold,
+                        ),
+                    )
+                    .order_by(table.c.next_run_at.asc())
+                    .limit(1)
+                    .with_for_update(skip_locked=True)
+                    .scalar_subquery()
+                )
+                stmt = (
+                    update(table)
+                    .where(table.c.id == subq)
+                    .values(locked_by=worker_id, locked_at=now)
+                    .returning(*table.c)
+                )
+                result = sess.execute(stmt).fetchone()
+                if result is None:
+                    return None
+                return dict(result._mapping)
+        except Exception as e:
+            log_debug(f"Error claiming schedule: {e}")
+            return None
+
+    def release_schedule(self, schedule_id: str, next_run_at: Optional[int] = None) -> bool:
+        try:
+            table = self._get_table(table_type="schedules")
+            if table is None:
+                return False
+            updates: Dict[str, Any] = {"locked_by": None, "locked_at": None, "updated_at": int(time.time())}
+            if next_run_at is not None:
+                updates["next_run_at"] = next_run_at
+            with self.Session() as sess, sess.begin():
+                result = sess.execute(table.update().where(table.c.id == schedule_id).values(**updates))
+                return result.rowcount > 0
+        except Exception as e:
+            log_debug(f"Error releasing schedule: {e}")
+            return False
+
+    def create_schedule_run(self, run_data: Dict[str, Any]) -> Dict[str, Any]:
+        try:
+            table = self._get_table(table_type="schedule_runs", create_table_if_not_found=True)
+            if table is None:
+                raise RuntimeError("Failed to get or create schedule_runs table")
+            with self.Session() as sess, sess.begin():
+                sess.execute(table.insert().values(**run_data))
+            return run_data
+        except Exception as e:
+            log_error(f"Error creating schedule run: {str(e)}")
+            raise
+
+    def update_schedule_run(self, schedule_run_id: str, **kwargs: Any) -> Optional[Dict[str, Any]]:
+        try:
+            table = self._get_table(table_type="schedule_runs")
+            if table is None:
+                return None
+            with self.Session() as sess, sess.begin():
+                sess.execute(table.update().where(table.c.id == schedule_run_id).values(**kwargs))
+            return self.get_schedule_run(schedule_run_id)
+        except Exception as e:
+            log_debug(f"Error updating schedule run: {e}")
+            return None
+
+    def get_schedule_run(self, run_id: str) -> Optional[Dict[str, Any]]:
+        try:
+            table = self._get_table(table_type="schedule_runs")
+            if table is None:
+                return None
+            with self.Session() as sess:
+                result = sess.execute(select(table).where(table.c.id == run_id)).fetchone()
+                return dict(result._mapping) if result else None
+        except Exception as e:
+            log_debug(f"Error getting schedule run: {e}")
+            return None
+
+    def get_schedule_runs(
+        self,
+        schedule_id: str,
+        limit: int = 20,
+        page: int = 1,
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        try:
+            table = self._get_table(table_type="schedule_runs")
+            if table is None:
+                return [], 0
+            with self.Session() as sess:
+                # Get total count
+                count_stmt = select(func.count()).select_from(table).where(table.c.schedule_id == schedule_id)
+                total_count = sess.execute(count_stmt).scalar() or 0
+
+                # Calculate offset from page
+                offset = (page - 1) * limit
+
+                # Get paginated results
+                stmt = (
+                    select(table)
+                    .where(table.c.schedule_id == schedule_id)
+                    .order_by(table.c.created_at.desc())
+                    .limit(limit)
+                    .offset(offset)
+                )
+                results = sess.execute(stmt).fetchall()
+                return [dict(row._mapping) for row in results], total_count
+        except Exception as e:
+            log_debug(f"Error getting schedule runs: {e}")
+            return [], 0
+
+    # -- Approval methods --
+
+    def create_approval(self, approval_data: Dict[str, Any]) -> Dict[str, Any]:
+        try:
+            table = self._get_table(table_type="approvals", create_table_if_not_found=True)
+            if table is None:
+                raise RuntimeError("Failed to get or create approvals table")
+            data = {**approval_data}
+            now = int(time.time())
+            data.setdefault("created_at", now)
+            data.setdefault("updated_at", now)
+            with self.Session() as sess, sess.begin():
+                sess.execute(table.insert().values(**data))
+            return data
+        except Exception as e:
+            log_error(f"Error creating approval: {str(e)}")
+            raise
+
+    def get_approval(self, approval_id: str) -> Optional[Dict[str, Any]]:
+        try:
+            table = self._get_table(table_type="approvals")
+            if table is None:
+                return None
+            with self.Session() as sess:
+                result = sess.execute(select(table).where(table.c.id == approval_id)).fetchone()
+                return dict(result._mapping) if result else None
+        except Exception as e:
+            log_debug(f"Error getting approval: {e}")
+            return None
+
+    def get_approvals(
+        self,
+        status: Optional[str] = None,
+        source_type: Optional[str] = None,
+        approval_type: Optional[str] = None,
+        pause_type: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
+        workflow_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+        schedule_id: Optional[str] = None,
+        run_id: Optional[str] = None,
+        limit: int = 100,
+        page: int = 1,
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        try:
+            table = self._get_table(table_type="approvals")
+            if table is None:
+                return [], 0
+            with self.Session() as sess:
+                stmt = select(table)
+                count_stmt = select(func.count()).select_from(table)
+                if status is not None:
+                    stmt = stmt.where(table.c.status == status)
+                    count_stmt = count_stmt.where(table.c.status == status)
+                if source_type is not None:
+                    stmt = stmt.where(table.c.source_type == source_type)
+                    count_stmt = count_stmt.where(table.c.source_type == source_type)
+                if approval_type is not None:
+                    stmt = stmt.where(table.c.approval_type == approval_type)
+                    count_stmt = count_stmt.where(table.c.approval_type == approval_type)
+                if pause_type is not None:
+                    stmt = stmt.where(table.c.pause_type == pause_type)
+                    count_stmt = count_stmt.where(table.c.pause_type == pause_type)
+                if agent_id is not None:
+                    stmt = stmt.where(table.c.agent_id == agent_id)
+                    count_stmt = count_stmt.where(table.c.agent_id == agent_id)
+                if team_id is not None:
+                    stmt = stmt.where(table.c.team_id == team_id)
+                    count_stmt = count_stmt.where(table.c.team_id == team_id)
+                if workflow_id is not None:
+                    stmt = stmt.where(table.c.workflow_id == workflow_id)
+                    count_stmt = count_stmt.where(table.c.workflow_id == workflow_id)
+                if user_id is not None:
+                    stmt = stmt.where(table.c.user_id == user_id)
+                    count_stmt = count_stmt.where(table.c.user_id == user_id)
+                if schedule_id is not None:
+                    stmt = stmt.where(table.c.schedule_id == schedule_id)
+                    count_stmt = count_stmt.where(table.c.schedule_id == schedule_id)
+                if run_id is not None:
+                    stmt = stmt.where(table.c.run_id == run_id)
+                    count_stmt = count_stmt.where(table.c.run_id == run_id)
+                total = sess.execute(count_stmt).scalar() or 0
+
+                # Calculate offset from page
+                offset = (page - 1) * limit
+
+                stmt = stmt.order_by(table.c.created_at.desc()).limit(limit).offset(offset)
+                results = sess.execute(stmt).fetchall()
+                return [dict(row._mapping) for row in results], total
+        except Exception as e:
+            log_debug(f"Error listing approvals: {e}")
+            return [], 0
+
+    def update_approval(
+        self, approval_id: str, expected_status: Optional[str] = None, **kwargs: Any
+    ) -> Optional[Dict[str, Any]]:
+        try:
+            table = self._get_table(table_type="approvals")
+            if table is None:
+                return None
+            kwargs["updated_at"] = int(time.time())
+            with self.Session() as sess, sess.begin():
+                stmt = table.update().where(table.c.id == approval_id)
+                if expected_status is not None:
+                    stmt = stmt.where(table.c.status == expected_status)
+                result = sess.execute(stmt.values(**kwargs))
+                if result.rowcount == 0:
+                    return None
+            return self.get_approval(approval_id)
+        except Exception as e:
+            log_debug(f"Error updating approval: {e}")
+            return None
+
+    def delete_approval(self, approval_id: str) -> bool:
+        try:
+            table = self._get_table(table_type="approvals")
+            if table is None:
+                return False
+            with self.Session() as sess, sess.begin():
+                result = sess.execute(table.delete().where(table.c.id == approval_id))
+                return result.rowcount > 0
+        except Exception as e:
+            log_debug(f"Error deleting approval: {e}")
+            return False
+
+    def get_pending_approval_count(self, user_id: Optional[str] = None) -> int:
+        try:
+            table = self._get_table(table_type="approvals")
+            if table is None:
+                return 0
+            with self.Session() as sess:
+                stmt = select(func.count()).select_from(table).where(table.c.status == "pending")
+                if user_id is not None:
+                    stmt = stmt.where(table.c.user_id == user_id)
+                return sess.execute(stmt).scalar() or 0
+        except Exception as e:
+            log_debug(f"Error counting approvals: {e}")
+            return 0
+
+    def update_approval_run_status(self, run_id: str, run_status: RunStatus) -> int:
+        """Update run_status on all approvals for a given run_id.
+
+        Args:
+            run_id: The run ID to match.
+            run_status: The new run status.
+
+        Returns:
+            Number of approvals updated.
+        """
+        try:
+            table = self._get_table(table_type="approvals")
+            if table is None:
+                return 0
+            with self.Session() as sess, sess.begin():
+                stmt = (
+                    table.update()
+                    .where(table.c.run_id == run_id)
+                    .values(run_status=run_status.value, updated_at=int(time.time()))
+                )
+                result = sess.execute(stmt)
+                return result.rowcount
+        except Exception as e:
+            log_debug(f"Error updating approval run_status: {e}")
+            return 0
+
+    # --- Built-in MCP OAuth server store ---
+    # Thin delegations to agno.db.mcp_oauth_store (shared with SqliteDb); each fetches the
+    # table via the normal schema-aware _get_table path, so the store is created on first
+    # use like every other agno table.
+
+    def get_mcp_oauth_client(self, client_id: str) -> Optional[str]:
+        table = self._get_table(table_type=MCP_OAUTH_CLIENTS, create_table_if_not_found=True)
+        return mcp_oauth_store.get_client(self.db_engine, table, client_id)
+
+    def create_mcp_oauth_client(
+        self, *, client_id: str, client_metadata: str, now: int, unconsumed_ttl: int, max_clients: int
+    ) -> bool:
+        table = self._get_table(table_type=MCP_OAUTH_CLIENTS, create_table_if_not_found=True)
+        return mcp_oauth_store.create_client(
+            self.db_engine,
+            table,
+            client_id=client_id,
+            client_metadata=client_metadata,
+            now=now,
+            unconsumed_ttl=unconsumed_ttl,
+            max_clients=max_clients,
+        )
+
+    def mark_mcp_oauth_client_consumed(self, client_id: str, now: int) -> None:
+        table = self._get_table(table_type=MCP_OAUTH_CLIENTS, create_table_if_not_found=True)
+        mcp_oauth_store.mark_client_consumed(self.db_engine, table, client_id, now)
+
+    def store_mcp_oauth_transaction(
+        self, *, txn_id: str, client_id: str, params: str, expires_at: int, now: int, max_pending: int
+    ) -> None:
+        table = self._get_table(table_type=MCP_OAUTH_TRANSACTIONS, create_table_if_not_found=True)
+        mcp_oauth_store.store_transaction(
+            self.db_engine,
+            table,
+            txn_id=txn_id,
+            client_id=client_id,
+            params=params,
+            expires_at=expires_at,
+            now=now,
+            max_pending=max_pending,
+        )
+
+    def get_mcp_oauth_transaction(self, txn_id: str) -> Optional[tuple]:
+        table = self._get_table(table_type=MCP_OAUTH_TRANSACTIONS, create_table_if_not_found=True)
+        return mcp_oauth_store.get_transaction(self.db_engine, table, txn_id)
+
+    def consume_mcp_oauth_transaction(self, txn_id: str, now: int) -> Optional[tuple]:
+        table = self._get_table(table_type=MCP_OAUTH_TRANSACTIONS, create_table_if_not_found=True)
+        return mcp_oauth_store.consume_transaction(self.db_engine, table, txn_id, now)
+
+    def store_mcp_oauth_code(self, *, code_hash: str, payload: str, expires_at: int, now: int) -> None:
+        table = self._get_table(table_type=MCP_OAUTH_CODES, create_table_if_not_found=True)
+        mcp_oauth_store.store_code(
+            self.db_engine, table, code_hash=code_hash, payload=payload, expires_at=expires_at, now=now
+        )
+
+    def get_mcp_oauth_code(self, code_hash: str) -> Optional[tuple]:
+        table = self._get_table(table_type=MCP_OAUTH_CODES, create_table_if_not_found=True)
+        return mcp_oauth_store.get_code(self.db_engine, table, code_hash)
+
+    def delete_mcp_oauth_code(self, code_hash: str) -> bool:
+        table = self._get_table(table_type=MCP_OAUTH_CODES, create_table_if_not_found=True)
+        return mcp_oauth_store.delete_code(self.db_engine, table, code_hash)
+
+    def store_mcp_oauth_refresh(
+        self, *, token_hash: str, client_id: str, scopes: str, expires_at: int, now: int, family_id: str
+    ) -> None:
+        table = self._get_table(table_type=MCP_OAUTH_REFRESH_TOKENS, create_table_if_not_found=True)
+        mcp_oauth_store.store_refresh(
+            self.db_engine,
+            table,
+            token_hash=token_hash,
+            client_id=client_id,
+            scopes=scopes,
+            expires_at=expires_at,
+            now=now,
+            family_id=family_id,
+        )
+
+    def get_mcp_oauth_refresh(self, token_hash: str) -> Optional[tuple]:
+        table = self._get_table(table_type=MCP_OAUTH_REFRESH_TOKENS, create_table_if_not_found=True)
+        return mcp_oauth_store.get_refresh(self.db_engine, table, token_hash)
+
+    def delete_mcp_oauth_refresh(self, token_hash: str) -> bool:
+        table = self._get_table(table_type=MCP_OAUTH_REFRESH_TOKENS, create_table_if_not_found=True)
+        return mcp_oauth_store.delete_refresh(self.db_engine, table, token_hash)
+
+    def delete_mcp_oauth_refresh_family(self, family_id: str) -> int:
+        table = self._get_table(table_type=MCP_OAUTH_REFRESH_TOKENS, create_table_if_not_found=True)
+        return mcp_oauth_store.delete_refresh_family(self.db_engine, table, family_id)
+
+    def get_mcp_oauth_keys(self) -> List[tuple]:
+        table = self._get_table(table_type=MCP_OAUTH_KEYS, create_table_if_not_found=True)
+        return mcp_oauth_store.get_keys(self.db_engine, table)
+
+    def insert_mcp_oauth_key(self, *, kid: str, secret: str, created_at: int) -> bool:
+        table = self._get_table(table_type=MCP_OAUTH_KEYS, create_table_if_not_found=True)
+        return mcp_oauth_store.insert_key(self.db_engine, table, kid=kid, secret=secret, created_at=created_at)
+
+    # --- Auth Tokens ---
+
+    def get_auth_token(self, provider: str, user_id: Optional[str], service: str) -> Optional[Dict[str, Any]]:
+        try:
+            table = self._get_table(table_type="auth_tokens")
+            if table is None:
+                return None
+            # Use empty string for NULL user_id to satisfy unique constraint on (provider, user_id, service)
+            effective_user_id = user_id if user_id is not None else ""
+            with self.Session() as sess:
+                result = sess.execute(
+                    select(table).where(
+                        table.c.provider == provider,
+                        table.c.user_id == effective_user_id,
+                        table.c.service == service,
+                    )
+                ).fetchone()
+                if not result:
+                    return None
+                return dict(result._mapping)
+        except Exception as e:
+            log_debug(f"Error getting auth token: {e}")
+            return None
+
+    def upsert_auth_token(self, token: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        try:
+            table = self._get_table(table_type="auth_tokens", create_table_if_not_found=True)
+            if table is None:
+                raise RuntimeError("Failed to get or create auth_tokens table")
+            data = {**token}
+            data["id"] = str(uuid4())
+            # Use empty string for NULL user_id to satisfy NOT NULL + unique constraint
+            data["user_id"] = data.get("user_id") or ""
+            now = int(time.time())
+            data.setdefault("created_at", now)
+            data["updated_at"] = now
+            with self.Session() as sess, sess.begin():
+                stmt = postgresql.insert(table).values(**data)
+                stmt = stmt.on_conflict_do_update(
+                    index_elements=["provider", "user_id", "service"],
+                    set_={
+                        "token_data": stmt.excluded.token_data,
+                        "granted_scopes": stmt.excluded.granted_scopes,
+                        "updated_at": stmt.excluded.updated_at,
+                    },
+                )
+                sess.execute(stmt)
+            return data
+        except Exception as e:
+            log_debug(f"Error upserting auth token: {e}")
+            return None
+
+    def delete_auth_token(self, provider: str, user_id: Optional[str], service: str) -> bool:
+        try:
+            table = self._get_table(table_type="auth_tokens")
+            if table is None:
+                return False
+            effective_user_id = user_id if user_id is not None else ""
+            with self.Session() as sess, sess.begin():
+                result = sess.execute(
+                    table.delete().where(
+                        table.c.provider == provider,
+                        table.c.user_id == effective_user_id,
+                        table.c.service == service,
+                    )
+                )
+                return result.rowcount > 0
+        except Exception as e:
+            log_debug(f"Error deleting auth token: {e}")
+            return False
+
+    # -- Service Accounts methods --
+
+    def create_service_account(self, account_data: Dict[str, Any]) -> Dict[str, Any]:
+        try:
+            table = self._get_table(table_type="service_accounts", create_table_if_not_found=True)
+            if table is None:
+                raise RuntimeError("Failed to get or create service accounts table")
+            with self.Session() as sess, sess.begin():
+                sess.execute(table.insert().values(**account_data))
+            return account_data
+        except Exception as e:
+            log_error(f"Error creating service account: {str(e)}")
+            raise
+
+    def get_service_account(self, service_account_id: str) -> Optional[Dict[str, Any]]:
+        try:
+            table = self._get_table(table_type="service_accounts")
+            if table is None:
+                return None
+            with self.Session() as sess:
+                result = sess.execute(select(table).where(table.c.id == service_account_id)).fetchone()
+                return dict(result._mapping) if result else None
+        except Exception as e:
+            log_debug(f"Error getting service account: {e}")
+            return None
+
+    def get_service_account_by_token_hash(self, token_hash: str) -> Optional[Dict[str, Any]]:
+        """Get a service account by token hash.
+
+        Re-raises on database errors (instead of returning None) so callers can
+        distinguish an unknown token from an unavailable database.
+        """
+        table = self._get_table(table_type="service_accounts")
+        if table is None:
+            # _get_table swallows connectivity errors and returns None, which is
+            # indistinguishable from "table not created yet". Probe the connection so
+            # a real outage propagates (fail closed) instead of reading as an unknown
+            # token; a genuinely absent table returns None.
+            with self.Session() as sess:
+                sess.execute(text("SELECT 1"))
+            return None
+        try:
+            with self.Session() as sess:
+                result = sess.execute(select(table).where(table.c.token_hash == token_hash)).fetchone()
+                return dict(result._mapping) if result else None
+        except Exception as e:
+            log_error(f"Error getting service account by token hash: {e}")
+            raise
+
+    def get_service_account_by_name(self, name: str, include_revoked: bool = False) -> Optional[Dict[str, Any]]:
+        try:
+            table = self._get_table(table_type="service_accounts")
+            if table is None:
+                return None
+            with self.Session() as sess:
+                stmt = select(table).where(table.c.name == name)
+                if not include_revoked:
+                    stmt = stmt.where(table.c.revoked_at.is_(None))
+                stmt = stmt.order_by(table.c.created_at.desc())
+                result = sess.execute(stmt).fetchone()
+                return dict(result._mapping) if result else None
+        except Exception as e:
+            log_debug(f"Error getting service account by name: {e}")
+            return None
+
+    def get_service_accounts(
+        self,
+        include_revoked: bool = True,
+        limit: int = 20,
+        page: int = 1,
+        sort_by: str = "created_at",
+        sort_order: str = "desc",
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        try:
+            table = self._get_table(table_type="service_accounts")
+            if table is None:
+                return [], 0
+            with self.Session() as sess:
+                # Build base query with filters
+                base_query = select(table)
+                if not include_revoked:
+                    base_query = base_query.where(table.c.revoked_at.is_(None))
+
+                # Get total count
+                count_stmt = select(func.count()).select_from(base_query.alias())
+                total_count = sess.execute(count_stmt).scalar() or 0
+
+                # Calculate offset from page
+                offset = (page - 1) * limit
+
+                # Validate sorting parameters
+                sort_col = table.c[resolve_service_account_sort_column(sort_by)]
+                order_by = sort_col.asc() if sort_order == "asc" else sort_col.desc()
+
+                # Get paginated results
+                stmt = base_query.order_by(order_by).limit(limit).offset(offset)
+                results = sess.execute(stmt).fetchall()
+                return [dict(row._mapping) for row in results], total_count
+        except Exception as e:
+            log_debug(f"Error listing service accounts: {e}")
+            return [], 0
+
+    def update_service_account(
+        self, service_account_id: str, return_record: bool = True, **kwargs: Any
+    ) -> Optional[Dict[str, Any]]:
+        validate_service_account_update(kwargs)
+        try:
+            table = self._get_table(table_type="service_accounts")
+            if table is None:
+                return None
+            with self.Session() as sess, sess.begin():
+                sess.execute(table.update().where(table.c.id == service_account_id).values(**kwargs))
+            if not return_record:
+                return None
+            return self.get_service_account(service_account_id)
+        except Exception as e:
+            log_debug(f"Error updating service account: {e}")
+            return None
+
+    def delete_service_account(self, service_account_id: str) -> bool:
+        try:
+            table = self._get_table(table_type="service_accounts")
+            if table is None:
+                return False
+            with self.Session() as sess, sess.begin():
+                result = sess.execute(table.delete().where(table.c.id == service_account_id))
+                return result.rowcount > 0
+        except Exception as e:
+            log_debug(f"Error deleting service account: {e}")
+            return False

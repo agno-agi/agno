@@ -16,6 +16,11 @@ on any EVM-compatible blockchain.
 from agno.agent import Agent
 from agno.tools.evm import EvmTools
 
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
+
+
 # Option 1: Use environment variables (recommended)
 agent = Agent(
     tools=[EvmTools()],  # Will use EVM_PRIVATE_KEY and EVM_RPC_URL from env
@@ -35,6 +40,11 @@ agent = Agent(
 
 # Convert 0.001 ETH to wei (1 ETH = 10^18 wei)
 # 0.001 ETH = 1,000,000,000,000,000 wei
-agent.print_response(
-    "Send 0.001 eth (which is 1000000000000000 wei) to address 0x3Dfc53E3C77bb4e30Ce333Be1a66Ce62558bE395"
-)
+
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+if __name__ == "__main__":
+    agent.print_response(
+        "Send 0.001 eth (which is 1000000000000000 wei) to address 0x3Dfc53E3C77bb4e30Ce333Be1a66Ce62558bE395"
+    )

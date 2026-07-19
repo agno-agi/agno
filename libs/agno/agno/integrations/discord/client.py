@@ -2,8 +2,6 @@ from os import getenv
 from textwrap import dedent
 from typing import Optional, Union
 
-import requests
-
 from agno.agent.agent import Agent, RunOutput
 from agno.media import Audio, File, Image, Video
 from agno.team.team import Team, TeamRunOutput
@@ -87,13 +85,9 @@ class DiscordClient:
                 if media_type.startswith("image/"):
                     message_image = media_url
                 elif media_type.startswith("video/"):
-                    req = requests.get(media_url)
-                    video = req.content
-                    message_video = video
+                    message_video = await media.read()
                 elif media_type.startswith("application/"):
-                    req = requests.get(media_url)
-                    document = req.content
-                    message_file = document
+                    message_file = await media.read()
                 elif media_type.startswith("audio/"):
                     message_audio = media_url
 
@@ -117,7 +111,7 @@ class DiscordClient:
                     """)
                 if self.agent:
                     self.agent.additional_context = additional_context
-                    agent_response: RunOutput = await self.agent.arun(
+                    agent_response: RunOutput = await self.agent.arun(  # type: ignore[misc]
                         input=message_text,
                         user_id=message_user_id,
                         session_id=str(thread.id),
@@ -134,7 +128,7 @@ class DiscordClient:
                     await self._handle_response_in_thread(agent_response, thread)
                 elif self.team:
                     self.team.additional_context = additional_context
-                    team_response: TeamRunOutput = await self.team.arun(
+                    team_response: TeamRunOutput = await self.team.arun(  # type: ignore[misc]
                         input=message_text,
                         user_id=message_user_id,
                         session_id=str(thread.id),
@@ -163,7 +157,7 @@ class DiscordClient:
                 tool.confirmed = view.value if view.value is not None else False
 
             if self.agent:
-                run_response = await self.agent.acontinue_run(
+                run_response = await self.agent.acontinue_run(  # type: ignore[misc]
                     run_response=run_response,
                 )
 

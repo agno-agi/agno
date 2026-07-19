@@ -3,6 +3,10 @@
 from agno.agent import Agent
 from agno.models.groq import Groq
 
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
+
 # We will use a deliberately wrong model ID, to trigger retries.
 wrong_model_id = "groq-wrong-id"
 
@@ -16,3 +20,10 @@ agent = Agent(
 )
 
 agent.print_response("What is the capital of France?")
+
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+
+if __name__ == "__main__":
+    pass

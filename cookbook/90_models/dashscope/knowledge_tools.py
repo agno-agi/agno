@@ -1,7 +1,7 @@
 """
 Here is a tool with reasoning capabilities to allow agents to search and analyze information from a knowledge base.
 
-1. Run: `uv pip install openai agno lancedb tantivy sqlalchemy` to install the dependencies
+1. Run: `uv pip install openai agno lancedb sqlalchemy` to install the dependencies
 2. Export your OPENAI_API_KEY
 3. Run: `cookbook/92_models/dashscope/knowledge_tools.py` to run the agent
 """
@@ -12,6 +12,10 @@ from agno.knowledge.knowledge import Knowledge
 from agno.models.dashscope import DashScope
 from agno.tools.knowledge import KnowledgeTools
 from agno.vectordb.lancedb import LanceDb, SearchType
+
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
 
 # Create a knowledge containing information from a URL
 agno_docs = Knowledge(
@@ -39,6 +43,10 @@ agent = Agent(
     tools=[knowledge_tools],
     markdown=True,
 )
+
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     agent.print_response(

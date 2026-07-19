@@ -1,4 +1,9 @@
-"""This example shows how to run a Performance evaluation on an async function."""
+"""
+Async Function Performance Evaluation
+=====================================
+
+Demonstrates performance evaluation for an asynchronous function.
+"""
 
 import asyncio
 
@@ -7,7 +12,9 @@ from agno.eval.performance import PerformanceEval
 from agno.models.openai import OpenAIChat
 
 
-# Simple async function to run an Agent.
+# ---------------------------------------------------------------------------
+# Create Benchmark Function
+# ---------------------------------------------------------------------------
 async def arun_agent():
     agent = Agent(
         model=OpenAIChat(id="gpt-5.2"),
@@ -17,7 +24,13 @@ async def arun_agent():
     return response
 
 
+# ---------------------------------------------------------------------------
+# Create Evaluation
+# ---------------------------------------------------------------------------
 performance_eval = PerformanceEval(func=arun_agent, num_iterations=10)
 
-# Because we are evaluating an async function, we use the arun method.
-asyncio.run(performance_eval.arun(print_summary=True, print_results=True))
+# ---------------------------------------------------------------------------
+# Run Evaluation
+# ---------------------------------------------------------------------------
+if __name__ == "__main__":
+    asyncio.run(performance_eval.arun(print_summary=True, print_results=True))

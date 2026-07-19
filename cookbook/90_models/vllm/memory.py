@@ -17,7 +17,11 @@ summary.
 from agno.agent import Agent
 from agno.db.postgres import PostgresDb
 from agno.models.vllm import VLLM
-from agno.utils.pprint import pprint
+from rich.pretty import pprint
+
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
 
 # Change this if your Postgres container is running elsewhere
 DB_URL = "postgresql+psycopg://ai:ai@localhost:5532/ai"
@@ -60,3 +64,10 @@ if agent.db:
 agent.print_response(
     "What have we been talking about, do you know my name?", stream=True
 )
+
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+
+if __name__ == "__main__":
+    pass

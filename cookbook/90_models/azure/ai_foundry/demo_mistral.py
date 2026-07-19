@@ -1,5 +1,16 @@
+"""
+Azure Demo Mistral
+==================
+
+Cookbook example for `azure/ai_foundry/demo_mistral.py`.
+"""
+
 from agno.agent import Agent, RunOutput  # noqa
 from agno.models.azure import AzureAIFoundry
+
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
 
 agent = Agent(model=AzureAIFoundry(id="Mistral-Large-2411"), markdown=True)
 
@@ -9,3 +20,10 @@ agent = Agent(model=AzureAIFoundry(id="Mistral-Large-2411"), markdown=True)
 
 # Print the response on the terminal
 agent.print_response("Share a 2 sentence horror story")
+
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+
+if __name__ == "__main__":
+    pass

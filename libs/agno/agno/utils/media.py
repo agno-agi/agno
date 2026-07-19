@@ -1,13 +1,68 @@
 import base64
+import mimetypes
 import time
 from enum import Enum
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Optional, Union
 
 import httpx
 
 from agno.media import Audio, File, Image, Video
 from agno.utils.log import log_info, log_warning
+
+# Ensure .webp is recognized on all platforms
+mimetypes.add_type("image/webp", ".webp")
+
+
+def get_image_type(data: bytes) -> Optional[str]:
+    """Returns the image format from magic bytes in the file header."""
+    if len(data) < 12:
+        return None
+    # PNG: 8-byte signature
+    if data[0:8] == b"\x89\x50\x4e\x47\x0d\x0a\x1a\x0a":
+        return "png"
+    # GIF: "GIF8" followed by "9a" or "7a" (we check for 'a')
+    if data[0:4] == b"GIF8" and data[5:6] == b"a":
+        return "gif"
+    # JPEG: SOI marker (Start of Image)
+    if data[0:3] == b"\xff\xd8\xff":
+        return "jpeg"
+    # HEIC/HEIF: ftyp box at offset 4
+    if data[4:8] == b"ftyp":
+        return "heic"
+    # WebP: RIFF container with WEBP identifier
+    if data[0:4] == b"RIFF" and data[8:12] == b"WEBP":
+        return "webp"
+    return None
+
+
+def resolve_image_mime_type(
+    mime_type: Optional[str] = None,
+    image_format: Optional[str] = None,
+    file_path: Optional[Union[Path, str]] = None,
+    image_bytes: Optional[bytes] = None,
+) -> str:
+    """Resolve MIME type for an image using a priority cascade.
+
+    Priority: explicit mime_type > format field > file extension > magic bytes > jpeg fallback.
+    Used by OpenAI Chat, OpenAI Responses, and other model providers that need
+    MIME types for base64 data URIs.
+    """
+    if mime_type:
+        return mime_type
+    # Convert short format (e.g. "png") to full MIME
+    if image_format:
+        return f"image/{image_format.lower()}"
+    if file_path:
+        guessed = mimetypes.guess_type(str(file_path))[0]
+        if guessed:
+            return guessed
+    # Magic byte detection
+    if image_bytes:
+        detected = get_image_type(image_bytes)
+        if detected:
+            return f"image/{detected}"
+    return "image/jpeg"
 
 
 class SampleDataFileExtension(str, Enum):
@@ -49,10 +104,10 @@ def download_image(url: str, output_path: str) -> bool:
         return True
 
     except httpx.HTTPError as e:
-        log_warning(f"Error downloading the image: {e}")
+        log_warning(f"Error downloading the image: {str(e)}")
         return False
     except IOError as e:
-        log_warning(f"Error saving the image to '{output_path}': {e}")
+        log_warning(f"Error saving the image to '{output_path}': {str(e)}")
         return False
 
 
@@ -224,7 +279,7 @@ def reconstruct_image_from_dict(img_data):
                 return Image(**img_data)
         return img_data
     except Exception as e:
-        log_warning(f"Failed to reconstruct image from dict: {e}")
+        log_warning(f"Failed to reconstruct image from dict: {str(e)}")
         return None
 
 
@@ -249,7 +304,7 @@ def reconstruct_video_from_dict(vid_data):
                 return Video(**vid_data)
         return vid_data
     except Exception as e:
-        log_warning(f"Failed to reconstruct video from dict: {e}")
+        log_warning(f"Failed to reconstruct video from dict: {str(e)}")
         return None
 
 
@@ -277,7 +332,7 @@ def reconstruct_audio_from_dict(aud_data):
                 return Audio(**aud_data)
         return aud_data
     except Exception as e:
-        log_warning(f"Failed to reconstruct audio from dict: {e}")
+        log_warning(f"Failed to reconstruct audio from dict: {str(e)}")
         return None
 
 
@@ -314,7 +369,7 @@ def reconstruct_file_from_dict(file_data):
                 return File(**file_data)
         return file_data
     except Exception as e:
-        log_warning(f"Failed to reconstruct file from dict: {e}")
+        log_warning(f"Failed to reconstruct file from dict: {str(e)}")
         return None
 
 

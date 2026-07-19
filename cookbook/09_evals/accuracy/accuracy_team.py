@@ -1,3 +1,10 @@
+"""
+Team Accuracy Evaluation
+========================
+
+Demonstrates evaluating language routing accuracy for a team.
+"""
+
 from typing import Optional
 
 from agno.agent import Agent
@@ -5,7 +12,9 @@ from agno.eval.accuracy import AccuracyEval, AccuracyResult
 from agno.models.openai import OpenAIChat
 from agno.team.team import Team
 
-# Setup a team with two members
+# ---------------------------------------------------------------------------
+# Create Team Members
+# ---------------------------------------------------------------------------
 english_agent = Agent(
     name="English Agent",
     role="You only answer in English",
@@ -17,11 +26,13 @@ spanish_agent = Agent(
     model=OpenAIChat(id="gpt-4o"),
 )
 
+# ---------------------------------------------------------------------------
+# Create Team
+# ---------------------------------------------------------------------------
 multi_language_team = Team(
     name="Multi Language Team",
     model=OpenAIChat("gpt-4o"),
     members=[english_agent, spanish_agent],
-    determine_input_for_members=False,
     respond_directly=True,
     markdown=True,
     instructions=[
@@ -32,7 +43,9 @@ multi_language_team = Team(
     ],
 )
 
-# Evaluate the accuracy of the Team's responses
+# ---------------------------------------------------------------------------
+# Create Evaluation
+# ---------------------------------------------------------------------------
 evaluation = AccuracyEval(
     name="Multi Language Team",
     model=OpenAIChat(id="o4-mini"),
@@ -42,5 +55,9 @@ evaluation = AccuracyEval(
     num_iterations=1,
 )
 
-result: Optional[AccuracyResult] = evaluation.run(print_results=True)
-assert result is not None and result.avg_score >= 8
+# ---------------------------------------------------------------------------
+# Run Evaluation
+# ---------------------------------------------------------------------------
+if __name__ == "__main__":
+    result: Optional[AccuracyResult] = evaluation.run(print_results=True)
+    assert result is not None and result.avg_score >= 8

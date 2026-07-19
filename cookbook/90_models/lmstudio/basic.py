@@ -1,5 +1,16 @@
+"""
+Lmstudio Basic
+==============
+
+Cookbook example for `lmstudio/basic.py`.
+"""
+
 from agno.agent import Agent, RunOutput  # noqa
 from agno.models.lmstudio import LMStudio
+
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
 
 agent = Agent(model=LMStudio(id="qwen2.5-7b-instruct-1m"), markdown=True)
 
@@ -8,4 +19,13 @@ agent = Agent(model=LMStudio(id="qwen2.5-7b-instruct-1m"), markdown=True)
 # print(run.content)
 
 # Print the response in the terminal
-agent.print_response("Share a 2 sentence horror story")
+
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+if __name__ == "__main__":
+    # --- Sync ---
+    agent.print_response("Share a 2 sentence horror story")
+
+    # --- Sync + Streaming ---
+    agent.print_response("Share a 2 sentence horror story", stream=True)

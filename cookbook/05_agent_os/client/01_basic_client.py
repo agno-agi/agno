@@ -27,6 +27,10 @@ import asyncio
 
 from agno.client import AgentOSClient
 
+# ---------------------------------------------------------------------------
+# Create Example
+# ---------------------------------------------------------------------------
+
 
 async def main():
     # Connect to AgentOS using async context manager
@@ -47,6 +51,10 @@ async def main():
         print(f"  Model: {agent.model}")
         print(f"  Tools: {len(agent.tools or [])}")
 
+
+# ---------------------------------------------------------------------------
+# Run Example
+# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     asyncio.run(main())

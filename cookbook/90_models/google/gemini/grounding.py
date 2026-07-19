@@ -10,9 +10,13 @@ Run `uv pip install google-generativeai` to install dependencies.
 from agno.agent import Agent
 from agno.models.google import Gemini
 
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
+
 agent = Agent(
     model=Gemini(
-        id="gemini-3-flash-preview",
+        id="gemini-3.5-flash",
         grounding=True,
         grounding_dynamic_threshold=0.7,  # Optional: set threshold for grounding
     ),
@@ -25,3 +29,10 @@ agent.print_response(
     stream=True,
     markdown=True,
 )
+
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+
+if __name__ == "__main__":
+    pass

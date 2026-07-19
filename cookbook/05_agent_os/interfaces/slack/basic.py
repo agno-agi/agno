@@ -1,8 +1,27 @@
+"""
+Basic Slack Agent
+=================
+
+Minimal Slack bot that responds only when mentioned in a channel.
+Uses SQLite for session persistence so the agent remembers conversation
+history across restarts.
+
+Key concepts:
+  - ``reply_to_mentions_only=True`` ignores DMs and only responds to @mentions.
+  - ``add_history_to_context=True`` feeds the last N runs back into the prompt.
+
+Slack scopes: app_mentions:read, assistant:write, chat:write, im:history
+"""
+
 from agno.agent import Agent
 from agno.db.sqlite.sqlite import SqliteDb
 from agno.models.openai import OpenAIChat
 from agno.os.app import AgentOS
 from agno.os.interfaces.slack import Slack
+
+# ---------------------------------------------------------------------------
+# Create Example
+# ---------------------------------------------------------------------------
 
 agent_db = SqliteDb(session_table="agent_sessions", db_file="tmp/persistent_memory.db")
 
@@ -27,6 +46,10 @@ agent_os = AgentOS(
 )
 app = agent_os.get_app()
 
+
+# ---------------------------------------------------------------------------
+# Run Example
+# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     """Run your AgentOS.

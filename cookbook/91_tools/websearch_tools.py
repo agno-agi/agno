@@ -1,5 +1,17 @@
+"""
+Websearch Tools
+=============================
+
+Demonstrates websearch tools.
+"""
+
 from agno.agent import Agent
 from agno.tools.websearch import WebSearchTools
+
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
+
 
 # Example 1: Basic web search with auto backend selection (default)
 # Both web_search and search_news are enabled by default
@@ -45,6 +57,10 @@ modified_agent = Agent(
         )
     ]
 )
+
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     # Run Example 1: Basic web search with auto backend

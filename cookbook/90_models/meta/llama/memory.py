@@ -11,6 +11,10 @@ from agno.db.postgres import PostgresDb
 from agno.models.meta import Llama
 from rich.pretty import pprint
 
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
+
 # Setup the database
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
 db = PostgresDb(db_url=db_url)
@@ -47,8 +51,14 @@ if agent.db:
         agent.get_session(session_id="test_session").summary  # type: ignore
     )
 
-
 # Ask about the conversation
 agent.print_response(
     "What have we been talking about, do you know my name?", stream=True
 )
+
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+
+if __name__ == "__main__":
+    pass

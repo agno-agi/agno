@@ -10,6 +10,10 @@ from agno.agent.agent import Agent
 from agno.db.postgres import PostgresDb
 from agno.models.cohere import Cohere
 
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
+
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
 agent = Agent(
     model=Cohere(id="command-a-03-2025"),
@@ -32,3 +36,10 @@ agent.print_response("I'm going to a concert tomorrow?", stream=True)
 agent.print_response(
     "What have we been talking about, do you know my name?", stream=True
 )
+
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+
+if __name__ == "__main__":
+    pass
