@@ -456,3 +456,17 @@ async def test_engine_validates_bounds():
         await arun_batch(StubAgent(), "abc")
     with pytest.raises(TypeError, match="bare string"):
         await arun_batch(StubAgent(), ["abc"], expected="x")
+
+
+async def test_error_type_is_structured():
+    # The raise path knows the exception class; a typeless error event leaves the
+    # field None (the storm check then falls back to its string heuristic).
+    raising = StubAgent(error=RuntimeError("boom"))
+    results = await arun_batch(raising, ["a"], k=1)
+    assert results[0][0].error_type == "RuntimeError"
+
+    event_only = StubAgent(fail_inputs=("a",))
+    results = await arun_batch(event_only, ["a"], k=1)
+    attempt = results[0][0]
+    assert attempt.stop_reason == "error"
+    assert attempt.error_type is None

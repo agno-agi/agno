@@ -11,17 +11,19 @@ from statistics import mean
 from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 from uuid import uuid4
 
+from agno.agent import Agent
 from agno.db.in_memory import InMemoryDb
 from agno.environments._engine import AttemptResult, StopReason, arun_batch
 from agno.environments._render import LiveGrid, attempt_glyph, build_grid
 from agno.environments.env import (
     Env,
     EnvTask,
+    _env_fingerprint_of,
     _env_fingerprint_or_none,
     _fingerprints_match,
-    env_fingerprint_of,
-    policy_fingerprint_of,
-    resolved_task_id,
+    _policy_fingerprint_of,
+    _resolved_task_id,
+    _validated_agent,
 )
 from agno.models.base import Model
 from agno.run.agent import RunOutput
@@ -171,13 +173,19 @@ class EnvRunResult:
                 "these results are not from the same environment (None never matches)"
             )
         baseline_by_id = {str(task_result.task.id): task_result for task_result in baseline.task_results}
+        current_ids = {str(task_result.task.id) for task_result in self.task_results}
         rows: List[Dict[str, Any]] = []
         improved: List[str] = []
         regressed: List[str] = []
+        # Same fingerprint, different task subset (learning_zone(), tasks=) is legal,
+        # so unmatched tasks are possible and must be visible, not silently dropped.
+        unmatched_current: List[str] = []
+        unmatched_baseline = [task_id for task_id in baseline_by_id if task_id not in current_ids]
         for task_result in self.task_results:
             task_id = str(task_result.task.id)
             baseline_task = baseline_by_id.get(task_id)
             if baseline_task is None:
+                unmatched_current.append(task_id)
                 continue
             current_rate = task_result.pass_rate
             baseline_rate = baseline_task.pass_rate
@@ -203,6 +211,8 @@ class EnvRunResult:
             rows=tuple(rows),
             improved=tuple(improved),
             regressed=tuple(regressed),
+            unmatched_current=tuple(unmatched_current),
+            unmatched_baseline=tuple(unmatched_baseline),
         )
 
     def save(self, path: Union[str, Path]) -> None:
@@ -233,6 +243,7 @@ class EnvRunResult:
                             "duration_seconds": attempt.duration_seconds,
                             "error": attempt.error,
                             "tool_call_limit_hit": attempt.tool_call_limit_hit,
+                            "error_type": attempt.error_type,
                         }
                         for attempt in task_result.attempts
                     ],
@@ -240,8 +251,14 @@ class EnvRunResult:
                 for task_result in self.task_results
             ],
         }
+        # Serialize BEFORE opening: open("w") truncates, so a dumps failure after it
+        # would destroy an existing baseline -- the exact file diff() needs.
+        try:
+            text = json.dumps(payload, ensure_ascii=False, indent=2)
+        except (TypeError, ValueError) as exc:
+            raise TypeError(f"EnvRunResult.save: {_name_unserializable(payload)}: {exc}") from exc
         with open(Path(path), "w", encoding="utf-8", newline="") as handle:
-            handle.write(json.dumps(payload, ensure_ascii=False, indent=2) + "\n")
+            handle.write(text + "\n")
 
     @classmethod
     def load(cls, path: Union[str, Path]) -> "EnvRunResult":
@@ -265,6 +282,7 @@ class EnvRunResult:
                     duration_seconds=attempt["duration_seconds"],
                     error=attempt["error"],
                     tool_call_limit_hit=attempt["tool_call_limit_hit"],
+                    error_type=attempt.get("error_type"),
                 )
                 for attempt in row["attempts"]
             )
@@ -322,6 +340,10 @@ class EnvDiff:
     rows: Tuple[Dict[str, Any], ...]
     improved: Tuple[str, ...]
     regressed: Tuple[str, ...]
+    # Tasks on only one side (a subset run diffed against a fuller baseline, or the
+    # reverse): not comparable, but never silently dropped.
+    unmatched_current: Tuple[str, ...] = ()
+    unmatched_baseline: Tuple[str, ...] = ()
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -330,6 +352,8 @@ class EnvDiff:
             "rows": list(self.rows),
             "improved": list(self.improved),
             "regressed": list(self.regressed),
+            "unmatched_current": list(self.unmatched_current),
+            "unmatched_baseline": list(self.unmatched_baseline),
         }
 
     def __str__(self) -> str:
@@ -342,7 +366,26 @@ class EnvDiff:
             if row["status"]:
                 line += f"   {row['status']}"
             lines.append(line)
+        if self.unmatched_current or self.unmatched_baseline:
+            parts = []
+            if self.unmatched_current:
+                parts.append(f"current-only: {', '.join(self.unmatched_current)}")
+            if self.unmatched_baseline:
+                parts.append(f"baseline-only: {', '.join(self.unmatched_baseline)}")
+            lines.append(f"  not compared -- {'; '.join(parts)}")
         return "\n".join(lines)
+
+
+def _name_unserializable(payload: Dict[str, Any]) -> str:
+    """Name the task and field that broke serialization: expected and metadata are the
+    only raw user-controlled values in the save payload."""
+    for row in payload.get("task_results", []):
+        for field_name in ("expected", "metadata"):
+            try:
+                json.dumps(row["task"][field_name])
+            except (TypeError, ValueError):
+                return f"task {row['task']['id']!r} field {field_name!r} is not JSON-serializable"
+    return "a component is not JSON-serializable"
 
 
 def _score_to_dict(score: Optional[Score]) -> Optional[Dict[str, Any]]:
@@ -364,6 +407,22 @@ def _attempt_cost(attempt: AttemptResult) -> Optional[float]:
     if run is None or run.metrics is None:
         return None
     return getattr(run.metrics, "cost", None)
+
+
+def _default_model_for(agent: Any) -> Optional[Model]:
+    """The default model the run path installs on a model-less Agent, resolved on a
+    shallow copy so the caller's agent is never mutated. None when resolution is
+    unavailable (openai not installed); the fingerprint then degrades loudly."""
+    if not isinstance(agent, Agent):
+        return None
+    try:
+        from agno.agent._init import set_default_model
+
+        probe = copy.copy(agent)
+        set_default_model(probe)
+        return probe.model
+    except Exception:
+        return None
 
 
 async def arun_rollouts(
@@ -389,7 +448,7 @@ async def arun_rollouts(
             "deliberately not supported -- construct the model and pass it"
         )
 
-    resolved_tasks = tuple(replace(task, id=resolved_task_id(task, index)) for index, task in enumerate(env.tasks))
+    resolved_tasks = tuple(replace(task, id=_resolved_task_id(task, index)) for index, task in enumerate(env.tasks))
     if tasks is None:
         selected = resolved_tasks
     else:
@@ -410,28 +469,40 @@ async def arun_rollouts(
     # Fingerprints are computed from the first instance constructed at run start and
     # stamped on the result; a scorer or component that cannot fingerprint degrades
     # to None with a warning rather than failing the run.
-    source_agent = env.agent() if callable(env.agent) else env.agent
+    if callable(env.agent):
+        try:
+            constructed = env.agent()
+        except Exception as exc:
+            raise RuntimeError(
+                f"env.agent factory raised during run-start construction, before any attempt ran: {exc}"
+            ) from exc
+        source_agent = _validated_agent(constructed)
+    else:
+        source_agent = env.agent
     env_fingerprint: Optional[str] = None
     try:
-        env_fingerprint = env_fingerprint_of(env, source_agent)
+        env_fingerprint = _env_fingerprint_of(env, source_agent)
     except EnvFingerprintError as exc:
         log_warning(f"env_fingerprint degraded to None: {exc}")
 
     # The stamped policy fingerprint is computed from the EFFECTIVE model actually
     # used -- stamping the env's declared model under a model= override would
-    # mislabel every checkpoint-swap comparison.
+    # mislabel every checkpoint-swap comparison. A model-less Agent runs on the
+    # default the run path installs, so that default is what gets fingerprinted.
     effective_model = model if model is not None else source_agent.model
+    if effective_model is None:
+        effective_model = _default_model_for(source_agent)
     policy_fingerprint: Optional[str] = None
     if effective_model is None:
         log_warning("policy_fingerprint degraded to None: the agent has no model")
     else:
         try:
-            policy_fingerprint = policy_fingerprint_of(effective_model)
+            policy_fingerprint = _policy_fingerprint_of(effective_model)
         except EnvFingerprintError as exc:
             log_warning(f"policy_fingerprint degraded to None: {exc}")
 
     def build_attempt_agent() -> Any:
-        agent = env.agent() if callable(env.agent) else env.agent.deep_copy()
+        agent = _validated_agent(env.agent()) if callable(env.agent) else env.agent.deep_copy()
         # The model override is applied BEFORE the cache handling, and the cache rule
         # is unconditional on the effective model: copy.copy per attempt (shallow, so
         # the HTTP client underneath stays shared), cache_response=False on the copy,
@@ -442,6 +513,15 @@ async def arun_rollouts(
             model_copy = copy.copy(attempt_model)
             model_copy.cache_response = False
             agent.model = model_copy
+        # The cache rule covers every model on the agent, not just the primary:
+        # deep_copy shares reasoning/parser/output models by reference, and a cached
+        # secondary call is a replay in exactly the same way.
+        for secondary_name in ("reasoning_model", "parser_model", "output_model"):
+            secondary = getattr(agent, secondary_name, None)
+            if secondary is not None:
+                secondary_copy = copy.copy(secondary)
+                secondary_copy.cache_response = False
+                setattr(agent, secondary_name, secondary_copy)
         # Hermetic overrides. add_history_to_context is deliberately NOT modified: a
         # fresh session means empty history, which is the honest version of pinned.
         # agent.knowledge is deliberately NOT nulled: knowledge reads must survive.
@@ -455,6 +535,15 @@ async def arun_rollouts(
         # own db; left attached, a "hermetic" run would write learning updates to the
         # caller's real store.
         agent.learning = None
+        # The same leak through the other db-bound managers deep_copy shares by
+        # reference: CultureManager and MemoryManager bind agent.db at initialize
+        # time, so a shared manager keeps reading and writing the caller's real store
+        # from inside a "hermetic" run. Nulled, they are rebuilt against the
+        # attempt's InMemoryDb when a run needs them.
+        agent.update_cultural_knowledge = False
+        agent.enable_agentic_culture = False
+        agent.culture_manager = None
+        agent.memory_manager = None
         return agent
 
     finished: List[AttemptResult] = []
@@ -470,7 +559,10 @@ async def arun_rollouts(
         first = finished[:concurrency]
         if not all(candidate.stop_reason == StopReason.error for candidate in first):
             return
-        kinds = {(candidate.error or "").split(":", 1)[0].strip() for candidate in first}
+        # The structured error_type when the engine knows the exception class; the
+        # first-colon prefix only as a fallback for typeless error events, whose
+        # content need not be prefix-stable.
+        kinds = {candidate.error_type or (candidate.error or "").split(":", 1)[0].strip() for candidate in first}
         if len(kinds) == 1:
             storm["stop"] = True
 
@@ -479,10 +571,19 @@ async def arun_rollouts(
     console = Console()
     live_grid = LiveGrid(console, env.name, k, [str(task.id) for task in selected]) if console.is_terminal else None
 
+    grid_disabled = {"disabled": False}
+
     def on_attempt_end(input_index: int, attempt_index: int, attempt: AttemptResult) -> None:
+        # The storm check must survive a rendering bug: an exception escaping this
+        # callback would make the engine disable it entirely, and with it the
+        # spec-mandated error-storm stop -- so the grid gets its own failure domain.
         check_error_storm(attempt)
-        if live_grid is not None:
-            live_grid.on_attempt(input_index, attempt_index, attempt)
+        if live_grid is not None and not grid_disabled["disabled"]:
+            try:
+                live_grid.on_attempt(input_index, attempt_index, attempt)
+            except Exception as exc:
+                grid_disabled["disabled"] = True
+                log_warning(f"live grid rendering failed and is disabled for the rest of the run: {exc}")
 
     inputs = [task.input for task in selected]
     expected = [task.expected for task in selected]

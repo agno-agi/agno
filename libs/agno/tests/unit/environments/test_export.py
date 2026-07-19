@@ -272,3 +272,51 @@ def test_root_reexports():
 
     assert root_to_sft_jsonl is exporters_to_sft_jsonl
     assert RootExportReport is ExportReport
+
+
+def test_export_skip_order_limit_hit_before_tool_runs(tmp_path):
+    # A real limit-hit run is tool-bearing (successful executions before the refusal),
+    # so checks (2) and (3) overlap: first-match-wins must attribute it to limit_hit.
+    tool_bearing_limit_hit = _attempt(
+        _conversational_run("under duress", tools=[ToolExecution(tool_name="search")]),
+        limit_hit=True,
+    )
+    report = to_sft_jsonl(_result([tool_bearing_limit_hit]), tmp_path / "train.jsonl")
+
+    assert report.n_written == 0
+    assert report.n_skipped_limit_hit == 1
+    assert report.n_skipped_tool_runs == 0
+
+
+def test_export_skip_order_failed_before_limit_hit(tmp_path):
+    # A failed, limit-hit, tool-bearing attempt increments exactly one counter: (1).
+    overlapping = _attempt(
+        _conversational_run("wrong", tools=[ToolExecution(tool_name="search")]),
+        passed=False,
+        limit_hit=True,
+    )
+    report = to_sft_jsonl(_result([overlapping]), tmp_path / "train.jsonl")
+
+    assert report.n_written == 0
+    assert report.n_skipped_failed == 1
+    assert report.n_skipped_limit_hit == 0
+    assert report.n_skipped_tool_runs == 0
+
+
+def test_export_only_passed_false_writes_failed_attempts(tmp_path):
+    # The explicit override: failed scored attempts are written, unscored attempts
+    # remain non-candidates, and the sidecar records the option.
+    result = _result(
+        [
+            _attempt(_conversational_run("4")),
+            _attempt(_conversational_run("five"), passed=False),
+            _attempt(_conversational_run("ignored"), unscored=True),
+        ]
+    )
+    path = tmp_path / "train.jsonl"
+    report = to_sft_jsonl(result, path, only_passed=False)
+
+    assert report.n_written == 2
+    assert report.n_skipped_failed == 0
+    sidecar = json.loads((tmp_path / "train.jsonl.meta.json").read_text(encoding="utf-8"))
+    assert sidecar["options"]["only_passed"] is False
