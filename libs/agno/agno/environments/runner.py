@@ -433,9 +433,9 @@ _HERMETIC_FIELD_ACTIONS: Dict[str, str] = {
     "followup_model": "cache-off-copy",
     "knowledge": "shared",  # reads survive: retrieval goes through knowledge.vector_db
     "skills": "shared",  # loader-backed skill definitions: read-only, no db binding
-    "learning": "read-only-rebind",  # learned knowledge is global: reads survive, writes severed
-    "memory_manager": "nulled",  # a fresh user_id reads empty memories by design
-    "session_summary_manager": "nulled",
+    "learning": "writes-severed-copy",  # global reads keep the caller's db; every write engine cut
+    "memory_manager": "fresh-db-rebind",  # per-user state: reads come from the attempt's empty db
+    "session_summary_manager": "isolated-copy",  # resolution binds the attempt model on the copy
     "culture_manager": "read-only-rebind",  # culture is global knowledge: reads survive
     "compression_manager": "isolated-copy",
     "fallback_config": "cache-off-copies",
@@ -452,14 +452,19 @@ def _cache_off_copy(model_like: Any) -> Any:
     return model_copy
 
 
-_LEARNING_STORE_FIELDS = (
-    "user_profile",
-    "user_memory",
-    "session_context",
-    "entity_memory",
-    "learned_knowledge",
-    "decision_log",
-)
+def _isolated_manager_copy(manager: Any, db: Any = None, reset_stats: bool = False) -> Any:
+    """An attempt-local shallow copy of a manager: resolution binds db and model
+    onto the copy, never onto the caller's instance. `db` rebinds the copy's
+    store; a model already set on the manager gets the cache-off treatment."""
+    manager_copy = copy.copy(manager)
+    if db is not None:
+        manager_copy.db = db
+    if reset_stats and hasattr(manager_copy, "stats"):
+        manager_copy.stats = {}
+    manager_model = getattr(manager_copy, "model", None)
+    if manager_model is not None and hasattr(manager_model, "cache_response"):
+        manager_copy.model = _cache_off_copy(manager_model)
+    return manager_copy
 
 
 def _writes_off_learning_config(config: Any) -> Any:
@@ -483,21 +488,40 @@ def _writes_off_learning_config(config: Any) -> Any:
 
 
 def _read_only_learning_machine(machine: Any, source_db: Any) -> Any:
-    """A per-attempt read-only copy of a LearningMachine.
+    """A per-attempt writes-severed copy of a LearningMachine.
 
     Learned knowledge is global state exactly like culture, so its READS -- the
     <learning_system> block, the search tools, store reads through the caller's
-    knowledge and db -- survive the attempt. Every write engine is severed: the
+    knowledge and db -- survive the attempt (`source_db` carries the caller's db
+    onto a machine that had none). Every write engine is severed: the
     extraction/curation hooks are no-ops on the copy (they fire whenever the
     machine exists, mode-gated per store), the agentic save/update/create tools
     go through _writes_off_learning_config, and custom stores -- opaque write
-    surfaces -- are dropped loudly. Per-user reads still come back empty: the
-    attempt runs a fresh rollout user."""
-    from agno.learn.config import DecisionLogConfig, LearnedKnowledgeConfig
+    surfaces -- are dropped loudly. Bare-True store configs (and the knowledge
+    auto-enable, which defaults its save tools ON) are materialized first so the
+    flag pass can reach them. Per-user reads still come back empty: the attempt
+    runs a fresh rollout user."""
+    from agno.learn.config import (
+        DecisionLogConfig,
+        EntityMemoryConfig,
+        LearnedKnowledgeConfig,
+        SessionContextConfig,
+        UserMemoryConfig,
+        UserProfileConfig,
+    )
+
+    store_config_types = {
+        "user_profile": UserProfileConfig,
+        "user_memory": UserMemoryConfig,
+        "session_context": SessionContextConfig,
+        "entity_memory": EntityMemoryConfig,
+        "learned_knowledge": LearnedKnowledgeConfig,
+        "decision_log": DecisionLogConfig,
+    }
 
     machine_copy = copy.copy(machine)
     # Both are lazy caches over the config fields; reset so the copy's stores are
-    # built from the read-only configs below, never shared with the caller's.
+    # built from the writes-severed configs below, never shared with the caller's.
     machine_copy._stores = None
     machine_copy._curator = None
     if getattr(machine_copy, "db", None) is None and source_db is not None:
@@ -506,20 +530,15 @@ def _read_only_learning_machine(machine: Any, source_db: Any) -> Any:
     if machine_model is not None and hasattr(machine_model, "cache_response"):
         machine_copy.model = _cache_off_copy(machine_model)
 
-    # These two default their save tools ON, so a bare True (or the knowledge
-    # auto-enable) must be materialized into a config the flag pass can reach.
-    if machine_copy.learned_knowledge is True or (
-        not machine_copy.learned_knowledge and getattr(machine_copy, "knowledge", None) is not None
-    ):
+    if not machine_copy.learned_knowledge and getattr(machine_copy, "knowledge", None) is not None:
         machine_copy.learned_knowledge = LearnedKnowledgeConfig()
-    if machine_copy.decision_log is True:
-        machine_copy.decision_log = DecisionLogConfig()
 
-    for field_name in _LEARNING_STORE_FIELDS:
+    for field_name, config_type in store_config_types.items():
         value = getattr(machine_copy, field_name, None)
-        if value is None or isinstance(value, bool):
-            continue
-        setattr(machine_copy, field_name, _writes_off_learning_config(value))
+        if value is True:
+            setattr(machine_copy, field_name, _writes_off_learning_config(config_type()))
+        elif value and not isinstance(value, bool):
+            setattr(machine_copy, field_name, _writes_off_learning_config(value))
 
     if getattr(machine_copy, "custom_stores", None):
         log_warning("hermetic overrides cannot make custom learning stores read-only; dropping them for isolation")
@@ -566,50 +585,56 @@ def _mcp_tool_names(agent: Any, _seen: Optional[Set[int]] = None) -> List[str]:
 def _apply_hermetic_overrides(
     agent: Any, model_override: Optional[Model] = None, _seen: Optional[Set[int]] = None
 ) -> None:
-    """The hermetic override block, applied per attempt to a factory product or a
-    deep copy -- and recursively to a user-supplied reasoning agent, whose own
-    deep_copy re-shares its db and model.
+    """Hermetic isolation by INPUT swap, applied per attempt to a factory product
+    or a deep copy -- and recursively to a user-supplied reasoning agent, whose
+    own deep_copy re-shares its db and model.
 
-    What survives, deliberately: knowledge (reads go through knowledge.vector_db,
-    not agent.db), skills (read-only definitions), culture READS (culture is global
-    knowledge, not per-user state -- the manager is rebound to a copy holding the
-    caller's culture db while both write flags are off), learning READS for a
-    configured LearningMachine (learned knowledge is global exactly like culture:
-    the machine is rebound read-only via _read_only_learning_machine, so the
-    <learning_system> block, the search tools, and store reads survive while
-    extraction and save tools are severed), and compression (it changes what the
-    model sees, so it stays on; the manager is isolated so attempt stats and model
-    bindings never land on the caller's). add_history_to_context is NOT modified:
-    a fresh session means empty history, the honest version of pinned.
+    The override swaps the attempt's inputs, lets production's own resolver
+    (Agent.initialize_agent) run UNCHANGED against them, and only then severs
+    write paths. It never writes a resolved read-shaping flag
+    (add_memories_to_context, add_session_summary_to_context,
+    add_culture_to_context, add_learnings_to_context): production computes those
+    lazily from write signals plus manager presence, and with the inputs swapped
+    first the attempt resolves them exactly as a fresh production user would --
+    empty per-user reads render production's own empty states, not an absent
+    block.
 
-    Everything else that touches the caller's world is cut: db swapped for a fresh
-    InMemoryDb, fresh user id, memory capture / knowledge writes / learning writes /
-    cultural-knowledge writes off, and the memory and session-summary context
-    blocks forced off. Memory READS are therefore empty inside an attempt -- by
-    design, not as a side effect: memories are keyed to the user id, every attempt
-    runs a fresh rollout user, and the empty read is the honest result for a user
-    with no history. Session summaries are off entirely (an extra LLM call per
-    attempt, and attempt init would write the attempt's model onto a shared
-    manager), save_response_to_file nulled (K attempts would race-write the
-    caller's file), and every model slot -- primary, *_model fields, fallback
-    lists -- runs on a copy with the response cache off, because the cache is a
-    shared disk cache keyed by messages and a cached attempt is a replay, not a
-    sample.
+    Inputs, by kind:
+
+    - Per-user state (memories, session history, session summaries, per-user
+      learning stores) reads from a fresh empty InMemoryDb under a fresh rollout
+      user id; the memory manager copy is rebound to the fresh db.
+    - Global read-only stores keep the caller's data: knowledge and skills stay
+      shared (retrieval goes through knowledge.vector_db, not agent.db), the
+      culture manager copy keeps the caller's culture db, and a configured
+      LearningMachine copy keeps the caller's db for its global learned-knowledge
+      reads. These are the read paths deliberately NOT backed by the isolated db,
+      which is why their write engines must be severed below -- empty inputs
+      cannot neutralize a write into a shared store.
+    - Every model slot -- primary, *_model fields, fallback lists, manager
+      models -- runs on a copy with the response cache off: the cache is a shared
+      disk cache keyed by messages, and a cached attempt is a replay, not a
+      sample.
+    - Manager copies are attempt-local, so resolution binds db and model onto
+      them, never onto the caller's instances.
+
+    Severed after resolution, and only because they act on the world: memory
+    capture and the agentic memory tool, knowledge and culture write tools and
+    post-run writes, learning extraction and save tools, the session-summary
+    WRITE (an extra LLM call per attempt; the read resolves naturally and a
+    fresh session has no summary to render), and save_response_to_file (K
+    attempts would race-write the caller's file). add_history_to_context is NOT
+    modified: a fresh session means empty history, the honest version of pinned.
+    Compression stays on (it changes what the model sees) on an isolated copy so
+    attempt stats and model bindings never land on the caller's manager.
     """
     seen = _seen if _seen is not None else set()
     if id(agent) in seen:
         return
     seen.add(id(agent))
     source_db = getattr(agent, "db", None)
-    # Whether the production configuration would put culture in context: read
-    # BEFORE the capture flags are forced off, because they feed the resolution.
-    wants_culture = bool(
-        getattr(agent, "add_culture_to_context", None)
-        or getattr(agent, "update_cultural_knowledge", False)
-        or getattr(agent, "enable_agentic_culture", False)
-        or getattr(agent, "culture_manager", None) is not None
-    )
 
+    # -- inputs: every model slot runs on a cache-off copy ------------------
     attempt_model = model_override if model_override is not None else getattr(agent, "model", None)
     if attempt_model is not None:
         agent.model = _cache_off_copy(attempt_model)
@@ -636,38 +661,33 @@ def _apply_hermetic_overrides(
                 )
         agent.fallback_config = config_copy
 
-    agent.db = InMemoryDb()
+    # -- inputs: per-user state is a fresh empty world ----------------------
+    fresh_db = InMemoryDb()
+    agent.db = fresh_db
     agent.user_id = f"rollout-user-{uuid4().hex}"
-    agent.update_memory_on_run = False
-    agent.enable_user_memories = False
-    agent.enable_agentic_memory = False
-    # These two default to None and are resolved IN PLACE on the caller's first
-    # run (agent._init), so without forcing them off the attempt prompt would
-    # differ depending on whether the caller had run the agent before handing it
-    # to the Env. Memory and summaries are per-user state and the attempt runs a
-    # fresh rollout user, so their context blocks carry no signal here anyway.
-    agent.add_memories_to_context = False
-    agent.add_session_summary_to_context = False
-    agent.update_knowledge = False
-    agent.update_cultural_knowledge = False
-    agent.enable_agentic_culture = False
-    agent.memory_manager = None
-    agent.session_summary_manager = None
-    agent.enable_session_summaries = False
-    agent.save_response_to_file = None
 
+    memory_manager = getattr(agent, "memory_manager", None)
+    if memory_manager is not None:
+        agent.memory_manager = _isolated_manager_copy(memory_manager, db=fresh_db)
+
+    session_summary_manager = getattr(agent, "session_summary_manager", None)
+    if session_summary_manager is not None:
+        agent.session_summary_manager = _isolated_manager_copy(session_summary_manager)
+
+    # -- inputs: global read-only stores keep the caller's data -------------
     culture_manager = getattr(agent, "culture_manager", None)
     if culture_manager is not None:
-        manager_copy = copy.copy(culture_manager)
-        if getattr(manager_copy, "db", None) is None and source_db is not None:
-            manager_copy.db = source_db
-        manager_model = getattr(manager_copy, "model", None)
-        if manager_model is not None and hasattr(manager_model, "cache_response"):
-            manager_copy.model = _cache_off_copy(manager_model)
-        agent.culture_manager = manager_copy
-    elif wants_culture and source_db is not None:
-        # Production reads came straight off agent.db; the attempt's db is fresh, so
-        # an explicit manager bound to the caller's db keeps the reads identical.
+        agent.culture_manager = _isolated_manager_copy(
+            culture_manager, db=source_db if getattr(culture_manager, "db", None) is None else None
+        )
+    elif source_db is not None and (
+        getattr(agent, "add_culture_to_context", None)
+        or getattr(agent, "update_cultural_knowledge", False)
+        or getattr(agent, "enable_agentic_culture", False)
+    ):
+        # Production reads would come straight off agent.db; the attempt's db is
+        # fresh, so an explicit manager bound to the caller's db keeps the reads
+        # identical to a fresh production user's.
         from agno.culture.manager import CultureManager
 
         agent.culture_manager = CultureManager(db=source_db)
@@ -676,27 +696,31 @@ def _apply_hermetic_overrides(
     if learning is not None and learning is not False:
         from agno.learn.machine import LearningMachine
 
-        if isinstance(learning, LearningMachine):
+        if learning is True:
+            # Materialized into the default machine set_learning_machine would
+            # build, because that builder RE-BUILDS on every initialize and would
+            # resurrect the write engines on a machine it constructed itself. db
+            # stays unbound so resolution binds the fresh db: learning=True
+            # enables only per-user stores.
+            agent.learning = _read_only_learning_machine(
+                LearningMachine(user_profile=True, user_memory=True), source_db=None
+            )
+        elif isinstance(learning, LearningMachine):
             agent.learning = _read_only_learning_machine(learning, source_db)
         else:
-            # learning=True (and duck-typed stand-ins) builds only the default
-            # per-user stores, whose reads are empty for the fresh rollout user:
-            # nulling cuts their extraction calls without losing any read.
+            log_warning(
+                f"hermetic overrides cannot sever writes on a {type(learning).__name__} "
+                "learning value; nulling it for isolation"
+            )
             agent.learning = None
 
     compression_manager = getattr(agent, "compression_manager", None)
     if compression_manager is not None:
-        manager_copy = copy.copy(compression_manager)
-        if hasattr(manager_copy, "stats"):
-            manager_copy.stats = {}
-        manager_model = getattr(manager_copy, "model", None)
-        if manager_model is not None and hasattr(manager_model, "cache_response"):
-            manager_copy.model = _cache_off_copy(manager_model)
-        agent.compression_manager = manager_copy
+        agent.compression_manager = _isolated_manager_copy(compression_manager, reset_stats=True)
 
-    # A manager this block has never seen is nulled loudly: managers bind db and
-    # model by pattern, and silently sharing one is the exact leak this function
-    # exists to stop.
+    # A manager this block has never seen is nulled loudly, BEFORE resolution
+    # can bind anything onto it: managers bind db and model by pattern, and
+    # silently sharing one is the exact leak this function exists to stop.
     for field_name in _field_names_of(agent):
         if (
             field_name.endswith("_manager")
@@ -705,6 +729,23 @@ def _apply_hermetic_overrides(
         ):
             log_warning(f"hermetic overrides do not know agent.{field_name}; nulling it for isolation")
             setattr(agent, field_name, None)
+
+    # -- production's own resolver, unchanged, against the swapped inputs ---
+    # Resolves the add_*_to_context read flags and materializes managers from
+    # the ORIGINAL write signals, so the severing below can no longer re-shape
+    # any read. Duck-typed subjects have no lazy resolution to run.
+    if isinstance(agent, Agent):
+        agent.initialize_agent()
+
+    # -- sever write and side-effect paths ----------------------------------
+    agent.update_memory_on_run = False  # the post-run memory extraction call
+    agent.enable_user_memories = False  # deprecated alias of update_memory_on_run
+    agent.enable_agentic_memory = False  # the update_user_memory tool and its prompt block
+    agent.update_knowledge = False  # the knowledge write tool: agent.knowledge stays shared
+    agent.update_cultural_knowledge = False  # the post-run write into the caller's culture store
+    agent.enable_agentic_culture = False  # the culture write tool and its prompt block
+    agent.enable_session_summaries = False  # the post-run summary write, an extra LLM call
+    agent.save_response_to_file = None  # K attempts would race-write the caller's file
 
     reasoning_agent = getattr(agent, "reasoning_agent", None)
     if reasoning_agent is not None:
@@ -739,18 +780,21 @@ async def arun_rollouts(
 
     Rollouts are hermetic and there is no knob: contaminated statistics answer "does
     my agent work" wrongly, and contaminated trajectories poison the training set.
-    Every attempt runs on a fresh copy with a fresh in-memory db, fresh session and
-    user ids, memory capture, knowledge writes and learning writes disabled, and the
-    response cache off. Knowledge READS survive: retrieval goes through
-    knowledge.vector_db, not agent.db, so a RAG agent retrieves normally inside a
-    rollout -- and culture and learned-knowledge reads survive the same way, through
-    read-only rebinds of the culture manager and the LearningMachine. Memory READS do
-    not: memories are keyed to the user id, each attempt runs a fresh rollout user,
-    and the resulting empty read is deliberate -- per-user state from the caller's
-    world must not leak into a sample. The full field inventory lives on
-    _apply_hermetic_overrides.
+    Every attempt runs on a fresh copy whose INPUTS are swapped -- a fresh in-memory
+    db, fresh session and user ids, the response cache off -- and then production's
+    own resolver runs unchanged against those inputs, so the attempt's prompt is the
+    prompt a fresh production user would get, by construction. Only write paths are
+    severed afterwards: memory capture, knowledge/culture/learning writes, the
+    session-summary write, save_response_to_file. Knowledge READS survive: retrieval
+    goes through knowledge.vector_db, not agent.db, so a RAG agent retrieves
+    normally inside a rollout -- and culture and learned-knowledge reads survive the
+    same way, through writes-severed copies of the culture manager and the
+    LearningMachine that keep the caller's db. Memory READS resolve against the
+    attempt's empty db under a fresh rollout user, so they render production's own
+    fresh-user empty states -- per-user state from the caller's world must not leak
+    into a sample. The full field inventory lives on _apply_hermetic_overrides.
 
-    Two residuals the overrides cannot reach, stated honestly:
+    Three residuals the overrides cannot reach, stated honestly:
 
     - env.timeout_seconds bounds when an attempt RETURNS, not when a sync scorer's
       body stops: a sync scorer runs in a thread (asyncio.to_thread), cancellation
@@ -762,6 +806,11 @@ async def arun_rollouts(
       and user ids. (Suppressing them via OTel context is not viable today: the
       installed openinference-instrumentation-agno's suppressed fast-path breaks
       streamed runs.)
+    - User-supplied callables are shared by reference and run inside attempts with
+      whatever side effects they carry: pre/post hooks fire per attempt, and a
+      fallback_config.callback fires on attempt fallbacks. The override cannot
+      reach into a callable; keep rollout-visible hooks idempotent or filter on
+      the rollout-* ids they receive.
 
     A LIVE agent holding MCPTools is rejected at run start: deep_copy shares the
     MCP session by reference, concurrent attempts connect and close that one shared

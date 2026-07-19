@@ -76,3 +76,29 @@ train.jsonl was written this run; the export path (including the new ato_sft_jso
 twin) is pinned by the unit suite.
 
 ---
+
+## 2026-07-19 — re-run after the input-isolation rewrite of the hermetic override
+
+### _01_first_env.py
+
+**Status:** PASS
+
+**Description:** Live re-run against the rewritten override: inputs swapped
+(fresh db, fresh rollout user, manager copies), production's resolver run
+unchanged, only write paths severed. Read parity across
+memory/culture/learning/summary/knowledge/skills is byte-identical to the
+fresh-user production prompt (pinned by the unit parity matrix).
+
+**Result:** 16/16 scored, grid rendered, both fingerprints stamped non-None.
+Both tasks 8/8 this run, learning zone empty (documented saturation behavior).
+
+### _02_export_sft.py
+
+**Status:** PASS
+
+**Description:** Live re-run, 24 attempts, no tracebacks.
+
+**Result:** All three tasks 8/8; the graceful empty-zone branch fired and no
+train.jsonl was written this run. Export path pinned by the unit suite.
+
+---
