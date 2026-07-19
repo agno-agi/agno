@@ -256,6 +256,84 @@ def test_team_member_executions_matched():
     assert "multiply" in result.passed_tool_calls
 
 
+def test_nested_team_member_executions_matched():
+    # Members can themselves be teams; a grandchild agent's clean execution satisfies
+    # the expectation exactly like a direct member's.
+    from agno.run.team import TeamRunOutput
+
+    grandchild = RunOutput(content="42", tools=[_make_execution("multiply")])
+    inner_team = TeamRunOutput(content="42", member_responses=[grandchild])
+    team_response = TeamRunOutput(content="42", member_responses=[inner_team])
+    result = _run_eval(team_response=team_response, expected_tool_calls=["multiply"])
+    assert result.eval_status == "PASSED"
+    assert result.passed_tool_calls == ["multiply"]
+    assert result.missing_tool_calls == []
+
+
+def test_nested_team_depth_two_delegations_policed_like_depth_zero():
+    # An inner leader's own delegation execution is subject to strict mode at every
+    # depth, exactly as a depth-0 leader's already is: list it or allow additionals.
+    from agno.run.team import TeamRunOutput
+
+    leaf = RunOutput(content="42", tools=[_make_execution("multiply")])
+    depth_two_leader = TeamRunOutput(
+        content="42",
+        tools=[_make_execution("delegate_task_to_member")],
+        member_responses=[leaf],
+    )
+    middle = TeamRunOutput(content="42", member_responses=[depth_two_leader])
+    outer = TeamRunOutput(content="42", member_responses=[middle])
+
+    strict = _run_eval(team_response=outer, expected_tool_calls=["multiply"])
+    assert strict.eval_status == "FAILED"
+    assert "delegate_task_to_member" in strict.failed_tool_calls
+
+    listed = _run_eval(team_response=outer, expected_tool_calls=["multiply", "delegate_task_to_member"])
+    assert listed.eval_status == "PASSED"
+    assert "multiply" in listed.passed_tool_calls
+
+
+def test_from_history_requests_ignored():
+    # Prior-turn messages injected by add_history_to_context carry tool_calls this
+    # run never made; strict mode must not fail today's run over yesterday's tools.
+    response = RunOutput(
+        content="done",
+        tools=[_make_execution("multiply")],
+        messages=[
+            Message(
+                role="assistant",
+                content=None,
+                from_history=True,
+                tool_calls=[{"id": "h1", "type": "function", "function": {"name": "prior_tool", "arguments": "{}"}}],
+            ),
+        ],
+    )
+    result = _run_eval(agent_response=response, expected_tool_calls=["multiply"])
+    assert result.eval_status == "PASSED"
+    assert result.failed_tool_calls == []
+    assert result.passed_tool_calls == ["multiply"]
+
+
+def test_from_history_request_does_not_annotate_missing():
+    # A from_history request is not evidence the CURRENT run attempted the tool, so
+    # the missing entry stays unannotated.
+    response = RunOutput(
+        content="no tools this turn",
+        tools=[],
+        messages=[
+            Message(
+                role="assistant",
+                content=None,
+                from_history=True,
+                tool_calls=[{"id": "h1", "type": "function", "function": {"name": "search", "arguments": "{}"}}],
+            ),
+        ],
+    )
+    result = _run_eval(agent_response=response, expected_tool_calls=["search"])
+    assert result.eval_status == "FAILED"
+    assert result.missing_tool_calls == ["search"]
+
+
 # ---------------------------------------------------------------------------
 # Subset matching (allow_additional_tool_calls=True)
 # ---------------------------------------------------------------------------

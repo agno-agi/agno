@@ -54,6 +54,20 @@ class ReliabilityResult:
         assert self.eval_status == "PASSED", f"ReliabilityEval failed: {self}"
 
 
+def _collect_member_evidence(response: Any, executions: List[ToolExecution], messages: list) -> None:
+    """Collect tools and messages from a response and every nested member response.
+
+    Only TeamRunOutput carries member_responses; a member RunOutput is a leaf. Inner
+    team leaders' own executions (e.g. delegate_task_to_member) surface at every depth,
+    matching what a depth-0 leader already reports today.
+    """
+    executions += list(response.tools or [])
+    if response.messages is not None:
+        messages += response.messages
+    for member_response in getattr(response, "member_responses", None) or []:
+        _collect_member_evidence(member_response, executions, messages)
+
+
 @dataclass
 class ReliabilityEval:
     """Evaluate the reliability of a model by checking the tool calls"""
@@ -111,20 +125,20 @@ class ReliabilityEval:
             executions = list(self.agent_response.tools or [])
             messages = list(self.agent_response.messages or [])
         elif self.team_response is not None:
-            # Union the members' executions: delegated tool calls live on member
-            # responses, and a leader-only read would lose every one of them.
-            executions = list(self.team_response.tools or [])
-            messages = list(self.team_response.messages or [])
-            for member_response in self.team_response.member_responses:
-                executions += list(member_response.tools or [])
-                if member_response.messages is not None:
-                    messages += member_response.messages
+            # Union the members' executions at every nesting depth: delegated tool
+            # calls live on member responses, members can themselves be teams, and a
+            # flat read would report a grandchild's clean execution as missing.
+            _collect_member_evidence(self.team_response, executions, messages)
 
         # Message-side REQUESTS are kept only to annotate failures: a call refused by
         # tool_call_limit never produces an execution, so the request is the only
-        # evidence it was attempted at all.
+        # evidence it was attempted at all. Prior-turn messages injected by
+        # add_history_to_context carry tool_calls this run never made, so they are
+        # excluded -- yesterday's tools must not fail today's strict eval.
         requested_names: Set[str] = set()
         for message in messages:
+            if getattr(message, "from_history", False):
+                continue
             for tool_call in message.tool_calls or []:
                 func = tool_call.get("function")
                 tool_name = func.get("name") if isinstance(func, dict) else None
