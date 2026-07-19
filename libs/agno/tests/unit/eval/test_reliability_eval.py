@@ -489,3 +489,38 @@ def test_combined_subset_and_argument_check():
     assert "multiply" in result.passed_tool_calls
     assert "exponentiate" in result.additional_tool_calls
     assert "multiply" in result.passed_argument_checks
+
+
+def test_strict_mode_fails_on_refused_additional_call():
+    # A call refused by tool_call_limit never produces an execution: the request is
+    # its only trace. Strict mode polices the attempt whether or not it executed.
+    response = RunOutput(
+        content="done",
+        messages=[
+            Message(
+                role="assistant",
+                content=None,
+                tool_calls=[
+                    {"id": "c1", "type": "function", "function": {"name": "search", "arguments": "{}"}},
+                    {"id": "c2", "type": "function", "function": {"name": "delete_db", "arguments": "{}"}},
+                ],
+            ),
+            Message(
+                role="tool",
+                content="Tool call limit reached. Tool call delete_db not executed.",
+                tool_call_id="c2",
+                tool_name="delete_db",
+                tool_call_error=True,
+            ),
+        ],
+        tools=[_make_execution("search")],
+    )
+
+    strict = _run_eval(agent_response=response, expected_tool_calls=["search"], allow_additional_tool_calls=False)
+    assert strict.eval_status == "FAILED"
+    assert "delete_db" in strict.failed_tool_calls
+
+    # Lenient mode keeps the refused attempt visible as an additional call.
+    lenient = _run_eval(agent_response=response, expected_tool_calls=["search"], allow_additional_tool_calls=True)
+    assert lenient.eval_status == "PASSED"
+    assert "delete_db" in lenient.additional_tool_calls

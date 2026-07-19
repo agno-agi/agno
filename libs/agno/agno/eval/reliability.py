@@ -153,7 +153,7 @@ class ReliabilityEval:
                     additional_tool_calls.append(tool_name)
                 else:
                     # Strict mode polices the attempt, not its success: an unexpected
-                    # call that errored still fails the eval.
+                    # call that errored or was refused still fails the eval.
                     failed_tool_calls.append(tool_name)
             elif not tool.tool_call_error:
                 passed_tool_calls.append(tool_name)
@@ -161,6 +161,21 @@ class ReliabilityEval:
             # itself: it cannot satisfy the expectation, and the failure surfaces as
             # the annotated missing entry below when no clean execution exists -- so a
             # retry that eventually succeeds still passes.
+
+        # Request-only names: a call refused by tool_call_limit never produces an
+        # execution, so the message-side request is its only trace. An unexpected
+        # refused request is still the agent attempting an unexpected tool -- strict
+        # mode fails it, lenient mode keeps it visible as an additional call. A
+        # refused EXPECTED tool instead surfaces as the annotated missing entry.
+        if self.expected_tool_calls is not None:
+            executed_names = {t.tool_name for t in executions if t.tool_name}
+            for requested in sorted(requested_names - executed_names):
+                if requested in self.expected_tool_calls:
+                    continue
+                if self.allow_additional_tool_calls:
+                    additional_tool_calls.append(requested)
+                else:
+                    failed_tool_calls.append(requested)
 
         # Missing: expected names with no clean execution. When the tool was requested
         # or attempted but every execution was refused/errored, the entry says so --
