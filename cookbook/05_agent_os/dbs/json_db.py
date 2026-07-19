@@ -34,7 +34,6 @@ team = Team(
     model=OpenAIChat(id="gpt-4o"),
     db=db,
     members=[agent],
-    debug_mode=True,
 )
 
 # Evaluation example

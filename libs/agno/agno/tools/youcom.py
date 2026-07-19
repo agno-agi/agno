@@ -1,6 +1,6 @@
 import json
 from os import getenv
-from typing import Any, Dict, List, Literal, Optional
+from typing import Any, Dict, List, Literal, Optional, Union
 
 import httpx
 
@@ -25,13 +25,26 @@ class YouTools(Toolkit):
         base_url (Optional[str]): Override the API base URL. Falls back to the ``YDC_BASE_URL``
             env var, then defaults to ``https://ydc-index.io``.
         num_results (int): Default number of search results. Default is 5.
-        livecrawl (str): Live-crawl mode for the search API (``"web"``, ``"always"``,
-            ``"fallback"``, ``"never"``). Default is ``"web"``.
-        livecrawl_formats (str): Comma-separated content formats to request from livecrawl
-            (e.g. ``"markdown"``, ``"text"``). Default is ``"markdown"``.
+        livecrawl (Optional[str]): Live-crawl mode for the search API (``"web"``, ``"news"``,
+            ``"all"``). Default is ``None`` (off).
+        livecrawl_formats (Union[str, List[str]]): Content formats to request from livecrawl
+            (e.g. ``"markdown"``, ``"html"``, or ``["markdown", "html"]``). Default is ``"markdown"``.
         text_length_limit (int): Max length of text content per result. Default is 1000.
-        include_domains (Optional[List[str]]): Restrict results to these domains.
+        include_domains (Optional[List[str]]): Restrict results to these domains. Cannot be combined
+            with exclude_domains or boost_domains.
         exclude_domains (Optional[List[str]]): Exclude results from these domains.
+        country (Optional[str]): The country code that determines the geographical focus of the web results.
+        freshness (Optional[str]): Specifies the freshness of the results to return (e.g. ``"day"``, ``"week"``, ``"month"``, ``"year"``).
+        language (Optional[str]): The language of the web results that will be returned (BCP 47 format).
+        safesearch (Optional[str]): Configures the safesearch filter for content moderation (``"off"``, ``"moderate"``, ``"strict"``).
+        offset (Optional[int]): Indicates the offset for pagination, in multiples of the result count.
+            Must be between 0 and 9.
+        boost_domains (Optional[List[str]]): Domains to boost in search ranking (results are not limited
+            to them). Cannot be combined with include_domains.
+        crawl_timeout (int): Maximum time in seconds to wait for page content when livecrawl is set.
+            Must be between 1 and 60 seconds. Default is 10.
+        search_params (Optional[Dict[str, Any]]): Additional query parameters merged into the search
+            request, overriding the arguments above. Lets you pass You.com params not exposed here.
         timeout (int): Maximum time in seconds to wait for API responses. Default is 30.
         format (str): Output format for search results (``"json"`` or ``"markdown"``).
             Default is ``"json"``.
@@ -43,11 +56,19 @@ class YouTools(Toolkit):
         api_key: Optional[str] = None,
         base_url: Optional[str] = None,
         num_results: int = 5,
-        livecrawl: Literal["always", "fallback", "never", "web"] = "web",
-        livecrawl_formats: str = "markdown",
+        livecrawl: Optional[Literal["web", "news", "all"]] = None,
+        livecrawl_formats: Union[str, List[str]] = "markdown",
         text_length_limit: int = 1000,
         include_domains: Optional[List[str]] = None,
         exclude_domains: Optional[List[str]] = None,
+        country: Optional[str] = None,
+        freshness: Optional[str] = None,
+        language: Optional[str] = None,
+        safesearch: Optional[str] = None,
+        offset: Optional[int] = None,
+        boost_domains: Optional[List[str]] = None,
+        crawl_timeout: int = 10,
+        search_params: Optional[Dict[str, Any]] = None,
         timeout: int = 30,
         format: Literal["json", "markdown"] = "json",
         show_results: bool = False,
@@ -57,13 +78,31 @@ class YouTools(Toolkit):
         if not self.api_key:
             log_error("YDC_API_KEY not set. Please set the YDC_API_KEY environment variable.")
 
+        if not (1 <= crawl_timeout <= 60):
+            raise ValueError("crawl_timeout must be between 1 and 60 seconds")
+
+        if offset is not None and not (0 <= offset <= 9):
+            raise ValueError("offset must be between 0 and 9")
+
+        # You.com 422s include+exclude, and accepts include+boost only intermittently; reject both up front.
+        if include_domains and (exclude_domains or boost_domains):
+            raise ValueError("include_domains cannot be combined with exclude_domains or boost_domains")
+
         self.base_url: str = (base_url or getenv("YDC_BASE_URL") or DEFAULT_BASE_URL).rstrip("/")
         self.num_results: int = num_results
-        self.livecrawl: str = livecrawl
-        self.livecrawl_formats: str = livecrawl_formats
+        self.livecrawl: Optional[str] = livecrawl
+        self.livecrawl_formats: Union[str, List[str]] = livecrawl_formats
         self.text_length_limit: int = text_length_limit
         self.include_domains: Optional[List[str]] = include_domains
         self.exclude_domains: Optional[List[str]] = exclude_domains
+        self.country: Optional[str] = country
+        self.freshness: Optional[str] = freshness
+        self.language: Optional[str] = language
+        self.safesearch: Optional[str] = safesearch
+        self.offset: Optional[int] = offset
+        self.boost_domains: Optional[List[str]] = boost_domains
+        self.crawl_timeout: int = crawl_timeout
+        self.search_params: Optional[Dict[str, Any]] = search_params
         self.timeout: int = timeout
         self.format: Literal["json", "markdown"] = format
         self.show_results: bool = show_results
@@ -97,13 +136,34 @@ class YouTools(Toolkit):
             params: Dict[str, Any] = {
                 "query": query,
                 "count": num_results or self.num_results,
-                "livecrawl": self.livecrawl,
-                "livecrawl_formats": self.livecrawl_formats,
             }
+            # livecrawl is off unless set; its formats/timeout only apply when it is on.
+            if self.livecrawl:
+                params["livecrawl"] = self.livecrawl
+                params["crawl_timeout"] = self.crawl_timeout
+                if isinstance(self.livecrawl_formats, str):
+                    params["livecrawl_formats"] = [f.strip() for f in self.livecrawl_formats.split(",") if f.strip()]
+                else:
+                    params["livecrawl_formats"] = self.livecrawl_formats
+
             if self.include_domains:
                 params["include_domains"] = ",".join(self.include_domains)
             if self.exclude_domains:
                 params["exclude_domains"] = ",".join(self.exclude_domains)
+            if self.country:
+                params["country"] = self.country
+            if self.freshness:
+                params["freshness"] = self.freshness
+            if self.language:
+                params["language"] = self.language
+            if self.safesearch:
+                params["safesearch"] = self.safesearch
+            if self.offset is not None:
+                params["offset"] = self.offset
+            if self.boost_domains:
+                params["boost_domains"] = ",".join(self.boost_domains)
+            if self.search_params:
+                params.update(self.search_params)
 
             with httpx.Client(timeout=self.timeout) as client:
                 response = client.get(f"{self.base_url}/v1/search", headers=self._headers(), params=params)
@@ -118,7 +178,12 @@ class YouTools(Toolkit):
             return f"Error: {e}"
 
     def _format_results(self, query: str, data: Dict[str, Any]) -> str:
-        raw_results = data.get("results") or data.get("hits") or []
+        results = data.get("results")
+        # Results are grouped by source (web/news); flatten them into a single list.
+        if isinstance(results, dict):
+            raw_results = [r for section in results.values() if isinstance(section, list) for r in section]
+        else:
+            raw_results = results or data.get("hits") or []
         cleaned: List[Dict[str, Any]] = []
         for r in raw_results:
             if not isinstance(r, dict):
@@ -131,11 +196,18 @@ class YouTools(Toolkit):
             snippet = r.get("description") or r.get("snippet")
             if snippet:
                 entry["snippet"] = snippet
-            text = r.get("markdown") or r.get("text") or r.get("content")
+            # Body text comes from livecrawled "contents", else the "snippets" list.
+            contents = r.get("contents")
+            if not isinstance(contents, dict):
+                contents = r
+            text = contents.get("markdown") or contents.get("text") or contents.get("html") or contents.get("content")
+            if not text and isinstance(r.get("snippets"), list):
+                text = "\n".join(s for s in r["snippets"] if isinstance(s, str)) or None
             if text:
                 entry["text"] = self._truncate(text)
-            if r.get("published_date"):
-                entry["published_date"] = r["published_date"]
+            published_date = r.get("published_date") or r.get("page_age")
+            if published_date:
+                entry["published_date"] = published_date
             cleaned.append(entry)
 
         if self.format == "markdown":

@@ -13,6 +13,16 @@ class ShellTools(Toolkit):
         all: bool = False,
         **kwargs,
     ):
+        """Initialize ShellTools.
+
+        .. warning::
+            ``run_shell_command`` runs an arbitrary command on the host OS with no
+            sandboxing — an RCE sink if the agent is prompt-injected. To require
+            human approval before any command executes, gate the tool through the
+            toolkit's confirmation mechanism::
+
+                ShellTools(requires_confirmation_tools=["run_shell_command"])
+        """
         self.base_dir: Optional[Path] = None
         if base_dir is not None:
             self.base_dir = Path(base_dir) if isinstance(base_dir, str) else base_dir
@@ -25,6 +35,11 @@ class ShellTools(Toolkit):
 
     def run_shell_command(self, args: List[str], tail: int = 100) -> str:
         """Runs a shell command and returns the output or error.
+
+        .. warning::
+            The command is executed directly on the host OS. Gate this tool with
+            ``requires_confirmation_tools=["run_shell_command"]`` to require human
+            approval and avoid arbitrary code execution.
 
         Args:
             args (List[str]): The command to run as a list of strings.

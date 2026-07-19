@@ -249,7 +249,9 @@ class ParallelTools(Toolkit):
 
             advanced_settings: Dict[str, Any] = {}
 
-            final_excerpt_chars = max_chars_per_excerpt if max_chars_per_excerpt is not None else self.max_chars_per_result
+            final_excerpt_chars = (
+                max_chars_per_excerpt if max_chars_per_excerpt is not None else self.max_chars_per_result
+            )
             if final_excerpt_chars is not None:
                 advanced_settings["excerpt_settings"] = {"max_chars_per_result": final_excerpt_chars}
 

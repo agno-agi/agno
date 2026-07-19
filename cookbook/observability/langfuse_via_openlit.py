@@ -57,7 +57,6 @@ agent = Agent(
     model=OpenAIChat(id="gpt-4o-mini"),
     tools=[WebSearchTools()],
     markdown=True,
-    debug_mode=True,
 )
 
 
