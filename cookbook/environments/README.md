@@ -21,6 +21,14 @@ first question.
 |------|---------------|
 | `_01_first_env.py` | The whole thing in twenty lines: `Env`, a typed `CodeScorer`, `run_rollouts`, the live grid, `summary()` |
 | `_02_export_sft.py` | The second job: `learning_zone()`, `to_sft_jsonl`, the export report, and the provenance sidecar |
+| `_03_tool_reliability.py` | `ToolCallScorer`: did the lookup tool actually EXECUTE, or did the agent answer from its head? Executions, not requests |
+| `_04_judge_rubric.py` | `JudgeScorer` with a graded rubric: a pass rate for quality you cannot check with code (tone, commitments, next steps) |
+| `_05_compare_models.py` | The cost-review question: same env, `model=` override, `save`/`load`/`diff` -- can the cheaper model ship? Tasks from JSONL |
+
+The three scorers cover the three kinds of pass criteria: a typed field you can compare
+in code (`_01`), a tool that must have done real work (`_03`), and quality only a judge
+can grade (`_04`). `_02` and `_05` are the two things you do with the artifact
+afterwards: export the runs that worked, and compare runs across time or models.
 
 ## Setup
 
@@ -28,11 +36,16 @@ first question.
 export OPENAI_API_KEY=***
 .venvs/demo/bin/python cookbook/environments/_01_first_env.py
 .venvs/demo/bin/python cookbook/environments/_02_export_sft.py
+.venvs/demo/bin/python cookbook/environments/_03_tool_reliability.py
+.venvs/demo/bin/python cookbook/environments/_04_judge_rubric.py
+.venvs/demo/bin/python cookbook/environments/_05_compare_models.py
 ```
 
 No database or services needed: rollouts are hermetic (each attempt runs on a fresh
 copy with an in-memory db, fresh session and user ids, and the response cache off), so
-nothing touches your stores.
+nothing touches your stores. State owned by your own tools is the one thing the runner
+cannot isolate for you -- `_03` keeps its lookup table read-only for exactly that
+reason.
 
 ## Choosing a door
 
@@ -41,4 +54,6 @@ nothing touches your stores.
 - Measuring a distribution over K attempts, or exporting training data:
   `agno.environments` (`EnvTask`, `run_rollouts`).
 
-Exports land in `data/generated/`, which is gitignored.
+Task sets a team owns in git live in `tasks/` (checked in, strict-validated by
+`EnvTask.from_jsonl`). Exports and saved baselines land in `data/generated/`, which is
+gitignored.

@@ -14,7 +14,7 @@ from uuid import uuid4
 from agno.agent import Agent
 from agno.db.in_memory import InMemoryDb
 from agno.environments._engine import AttemptResult, StopReason, arun_batch
-from agno.environments._render import LiveGrid, attempt_glyph, build_grid
+from agno.environments._render import LiveGrid, attempt_glyph, build_grid, build_report
 from agno.environments.env import (
     Env,
     EnvTask,
@@ -305,6 +305,63 @@ class EnvRunResult:
     async def aload(cls, path: Union[str, Path]) -> "EnvRunResult":
         """Async twin of load."""
         return await asyncio.to_thread(cls.load, path)
+
+    def print_report(
+        self,
+        *,
+        only: str = "failed",
+        attempts: Optional[int] = None,
+        console: Optional[Any] = None,
+    ) -> None:
+        """Print the per-attempt evidence underneath the grid: verdict, score reason,
+        tool executions, the answer, and the token bill for each attempt.
+
+        `only="failed"` (default) shows the attempts a person investigates -- scored
+        fails plus everything unscored (errors, timeouts, pauses); `only="all"` shows
+        every attempt. `attempts` caps rows per task. Presentation only: the format is
+        not a contract and may change; parse `summary()` or `save()` output instead.
+        """
+        text = build_report(self.task_results, only=only, attempts=attempts)
+        if console is not None:
+            console.print(text)
+        else:
+            print(text)
+
+    def print_attempt(self, task_id: str, attempt: int = 1, *, markdown: bool = False) -> None:
+        """Print one attempt in full: the score's complete reasoning, then the whole
+        run transcript via `pprint_run_response`. `attempt` is 1-based, matching the
+        grid's glyph order. Presentation only, like `print_report`."""
+        task_result = next((tr for tr in self.task_results if str(tr.task.id) == task_id), None)
+        if task_result is None:
+            known = ", ".join(str(tr.task.id) for tr in self.task_results)
+            raise KeyError(f"no task with id {task_id!r}; known ids: {known}")
+        if not 1 <= attempt <= len(task_result.attempts):
+            raise IndexError(f"attempt must be in 1..{len(task_result.attempts)} for task {task_id!r}, got {attempt}")
+        selected = task_result.attempts[attempt - 1]
+        print(f"task {task_id}, attempt {attempt} of {len(task_result.attempts)}")
+        print(f"  input: {task_result.task.input}")
+        if task_result.task.expected is not None:
+            print(f"  expected: {task_result.task.expected}")
+        score = selected.score
+        verdict = "unscored" if score is None else ("PASS" if score.passed else "FAIL")
+        print(
+            f"  {verdict}   stop={selected.stop_reason.value}   "
+            f"{selected.duration_seconds:.1f}s   limit_hit={selected.tool_call_limit_hit}"
+        )
+        if selected.error:
+            print(f"  error: {selected.error}")
+        if score is not None:
+            print(f"  score: value={score.value} passed={score.passed}")
+            if score.reason:
+                print(f"  reason: {score.reason}")
+            if score.detail:
+                print(f"  detail: {score.detail}")
+        if selected.run is None:
+            print("  (no run captured)")
+            return
+        from agno.utils.pprint import pprint_run_response
+
+        pprint_run_response(selected.run, markdown=markdown)
 
     def __str__(self) -> str:
         rows = []

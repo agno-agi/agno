@@ -76,3 +76,51 @@ train.jsonl was written this run; the export path (including the new ato_sft_jso
 twin) is pinned by the unit suite.
 
 ---
+
+## 2026-07-19 — three new use-case cookbooks (_03/_04/_05), all executed live
+
+### _03_tool_reliability.py
+
+**Status:** PASS
+
+**Description:** ToolCallScorer over an order-support agent with a read-only lookup
+tool; three tasks including a tempting-assertion trap (customer asserts a status in
+the question) and an unknown-order id. Measures the fraction of attempts where the
+lookup actually EXECUTED.
+
+**Result:** 24 attempts in 26s, grounding rate 1.0 on every task — gpt-5.5 with
+explicit grounding instructions executes the lookup on all 8 attempts of all three
+tasks, including the trap and the not-found path.
+
+### _04_judge_rubric.py
+
+**Status:** PASS (after one documented calibration round)
+
+**Description:** JudgeScorer in numeric mode (threshold 8) with a five-point support
+rubric over a reply-rewriting agent. The file deliberately documents its own
+iteration loop: the first-draft instructions ("be professional and empathetic")
+measured 0/12 at threshold 8 with mean raw score ~5.2 (judge reasons: no
+acknowledgment of frustration, no apology, no concrete next step); instructions were
+tuned against the rubric and the run repeated.
+
+**Result:** Before: 0/12, mean value 0.46. After: 12/12 in 45s, mean value 0.96. Both
+endpoints recorded in the file's comments as the measured instructions-vs-rubric gap.
+
+### _05_compare_models.py
+
+**Status:** PASS (with one observed teardown artifact)
+
+**Description:** EnvTask.from_jsonl over tasks/support_triage.jsonl (5 triage tasks,
+one deliberately ambiguous), CodeScorer on a typed output_schema field, baseline run
+on gpt-5.5, candidate via the model= override on gpt-5-mini, save/load round-trip,
+and candidate.diff(baseline).
+
+**Result:** 80 attempts total (40 + 40), both models 8/8 on all five tasks including
+the ambiguous crash-then-charge row; baseline saved and reloaded; diff printed
+"(env identical, policy changed)" with +0.00 on every row — the cheap-model question
+answered "yes" for this task set. Observed: a RuntimeError("Event loop is closed")
+traceback from httpcore transport cleanup between the two runs (exit code still 0) —
+consistent with the known sync-door loop-shutdown residual and the unclosed
+per-attempt HTTP clients noted in review.
+
+---
