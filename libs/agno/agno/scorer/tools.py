@@ -45,7 +45,7 @@ class ToolCallScorer:
     reach it.
 
     For a `TeamRunOutput` only the top-level `tools` -- the leader's executions -- are
-    inspected. Member tool matching is out of scope for 2.7.5; when member responses
+    inspected. Member tool matching is out of scope for 2.8.0; when member responses
     carry tools the `Score.reason` names the limitation.
 
     Name-only matching remains satisfiable by a successful call with junk arguments.
@@ -123,7 +123,7 @@ class ToolCallScorer:
         if not executions:
             notes.insert(0, "run has no tool executions")
         if isinstance(run, TeamRunOutput) and _members_carry_tools(run):
-            notes.append("member tool executions were not inspected (member matching is out of scope for 2.7.5)")
+            notes.append("member tool executions were not inspected (member matching is out of scope for 2.8.0)")
 
         # The constructor guarantees at least one check.
         value = n_satisfied / n_checks
