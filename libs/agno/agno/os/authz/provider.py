@@ -32,7 +32,20 @@ class AuthorizationContext:
         resource_id: Specific resource id, or None for list/collection checks.
         action: Action being attempted ("read", "run", "write", ...).
         admin_scope: The scope string that grants full bypass (default
-            ``agent_os:admin``), honoured by the built-in provider.
+            ``agent_os:admin``).
+
+            IMPORTANT -- this is a *scope-plane* feature. It is honoured by
+            :class:`~agno.os.authz.scope_provider.ScopeAuthorizationProvider`,
+            which reads it off the caller's token scopes. Providers that do not
+            authorize from token scopes deliberately ignore it and model admin in
+            their own terms instead: the managed-role engine grants an admin ROLE
+            (a role whose scopes include ``agent_os:admin``), and a relationship
+            (ReBAC) provider expects an admin RELATIONSHIP. So a token carrying
+            ``agent_os:admin`` is NOT automatically an admin under a role or ReBAC
+            provider used on its own -- if you want token-scope admins alongside
+            one of those, run the scope provider as a second plane
+            (``authorization_provider=[ScopeAuthorizationProvider(), other]``),
+            where the OR composition gives you the bypass.
     """
 
     principal_id: Optional[str] = None
