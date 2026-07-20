@@ -52,33 +52,31 @@ try:
         ThoughtStep,
         URLContextCallStep,
         URLContextResultStep,
-        step_delta,
     )
 
-    # step_delta is exposed as a submodule attribute, not a sub-package, so
-    # the Delta* types need attribute access rather than a direct import.
-    DeltaArgumentsDelta = step_delta.DeltaArgumentsDelta
-    DeltaImage = step_delta.DeltaImage
-    DeltaText = step_delta.DeltaText
-    DeltaThoughtSignature = step_delta.DeltaThoughtSignature
-    DeltaThoughtSummary = step_delta.DeltaThoughtSummary
-    # Typed call deltas. Non-function call families stream their typed
-    # Arguments object here (DeltaArgumentsDelta only fires for functions).
-    DeltaCodeExecutionCall = step_delta.DeltaCodeExecutionCall
-    DeltaFileSearchCall = step_delta.DeltaFileSearchCall
-    DeltaGoogleMapsCall = step_delta.DeltaGoogleMapsCall
-    DeltaGoogleSearchCall = step_delta.DeltaGoogleSearchCall
-    DeltaMCPServerToolCall = step_delta.DeltaMCPServerToolCall
-    DeltaURLContextCall = step_delta.DeltaURLContextCall
-    # Result deltas. Every *ResultStep arrives empty at StepStart and its
-    # actual payload streams here (one or more deltas, then StepStop).
-    DeltaCodeExecutionResult = step_delta.DeltaCodeExecutionResult
-    DeltaFileSearchResult = step_delta.DeltaFileSearchResult
-    DeltaFunctionResult = step_delta.DeltaFunctionResult
-    DeltaGoogleMapsResult = step_delta.DeltaGoogleMapsResult
-    DeltaGoogleSearchResult = step_delta.DeltaGoogleSearchResult
-    DeltaMCPServerToolResult = step_delta.DeltaMCPServerToolResult
-    DeltaURLContextResult = step_delta.DeltaURLContextResult
+    # Streaming delta types: the location and naming differs between google-genai
+    # <2.9.0 and >=2.9.0. The compat module version-detects once and exposes a
+    # stable set of `Delta*` aliases so the rest of this file stays unchanged.
+    from agno.utils.models._genai_compat import (
+        DeltaArgumentsDelta,
+        DeltaCodeExecutionCall,
+        DeltaCodeExecutionResult,
+        DeltaFileSearchCall,
+        DeltaFileSearchResult,
+        DeltaFunctionResult,
+        DeltaGoogleMapsCall,
+        DeltaGoogleMapsResult,
+        DeltaGoogleSearchCall,
+        DeltaGoogleSearchResult,
+        DeltaImage,
+        DeltaMCPServerToolCall,
+        DeltaMCPServerToolResult,
+        DeltaText,
+        DeltaThoughtSignature,
+        DeltaThoughtSummary,
+        DeltaURLContextCall,
+        DeltaURLContextResult,
+    )
 except ImportError:
     raise ImportError(
         "`google-genai` not installed or not at the latest version. "
@@ -924,8 +922,10 @@ class GeminiInteractions(Model):
                         "arguments": args_str,
                     },
                 }
-                if step.signature:
-                    tool_call["thought_signature"] = step.signature
+                # FunctionCallStep dropped the `signature` field in google-genai 2.9.0.
+                step_signature = getattr(step, "signature", None)
+                if step_signature:
+                    tool_call["thought_signature"] = step_signature
                 model_response.tool_calls.append(tool_call)
 
         # Parse usage metrics
@@ -1095,8 +1095,10 @@ class GeminiInteractions(Model):
                         "arguments": "",
                     },
                 }
-                if step.signature:
-                    tool_call["thought_signature"] = step.signature
+                # FunctionCallStep dropped the `signature` field in google-genai 2.9.0.
+                step_signature = getattr(step, "signature", None)
+                if step_signature:
+                    tool_call["thought_signature"] = step_signature
                 args = step.arguments
                 args_buffer = json.dumps(args) if isinstance(args, dict) and args else ""
                 stream_state["pending_calls"][idx] = {"tool_call": tool_call, "args_buffer": args_buffer}

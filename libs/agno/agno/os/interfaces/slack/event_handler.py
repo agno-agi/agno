@@ -15,6 +15,7 @@ from agno.os.interfaces.slack.helpers import (
     extract_event_context,
     open_chat_stream,
     resolve_channel_name,
+    resolve_session_id,
     resolve_slack_user,
     send_slack_message_async,
     should_respond,
@@ -80,7 +81,7 @@ class SlackEventHandler:
         bot_name = await self.bot_name_resolver.resolve(client, bot_user_id) if bot_user_id else None
         message_text = strip_bot_mention(raw_ctx["message_text"], bot_user_id, bot_name)
 
-        session_id = f"{self.entity_id}:{raw_ctx['thread_id']}"
+        session_id = await resolve_session_id(self.entity, self.entity_id, raw_ctx["channel_id"], raw_ctx["thread_id"])
         team_id = data.get("team_id") or event.get("team")
 
         resolved_user_id = raw_ctx["user"]
