@@ -69,10 +69,11 @@ def _conversation_from(run: Any) -> Optional[List[Dict[str, str]]]:
 def to_sft_jsonl(result: EnvironmentRunResult, path: Union[str, Path], *, only_passed: bool = True) -> ExportReport:
     """Write the result's exportable attempts as conversational-SFT JSONL.
 
-    `only_passed=True` is the default because `learning_zone()` selects TASKS whose
-    attempts disagreed -- by construction those tasks contain failures, and exporting
-    them would write wrong answers into a supervised file. `learning_zone()` selects
-    tasks; `only_passed` selects attempts within them: SFT wants both.
+    `only_passed=True` is the default because `learning_zone()` selects TASKS with
+    both passed and failed attempts -- by construction those tasks contain failures,
+    and exporting them would write wrong answers into a supervised file.
+    `learning_zone()` selects tasks; `only_passed` selects attempts within them:
+    SFT wants both.
 
     Emission order is task order, attempt order within -- deterministic under any
     concurrency. Caps match the strictest checked consumer: 320 conversations and

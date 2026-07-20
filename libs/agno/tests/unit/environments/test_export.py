@@ -99,9 +99,9 @@ def test_export_passes_vendored_validator(tmp_path):
 
 
 def test_export_default_excludes_failed_attempts(tmp_path):
-    # learning_zone() selects TASKS whose attempts disagreed -- by construction they
-    # contain failures, and the flagship's last line must not write wrong answers
-    # into a supervised file.
+    # learning_zone() selects TASKS with both passed and failed attempts -- by
+    # construction they contain failures, and the flagship's last line must not
+    # write wrong answers into a supervised file.
     result = _result(
         [
             _attempt(_conversational_run("4"), passed=True),
@@ -109,7 +109,7 @@ def test_export_default_excludes_failed_attempts(tmp_path):
         ]
     )
     zone = result.learning_zone()
-    assert len(zone.task_results) == 1  # the attempts disagreed
+    assert len(zone.task_results) == 1  # mixed pass/fail: in the zone
 
     path = tmp_path / "train.jsonl"
     report = to_sft_jsonl(zone, path)

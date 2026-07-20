@@ -22,8 +22,8 @@ def groq_model():
 
 @pytest.fixture(scope="module")
 def groq_reasoning_model():
-    """Fixture that provides a Groq DeepSeek reasoning model."""
-    return Groq(id="qwen/qwen3-32b", request_params={"include_reasoning": True})
+    """Fixture that provides a Groq reasoning model (gpt-oss emits reasoning on Groq)."""
+    return Groq(id="openai/gpt-oss-20b", request_params={"include_reasoning": True})
 
 
 def _get_reasoning_streaming_agent(main_model, reasoning_model, **kwargs):
