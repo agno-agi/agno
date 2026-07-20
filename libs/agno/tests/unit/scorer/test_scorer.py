@@ -9,7 +9,7 @@ import sys
 import pytest
 
 from agno.run.agent import RunOutput
-from agno.scorer import CodeScorer, EnvFingerprintError, Score, Scorer, ToolCallScorer
+from agno.scorer import CodeScorer, FingerprintError, Score, Scorer, ToolCallScorer
 
 
 def _run(content="x"):
@@ -169,8 +169,8 @@ def test_code_scorer_digest_stable_and_sensitive():
     assert CodeScorer(scorer_a).digest() == CodeScorer(scorer_a).digest()
     # A different body flips the digest.
     assert CodeScorer(scorer_a).digest() != CodeScorer(scorer_b).digest()
-    # A callable without retrievable source raises EnvFingerprintError.
-    with pytest.raises(EnvFingerprintError):
+    # A callable without retrievable source raises FingerprintError.
+    with pytest.raises(FingerprintError):
         CodeScorer(len).digest()
 
 
