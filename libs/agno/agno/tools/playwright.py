@@ -481,7 +481,14 @@ class PlaywrightTools(Toolkit):
         self._async_page = None
 
     async def anavigate_to(self, url: str) -> str:
-        """Navigates to a URL asynchronously."""
+        """Navigates to a URL asynchronously.
+
+        Args:
+            url (str): The URL to navigate to
+
+        Returns:
+            JSON string with navigation status
+        """
         try:
             await self._ainitialize_browser()
             if self._async_page:
@@ -493,7 +500,11 @@ class PlaywrightTools(Toolkit):
             raise e
 
     async def ago_back(self) -> str:
-        """Navigates back in browser history asynchronously."""
+        """Navigates back in browser history asynchronously.
+
+        Returns:
+            JSON string with navigation status
+        """
         try:
             await self._ainitialize_browser()
             if self._async_page:
@@ -506,7 +517,15 @@ class PlaywrightTools(Toolkit):
             raise e
 
     async def ascreenshot(self, path: str, full_page: bool = True) -> str:
-        """Takes a screenshot asynchronously."""
+        """Takes a screenshot of the current page asynchronously.
+
+        Args:
+            path (str): File path to save the screenshot
+            full_page (bool): Whether to capture the full scrollable page
+
+        Returns:
+            JSON string confirming screenshot was saved
+        """
         try:
             await self._ainitialize_browser()
             if self._async_page:
@@ -517,7 +536,11 @@ class PlaywrightTools(Toolkit):
             raise e
 
     async def aget_page_content(self) -> str:
-        """Gets the content of the current page asynchronously."""
+        """Gets the content of the current page asynchronously.
+
+        Returns:
+            The page content (text-only if parse_html=True, otherwise raw HTML)
+        """
         try:
             await self._ainitialize_browser()
             if not self._async_page:
@@ -536,7 +559,11 @@ class PlaywrightTools(Toolkit):
             raise e
 
     async def aclose_session(self) -> str:
-        """Closes the browser session asynchronously."""
+        """Closes the browser session asynchronously.
+
+        Returns:
+            JSON string with closure status
+        """
         try:
             await self._acleanup()
             return json.dumps({"status": "closed", "message": "Browser session closed"})
@@ -544,7 +571,14 @@ class PlaywrightTools(Toolkit):
             return json.dumps({"status": "warning", "message": f"Cleanup completed with warning: {str(e)}"})
 
     async def aclick(self, selector: str) -> str:
-        """Clicks an element asynchronously."""
+        """Clicks an element on the page asynchronously.
+
+        Args:
+            selector (str): CSS selector of element to click
+
+        Returns:
+            JSON string with click status
+        """
         try:
             await self._ainitialize_browser()
             if self._async_page:
@@ -555,7 +589,15 @@ class PlaywrightTools(Toolkit):
             raise e
 
     async def atype_text(self, selector: str, text: str) -> str:
-        """Types text into an input element asynchronously."""
+        """Types text into an input element asynchronously.
+
+        Args:
+            selector (str): CSS selector of input element
+            text (str): Text to type
+
+        Returns:
+            JSON string with typing status
+        """
         try:
             await self._ainitialize_browser()
             if self._async_page:
@@ -566,7 +608,14 @@ class PlaywrightTools(Toolkit):
             raise e
 
     async def afill_form(self, form_data: Dict[str, str]) -> str:
-        """Fills multiple form fields asynchronously."""
+        """Fills multiple form fields at once asynchronously.
+
+        Args:
+            form_data (dict): Dictionary mapping CSS selectors to values
+
+        Returns:
+            JSON string with fill status
+        """
         try:
             await self._ainitialize_browser()
             if self._async_page:
@@ -578,7 +627,14 @@ class PlaywrightTools(Toolkit):
             raise e
 
     async def aget_element_text(self, selector: str) -> str:
-        """Gets text content of a specific element asynchronously."""
+        """Gets text content of a specific element asynchronously.
+
+        Args:
+            selector (str): CSS selector of element
+
+        Returns:
+            JSON string with the text content
+        """
         try:
             await self._ainitialize_browser()
             if not self._async_page:
@@ -593,7 +649,15 @@ class PlaywrightTools(Toolkit):
             raise e
 
     async def await_for(self, selector: str, timeout_ms: Optional[int] = None) -> str:
-        """Waits for an element to appear asynchronously."""
+        """Waits for an element to appear on the page asynchronously.
+
+        Args:
+            selector (str): CSS selector to wait for
+            timeout_ms (int, optional): Maximum time to wait in milliseconds
+
+        Returns:
+            JSON string with wait status
+        """
         try:
             await self._ainitialize_browser()
             if self._async_page:
@@ -603,7 +667,14 @@ class PlaywrightTools(Toolkit):
             return json.dumps({"status": "error", "message": str(e), "selector": selector})
 
     async def aevaluate_js(self, expression: str) -> str:
-        """Executes JavaScript asynchronously."""
+        """Executes JavaScript on the page asynchronously.
+
+        Args:
+            expression (str): JavaScript expression to evaluate
+
+        Returns:
+            JSON string with the evaluation result
+        """
         try:
             await self._ainitialize_browser()
             if not self._async_page:
@@ -614,7 +685,14 @@ class PlaywrightTools(Toolkit):
             return json.dumps({"status": "error", "message": str(e)})
 
     async def asave_pdf(self, path: str) -> str:
-        """Generates a PDF asynchronously. Chromium only."""
+        """Generates a PDF of the current page asynchronously. Chromium only.
+
+        Args:
+            path (str): File path to save the PDF
+
+        Returns:
+            JSON string confirming PDF was saved
+        """
         try:
             await self._ainitialize_browser()
             if self._async_page:
@@ -624,7 +702,11 @@ class PlaywrightTools(Toolkit):
             return json.dumps({"status": "error", "message": str(e), "path": path})
 
     async def aget_recording(self) -> str:
-        """Gets the video recording path asynchronously."""
+        """Gets the video recording path asynchronously. Closes the session to finalize the video.
+
+        Returns:
+            JSON string with the video file path
+        """
         try:
             if not self.record_video_dir:
                 return json.dumps({"status": "error", "message": "Video recording not enabled"})
