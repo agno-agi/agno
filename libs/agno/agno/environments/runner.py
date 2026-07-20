@@ -481,7 +481,7 @@ def _attempt_cost(attempt: AttemptResult) -> Optional[float]:
 # cache-bearing fallback models, a save path string, a sub-agent that re-shares its
 # own db). The drift test pins SHARED_BY_REFERENCE_FIELDS as a subset of this
 # mapping, so a field newly shared upstream fails CI until an action is chosen here.
-_HERMETIC_FIELD_ACTIONS: Dict[str, str] = {
+_ISOLATE_FIELD_ACTIONS: Dict[str, str] = {
     "db": "fresh-inmemory-db",
     "model": "cache-off-copy",
     "reasoning_model": "cache-off-copy",
@@ -786,7 +786,7 @@ def _isolate_attempt(agent: Any, model_override: Optional[Model] = None, _seen: 
     for field_name in _field_names_of(agent):
         if (
             field_name.endswith("_manager")
-            and field_name not in _HERMETIC_FIELD_ACTIONS
+            and field_name not in _ISOLATE_FIELD_ACTIONS
             and getattr(agent, field_name, None) is not None
         ):
             log_warning(f"rollout isolation does not know agent.{field_name}; nulling it")

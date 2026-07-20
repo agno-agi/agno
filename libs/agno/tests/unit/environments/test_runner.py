@@ -11,7 +11,7 @@ from agno.agent._utils import SHARED_BY_REFERENCE_FIELDS
 from agno.db.in_memory import InMemoryDb
 from agno.environments import Env, EnvRunResult, EnvTask, StopReason, TaskResult, arun_rollouts, run_rollouts
 from agno.environments._engine import AttemptResult
-from agno.environments.runner import _HERMETIC_FIELD_ACTIONS
+from agno.environments.runner import _ISOLATE_FIELD_ACTIONS
 from agno.models.base import Model
 from agno.models.message import Message
 from agno.models.openai import OpenAIChat
@@ -1295,7 +1295,7 @@ async def test_model_less_duck_subject_degrades_policy_fingerprint():
 def test_every_shared_field_has_a_hermetic_action():
     # The drift alarm: a field added to deep_copy's shared-by-reference tuple
     # without a mapped hermetic action fails here before it ships.
-    missing = set(SHARED_BY_REFERENCE_FIELDS) - set(_HERMETIC_FIELD_ACTIONS)
+    missing = set(SHARED_BY_REFERENCE_FIELDS) - set(_ISOLATE_FIELD_ACTIONS)
     assert not missing, f"unmapped shared-by-reference fields: {sorted(missing)}"
 
 
