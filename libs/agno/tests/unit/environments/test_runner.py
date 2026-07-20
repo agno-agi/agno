@@ -410,7 +410,7 @@ async def test_model_override_flips_policy_only():
 
 
 async def test_model_override_stamps_effective_fingerprint():
-    from agno.environments.env import _policy_fingerprint_of as policy_fingerprint_of
+    from agno.environments.environment import _policy_fingerprint_of as policy_fingerprint_of
 
     override = OpenAIChat(id="gpt-5")
     env = _stub_env(model=StubModel(id="declared-model"))

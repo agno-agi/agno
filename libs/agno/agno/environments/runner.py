@@ -15,7 +15,7 @@ from agno.agent import Agent
 from agno.db.in_memory import InMemoryDb
 from agno.environments._engine import AttemptResult, StopReason, arun_batch
 from agno.environments._render import LiveGrid, attempt_glyph, build_grid, build_report
-from agno.environments.env import (
+from agno.environments.environment import (
     Environment,
     Task,
     _env_fingerprint_of,
