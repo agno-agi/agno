@@ -33,6 +33,10 @@ Providers ship in this package:
 | `WikiContextProvider` + `GitBackend` | A clone of a git repo (PAT auth) | `query_<id>`, `update_<id>`; writes auto-commit, rebase, and push |
 | `WikiContextProvider` + `NotionDatabaseBackend` | A Notion database (one row per page) mirrored as flat `.md` files; `notion_page_id` / `notion_last_edited` in frontmatter | `query_<id>`, `update_<id>`; writes round-trip through Notion blocks; conflict-detected on update |
 | `WikiContextProvider` + `web=ContextBackend` | Wiki + web ingestion (e.g. `ExaMCPBackend`) | Write sub-agent gains web search/fetch so `update_<id>("add this paper")` fetches and digests in one hop |
+| `GmailContextProvider` | Gmail via OAuth or service account | `query_gmail`, `update_gmail` (separate read/write sub-agents) |
+| `GoogleCalendarContextProvider` | Google Calendar via OAuth or service account | `query_calendar`, `update_calendar` (separate read/write sub-agents) |
+| `BrowserContextProvider` + `PlaywrightMCPBackend` | Browser automation via Playwright MCP | `query_browser` (accessibility-tree navigation) |
+| `BrowserContextProvider` + `BrowserbaseMCPBackend` | Cloud browser via Browserbase + Stagehand | `query_browser` (natural-language actions) |
 
 All read+write providers (`WikiContextProvider`, `DatabaseContextProvider`, `SlackContextProvider`) accept `read=True, write=True` flags. Set `write=False` for a read-only surface (e.g. a code-managed voice wiki, an analytics-only DB), or `read=False` for a write-only sink. Both `False` raises.
 
@@ -59,6 +63,15 @@ All read+write providers (`WikiContextProvider`, `DatabaseContextProvider`, `Sla
 | `15a_wiki_notion.py` | Same provider against a Notion database (flat: one row per page); files a customer call summary and prints the local mirror path + Notion page URL (env-gated on `NOTION_API_KEY` / `NOTION_DATABASE_ID`) |
 | `16_wiki_with_web.py` | Wiki + Exa MCP web backend; "add this paper" fetches the URL, digests it, and files it in one update call |
 | `17_wiki_dual.py` | Two `WikiContextProvider` instances on one agent — `company_knowledge` (full) + `company_voice` (`write=False`) |
+| `18_gmail.py` | Gmail read/write via `GmailContextProvider` |
+| `19_calendar.py` | Calendar read/write via `GoogleCalendarContextProvider` |
+| `20_google_workspace.py` | Multi-provider: GDrive + Gmail + Calendar |
+| `21_gdrive_office.py` | GDrive with Office file support |
+| `22_wiki_streaming_events.py` | Wiki with streaming context events |
+| `23_wiki_agentos_streaming.py` | Wiki streaming in AgentOS |
+| `24_multi_context_streaming.py` | Multiple providers with streaming |
+| `25_browser.py` | `BrowserContextProvider` with Playwright and Browserbase backends |
+| `26_browser_direct.py` | Direct toolkit usage (`PlaywrightTools`, `BrowserbaseTools`) |
 
 ## Run
 
