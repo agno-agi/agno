@@ -16,6 +16,7 @@ from agno.utils.log import log_warning
 
 if TYPE_CHECKING:
     from agno.tools import Toolkit
+    from agno.tools.mcp import MCPTools
 
 
 class PlaywrightMCPBackend(ContextBackend):
@@ -35,7 +36,7 @@ class PlaywrightMCPBackend(ContextBackend):
         self.exclude_tools = exclude_tools
         self.tool_name_prefix = tool_name_prefix
         self.timeout_seconds = timeout_seconds
-        self._mcp_tools: Toolkit | None = None
+        self._mcp_tools: MCPTools | None = None
 
     def status(self) -> Status:
         if self._mcp_tools is not None and getattr(self._mcp_tools, "initialized", False):
@@ -54,7 +55,7 @@ class PlaywrightMCPBackend(ContextBackend):
             self._mcp_tools = self._build_tools()
         return [self._mcp_tools]
 
-    def _build_tools(self) -> Toolkit:
+    def _build_tools(self) -> MCPTools:
         from mcp import StdioServerParameters
 
         from agno.tools.mcp import MCPTools
@@ -72,13 +73,13 @@ class PlaywrightMCPBackend(ContextBackend):
             timeout_seconds=self.timeout_seconds,
         )
 
-    async def _ensure_session(self) -> Toolkit:
+    async def _ensure_session(self) -> MCPTools:
         if self._mcp_tools is not None and getattr(self._mcp_tools, "initialized", False):
             return self._mcp_tools
         if self._mcp_tools is None:
             self._mcp_tools = self._build_tools()
         try:
-            await self._mcp_tools._connect()  # type: ignore[attr-defined]
+            await self._mcp_tools._connect()
         except Exception:
             self._mcp_tools = None
             raise
@@ -96,6 +97,6 @@ class PlaywrightMCPBackend(ContextBackend):
         if tools is None:
             return
         try:
-            tools.close()  # type: ignore[func-returns-value]
+            await tools.close()
         except Exception as exc:
             log_warning(f"PlaywrightMCPBackend close raised {type(exc).__name__}: {exc}")
