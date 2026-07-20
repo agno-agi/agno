@@ -6,7 +6,7 @@ from typing import Any, Dict, List, Optional, Sequence, Union
 
 from agno.models.response import ToolExecution
 from agno.run.team import TeamRunOutput
-from agno.scorer.base import AnyRunOutput, EnvFingerprintError, Score
+from agno.scorer.base import AnyRunOutput, FingerprintError, Score
 
 
 def _members_carry_tools(response: Any) -> bool:
@@ -142,5 +142,5 @@ class ToolCallScorer:
         try:
             canonical = json.dumps(payload, sort_keys=True, ensure_ascii=True, separators=(",", ":"))
         except (TypeError, ValueError) as exc:
-            raise EnvFingerprintError(f"ToolCallScorer expectations are not JSON-serializable: {exc}") from exc
+            raise FingerprintError(f"ToolCallScorer expectations are not JSON-serializable: {exc}") from exc
         return hashlib.sha256(canonical.encode("utf-8")).hexdigest()

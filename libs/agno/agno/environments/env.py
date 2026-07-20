@@ -1,4 +1,4 @@
-"""Env and EnvTask: the task set, the scorer, and the two fingerprints."""
+"""Environment and Task: the task set, the scorer, and the two fingerprints."""
 
 import asyncio
 import hashlib
@@ -9,7 +9,7 @@ from typing import Any, Callable, Dict, List, Mapping, Optional, Tuple, Union
 
 from agno.agent import Agent
 from agno.models.base import Model
-from agno.scorer import EnvFingerprintError, Scorer
+from agno.scorer import FingerprintError, Scorer
 from agno.scorer._model import model_identity_payload, model_prompt_payload
 from agno.tools.function import Function
 from agno.tools.toolkit import Toolkit
@@ -18,7 +18,7 @@ _TASK_KEYS = {"input", "expected", "id", "metadata"}
 
 
 @dataclass(frozen=True, eq=False)
-class EnvTask:
+class Task:
     """One task row: an input and, optionally, the value the agent should produce.
 
     `id` is for display and selection; when None it defaults to t1..tN positionally at
@@ -32,14 +32,14 @@ class EnvTask:
     metadata: Mapping[str, Any] = field(default_factory=dict)
 
     @classmethod
-    def from_jsonl(cls, path: Union[str, Path]) -> Tuple["EnvTask", ...]:
+    def from_jsonl(cls, path: Union[str, Path]) -> Tuple["Task", ...]:
         """Load tasks from JSONL: required "input" (str); optional "expected", "id",
         "metadata" (object). Any other top-level key raises ValueError naming the line
         number and the key -- an "expected_output" column must not silently yield
         expected=None on every task, which under a None-tolerant scorer greens
         everything.
         """
-        tasks: List[EnvTask] = []
+        tasks: List[Task] = []
         text = Path(path).read_text(encoding="utf-8")
         for line_number, line in enumerate(text.split("\n"), start=1):
             if not line.strip():
@@ -67,13 +67,13 @@ class EnvTask:
         return tuple(tasks)
 
     @classmethod
-    async def afrom_jsonl(cls, path: Union[str, Path]) -> Tuple["EnvTask", ...]:
+    async def afrom_jsonl(cls, path: Union[str, Path]) -> Tuple["Task", ...]:
         """Async twin of from_jsonl."""
         return await asyncio.to_thread(cls.from_jsonl, path)
 
 
 @dataclass(frozen=True, eq=False)
-class Env:
+class Environment:
     """An agent, a task set, and a scorer -- the unit `run_rollouts` runs.
 
     `frozen=True` guarantees wiring, not state: the fields cannot be rebound, so a
@@ -89,7 +89,7 @@ class Env:
     """
 
     name: str
-    tasks: Tuple[EnvTask, ...]
+    tasks: Tuple[Task, ...]
     scorer: Scorer
     agent: Union[Agent, Callable[[], Agent]]
     timeout_seconds: int = 120
@@ -98,8 +98,8 @@ class Env:
         object.__setattr__(self, "tasks", tuple(self.tasks))
         declared_ids: set = set()
         for index, task in enumerate(self.tasks):
-            if not isinstance(task, EnvTask):
-                raise TypeError(f"tasks[{index}] must be an EnvTask, got {type(task).__name__}")
+            if not isinstance(task, Task):
+                raise TypeError(f"tasks[{index}] must be an Task, got {type(task).__name__}")
             if task.id is not None:
                 # A duplicated id makes diff() silently pair rows with the wrong
                 # baseline task; positional collisions with auto-ids are caught at
@@ -116,14 +116,14 @@ class Env:
             Team = None  # type: ignore[assignment, misc]
         if Team is not None and isinstance(self.agent, Team):
             raise TypeError(
-                f"Env.agent does not accept a Team (got {received}); team environments "
+                f"Environment.agent does not accept a Team (got {received}); team environments "
                 "arrive in the team release with member-level isolation"
             )
         # Discrimination is callable(x): Agent defines no __call__. Anything else
         # raises at construction, naming the received type.
         if isinstance(self.agent, Agent) or callable(self.agent):
             return
-        raise TypeError(f"Env.agent must be an Agent or a zero-arg factory returning one, got {received}")
+        raise TypeError(f"Environment.agent must be an Agent or a zero-arg factory returning one, got {received}")
 
     def _source_agent(self) -> Agent:
         """One agent instance to fingerprint. For a factory env this constructs one
@@ -141,7 +141,7 @@ class Env:
         agent = self._source_agent()
         model = getattr(agent, "model", None)
         if model is None:
-            raise EnvFingerprintError("policy_fingerprint needs a model; the agent has none")
+            raise FingerprintError("policy_fingerprint needs a model; the agent has none")
         return _policy_fingerprint_of(model)
 
     def env_matches(self, other: Any) -> bool:
@@ -165,15 +165,15 @@ def _validated_agent(product: Any) -> Any:
         Team = None  # type: ignore[assignment, misc]
     if Team is not None and isinstance(product, Team):
         raise TypeError(
-            f"Env.agent factory returned a Team ({received}); team environments arrive "
+            f"Environment.agent factory returned a Team ({received}); team environments arrive "
             "in the team release with member-level isolation"
         )
     if not callable(getattr(product, "arun", None)):
-        raise TypeError(f"Env.agent factory must return an Agent, got {received}")
+        raise TypeError(f"Environment.agent factory must return an Agent, got {received}")
     return product
 
 
-def _resolved_task_id(task: EnvTask, index: int) -> str:
+def _resolved_task_id(task: Task, index: int) -> str:
     """The display/selection id: the declared one, or t1..tN positionally."""
     return task.id if task.id is not None else f"t{index + 1}"
 
@@ -185,7 +185,7 @@ def _canonical(payload: Any) -> str:
     try:
         return json.dumps(payload, sort_keys=True, ensure_ascii=True, separators=(",", ":"))
     except (TypeError, ValueError) as exc:
-        raise EnvFingerprintError(f"fingerprint component is not JSON-serializable: {exc}") from exc
+        raise FingerprintError(f"fingerprint component is not JSON-serializable: {exc}") from exc
 
 
 def _sha256(payload: Any) -> str:
@@ -195,7 +195,7 @@ def _sha256(payload: Any) -> str:
 def _scorer_digest(scorer: Scorer) -> str:
     digest = getattr(scorer, "digest", None)
     if digest is None or not callable(digest):
-        raise EnvFingerprintError(
+        raise FingerprintError(
             f"scorer {type(scorer).__name__} has no digest(); the env_fingerprint degrades to None"
         )
     return digest()
@@ -214,7 +214,7 @@ def _declared_tool_schemas(agent: Agent) -> List[Dict[str, Any]]:
         return []
     if not isinstance(tools, (list, tuple)):
         # A callable tools factory resolves per run; there is no declared schema.
-        raise EnvFingerprintError("agent.tools is a factory; declared tool schemas cannot be fingerprinted")
+        raise FingerprintError("agent.tools is a factory; declared tool schemas cannot be fingerprinted")
     schemas: List[Dict[str, Any]] = []
     for tool in tools:
         if isinstance(tool, dict):
@@ -229,7 +229,7 @@ def _declared_tool_schemas(agent: Agent) -> List[Dict[str, Any]]:
         elif callable(tool):
             schemas.append(Function.from_callable(tool).to_dict())
         else:
-            raise EnvFingerprintError(f"cannot fingerprint tool of type {type(tool).__name__}")
+            raise FingerprintError(f"cannot fingerprint tool of type {type(tool).__name__}")
     # Name-less dict tools (provider builtins like {"type": "file_search"}) would all
     # sort under "" and leak declaration order into the hash; the canonical-JSON
     # tiebreak keeps the fingerprint order-insensitive for them too.
@@ -244,10 +244,10 @@ def _prompt_component(value: Any, label: str) -> Any:
     to_dict = getattr(value, "to_dict", None)
     if callable(to_dict):
         return to_dict()
-    raise EnvFingerprintError(f"agent.{label} is {type(value).__name__}; only strings and lists fingerprint")
+    raise FingerprintError(f"agent.{label} is {type(value).__name__}; only strings and lists fingerprint")
 
 
-def _env_fingerprint_of(env: "Env", agent: Agent, model: Optional[Model] = None) -> str:
+def _env_fingerprint_of(env: "Environment", agent: Agent, model: Optional[Model] = None) -> str:
     """sha256 over the environment identity: tasks, scorer, declared tools, prompt
     strings (agent-level and model-level), declared session_state, and termination
     settings.
@@ -258,7 +258,7 @@ def _env_fingerprint_of(env: "Env", agent: Agent, model: Optional[Model] = None)
     EFFECTIVE model so a prompt-bearing override reads as an environment change;
     callers that omit it get the agent's declared model.
 
-    Every component failure surfaces as EnvFingerprintError -- including exceptions
+    Every component failure surfaces as FingerprintError -- including exceptions
     raised while BUILDING the payload (a sourceless scorer, a schema builder choking
     on an exotic tool) -- so the runner's catch-and-degrade-to-None is complete and a
     fingerprint can never crash a run.
@@ -282,10 +282,10 @@ def _env_fingerprint_of(env: "Env", agent: Agent, model: Optional[Model] = None)
                 "tool_call_limit": getattr(agent, "tool_call_limit", None),
             },
         }
-    except EnvFingerprintError:
+    except FingerprintError:
         raise
     except Exception as exc:
-        raise EnvFingerprintError(f"fingerprint component failed: {type(exc).__name__}: {exc}") from exc
+        raise FingerprintError(f"fingerprint component failed: {type(exc).__name__}: {exc}") from exc
     return _sha256(payload)
 
 
@@ -296,10 +296,10 @@ def _policy_fingerprint_of(model: Model) -> str:
     exactly the drift the split exists to catch."""
     try:
         payload: Dict[str, Any] = model_identity_payload(model)
-    except EnvFingerprintError:
+    except FingerprintError:
         raise
     except Exception as exc:
-        raise EnvFingerprintError(f"fingerprint component failed: {type(exc).__name__}: {exc}") from exc
+        raise FingerprintError(f"fingerprint component failed: {type(exc).__name__}: {exc}") from exc
     return _sha256(payload)
 
 
@@ -308,7 +308,7 @@ def _env_fingerprint_or_none(obj: Any) -> Optional[str]:
     if callable(fingerprint):
         try:
             return fingerprint()
-        except EnvFingerprintError:
+        except FingerprintError:
             return None
     return fingerprint
 

@@ -17,7 +17,7 @@ supervised fine-tuning dataset.
 """
 
 from agno.agent import Agent
-from agno.environments import Env, EnvTask, run_rollouts
+from agno.environments import Environment, Task, run_rollouts
 from agno.models.openai import OpenAIResponses
 from agno.scorer import CodeScorer
 from pydantic import BaseModel
@@ -40,15 +40,15 @@ def exact(run, expected):
 
 agent = Agent(model=OpenAIResponses(id="gpt-5.5"), output_schema=Answer)
 
-env = Env(
+env = Environment(
     name="mental-math",
     agent=agent,
     tasks=(
         # Easy: expect 8/8, carries no signal.
-        EnvTask(input="What is 17 x 23?", expected=391),
+        Task(input="What is 17 x 23?", expected=391),
         # Hard enough that attempts disagree: a chained computation gives sampling
         # three chances to slip, where single products saturate at 8/8.
-        EnvTask(
+        Task(
             input=(
                 "Compute 31415926535897 x 27182818284590, then give the sum of "
                 "the digits of the product multiplied by 104729."

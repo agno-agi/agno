@@ -6,7 +6,7 @@ hidden, and refused), not exact formatting.
 
 import pytest
 
-from agno.environments import EnvRunResult, EnvTask, StopReason, TaskResult
+from agno.environments import EnvironmentRunResult, Task, StopReason, TaskResult
 from agno.environments._engine import AttemptResult
 from agno.environments._render import build_report
 from agno.models.response import ToolExecution
@@ -41,11 +41,11 @@ def _attempt(
 
 
 def _task_result(task_id, attempts):
-    return TaskResult(task=EnvTask(input=f"input for {task_id}", id=task_id), attempts=tuple(attempts))
+    return TaskResult(task=Task(input=f"input for {task_id}", id=task_id), attempts=tuple(attempts))
 
 
 def _result(task_results):
-    return EnvRunResult(
+    return EnvironmentRunResult(
         env_name="report-env",
         k=max((len(tr.attempts) for tr in task_results), default=0),
         env_fingerprint="e" * 8,

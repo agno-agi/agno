@@ -17,7 +17,7 @@ from typing import Any, Dict, List, Optional, Union
 
 from agno.environments._engine import AttemptResult
 from agno.environments.exporters._validate import MAX_CONVERSATIONS, MAX_DATASET_BYTES
-from agno.environments.runner import EnvRunResult
+from agno.environments.runner import EnvironmentRunResult
 
 
 @dataclass
@@ -66,7 +66,7 @@ def _conversation_from(run: Any) -> Optional[List[Dict[str, str]]]:
     return conversation
 
 
-def to_sft_jsonl(result: EnvRunResult, path: Union[str, Path], *, only_passed: bool = True) -> ExportReport:
+def to_sft_jsonl(result: EnvironmentRunResult, path: Union[str, Path], *, only_passed: bool = True) -> ExportReport:
     """Write the result's exportable attempts as conversational-SFT JSONL.
 
     `only_passed=True` is the default because `learning_zone()` selects TASKS whose
@@ -141,7 +141,7 @@ def to_sft_jsonl(result: EnvRunResult, path: Union[str, Path], *, only_passed: b
     return report
 
 
-async def ato_sft_jsonl(result: EnvRunResult, path: Union[str, Path], *, only_passed: bool = True) -> ExportReport:
+async def ato_sft_jsonl(result: EnvironmentRunResult, path: Union[str, Path], *, only_passed: bool = True) -> ExportReport:
     """Async twin of to_sft_jsonl."""
     return await asyncio.to_thread(to_sft_jsonl, result, path, only_passed=only_passed)
 

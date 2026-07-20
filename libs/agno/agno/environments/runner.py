@@ -16,8 +16,8 @@ from agno.db.in_memory import InMemoryDb
 from agno.environments._engine import AttemptResult, StopReason, arun_batch
 from agno.environments._render import LiveGrid, attempt_glyph, build_grid, build_report
 from agno.environments.env import (
-    Env,
-    EnvTask,
+    Environment,
+    Task,
     _env_fingerprint_of,
     _env_fingerprint_or_none,
     _fingerprints_match,
@@ -27,7 +27,7 @@ from agno.environments.env import (
 )
 from agno.models.base import Model
 from agno.run.agent import RunOutput
-from agno.scorer import EnvFingerprintError, EnvMismatchError, Score
+from agno.scorer import FingerprintError, MismatchError, Score
 from agno.utils.log import log_warning
 
 _FORMAT_VERSION = 1
@@ -42,7 +42,7 @@ _ABS_TOL = 1e-9
 class TaskResult:
     """One task's K attempts, in attempt order."""
 
-    task: EnvTask
+    task: Task
     attempts: Tuple[AttemptResult, ...]
 
     @property
@@ -84,7 +84,7 @@ class TaskResult:
 
 
 @dataclass
-class EnvRunResult:
+class EnvironmentRunResult:
     """The result of one rollout run: fingerprints, task results, and the grid."""
 
     env_name: str
@@ -144,7 +144,7 @@ class EnvRunResult:
             ],
         }
 
-    def learning_zone(self) -> "EnvRunResult":
+    def learning_zone(self) -> "EnvironmentRunResult":
         """A filtered copy holding only the tasks whose attempts disagreed -- same
         fingerprints, so the grid, summary() and the exporter all work on it."""
         return replace(
@@ -164,10 +164,10 @@ class EnvRunResult:
     def env_matches(self, other: Any) -> bool:
         return _fingerprints_match(self.env_fingerprint, _env_fingerprint_or_none(other))
 
-    def diff(self, baseline: "EnvRunResult") -> "EnvDiff":
+    def diff(self, baseline: "EnvironmentRunResult") -> "EnvironmentDiff":
         """Per-task deltas against a baseline run of the same environment."""
         if not self.env_matches(baseline):
-            raise EnvMismatchError(
+            raise MismatchError(
                 "env_fingerprint diverged: current="
                 f"{self.env_fingerprint!r}, baseline={baseline.env_fingerprint!r} -- "
                 "these results are not from the same environment (None never matches)"
@@ -205,7 +205,7 @@ class EnvRunResult:
                     "status": status,
                 }
             )
-        return EnvDiff(
+        return EnvironmentDiff(
             env_name=self.env_name,
             policy_changed=not _fingerprints_match(self.policy_fingerprint, baseline.policy_fingerprint),
             rows=tuple(rows),
@@ -256,7 +256,7 @@ class EnvRunResult:
         try:
             text = json.dumps(payload, ensure_ascii=False, indent=2)
         except (TypeError, ValueError) as exc:
-            raise TypeError(f"EnvRunResult.save: {_name_unserializable(payload)}: {exc}") from exc
+            raise TypeError(f"EnvironmentRunResult.save: {_name_unserializable(payload)}: {exc}") from exc
         with open(Path(path), "w", encoding="utf-8", newline="") as handle:
             handle.write(text + "\n")
 
@@ -265,14 +265,14 @@ class EnvRunResult:
         await asyncio.to_thread(self.save, path)
 
     @classmethod
-    def load(cls, path: Union[str, Path]) -> "EnvRunResult":
+    def load(cls, path: Union[str, Path]) -> "EnvironmentRunResult":
         payload = json.loads(Path(path).read_text(encoding="utf-8"))
         version = payload.get("format_version")
         if version != _FORMAT_VERSION:
             raise ValueError(f"unsupported format_version {version!r}; this build reads {_FORMAT_VERSION}")
         task_results = []
         for row in payload["task_results"]:
-            task = EnvTask(
+            task = Task(
                 input=row["task"]["input"],
                 expected=row["task"]["expected"],
                 id=row["task"]["id"],
@@ -302,7 +302,7 @@ class EnvRunResult:
         )
 
     @classmethod
-    async def aload(cls, path: Union[str, Path]) -> "EnvRunResult":
+    async def aload(cls, path: Union[str, Path]) -> "EnvironmentRunResult":
         """Async twin of load."""
         return await asyncio.to_thread(cls.load, path)
 
@@ -398,7 +398,7 @@ class EnvRunResult:
 
 
 @dataclass
-class EnvDiff:
+class EnvironmentDiff:
     """Per-task deltas between two runs of the same environment."""
 
     env_name: str
@@ -837,13 +837,13 @@ def _default_model_for(agent: Any) -> Optional[Model]:
 
 
 async def arun_rollouts(
-    env: Env,
+    env: Environment,
     *,
     k: int = 8,
-    tasks: Optional[Sequence[EnvTask]] = None,
+    tasks: Optional[Sequence[Task]] = None,
     model: Optional[Model] = None,
     concurrency: int = 4,
-) -> EnvRunResult:
+) -> EnvironmentRunResult:
     """Run every task K times, each attempt isolated, and score every attempt.
 
     Isolation is unconditional and there is no knob: each attempt runs against a
@@ -895,7 +895,7 @@ async def arun_rollouts(
         )
 
     resolved_tasks = tuple(replace(task, id=_resolved_task_id(task, index)) for index, task in enumerate(env.tasks))
-    # Declared duplicates are rejected at Env construction; the positional case (an
+    # Declared duplicates are rejected at Environment construction; the positional case (an
     # explicit "t2" colliding with the second task's auto-id) only exists after
     # resolution, so it is caught here -- diff() keyed on a duplicated id silently
     # pairs rows with the wrong baseline task.
@@ -909,7 +909,7 @@ async def arun_rollouts(
         selected = resolved_tasks
     else:
         index_by_identity = {id(task): index for index, task in enumerate(env.tasks)}
-        selected_list: List[EnvTask] = []
+        selected_list: List[Task] = []
         for task in tasks:
             env_index = index_by_identity.get(id(task))
             if env_index is None:
@@ -960,7 +960,7 @@ async def arun_rollouts(
     env_fingerprint: Optional[str] = None
     try:
         env_fingerprint = _env_fingerprint_of(env, source_agent, model=effective_model)
-    except EnvFingerprintError as exc:
+    except FingerprintError as exc:
         log_warning(f"env_fingerprint degraded to None: {exc}")
 
     policy_fingerprint: Optional[str] = None
@@ -969,7 +969,7 @@ async def arun_rollouts(
     else:
         try:
             policy_fingerprint = _policy_fingerprint_of(effective_model)
-        except EnvFingerprintError as exc:
+        except FingerprintError as exc:
             log_warning(f"policy_fingerprint degraded to None: {exc}")
 
     def build_attempt_agent() -> Any:
@@ -1046,7 +1046,7 @@ async def arun_rollouts(
         )
 
     task_results = tuple(TaskResult(task=task, attempts=attempts) for task, attempts in zip(selected, batches))
-    return EnvRunResult(
+    return EnvironmentRunResult(
         env_name=env.name,
         k=k,
         env_fingerprint=env_fingerprint,
@@ -1058,13 +1058,13 @@ async def arun_rollouts(
 
 
 def run_rollouts(
-    env: Env,
+    env: Environment,
     *,
     k: int = 8,
-    tasks: Optional[Sequence[EnvTask]] = None,
+    tasks: Optional[Sequence[Task]] = None,
     model: Optional[Model] = None,
     concurrency: int = 4,
-) -> EnvRunResult:
+) -> EnvironmentRunResult:
     """Sync door over arun_rollouts (asyncio.run).
 
     Timeout semantics match the async door -- the attempt coroutine is cancelled at

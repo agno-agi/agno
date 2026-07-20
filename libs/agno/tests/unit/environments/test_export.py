@@ -4,9 +4,9 @@ import hashlib
 import json
 
 from agno.environments import (
-    Env,
-    EnvRunResult,
-    EnvTask,
+    Environment,
+    EnvironmentRunResult,
+    Task,
     StopReason,
     TaskResult,
     arun_rollouts,
@@ -47,10 +47,10 @@ def _attempt(run, *, passed=True, value=None, limit_hit=False, unscored=False):
 
 def _result(*task_rows, env_fingerprint="env-fp", policy_fingerprint="policy-fp"):
     task_results = tuple(
-        TaskResult(task=EnvTask(input=f"q{index}", id=f"t{index + 1}"), attempts=tuple(attempts))
+        TaskResult(task=Task(input=f"q{index}", id=f"t{index + 1}"), attempts=tuple(attempts))
         for index, attempts in enumerate(task_rows)
     )
-    return EnvRunResult(
+    return EnvironmentRunResult(
         env_name="export-env",
         k=max((len(attempts) for attempts in task_rows), default=0),
         env_fingerprint=env_fingerprint,
@@ -191,12 +191,12 @@ async def test_export_is_deterministic(tmp_path):
         async def arun(self, *, input, stream, stream_events, yield_run_output, session_id):
             yield _conversational_run(f"echo:{input}", question=input, history_noise=False)
 
-    env = Env(
+    env = Environment(
         name="deterministic",
         tasks=(
-            EnvTask(input="one", expected="echo:one"),
-            EnvTask(input="two", expected="echo:two"),
-            EnvTask(input="three", expected="echo:three"),
+            Task(input="one", expected="echo:one"),
+            Task(input="two", expected="echo:two"),
+            Task(input="three", expected="echo:three"),
         ),
         scorer=CodeScorer(scorer_fn),
         agent=lambda: ConversationalStub(),

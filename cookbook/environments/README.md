@@ -19,7 +19,7 @@ generation; you do not need to know anything about RL to use it.
 
 | File | What it shows |
 |------|---------------|
-| `_01_first_env.py` | The whole thing in twenty lines: `Env`, a typed `CodeScorer`, `run_rollouts`, the live grid, `summary()` |
+| `_01_first_env.py` | The whole thing in twenty lines: `Environment`, a typed `CodeScorer`, `run_rollouts`, the live grid, `summary()` |
 | `_02_export_sft.py` | The second job: `learning_zone()`, `to_sft_jsonl`, the export report, and the provenance sidecar |
 | `_03_tool_reliability.py` | `ToolCallScorer`: did the lookup tool actually EXECUTE, or did the agent answer from its head? Executions, not requests |
 | `_04_judge_rubric.py` | `JudgeScorer` with a graded rubric: a pass rate for quality you cannot check with code (tone, commitments, next steps) |
@@ -55,10 +55,10 @@ reason.
 - Gating a release in CI, one attempt read by a person: `agno.eval` (`Case`,
   `run_cases`).
 - Measuring a distribution over K attempts, or exporting training data:
-  `agno.environments` (`EnvTask`, `run_rollouts`).
+  `agno.environments` (`Task`, `run_rollouts`).
 
 Task sets a team owns in git live in `tasks/` (checked in, strict-validated by
-`EnvTask.from_jsonl`). Exports and saved baselines land in `data/generated/`, which is
+`Task.from_jsonl`). Exports and saved baselines land in `data/generated/`, which is
 gitignored.
 
 ## The next step

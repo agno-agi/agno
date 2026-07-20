@@ -6,7 +6,7 @@ import inspect
 import textwrap
 from typing import Any, Callable, Union
 
-from agno.scorer.base import AnyRunOutput, EnvFingerprintError, Score
+from agno.scorer.base import AnyRunOutput, FingerprintError, Score
 
 
 class CodeScorer:
@@ -69,7 +69,7 @@ class CodeScorer:
         try:
             source = inspect.getsource(self.fn)
         except (OSError, TypeError) as exc:
-            raise EnvFingerprintError(
+            raise FingerprintError(
                 f"CodeScorer cannot digest {self.fn!r}: source is not retrievable "
                 "(REPL-defined, builtin, or C callable)"
             ) from exc

@@ -27,7 +27,7 @@ The judged output is fenced behind a per-call nonce, so a reply containing
 """
 
 from agno.agent import Agent
-from agno.environments import Env, EnvTask, run_rollouts
+from agno.environments import Environment, Task, run_rollouts
 from agno.models.openai import OpenAIResponses
 from agno.scorer import JudgeScorer
 
@@ -66,11 +66,11 @@ rubric = (
     "facts cap the score at 4."
 )
 
-env = Env(
+env = Environment(
     name="support-reply-rewrite",
     agent=agent,
     tasks=(
-        EnvTask(
+        Task(
             input=(
                 "Draft reply: 'We told you already, the refund of $42.50 for "
                 "order A-1001 takes 5-7 business days. Please stop emailing "
@@ -78,14 +78,14 @@ env = Env(
             ),
             id="hostile-draft",
         ),
-        EnvTask(
+        Task(
             input=(
                 "Draft reply: 'Your package is lost, not much we can do. "
                 "Carrier says maybe file a claim? Order A-1003, worth $180.'"
             ),
             id="shrug-draft",
         ),
-        EnvTask(
+        Task(
             input=(
                 "Draft reply: 'The outage on 2026-07-14 wiped your report. "
                 "Engineering restored a backup from 2026-07-12 so two days "
