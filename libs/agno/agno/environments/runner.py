@@ -633,14 +633,56 @@ def _read_only_learning_machine(machine: Any, source_db: Any) -> Any:
 
 
 def _field_names_of(agent: Any) -> List[str]:
+    """Declared dataclass fields UNIONED with live instance attributes.
+
+    Agent is @dataclass(init=False), so fields() alone misses anything a subclass sets
+    in its own __init__ -- and an unseen custom manager or model is exactly what the
+    isolation walk exists to catch: it would stay bound to the caller's db (or keep its
+    response cache on) inside every attempt. Union, not replacement: some declared
+    fields are absent from vars() on an initialized agent, and dropping them would
+    silently un-guard those slots. A list, not a generator: both callers setattr while
+    iterating."""
     if is_dataclass(agent):
-        return [f.name for f in fields(agent)]
+        names = [f.name for f in fields(agent)]
+        seen = set(names)
+        names.extend(name for name in vars(agent) if name not in seen)
+        return names
     return list(vars(agent))
 
 
 def _is_mcp_tool(tool: Any) -> bool:
     mro = getattr(type(tool), "__mro__", ())
     return any(c.__name__ in ("MCPTools", "MultiMCPTools") for c in mro)
+
+
+def _mcp_tool_instances(agent: Any, _seen: Optional[Set[int]] = None) -> List[Any]:
+    """The MCP tool OBJECTS an agent carries -- same traversal as _mcp_tool_names
+    (callable factories resolved, one level of composition, nested reasoning agent),
+    returning the instances so two factory products can be compared by identity."""
+    seen = _seen if _seen is not None else set()
+    if id(agent) in seen:
+        return []
+    seen.add(id(agent))
+    found: List[Any] = []
+    tools = getattr(agent, "tools", None)
+    if callable(tools):
+        try:
+            tools = tools()
+        except Exception:
+            tools = None
+    if isinstance(tools, (list, tuple)):
+        for tool in tools:
+            if _is_mcp_tool(tool):
+                found.append(tool)
+                continue
+            for attr in ("tools", "functions", "toolkits"):
+                inner = getattr(tool, attr, None)
+                if isinstance(inner, (list, tuple)):
+                    found.extend(sub for sub in inner if _is_mcp_tool(sub))
+    reasoning_agent = getattr(agent, "reasoning_agent", None)
+    if reasoning_agent is not None:
+        found.extend(_mcp_tool_instances(reasoning_agent, _seen=seen))
+    return found
 
 
 def _mcp_tool_names(agent: Any, _seen: Optional[Set[int]] = None, *, callable_only: bool = False) -> List[str]:
@@ -983,6 +1025,24 @@ async def arun_rollouts(
                 "concrete list -- agent=lambda: Agent(..., tools=[MCPTools(...)]) -- so each attempt "
                 "owns and connects its own."
             )
+        # A factory that CLOSES OVER one MCP returns a fresh agent holding the same
+        # session every call -- the anti-pattern rejected on the live path, invisible to
+        # a single-product check. Compared by instance identity across two products, and
+        # only when the first actually carries MCP, so the extra construction is paid
+        # solely by MCP factories. Raised here, before any attempt: raising inside the
+        # per-attempt build would be swallowed into attempt-error data, and the first
+        # attempt would already have run green against the shared session.
+        first_mcp = _mcp_tool_instances(source_agent)
+        if first_mcp:
+            probe_ids = {id(tool) for tool in _mcp_tool_instances(_validated_agent(env.agent()))}
+            shared = [tool for tool in first_mcp if id(tool) in probe_ids]
+            if shared:
+                raise RuntimeError(
+                    f"the env.agent factory returns the SAME {type(shared[0]).__name__} instance on every "
+                    "call: every attempt shares one MCP session, and concurrent attempts connect and close "
+                    "it mid-run, losing the batch. Construct the MCP INSIDE the factory -- "
+                    "agent=lambda: Agent(..., tools=[MCPTools(...)]) -- so each attempt owns its own."
+                )
     else:
         source_agent = env.agent
         # Live path: a factory constructs fresh MCP tools per attempt, which is exactly
@@ -1025,9 +1085,29 @@ async def arun_rollouts(
         except FingerprintError as exc:
             log_warning(f"policy_fingerprint degraded to None: {exc}")
 
+    expected_model_id = getattr(effective_model, "id", None)
+
     def build_attempt_agent() -> Any:
+        is_factory = callable(env.agent)
         agent = _validated_agent(env.agent()) if callable(env.agent) else env.agent.deep_copy()
         _isolate_attempt(agent, model_override=model)
+        # deep_copy rebuilds the agent through its own __init__ signature, so a subclass
+        # declaring **kwargs loses every field -- the attempt then samples a different
+        # (or default) model while the result carries the caller's policy fingerprint: a
+        # green verification attributed to a policy that never ran. Live path only; a
+        # factory is expected to build its own model. This reads the model AFTER
+        # _isolate_attempt because initialize_agent() installs the default there -- if
+        # that resolution ever moves later, this fires on every model-less agent.
+        if not is_factory and expected_model_id is not None:
+            actual_model_id = getattr(getattr(agent, "model", None), "id", None)
+            if actual_model_id is not None and actual_model_id != expected_model_id:
+                raise RuntimeError(
+                    f"attempt agent sampled model {actual_model_id!r} but the run was fingerprinted against "
+                    f"{expected_model_id!r}: env.agent does not survive deep_copy (an Agent subclass whose "
+                    "__init__ takes **kwargs loses its fields), so results would be stamped with a policy "
+                    "that never ran. Use a factory env -- agent=lambda: MyAgent(...) -- which is constructed "
+                    "fresh per attempt."
+                )
         return agent
 
     finished: List[AttemptResult] = []

@@ -19,7 +19,7 @@ from agno.environments import (
     run_rollouts,
 )
 from agno.environments._engine import AttemptResult
-from agno.environments.runner import _ISOLATE_FIELD_ACTIONS
+from agno.environments.runner import _ISOLATE_FIELD_ACTIONS, _isolate_attempt
 from agno.models.base import Model
 from agno.models.message import Message
 from agno.models.openai import OpenAIChat
@@ -1759,3 +1759,69 @@ async def test_asave_aload_roundtrip(tmp_path):
     await result.asave(target)
     loaded = await EnvironmentRunResult.aload(target)
     assert loaded.summary() == result.summary()
+
+
+async def test_subclass_custom_manager_and_model_are_isolated():
+    # Agent is @dataclass(init=False): a subclass's own instance attributes are not
+    # dataclass fields, so before the union in _field_names_of they were invisible to
+    # the unknown-manager null and the cache-off walk -- a custom manager stayed bound
+    # to the caller's db and a write through it landed in the caller's store.
+    caller_db = InMemoryDb()
+
+    class _CustomManager:
+        def __init__(self, db):
+            self.db = db
+
+    # An EXPLICIT signature on purpose: a **kwargs subclass loses every field under
+    # deep_copy (a separate defect, guarded by the wrong-policy check), which would make
+    # this test vacuous by dropping the very attributes it asserts on.
+    class _SubAgent(Agent):
+        def __init__(self, model=None, db=None, telemetry=False):
+            super().__init__(model=model, db=db, telemetry=telemetry)
+            self.custom_manager = _CustomManager(db=caller_db)
+            self.critic_model = RecordingFakeModel("critic")
+            self.critic_model.cache_response = True
+
+    caller = _SubAgent(model=RecordingFakeModel("main"), db=caller_db, telemetry=False)
+    # Non-vacuity: the copy really does carry the subclass attributes, re-bound to the
+    # caller's db, before isolation runs.
+    precheck = caller.deep_copy()
+    assert precheck.custom_manager.db is caller_db
+    assert precheck.critic_model.cache_response is True
+    isolated = caller.deep_copy()
+    _isolate_attempt(isolated)
+
+    # The unknown manager is nulled loudly rather than shared, and the subclass's own
+    # model has its response cache disabled like any other.
+    assert getattr(isolated, "custom_manager", None) is None
+    assert getattr(isolated, "critic_model").cache_response is False
+
+
+async def test_factory_returning_shared_mcp_instance_rejected():
+    # A factory that closes over ONE MCP hands every attempt the same session -- the
+    # anti-pattern the run-start guard rejects on the live path. Identity across calls
+    # is what catches it here.
+    recorder = Recorder()
+    shared = MCPTools()
+
+    def factory():
+        stub = StubRolloutAgent(recorder)
+        stub.tools = [shared]  # same instance every call
+        return stub
+
+    env = Environment(
+        name="mcp-shared", tasks=(Task(input="one"),), scorer=CodeScorer(lambda r, e: True), agent=factory
+    )
+    with pytest.raises(RuntimeError, match="SAME"):
+        await arun_rollouts(env, k=2, concurrency=1)
+
+
+async def test_model_less_agent_does_not_trip_policy_guard():
+    # The wrong-policy guard reads the attempt's model AFTER _isolate_attempt, because
+    # initialize_agent() installs the default there. A model-less agent must therefore
+    # match the same default the run was fingerprinted against, not fire the guard. If
+    # default-model resolution ever moves later, this test catches it.
+    caller = Agent(telemetry=False)
+    env = _real_env(caller)
+    result = await arun_rollouts(env, k=1, concurrency=1)
+    assert result.n_attempts == 1
