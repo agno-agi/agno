@@ -152,11 +152,16 @@ teaching the model to answer without its tools.
 
 ## Truncated answers are unscored, not failed
 
-A response that exhausts the model's output budget comes back with nothing to grade.
-The engine stops that attempt with `StopReason.truncated` before scoring, so the
+A response that exhausts the model's output budget can come back with nothing at all to
+grade. The engine stops that attempt with `StopReason.truncated` before scoring, so the
 scorer is never called on it and the attempt is excluded from `pass_rate` — the same
-category as a timeout, because no answer is not a wrong answer. That is why every
-scorer in these examples reads `run.content` directly, with no `None` guard: the case
-they would be guarding against never reaches them. Raise the agent's output cap when a
-run shows truncated attempts; do not return `False` for empty content, which would
-drag truncation into the pass rate and hide the real cause.
+category as a timeout, because no answer is not a wrong answer. The grid tags those
+rows `truncated`, which reads as "raise the output cap", not "this agent is
+unreliable".
+
+That is why the scorers in these examples read `run.content` directly: a run with *no*
+content never reaches them. The narrower case still exists — an `output_schema` run
+truncated mid-answer keeps its partial text, so `run.content` is a string rather than
+the parsed model, and a scorer reading a field off it will raise. Do not answer either
+case by returning `False` for bad content: that drags truncation into the pass rate and
+hides the real cause. Raise the output cap instead.

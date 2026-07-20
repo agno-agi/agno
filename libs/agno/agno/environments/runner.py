@@ -386,6 +386,9 @@ class EnvironmentRunResult:
                     "pass_rate": task_result.pass_rate,
                     "learning_zone": task_result.in_learning_zone,
                     "n_unscored": task_result.n_unscored,
+                    "n_truncated": sum(
+                        1 for attempt in task_result.attempts if attempt.stop_reason == StopReason.truncated
+                    ),
                 }
             )
         return build_grid(

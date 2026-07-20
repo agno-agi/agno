@@ -13,14 +13,14 @@ import copy
 import pytest
 
 from agno.agent import Agent
-from agno.environments import Environment, StopReason, Task, run_rollouts
+from agno.environments import Environment, EnvironmentRunResult, StopReason, Task, run_rollouts
 from agno.environments._engine import arun_batch
 from agno.environments._render import build_report
 from agno.models.base import Model
-from agno.models.response import ModelResponse
+from agno.models.response import ModelResponse, ToolExecution
 from agno.run.agent import RunOutput
 from agno.run.base import RunStatus
-from agno.scorer import CodeScorer, JudgeScorer
+from agno.scorer import CodeScorer, JudgeScorer, ToolCallScorer
 
 
 def _output(**kwargs):
@@ -162,13 +162,63 @@ async def test_truncated_distinct_in_report():
         tasks=(Task(input="a"),),
         scorer=CodeScorer(lambda run, expected: True),
     )
+    # The report names the reason for all three.
     report = build_report([_task_result_from(env, truncated[0])], only="failed")
     assert "stop=truncated" in report
-    assert "output limit reached" in report
+    assert "the run completed with no content" in report
 
     errored_report = build_report([_task_result_from(env, errored[0])], only="failed")
     assert "stop=error" in errored_report
     assert "stop=truncated" not in errored_report
+
+    timeout_report = build_report([_task_result_from(env, timed_out[0])], only="failed")
+    assert "stop=timeout" in timeout_report
+    assert "stop=truncated" not in timeout_report
+
+    # And so does the grid: an unscored count alone cannot tell an operator whether to
+    # raise the output cap or go fix the agent.
+    grid = str(
+        EnvironmentRunResult(
+            env_name="truncation",
+            k=1,
+            env_fingerprint="envfp2:test",
+            policy_fingerprint="test",
+            task_results=(_task_result_from(env, truncated[0]),),
+            duration_seconds=0.1,
+        )
+    )
+    assert "1 truncated" in grid
+
+    errored_grid = str(
+        EnvironmentRunResult(
+            env_name="truncation",
+            k=1,
+            env_fingerprint="envfp2:test",
+            policy_fingerprint="test",
+            task_results=(_task_result_from(env, errored[0]),),
+            duration_seconds=0.1,
+        )
+    )
+    assert "truncated" not in errored_grid
+
+
+async def test_tool_terminated_run_is_not_truncated():
+    # A run that ends on stop_after_tool_call never emits a final assistant turn, so
+    # its content is legitimately None. ToolCallScorer grades run.tools, not
+    # run.content -- calling these truncated would turn a correct pass into no data.
+    execution = ToolExecution(tool_call_id="c1", tool_name="submit", stop_after_tool_call=True)
+    agent = StubAgent(lambda value: _output(content=None, tools=[execution]))
+    scorer = ToolCallScorer(expected_tools=["submit"])
+
+    results = await arun_batch(agent, ["a"], k=1, scorer=scorer)
+
+    attempt = results[0][0]
+    assert attempt.stop_reason == StopReason.completed
+    assert attempt.score is not None and attempt.score.passed
+
+    # A contentless run WITHOUT that marker is still truncated.
+    plain = await arun_batch(StubAgent(lambda value: _output(content=None)), ["a"], k=1, scorer=scorer)
+    assert plain[0][0].stop_reason == StopReason.truncated
 
 
 async def test_completed_with_content_scores_as_before():
@@ -210,6 +260,17 @@ def test_environment_rejects_non_scorer():
     message = str(excinfo.value)
     assert "must be a Scorer" in message
     assert "CodeScorer" in message
+
+    # An unconstructed scorer CLASS carries the same methods, so a structural check
+    # alone would accept it -- the same typo, one keystroke away.
+    with pytest.raises(TypeError) as class_exc:
+        Environment(
+            name="scorer-class",
+            agent=Agent(model=FakeModel()),
+            tasks=(Task(input="a"),),
+            scorer=CodeScorer,
+        )
+    assert "CodeScorer" in str(class_exc.value)
 
     # The built-ins still construct.
     Environment(

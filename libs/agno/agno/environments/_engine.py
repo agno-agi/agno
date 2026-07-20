@@ -129,12 +129,22 @@ def _is_truncated(run: AnyRunOutput) -> bool:
     today, so content is the only cross-provider signal available; this is the
     content-side fallback rather than a guess from token counts.
 
-    Deliberately `is None` and not "empty or blank": an empty answer is an answer and
-    stays scoreable. The residual is a run that completes with no content for some
-    other reason (a tool-only final turn); it reads as truncated here, which still
-    leaves it unscored rather than counted as a wrong answer.
+    Two deliberate narrowings, both of which would otherwise turn a scoreable attempt
+    into an unscored one:
+
+    - `is None`, not "empty or blank". An empty answer is an answer and stays scored.
+    - a run that ended on `stop_after_tool_call` never emits a final assistant turn, so
+      its content is legitimately None. Those runs are exactly what `ToolCallScorer`
+      grades -- it reads `run.tools`, not `run.content` -- and calling them truncated
+      would convert a correct pass into no data at all.
+
+    Residual: an `output_schema` run truncated *mid-answer* keeps its partial text, so
+    content is a `str` and this returns False. Detection stays on the licensed
+    content-side signal rather than guessing at schema conformance.
     """
-    return run.content is None
+    if run.content is not None:
+        return False
+    return not any(getattr(execution, "stop_after_tool_call", False) for execution in (run.tools or []))
 
 
 def _stop_reason_for(state: _AttemptState) -> StopReason:
@@ -243,7 +253,9 @@ async def _run_attempt(
         if stop_reason == StopReason.truncated:
             # Explain the outcome the way the timeout branch does: a run reading
             # "completed" with nothing in it is otherwise unreadable in the report.
-            state.errors.append("truncated: the run completed with no content (output limit reached)")
+            # No cause claim: the engine has no token evidence, and this string reaches
+            # `summary()["first_error"]` and the grid headline.
+            state.errors.append("truncated: the run completed with no content")
         elif stop_reason != StopReason.completed and not state.errored:
             if state.run is None:
                 state.errors.append("no run output recorded")

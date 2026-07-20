@@ -123,9 +123,13 @@ class Environment:
         # Typed as Scorer but structurally checked: a bare callable otherwise sails
         # through construction and dies at score time with an AttributeError naming
         # `ascore`, long after the run has been paid for.
-        if not isinstance(self.scorer, Scorer):
+        # `isinstance(x, Scorer)` is a structural check, and a class object carries its
+        # own methods -- so `scorer=CodeScorer` (the class, unconstructed) would pass
+        # it. That is the same typo class this guard exists to catch.
+        if isinstance(self.scorer, type) or not isinstance(self.scorer, Scorer):
+            received = self.scorer.__name__ if isinstance(self.scorer, type) else type(self.scorer).__name__
             raise TypeError(
-                f"Environment.scorer must be a Scorer, got {type(self.scorer).__name__}; "
+                f"Environment.scorer must be a Scorer instance, got {received}; "
                 "wrap a callable in CodeScorer, or use JudgeScorer / ToolCallScorer"
             )
         received = type(self.agent).__name__
