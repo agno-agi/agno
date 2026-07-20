@@ -19,6 +19,7 @@ Requires: OPENAI_API_KEY, Node.js 18+
 """
 
 import asyncio
+from typing import List, Optional
 
 from agno.agent import Agent
 from agno.context.browser import (
@@ -130,12 +131,12 @@ async def demo_structured_output() -> None:
     class Story(BaseModel):
         title: str = Field(description="The story title")
         url: str = Field(description="Link to the story or comments")
-        points: int | None = Field(
+        points: Optional[int] = Field(
             default=None, description="Points/score if available"
         )
 
     class TopStories(BaseModel):
-        stories: list[Story] = Field(description="List of top stories")
+        stories: List[Story] = Field(description="List of top stories")
 
     browser = BrowserContextProvider(
         backend=PlaywrightMCPBackend(headless=True),

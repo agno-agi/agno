@@ -596,3 +596,70 @@ async def test_provider_asetup_delegates_to_backend():
         provider = BrowserContextProvider(backend=backend)
         await provider.asetup()
         assert setup_called
+
+
+# ---------------------------------------------------------------------------
+# BrowserContextProvider — aquery()
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_provider_aquery_returns_answer():
+    """aquery() must return an Answer object."""
+    from unittest.mock import AsyncMock
+
+    from agno.context.provider import Answer
+
+    provider = BrowserContextProvider()
+
+    # Mock the sub-agent
+    mock_agent = type("MockAgent", (), {"arun": AsyncMock()})()
+    mock_output = type("Out", (), {
+        "content": "Top 3 stories from HN",
+        "get_content_as_string": lambda self: "Top 3 stories from HN"
+    })()
+    mock_agent.arun.return_value = mock_output
+    provider._agent = mock_agent
+
+    answer = await provider.aquery("get top stories from HN")
+
+    mock_agent.arun.assert_awaited_once()
+    assert isinstance(answer, Answer)
+    assert answer.text == "Top 3 stories from HN"
+
+
+@pytest.mark.asyncio
+async def test_provider_aquery_propagates_run_context():
+    """run_context (user_id, session_id, metadata, dependencies) must reach sub-agent."""
+    from unittest.mock import AsyncMock
+
+    from agno.run import RunContext
+
+    provider = BrowserContextProvider()
+
+    # Mock the sub-agent
+    mock_agent = type("MockAgent", (), {"arun": AsyncMock()})()
+    mock_output = type("Out", (), {
+        "content": "ok",
+        "get_content_as_string": lambda self: "ok"
+    })()
+    mock_agent.arun.return_value = mock_output
+    provider._agent = mock_agent
+
+    rc = RunContext(
+        run_id="r-browser-1",
+        user_id="user-123",
+        session_id="session-456",
+        metadata={"request_id": "req-789"},
+        dependencies={"db": "postgres"},
+    )
+    await provider.aquery("navigate to example.com", run_context=rc)
+
+    mock_agent.arun.assert_awaited_once()
+    _, kwargs = mock_agent.arun.call_args
+    assert kwargs == {
+        "user_id": "user-123",
+        "session_id": "session-456",
+        "metadata": {"request_id": "req-789"},
+        "dependencies": {"db": "postgres"},
+    }
