@@ -647,4 +647,8 @@ def test_still_paused_call_fails():
         expected_tool_calls=["delete_file"],
     )
     assert result.eval_status == "FAILED"
-    assert "delete_file" in result.missing_tool_calls
+    # The expected tool is reported missing (annotated), and -- since the per-call loop
+    # excludes still-paused calls -- it is NOT also in passed_tool_calls (no
+    # self-contradictory payload).
+    assert any("delete_file" in entry for entry in result.missing_tool_calls)
+    assert "delete_file" not in result.passed_tool_calls

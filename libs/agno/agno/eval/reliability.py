@@ -169,7 +169,7 @@ class ReliabilityEval:
                     # Strict mode polices the attempt, not its success: an unexpected
                     # call that errored or was refused still fails the eval.
                     failed_tool_calls.append(tool_name)
-            elif not tool.tool_call_error:
+            elif not tool.tool_call_error and not tool.is_paused:
                 passed_tool_calls.append(tool_name)
             # An errored execution of an EXPECTED tool is neither passed nor failed by
             # itself: it cannot satisfy the expectation, and the failure surfaces as
