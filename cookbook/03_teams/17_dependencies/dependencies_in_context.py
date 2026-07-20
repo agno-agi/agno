@@ -74,7 +74,6 @@ team = Team(
         "Here is the user profile: {user_profile}",
         "Here is the current context: {current_context}",
     ],
-    debug_mode=True,
     markdown=True,
 )
 

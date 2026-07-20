@@ -58,6 +58,8 @@ class GoogleCalendarTools(GoogleToolkit):
         oauth_port: int = 8080,
         login_hint: Optional[str] = None,
         calendar_id: str = "primary",
+        max_results: int = 20,
+        expand_recurring: bool = True,
         allow_update: Optional[bool] = None,
         list_events: bool = True,
         get_event: bool = True,
@@ -89,9 +91,14 @@ class GoogleCalendarTools(GoogleToolkit):
             oauth_port: Port for OAuth local redirect server (default: 8080).
             login_hint: Email to pre-select in the OAuth consent screen.
             calendar_id: Calendar to operate on. Defaults to "primary".
+            max_results: Maximum results per API request (default: 20).
+            expand_recurring: If True (default), recurring events are expanded into instances.
+                If False, returns master events with RRULE for bulk operations.
             instructions: Custom instructions for the toolkit. If None, uses default.
             add_instructions: Whether to inject instructions into the agent system prompt.
         """
+        self.max_results = max_results
+        self.expand_recurring = expand_recurring
         if allow_update:
             create_event = True
             update_event = True
@@ -184,16 +191,24 @@ class GoogleCalendarTools(GoogleToolkit):
                 raise ValueError(f"The scope {read_scope} is required for read operations")
 
     @authenticate
-    def list_events(self, limit: int = 10, start_date: Optional[str] = None) -> str:
+    def list_events(
+        self,
+        limit: int = 10,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+        page_token: Optional[str] = None,
+    ) -> str:
         """
         List upcoming events from the user's Google Calendar.
 
         Args:
             limit (int): Number of events to return (default: 10)
             start_date (Optional[str]): Start date in ISO format (YYYY-MM-DDTHH:MM:SS). Defaults to now.
+            end_date (Optional[str]): End date in ISO format. Only events starting before this are returned.
+            page_token (Optional[str]): Token from a previous response to fetch the next page.
 
         Returns:
-            str: JSON string containing the Google Calendar events or error message
+            str: JSON string containing events and nextPageToken if more results exist.
         """
         if start_date is None:
             start_date = datetime.datetime.now(datetime.timezone.utc).isoformat()
@@ -213,21 +228,35 @@ class GoogleCalendarTools(GoogleToolkit):
 
         try:
             service = cast(Resource, self.service)
-            events_result = (
-                service.events()
-                .list(
-                    calendarId=self.calendar_id,
-                    timeMin=start_date,
-                    maxResults=limit,
-                    singleEvents=True,
-                    orderBy="startTime",
-                )
-                .execute()
-            )
+            effective_limit = min(limit, self.max_results)
+            params: Dict[str, Any] = {
+                "calendarId": self.calendar_id,
+                "timeMin": start_date,
+                "maxResults": effective_limit,
+                "singleEvents": self.expand_recurring,
+            }
+            if self.expand_recurring:
+                params["orderBy"] = "startTime"
+            if end_date:
+                try:
+                    dt = datetime.datetime.fromisoformat(end_date)
+                    if dt.tzinfo is None:
+                        dt = dt.replace(tzinfo=datetime.timezone.utc)
+                    params["timeMax"] = dt.isoformat()
+                except ValueError:
+                    return json.dumps({"error": f"Invalid end_date format: {end_date}. Use ISO format."})
+            if page_token:
+                params["pageToken"] = page_token
+
+            events_result = service.events().list(**params).execute()
             events = events_result.get("items", [])
-            if not events:
-                return json.dumps({"message": "No upcoming events found."})
-            return json.dumps(events)
+
+            result: Dict[str, Any] = {"events": events}
+            if events_result.get("nextPageToken"):
+                result["nextPageToken"] = events_result["nextPageToken"]
+            if not events and not page_token:
+                result["message"] = "No upcoming events found."
+            return json.dumps(result)
         except HttpError as error:
             log_error(f"An error occurred: {error}")
             return json.dumps({"error": f"An error occurred: {error}"})
@@ -653,15 +682,21 @@ class GoogleCalendarTools(GoogleToolkit):
             return json.dumps({"error": f"An error occurred: {error}"})
 
     @authenticate
-    def list_calendars(self) -> str:
+    def list_calendars(self, page_token: Optional[str] = None) -> str:
         """
         List all available Google Calendars for the authenticated user.
 
+        Args:
+            page_token (Optional[str]): Token from a previous response to fetch the next page.
+
         Returns:
-            str: JSON string containing available calendars with their IDs, names, and access roles
+            str: JSON string containing calendars and nextPageToken if more results exist.
         """
         try:
-            calendar_list = self.service.calendarList().list().execute()  # type: ignore
+            params: Dict[str, Any] = {"maxResults": min(self.max_results, 250)}
+            if page_token:
+                params["pageToken"] = page_token
+            calendar_list = self.service.calendarList().list(**params).execute()  # type: ignore
             calendars = calendar_list.get("items", [])
 
             all_calendars = []
@@ -677,12 +712,13 @@ class GoogleCalendarTools(GoogleToolkit):
                 all_calendars.append(calendar_info)
 
             log_debug(f"Found {len(all_calendars)} calendars for user")
-            return json.dumps(
-                {
-                    "calendars": all_calendars,
-                    "current_default": self.calendar_id,
-                }
-            )
+            result: Dict[str, Any] = {
+                "calendars": all_calendars,
+                "current_default": self.calendar_id,
+            }
+            if calendar_list.get("nextPageToken"):
+                result["nextPageToken"] = calendar_list["nextPageToken"]
+            return json.dumps(result)
 
         except HttpError as error:
             log_error(f"An error occurred while listing calendars: {error}")
@@ -808,6 +844,7 @@ class GoogleCalendarTools(GoogleToolkit):
         start_date: Optional[str] = None,
         end_date: Optional[str] = None,
         max_results: int = 10,
+        page_token: Optional[str] = None,
     ) -> str:
         """
         Search Google Calendar events by text across summary, description, location, and attendees.
@@ -818,20 +855,23 @@ class GoogleCalendarTools(GoogleToolkit):
             start_date (Optional[str]): Start of search window in ISO format
             end_date (Optional[str]): End of search window in ISO format
             max_results (int): Maximum number of events to return (default: 10)
+            page_token (Optional[str]): Token from a previous response to fetch the next page.
 
         Returns:
-            str: JSON string containing matching events or error message
+            str: JSON string containing events and nextPageToken if more results exist.
         """
         try:
             service = cast(Resource, self.service)
+            effective_max = min(max_results, self.max_results, 100)
 
             params: Dict[str, Any] = {
                 "calendarId": self.calendar_id,
                 "q": query,
-                "maxResults": min(max_results, 100),
-                "singleEvents": True,
-                "orderBy": "startTime",
+                "maxResults": effective_max,
+                "singleEvents": self.expand_recurring,
             }
+            if self.expand_recurring:
+                params["orderBy"] = "startTime"
 
             if start_date:
                 try:
@@ -851,14 +891,20 @@ class GoogleCalendarTools(GoogleToolkit):
                 except ValueError:
                     params["timeMax"] = end_date
 
+            if page_token:
+                params["pageToken"] = page_token
+
             events_result = service.events().list(**params).execute()
             events = events_result.get("items", [])
 
-            if not events:
-                return json.dumps({"message": f"No events found matching '{query}'."})
+            result: Dict[str, Any] = {"events": events}
+            if events_result.get("nextPageToken"):
+                result["nextPageToken"] = events_result["nextPageToken"]
+            if not events and not page_token:
+                result["message"] = f"No events found matching '{query}'."
 
             log_debug(f"Found {len(events)} events matching '{query}'")
-            return json.dumps(events)
+            return json.dumps(result)
         except HttpError as error:
             log_error(f"An error occurred while searching events: {error}")
             return json.dumps({"error": f"An error occurred: {error}"})

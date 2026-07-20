@@ -1,5 +1,15 @@
 # Test Log
 
+### file_generation_tools.py (generate_code_file)
+
+**Status:** PASS
+
+**Description:** Added `generate_code_file` to `FileGenerationTools` so agents can emit source code as downloadable file artifacts for any language (Python, JS, TS, Go, Rust, Java, etc.). The tool maps a `language` (or the filename extension) to a file extension and a valid MIME type, falling back to `text/plain` for languages without a dedicated allowlisted MIME type. Added `example_code_generation()` to the cookbook (Python + TypeScript) and wired it into `__main__`.
+
+**Result:** Unit tests pass (`pytest libs/agno/tests/unit/tools/test_file_generation.py` — 45 passed, 2 skipped) covering Python (`.py`, `text/x-python`), TypeScript fallback (`.ts`, `text/plain`), unknown-language default (`.txt`), extension inference from filename, alias resolution (`py`/`c++`/`c#`/`bash`/`golang`), and the `enable_code_generation` toggle. Standalone check confirmed `File` artifacts construct without raising (MIME type stays within `File.valid_mime_types()`) and content round-trips for python/typescript/go/rust. Live agent run not executed (no OpenAI credentials / demo venv in this environment).
+
+---
+
 ### file_tools.py (Examples 6-8: exclude_patterns)
 
 **Status:** PASS
@@ -67,5 +77,15 @@
 **Description:** Gemini-driven Agno agent runs `run_antigravity_task` to write a few files in the sandbox, then calls `download_antigravity_environment_snapshot` with `environment_id="current"` to resolve the env id from `agent.session_state` and save the resulting tar to disk. Demonstrates the full sandbox-write → archive flow through tool calls.
 
 **Result:** Unit tests pass covering snapshot URL construction, byte-for-byte write to disk, "current" resolution from session_state, and the no-cached-env error path. Live cookbook awaiting partner key.
+
+---
+
+### tavily_tools_advanced.py
+
+**Status:** PASS
+
+**Description:** Runs two agents with advanced Tavily search parameters against the live API: domain-restricted research (include_domains=["arxiv.org", "github.com"], exclude_domains=["reddit.com"], time_range="month", country="united states") and recent news scoped by day count (topic="news", days=3). Request payloads were additionally verified at the wire level: configured parameters present in every request, unset parameters omitted (the {query, search_depth, include_answer, max_results} baseline is unchanged when nothing is configured).
+
+**Result:** Both examples completed without errors. Domain-restricted search returned arxiv-sourced MoE papers, and the news agent returned items from the last few days. Note: answer text is model-composed; the domain restriction applies to the search results feeding it.
 
 ---
