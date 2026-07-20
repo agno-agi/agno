@@ -559,10 +559,39 @@ class AgentOS:
 
         self._reprovision_routers(app=app)
 
+    def _mirror_authz_state_to_mcp_app(self, app: FastAPI) -> None:
+        """Copy the authz state the MCP tool gate reads onto the mounted sub-app.
+
+        The MCP tools are a mounted sub-app, so ``request.app`` inside the tool gate is
+        that sub-app, not this AgentOS's app -- ``request.state`` crosses the mount
+        boundary but ``request.app`` does not. Anything the gate resolves off
+        ``app.state`` therefore has to be mirrored here, or it silently degrades: a
+        missing provider drops managed-role/composite/FGA policy to scope-only, and a
+        missing sink drops every MCP decision from the access trail.
+
+        Kept next to the mount (and called from there as well as from seeding) so that
+        ANY future rebuild or re-mount of ``_mcp_app`` re-applies it. Today the sub-app
+        is built once, which is the only reason a seed-time-only mirror was correct --
+        an implicit dependency worth not relying on.
+        """
+        if self._mcp_app is None or not hasattr(self._mcp_app, "state"):
+            return
+        parent = getattr(app, "state", None)
+        if parent is None:
+            return
+        for attr in ("authorization_provider", "authz_audit"):
+            value = getattr(parent, attr, None)
+            if value is not None:
+                setattr(self._mcp_app.state, attr, value)
+
     def _mount_mcp_app(self, app: FastAPI) -> None:
         """Mount the MCP app at root exactly once (idempotent across get_app/resync calls)."""
         if self._mcp_app is None:
             return
+        # Re-apply on every mount, so a rebuilt sub-app can't silently lose the authz
+        # state (on the first get_app() this is a no-op: seeding runs after the mount
+        # and does the mirror itself).
+        self._mirror_authz_state_to_mcp_app(app)
         if any(getattr(route, "app", None) is self._mcp_app for route in app.router.routes):
             return
         app.mount("/", self._mcp_app)
@@ -1528,24 +1557,16 @@ class AgentOS:
 
         if resolved_provider is not None:
             fastapi_app.state.authorization_provider = resolved_provider
-            # The MCP tools are a mounted sub-app: the tool gate resolves the provider
-            # from the in-flight request's ``.app``, which is this sub-app (request.state
-            # crosses the mount boundary, request.app does not). Without mirroring the
-            # provider here the gate falls back to the default ScopeAuthorizationProvider,
-            # silently degrading a managed-role / custom provider to scope-only over MCP.
-            # Mirror it so all four choke points enforce the same provider.
-            if self._mcp_app is not None and hasattr(self._mcp_app, "state"):
-                self._mcp_app.state.authorization_provider = resolved_provider
 
         audit = getattr(config, "audit", None)
         if audit is not None:
             fastapi_app.state.authz_audit = audit
-            # Same mount-boundary reason as the provider above: the MCP tool gate
-            # resolves the sink from the in-flight request's ``.app``, which is the
-            # mounted sub-app. Without this mirror MCP decisions can't be recorded at
-            # all, leaving a hole in the access trail that REST/WS decisions fill.
-            if self._mcp_app is not None and hasattr(self._mcp_app, "state"):
-                self._mcp_app.state.authz_audit = audit
+
+        # The MCP tools run in a mounted sub-app whose ``request.app`` is NOT this app,
+        # so everything the tool gate resolves off ``app.state`` (the provider, the audit
+        # sink) must be mirrored onto it -- see _mirror_authz_state_to_mcp_app. Seeding
+        # runs after the mount, so this is where the first mirror happens.
+        self._mirror_authz_state_to_mcp_app(fastapi_app)
 
         # Optional user directory (no-IdP). When present, the middleware (and the
         # WebSocket connect path) denies disabled users and — when auto-provision is
