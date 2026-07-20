@@ -44,7 +44,9 @@ class ScriptedModel(Model):
     """Answers from a script, cycling per task so some attempts pass and some do not."""
 
     def __init__(self, answers: List[str], tag: str):
-        super().__init__(id=f"scripted-{tag}", name=f"scripted-{tag}", provider="Offline")
+        super().__init__(
+            id=f"scripted-{tag}", name=f"scripted-{tag}", provider="Offline"
+        )
         self._answers: Dict[str, cycle] = {}
         self._script = answers
 
@@ -84,7 +86,9 @@ class StubTrainer:
         self._tuned = tuned
         self._round = 0
 
-    def fit(self, dataset, *, train_on: TrainOn = TrainOn.LAST_ASSISTANT) -> TrainResult:
+    def fit(
+        self, dataset, *, train_on: TrainOn = TrainOn.LAST_ASSISTANT
+    ) -> TrainResult:
         rows = Path(dataset).read_text(encoding="utf-8").strip().split("\n")
         self._round += 1
         print(f"  stub fit: round {self._round} trained on {len(rows)} conversations")
@@ -93,13 +97,21 @@ class StubTrainer:
                 ref=f"stub://round-{self._round}",
                 base_model=BASE_MODEL,
                 dataset_digest="offline",
-                hyperparams={"rank": 16, "learning_rate": 2e-4, "epochs": 2, "batch_size": 8, "train_on": "last"},
+                hyperparams={
+                    "rank": 16,
+                    "learning_rate": 2e-4,
+                    "epochs": 2,
+                    "batch_size": 8,
+                    "train_on": "last",
+                },
             ),
             step_metrics=[{"step": 1, "mean_nll": 1.9}, {"step": 2, "mean_nll": 1.7}],
             status=TrainStatus.COMPLETED,
         )
 
-    async def afit(self, dataset, *, train_on: TrainOn = TrainOn.LAST_ASSISTANT) -> TrainResult:
+    async def afit(
+        self, dataset, *, train_on: TrainOn = TrainOn.LAST_ASSISTANT
+    ) -> TrainResult:
         return self.fit(dataset, train_on=train_on)
 
     def as_model(self, checkpoint: Checkpoint) -> Model:
@@ -141,6 +153,9 @@ env = Environment(
         Task(id="train", input="a train"),
     ),
     scorer=CodeScorer(is_three_lines),
+    # The offline stub answers instantly, but a real thinking model spends minutes on a
+    # 2000-token sample and the 120s default times out every attempt.
+    timeout_seconds=900,
 )
 
 
@@ -170,4 +185,6 @@ if __name__ == "__main__":
         print(f"trained on: {report.dataset_path}")
         print(f"loss curve: {report.train_result.step_metrics}")
         print("Same environment, same agent design, different weights.")
-        print("At 3 tasks the numbers are noisy; measure held-out tasks before claiming a gain.")
+        print(
+            "At 3 tasks the numbers are noisy; measure held-out tasks before claiming a gain."
+        )

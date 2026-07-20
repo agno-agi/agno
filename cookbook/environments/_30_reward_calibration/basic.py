@@ -38,7 +38,11 @@ labeled_traces = [
     (_trace("42"), 42, True),
     (_trace("It is not 42."), 42, False),  # contains "42", but says the opposite
     (_trace("42000"), 42, False),  # contains "42", wrong number
-    (_trace("The answer is forty-two."), 42, True),  # correct, but the scorer cannot see it
+    (
+        _trace("The answer is forty-two."),
+        42,
+        True,
+    ),  # correct, but the scorer cannot see it
     (_trace("I do not know."), 42, False),
     (_trace("7"), 42, False),
 ]
@@ -47,7 +51,9 @@ labeled_traces = [
 if __name__ == "__main__":
     report = calibrate(CodeScorer(mentions_the_number), labeled_traces)
 
-    print(f"traces: {report.n_traces}   scored: {report.n_scored}   scorer errors: {report.n_errors}")
+    print(
+        f"traces: {report.n_traces}   scored: {report.n_scored}   scorer errors: {report.n_errors}"
+    )
     print(f"agreement:           {report.agreement:.2f}")
     print(f"false positive rate: {report.false_positive_rate:.2f}")
     print(f"false negative rate: {report.false_negative_rate:.2f}")
@@ -55,7 +61,11 @@ if __name__ == "__main__":
 
     print("where the scorer and the labels disagree:")
     for row in report.disagreements:
-        direction = "passed what should fail" if row["scorer_passed"] else "failed what should pass"
+        direction = (
+            "passed what should fail"
+            if row["scorer_passed"]
+            else "failed what should pass"
+        )
         print(f"  trace {row['index']}: {direction}")
 
     print()

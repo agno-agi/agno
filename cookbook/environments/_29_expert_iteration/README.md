@@ -31,6 +31,17 @@ Tool-using agents export nothing in this release — the text-only SFT format ha
 no tool representation, so the loop reports `"not_exportable"` and trains
 nothing. See [`_10_export_sft/`](../_10_export_sft/).
 
+## If you run the live path
+
+A thinking model spends a long time inside `<think>` before the visible answer: a
+2000-token sample from a 35B MoE routinely takes minutes. The environment here sets
+`timeout_seconds=900` for that reason — the 120s default times out every attempt, which
+surfaces as a rollout of unscored triangles and a `None` pass rate rather than as a
+timeout you would notice.
+
+Budget for that: at 3 tasks and k=4 the loop samples 12 attempts for the baseline and
+12 more to measure the tuned checkpoint, either side of the fine-tune itself.
+
 ## Reading the numbers honestly
 
 This is rejection-sampling fine-tuning, and it saturates. Three caveats worth

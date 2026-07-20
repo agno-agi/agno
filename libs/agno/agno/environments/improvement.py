@@ -339,7 +339,9 @@ class ImprovementLoop:
             self._warned_output_schema = True
             try:
                 # Resolves a factory too: the isolation-recommended shape must not be
-                # the one shape that silently skips the warning.
+                # the one shape that silently skips the warning. This constructs one
+                # extra product for a factory env, once per loop, which is why it is
+                # inside the round-1 guard and tolerant of a factory that raises.
                 agent: Optional[Agent] = self.env._source_agent()
             except Exception:
                 agent = None
