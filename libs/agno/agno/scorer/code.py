@@ -59,7 +59,12 @@ class CodeScorer:
         return self._to_score(result)
 
     def digest(self) -> str:
-        """sha256 hex of the function's dedented source, for `env_fingerprint`.
+        """sha256 hex of the function's dedented source AND pass_threshold, for
+        `env_fingerprint`.
+
+        pass_threshold is part of the identity: the same function with a different
+        threshold grades differently, so it must change the digest -- otherwise two
+        environments that pass and fail the same score hash identically.
 
         Source hashing has two documented residuals: editing an unrelated part of the
         same statement flips the hash (over-invalidation, safe), and closure-captured
@@ -73,4 +78,5 @@ class CodeScorer:
                 f"CodeScorer cannot digest {self.fn!r}: source is not retrievable "
                 "(REPL-defined, builtin, or C callable)"
             ) from exc
-        return hashlib.sha256(textwrap.dedent(source).encode("utf-8")).hexdigest()
+        payload = f"{textwrap.dedent(source)}\npass_threshold={self.pass_threshold!r}"
+        return hashlib.sha256(payload.encode("utf-8")).hexdigest()
