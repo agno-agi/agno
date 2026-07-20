@@ -24,6 +24,13 @@ def get_weather(city: str) -> str:
 agent = Agent(tools=[get_weather])
 ```
 
+## Compliance Tools
+
+`strale_compliance_agent.py` demonstrates a custom Strale SDK wrapper for KYB
+checks, sanctions screening, and IBAN validation. Set `STRALE_API_KEY` for paid
+Strale capabilities; IBAN validation can run on Strale's free tier without an
+API key.
+
 ## MCP Tools
 
 Model Context Protocol allows connecting to external tool servers:
