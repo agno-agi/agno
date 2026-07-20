@@ -1,5 +1,24 @@
 # Test Log - _01_first_environment
 
+## Re-test 2026-07-20 — fix/cookbooks-claude (Agno 2.8.0 source)
+
+2.8.0 defines the learning zone as `0 < pass_rate < 1` (mixed pass/fail), so a k=4
+file whose one hard task can land 4/4 saturates on unlucky runs.
+
+### with_summary.py — FIXED
+
+**Fix:** `chained-product-c` (which shared the edge with `chained-product-a` and
+saturated together this run) replaced with a second, independent calibrated chain
+(`chained-product-b`, expected 10481347), so a zone row is reliable at k=4.
+
+**Grid (k=4):** `easy-product` 4/4; `chained-product-a` 3/4 (0.75, zone);
+`chained-product-b` 4/4.
+
+`basic.py` (chained-product-a 2/4, zone) and `with_fingerprints.py` (a=2/4, b=3/4,
+two zones) re-ran clean and unchanged.
+
+---
+
 Tested 2026-07-20 against `gpt-5.5` through `OpenAIResponses`, Agno 2.7.4.
 
 ### basic.py

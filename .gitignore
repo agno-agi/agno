@@ -105,3 +105,6 @@ CLAUDE_PRIVATE.md
 
 # generated synthetic-data outputs from data_labeling cookbooks (never committed)
 cookbook/data_labeling/*/data/generated/
+
+# cookbook rollout exports and baselines are run artifacts, never source
+data/generated/

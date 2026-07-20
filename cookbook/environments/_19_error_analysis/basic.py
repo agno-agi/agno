@@ -24,6 +24,10 @@ class Answer(BaseModel):
 def exact_or_raise(run, expected):
     if expected["raise"]:
         raise RuntimeError("deliberate scorer failure for inspection")
+    if run.content is None:
+        # A truncated attempt (max_output_tokens) has no parsed output. Raise a clear
+        # error so the runner records it unscored -- a no-answer, not a wrong answer.
+        raise ValueError("no parsed output: hit max_output_tokens")
     return run.content.value == expected["value"]
 
 

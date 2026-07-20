@@ -38,6 +38,12 @@ cookbook/environments/
 
 ## Cookbooks
 
+### Quickstart
+
+- [`_00_quickstart/`](_00_quickstart/): seven single-file examples covering the
+  whole arc — run K times, score, read the grid, export what passed. Start here
+  for the shortest path; the numbered folders below go deeper on the same ideas.
+
 ### Verification basics
 
 - [`_01_first_environment/`](_01_first_environment/): create an `Environment`, run K

@@ -21,6 +21,8 @@ class Answer(BaseModel):
 def verifier_with_fault(run, expected):
     if expected is None:
         raise ValueError("expected answer is missing")
+    if run.content is None:
+        raise ValueError("no parsed output: hit max_output_tokens")
     return run.content.value == expected
 
 

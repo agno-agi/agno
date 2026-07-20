@@ -19,6 +19,7 @@ class Triage(BaseModel):
     queue: Literal["security", "incident", "access", "billing", "bug", "feature"]
     active_issue_ids: list[str]
     winning_issue_id: str
+    handoff_checksum: int
     reason: str
 
 
@@ -38,7 +39,10 @@ agent = Agent(
         "exposure, or payment-card exposure; a user merely unable to sign in is access. "
         "Incident requires current multi-user unavailability or data loss. Ignore "
         "hypothetical risks, quoted history, and issues explicitly resolved. Return "
-        "all active labeled issue ids in lexical order and the id that wins precedence."
+        "all active labeled issue ids in lexical order and the id that wins precedence. "
+        "For the handoff audit, handoff_checksum is sum((position squared) * (numeric "
+        "suffix cubed)) over the lexically ordered active issue ids, positions starting "
+        "at 1, reduced modulo 9973."
     ),
 )
 
@@ -57,6 +61,7 @@ environment = Environment(
                 "queue": "access",
                 "active_issue_ids": ["I1", "I2"],
                 "winning_issue_id": "I1",
+                "handoff_checksum": 33,
             },
         ),
         Task(
@@ -70,6 +75,7 @@ environment = Environment(
                 "queue": "billing",
                 "active_issue_ids": ["I2"],
                 "winning_issue_id": "I2",
+                "handoff_checksum": 8,
             },
         ),
         Task(
@@ -110,6 +116,7 @@ environment = Environment(
                     "I20",
                 ],
                 "winning_issue_id": "I10",
+                "handoff_checksum": 1503,
             },
         ),
     ),

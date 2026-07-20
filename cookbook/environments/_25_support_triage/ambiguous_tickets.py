@@ -50,9 +50,9 @@ agent = Agent(
         "access to recover_access, billing to refund_review, bug to diagnose_bug, and "
         "feature to product_feedback. Return active labeled issue ids in lexical order "
         "and the issue id that owns the selected action or safety override. For the "
-        "handoff audit, active_issue_checksum is sum(position * numeric_suffix^2) "
-        "over the lexically ordered active_issue_ids, with positions starting at 1, "
-        "reduced modulo 97."
+        "handoff audit, active_issue_checksum is sum((position squared) * "
+        "(numeric_suffix cubed)) over the lexically ordered active_issue_ids, with "
+        "positions starting at 1, reduced modulo 9973."
     ),
 )
 
@@ -72,7 +72,7 @@ environment = Environment(
                 "queue": "billing",
                 "action": "refund_review",
                 "active_issue_ids": ["I2"],
-                "active_issue_checksum": 4,
+                "active_issue_checksum": 8,
                 "winning_issue_id": "I2",
             },
         ),
@@ -101,7 +101,7 @@ environment = Environment(
                 "queue": "security",
                 "action": "revoke_credentials",
                 "active_issue_ids": ["I1", "I2"],
-                "active_issue_checksum": 9,
+                "active_issue_checksum": 33,
                 "winning_issue_id": "I2",
             },
         ),
@@ -116,7 +116,7 @@ environment = Environment(
                 "queue": "access",
                 "action": "recover_access",
                 "active_issue_ids": ["I2"],
-                "active_issue_checksum": 4,
+                "active_issue_checksum": 8,
                 "winning_issue_id": "I2",
             },
         ),
@@ -130,7 +130,7 @@ environment = Environment(
                 "queue": "incident",
                 "action": "restore_service",
                 "active_issue_ids": ["I1", "I2"],
-                "active_issue_checksum": 9,
+                "active_issue_checksum": 33,
                 "winning_issue_id": "I2",
             },
         ),
@@ -186,7 +186,7 @@ environment = Environment(
                     "I30",
                     "I32",
                 ],
-                "active_issue_checksum": 71,
+                "active_issue_checksum": 1156,
                 "winning_issue_id": "I05",
             },
         ),

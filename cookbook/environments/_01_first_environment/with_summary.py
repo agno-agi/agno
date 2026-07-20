@@ -43,12 +43,12 @@ environment = Environment(
         ),
         Task(
             input=(
-                "Compute 1618033988749895 multiplied by 1414213562373095. "
-                "Add its decimal digits, multiply that sum by 99991, subtract "
-                "the product remainder modulo 65519, and return the result."
+                "Compute 3141592653589793 multiplied by 1414213562373095. "
+                "Add its decimal digits, multiply that sum by 65537, subtract "
+                "the product remainder modulo 32749, and return the result."
             ),
-            expected=11468302,
-            id="chained-product-c",
+            expected=10481347,
+            id="chained-product-b",
         ),
     ),
     scorer=CodeScorer(answer_matches),

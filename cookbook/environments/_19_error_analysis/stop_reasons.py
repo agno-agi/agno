@@ -29,6 +29,8 @@ class Answer(BaseModel):
 def exact_or_unscorable(run, expected):
     if expected == "unscorable":
         raise RuntimeError("deliberate verifier exception")
+    if run.content is None:
+        raise ValueError("no parsed output: hit max_output_tokens")
     return run.content.value == expected
 
 
