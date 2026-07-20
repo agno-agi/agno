@@ -29,8 +29,10 @@ class FakeTensor:
 
 
 class FakeDatum:
-    def __init__(self, n_tokens=4):
-        self.loss_fn_inputs = {"weights": FakeTensor([0.0, 0.0, 0.5, 0.5][:n_tokens])}
+    def __init__(self, weights=None):
+        # Zeros for the prompt, positive for the target -- the real reduction="mean"
+        # shape, where only the tokens that carry loss have weight.
+        self.loss_fn_inputs = {"weights": FakeTensor(weights if weights is not None else [0.0, 0.0, 0.5, 0.5])}
 
 
 class FakeFuture:
@@ -66,8 +68,8 @@ class FakeTrainingClient:
         self.optim_calls.append(adam_params)
         return FakeFuture(SimpleNamespace(metrics={}))
 
-    def save_weights_for_sampler(self, *, name):
-        self.saved.append(name)
+    def save_weights_for_sampler(self, *, name, ttl_seconds=None):
+        self.saved.append({"name": name, "ttl_seconds": ttl_seconds})
         if self._save_raises is not None:
             return FakeFuture(raises=self._save_raises)
         return FakeFuture(SimpleNamespace(path=f"tinker://checkpoint/{name}"))
@@ -77,14 +79,27 @@ def _tensor_len(datum):
     return datum.loss_fn_inputs["weights"].data
 
 
+class FakeSamplingClient:
+    def __init__(self, **kwargs):
+        self.kwargs = kwargs
+
+    def get_tokenizer(self):
+        return "fake-tokenizer"
+
+
 class FakeServiceClient:
     def __init__(self, training_client=None):
         self.training_client = training_client or FakeTrainingClient()
         self.lora_kwargs = None
+        self.sampling_kwargs = []
 
     def create_lora_training_client(self, **kwargs):
         self.lora_kwargs = kwargs
         return self.training_client
+
+    def create_sampling_client(self, **kwargs):
+        self.sampling_kwargs.append(kwargs)
+        return FakeSamplingClient(**kwargs)
 
 
 @pytest.fixture(autouse=True)
@@ -278,6 +293,15 @@ def test_tinker_trainer_as_model_returns_tinker_model(tmp_path):
     assert isinstance(tuned, TinkerModel) and isinstance(base, TinkerModel)
     assert tuned.model_path == "tinker://checkpoint/run-1"
     assert base.model_path is None
+
+    # Both are served through the trainer's OWN service client, so a trainer holding an
+    # injected client does not hand back models that reach for the real SDK.
+    service = trainer._service_client
+    assert service.sampling_kwargs == [
+        {"model_path": "tinker://checkpoint/run-1"},
+        {"base_model": "Qwen/Qwen3.6-35B-A3B"},
+    ]
+    assert tuned._sampling_client is not None and base._sampling_client is not None
     assert tuned.base_model == base.base_model == "Qwen/Qwen3.6-35B-A3B"
     for model in (tuned, base):
         assert model.temperature == 0.9
@@ -304,6 +328,77 @@ async def test_tinker_trainer_async_twins(tmp_path):
     checkpoint = result.checkpoint
     assert isinstance(await trainer.aas_model(checkpoint), TinkerModel)
     assert isinstance(await trainer.abase_as_model(), TinkerModel)
+
+
+def test_tinker_trainer_rejects_untrainable_dataset(tmp_path, fake_sdk, monkeypatch):
+    # Rendering truncates from the end, so a conversation longer than max_length loses
+    # the assistant turn it was meant to teach and arrives with all-zero weights. It
+    # would contribute no gradient while the loss curve still looked healthy -- a paid
+    # run that trained on less than the caller believes. Refuse before the first step.
+    import sys
+
+    dead = SimpleNamespace(
+        conversation_to_datum=lambda conversation, renderer, *, max_length, train_on_what: FakeDatum(
+            weights=[0.0, 0.0, 0.0, 0.0]
+        )
+    )
+    monkeypatch.setitem(sys.modules, "tinker_cookbook.supervised.data", dead)
+
+    training = FakeTrainingClient()
+    trainer = TinkerTrainer(
+        base_model="Qwen/Qwen3.6-35B-A3B",
+        epochs=1,
+        service_client=FakeServiceClient(training),
+    )
+
+    result = trainer.fit(_dataset(tmp_path))
+
+    assert result.status == TrainStatus.FAILED
+    assert result.checkpoint is None
+    assert "no trainable target" in result.error
+    assert training.forward_backward_calls == []  # refused before the first paid step
+
+
+def test_tinker_trainer_checkpoints_carry_a_ttl(tmp_path):
+    # The SDK treats ttl_seconds=None as "never expires", so an unset TTL would leave a
+    # permanent checkpoint behind for every round of every loop.
+    training = FakeTrainingClient()
+    trainer = TinkerTrainer(
+        base_model="Qwen/Qwen3.6-35B-A3B",
+        epochs=1,
+        service_client=FakeServiceClient(training),
+    )
+
+    trainer.fit(_dataset(tmp_path))
+
+    assert training.saved[0]["ttl_seconds"] == 7 * 24 * 60 * 60
+
+
+def test_tinker_trainer_telemetry_failure_keeps_the_checkpoint(tmp_path, monkeypatch):
+    # A loss reading that cannot be computed is a telemetry failure, not a training
+    # failure: the completed steps were paid for and must still yield a checkpoint.
+    import agno.trainers.tinker as trainer_module
+
+    def boom(loss_fn_outputs, batch):
+        raise ValueError("Tinker response is missing per-token logprobs")
+
+    monkeypatch.setattr(trainer_module, "_mean_nll", boom)
+
+    training = FakeTrainingClient()
+    trainer = TinkerTrainer(
+        base_model="Qwen/Qwen3.6-35B-A3B",
+        epochs=2,
+        batch_size=1,
+        service_client=FakeServiceClient(training),
+    )
+
+    result = trainer.fit(_dataset(tmp_path, rows=2))
+
+    assert result.status == TrainStatus.PARTIAL
+    assert result.checkpoint is not None
+    assert "loss telemetry" in result.error
+    assert result.step_metrics[0]["mean_nll"] is None
+    assert len(training.forward_backward_calls) == 1  # stopped after the first failure
 
 
 def test_mean_nll_uses_logprobs_and_weights():

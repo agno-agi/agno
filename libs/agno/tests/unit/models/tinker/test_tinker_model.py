@@ -9,6 +9,7 @@ offline suite and breaks on the first live sample.
 
 import asyncio
 import threading
+from types import SimpleNamespace
 
 import pytest
 
@@ -91,19 +92,20 @@ class FakeRenderer:
 
 
 @pytest.fixture(autouse=True)
-def fake_sampling_params(monkeypatch):
-    """Stand in for `tinker.types.SamplingParams` without the SDK installed."""
-    import agno.models.tinker.tinker as tinker_module
+def fake_sdk(monkeypatch):
+    """Inject the SDK at the module boundary, not over the unit under test.
 
-    monkeypatch.setattr(
-        tinker_module.TinkerModel,
-        "_sampling_params",
-        lambda self, renderer: FakeSamplingParams(
-            max_tokens=self.max_tokens,
-            temperature=self.temperature,
-            seed=self.seed,
-            stop=renderer.get_stop_sequences(),
-        ),
+    Deliberately NOT a monkeypatch of `TinkerModel._sampling_params`: that would
+    replace the only code that builds the sampling request, and the sampling-params
+    test would then be asserting against its own re-implementation. Stubbing
+    `sys.modules["tinker"]` leaves the production method running.
+    """
+    import sys
+
+    monkeypatch.setitem(
+        sys.modules,
+        "tinker",
+        SimpleNamespace(types=SimpleNamespace(SamplingParams=FakeSamplingParams)),
     )
 
 
