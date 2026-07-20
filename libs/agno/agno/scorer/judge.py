@@ -10,7 +10,7 @@ from agno.agent import Agent
 from agno.models.base import Model
 from agno.scorer._fence import fence_untrusted
 from agno.scorer._model import model_identity_payload
-from agno.scorer.base import AnyRunOutput, EnvFingerprintError, Score
+from agno.scorer.base import AnyRunOutput, FingerprintError, Score
 
 
 # Local schema: agno.scorer must not import agno.eval.
@@ -159,5 +159,5 @@ class JudgeScorer:
         try:
             canonical = json.dumps(payload, sort_keys=True, ensure_ascii=True, separators=(",", ":"))
         except (TypeError, ValueError) as exc:
-            raise EnvFingerprintError(f"JudgeScorer identity is not JSON-serializable: {exc}") from exc
+            raise FingerprintError(f"JudgeScorer identity is not JSON-serializable: {exc}") from exc
         return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
