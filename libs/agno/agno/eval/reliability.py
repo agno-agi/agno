@@ -152,7 +152,7 @@ class ReliabilityEval:
         failed_argument_checks: List[str] = []
         passed_argument_checks: List[str] = []
 
-        clean_executions = [t for t in executions if t.tool_name and not t.tool_call_error]
+        clean_executions = [t for t in executions if t.tool_name and not t.tool_call_error and not t.is_paused]
         clean_names = {t.tool_name for t in clean_executions}
         attempted_names = {t.tool_name for t in executions if t.tool_name} | requested_names
 
@@ -169,7 +169,7 @@ class ReliabilityEval:
                     # Strict mode polices the attempt, not its success: an unexpected
                     # call that errored or was refused still fails the eval.
                     failed_tool_calls.append(tool_name)
-            elif not tool.tool_call_error:
+            elif not tool.tool_call_error and not tool.is_paused:
                 passed_tool_calls.append(tool_name)
             # An errored execution of an EXPECTED tool is neither passed nor failed by
             # itself: it cannot satisfy the expectation, and the failure surfaces as

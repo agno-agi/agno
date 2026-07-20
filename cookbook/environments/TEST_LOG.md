@@ -97,3 +97,22 @@ attempts=2 cap and the "... 6 more" elision worked; print_attempt rendered the
 scorer verdict plus the full transcript via pprint_run_response.
 
 ---
+
+### _07_support_triage.py
+
+**Status:** NOT RUN LIVE (no API key in the authoring session)
+
+**Description:** New cookbook: classify support tickets into buckets, k=8 per task,
+surface the learning zone, export the passing runs. Written as the clean
+"learning zone at a glance" screenshot example — one saturated task, two
+deliberately ambiguous ones in the learning zone, one clear per remaining bucket.
+
+**Result:** Syntax check passes; imports resolve against the current public API
+(no stale Env/EnvTask names); the Environment constructs and the
+scorer -> grid -> learning_zone() -> to_sft_jsonl wiring was exercised end-to-end
+with a stub model (6 tasks, k=2, 12 scored — sound). The live model run was NOT
+performed here because no OPENAI_API_KEY was available. Run it with a key to
+produce the authentic grid (with duration + cost) for the screenshot:
+`.venvs/demo/bin/python cookbook/environments/_07_support_triage.py`
+
+---

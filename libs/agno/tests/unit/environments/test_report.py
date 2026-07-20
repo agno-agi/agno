@@ -6,7 +6,7 @@ hidden, and refused), not exact formatting.
 
 import pytest
 
-from agno.environments import EnvironmentRunResult, Task, StopReason, TaskResult
+from agno.environments import EnvironmentRunResult, StopReason, Task, TaskResult
 from agno.environments._engine import AttemptResult
 from agno.environments._render import build_report
 from agno.models.response import ToolExecution

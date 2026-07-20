@@ -16,6 +16,19 @@ from agno.tools.toolkit import Toolkit
 
 _TASK_KEYS = {"input", "expected", "id", "metadata"}
 
+# Bumped whenever the env_fingerprint payload shape changes. The version is a prefix on
+# the returned fingerprint string, so a fingerprint written by an older format never
+# compares equal to a new one (env_matches refuses to compare across versions -- the safe
+# default) even in the vanishingly unlikely event the raw hashes collide. envfp2 adds the
+# prompt-shaping agent fields that envfp1 omitted (additional_context, expected_output,
+# role, additional_input, and the markdown/name/location/datetime/session-state flags).
+_ENV_FINGERPRINT_VERSION = "envfp2"
+
+# Per-instance Message fields that carry no prompt meaning but DO vary run to run: a fresh
+# id on every construction and a wall-clock created_at. Hashing them would make two agents
+# with the same additional_input hash differently, so they are stripped before hashing.
+_VOLATILE_MESSAGE_KEYS = frozenset({"id", "created_at"})
+
 
 @dataclass(frozen=True, eq=False)
 class Task:
@@ -99,7 +112,7 @@ class Environment:
         declared_ids: set = set()
         for index, task in enumerate(self.tasks):
             if not isinstance(task, Task):
-                raise TypeError(f"tasks[{index}] must be an Task, got {type(task).__name__}")
+                raise TypeError(f"tasks[{index}] must be a Task, got {type(task).__name__}")
             if task.id is not None:
                 # A duplicated id makes diff() silently pair rows with the wrong
                 # baseline task; positional collisions with auto-ids are caught at
@@ -195,9 +208,7 @@ def _sha256(payload: Any) -> str:
 def _scorer_digest(scorer: Scorer) -> str:
     digest = getattr(scorer, "digest", None)
     if digest is None or not callable(digest):
-        raise FingerprintError(
-            f"scorer {type(scorer).__name__} has no digest(); the env_fingerprint degrades to None"
-        )
+        raise FingerprintError(f"scorer {type(scorer).__name__} has no digest(); the env_fingerprint degrades to None")
     return digest()
 
 
@@ -247,16 +258,61 @@ def _prompt_component(value: Any, label: str) -> Any:
     raise FingerprintError(f"agent.{label} is {type(value).__name__}; only strings and lists fingerprint")
 
 
+def _additional_input_item(item: Any) -> Any:
+    """One additional_input element, normalized to a JSON-serializable, run-stable form.
+
+    additional_input is List[Union[str, Dict, BaseModel, Message]]; each element shapes the
+    rendered run input. Messages serialize via to_dict() with the volatile per-instance
+    fields stripped (see _VOLATILE_MESSAGE_KEYS), so identical inputs hash identically;
+    BaseModels fall back to model_dump(); strings and dicts pass through as-is (a caller's
+    literal dict is already stable, so its keys are kept verbatim)."""
+    if item is None or isinstance(item, str):
+        return item
+    if isinstance(item, dict):
+        return item
+    to_dict = getattr(item, "to_dict", None)
+    if callable(to_dict):
+        rendered = to_dict()
+        if isinstance(rendered, dict):
+            return {key: value for key, value in rendered.items() if key not in _VOLATILE_MESSAGE_KEYS}
+        return rendered
+    model_dump = getattr(item, "model_dump", None)
+    if callable(model_dump):
+        return model_dump()
+    raise FingerprintError(f"cannot fingerprint additional_input item of type {type(item).__name__}")
+
+
+def _additional_input_component(value: Any) -> Any:
+    """The declared additional_input, each element normalized. None stays None so an agent
+    without extra input hashes the same as before this field entered the payload."""
+    if value is None:
+        return None
+    if not isinstance(value, (list, tuple)):
+        raise FingerprintError(f"agent.additional_input is {type(value).__name__}; expected a list")
+    return [_additional_input_item(item) for item in value]
+
+
 def _env_fingerprint_of(env: "Environment", agent: Agent, model: Optional[Model] = None) -> str:
     """sha256 over the environment identity: tasks, scorer, declared tools, prompt
-    strings (agent-level and model-level), declared session_state, and termination
-    settings.
+    strings and flags (agent-level and model-level), declared session_state, and
+    termination settings. Returned string is prefixed with the payload version
+    (_ENV_FINGERPRINT_VERSION) so cross-version fingerprints never compare equal.
 
     Model-level system_prompt/instructions are prompt-shaped and therefore
     environment, not policy: they enter here and are excluded from the policy
     payload. `model` is the model whose prompt fields count -- the runner passes the
     EFFECTIVE model so a prompt-bearing override reads as an environment change;
     callers that omit it get the agent's declared model.
+
+    Prompt-shaping agent fields all count as environment: the static strings
+    (additional_context, expected_output, role) and extra input (additional_input)
+    are folded in by value; the context flags (markdown, add_name_to_context,
+    add_location_to_context, add_datetime_to_context, add_session_state_to_context)
+    are hashed as their FLAG value, never their rendered text -- add_datetime_to_context
+    injects wall-clock time, so hashing the rendered value would make the fingerprint
+    non-deterministic across runs. agent.name is folded in only when
+    add_name_to_context is set, the sole path by which it reaches the prompt; a
+    cosmetic rename with the flag off leaves the fingerprint unchanged.
 
     Every component failure surfaces as FingerprintError -- including exceptions
     raised while BUILDING the payload (a sourceless scorer, a schema builder choking
@@ -265,6 +321,7 @@ def _env_fingerprint_of(env: "Environment", agent: Agent, model: Optional[Model]
     """
     if model is None:
         model = getattr(agent, "model", None)
+    add_name_to_context = bool(getattr(agent, "add_name_to_context", False))
     try:
         payload = {
             "tasks": [
@@ -272,9 +329,25 @@ def _env_fingerprint_of(env: "Environment", agent: Agent, model: Optional[Model]
             ],
             "scorer": _scorer_digest(env.scorer),
             "tools": _declared_tool_schemas(agent),
+            # tool_choice shapes which of the declared tools the model may call
+            # (none/auto/required/a named tool), so two envs with identical tools but
+            # different tool_choice are different environments.
+            "tool_choice": getattr(agent, "tool_choice", None),
             "instructions": _prompt_component(getattr(agent, "instructions", None), "instructions"),
             "description": _prompt_component(getattr(agent, "description", None), "description"),
             "system_message": _prompt_component(getattr(agent, "system_message", None), "system_message"),
+            "additional_context": _prompt_component(getattr(agent, "additional_context", None), "additional_context"),
+            "expected_output": _prompt_component(getattr(agent, "expected_output", None), "expected_output"),
+            "role": _prompt_component(getattr(agent, "role", None), "role"),
+            "additional_input": _additional_input_component(getattr(agent, "additional_input", None)),
+            "name": getattr(agent, "name", None) if add_name_to_context else None,
+            "prompt_flags": {
+                "markdown": bool(getattr(agent, "markdown", False)),
+                "add_name_to_context": add_name_to_context,
+                "add_location_to_context": bool(getattr(agent, "add_location_to_context", False)),
+                "add_datetime_to_context": bool(getattr(agent, "add_datetime_to_context", False)),
+                "add_session_state_to_context": bool(getattr(agent, "add_session_state_to_context", False)),
+            },
             "model_prompt": model_prompt_payload(model),
             "session_state": getattr(agent, "session_state", None),
             "termination": {
@@ -286,7 +359,7 @@ def _env_fingerprint_of(env: "Environment", agent: Agent, model: Optional[Model]
         raise
     except Exception as exc:
         raise FingerprintError(f"fingerprint component failed: {type(exc).__name__}: {exc}") from exc
-    return _sha256(payload)
+    return f"{_ENV_FINGERPRINT_VERSION}:{_sha256(payload)}"
 
 
 def _policy_fingerprint_of(model: Model) -> str:

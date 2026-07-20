@@ -629,3 +629,26 @@ def test_passed_tool_calls_keeps_one_entry_per_execution():
     )
     assert result.eval_status == "PASSED"
     assert result.passed_tool_calls == ["search", "search"]
+
+
+def test_still_paused_call_fails():
+    # A still-paused call (awaiting confirmation, never resumed) has tool_call_error=None
+    # but is_paused=True -- it never executed, so it must not satisfy the expectation.
+    paused = ToolExecution(
+        tool_call_id="call_delete_file",
+        tool_name="delete_file",
+        requires_confirmation=True,
+        confirmed=None,
+        tool_call_error=None,
+    )
+    assert paused.is_paused is True
+    result = _run_eval(
+        agent_response=_make_response(paused),
+        expected_tool_calls=["delete_file"],
+    )
+    assert result.eval_status == "FAILED"
+    # The expected tool is reported missing (annotated), and -- since the per-call loop
+    # excludes still-paused calls -- it is NOT also in passed_tool_calls (no
+    # self-contradictory payload).
+    assert any("delete_file" in entry for entry in result.missing_tool_calls)
+    assert "delete_file" not in result.passed_tool_calls

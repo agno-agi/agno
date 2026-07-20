@@ -187,6 +187,11 @@ def test_code_scorer_digest_stable_and_sensitive():
     assert CodeScorer(scorer_a).digest() == CodeScorer(scorer_a).digest()
     # A different body flips the digest.
     assert CodeScorer(scorer_a).digest() != CodeScorer(scorer_b).digest()
+    # The same function with a different pass_threshold grades differently, so it
+    # must flip the digest -- otherwise two environments that pass and fail the same
+    # score would share an env_fingerprint.
+    assert CodeScorer(scorer_a, pass_threshold=0.5).digest() != CodeScorer(scorer_a, pass_threshold=0.8).digest()
+    assert CodeScorer(scorer_a, pass_threshold=0.5).digest() == CodeScorer(scorer_a, pass_threshold=0.5).digest()
     # A callable without retrievable source raises FingerprintError.
     with pytest.raises(FingerprintError):
         CodeScorer(len).digest()

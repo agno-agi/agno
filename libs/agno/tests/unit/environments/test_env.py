@@ -8,7 +8,9 @@ import pytest
 
 from agno.agent import Agent
 from agno.environments import Environment, FingerprintError, Task
+from agno.environments.environment import _ENV_FINGERPRINT_VERSION
 from agno.environments.environment import _policy_fingerprint_of as policy_fingerprint_of
+from agno.models.message import Message
 from agno.models.openai import OpenAIChat
 from agno.scorer import CodeScorer, JudgeScorer
 
@@ -132,6 +134,16 @@ def test_model_level_prompt_is_env_not_policy():
     assert prompted.policy_fingerprint() == plain.policy_fingerprint()
 
 
+def test_tool_choice_is_env_not_policy():
+    # tool_choice shapes which of the declared tools the model may call, so two envs
+    # with identical tools but different tool_choice are different environments -- and
+    # it is a prompt/request-shaping field, not model sampling identity.
+    auto = _env(agent=Agent(model=OpenAIChat(id="gpt-5-mini"), tools=[search_tool], tool_choice="auto"))
+    none = _env(agent=Agent(model=OpenAIChat(id="gpt-5-mini"), tools=[search_tool], tool_choice="none"))
+    assert auto.env_fingerprint() != none.env_fingerprint()
+    assert auto.policy_fingerprint() == none.policy_fingerprint()
+
+
 def test_fingerprint_does_not_mutate_agent():
     env = _env()
     before = env.agent.__dict__.get("_tool_instructions")
@@ -213,6 +225,129 @@ def test_policy_fingerprint_reads_the_live_model():
     fingerprint = policy_fingerprint_of(OpenAIChat(id="gpt-5-mini", temperature=0.7))
     assert fingerprint != policy_fingerprint_of(OpenAIChat(id="gpt-5-mini", temperature=0.8))
     assert fingerprint == policy_fingerprint_of(OpenAIChat(id="gpt-5-mini", temperature=0.7))
+
+
+# ---------------------------------------------------------------------------
+# Prompt-shaping agent fields (envfp2): each changes the rendered system prompt or
+# run input, so each must flip env_fingerprint while leaving policy_fingerprint alone.
+# Before envfp2 every pair below hashed IDENTICALLY -- the under-invalidation this fixes.
+# ---------------------------------------------------------------------------
+
+
+def _prompt_agent(**overrides) -> Agent:
+    return Agent(model=OpenAIChat(id="gpt-5-mini"), **overrides)
+
+
+# (label, base kwargs, edited kwargs) -- the two agents differ in exactly one field.
+_PROMPT_FIELD_EDITS = [
+    ("additional_context", {"additional_context": "Cite sources."}, {"additional_context": "Be terse."}),
+    ("expected_output", {"expected_output": "a number"}, {"expected_output": "a sentence"}),
+    ("role", {"role": "teacher"}, {"role": "examiner"}),
+    ("markdown", {"markdown": False}, {"markdown": True}),
+    ("add_datetime_to_context", {"add_datetime_to_context": False}, {"add_datetime_to_context": True}),
+    ("add_location_to_context", {"add_location_to_context": False}, {"add_location_to_context": True}),
+    (
+        "add_session_state_to_context",
+        {"add_session_state_to_context": False},
+        {"add_session_state_to_context": True},
+    ),
+    (
+        "add_name_to_context",
+        {"name": "Bot", "add_name_to_context": False},
+        {"name": "Bot", "add_name_to_context": True},
+    ),
+    (
+        "name (with add_name_to_context on)",
+        {"name": "Alice", "add_name_to_context": True},
+        {"name": "Bob", "add_name_to_context": True},
+    ),
+    (
+        "additional_input (dict)",
+        {"additional_input": [{"role": "user", "content": "one"}]},
+        {"additional_input": [{"role": "user", "content": "two"}]},
+    ),
+    (
+        "additional_input (Message)",
+        {"additional_input": [Message(role="user", content="one")]},
+        {"additional_input": [Message(role="user", content="two")]},
+    ),
+]
+
+
+@pytest.mark.parametrize(
+    "label, base_kwargs, edited_kwargs", _PROMPT_FIELD_EDITS, ids=[e[0] for e in _PROMPT_FIELD_EDITS]
+)
+def test_prompt_shaping_field_flips_env_fingerprint(label, base_kwargs, edited_kwargs):
+    base = _env(agent=_prompt_agent(**base_kwargs))
+    edited = _env(agent=_prompt_agent(**edited_kwargs))
+    # The environment changed (prompt/input differs), so the env fingerprint must too.
+    assert edited.env_fingerprint() != base.env_fingerprint()
+    # ...but the model is untouched, so it is an environment change, not a policy one.
+    assert edited.policy_fingerprint() == base.policy_fingerprint()
+
+
+def test_add_name_to_context_gates_the_name():
+    # With the flag off, agent.name never reaches the prompt, so a rename must NOT
+    # invalidate: hashing name unconditionally would spuriously flag cosmetic renames.
+    flag_off = _env(agent=_prompt_agent(name="Alice"))
+    renamed_off = _env(agent=_prompt_agent(name="Bob"))
+    assert flag_off.env_fingerprint() == renamed_off.env_fingerprint()
+
+    # With the flag on, the name is in the prompt, so a rename must invalidate.
+    flag_on = _env(agent=_prompt_agent(name="Alice", add_name_to_context=True))
+    renamed_on = _env(agent=_prompt_agent(name="Bob", add_name_to_context=True))
+    assert flag_on.env_fingerprint() != renamed_on.env_fingerprint()
+
+
+def test_add_datetime_to_context_is_reproducible():
+    # add_datetime_to_context injects wall-clock time into the prompt. The fingerprint
+    # hashes the FLAG, not the rendered time, so repeated calls on the same agent are
+    # stable -- the timestamp must not leak into the hash.
+    import time
+
+    env = _env(agent=_prompt_agent(add_datetime_to_context=True))
+    first = env.env_fingerprint()
+    time.sleep(1.1)  # cross a whole-second boundary; a leaked timestamp would change here
+    assert env.env_fingerprint() == first
+
+
+def test_additional_input_message_hashes_stably():
+    # Two agents with semantically identical Message input must hash the same. A raw
+    # Message carries a fresh id and a wall-clock created_at on every construction;
+    # those volatile fields are stripped before hashing.
+    one = _env(agent=_prompt_agent(additional_input=[Message(role="user", content="hello")]))
+    two = _env(agent=_prompt_agent(additional_input=[Message(role="user", content="hello")]))
+    assert one.env_fingerprint() == two.env_fingerprint()
+
+
+class _OldFormatResult:
+    """Stand-in for a result whose env_fingerprint was written by the pre-version format
+    (a bare sha256, no 'envfp2:' prefix)."""
+
+    def __init__(self, fingerprint):
+        self._fingerprint = fingerprint
+
+    def env_fingerprint(self):
+        return self._fingerprint
+
+
+def test_env_fingerprint_carries_version_prefix():
+    fingerprint = _env().env_fingerprint()
+    assert fingerprint.startswith(f"{_ENV_FINGERPRINT_VERSION}:")
+
+
+def test_cross_version_fingerprints_do_not_match():
+    # A version bump must make old fingerprints refuse to compare, even if the raw hash
+    # underneath is byte-identical: the prefix is what env_matches sees, so a bare
+    # (pre-version) hash never equals the prefixed one. Refusing to compare is the safe
+    # behavior -- a false "same environment" is exactly what the fingerprint exists to
+    # prevent.
+    env = _env()
+    new_fingerprint = env.env_fingerprint()
+    bare_hash = new_fingerprint.split(":", 1)[1]  # simulate the old format: hash without prefix
+    assert env.env_matches(_OldFormatResult(bare_hash)) is False
+    # Same version and hash still matches -- the prefix does not break normal equality.
+    assert env.env_matches(_OldFormatResult(new_fingerprint)) is True
 
 
 # ---------------------------------------------------------------------------
