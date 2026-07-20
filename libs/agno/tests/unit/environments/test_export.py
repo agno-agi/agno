@@ -339,3 +339,14 @@ def test_export_only_passed_false_writes_failed_attempts(tmp_path):
     assert report.n_skipped_failed == 0
     sidecar = json.loads((tmp_path / "train.jsonl.meta.json").read_text(encoding="utf-8"))
     assert sidecar["options"]["only_passed"] is False
+
+
+def test_export_creates_missing_parent_dirs(tmp_path):
+    # A fresh checkout has no data/generated/ dir; the exporter must create the
+    # parent path rather than FileNotFoundError (C9: parent directories are created).
+    result = _result([_attempt(_conversational_run("4"), passed=True)])
+    nested = tmp_path / "data" / "generated" / "train.jsonl"
+    assert not nested.parent.exists()
+    report = to_sft_jsonl(result, nested)
+    assert nested.exists()
+    assert report.n_written == 1

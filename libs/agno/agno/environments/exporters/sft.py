@@ -116,6 +116,7 @@ def to_sft_jsonl(result: EnvironmentRunResult, path: Union[str, Path], *, only_p
             )
 
     output_path = Path(path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
     # newline="" disables platform newline translation: on Windows, translated CRLF
     # would silently push an exact-fit file past the byte cap and break the
     # sha256-pinned determinism.
