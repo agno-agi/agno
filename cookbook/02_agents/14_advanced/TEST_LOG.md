@@ -193,3 +193,12 @@
 **Result:** Timed out after 120s.
 
 ---
+
+### background_execution_concurrency.py
+
+**Status:** NOT RUN
+**Tier:** untagged
+**Description:** Demonstrates the process-wide concurrency limit for background runs (set_background_max_concurrency): 5 runs submitted, at most 2 execute at once, the rest wait as PENDING. Compile-checked only; live run requires OPENAI_API_KEY, which was not available in the test environment. The underlying limiter is covered by unit tests in libs/agno/tests/unit/run/test_background_concurrency.py and libs/agno/tests/unit/agent/test_background_execution.py.
+**Result:** Compile check passed; pending a live run with API access.
+
+---

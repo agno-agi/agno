@@ -68,6 +68,7 @@ from agno.run.cancel import (
 from agno.run.cancel import (
     cancel_run as cancel_run_global,
 )
+from agno.run.concurrency import background_run_slot
 from agno.run.team import (
     RunCancelledEvent as TeamRunCancelledEvent,
 )
@@ -4191,37 +4192,39 @@ class Workflow:
         self.update_agents_and_teams_session_info()
 
         async def execute_workflow_background():
-            """Simple background execution"""
+            """Background execution: waits for a concurrency slot (background_run_slot);
+            the run stays PENDING while waiting in line."""
             try:
-                # Update status to RUNNING and save
-                workflow_run_response.status = RunStatus.running
-                if self._has_async_db():
-                    await self.asave_session(session=workflow_session)
-                else:
-                    self.save_session(session=workflow_session)
+                async with background_run_slot():
+                    # Update status to RUNNING and save
+                    workflow_run_response.status = RunStatus.running
+                    if self._has_async_db():
+                        await self.asave_session(session=workflow_session)
+                    else:
+                        self.save_session(session=workflow_session)
 
-                if self.agent is not None:
-                    self._aexecute_workflow_agent(
-                        user_input=input,  # type: ignore
-                        execution_input=inputs,
-                        run_context=run_context,
-                        stream=False,
-                        **kwargs,
-                    )
-                else:
-                    await self._aexecute(
-                        session_id=session_id,
-                        user_id=user_id,
-                        execution_input=inputs,
-                        workflow_run_response=workflow_run_response,
-                        run_context=run_context,
-                        session_state=session_state,
-                        add_dependencies_to_context=resolved["add_dependencies_to_context"],
-                        add_session_state_to_context=resolved["add_session_state_to_context"],
-                        **kwargs,
-                    )
+                    if self.agent is not None:
+                        self._aexecute_workflow_agent(
+                            user_input=input,  # type: ignore
+                            execution_input=inputs,
+                            run_context=run_context,
+                            stream=False,
+                            **kwargs,
+                        )
+                    else:
+                        await self._aexecute(
+                            session_id=session_id,
+                            user_id=user_id,
+                            execution_input=inputs,
+                            workflow_run_response=workflow_run_response,
+                            run_context=run_context,
+                            session_state=session_state,
+                            add_dependencies_to_context=resolved["add_dependencies_to_context"],
+                            add_session_state_to_context=resolved["add_session_state_to_context"],
+                            **kwargs,
+                        )
 
-                log_debug(f"Background execution completed with status: {workflow_run_response.status}")
+                    log_debug(f"Background execution completed with status: {workflow_run_response.status}")
 
             except Exception as e:
                 logger.exception("Background workflow execution failed")

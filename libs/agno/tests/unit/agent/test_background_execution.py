@@ -267,3 +267,71 @@ class TestBackgroundLifecycle:
 
         # Should have persisted ERROR status
         assert RunStatus.error in final_statuses
+
+
+class TestBackgroundConcurrencyLimit:
+    @pytest.mark.asyncio
+    async def test_second_run_waits_as_pending_under_limit(self, monkeypatch: pytest.MonkeyPatch):
+        """With a concurrency limit of 1, a second background run stays PENDING
+        (never transitions to RUNNING) until the first run finishes."""
+        from agno.run import concurrency
+        from agno.run.concurrency import set_background_max_concurrency
+
+        set_background_max_concurrency(1)
+        concurrency._semaphores.clear()
+        try:
+            agent = Agent(name="test-agent")
+
+            first_started = asyncio.Event()
+            release_first = asyncio.Event()
+            running_order: list[str] = []
+
+            async def fake_aread_or_create_session(agent, session_id=None, user_id=None):
+                return AgentSession(session_id=session_id or "test-session", user_id=user_id, runs=[])
+
+            async def fake_asave_session(agent, session=None):
+                pass
+
+            async def fake_arun(agent, run_response, run_context, **kwargs):
+                running_order.append(run_response.run_id)
+                if run_response.run_id == "bg-slot-1":
+                    first_started.set()
+                    await release_first.wait()
+                run_response.status = RunStatus.completed
+                return run_response
+
+            monkeypatch.setattr(_storage, "aread_or_create_session", fake_aread_or_create_session)
+            monkeypatch.setattr(_storage, "update_metadata", lambda agent, session=None: None)
+            monkeypatch.setattr("agno.agent._session.asave_session", fake_asave_session)
+            monkeypatch.setattr(_run, "_arun", fake_arun)
+
+            first = await _run._arun_background(
+                agent,
+                run_response=RunOutput(run_id="bg-slot-1", session_id="test-session"),
+                run_context=RunContext(run_id="bg-slot-1", session_id="test-session"),
+                session_id="test-session",
+            )
+            second = await _run._arun_background(
+                agent,
+                run_response=RunOutput(run_id="bg-slot-2", session_id="test-session"),
+                run_context=RunContext(run_id="bg-slot-2", session_id="test-session"),
+                session_id="test-session",
+            )
+
+            await asyncio.wait_for(first_started.wait(), timeout=2)
+            # Give the second task a chance to (incorrectly) start executing
+            await asyncio.sleep(0.05)
+
+            # Second run must be waiting for a slot: still PENDING, not yet executed
+            assert running_order == ["bg-slot-1"]
+            assert second.status == RunStatus.pending
+
+            # Release the first run; the second should now execute and complete
+            release_first.set()
+            await asyncio.sleep(0.1)
+            assert running_order == ["bg-slot-1", "bg-slot-2"]
+            assert first.status == RunStatus.completed
+            assert second.status == RunStatus.completed
+        finally:
+            set_background_max_concurrency(None)
+            concurrency._semaphores.clear()

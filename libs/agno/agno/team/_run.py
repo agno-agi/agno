@@ -71,6 +71,7 @@ from agno.run.cancel import (
 from agno.run.cancel import (
     cancel_run as cancel_run_global,
 )
+from agno.run.concurrency import background_run_slot
 from agno.run.messages import RunMessages
 from agno.run.team import (
     RunCancelledEvent as TeamRunCancelledEvent,
@@ -3395,30 +3396,32 @@ async def _arun_background(
 
     log_info(f"Background run {run_response.run_id} created with PENDING status")
 
-    # 4. Spawn the background task
+    # 4. Spawn the background task. Execution waits for a concurrency slot
+    # (background_run_slot); the run stays PENDING while waiting in line.
     async def _background_task() -> None:
         try:
-            # Transition to RUNNING
-            run_response.status = RunStatus.running
-            team_session.upsert_run(run_response=run_response)
-            await asave_session(team, session=team_session)
+            async with background_run_slot():
+                # Transition to RUNNING
+                run_response.status = RunStatus.running
+                team_session.upsert_run(run_response=run_response)
+                await asave_session(team, session=team_session)
 
-            # Execute the actual run — _arun handles everything including
-            # session persistence and cleanup
-            await _arun(
-                team,
-                run_response=run_response,
-                run_context=run_context,
-                session_id=session_id,
-                user_id=user_id,
-                add_history_to_context=add_history_to_context,
-                add_dependencies_to_context=add_dependencies_to_context,
-                add_session_state_to_context=add_session_state_to_context,
-                response_format=response_format,
-                debug_mode=debug_mode,
-                background_tasks=background_tasks,
-                **kwargs,
-            )
+                # Execute the actual run — _arun handles everything including
+                # session persistence and cleanup
+                await _arun(
+                    team,
+                    run_response=run_response,
+                    run_context=run_context,
+                    session_id=session_id,
+                    user_id=user_id,
+                    add_history_to_context=add_history_to_context,
+                    add_dependencies_to_context=add_dependencies_to_context,
+                    add_session_state_to_context=add_session_state_to_context,
+                    response_format=response_format,
+                    debug_mode=debug_mode,
+                    background_tasks=background_tasks,
+                    **kwargs,
+                )
         except Exception as e:
             log_error(f"Background run {run_response.run_id} failed: {str(e)}")
             # Persist ERROR status
