@@ -355,3 +355,85 @@ def test_db_audit_sink_never_raises_into_caller(tmp_path, monkeypatch):
     # both trails: must not propagate
     sink.record(AuditEvent(action="role.set_scopes", actor="alice", target="m"))
     sink.record(AuditEvent(action="access.denied", actor="bob", target="GET /x"))
+
+
+def test_per_resource_deny_is_recorded_when_it_denies_independently():
+    """The per-resource gate records its own DENY.
+
+    Note the route gate is ALREADY resource-aware (it puts resource_id in the context,
+    so a managed-role per-resource denial is decided -- and recorded -- there, with the
+    concrete resource in the target). The gap this covers is the case the route gate
+    can't: a provider whose ``check`` is stricter than its ``authorize_route``, so the
+    route is allowed and the per-resource dependency is what actually blocks. Without
+    recording here that denial would be invisible -- the trail would show the route
+    allowed and never show what stopped the request.
+    """
+    from agno.os.authz.provider import AuthorizationProvider
+
+    class RouteOpenResourceClosed(AuthorizationProvider):
+        """Lets every route through, then denies the specific resource."""
+
+        def check(self, ctx):
+            return False
+
+        def accessible_resource_ids(self, ctx):
+            return {"*"}
+
+        def authorize_route(self, ctx, required_scopes):
+            return True
+
+    sink = _CapturingSink()
+    db = InMemoryDb()
+    agent_os = AgentOS(
+        id=OS_ID,
+        agents=[Agent(id="yours", name="Yours", db=db)],
+        db=db,
+        authorization=True,
+        authorization_config=AuthorizationConfig(
+            verification_keys=[SECRET],
+            algorithm="HS256",
+            verify_audience=True,
+            audience=OS_ID,
+            authorization_provider=RouteOpenResourceClosed(),
+            audit=sink,
+        ),
+    )
+    client = TestClient(agent_os.get_app())
+    r = client.post("/agents/yours/runs", headers=_auth("bob"), data={"message": "hi"})
+    assert r.status_code == 403, r.text
+
+    resource_denials = [e for e in sink.events if e.metadata.get("reason") == "resource_access_denied"]
+    assert resource_denials, f"per-resource deny not recorded; got {[(e.action, e.target) for e in sink.events]}"
+    ev = resource_denials[0]
+    assert ev.action == "access.denied" and ev.actor == "bob"
+    assert "yours" in ev.target
+
+
+def test_audit_sink_is_mirrored_onto_the_mcp_subapp():
+    """The MCP tool gate resolves its sink from the mounted sub-app's state (request.app
+    is the sub-app, not the main app). Without this mirror MCP decisions can't be
+    recorded at all, leaving the access trail covering REST/WS but silently missing the
+    entire MCP transport."""
+    pytest.importorskip("fastmcp")
+    sink = _CapturingSink()
+    store = ManagedRoleStore(db_url=_db_url())
+    store.set_role_scopes("viewer", ["agents:*:read"])
+
+    db = InMemoryDb()
+    agent_os = AgentOS(
+        id=OS_ID,
+        agents=[Agent(id="research-agent", name="Research Agent", db=db)],
+        db=db,
+        authorization=True,
+        mcp_server=True,
+        authorization_config=AuthorizationConfig(
+            verification_keys=[SECRET],
+            algorithm="HS256",
+            authorization_provider=store.provider,
+            audit=sink,
+        ),
+    )
+    app = agent_os.get_app()
+    assert getattr(app.state, "authz_audit", None) is sink
+    sub = getattr(getattr(agent_os, "_mcp_app", None), "state", None)
+    assert getattr(sub, "authz_audit", None) is sink, "MCP sub-app must resolve the SAME audit sink"

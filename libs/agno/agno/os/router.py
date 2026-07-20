@@ -331,7 +331,23 @@ def get_websocket_router(
                 action="run",
                 admin_scope=ws_admin_scope,
             )
-            return ws_authorization_provider.authorize_route(ctx, ws_workflow_run_scopes)
+            allowed = ws_authorization_provider.authorize_route(ctx, ws_workflow_run_scopes)
+            # Same access trail the REST gate writes to: the equivalent
+            # POST /workflows/{id}/runs decision is recorded, so the streaming
+            # transport must not be a blind spot in the audit.
+            from agno.os.authz.audit import record_decision
+
+            record_decision(
+                websocket.app,
+                allowed=allowed,
+                target=f"WS /workflows/{workflow_id or '_'}/runs",
+                principal=ctx.principal_id,
+                required_scopes=ws_workflow_run_scopes,
+                scopes=ctx.scopes,
+                claims=ctx.claims,
+                reason=None if allowed else "ws_workflow_denied",
+            )
+            return allowed
 
         jwt_auth_enabled = jwt_validator is not None
         # auth_required is True when JWTMiddleware is configured, even if the

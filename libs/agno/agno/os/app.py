@@ -1611,6 +1611,12 @@ class AgentOS:
         audit = getattr(config, "audit", None)
         if audit is not None:
             fastapi_app.state.authz_audit = audit
+            # Same mount-boundary reason as the provider above: the MCP tool gate
+            # resolves the sink from the in-flight request's ``.app``, which is the
+            # mounted sub-app. Without this mirror MCP decisions can't be recorded at
+            # all, leaving a hole in the access trail that REST/WS decisions fill.
+            if self._mcp_app is not None and hasattr(self._mcp_app, "state"):
+                self._mcp_app.state.authz_audit = audit
 
         # Optional user directory (no-IdP). When present, the middleware (and the
         # WebSocket connect path) denies disabled users and — when auto-provision is
