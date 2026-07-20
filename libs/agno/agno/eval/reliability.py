@@ -152,7 +152,7 @@ class ReliabilityEval:
         failed_argument_checks: List[str] = []
         passed_argument_checks: List[str] = []
 
-        clean_executions = [t for t in executions if t.tool_name and not t.tool_call_error]
+        clean_executions = [t for t in executions if t.tool_name and not t.tool_call_error and not t.is_paused]
         clean_names = {t.tool_name for t in clean_executions}
         attempted_names = {t.tool_name for t in executions if t.tool_name} | requested_names
 
