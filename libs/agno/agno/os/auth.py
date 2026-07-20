@@ -582,6 +582,24 @@ def require_resource_access(resource_type: str, action: str, resource_id_param: 
         # Get the resource_id from path parameters
         resource_id = request.path_params.get(resource_id_param)
         if resource_id and not check_resource_access(request, resource_id, resource_type, action):
+            # Record the per-resource DENY. The route gate already logged an allow for
+            # this request (with the concrete resource in the path), so a per-resource
+            # ALLOW would only duplicate it -- but a per-resource DENY is otherwise
+            # invisible: the trail would show the route allowed and never show what
+            # actually blocked the request. For a role/ReBAC model this is the
+            # security-relevant decision, so it must appear in the access audit.
+            from agno.os.authz.audit import record_decision
+
+            record_decision(
+                request,
+                allowed=False,
+                target=f"{request.method} /{resource_type}/{resource_id}",
+                principal=getattr(request.state, "user_id", None),
+                required_scopes=[f"{resource_type}:{resource_id}:{action}"],
+                scopes=list(getattr(request.state, "scopes", None) or []),
+                claims=getattr(request.state, "claims", None),
+                reason="resource_access_denied",
+            )
             raise HTTPException(status_code=403, detail=f"Access denied to {action} this {resource_singular}")
 
     return dependency

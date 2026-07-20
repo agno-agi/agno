@@ -909,32 +909,19 @@ class AuthMiddleware(BaseHTTPMiddleware):
         request into a 500. No-op when no decision sink is configured, so the default
         (no audit) path is untouched.
         """
-        state = getattr(getattr(request, "app", None), "state", None)
-        sink = getattr(state, "authz_audit", None) if state is not None else None
-        if sink is None:
-            return
-        try:
-            import time
+        from agno.os.authz.audit import record_decision
 
-            from agno.os.authz.audit import AuditEvent
-
-            claims = getattr(request.state, "claims", None)
-            token = self._extract_token(request)
-            token_ref = self._token_reference(token, claims)
-            metadata: Dict[str, Any] = {"required": required_scopes, "token": token_ref, "scopes": scopes}
-            if reason:
-                metadata["reason"] = reason
-            sink.record(
-                AuditEvent(
-                    action="access.allowed" if allowed else "access.denied",
-                    actor=principal,
-                    target=f"{method} {path}",
-                    timestamp=int(time.time()),
-                    metadata=metadata,
-                )
-            )
-        except Exception as e:  # pragma: no cover - audit must never break requests
-            log_debug(f"decision audit failed: {e}")
+        record_decision(
+            request,
+            allowed=allowed,
+            target=f"{method} {path}",
+            principal=principal,
+            required_scopes=required_scopes,
+            scopes=scopes,
+            claims=getattr(request.state, "claims", None),
+            token=self._extract_token(request),
+            reason=reason,
+        )
 
     @staticmethod
     def _token_reference(token: Optional[str], claims: Optional[dict]) -> Optional[str]:
