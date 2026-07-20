@@ -10,19 +10,19 @@ without importing scorer.
 """
 
 from agno.environments._engine import AttemptResult, StopReason
-from agno.environments.env import Env, EnvTask
+from agno.environments.env import Environment, Task
 from agno.environments.exporters import ExportReport, ato_sft_jsonl, to_sft_jsonl
-from agno.environments.runner import EnvDiff, EnvRunResult, TaskResult, arun_rollouts, run_rollouts
-from agno.scorer import EnvFingerprintError, EnvMismatchError
+from agno.environments.runner import EnvironmentDiff, EnvironmentRunResult, TaskResult, arun_rollouts, run_rollouts
+from agno.scorer import FingerprintError, MismatchError
 
 __all__ = [
     "AttemptResult",
-    "Env",
-    "EnvDiff",
-    "EnvFingerprintError",
-    "EnvMismatchError",
-    "EnvRunResult",
-    "EnvTask",
+    "Environment",
+    "EnvironmentDiff",
+    "FingerprintError",
+    "MismatchError",
+    "EnvironmentRunResult",
+    "Task",
     "ExportReport",
     "StopReason",
     "TaskResult",

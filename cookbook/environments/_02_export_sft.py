@@ -24,7 +24,7 @@ the file format itself has no room for provenance.
 from pathlib import Path
 
 from agno.agent import Agent
-from agno.environments import Env, EnvTask, run_rollouts, to_sft_jsonl
+from agno.environments import Environment, Task, run_rollouts, to_sft_jsonl
 from agno.models.openai import OpenAIResponses
 from agno.scorer import CodeScorer
 from pydantic import BaseModel
@@ -45,21 +45,21 @@ def exact(run, expected):
 
 agent = Agent(model=OpenAIResponses(id="gpt-5.5"), output_schema=Answer)
 
-env = Env(
+env = Environment(
     name="mental-math",
     agent=agent,
     tasks=(
         # One saturated anchor (no signal), two chained tasks hard enough that
         # attempts disagree -- the learning zone is where a trainer earns its keep.
-        EnvTask(input="What is 17 x 23?", expected=391),
-        EnvTask(
+        Task(input="What is 17 x 23?", expected=391),
+        Task(
             input=(
                 "Compute 31415926535897 x 27182818284590, then give the sum of "
                 "the digits of the product multiplied by 104729."
             ),
             expected=12358022,
         ),
-        EnvTask(
+        Task(
             input=(
                 "Compute 2718281828459 x 3141592653589, then give the sum of "
                 "the digits of the product multiplied by 7919."

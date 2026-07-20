@@ -3,7 +3,7 @@ programmatic contract, none of this is.
 
 K attempts is K glyphs: a full block for a pass, a light shade for a scored fail, a
 triangle for an unscored attempt. Rendered live through rich during a TTY run, and
-statically by `EnvRunResult.__str__`. `build_report` is the layer underneath the
+statically by `EnvironmentRunResult.__str__`. `build_report` is the layer underneath the
 glyphs: one text block per attempt -- verdict, score reason, tool executions, the
 answer -- so a red glyph is explainable without walking the result objects by hand.
 """

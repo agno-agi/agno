@@ -1,4 +1,4 @@
-"""Unit tests for Env, EnvTask, and the two fingerprints (offline)."""
+"""Unit tests for Environment, Task, and the two fingerprints (offline)."""
 
 import logging
 import pathlib
@@ -7,7 +7,7 @@ from contextlib import contextmanager
 import pytest
 
 from agno.agent import Agent
-from agno.environments import Env, EnvFingerprintError, EnvTask
+from agno.environments import Environment, FingerprintError, Task
 from agno.environments.env import _policy_fingerprint_of as policy_fingerprint_of
 from agno.models.openai import OpenAIChat
 from agno.scorer import CodeScorer, JudgeScorer
@@ -57,15 +57,15 @@ def _capture_agno_warnings():
         logger.setLevel(previous_level)
 
 
-def _env(**overrides) -> Env:
+def _env(**overrides) -> Environment:
     settings = {
         "name": "arithmetic",
-        "tasks": (EnvTask(input="What is 2+2?", expected=4),),
+        "tasks": (Task(input="What is 2+2?", expected=4),),
         "scorer": CodeScorer(exact_match),
         "agent": Agent(model=OpenAIChat(id="gpt-5-mini"), instructions="Answer tersely.", tools=[search_tool]),
     }
     settings.update(overrides)
-    return Env(**settings)
+    return Environment(**settings)
 
 
 # ---------------------------------------------------------------------------
@@ -80,8 +80,8 @@ def test_fingerprint_sensitivity():
 
     # Environment edits flip env_fingerprint only.
     env_edits = [
-        _env(tasks=(EnvTask(input="What is 3+3?", expected=4),)),  # task input
-        _env(tasks=(EnvTask(input="What is 2+2?", expected=5),)),  # expected value
+        _env(tasks=(Task(input="What is 3+3?", expected=4),)),  # task input
+        _env(tasks=(Task(input="What is 2+2?", expected=5),)),  # expected value
         _env(scorer=JudgeScorer(OpenAIChat(id="gpt-5-mini"), "Is it right?")),  # scorer identity
         _env(
             agent=Agent(
@@ -150,8 +150,8 @@ def test_flagship_example_fingerprints_clean():
 
 
 def test_fingerprint_rejects_unserializable_expected():
-    env = _env(tasks=(EnvTask(input="q", expected=object()),))
-    with pytest.raises(EnvFingerprintError):
+    env = _env(tasks=(Task(input="q", expected=object()),))
+    with pytest.raises(FingerprintError):
         env.env_fingerprint()
 
     # The other half of the contract: the rollout runner catches, stamps None, and
@@ -170,9 +170,9 @@ def test_fingerprint_rejects_unserializable_expected():
 
             yield RunOutput(content="ok", status=RunStatus.completed)
 
-    stub_env = Env(
+    stub_env = Environment(
         name="degrades",
-        tasks=(EnvTask(input="q", expected=object()),),
+        tasks=(Task(input="q", expected=object()),),
         scorer=CodeScorer(lambda run, expected: Score(value=1.0, passed=True)),
         agent=lambda: StubFingerprintAgent(),
     )
@@ -186,7 +186,7 @@ def test_fingerprint_rejects_unserializable_expected():
 
 def test_fingerprint_component_failures_become_env_fingerprint_error():
     # Exceptions raised while BUILDING the payload must surface as
-    # EnvFingerprintError too, or the runner's catch-and-degrade is incomplete: a
+    # FingerprintError too, or the runner's catch-and-degrade is incomplete: a
     # functools.partial tool has no __name__ and would otherwise escape as a raw
     # AttributeError and crash the run at fingerprint time.
     import functools
@@ -196,13 +196,13 @@ def test_fingerprint_component_failures_become_env_fingerprint_error():
 
     partial_tool = functools.partial(helper, depth=2)
     env = _env(agent=Agent(model=OpenAIChat(id="gpt-5-mini"), instructions="Answer tersely.", tools=[partial_tool]))
-    with pytest.raises(EnvFingerprintError):
+    with pytest.raises(FingerprintError):
         env.env_fingerprint()
 
 
 def test_env_matches_rejects_none():
     good = _env()
-    bad = _env(tasks=(EnvTask(input="q", expected=object()),))  # fingerprint degrades to None
+    bad = _env(tasks=(Task(input="q", expected=object()),))  # fingerprint degrades to None
     assert good.env_matches(bad) is False
     assert bad.env_matches(good) is False
     assert bad.env_matches(bad) is False  # None == None must NOT match
@@ -260,7 +260,7 @@ def test_team_agent_hybrid_rejected():
 
 def test_duplicate_declared_task_ids_rejected():
     with pytest.raises(ValueError, match="duplicate task id"):
-        _env(tasks=(EnvTask(input="a", id="dup"), EnvTask(input="b", id="dup")))
+        _env(tasks=(Task(input="a", id="dup"), Task(input="b", id="dup")))
 
 
 def test_factory_product_validated():
@@ -291,9 +291,9 @@ def test_fingerprint_order_insensitive_for_nameless_dict_tools():
 
 def test_env_not_silently_unhashable():
     # eq=False keeps identity hashing: the auto-generated __hash__ would raise the
-    # first time an Env or EnvTask sat in a set (metadata is a mapping).
+    # first time an Environment or Task sat in a set (metadata is a mapping).
     env = _env()
-    task = EnvTask(input="q", metadata={"difficulty": "hard"})
+    task = Task(input="q", metadata={"difficulty": "hard"})
     assert {env, task}
 
 
@@ -310,7 +310,7 @@ def test_from_jsonl_roundtrip(tmp_path):
         '{"input": "Hard one.", "metadata": {"difficulty": "hard"}}\n',
         encoding="utf-8",
     )
-    tasks = EnvTask.from_jsonl(path)
+    tasks = Task.from_jsonl(path)
     assert len(tasks) == 3
     assert tasks[0].input == "What is 2+2?"
     assert tasks[0].expected == 4
@@ -323,7 +323,7 @@ def test_from_jsonl_roundtrip(tmp_path):
 async def test_afrom_jsonl_matches_sync(tmp_path):
     path = tmp_path / "tasks.jsonl"
     path.write_text('{"input": "What is 2+2?", "expected": 4}\n', encoding="utf-8")
-    tasks = await EnvTask.afrom_jsonl(path)
+    tasks = await Task.afrom_jsonl(path)
     assert len(tasks) == 1
     assert tasks[0].input == "What is 2+2?"
     assert tasks[0].expected == 4
@@ -339,7 +339,7 @@ def test_from_jsonl_rejects_unknown_keys(tmp_path):
         encoding="utf-8",
     )
     with pytest.raises(ValueError) as excinfo:
-        EnvTask.from_jsonl(path)
+        Task.from_jsonl(path)
     assert "line 2" in str(excinfo.value)
     assert "expected_output" in str(excinfo.value)
 

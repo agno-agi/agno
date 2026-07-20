@@ -8,7 +8,7 @@ history.
 
 **Status:** PASS
 
-**Description:** Env over two mental-math tasks, typed CodeScorer, run_rollouts at
+**Description:** Environment over two mental-math tasks, typed CodeScorer, run_rollouts at
 k=8, the grid, summary() with fingerprints and learning-zone ids.
 
 **Result:** 16 attempts in 55s, 16/16 scored, both fingerprints stamped non-None.
@@ -66,7 +66,7 @@ disagreed), which is the intended signal for a rubric with graded levels.
 
 **Status:** PASS (after restoring a file missing from the branch)
 
-**Description:** EnvTask.from_jsonl over tasks/support_triage.jsonl (5 triage
+**Description:** Task.from_jsonl over tasks/support_triage.jsonl (5 triage
 tasks, one deliberately ambiguous), CodeScorer on a typed output_schema field,
 baseline on gpt-5.5, candidate via model= override on gpt-5-mini, save/load
 round-trip, candidate.diff(baseline).

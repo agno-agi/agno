@@ -7,7 +7,7 @@ diff the two results task by task.
 
 Three pieces of the API meet here:
 
-- EnvTask.from_jsonl loads the task set from a file a team can own in git.
+- Task.from_jsonl loads the task set from a file a team can own in git.
   Validation is strict: an unknown key (say, a misspelled "expected_output"
   column) raises with the line number instead of silently making every
   expected None.
@@ -15,9 +15,9 @@ Three pieces of the API meet here:
   the env. The environment fingerprint stays identical -- the tasks, scorer,
   and prompts did not move -- while the policy fingerprint tracks the model
   that actually ran. That split is what makes the diff meaningful.
-- results.save() / EnvRunResult.load() / candidate.diff(baseline) close the
+- results.save() / EnvironmentRunResult.load() / candidate.diff(baseline) close the
   loop across time: save a baseline today, diff a candidate against it next
-  week. diff raises EnvMismatchError if the environment drifted in between,
+  week. diff raises MismatchError if the environment drifted in between,
   so you cannot accidentally compare across different task sets. Note the
   saved artifact contains full transcripts in plain text -- treat it like
   any other file holding your production prompts.
@@ -26,7 +26,7 @@ Three pieces of the API meet here:
 from pathlib import Path
 
 from agno.agent import Agent
-from agno.environments import Env, EnvRunResult, EnvTask, run_rollouts
+from agno.environments import Environment, EnvironmentRunResult, Task, run_rollouts
 from agno.models.openai import OpenAIResponses
 from agno.scorer import CodeScorer
 from pydantic import BaseModel
@@ -57,10 +57,10 @@ agent = Agent(
     ),
 )
 
-env = Env(
+env = Environment(
     name="support-triage",
     agent=agent,
-    tasks=EnvTask.from_jsonl(_TASKS_PATH),
+    tasks=Task.from_jsonl(_TASKS_PATH),
     scorer=CodeScorer(label_matches),
 )
 
@@ -87,7 +87,7 @@ if __name__ == "__main__":
     print()
 
     # Reload the baseline as a second session would, then diff.
-    baseline = EnvRunResult.load(baseline_path)
+    baseline = EnvironmentRunResult.load(baseline_path)
     diff = candidate.diff(baseline)
     print(diff)
 

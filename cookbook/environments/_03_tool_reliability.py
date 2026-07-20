@@ -22,7 +22,7 @@ call with wrong arguments; for a strict check, pin them with the
 import json
 
 from agno.agent import Agent
-from agno.environments import Env, EnvTask, run_rollouts
+from agno.environments import Environment, Task, run_rollouts
 from agno.models.openai import OpenAIResponses
 from agno.scorer import ToolCallScorer
 
@@ -61,15 +61,15 @@ agent = Agent(
     ),
 )
 
-env = Env(
+env = Environment(
     name="order-support-grounding",
     agent=agent,
     tasks=(
-        EnvTask(input="Where is order A-1001 right now?", id="plain-lookup"),
+        Task(input="Where is order A-1001 right now?", id="plain-lookup"),
         # The customer asserts a status in the question. An agent that takes
         # the customer's word for it answers fluently -- without the lookup
         # ever running. This is the attempt the scorer exists to catch.
-        EnvTask(
+        Task(
             input=(
                 "My confirmation email says order A-1003 already shipped. "
                 "Can you just confirm it arrives this week?"
@@ -78,7 +78,7 @@ env = Env(
         ),
         # No such order: the clean behavior is to look it up, get the error
         # back, and say so -- which still counts, because the execution ran.
-        EnvTask(input="What is the ETA for order A-9999?", id="unknown-order"),
+        Task(input="What is the ETA for order A-9999?", id="unknown-order"),
     ),
     # Executions only: a refused or errored call never satisfies this.
     scorer=ToolCallScorer(expected_tools=["get_order_status"]),

@@ -9,7 +9,7 @@ import pytest
 from agno.agent import Agent
 from agno.agent._utils import SHARED_BY_REFERENCE_FIELDS
 from agno.db.in_memory import InMemoryDb
-from agno.environments import Env, EnvRunResult, EnvTask, StopReason, TaskResult, arun_rollouts, run_rollouts
+from agno.environments import Environment, EnvironmentRunResult, Task, StopReason, TaskResult, arun_rollouts, run_rollouts
 from agno.environments._engine import AttemptResult
 from agno.environments.runner import _ISOLATE_FIELD_ACTIONS
 from agno.models.base import Model
@@ -18,7 +18,7 @@ from agno.models.openai import OpenAIChat
 from agno.models.response import ModelResponse
 from agno.run.agent import RunOutput
 from agno.run.base import RunStatus
-from agno.scorer import CodeScorer, EnvMismatchError, Score
+from agno.scorer import CodeScorer, MismatchError, Score
 
 
 def _output(**kwargs):
@@ -55,7 +55,7 @@ class StubManager:
 
 
 class StubRolloutAgent:
-    """Duck-typed agent for Env factories. Mirrors the streaming contract; records a
+    """Duck-typed agent for Environment factories. Mirrors the streaming contract; records a
     hermetic-relevant snapshot of itself at run time."""
 
     def __init__(
@@ -147,11 +147,11 @@ class StubRolloutAgent:
         yield self._respond(input)
 
 
-def _stub_env(recorder=None, *, tasks=None, scorer=None, timeout_seconds=120, **agent_kwargs) -> Env:
+def _stub_env(recorder=None, *, tasks=None, scorer=None, timeout_seconds=120, **agent_kwargs) -> Environment:
     recorder = recorder if recorder is not None else Recorder()
-    return Env(
+    return Environment(
         name="stub-env",
-        tasks=tasks if tasks is not None else (EnvTask(input="one", expected="echo:one"),),
+        tasks=tasks if tasks is not None else (Task(input="one", expected="echo:one"),),
         scorer=scorer if scorer is not None else CodeScorer(echo_scorer),
         agent=lambda: StubRolloutAgent(recorder, **agent_kwargs),
         timeout_seconds=timeout_seconds,
@@ -224,14 +224,14 @@ async def test_hermetic_knowledge_reads_still_work():
     assert all(snapshot["knowledge"] is shared_knowledge for snapshot in recorder.snapshots)
 
 
-def _live_env(live_agent) -> Env:
-    """An Env whose agent is a LIVE duck-typed stub, to drive the runner's deep_copy
-    branch offline. Env's front door correctly rejects a non-Agent live value, so the
+def _live_env(live_agent) -> Environment:
+    """An Environment whose agent is a LIVE duck-typed stub, to drive the runner's deep_copy
+    branch offline. Environment's front door correctly rejects a non-Agent live value, so the
     stub is installed past validation -- the branch under test is the runner's, and a
     real Agent cannot run without a live model."""
-    env = Env(
+    env = Environment(
         name="live-env",
-        tasks=(EnvTask(input="one", expected="echo:one"),),
+        tasks=(Task(input="one", expected="echo:one"),),
         scorer=CodeScorer(echo_scorer),
         agent=lambda: None,
     )
@@ -369,7 +369,7 @@ def _task_result_with_values(values, unscored=0):
         AttemptResult(run=None, score=None, stop_reason=StopReason.timeout, duration_seconds=0.1)
         for _ in range(unscored)
     ]
-    return TaskResult(task=EnvTask(input="q", id="t1"), attempts=tuple(attempts))
+    return TaskResult(task=Task(input="q", id="t1"), attempts=tuple(attempts))
 
 
 def test_learning_zone_rule():
@@ -384,8 +384,8 @@ def test_learning_zone_rule():
 async def test_expected_reaches_scorer_through_env():
     env = _stub_env(
         tasks=(
-            EnvTask(input="one", expected="echo:one"),
-            EnvTask(input="two", expected="echo:two"),
+            Task(input="one", expected="echo:one"),
+            Task(input="two", expected="echo:two"),
         )
     )
     result = await arun_rollouts(env, k=3, concurrency=3)
@@ -445,9 +445,9 @@ async def test_model_override_disables_cache():
 
 async def test_tasks_subset_selection():
     tasks = (
-        EnvTask(input="one", expected="echo:one"),
-        EnvTask(input="two", expected="echo:two"),
-        EnvTask(input="three", expected="echo:three"),
+        Task(input="one", expected="echo:one"),
+        Task(input="two", expected="echo:two"),
+        Task(input="three", expected="echo:three"),
     )
     env = _stub_env(tasks=tasks)
     full = await arun_rollouts(env, k=1)
@@ -460,7 +460,7 @@ async def test_tasks_subset_selection():
     assert subset.task_results[0].task.id == "t2"
 
     with pytest.raises(ValueError, match="env.tasks"):
-        await arun_rollouts(env, k=1, tasks=[EnvTask(input="two")])
+        await arun_rollouts(env, k=1, tasks=[Task(input="two")])
 
 
 async def test_scorer_exception_captured():
@@ -480,7 +480,7 @@ async def test_error_storm_stops_early():
     # A uniform misconfiguration is not data about the agent: first `concurrency`
     # completions all errored with one exception type -> stop scheduling, drain, and
     # return the partial result.
-    env = _stub_env(tasks=(EnvTask(input="one"), EnvTask(input="two")), error=RuntimeError("bad api key"))
+    env = _stub_env(tasks=(Task(input="one"), Task(input="two")), error=RuntimeError("bad api key"))
     result = await arun_rollouts(env, k=4, concurrency=2)
 
     assert result.stopped_early == "error-storm"
@@ -504,7 +504,7 @@ async def test_errors_grouped_by_task():
     recorder = Recorder()
     env = _stub_env(
         recorder,
-        tasks=(EnvTask(input="one", expected="echo:one"), EnvTask(input="two", expected="echo:two")),
+        tasks=(Task(input="one", expected="echo:one"), Task(input="two", expected="echo:two")),
         error_on_calls={0},
     )
     result = await arun_rollouts(env, k=2, concurrency=2)
@@ -591,14 +591,14 @@ async def test_summary_shape():
 
 
 async def test_save_load_roundtrip(tmp_path):
-    env = _stub_env(tasks=(EnvTask(input="one", expected="echo:one"), EnvTask(input="two", expected="wrong")))
+    env = _stub_env(tasks=(Task(input="one", expected="echo:one"), Task(input="two", expected="wrong")))
     result = await arun_rollouts(env, k=2, concurrency=2)
     path = tmp_path / "baseline.json"
 
     result.save(path)
     assert json.loads(path.read_text(encoding="utf-8"))["format_version"] == 1
 
-    loaded = EnvRunResult.load(path)
+    loaded = EnvironmentRunResult.load(path)
     assert loaded.summary() == result.summary()
     diff = result.diff(loaded)
     assert all(row["delta"] == 0.0 for row in diff.rows)
@@ -618,8 +618,8 @@ def _result_with(env_fingerprint, policy_fingerprint, rates_by_id):
             )
             for is_pass in [True] * passed + [False] * failed
         ]
-        task_results.append(TaskResult(task=EnvTask(input=task_id, id=task_id), attempts=tuple(attempts)))
-    return EnvRunResult(
+        task_results.append(TaskResult(task=Task(input=task_id, id=task_id), attempts=tuple(attempts)))
+    return EnvironmentRunResult(
         env_name="arithmetic",
         k=8,
         env_fingerprint=env_fingerprint,
@@ -631,11 +631,11 @@ def _result_with(env_fingerprint, policy_fingerprint, rates_by_id):
 
 def test_diff_refuses_mismatched_env():
     current = _result_with("aaa", "p1", {"t1": (8, 0)})
-    with pytest.raises(EnvMismatchError, match="env_fingerprint"):
+    with pytest.raises(MismatchError, match="env_fingerprint"):
         current.diff(_result_with("bbb", "p1", {"t1": (8, 0)}))
     # None never matches -- a plain == would pass trivially when both are None.
     nameless = _result_with(None, "p1", {"t1": (8, 0)})
-    with pytest.raises(EnvMismatchError):
+    with pytest.raises(MismatchError):
         nameless.diff(_result_with(None, "p1", {"t1": (8, 0)}))
 
 
@@ -698,9 +698,9 @@ async def test_factory_preflight_error_names_the_factory():
     def broken():
         raise KeyError("no such config")
 
-    env = Env(
+    env = Environment(
         name="broken",
-        tasks=(EnvTask(input="x"),),
+        tasks=(Task(input="x"),),
         scorer=CodeScorer(echo_scorer),
         agent=broken,
     )
@@ -709,9 +709,9 @@ async def test_factory_preflight_error_names_the_factory():
 
 
 async def test_factory_returning_non_agent_rejected_at_run_start():
-    env = Env(
+    env = Environment(
         name="bypass",
-        tasks=(EnvTask(input="x"),),
+        tasks=(Task(input="x"),),
         scorer=CodeScorer(echo_scorer),
         agent=lambda: "not an agent",
     )
@@ -755,7 +755,7 @@ async def test_error_storm_survives_grid_failure(monkeypatch):
     monkeypatch.setattr(runner_module, "LiveGrid", RenderBugGrid)
     monkeypatch.setattr("rich.console.Console.is_terminal", property(lambda self: True))
 
-    env = _stub_env(tasks=(EnvTask(input="one"), EnvTask(input="two")), error=RuntimeError("bad api key"))
+    env = _stub_env(tasks=(Task(input="one"), Task(input="two")), error=RuntimeError("bad api key"))
     result = await arun_rollouts(env, k=4, concurrency=2)
 
     assert result.stopped_early == "error-storm"
@@ -775,9 +775,9 @@ async def test_error_storm_uses_structured_error_type(monkeypatch):
         calls["n"] += 1
         return StubRolloutAgent(recorder, error=WeirdError(f"request {calls['n']} failed; retry later"))
 
-    env = Env(
+    env = Environment(
         name="storm",
-        tasks=(EnvTask(input="one"), EnvTask(input="two")),
+        tasks=(Task(input="one"), Task(input="two")),
         scorer=CodeScorer(echo_scorer),
         agent=varying_error_factory,
     )
@@ -786,7 +786,7 @@ async def test_error_storm_uses_structured_error_type(monkeypatch):
 
 
 async def test_timeout_unscored_at_runner_level():
-    # The runner threads Env.timeout_seconds into the engine: a timed-out attempt is
+    # The runner threads Environment.timeout_seconds into the engine: a timed-out attempt is
     # unscored and excluded from statistics, never counted as 0.0.
     recorder = Recorder()
     env = _stub_env(recorder, delay=1.5, timeout_seconds=1)
@@ -807,8 +807,8 @@ def test_save_failure_names_task_and_preserves_existing_file(tmp_path):
     class Weird:
         pass
 
-    task = EnvTask(input="x", expected=Weird(), id="t1")
-    result = EnvRunResult(
+    task = Task(input="x", expected=Weird(), id="t1")
+    result = EnvironmentRunResult(
         env_name="e",
         k=1,
         env_fingerprint=None,
@@ -941,9 +941,9 @@ class VaryingErrorModel(Model):
 
 
 def _real_env(agent, *, tasks=None):
-    return Env(
+    return Environment(
         name="real-env",
-        tasks=tasks if tasks is not None else (EnvTask(input="hello"),),
+        tasks=tasks if tasks is not None else (Task(input="hello"),),
         scorer=CodeScorer(lambda run, expected: True),
         agent=agent,
     )
@@ -967,7 +967,7 @@ async def test_error_storm_detected_by_error_type_on_real_agent():
     # 8 attempts with stopped_early=None.
     env = _real_env(
         Agent(model=VaryingErrorModel(), telemetry=False),
-        tasks=(EnvTask(input="one"), EnvTask(input="two")),
+        tasks=(Task(input="one"), Task(input="two")),
     )
     result = await arun_rollouts(env, k=4, concurrency=2)
 
@@ -1178,7 +1178,7 @@ async def test_attempt_prompt_same_whether_caller_ran_before_handover():
     # are resolved IN PLACE on the caller's first run. The override runs
     # production's resolver against the swapped inputs, so a never-run caller's
     # attempts resolve the same flags an already-run caller carries -- one prompt
-    # for the same Env and task, and it is production's fresh-user prompt: the
+    # for the same Environment and task, and it is production's fresh-user prompt: the
     # memory empty-state paragraph is IN it, not severed with the block.
     from agno.memory import MemoryManager
 
@@ -1229,7 +1229,7 @@ async def test_factory_env_with_mcp_tools_not_rejected():
         stub.tools = [MCPTools()]
         return stub
 
-    env = Env(name="mcp-factory", tasks=(EnvTask(input="one"),), scorer=CodeScorer(lambda r, e: True), agent=factory)
+    env = Environment(name="mcp-factory", tasks=(Task(input="one"),), scorer=CodeScorer(lambda r, e: True), agent=factory)
     result = await arun_rollouts(env, k=1, concurrency=1)
     assert result.n_attempts == 1
 
@@ -1256,9 +1256,9 @@ async def test_factory_env_with_nested_mcp_tools_not_rejected():
         stub.reasoning_agent = nested
         return stub
 
-    env = Env(
+    env = Environment(
         name="mcp-nested-factory",
-        tasks=(EnvTask(input="one"),),
+        tasks=(Task(input="one"),),
         scorer=CodeScorer(lambda r, e: True),
         agent=factory,
     )
@@ -1269,7 +1269,7 @@ async def test_factory_env_with_nested_mcp_tools_not_rejected():
 async def test_positional_task_id_collision_rejected_at_run_start():
     # An explicit "t2" colliding with the second task's auto-id only exists after
     # resolution; diff() keyed on the duplicate would pair rows with the wrong task.
-    env = _stub_env(tasks=(EnvTask(input="a", id="t2"), EnvTask(input="b")))
+    env = _stub_env(tasks=(Task(input="a", id="t2"), Task(input="b")))
     with pytest.raises(ValueError, match="duplicate resolved task id"):
         await arun_rollouts(env, k=1)
 
@@ -1281,9 +1281,9 @@ async def test_model_less_duck_subject_degrades_policy_fingerprint():
         async def arun(self, *, input, stream, stream_events, yield_run_output, session_id):
             yield _output(content=f"echo:{input}")
 
-    env = Env(
+    env = Environment(
         name="duck",
-        tasks=(EnvTask(input="one"),),
+        tasks=(Task(input="one"),),
         scorer=CodeScorer(lambda run, expected: True),
         agent=lambda: ModelLessDuck(),
     )
@@ -1642,9 +1642,9 @@ async def test_callable_instance_hooks_survive_attempts():
     pre_hook = RecordingCallableHook(fired)
     post_hook = RecordingCallableHook(fired)
 
-    env = Env(
+    env = Environment(
         name="callable-hooks",
-        tasks=(EnvTask(input="hello"),),
+        tasks=(Task(input="hello"),),
         scorer=CodeScorer(lambda run, expected: True),
         agent=lambda: Agent(
             model=RecordingFakeModel("hooks"),
@@ -1666,5 +1666,5 @@ async def test_asave_aload_roundtrip(tmp_path):
     result = await arun_rollouts(_stub_env(), k=2, concurrency=2)
     target = tmp_path / "async-roundtrip.json"
     await result.asave(target)
-    loaded = await EnvRunResult.aload(target)
+    loaded = await EnvironmentRunResult.aload(target)
     assert loaded.summary() == result.summary()

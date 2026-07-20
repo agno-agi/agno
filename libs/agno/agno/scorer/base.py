@@ -2,7 +2,7 @@
 
 `agno.scorer` must not import `agno.eval` or `agno.environments` -- both import it.
 The fingerprint errors live here (not in `agno.environments`) because `CodeScorer.digest`
-raises `EnvFingerprintError` before `agno.environments` exists in the dependency order.
+raises `FingerprintError` before `agno.environments` exists in the dependency order.
 """
 
 from dataclasses import dataclass
@@ -16,11 +16,11 @@ from agno.run.team import TeamRunOutput
 AnyRunOutput = Union[RunOutput, TeamRunOutput]
 
 
-class EnvFingerprintError(Exception):
+class FingerprintError(Exception):
     """A fingerprint component cannot be computed (unserializable value, sourceless callable)."""
 
 
-class EnvMismatchError(Exception):
+class MismatchError(Exception):
     """Two results whose environment fingerprints do not match were compared."""
 
 
@@ -44,7 +44,7 @@ class Score:
 class Scorer(Protocol):
     """Anything that can turn a run into a Score.
 
-    `expected` is the task's expected value when the caller has one (`EnvTask.expected`,
+    `expected` is the task's expected value when the caller has one (`Task.expected`,
     `Case.expected`); callers with neither pass a bare run. Implementing only `ascore`
     is valid for third-party scorers; the shipped scorers also provide a sync `score()`.
     """
