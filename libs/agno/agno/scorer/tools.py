@@ -79,11 +79,11 @@ class ToolCallScorer:
 
     def score(self, run: AnyRunOutput, expected: Any = None) -> Score:
         executions: List[ToolExecution] = list(run.tools or [])
-        # A refused call never enters run.tools; a rejected HITL call does, marked by
-        # tool_call_error=True. `not t.tool_call_error` is the only correct filter:
-        # is_paused is cleared on resume, and `requires_confirmation and not confirmed`
-        # is false for a rejected call too.
-        clean = [t for t in executions if not t.tool_call_error]
+        # A clean execution actually ran. Exclude rejected/errored calls
+        # (tool_call_error) and still-paused calls that never executed (is_paused, true
+        # only while awaiting confirmation/input/external-execution; cleared on resume).
+        # A refused call never enters run.tools at all.
+        clean = [t for t in executions if not t.tool_call_error and not t.is_paused]
         clean_names = {t.tool_name for t in clean if t.tool_name}
 
         notes: List[str] = []
