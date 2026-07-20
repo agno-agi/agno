@@ -31,6 +31,10 @@ from agno.utils.log import log_info, log_warning
 MAX_LENGTH = 1024
 TRAINING_SEED = 0
 
+# The SDK treats ttl_seconds=None as "never expires", so an unset TTL would leave a
+# permanent LoRA checkpoint behind for every round of every loop. Mirrors rl-tutor.
+CHECKPOINT_TTL_SECONDS = 7 * 24 * 60 * 60
+
 # rl-tutor's MAX_STEPS=40 planning cap is deliberately NOT copied: the dataset
 # validator's caps are the gate here, and at batch_size=8 / epochs=2 a full 320-row
 # export is a legitimate fit that must not be refused.
@@ -44,10 +48,9 @@ _TRAIN_ON_WHAT = {
 class TinkerTrainer:
     """A `Trainer` backed by the Tinker training and sampling APIs.
 
-    Checkpoint refs are not durable -- Tinker expires them on the platform's retention
-    schedule (days, not months). The reproducible provenance is the dataset file plus
-    the `dataset_digest` and `hyperparams` on the returned `Checkpoint`; `ref` only
-    re-samples while it lives.
+    Checkpoint refs are not durable: they are saved with a 7-day TTL, so `ref` only
+    re-samples while it lives. The reproducible provenance is the dataset file plus the
+    `dataset_digest` and `hyperparams` on the returned `Checkpoint`.
     """
 
     def __init__(
@@ -137,8 +140,17 @@ class TinkerTrainer:
                 )
                 for conversation in conversations
             ]
+            # Before the first paid step. Rendering truncates from the end at
+            # MAX_LENGTH, so a long conversation can lose the very assistant turn it
+            # was supposed to teach and arrive with all-zero weights -- contributing no
+            # gradient while the loss curve still looks healthy. Refuse the run instead
+            # of paying to train on rows that carry nothing.
+            _reject_untrainable(data)
 
+            telemetry_error: Optional[str] = None
             for _ in range(self.epochs):
+                if telemetry_error:
+                    break
                 for start in range(0, len(data), self.batch_size):
                     batch = data[start : start + self.batch_size]
                     forward_backward = training_client.forward_backward(batch, "cross_entropy")
@@ -146,15 +158,30 @@ class TinkerTrainer:
                     submitted_steps += 1
                     result = forward_backward.result()
                     optim.result()
-                    step_metrics.append(
-                        {
-                            "step": len(step_metrics) + 1,
-                            "mean_nll": _mean_nll(result.loss_fn_outputs, batch),
-                        }
-                    )
+                    step: Dict[str, Any] = {"step": len(step_metrics) + 1, "mean_nll": None}
+                    try:
+                        step["mean_nll"] = _mean_nll(result.loss_fn_outputs, batch)
+                    except Exception as exc:
+                        # A loss reading that cannot be computed is a telemetry failure,
+                        # not a training failure. Stop, but still checkpoint what the
+                        # completed steps paid for rather than discarding them.
+                        telemetry_error = (
+                            f"loss telemetry after step {len(step_metrics) + 1}: {type(exc).__name__}: {exc}"
+                        )
+                    step_metrics.append(step)
+                    if telemetry_error:
+                        break
 
-            ref = training_client.save_weights_for_sampler(name=f"agno-{dataset_digest[:12]}").result().path
+            ref = (
+                training_client.save_weights_for_sampler(
+                    name=f"agno-{dataset_digest[:12]}", ttl_seconds=CHECKPOINT_TTL_SECONDS
+                )
+                .result()
+                .path
+            )
             log_info(f"TinkerTrainer: saved checkpoint {ref}")
+            if telemetry_error:
+                log_warning(f"TinkerTrainer: {telemetry_error}")
             return TrainResult(
                 checkpoint=Checkpoint(
                     ref=ref,
@@ -163,7 +190,8 @@ class TinkerTrainer:
                     hyperparams=hyperparams,
                 ),
                 step_metrics=step_metrics,
-                status=TrainStatus.COMPLETED,
+                status=TrainStatus.PARTIAL if telemetry_error else TrainStatus.COMPLETED,
+                error=telemetry_error,
             )
         except Exception as exc:
             error = f"{type(exc).__name__}: {str(exc).strip() or 'no details'}"
@@ -172,7 +200,9 @@ class TinkerTrainer:
             if training_client is not None and submitted_steps > 0:
                 try:
                     ref = (
-                        training_client.save_weights_for_sampler(name=f"agno-{dataset_digest[:12]}-recovery")
+                        training_client.save_weights_for_sampler(
+                            name=f"agno-{dataset_digest[:12]}-recovery", ttl_seconds=CHECKPOINT_TTL_SECONDS
+                        )
                         .result()
                         .path
                     )
@@ -206,6 +236,9 @@ class TinkerTrainer:
             model_path=checkpoint.ref,
             temperature=self.sampling_temperature,
             max_tokens=self.sampling_max_tokens,
+            # Built here rather than lazily inside the model, so a trainer holding an
+            # injected service client serves models that use it too.
+            sampling_client=self._get_service_client().create_sampling_client(model_path=checkpoint.ref),
         )
 
     async def aas_model(self, checkpoint: Checkpoint) -> Model:
@@ -217,6 +250,7 @@ class TinkerTrainer:
             base_model=self.base_model,
             temperature=self.sampling_temperature,
             max_tokens=self.sampling_max_tokens,
+            sampling_client=self._get_service_client().create_sampling_client(base_model=self.base_model),
         )
 
     async def abase_as_model(self) -> Model:
@@ -235,6 +269,19 @@ def _read_conversations(path: Path) -> List[List[Dict[str, str]]]:
             continue
         conversations.append(json.loads(line)["messages"])
     return conversations
+
+
+def _reject_untrainable(data: List[Any]) -> None:
+    """Every datum must carry at least one positive training weight."""
+    for index, datum in enumerate(data, start=1):
+        weights = _tensor_values(datum.loss_fn_inputs.get("weights"))
+        if not weights or any(not math.isfinite(weight) or weight < 0 for weight in weights):
+            raise ValueError(f"conversation {index} produced invalid training weights")
+        if not any(weight > 0 for weight in weights):
+            raise ValueError(
+                f"conversation {index} has no trainable target after rendering "
+                f"(longer than max_length={MAX_LENGTH}, so its assistant turn was truncated away)"
+            )
 
 
 def _tensor_values(tensor: Any) -> List[float]:

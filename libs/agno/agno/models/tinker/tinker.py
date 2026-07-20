@@ -5,6 +5,10 @@ lets `run_rollouts(env, model=...)` measure a real pass rate for a base model an
 the checkpoint trained from it. It is the half of the loop that turns a training
 receipt into a measurement.
 
+**Scope.** This first cut targets text tasks (haiku, math, format transfer). Tool
+calling through the renderer depends on its function-calling support and is a
+follow-up, so tool-call parts in a parsed response are not surfaced here.
+
 **Import style is a deliberate deviation.** Every other adapter in `agno/models/`
 imports its SDK at module level inside a try/except. This one imports `tinker` and
 `tinker_cookbook` lazily, *inside* methods, so the module imports cleanly with the SDK
@@ -23,6 +27,19 @@ from agno.utils.log import log_warning
 # A sample that did not end on a stop sequence was cut off mid-answer; the renderer
 # reports it and we refuse to pass the fragment off as an answer.
 _CLEAN_TERMINATIONS = frozenset({"stop_sequence", "eos"})
+
+# Sampling clients and renderers, shared across every attempt of a run.
+#
+# The rollout engine shallow-copies the model per attempt, and `copy.copy` gives the
+# copy its own __dict__ -- so a client lazily assigned to `self` lands on the throwaway
+# copy and the next attempt starts from None again. Without this cache every single
+# attempt would build a fresh ServiceClient, JWT exchange, session and sampler: five
+# network round trips before the first token, hundreds of sessions per round.
+#
+# Keyed on what actually identifies a sampler. A duplicate build under concurrency is
+# harmless (last writer wins, both are equivalent), so no lock.
+_SAMPLING_CLIENTS: Dict[Tuple[str, Optional[str]], Any] = {}
+_RENDERERS: Dict[str, Any] = {}
 
 
 class TinkerModel(Model):
@@ -70,24 +87,33 @@ class TinkerModel(Model):
     # -- lazy SDK wiring ---------------------------------------------------------
 
     def _get_sampling_client(self) -> Any:
-        if self._sampling_client is None:
+        if self._sampling_client is not None:
+            return self._sampling_client
+        key = (self.base_model, self.model_path)
+        client = _SAMPLING_CLIENTS.get(key)
+        if client is None:
             import tinker
 
             service_client = tinker.ServiceClient()
             if self.model_path is not None:
-                self._sampling_client = service_client.create_sampling_client(model_path=self.model_path)
+                client = service_client.create_sampling_client(model_path=self.model_path)
             else:
-                self._sampling_client = service_client.create_sampling_client(base_model=self.base_model)
-        return self._sampling_client
+                client = service_client.create_sampling_client(base_model=self.base_model)
+            _SAMPLING_CLIENTS[key] = client
+        return client
 
     def _get_renderer(self) -> Any:
-        if self._renderer is None:
+        if self._renderer is not None:
+            return self._renderer
+        renderer = _RENDERERS.get(self.base_model)
+        if renderer is None:
             from tinker_cookbook.model_info import get_recommended_renderer_name
             from tinker_cookbook.renderers import get_renderer
 
             tokenizer = self._get_sampling_client().get_tokenizer()
-            self._renderer = get_renderer(get_recommended_renderer_name(self.base_model), tokenizer)
-        return self._renderer
+            renderer = get_renderer(get_recommended_renderer_name(self.base_model), tokenizer)
+            _RENDERERS[self.base_model] = renderer
+        return renderer
 
     def _sampling_params(self, renderer: Any) -> Any:
         from tinker import types
@@ -105,6 +131,16 @@ class TinkerModel(Model):
 
     def _sample(self, args: Tuple[Any, ...], kwargs: Dict[str, Any]) -> ModelResponse:
         """One blocking sample. Called directly by the sync doors, off-thread by async."""
+        if kwargs.get("tools"):
+            # Tool calling is a documented follow-up. Failing loudly here is the point:
+            # sampling anyway returns a tool call the adapter cannot represent, which
+            # parses to empty visible text, terminates CLEANLY, and is therefore SCORED
+            # as a wrong answer -- a whole env printing a plausible 0.0 pass rate.
+            raise ValueError(
+                "TinkerModel does not support tool calling yet; this environment's agent declares tools. "
+                "Use a text-answer environment, or serve the checkpoint through a tool-capable adapter."
+            )
+
         renderer = self._get_renderer()
         client = self._get_sampling_client()
         prompt = renderer.build_generation_prompt(_to_renderer_messages(_messages_from(args, kwargs)))
@@ -129,6 +165,13 @@ class TinkerModel(Model):
                 f"raise max_tokens above {self.max_tokens} if this repeats"
             )
             raise ValueError(f"Tinker returned an unclean sample ({termination})")
+
+        if isinstance(message, dict) and message.get("tool_calls"):
+            # The renderer parsed a tool call even though none were offered. Raising
+            # makes it an errored (unscored) attempt rather than an empty answer scored
+            # as wrong.
+            log_warning("TinkerModel received a sample containing a tool call, which it cannot represent")
+            raise ValueError("Tinker returned a tool call; TinkerModel supports text answers only")
 
         content, reasoning = _split_content(message)
         return ModelResponse(role="assistant", content=content, reasoning_content=reasoning)
@@ -166,7 +209,12 @@ def _messages_from(args: Tuple[Any, ...], kwargs: Dict[str, Any]) -> List[Messag
             if isinstance(value, list) and value and all(isinstance(item, Message) for item in value):
                 candidate = value
                 break
-    return candidate or []
+    if not candidate:
+        # Failing open would sample from an empty prompt: a clean, plausible,
+        # task-unrelated answer that scores normally and makes a whole measured pass
+        # rate meaningless, with nothing anywhere saying so.
+        raise ValueError("TinkerModel was invoked with no messages; nothing to sample from")
+    return candidate
 
 
 def _to_renderer_messages(messages: List[Message]) -> List[Dict[str, str]]:
