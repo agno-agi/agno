@@ -767,8 +767,11 @@ def from_dict(
                 # Fall back to a code-defined agent registered in the registry.
                 # These are legitimately not persisted as DB components (e.g. agents
                 # passed to AgentOS(agents=[...])), so a DB lookup returns nothing.
+                # Deep copy so the shared registry singleton isn't mutated when the
+                # owning team runs (initialize_team sets team_id/_team on members).
                 if agent is None and registry is not None:
-                    agent = registry.get_agent(agent_id)
+                    registered_agent = registry.get_agent(agent_id)
+                    agent = registered_agent.deep_copy() if registered_agent is not None else None
                 if agent is not None:
                     members.append(agent)
                 else:
@@ -778,8 +781,10 @@ def from_dict(
                 team_id = member_data["team_id"]
                 nested_team = get_team_by_id(id=team_id, db=db, registry=registry) if db is not None else None
                 # Fall back to a code-defined team registered in the registry.
+                # Deep copy so the shared registry singleton isn't mutated on run.
                 if nested_team is None and registry is not None:
-                    nested_team = registry.get_team(team_id)
+                    registered_team = registry.get_team(team_id)
+                    nested_team = registered_team.deep_copy() if registered_team is not None else None
                 if nested_team is not None:
                     members.append(nested_team)
                 else:

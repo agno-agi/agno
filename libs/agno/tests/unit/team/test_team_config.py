@@ -440,7 +440,10 @@ class TestTeamFromDict:
         with patch("agno.agent.get_agent_by_id", return_value=None):
             team = Team.from_dict(config, db=mock_db, registry=registry)
 
-        assert team.members == [member_agent]
+        assert len(team.members) == 1
+        assert team.members[0].id == "member-agent"
+        # A deep copy is used so the shared registry singleton is not mutated on run
+        assert team.members[0] is not member_agent
 
     def test_from_dict_member_registry_fallback_without_db(self, member_agent):
         """Test from_dict resolves a registry member even when db is None."""
@@ -452,7 +455,9 @@ class TestTeamFromDict:
 
         team = Team.from_dict(config, db=None, registry=registry)
 
-        assert team.members == [member_agent]
+        assert len(team.members) == 1
+        assert team.members[0].id == "member-agent"
+        assert team.members[0] is not member_agent
 
     def test_from_dict_unknown_member_is_dropped(self, mock_db):
         """Test from_dict drops a member that is in neither db nor registry."""
