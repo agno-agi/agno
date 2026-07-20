@@ -17,7 +17,6 @@ from agno.tools.perplexity import PerplexitySearch
 agent = Agent(
     model=OpenAIChat(id="gpt-4o"),
     tools=[PerplexitySearch()],
-    show_tool_calls=True,
     markdown=True,
 )
 
@@ -32,7 +31,6 @@ agent_filtered = Agent(
             show_results=True,
         )
     ],
-    show_tool_calls=True,
     markdown=True,
 )
 
