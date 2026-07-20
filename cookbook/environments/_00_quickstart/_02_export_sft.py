@@ -43,7 +43,9 @@ def exact(run, expected):
     return run.content.value == expected
 
 
-agent = Agent(model=OpenAIResponses(id="gpt-5.5"), output_schema=Answer)
+agent = Agent(
+    model=OpenAIResponses(id="gpt-5.5", reasoning_effort="low"), output_schema=Answer
+)
 
 env = Environment(
     name="mental-math",
@@ -54,17 +56,19 @@ env = Environment(
         Task(input="What is 17 x 23?", expected=391),
         Task(
             input=(
-                "Compute 31415926535897 x 27182818284590, then give the sum of "
-                "the digits of the product multiplied by 104729."
+                "Compute 2718281828459045 multiplied by 1618033988749895. Add the "
+                "decimal digits of the product, multiply that digit sum by 131071, "
+                "then subtract the product's remainder modulo 65521."
             ),
-            expected=12358022,
+            expected=20944939,
         ),
         Task(
             input=(
-                "Compute 2718281828459 x 3141592653589, then give the sum of "
-                "the digits of the product multiplied by 7919."
+                "Compute 3141592653589793 multiplied by 1414213562373095. Add the "
+                "decimal digits of the product, multiply that digit sum by 65537, "
+                "then subtract the product's remainder modulo 32749."
             ),
-            expected=966118,
+            expected=10481347,
         ),
     ),
     scorer=CodeScorer(exact),

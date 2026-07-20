@@ -1,5 +1,22 @@
 # Test Log - _11_export_provenance
 
+## Re-test 2026-07-20 — fix/cookbooks-claude (Agno 2.8.0 source)
+
+### basic.py — FIXED
+
+**Fix:** both tasks saturated at k=4, so `learning_zone()` was empty and the file
+printed its guard ("No learning-zone tasks; make the tasks harder") instead of
+exporting — the provenance sidecar it exists to show never appeared. `product-b`
+replaced with a second independent calibrated chain (expected 10481347) so a zone
+row is reliable and the export runs.
+
+**Grid (k=4):** `product-a` 3/4 (0.75, zone); `product-b` 4/4. Exported 3 dataset
+rows and 3 sidecar rows with env/policy fingerprints.
+
+`inspect_sidecar.py` (a=0.50, zone) re-ran clean and unchanged.
+
+---
+
 Tested 2026-07-20 with `OpenAIResponses(id="gpt-5.5", reasoning_effort="low")`.
 
 ### basic.py

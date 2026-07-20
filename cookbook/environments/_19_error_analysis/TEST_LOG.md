@@ -1,5 +1,32 @@
 # Test Log - _19_error_analysis
 
+## Re-test 2026-07-20 — fix/cookbooks-claude (Agno 2.8.0 source)
+
+All three files already demonstrated their claim (a real zone plus unscored evidence
+kept separate from wrong answers). Hardened the three custom scorers so a truncated
+attempt (`run.content is None` after `max_output_tokens`) raises a clear
+`ValueError("no parsed output: hit max_output_tokens")` instead of a cryptic
+`'NoneType' object has no attribute 'value'`. The runner still records the attempt
+unscored — a no-answer, never a wrong answer — counts are unchanged, and errors()
+now reads honestly.
+
+### basic.py — hardened; PASS
+
+**Grid (k=8):** `hard-product` 5/8 (0.62, zone; 2 truncated → unscored);
+`scorer-outage` 0/0 (8 unscored, deliberate RuntimeError).
+
+### scorer_errors.py — hardened; PASS
+
+**Grid (k=8):** `hard-product` 3/6 scored (0.50, zone; 2 unscored via the new clear
+ValueError); `missing-gold` 8 unscored (missing-expected ValueError).
+
+### stop_reasons.py — hardened; PASS
+
+**Grid (k=8):** `hard-product` 5/8 (0.62, zone); `verifier-error` 8 unscored.
+StopReason counts: completed 16, error/timeout/cancelled/paused 0.
+
+---
+
 Tested 2026-07-20 live against `gpt-5.5`, agno 2.7.4, using
 `.venvs/demo/bin/python` with `OPENAI_API_KEY` loaded from `.envrc`.
 

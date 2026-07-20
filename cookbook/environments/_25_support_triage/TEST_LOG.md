@@ -1,5 +1,33 @@
 # Test Log - _25_support_triage
 
+## Re-test 2026-07-20 — fix/cookbooks-claude (Agno 2.8.0 source)
+
+gpt-5.5 aced the classification tasks (including the 20- and 32-issue handoffs) at
+`reasoning_effort="low"`, so `basic.py` and `ambiguous_tickets.py` saturated. Made
+the in-schema handoff checksum genuinely hard (sum of `position^2 * suffix^3` mod
+9973), which the model slips on at low effort.
+
+### basic.py — FIXED
+
+**Fix:** added a `handoff_checksum` field computed over the active-issue set; the
+20-issue task's checksum is now error-prone.
+
+**Grid (k=8):** `self-login-plus-charge` 8/8; `resolved-token-history` 8/8;
+`twenty-issue-handoff` 7/8 (0.88, zone).
+
+### ambiguous_tickets.py — FIXED
+
+**Fix:** replaced the easy `active_issue_checksum` (position * suffix^2 mod 97) with
+the hard formula; the safety-override tasks also carry genuine classification
+ambiguity.
+
+**Grid (k=6):** `feature-with-hypothetical-risk` 5/6 (0.83, zone); the other five
+tasks 6/6.
+
+`precedence_rules.py` (card-data-not-outage 4/6, zone) re-ran clean and unchanged.
+
+---
+
 Tested 2026-07-20 against `gpt-5.5` through `OpenAIResponses`, Agno 2.7.4.
 
 ### basic.py

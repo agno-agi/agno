@@ -46,12 +46,12 @@ env = Environment(
         Task(
             id="product-b",
             input=(
-                "Compute 3141592653589793 times 2718281828459045. Add the "
+                "Compute 3141592653589793 times 1414213562373095. Add the "
                 "decimal digits of that product, multiply the digit sum by "
-                "104729, subtract the product remainder modulo 65537, and "
+                "65537, subtract the product remainder modulo 32749, and "
                 "return the final integer."
             ),
-            expected=16756170,
+            expected=10481347,
         ),
     ),
     scorer=CodeScorer(exact_value),
