@@ -910,6 +910,37 @@ class FunctionCall(BaseModel):
                 log_warning(f"Error in post-hook callback: {str(e)}")
                 log_exception(e)
 
+    def _validate_required_args(self, entrypoint_args: Dict[str, Any]) -> Optional[str]:
+        """Validate that all required parameters are provided.
+
+        When the LLM sends a tool call with missing or empty arguments, this
+        checks whether every required (no default value) parameter of the
+        entrypoint is satisfied by the combined entrypoint_args + self.arguments.
+        Returns an error string if any required argument is missing, or None if
+        all required arguments are present.
+        """
+        if self.arguments is None or self.arguments == {}:
+            from inspect import Parameter, signature
+
+            sig = signature(self.function.entrypoint)  # type: ignore
+            provided_keys = set(entrypoint_args.keys())
+            missing: list = []
+            for param_name, param in sig.parameters.items():
+                if param_name in provided_keys:
+                    continue
+                if param.default is not Parameter.empty:
+                    continue
+                if param.kind in (Parameter.VAR_POSITIONAL, Parameter.VAR_KEYWORD):
+                    continue
+                missing.append(param_name)
+            if missing:
+                return (
+                    f"Missing required argument(s) for function '{self.function.name}': "
+                    f"{', '.join(missing)}. "
+                    f"Please provide the missing arguments and retry."
+                )
+        return None
+
     def _build_entrypoint_args(self) -> Dict[str, Any]:
         """Builds the arguments for the entrypoint."""
         from inspect import signature
@@ -1063,6 +1094,12 @@ class FunctionCall(BaseModel):
 
         entrypoint_args = self._build_entrypoint_args()
 
+        # Validate that all required arguments are provided
+        validation_error = self._validate_required_args(entrypoint_args)
+        if validation_error is not None:
+            self.error = validation_error
+            return FunctionExecutionResult(status="failure", error=validation_error)
+
         # Check cache if enabled and not a generator function
         if self.function.cache_results and not isgeneratorfunction(self.function.entrypoint):
             cache_key = self.function._get_cache_key(entrypoint_args, self.arguments)
@@ -1084,7 +1121,10 @@ class FunctionCall(BaseModel):
                 execution_chain = self._build_nested_execution_chain(entrypoint_args=entrypoint_args)
                 result = execution_chain(self.function.name, self.function.entrypoint, self.arguments or {})
             else:
-                result = self.function.entrypoint(**entrypoint_args, **self.arguments)  # type: ignore
+                if self.arguments is None or self.arguments == {}:
+                    result = self.function.entrypoint(**entrypoint_args)
+                else:
+                    result = self.function.entrypoint(**entrypoint_args, **self.arguments)
 
             # Handle generator case
             if isgenerator(result):
@@ -1279,6 +1319,12 @@ class FunctionCall(BaseModel):
             self._handle_pre_hook()
 
         entrypoint_args = self._build_entrypoint_args()
+
+        # Validate that all required arguments are provided
+        validation_error = self._validate_required_args(entrypoint_args)
+        if validation_error is not None:
+            self.error = validation_error
+            return FunctionExecutionResult(status="failure", error=validation_error)
 
         # Check cache if enabled and not a generator function
         if self.function.cache_results and not (
