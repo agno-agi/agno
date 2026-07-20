@@ -23,7 +23,7 @@ import hashlib
 import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Literal, Optional
+from typing import Any, Dict, List, Literal, Optional, Tuple
 
 from agno.agent import Agent
 from agno.environments.environment import Environment
@@ -34,7 +34,7 @@ from agno.scorer import FingerprintError, Scorer
 from agno.trainers.base import Checkpoint, Trainer, TrainOn, TrainResult
 from agno.utils.log import log_warning
 
-ConvergedReason = Literal["saturated", "all_failing", "not_exportable", "baseline_unscored"]
+_ConvergedReason = Literal["saturated", "all_failing", "not_exportable", "baseline_unscored"]
 
 
 @dataclass(frozen=True)
@@ -53,7 +53,7 @@ class RewardHackReport:
     audit_pass_rate: Optional[float]
     gap: Optional[float]  # train - audit
 
-    def to_dict(self) -> Dict[str, Any]:
+    def _to_dict(self) -> Dict[str, Any]:
         return {
             "round": self.round,
             "train_pass_rate": self.train_pass_rate,
@@ -85,7 +85,7 @@ class IterationReport:
     reward_hack: Optional[RewardHackReport] = None
     audit_scorer_digest: Optional[str] = None
     converged: bool = False
-    converged_reason: Optional[ConvergedReason] = None
+    converged_reason: Optional[_ConvergedReason] = None
 
     def to_dict(self) -> Dict[str, Any]:
         """A json-ready report. Byte-stable under `json.dumps(..., sort_keys=True)` for
@@ -127,7 +127,7 @@ class IterationReport:
                 "n_dropped_over_cap": self.export_report.n_dropped_over_cap,
             },
             "train_result": train_result,
-            "reward_hack": self.reward_hack.to_dict() if self.reward_hack is not None else None,
+            "reward_hack": self.reward_hack._to_dict() if self.reward_hack is not None else None,
             "audit_scorer_digest": self.audit_scorer_digest,
             "converged": self.converged,
             "converged_reason": self.converged_reason,
@@ -261,12 +261,15 @@ class ImprovementLoop:
         # 4. Cumulative dataset. `fit` retrains the pristine base every round, and the
         #    learning zone systematically excludes tasks the previous round mastered --
         #    so training on this round's rows alone would forget them.
-        dataset_path = self._write_cumulative(fresh_path, round_number)
+        dataset_path, cumulative_rows = self._write_cumulative(fresh_path, round_number)
         dataset_digest = hashlib.sha256(dataset_path.read_bytes()).hexdigest()
 
         # 5. Train.
         train_result = await self.trainer.afit(dataset_path, train_on=TrainOn.LAST_ASSISTANT)
         if train_result.checkpoint is None:
+            # Retaining this round's rows would double them: a failed fit leaves no
+            # tuned policy, so a second bare step() re-rolls the same base and exports
+            # the same learning zone again.
             return IterationReport(
                 round=round_number,
                 baseline_pass_rate=baseline.pass_rate,
@@ -282,6 +285,9 @@ class ImprovementLoop:
                 train_result=train_result,
                 audit_scorer_digest=audit_digest,
             )
+
+        # The rows are kept only once a checkpoint exists to show for them.
+        self._rows = cumulative_rows
 
         # 6. Measure what was paid for -- including a PARTIAL run's recovery checkpoint.
         tuned_model = await self.trainer.aas_model(train_result.checkpoint)
@@ -331,7 +337,12 @@ class ImprovementLoop:
             )
         if round_number == 1 and not self._warned_output_schema:
             self._warned_output_schema = True
-            agent = self.env.agent if isinstance(self.env.agent, Agent) else None
+            try:
+                # Resolves a factory too: the isolation-recommended shape must not be
+                # the one shape that silently skips the warning.
+                agent: Optional[Agent] = self.env._source_agent()
+            except Exception:
+                agent = None
             if agent is not None and getattr(agent, "output_schema", None) is not None:
                 log_warning(
                     "ImprovementLoop: the environment agent declares an output_schema, so the "
@@ -339,8 +350,13 @@ class ImprovementLoop:
                     "on JSON strings is rarely what you want; text-answer tasks are the intended fit."
                 )
 
-    def _write_cumulative(self, fresh_path: Path, round_number: int) -> Path:
-        """Every retained row from rounds 1..n, newest first, capped by the validator."""
+    def _write_cumulative(self, fresh_path: Path, round_number: int) -> Tuple[Path, List[str]]:
+        """Every retained row from rounds 1..n, newest first, capped by the validator.
+
+        Returns the file and the rows it holds; the caller decides whether to keep
+        them, so a round whose fit produced nothing does not leave its rows behind to
+        be exported a second time.
+        """
         assert self.workdir is not None
         fresh_lines = [line for line in fresh_path.read_text(encoding="utf-8").split("\n") if line.strip()]
         rows = fresh_lines + self._rows
@@ -360,11 +376,10 @@ class ImprovementLoop:
                 f"({MAX_CONVERSATIONS} conversations / {MAX_DATASET_BYTES} bytes); dropped the "
                 f"{dropped} oldest row(s)."
             )
-        self._rows = kept
 
         dataset_path = self.workdir / f"round_{round_number}.jsonl"
         dataset_path.write_text("\n".join(kept) + "\n", encoding="utf-8")
-        return dataset_path
+        return dataset_path, kept
 
     def _audit_digest(self) -> Optional[str]:
         if self.audit_scorer is None:
@@ -415,7 +430,7 @@ class ImprovementLoop:
         )
 
 
-def _converged_reason_for(pass_rate: float) -> ConvergedReason:
+def _converged_reason_for(pass_rate: float) -> _ConvergedReason:
     if pass_rate >= 1.0:
         return "saturated"
     if pass_rate <= 0.0:

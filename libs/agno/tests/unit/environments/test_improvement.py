@@ -10,7 +10,7 @@ import json
 import pytest
 
 from agno.agent import Agent
-from agno.environments import Environment, ImprovementLoop, Task
+from agno.environments import Environment, ImprovementLoop, Task, run_rollouts
 from agno.environments.improvement import RewardHackReport
 from agno.models.response import ToolExecution
 from agno.run.agent import RunOutput
@@ -411,6 +411,79 @@ def test_failed_fit_stops_run_with_no_tuned_numbers(tmp_path):
     assert reports[0].checkpoint is None
     assert reports[0].tuned_pass_rate is None
     assert reports[0].converged is False  # a failed fit is not convergence
+
+
+def test_failed_fit_does_not_retain_rows_for_the_next_step(tmp_path):
+    # A failed fit leaves no tuned policy, so a second bare step() re-rolls the same
+    # base and re-exports the same learning zone. Keeping the first round's rows would
+    # train the next attempt on exact duplicates.
+    base = _partial_base()
+    trainer = StubTrainer(
+        base,
+        [ScriptedModel(RIGHT, tag="tuned-1")],
+        fail_on_round=1,
+        recoverable=False,
+    )
+    loop = ImprovementLoop(_env(base), trainer=trainer, k=2, workdir=tmp_path)
+
+    loop.step()
+    loop.step()
+
+    first_rows = _rows(trainer.fit_calls[0])
+    second_rows = _rows(trainer.fit_calls[1])
+    assert len(second_rows) == len(first_rows)
+    assert len(second_rows) == len(set(second_rows))  # no duplicated conversations
+
+
+def test_improvement_loop_warns_on_output_schema_from_factory(tmp_path, monkeypatch):
+    # The factory form is the recommended isolation shape; it must not be the one
+    # shape that silently skips the scope warning.
+    from pydantic import BaseModel
+
+    import agno.environments.improvement as improvement_module
+
+    class Answer(BaseModel):
+        value: str
+
+    warnings: list = []
+    monkeypatch.setattr(improvement_module, "log_warning", warnings.append)
+
+    base = _partial_base()
+    trainer = StubTrainer(base, [ScriptedModel(RIGHT, tag="tuned-1")])
+    loop = ImprovementLoop(
+        _env(agent=lambda: Agent(model=base, output_schema=Answer)),
+        trainer=trainer,
+        k=1,
+        workdir=tmp_path,
+    )
+
+    loop.step()
+
+    assert any("output_schema" in str(message) for message in warnings)
+
+
+def test_improvement_loop_refuses_none_policy_fingerprint(tmp_path):
+    # The other half of the pre-flight: without a policy fingerprint, baseline and
+    # tuned cannot be told apart, so `diff.policy_changed` comes back True for free
+    # and the round is unmeasurable before it is paid for.
+    #
+    # Driven through _preflight directly rather than through a rollout: a real run
+    # resolves a default model when the agent declares none, so the degraded-policy
+    # case is not reachable from ordinary wiring. The guard is what is pinned here.
+    from dataclasses import replace as dataclass_replace
+
+    base = _partial_base()
+    trainer = StubTrainer(base, [ScriptedModel(RIGHT, tag="tuned-1")])
+    loop = ImprovementLoop(_env(base), trainer=trainer, k=2, workdir=tmp_path)
+
+    measured = run_rollouts(_env(base), k=2)
+    degraded = dataclass_replace(measured, policy_fingerprint=None)
+
+    with pytest.raises(FingerprintError) as excinfo:
+        loop._preflight(degraded, 1)
+
+    assert "policy_fingerprint is None" in str(excinfo.value)
+    assert trainer.fit_calls == []
 
 
 def test_partial_fit_is_measured(tmp_path):
