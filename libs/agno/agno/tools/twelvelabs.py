@@ -17,16 +17,19 @@ class TwelveLabsTools(Toolkit):
     """
     TwelveLabsTools is a toolkit for interfacing with TwelveLabs' video understanding APIs.
 
-    It exposes three opt-in capabilities for agents:
+    It exposes three video-understanding capabilities for agents (`analyze_video` and
+    `embed_text` are enabled by default; `embed_video` is long-running and opt-in):
       - `analyze_video`: ask a natural-language question about a video and get a text answer
         back, powered by the Pegasus video understanding model.
       - `embed_text`: generate a multimodal embedding for a piece of text using the Marengo
         model. Marengo embeds text, video, audio and images into the same latent space, so
         these vectors can be used to search a video corpus by text.
-      - `embed_video`: generate Marengo embeddings for a whole video. The video is embedded
-        into the same latent space as `embed_text`, so a text query can be matched against
-        video segments by cosine similarity. Video embedding is asynchronous: the tool
-        creates a task, waits for it to finish, and returns one vector per video segment.
+      - `embed_video`: embed a whole video into the same Marengo latent space with one
+        vector per 2-10s segment. Video embedding is asynchronous: the tool creates a task,
+        waits for it to finish, and returns a summary of the resulting segments (their count,
+        the embedding dimensionality and each segment's time offsets and scope). The raw
+        vectors are not returned to the agent (see `embed_video` for why); this tool is
+        long-running, so it is disabled by default and must be enabled explicitly.
 
     Args:
         api_key (Optional[str]): TwelveLabs API key. Read from the `TWELVELABS_API_KEY`
@@ -40,7 +43,8 @@ class TwelveLabsTools(Toolkit):
             giving up. Default is 300.0.
         enable_analyze_video (bool): Enable the `analyze_video` tool. Default is True.
         enable_embed_text (bool): Enable the `embed_text` tool. Default is True.
-        enable_embed_video (bool): Enable the `embed_video` tool. Default is True.
+        enable_embed_video (bool): Enable the `embed_video` tool. Because video embedding is
+            long-running (it polls an async task), this is opt-in and defaults to False.
         all (bool): Enable all tools. Overrides individual flags when True. Default is False.
     """
 
@@ -54,7 +58,7 @@ class TwelveLabsTools(Toolkit):
         embed_timeout: float = 300.0,
         enable_analyze_video: bool = True,
         enable_embed_text: bool = True,
-        enable_embed_video: bool = True,
+        enable_embed_video: bool = False,
         all: bool = False,
         **kwargs,
     ):
@@ -147,17 +151,22 @@ class TwelveLabsTools(Toolkit):
         """Generate Marengo multimodal embeddings for a video.
 
         TwelveLabs embeds video asynchronously, so this creates an embedding task, waits for
-        it to finish, and returns one embedding vector per video segment (each segment is a
-        2-10s clip). The vectors live in the same latent space as `embed_text`, so a text
-        query can be matched against video segments by cosine similarity.
+        it to finish, and embeds the video into the same latent space as `embed_text` with
+        one vector per 2-10s segment.
+
+        The raw float vectors are deliberately NOT returned: Marengo emits one ~512-dim
+        vector per segment, so a long video is hundreds of KB of floats that would flood (or
+        exceed) the model context, and the model cannot use raw vectors anyway. Instead this
+        returns a compact summary of the segmentation. Consume the vectors from a vector
+        store or a TwelveLabs index if you need to run similarity search over them.
 
         Args:
             video_url (str): A publicly accessible URL of the video to embed.
 
         Returns:
             str: A JSON object with the model name, embedding dimensions, segment count and a
-                list of per-segment embeddings (start/end offsets, scope and vector), or an
-                error message.
+                list of per-segment metadata (start/end offsets and scope), or an error
+                message.
         """
         if not video_url:
             return "No video_url provided"
@@ -193,12 +202,15 @@ class TwelveLabsTools(Toolkit):
                     continue
                 if not dimensions:
                     dimensions = len(vector)
+                # Only the segment metadata is returned. The raw float vectors are
+                # deliberately omitted: Marengo emits one ~512-dim vector per 2-10s clip,
+                # so a long video is hundreds of KB of floats that would flood (or exceed)
+                # the model context, and the model cannot do anything useful with them.
                 segments.append(
                     {
                         "start_offset_sec": segment.start_offset_sec,
                         "end_offset_sec": segment.end_offset_sec,
                         "embedding_scope": segment.embedding_scope,
-                        "embedding": vector,
                     }
                 )
             if not segments:

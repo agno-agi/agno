@@ -7,8 +7,11 @@ Demonstrates using TwelveLabs video understanding tools with an agent.
 `analyze_video` answers questions about a video using the Pegasus model.
 `embed_text` generates a multimodal (Marengo) embedding that lives in the same
 latent space as TwelveLabs video/audio/image embeddings.
-`embed_video` generates Marengo embeddings for a whole video (one vector per
-segment), so a text query can be matched against video segments by similarity.
+`embed_video` embeds a whole video into the same Marengo latent space (one vector
+per 2-10s segment). It is long-running (async task polling) so it is opt-in
+(`enable_embed_video=True`), and it returns a compact summary of the segmentation
+(segment count, dimensions and per-segment time offsets) rather than the raw
+vectors, which would flood the model context.
 
 Set your API key first: `export TWELVELABS_API_KEY=...`
 Grab a free key at https://twelvelabs.io.

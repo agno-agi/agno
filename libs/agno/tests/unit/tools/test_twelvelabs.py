@@ -44,6 +44,15 @@ def test_init_all_tools():
     assert "embed_video" in names
 
 
+def test_embed_video_disabled_by_default():
+    """embed_video is long-running (async polling), so it is opt-in: off by default."""
+    tools = TwelveLabsTools(api_key="k")
+    names = [func.name for func in tools.functions.values()]
+    assert "analyze_video" in names
+    assert "embed_text" in names
+    assert "embed_video" not in names
+
+
 def test_init_with_only_embed_video():
     """Test that `embed_video` can be enabled on its own."""
     tools = TwelveLabsTools(
@@ -108,7 +117,7 @@ def test_embed_text_success(twelvelabs_tools):
 
 
 def test_embed_video_success(twelvelabs_tools):
-    """embed_video should create a task, wait for it, then return per-segment embeddings."""
+    """embed_video should create a task, wait for it, then return per-segment metadata (no raw vectors)."""
     seg1 = MagicMock(float_=[0.1, 0.2, 0.3], start_offset_sec=0.0, end_offset_sec=6.0, embedding_scope="clip")
     seg2 = MagicMock(float_=[0.4, 0.5, 0.6], start_offset_sec=6.0, end_offset_sec=12.0, embedding_scope="clip")
     retrieve_response = MagicMock()
@@ -125,8 +134,12 @@ def test_embed_video_success(twelvelabs_tools):
     assert result["model"] == "marengo3.0"
     assert result["dimensions"] == 3
     assert result["num_segments"] == 2
-    assert result["segments"][0]["embedding"] == [0.1, 0.2, 0.3]
+    # Raw float vectors are intentionally NOT serialized into the result (they would
+    # flood the model context and are useless to the model); only the segment metadata is.
+    assert "embedding" not in result["segments"][0]
     assert result["segments"][0]["start_offset_sec"] == 0.0
+    assert result["segments"][0]["end_offset_sec"] == 6.0
+    assert result["segments"][0]["embedding_scope"] == "clip"
     assert result["segments"][1]["end_offset_sec"] == 12.0
 
     _, create_kwargs = mock_client.embed.tasks.create.call_args
@@ -275,11 +288,12 @@ def test_embed_text_live():
     reason="TWELVELABS_API_KEY not set; skipping live TwelveLabs API test",
 )
 def test_embed_video_live():
-    """Live test: Marengo returns 512-dim embeddings for at least one video segment."""
-    tools = TwelveLabsTools()
+    """Live test: Marengo embeds the video into 512-dim segments; only metadata is returned."""
+    tools = TwelveLabsTools(enable_embed_video=True)
     result = json.loads(
         tools.embed_video(video_url="https://interactive-examples.mdn.mozilla.net/media/cc0-videos/flower.mp4")
     )
     assert result["dimensions"] == 512
     assert result["num_segments"] >= 1
-    assert len(result["segments"][0]["embedding"]) == 512
+    assert "embedding" not in result["segments"][0]
+    assert "start_offset_sec" in result["segments"][0]
