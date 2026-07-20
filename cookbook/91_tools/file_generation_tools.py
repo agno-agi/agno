@@ -146,4 +146,9 @@ if __name__ == "__main__":
     print("=" * 50)
 
     example_pdf_generation()
-    
+    # example_html_generation()
+    # example_code_generation()
+    # example_text_generation()
+    # example_docx_generation()
+    # example_csv_generation()
+    # example_json_generation()
