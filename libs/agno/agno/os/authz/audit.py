@@ -26,9 +26,12 @@ events to ``authz_audit`` and decision events to ``authz_decisions``.
 
 import json
 import logging
+import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
+
+from agno.utils.log import log_debug
 
 
 @dataclass
@@ -89,6 +92,84 @@ class LoggingAuditSink(AuditSink):
 def _is_decision(action: str) -> bool:
     """Decision events (``access.allowed`` / ``access.denied``) vs change events."""
     return action.startswith("access.")
+
+
+def resolve_audit_sink(app_or_request: Any) -> Optional[AuditSink]:
+    """The AuditSink recording this AgentOS's decisions, or None if none is configured.
+
+    Accepts a FastAPI ``app``, a ``Request`` or a ``WebSocket`` (``.app`` is read from
+    the latter two), mirroring ``resolve_authorization_provider`` so every choke point
+    can resolve the sink with whatever object it holds.
+    """
+    app = getattr(app_or_request, "app", app_or_request)
+    return getattr(getattr(app, "state", None), "authz_audit", None)
+
+
+def token_reference(token: Optional[str], claims: Optional[Dict[str, Any]]) -> Optional[str]:
+    """A non-secret reference to the presented token, for the decision trail.
+
+    Prefer the token's ``jti`` (RFC 7519 JWT ID): an opaque identifier the issuer
+    already minted, so it correlates to the issuer's own logs and any revocation list.
+    When the token has no ``jti``, fall back to a short SHA-256 of the raw token so two
+    distinct tokens stay distinguishable -- without ever storing the credential itself.
+    """
+    if claims:
+        jti = claims.get("jti")
+        if jti:
+            return str(jti)
+    if token:
+        import hashlib
+
+        return hashlib.sha256(token.encode()).hexdigest()[:12]
+    return None
+
+
+def record_decision(
+    app_or_request: Any,
+    *,
+    allowed: bool,
+    target: str,
+    principal: Optional[str],
+    required_scopes: Optional[List[str]] = None,
+    scopes: Optional[List[str]] = None,
+    claims: Optional[Dict[str, Any]] = None,
+    token: Optional[str] = None,
+    reason: Optional[str] = None,
+) -> None:
+    """Record ONE authorization decision to the configured sink.
+
+    This is shared by every enforcement choke point -- the REST route gate, the
+    per-resource gate, the WebSocket gates and the MCP tool gate -- so the access
+    trail covers all of them rather than only the transport that happens to run
+    inside the JWT middleware. ``target`` is the thing being decided on, formatted
+    like the route it corresponds to (e.g. ``"POST /agents/x/runs"``).
+
+    Never raises into the request path: an audit failure must not turn a served
+    request into a 500. No-op when no sink is configured, so the default (no audit)
+    deployment is untouched.
+    """
+    sink = resolve_audit_sink(app_or_request)
+    if sink is None:
+        return
+    try:
+        metadata: Dict[str, Any] = {
+            "required": list(required_scopes or []),
+            "token": token_reference(token, claims),
+            "scopes": list(scopes or []),
+        }
+        if reason:
+            metadata["reason"] = reason
+        sink.record(
+            AuditEvent(
+                action="access.allowed" if allowed else "access.denied",
+                actor=principal,
+                target=target,
+                timestamp=int(time.time()),
+                metadata=metadata,
+            )
+        )
+    except Exception as e:  # pragma: no cover - audit must never break requests
+        log_debug(f"decision audit failed: {e}")
 
 
 class DbAuditSink(AuditSink):

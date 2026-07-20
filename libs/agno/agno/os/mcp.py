@@ -316,7 +316,28 @@ def _require_tool_scopes(method: str, path: str) -> None:
     # The provider decides — default ScopeAuthorizationProvider is byte-identical to
     # v2.7's check_route_scopes; a managed-role/custom provider enforces its own model
     # on the OAuth-authenticated caller here too.
-    if not provider.authorize_route(ctx, required_scopes):
+    from agno.os.authz.audit import record_decision
+
+    allowed = provider.authorize_route(ctx, required_scopes)
+    # Record the decision on the SAME trail the REST gate writes to, so an access audit
+    # covers the MCP transport too (the tools are an alternate front door to the same
+    # surface). The sink is mirrored onto this sub-app's state; no sink -> no-op.
+    # Same non-secret token reference the REST gate captures (jti, else a short hash),
+    # so an MCP row correlates to the issuer's logs exactly like a REST row does.
+    auth_header = request.headers.get("Authorization") or ""
+    bearer = auth_header[7:] if auth_header[:7].lower() == "bearer " else None
+    record_decision(
+        request,
+        allowed=allowed,
+        target=f"{method} {path}",
+        principal=ctx.principal_id,
+        required_scopes=required_scopes,
+        scopes=ctx.scopes,
+        claims=ctx.claims,
+        token=bearer,
+        reason=None if allowed else "mcp_tool_scope_denied",
+    )
+    if not allowed:
         # Under mcp_auth, a scope denial is most often an external-AS misconfiguration
         # (the token carries non-agno scopes), which the client-facing 403 can't point at.
         # Log the presented-vs-required scopes and the AS-config hint so the deployer can
