@@ -7,6 +7,7 @@ Uses Google Gemini to analyze attached files. Set GOOGLE_API_KEY env var.
 """
 
 from agno.agent.agent import Agent
+from agno.db.sqlite import SqliteDb
 from agno.models.google import Gemini
 from agno.os import AgentOS
 from agno.os.interfaces.agui import AGUI
@@ -18,6 +19,7 @@ from agno.os.interfaces.agui import AGUI
 media_agent = Agent(
     name="Media Agent",
     model=Gemini(id="gemini-2.5-flash"),
+    db=SqliteDb(db_file="/tmp/agui_agent_with_media.db"),
     instructions="Analyze any image, audio, video, or document the user sends and answer their question about it.",
     add_datetime_to_context=True,
     markdown=True,

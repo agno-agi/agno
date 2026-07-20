@@ -316,6 +316,68 @@ async def test_async_url(mock_converter):
         assert documents[0].name == "document"
 
 
+def test_read_file_str_path(mock_converter):
+    """Test reading a local file path passed as a string"""
+    with (
+        patch("pathlib.Path.exists", return_value=True),
+        patch("agno.knowledge.reader.docling_reader.DocumentConverter", return_value=mock_converter),
+    ):
+        reader = DoclingReader()
+        documents = reader.read("test.pdf")
+
+        assert len(documents) == 1
+        assert documents[0].name == "test"
+        assert "Test Document" in documents[0].content
+        mock_converter.convert.assert_called_once()
+        # A local string path must be normalized to a Path before hitting Docling.
+        assert isinstance(mock_converter.convert.call_args.args[0], Path)
+
+
+def test_read_file_str_path_custom_name(mock_converter):
+    """Test reading a local string path with a custom document name."""
+    with (
+        patch("pathlib.Path.exists", return_value=True),
+        patch("agno.knowledge.reader.docling_reader.DocumentConverter", return_value=mock_converter),
+    ):
+        reader = DoclingReader()
+        documents = reader.read("test.pdf", name="custom_name")
+
+        assert len(documents) == 1
+        assert documents[0].name == "custom_name"
+
+
+@pytest.mark.asyncio
+async def test_async_read_file_str_path(mock_converter):
+    """Test async reading of a local file path passed as a string."""
+    with (
+        patch("pathlib.Path.exists", return_value=True),
+        patch("agno.knowledge.reader.docling_reader.DocumentConverter", return_value=mock_converter),
+    ):
+        reader = DoclingReader()
+        documents = await reader.async_read("test.pdf")
+
+        assert len(documents) == 1
+        assert documents[0].name == "test"
+        mock_converter.convert.assert_called_once()
+
+
+def test_invalid_file_str_path():
+    """Test that a non-existent local string path raises FileNotFoundError."""
+    with patch("pathlib.Path.exists", return_value=False):
+        reader = DoclingReader()
+        with pytest.raises(FileNotFoundError, match="Could not find file: nonexistent.pdf"):
+            reader.read("nonexistent.pdf")
+
+
+def test_read_local_str_path_unaffected_by_allowed_hosts(mock_converter):
+    """Local string path inputs must not be blocked by the URL host allowlist."""
+    reader = DoclingReader(allowed_hosts=["docs.agno.com"], converter=mock_converter)
+    with patch("pathlib.Path.exists", return_value=True):
+        documents = reader.read("local.pdf")
+    assert len(documents) >= 1
+    mock_converter.convert.assert_called_once()
+
+
 def test_default_output_format(mock_converter):
     """Test that default output format is markdown"""
     with (

@@ -8,6 +8,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
+import agno.utils.log as log_module
 from agno.exceptions import InputCheckError, OutputCheckError
 from agno.guardrails.base import BaseGuardrail
 from agno.run import RunContext
@@ -19,6 +20,18 @@ from agno.team._hooks import (
     _execute_pre_hooks,
 )
 from agno.utils.hooks import normalize_pre_hooks
+
+
+@pytest.fixture(autouse=True)
+def _restore_debug_globals():
+    # The inline hook path ends in set_debug(team), and these tests pass MagicMock
+    # teams: set_debug copies team.debug_level -- a MagicMock attribute -- into
+    # agno.utils.log's module globals, and nothing restores them, so every later
+    # real-run test in the same session dies on `MagicMock >= int` inside log_debug.
+    original_on, original_level = log_module.debug_on, log_module.debug_level
+    yield
+    log_module.debug_on = original_on
+    log_module.debug_level = original_level
 
 
 class BlockingGuardrail(BaseGuardrail):
@@ -52,6 +65,7 @@ def _make_team(run_hooks_in_background: bool = True) -> MagicMock:
     team = MagicMock()
     team._run_hooks_in_background = run_hooks_in_background
     team.debug_mode = False
+    team.debug_level = 1  # a real int: set_debug forwards this into log globals
     team.events_to_skip = None
     team.store_events = False
     return team
@@ -437,3 +451,95 @@ class TestTeamMetadataInjection:
             )
         )
         assert captured_args.get("metadata") == {"env": "test", "version": "2.5"}
+
+
+class RecordingCallableHook:
+    """A hook with no __name__: only the type name identifies it."""
+
+    def __init__(self):
+        self.calls = 0
+
+    def __call__(self, **kwargs: Any) -> None:
+        self.calls += 1
+
+
+class TestTeamCallableInstanceHooks:
+    """stream_events=True builds started/completed events from the hook's name on
+    every path. A callable instance (no __name__) must run and be named by its
+    type -- not crash pre-try, and not be swallowed as a hook failure in-try."""
+
+    def test_pre_hook_callable_instance_streams_events(self):
+        from agno.run.team import TeamRunOutput
+
+        team = _make_team(run_hooks_in_background=False)
+        hook = RecordingCallableHook()
+        events = list(
+            _execute_pre_hooks(
+                team=team,
+                hooks=[hook],
+                run_response=TeamRunOutput(),
+                run_input=_make_run_input(),
+                session=_make_session(),
+                run_context=_make_run_context(),
+                stream_events=True,
+            )
+        )
+        assert hook.calls == 1
+        assert [event.pre_hook_name for event in events] == ["RecordingCallableHook", "RecordingCallableHook"]
+
+    @pytest.mark.asyncio
+    async def test_async_pre_hook_callable_instance_streams_events(self):
+        from agno.run.team import TeamRunOutput
+
+        team = _make_team(run_hooks_in_background=False)
+        hook = RecordingCallableHook()
+        events = []
+        async for event in _aexecute_pre_hooks(
+            team=team,
+            hooks=[hook],
+            run_response=TeamRunOutput(),
+            run_input=_make_run_input(),
+            session=_make_session(),
+            run_context=_make_run_context(),
+            stream_events=True,
+        ):
+            events.append(event)
+        assert hook.calls == 1
+        assert [event.pre_hook_name for event in events] == ["RecordingCallableHook", "RecordingCallableHook"]
+
+    def test_post_hook_callable_instance_streams_events(self):
+        from agno.run.team import TeamRunOutput
+
+        team = _make_team(run_hooks_in_background=False)
+        hook = RecordingCallableHook()
+        events = list(
+            _execute_post_hooks(
+                team=team,
+                hooks=[hook],
+                run_output=TeamRunOutput(),
+                session=_make_session(),
+                run_context=_make_run_context(),
+                stream_events=True,
+            )
+        )
+        assert hook.calls == 1
+        assert [event.post_hook_name for event in events] == ["RecordingCallableHook", "RecordingCallableHook"]
+
+    @pytest.mark.asyncio
+    async def test_async_post_hook_callable_instance_streams_events(self):
+        from agno.run.team import TeamRunOutput
+
+        team = _make_team(run_hooks_in_background=False)
+        hook = RecordingCallableHook()
+        events = []
+        async for event in _aexecute_post_hooks(
+            team=team,
+            hooks=[hook],
+            run_output=TeamRunOutput(),
+            session=_make_session(),
+            run_context=_make_run_context(),
+            stream_events=True,
+        ):
+            events.append(event)
+        assert hook.calls == 1
+        assert [event.post_hook_name for event in events] == ["RecordingCallableHook", "RecordingCallableHook"]

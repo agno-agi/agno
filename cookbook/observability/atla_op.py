@@ -26,7 +26,6 @@ agent = Agent(
     model=OpenAIChat(id="gpt-4o-mini"),
     tools=[WebSearchTools()],
     instructions="You are a stock price agent. Answer questions in the style of a stock analyst.",
-    debug_mode=True,
 )
 
 
