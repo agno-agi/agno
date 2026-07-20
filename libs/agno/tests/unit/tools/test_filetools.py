@@ -49,6 +49,18 @@ def test_list_files_returns_relative_paths():
             assert file_path in ["file1.txt", "file2.txt", "file3.md"]
 
 
+def test_list_files_schema_exposes_directory():
+    """Test that list_files exposes its optional directory argument."""
+    file_tools = FileTools()
+    function = file_tools.functions["list_files"]
+    function.process_entrypoint()
+
+    properties = function.parameters["properties"]
+    assert properties["directory"]["type"] == "string"
+    assert "kwargs" not in properties
+    assert "directory" not in function.parameters.get("required", [])
+
+
 def test_search_files_returns_relative_paths():
     """Test that search_files returns relative paths in JSON structure."""
     with tempfile.TemporaryDirectory() as tmp_dir:
