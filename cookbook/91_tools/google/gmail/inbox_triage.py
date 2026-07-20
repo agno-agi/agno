@@ -34,7 +34,7 @@ db = PostgresDb(db_url="postgresql+psycopg://ai:ai@localhost:5532/ai")
 agent = Agent(
     name="Inbox Triage Agent",
     model=OpenAIResponses(id="gpt-5.5"),
-    tools=[GmailTools(download_attachment=True, archive_email=True)],
+    tools=[GmailTools(download_attachment=True, archive_email=True, max_results=10)],
     db=db,
     learning=LearningMachine(
         user_memory=UserMemoryConfig(
