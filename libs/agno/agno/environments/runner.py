@@ -1018,6 +1018,7 @@ async def arun_rollouts(
     else:
         index_by_identity = {id(task): index for index, task in enumerate(env.tasks)}
         selected_list: List[Task] = []
+        selected_indices: Set[int] = set()
         for task in tasks:
             env_index = index_by_identity.get(id(task))
             if env_index is None:
@@ -1025,6 +1026,15 @@ async def arun_rollouts(
                     "tasks must be selected from env.tasks (e.g. [t for t in env.tasks if ...]); "
                     "selection keeps env identity, a rebuilt task does not"
                 )
+            # The same task twice runs it twice under one id: the grid shows two rows
+            # that diff() cannot tell apart, and every passing attempt exports twice,
+            # weighting that task double in the training set.
+            if env_index in selected_indices:
+                raise ValueError(
+                    f"duplicate task in tasks: {str(resolved_tasks[env_index].id)!r} selected more than once; "
+                    "raise k to run a task more times"
+                )
+            selected_indices.add(env_index)
             selected_list.append(resolved_tasks[env_index])
         selected = tuple(selected_list)
 

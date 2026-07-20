@@ -40,6 +40,7 @@ class StopReason(str, Enum):
     completed = "completed"  # run finished; the only state a scorer sees
     error = "error"  # run raised or yielded an error event
     timeout = "timeout"  # exceeded timeout_seconds; whatever was captured is kept
+    truncated = "truncated"  # hit the output limit; no content to score, same category as timeout
     cancelled = "cancelled"  # run was cancelled
     paused = "paused"  # HITL pause; content is placeholder boilerplate, never scored
 
@@ -118,6 +119,24 @@ def _tool_call_limit_hit(run: Optional[AnyRunOutput]) -> bool:
     return False
 
 
+def _is_truncated(run: AnyRunOutput) -> bool:
+    """A run that reports completed but carries no content: the output limit was hit.
+
+    A model that exhausts `max_output_tokens` returns an incomplete response, and the
+    run still lands on `RunStatus.completed` with `content` left None -- under an
+    `output_schema` there is nothing parseable, and without one there is no final text.
+    No provider adapter normalizes an incomplete/length finish reason onto `RunOutput`
+    today, so content is the only cross-provider signal available; this is the
+    content-side fallback rather than a guess from token counts.
+
+    Deliberately `is None` and not "empty or blank": an empty answer is an answer and
+    stays scoreable. The residual is a run that completes with no content for some
+    other reason (a tool-only final turn); it reads as truncated here, which still
+    leaves it unscored rather than counted as a wrong answer.
+    """
+    return run.content is None
+
+
 def _stop_reason_for(state: _AttemptState) -> StopReason:
     """Pure derivation -- called both for the scoring gate and the final result."""
     if state.errored:
@@ -126,7 +145,9 @@ def _stop_reason_for(state: _AttemptState) -> StopReason:
         return StopReason.error
     status = state.run.status
     if status == RunStatus.completed:
-        return StopReason.completed
+        # Before the scoring gate, so a scorer reading run.content is never handed a
+        # truncated run: no answer is not a wrong answer.
+        return StopReason.truncated if _is_truncated(state.run) else StopReason.completed
     mapped = _STATUS_TO_STOP.get(status)
     return StopReason(mapped) if mapped is not None else StopReason.error
 
@@ -219,7 +240,11 @@ async def _run_attempt(
         stop_reason = StopReason.timeout
     else:
         stop_reason = _stop_reason_for(state)
-        if stop_reason != StopReason.completed and not state.errored:
+        if stop_reason == StopReason.truncated:
+            # Explain the outcome the way the timeout branch does: a run reading
+            # "completed" with nothing in it is otherwise unreadable in the report.
+            state.errors.append("truncated: the run completed with no content (output limit reached)")
+        elif stop_reason != StopReason.completed and not state.errored:
             if state.run is None:
                 state.errors.append("no run output recorded")
             else:

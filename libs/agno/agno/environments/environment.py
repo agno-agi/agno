@@ -120,6 +120,14 @@ class Environment:
                 if task.id in declared_ids:
                     raise ValueError(f"duplicate task id {task.id!r}; task ids must be unique")
                 declared_ids.add(task.id)
+        # Typed as Scorer but structurally checked: a bare callable otherwise sails
+        # through construction and dies at score time with an AttributeError naming
+        # `ascore`, long after the run has been paid for.
+        if not isinstance(self.scorer, Scorer):
+            raise TypeError(
+                f"Environment.scorer must be a Scorer, got {type(self.scorer).__name__}; "
+                "wrap a callable in CodeScorer, or use JudgeScorer / ToolCallScorer"
+            )
         received = type(self.agent).__name__
         # The Team check runs before the Agent accept: a hybrid subclassing both must
         # not slip through as an Agent.
