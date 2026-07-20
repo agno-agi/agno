@@ -63,15 +63,24 @@ paid trainer. Offline output unchanged.
 
 ### basic.py — live path
 
-**Status:** see `specs/agno/2.8.3/notes/live-proof.md`
+**Status:** PARTIAL (sampling proven, fine-tune blocked on network)
 
 **Description:** With `AGNO_RUN_TINKER_FINE_TUNE=1` and `TINKER_API_KEY` set,
 the same file swaps the stub for
 `TinkerTrainer(base_model="Qwen/Qwen3.6-35B-A3B", epochs=1)` and performs a real
-fine-tune. That run is bounded and recorded separately rather than as part of
-routine cookbook testing, because it spends real training compute.
+fine-tune (3 tasks, k=4, one round). That run is bounded and recorded separately rather
+than as part of routine cookbook testing, because it spends real training compute.
 
-**Result:** recorded in the live-proof note.
+**Result (2026-07-21):** A live sampling smoke against the real Qwen3.6-35B-A3B
+authenticated and sampled through the adapter end to end (the §3 live path works), but
+was slow enough — minutes per 2000-token thinking sample — that the default 120s
+per-attempt timeout was hit, which is why the env now sets `timeout_seconds=900`. Two
+subsequent attempts and a connectivity probe failed to reach the Tinker auth endpoint
+(intermittent network, `APIConnectionError`, upstream of any agno code), so the one
+bounded `fit` was not attempted — spending training money on a run that cannot
+authenticate for the follow-on sampling would break the spend policy. Full detail and
+the by-hand completion command are in `specs/agno/2.8.1/notes/live-proof.md`. Re-run by
+hand from a network where the Tinker host is reachable.
 
 ---
 
