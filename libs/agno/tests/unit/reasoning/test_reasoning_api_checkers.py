@@ -1,13 +1,15 @@
-"""Unit tests for API-based reasoning capability detection (Anthropic, Gemini, Ollama, OpenRouter).
+"""Unit tests for API-based reasoning capability detection (Anthropic, Gemini, Ollama, OpenRouter, Moonshot).
 
 These detectors query the provider API and fall back to substring/config checks when the API call
 fails. The provider clients are mocked here so no network access is required.
 """
 
+import agno.reasoning.moonshot as moonshot_mod
 import agno.reasoning.ollama as ollama_mod
 import agno.reasoning.openrouter as openrouter_mod
 from agno.reasoning.anthropic import is_anthropic_reasoning_model
 from agno.reasoning.gemini import is_gemini_reasoning_model
+from agno.reasoning.moonshot import is_moonshot_reasoning_model
 from agno.reasoning.ollama import is_ollama_reasoning_model
 from agno.reasoning.openrouter import is_openrouter_reasoning_model
 
@@ -171,3 +173,39 @@ def test_openrouter_catalog_empty_falls_back_to_substring(monkeypatch):
 
 def test_openrouter_non_openrouter_model():
     assert is_openrouter_reasoning_model(ApiModel("OpenAIChat", "openai/o3")) is False
+
+
+# ============================================================================
+# Moonshot (supports_reasoning on GET /v1/models)
+# ============================================================================
+
+
+def test_moonshot_api_reasoning_supported(monkeypatch):
+    monkeypatch.setattr(
+        moonshot_mod,
+        "_fetch_moonshot_models",
+        lambda model: {"kimi-k3": True, "kimi-k2.5": False},
+    )
+    assert is_moonshot_reasoning_model(ApiModel("MoonShot", "kimi-k3")) is True
+
+
+def test_moonshot_api_reasoning_not_supported(monkeypatch):
+    monkeypatch.setattr(
+        moonshot_mod,
+        "_fetch_moonshot_models",
+        lambda model: {"kimi-k3": True, "kimi-k2.5": False},
+    )
+    # Present in catalog with supports_reasoning False -> False.
+    assert is_moonshot_reasoning_model(ApiModel("MoonShot", "kimi-k2.5")) is False
+
+
+def test_moonshot_catalog_empty_falls_back_to_substring(monkeypatch):
+    # Empty catalog (fetch failed) -> substring fallback.
+    monkeypatch.setattr(moonshot_mod, "_fetch_moonshot_models", lambda model: {})
+    assert is_moonshot_reasoning_model(ApiModel("MoonShot", "kimi-k3")) is True
+    assert is_moonshot_reasoning_model(ApiModel("MoonShot", "kimi-k2-thinking")) is True
+    assert is_moonshot_reasoning_model(ApiModel("MoonShot", "kimi-k2.5")) is False
+
+
+def test_moonshot_non_moonshot_model():
+    assert is_moonshot_reasoning_model(ApiModel("OpenAIChat", "kimi-k3")) is False

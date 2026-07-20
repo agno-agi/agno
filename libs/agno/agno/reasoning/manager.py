@@ -127,6 +127,7 @@ class ReasoningManager:
         from agno.reasoning.deepseek import is_deepseek_reasoning_model
         from agno.reasoning.gemini import is_gemini_reasoning_model
         from agno.reasoning.groq import is_groq_reasoning_model
+        from agno.reasoning.moonshot import is_moonshot_reasoning_model
         from agno.reasoning.ollama import is_ollama_reasoning_model
         from agno.reasoning.openai import is_openai_reasoning_model
         from agno.reasoning.openrouter import is_openrouter_reasoning_model
@@ -136,9 +137,11 @@ class ReasoningManager:
             return "deepseek"
         if is_anthropic_reasoning_model(model):
             return "anthropic"
-        # OpenRouter is an OpenAILike subclass, so it must be checked before the OpenAI detector.
+        # OpenRouter and Moonshot are OpenAILike subclasses, so they must be checked before the OpenAI detector.
         if is_openrouter_reasoning_model(model):
             return "openrouter"
+        if is_moonshot_reasoning_model(model):
+            return "moonshot"
         if is_openai_reasoning_model(model):
             return "openai"
         if is_groq_reasoning_model(model):
@@ -216,6 +219,12 @@ class ReasoningManager:
                 log_debug("Starting DeepSeek Reasoning", center=True, symbol="=")
                 reasoning_message = get_deepseek_reasoning(reasoning_agent, messages, run_metrics=run_metrics)
 
+            elif model_type == "moonshot":
+                from agno.reasoning.moonshot import get_moonshot_reasoning
+
+                log_debug("Starting Kimi Reasoning", center=True, symbol="=")
+                reasoning_message = get_moonshot_reasoning(reasoning_agent, messages, run_metrics=run_metrics)
+
             elif model_type == "anthropic":
                 from agno.reasoning.anthropic import get_anthropic_reasoning
 
@@ -291,6 +300,12 @@ class ReasoningManager:
 
                 log_debug("Starting DeepSeek Reasoning", center=True, symbol="=")
                 reasoning_message = await aget_deepseek_reasoning(reasoning_agent, messages, run_metrics=run_metrics)
+
+            elif model_type == "moonshot":
+                from agno.reasoning.moonshot import aget_moonshot_reasoning
+
+                log_debug("Starting Kimi Reasoning", center=True, symbol="=")
+                reasoning_message = await aget_moonshot_reasoning(reasoning_agent, messages, run_metrics=run_metrics)
 
             elif model_type == "anthropic":
                 from agno.reasoning.anthropic import aget_anthropic_reasoning
@@ -380,6 +395,30 @@ class ReasoningManager:
             log_debug("Starting DeepSeek Reasoning (streaming)", center=True, symbol="=")
             final_message: Optional[Message] = None
             for reasoning_delta, message in get_deepseek_reasoning_stream(reasoning_agent, messages):
+                if reasoning_delta is not None:
+                    yield (reasoning_delta, None)
+                if message is not None:
+                    final_message = message
+
+            if final_message:
+                yield (
+                    None,
+                    ReasoningResult(
+                        message=final_message,
+                        steps=[ReasoningStep(result=final_message.content)],
+                        reasoning_messages=[final_message],
+                        success=True,
+                    ),
+                )
+            else:
+                yield (None, ReasoningResult(success=False, error="No reasoning content"))
+
+        elif model_type == "moonshot":
+            from agno.reasoning.moonshot import get_moonshot_reasoning_stream
+
+            log_debug("Starting Kimi Reasoning (streaming)", center=True, symbol="=")
+            final_message = None
+            for reasoning_delta, message in get_moonshot_reasoning_stream(reasoning_agent, messages):
                 if reasoning_delta is not None:
                     yield (reasoning_delta, None)
                 if message is not None:
@@ -596,6 +635,30 @@ class ReasoningManager:
             log_debug("Starting DeepSeek Reasoning (streaming)", center=True, symbol="=")
             final_message: Optional[Message] = None
             async for reasoning_delta, message in aget_deepseek_reasoning_stream(reasoning_agent, messages):
+                if reasoning_delta is not None:
+                    yield (reasoning_delta, None)
+                if message is not None:
+                    final_message = message
+
+            if final_message:
+                yield (
+                    None,
+                    ReasoningResult(
+                        message=final_message,
+                        steps=[ReasoningStep(result=final_message.content)],
+                        reasoning_messages=[final_message],
+                        success=True,
+                    ),
+                )
+            else:
+                yield (None, ReasoningResult(success=False, error="No reasoning content"))
+
+        elif model_type == "moonshot":
+            from agno.reasoning.moonshot import aget_moonshot_reasoning_stream
+
+            log_debug("Starting Kimi Reasoning (streaming)", center=True, symbol="=")
+            final_message = None
+            async for reasoning_delta, message in aget_moonshot_reasoning_stream(reasoning_agent, messages):
                 if reasoning_delta is not None:
                     yield (reasoning_delta, None)
                 if message is not None:
