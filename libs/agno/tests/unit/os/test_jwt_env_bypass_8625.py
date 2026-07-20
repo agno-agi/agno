@@ -22,7 +22,7 @@ from fastapi.testclient import TestClient
 from agno.agent import Agent
 from agno.os import AgentOS
 from agno.os.auth import (
-    AUTH_COMPLETE_ATTR,
+    _AUTH_COMPLETE_ATTR,
     get_authentication_dependency,
     validate_websocket_token,
 )
@@ -137,12 +137,12 @@ class TestAuthDependencyDirectly:
 
     @pytest.mark.asyncio
     async def test_auth_complete_marker_trusted(self, mock_request, clean_jwt_env):
-        """When AUTH_COMPLETE_ATTR is set, auth passes immediately."""
+        """When _AUTH_COMPLETE_ATTR is set, auth passes immediately."""
         settings = AgnoAPISettings(os_security_key=OS_SECURITY_KEY)
         dep = get_authentication_dependency(settings)
 
         # Simulate middleware having validated the request
-        setattr(mock_request.state, AUTH_COMPLETE_ATTR, True)
+        setattr(mock_request.state, _AUTH_COMPLETE_ATTR, True)
 
         # No credentials needed — middleware already authenticated
         result = await dep(mock_request, credentials=None)
@@ -150,12 +150,12 @@ class TestAuthDependencyDirectly:
 
     @pytest.mark.asyncio
     async def test_no_marker_requires_security_key(self, mock_request, clean_jwt_env):
-        """Without AUTH_COMPLETE_ATTR, security key validation runs."""
+        """Without _AUTH_COMPLETE_ATTR, security key validation runs."""
         settings = AgnoAPISettings(os_security_key=OS_SECURITY_KEY)
         dep = get_authentication_dependency(settings)
 
         # No middleware marker set
-        setattr(mock_request.state, AUTH_COMPLETE_ATTR, False)
+        setattr(mock_request.state, _AUTH_COMPLETE_ATTR, False)
 
         # No credentials should raise 401
         with pytest.raises(Exception) as exc_info:
@@ -170,7 +170,7 @@ class TestAuthDependencyDirectly:
         dep = get_authentication_dependency(settings)
 
         # No middleware marker
-        setattr(mock_request.state, AUTH_COMPLETE_ATTR, False)
+        setattr(mock_request.state, _AUTH_COMPLETE_ATTR, False)
 
         # Should still require auth
         with pytest.raises(Exception) as exc_info:

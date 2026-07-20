@@ -21,7 +21,7 @@ from agno.os.settings import AgnoAPISettings
 # Must match the value in middleware/jwt.py — kept in sync manually to avoid
 # circular imports. Checking this attribute is the ONLY safe way to know
 # authentication happened for THIS request. See issue #8625.
-AUTH_COMPLETE_ATTR = "_agno_auth_complete"
+_AUTH_COMPLETE_ATTR = "_agno_auth_complete"
 
 # Create a global HTTPBearer instance
 security = HTTPBearer(auto_error=False)
@@ -220,7 +220,7 @@ def get_authentication_dependency(settings: AgnoAPISettings):
         # credential for THIS request. Do NOT trust config flags (authorization_enabled)
         # or env var checks (_is_jwt_configured) here; they only prove something is
         # configured, not that it validated this request. See issue #8625.
-        if getattr(request.state, AUTH_COMPLETE_ATTR, False):
+        if getattr(request.state, _AUTH_COMPLETE_ATTR, False):
             return True
 
         # Service account tokens (agno_pat_...) are dispatched by prefix: they never

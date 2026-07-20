@@ -822,11 +822,11 @@ async def test_dispatch_short_circuits_on_private_marker():
     """The private marker set by an outer AuthMiddleware instance short-circuits re-verification."""
     from unittest.mock import AsyncMock, MagicMock
 
-    from agno.os.middleware.jwt import AUTH_COMPLETE_ATTR
+    from agno.os.middleware.jwt import _AUTH_COMPLETE_ATTR
 
     mw = JWTMiddleware(app=None, verification_keys=[JWT_SECRET], algorithm="HS256", excluded_route_paths=[])
     request = _no_token_request()
-    setattr(request.state, AUTH_COMPLETE_ATTR, True)
+    setattr(request.state, _AUTH_COMPLETE_ATTR, True)
 
     call_next = AsyncMock(return_value=MagicMock(status_code=200))
     await mw.dispatch(request, call_next)
@@ -838,7 +838,7 @@ async def test_dispatch_short_circuits_on_private_marker():
 async def test_dispatch_sets_private_marker_on_success():
     from unittest.mock import AsyncMock, MagicMock
 
-    from agno.os.middleware.jwt import AUTH_COMPLETE_ATTR
+    from agno.os.middleware.jwt import _AUTH_COMPLETE_ATTR
 
     secret = "marker-on-success-secret"
     mw = JWTMiddleware(app=None, verification_keys=[secret], algorithm="HS256", excluded_route_paths=[])
@@ -847,4 +847,4 @@ async def test_dispatch_sets_private_marker_on_success():
     call_next = AsyncMock(return_value=MagicMock(status_code=200))
     await mw.dispatch(request, call_next)
 
-    assert getattr(request.state, AUTH_COMPLETE_ATTR, False) is True
+    assert getattr(request.state, _AUTH_COMPLETE_ATTR, False) is True

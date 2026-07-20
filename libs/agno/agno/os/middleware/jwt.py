@@ -36,7 +36,7 @@ INTERNAL_SCHEDULER_USER_ID = "__scheduler__"
 # Request.state marker set only by this middleware once it has decided a request's
 # auth. The mount short-circuit reads THIS, not the public request.state.authenticated
 # flag, so no other middleware can trip it. Exported for use by auth.py dependency.
-AUTH_COMPLETE_ATTR = "_agno_auth_complete"
+_AUTH_COMPLETE_ATTR = "_agno_auth_complete"
 
 
 # The built-in MCP OAuth server mints request identities as ``__oauth__:<client_id>``.
@@ -949,7 +949,7 @@ class AuthMiddleware(BaseHTTPMiddleware):
         # a private marker this middleware sets itself -- never the public
         # request.state.authenticated flag, which any other middleware could set -- so an
         # unrelated middleware cannot short-circuit our checks by flipping that flag.
-        if getattr(request.state, AUTH_COMPLETE_ATTR, False):
+        if getattr(request.state, _AUTH_COMPLETE_ATTR, False):
             return await call_next(request)
 
         # Get origin and CORS allowed origins for error responses
@@ -983,7 +983,7 @@ class AuthMiddleware(BaseHTTPMiddleware):
         internal_token = getattr(request.app.state, "internal_service_token", None)
         if internal_token and hmac.compare_digest(token, internal_token):
             request.state.authenticated = True
-            setattr(request.state, AUTH_COMPLETE_ATTR, True)
+            setattr(request.state, _AUTH_COMPLETE_ATTR, True)
             request.state.user_id = INTERNAL_SCHEDULER_USER_ID
             request.state.session_id = None
             internal_scopes = list(INTERNAL_SERVICE_SCOPES)
@@ -1024,7 +1024,7 @@ class AuthMiddleware(BaseHTTPMiddleware):
                 return await call_next(request)
             if hmac.compare_digest(token, self.security_key):
                 request.state.authenticated = True
-                setattr(request.state, AUTH_COMPLETE_ATTR, True)
+                setattr(request.state, _AUTH_COMPLETE_ATTR, True)
                 return await call_next(request)
             return self._create_error_response(401, "Invalid authentication token", origin, cors_allowed_origins)
 
@@ -1103,7 +1103,7 @@ class AuthMiddleware(BaseHTTPMiddleware):
 
             request.state.token = token
             request.state.authenticated = True
-            setattr(request.state, AUTH_COMPLETE_ATTR, True)
+            setattr(request.state, _AUTH_COMPLETE_ATTR, True)
 
         except jwt.InvalidAudienceError as e:
             log_warning(f"Invalid token audience - expected: {expected_audience}: {str(e)}")
@@ -1141,7 +1141,7 @@ class AuthMiddleware(BaseHTTPMiddleware):
         # would skip enforcement, while the state below only covers the downstream route/tool
         # gates (runs, MCP). ``user_id`` is pinned to None (matching the no-``sub`` success path)
         # so the user-isolation layer scopes queries by owner rather than reading a stale id.
-        if not getattr(request.state, AUTH_COMPLETE_ATTR, False):
+        if not getattr(request.state, _AUTH_COMPLETE_ATTR, False):
             request.state.authorization_enabled = self.authorization or False
             request.state.scopes = []
             request.state.user_id = None
@@ -1198,7 +1198,7 @@ class AuthMiddleware(BaseHTTPMiddleware):
                 )
             return self._create_error_response(status_code, detail, origin, cors_allowed_origins)
 
-        setattr(request.state, AUTH_COMPLETE_ATTR, True)
+        setattr(request.state, _AUTH_COMPLETE_ATTR, True)
         return await call_next(request)
 
     def _extract_token(self, request: Request) -> Optional[str]:
