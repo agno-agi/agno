@@ -1237,6 +1237,17 @@ class AgentOS:
             # In JWT mode the security key is ignored (JWT takes precedence), matching
             # get_effective_auth_mode; pass None so the middleware doesn't fall back to it.
             effective_key = None if (self.authorization or jwt_env_configured) else security_key
+
+            # Warn when JWT env vars override an explicit OS_SECURITY_KEY without authorization=True.
+            # This is a common misconfiguration in shared container environments where env vars leak.
+            if jwt_env_configured and security_key and not self.authorization:
+                log_warning(
+                    "JWT environment variable (JWT_VERIFICATION_KEY or JWT_JWKS_FILE) detected alongside "
+                    "OS_SECURITY_KEY. JWT authentication takes precedence — your OS_SECURITY_KEY will NOT "
+                    "be used. If you intended to use bearer-token auth with OS_SECURITY_KEY, remove the "
+                    "JWT environment variables. If you intended to use JWT auth, set authorization=True."
+                )
+
             self._add_auth_middleware(fastapi_app, security_key=effective_key)
 
         # Under mcp_auth, the OAuth flow routes must be reachable without an agno bearer.
