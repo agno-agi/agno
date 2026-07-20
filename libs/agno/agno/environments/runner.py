@@ -2,6 +2,7 @@
 
 import asyncio
 import copy
+import inspect
 import json
 import math
 import time
@@ -32,8 +33,8 @@ from agno.utils.log import log_warning
 
 _FORMAT_VERSION = 1
 
-# Learning-zone tolerance: float judge values that differ only by rounding noise
-# count as agreeing.
+# Pass-rate delta tolerance: diff deltas that differ only by float rounding noise
+# count as unchanged.
 _REL_TOL = 1e-9
 _ABS_TOL = 1e-9
 
@@ -76,11 +77,10 @@ class TaskResult:
 
     @property
     def in_learning_zone(self) -> bool:
-        """At least two scored attempts, and the extremes disagree."""
-        values = self._scored_values
-        if len(values) < 2:
-            return False
-        return not math.isclose(min(values), max(values), rel_tol=_REL_TOL, abs_tol=_ABS_TOL)
+        """Some scored attempts passed and some failed -- the task is neither
+        saturated nor hopeless, so every failure has a passing attempt to
+        contrast against. Unscored attempts are excluded, as everywhere."""
+        return 0 < self.n_passed < self.n_scored
 
 
 @dataclass
@@ -145,8 +145,11 @@ class EnvironmentRunResult:
         }
 
     def learning_zone(self) -> "EnvironmentRunResult":
-        """A filtered copy holding only the tasks whose attempts disagreed -- same
-        fingerprints, so the grid, summary() and the exporter all work on it."""
+        """A filtered copy holding only the tasks with both passed and failed
+        scored attempts -- same fingerprints, so the grid, summary() and the
+        exporter all work on it. Every task kept contains at least one failed
+        scored attempt, the guarantee to_sft_jsonl's only_passed default
+        builds on."""
         return replace(
             self,
             task_results=tuple(task_result for task_result in self.task_results if task_result.in_learning_zone),
@@ -655,10 +658,39 @@ def _is_mcp_tool(tool: Any) -> bool:
     return any(c.__name__ in ("MCPTools", "MultiMCPTools") for c in mro)
 
 
+def _resolved_tools_factory(tools: Any) -> Any:
+    """Resolve a callable tools factory for inspection, failing closed: tools the
+    guard never saw cannot be certified MCP-free. Production accepts factories
+    taking injected parameters (agent, run_context, session_state) and async
+    factories -- neither resolves under a plain zero-argument call, so both raise
+    here instead of being silently treated as toolless."""
+    try:
+        resolved = tools()
+    except Exception as exc:
+        raise RuntimeError(
+            "the agent's callable tools factory could not be resolved for MCP safety checking "
+            f"({type(exc).__name__}: {exc}). A tools factory taking injected parameters (agent, "
+            "run_context, session_state) cannot be called at run start, and unseen tools cannot "
+            "be certified MCP-free. Use a concrete tools list, or build the tools inside an "
+            "agent factory -- agent=lambda: Agent(..., tools=[...])."
+        ) from exc
+    if inspect.isawaitable(resolved):
+        if inspect.iscoroutine(resolved):
+            resolved.close()
+        raise RuntimeError(
+            "the agent's tools factory is async, so it could not be resolved for MCP safety "
+            "checking at run start, and unseen tools cannot be certified MCP-free. Use a "
+            "concrete tools list, or build the tools inside an agent factory -- "
+            "agent=lambda: Agent(..., tools=[...])."
+        )
+    return resolved
+
+
 def _mcp_tool_instances(agent: Any, _seen: Optional[Set[int]] = None) -> List[Any]:
     """The MCP tool OBJECTS an agent carries -- same traversal as _mcp_tool_names
-    (callable factories resolved, one level of composition, nested reasoning agent),
-    returning the instances so two factory products can be compared by identity."""
+    (callable factories resolved fail-closed, one level of composition, nested
+    reasoning agent), returning the instances so two factory products can be
+    compared by identity."""
     seen = _seen if _seen is not None else set()
     if id(agent) in seen:
         return []
@@ -666,10 +698,7 @@ def _mcp_tool_instances(agent: Any, _seen: Optional[Set[int]] = None) -> List[An
     found: List[Any] = []
     tools = getattr(agent, "tools", None)
     if callable(tools):
-        try:
-            tools = tools()
-        except Exception:
-            tools = None
+        tools = _resolved_tools_factory(tools)
     if isinstance(tools, (list, tuple)):
         for tool in tools:
             if _is_mcp_tool(tool):
@@ -693,11 +722,15 @@ def _mcp_tool_names(agent: Any, _seen: Optional[Set[int]] = None, *, callable_on
     A callable tools-factory is resolved here before inspection: production resolves it
     per attempt into run_context (not agent.tools), so connect_mcp_tools never connects
     it and aget_tools silently drops the unconnected MCP -- the agent runs toolless and
-    the rollout greens a run that never had its tools. One level of container
-    composition is walked so a toolkit wrapping MCPTools does not evade the top-level
-    type check. With callable_only, only MCP hidden behind a callable factory is
-    reported: a concrete tools=[MCPTools(...)] list is the supported per-attempt-factory
-    pattern (each attempt owns a fresh connection) and is left alone."""
+    the rollout greens a run that never had its tools. A factory this call cannot
+    resolve fails closed via _resolved_tools_factory: production supports factories
+    taking injected parameters and async factories, neither of which a plain
+    zero-argument call can see into, and tools the guard never saw cannot be certified
+    MCP-free. One level of container composition is walked so a toolkit wrapping
+    MCPTools does not evade the top-level type check. With callable_only, only MCP
+    hidden behind a callable factory is reported: a concrete tools=[MCPTools(...)]
+    list is the supported per-attempt-factory pattern (each attempt owns a fresh
+    connection) and is left alone."""
     seen = _seen if _seen is not None else set()
     if id(agent) in seen:
         return []
@@ -706,10 +739,7 @@ def _mcp_tool_names(agent: Any, _seen: Optional[Set[int]] = None, *, callable_on
     tools = getattr(agent, "tools", None)
     tools_is_callable = callable(tools)
     if callable(tools):
-        try:
-            tools = tools()
-        except Exception:
-            tools = None
+        tools = _resolved_tools_factory(tools)
     if (tools_is_callable or not callable_only) and isinstance(tools, (list, tuple)):
         for tool in tools:
             if _is_mcp_tool(tool):
@@ -1119,9 +1149,13 @@ async def arun_rollouts(
     # cohort is one task, and a single front-loaded failing task would otherwise abort
     # healthy tasks that never got to run -- making completeness depend on task order. A
     # floor keeps a tiny concurrency from aborting on the first error or two before there
-    # is enough signal that the failure is uniform, not a flaky first sample.
+    # is enough signal that the failure is uniform, not a flaky first sample. Armed only
+    # when k exceeds the evidence window: at k <= the window every attempt has run (or
+    # started) by the time the verdict is in, so there is nothing left to save by
+    # stopping.
     storm_floor = 4
-    storm_trip_at = min(k, max(concurrency, storm_floor)) if len(selected) == 1 else 0
+    storm_window = max(concurrency, storm_floor)
+    storm_trip_at = storm_window if len(selected) == 1 and k > storm_window else 0
 
     def check_error_storm(attempt: AttemptResult) -> None:
         finished.append(attempt)
@@ -1186,6 +1220,10 @@ async def arun_rollouts(
         )
 
     task_results = tuple(TaskResult(task=task, attempts=attempts) for task, attempts in zip(selected, batches))
+    # Stamped only when the stop actually cost attempts: in-flight attempts drain
+    # after the trip, so a late trip can still complete the full plan, and a complete
+    # run stamped stopped-early would misreport its own completeness.
+    n_ran = sum(len(attempts) for attempts in batches)
     return EnvironmentRunResult(
         env_name=env.name,
         k=k,
@@ -1193,7 +1231,7 @@ async def arun_rollouts(
         policy_fingerprint=policy_fingerprint,
         task_results=task_results,
         duration_seconds=time.perf_counter() - start,
-        stopped_early="error-storm" if storm["stop"] else None,
+        stopped_early="error-storm" if storm["stop"] and n_ran < k * len(selected) else None,
     )
 
 

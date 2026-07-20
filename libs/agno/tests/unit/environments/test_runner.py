@@ -381,12 +381,44 @@ def _task_result_with_values(values, unscored=0):
 
 
 def test_learning_zone_rule():
-    # Needs two scored attempts; isclose on the extremes -- no epsilon invented.
-    assert _task_result_with_values([0.7, 0.7000000001]).in_learning_zone is False
-    assert _task_result_with_values([0.8, 0.9, 1.0]).in_learning_zone is True
+    # Pass rate strictly between 0 and 1; the helper scores value >= 0.5 as passed.
+    assert _task_result_with_values([0.0, 1.0]).in_learning_zone is True  # binary mixed
+    assert _task_result_with_values([1.0, 1.0]).in_learning_zone is False  # binary saturated
+    assert _task_result_with_values([0.0, 0.0]).in_learning_zone is False  # binary hopeless
+    assert _task_result_with_values([0.4, 0.9]).in_learning_zone is True  # numeric mixed
+    assert _task_result_with_values([0.6, 0.8, 1.0]).in_learning_zone is False  # all passed, scores vary
+    assert _task_result_with_values([0.1, 0.3]).in_learning_zone is False  # all failed, scores vary
     assert _task_result_with_values([1.0]).in_learning_zone is False  # k=1 degenerate
+    assert _task_result_with_values([0.0]).in_learning_zone is False
     assert _task_result_with_values([], unscored=2).in_learning_zone is False
-    assert _task_result_with_values([0.0, 1.0]).in_learning_zone is True
+    assert _task_result_with_values([0.4, 0.9], unscored=3).in_learning_zone is True  # unscored never blocks
+    assert _task_result_with_values([1.0], unscored=4).in_learning_zone is False  # unscored are not failures
+
+
+def test_learning_zone_filter_keeps_only_tasks_with_failures():
+    # The invariant to_sft_jsonl's only_passed default builds on: every task
+    # learning_zone() returns has at least one FAILED scored attempt.
+    result = EnvironmentRunResult(
+        env_name="zone",
+        k=4,
+        env_fingerprint="aaa",
+        policy_fingerprint="p1",
+        task_results=(
+            _task_result_with_values([0.6, 0.8, 1.0]),  # all passed, scores vary
+            _task_result_with_values([0.1, 0.3]),  # all failed, scores vary
+            _task_result_with_values([0.4, 0.9]),  # mixed
+            _task_result_with_values([0.0, 1.0], unscored=2),  # mixed with unscored
+            _task_result_with_values([1.0]),  # single scored attempt
+            _task_result_with_values([], unscored=3),  # unscored only
+        ),
+        duration_seconds=1.0,
+    )
+    zone = result.learning_zone()
+    assert len(zone.task_results) == 2  # exactly the two mixed tasks
+    for task_result in zone.task_results:
+        assert any(attempt.score is not None and not attempt.score.passed for attempt in task_result.attempts), (
+            "learning_zone() returned a task with no failed scored attempt"
+        )
 
 
 async def test_expected_reaches_scorer_through_env():
@@ -518,6 +550,74 @@ async def test_error_storm_needs_sample_floor():
 
     assert result.stopped_early is None
     assert result.n_attempts == 8  # one early error does not abort the run
+
+
+async def test_error_storm_disarmed_at_small_k():
+    # At k <= max(concurrency, floor) every attempt has run or started by the time
+    # uniform failure could be established, so there is nothing to save by stopping:
+    # even uniform failures complete the full plan with no stopped-early stamp.
+    env = _stub_env(tasks=(Task(input="one"),), error=RuntimeError("bad api key"))
+    for k in (1, 2, 3, 4):
+        result = await arun_rollouts(env, k=k, concurrency=1)
+        assert result.stopped_early is None, f"k={k}"
+        assert result.n_attempts == k, f"k={k}"
+
+
+async def test_error_storm_trips_across_concurrency_levels():
+    # Above the evidence window the storm still trips on uniform failures and the
+    # unscheduled tail is skipped, at small and window-sized concurrency alike.
+    for concurrency in (1, 4):
+        env = _stub_env(tasks=(Task(input="one"),), error=RuntimeError("bad api key"))
+        result = await arun_rollouts(env, k=8, concurrency=concurrency)
+        assert result.stopped_early == "error-storm", f"concurrency={concurrency}"
+        assert result.n_attempts < 8, f"concurrency={concurrency}"
+
+
+async def test_storm_trip_after_full_plan_not_stamped():
+    # k just above the evidence window with concurrency at the window: the storm can
+    # trip only after the fifth attempt has already passed the scheduling gate, so the
+    # full plan runs and nothing is skipped. A complete run must not be stamped
+    # stopped-early -- the completeness guard's own case, reachable by no other test.
+    # The event forces the order: attempt 0 errors instantly, freeing a slot for
+    # attempt 4 while only one error is in (no trip yet); attempts 1-3 hold their
+    # errors until attempt 4 has started, so the trip always lands after full entry.
+    starts = []
+    fifth_started = asyncio.Event()
+
+    class GatedErrorAgent:
+        async def arun(self, *, input, stream, stream_events, yield_run_output, session_id):
+            index = len(starts)
+            starts.append(session_id)
+            if index >= 4:
+                fifth_started.set()
+            elif index > 0:
+                await fifth_started.wait()
+            raise RuntimeError("bad api key")
+            yield  # pragma: no cover
+
+    env = Environment(
+        name="late-trip",
+        tasks=(Task(input="one"),),
+        scorer=CodeScorer(lambda r, e: True),
+        agent=lambda: GatedErrorAgent(),
+    )
+    result = await arun_rollouts(env, k=5, concurrency=4)
+
+    assert len(starts) == 5  # the fifth attempt entered before the trip
+    assert result.n_attempts == 5
+    assert result.stopped_early is None
+
+
+async def test_error_order_does_not_change_completeness():
+    # A leading error and a trailing error cost the run the same: nothing. Below the
+    # evidence window the storm is disarmed, so [BAD, GOOD] and [GOOD, BAD] both
+    # complete every attempt.
+    for error_call in (0, 1):
+        env = _stub_env(tasks=(Task(input="one"),), error_on_calls={error_call})
+        result = await arun_rollouts(env, k=2, concurrency=1)
+        assert result.stopped_early is None, f"error on call {error_call}"
+        assert result.n_attempts == 2, f"error on call {error_call}"
+        assert result.n_unscored == 1, f"error on call {error_call}"
 
 
 async def test_partial_errors_do_not_stop():
@@ -1296,6 +1396,84 @@ async def test_factory_env_with_callable_tools_factory_mcp_rejected():
         await arun_rollouts(env, k=1, concurrency=1)
 
 
+async def test_injected_arg_tools_factory_fails_closed():
+    # Production supports tools factories with injected parameters (agent, run_context,
+    # session_state); the run-start guard can only call a factory with no arguments, so
+    # an injected-arg factory raises there and its tools are never inspected. Tools the
+    # guard never saw cannot be certified MCP-free: the run refuses to start, before
+    # any attempt reaches the model.
+    calls = []
+
+    def tools_factory(agent, run_context):
+        return []
+
+    caller = Agent(model=RecordingFakeModel("injected", calls=calls), tools=tools_factory, telemetry=False)
+    with pytest.raises(RuntimeError, match="tools factory"):
+        await arun_rollouts(_real_env(caller), k=2)
+    assert calls == []  # no attempt ever ran
+
+
+async def test_injected_arg_tools_factory_fails_closed_on_factory_env():
+    recorder = Recorder()
+
+    def factory():
+        stub = StubRolloutAgent(recorder)
+        stub.tools = lambda agent, run_context: []
+        return stub
+
+    env = Environment(
+        name="injected-factory", tasks=(Task(input="one"),), scorer=CodeScorer(lambda r, e: True), agent=factory
+    )
+    with pytest.raises(RuntimeError, match="tools factory"):
+        await arun_rollouts(env, k=1, concurrency=1)
+    assert recorder.snapshots == []  # no attempt ever ran
+
+
+async def test_async_tools_factory_fails_closed():
+    # Calling a coroutine function raises nothing -- it returns a coroutine object --
+    # so without an awaitable check an async factory would slip past the guard as
+    # "no tools" and green a run whose MCP was never connected. Async factories are
+    # a supported production pattern, so this is a real front door, and it must
+    # fail closed like the injected-arg case.
+    calls = []
+
+    async def tools_factory():
+        return []
+
+    caller = Agent(model=RecordingFakeModel("async-tools", calls=calls), tools=tools_factory, telemetry=False)
+    with pytest.raises(RuntimeError, match="async"):
+        await arun_rollouts(_real_env(caller), k=2)
+    assert calls == []  # no attempt ever ran
+
+
+async def test_async_tools_factory_hiding_mcp_fails_closed_on_factory_env():
+    recorder = Recorder()
+
+    async def tools_factory():
+        return [MCPTools()]
+
+    def factory():
+        stub = StubRolloutAgent(recorder)
+        stub.tools = tools_factory
+        return stub
+
+    env = Environment(name="async-mcp", tasks=(Task(input="one"),), scorer=CodeScorer(lambda r, e: True), agent=factory)
+    with pytest.raises(RuntimeError, match="async"):
+        await arun_rollouts(env, k=1, concurrency=1)
+    assert recorder.snapshots == []  # no attempt ever ran
+
+
+async def test_zero_arg_tools_factory_without_mcp_still_runs():
+    # A zero-arg factory the guard can resolve to ordinary tools passes; only
+    # unresolvable factories fail closed.
+    def tools_factory():
+        return []
+
+    caller = Agent(model=RecordingFakeModel("zero-arg-tools"), tools=tools_factory, telemetry=False)
+    result = await arun_rollouts(_real_env(caller), k=1, concurrency=1)
+    assert result.pass_rate == 1.0
+
+
 async def test_live_agent_with_composed_mcp_tools_rejected():
     # MCP held by composition (a toolkit wrapping MCPTools) evades a top-level type
     # check; one level of container composition is walked so it is still caught.
@@ -1816,12 +1994,38 @@ async def test_factory_returning_shared_mcp_instance_rejected():
         await arun_rollouts(env, k=2, concurrency=1)
 
 
-async def test_model_less_agent_does_not_trip_policy_guard():
+async def test_model_less_agent_does_not_trip_policy_guard(monkeypatch):
     # The wrong-policy guard reads the attempt's model AFTER _isolate_attempt, because
-    # initialize_agent() installs the default there. A model-less agent must therefore
-    # match the same default the run was fingerprinted against, not fire the guard. If
-    # default-model resolution ever moves later, this test catches it.
+    # initialize_agent() installs the default there. A model-less agent must resolve
+    # to the same default the run was fingerprinted against, not fire the guard: a
+    # misfire is captured as attempt-error data, which is exactly what the completed/
+    # no-error assertions below rule out. The default installer is patched to an
+    # offline recording model -- every consumer imports it from agno.agent._init at
+    # call time -- so the test never constructs the real provider default and can
+    # never make a live call.
+    import agno.agent._init as agent_init
+    from agno.environments.environment import _policy_fingerprint_of
+
+    calls = []
+    fake_default = RecordingFakeModel("default", calls=calls)
+
+    def install_fake_default(agent):
+        if agent.model is None:
+            agent.model = fake_default
+
+    monkeypatch.setattr(agent_init, "set_default_model", install_fake_default)
+
+    # Computed before the run, like the runner's own stamp: the fingerprint sweeps
+    # unknown model attributes, which for this recording model includes the call
+    # sinks the attempt fills.
+    expected_fingerprint = _policy_fingerprint_of(fake_default)
+
     caller = Agent(telemetry=False)
-    env = _real_env(caller)
-    result = await arun_rollouts(env, k=1, concurrency=1)
-    assert result.n_attempts == 1
+    result = await arun_rollouts(_real_env(caller), k=1, concurrency=1)
+
+    assert caller.model is None  # the caller stays model-less; only copies get the default
+    assert [call[0] for call in calls] == ["fake-default"]  # the fake default served the attempt
+    attempt = result.task_results[0].attempts[0]
+    assert attempt.stop_reason == StopReason.completed
+    assert attempt.error is None  # the guard did not fire (guard failures land here)
+    assert result.policy_fingerprint == expected_fingerprint
