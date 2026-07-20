@@ -8,7 +8,7 @@ import pytest
 
 from agno.agent import Agent
 from agno.environments import Environment, FingerprintError, Task
-from agno.environments.env import _policy_fingerprint_of as policy_fingerprint_of
+from agno.environments.environment import _policy_fingerprint_of as policy_fingerprint_of
 from agno.models.openai import OpenAIChat
 from agno.scorer import CodeScorer, JudgeScorer
 
