@@ -10,6 +10,13 @@ without importing scorer.
 """
 
 from agno.environments._engine import AttemptResult, StopReason
+from agno.environments.calibration import (
+    CalibrationReport,
+    acalibrate,
+    acalibrate_result,
+    calibrate,
+    calibrate_result,
+)
 from agno.environments.environment import Environment, Task
 from agno.environments.exporters import ExportReport, ato_sft_jsonl, to_sft_jsonl
 from agno.environments.improvement import ImprovementLoop, IterationReport, RewardHackReport
@@ -18,6 +25,7 @@ from agno.scorer import FingerprintError, MismatchError
 
 __all__ = [
     "AttemptResult",
+    "CalibrationReport",
     "Environment",
     "EnvironmentDiff",
     "FingerprintError",
@@ -30,8 +38,12 @@ __all__ = [
     "ExportReport",
     "StopReason",
     "TaskResult",
+    "acalibrate",
+    "acalibrate_result",
     "arun_rollouts",
     "ato_sft_jsonl",
+    "calibrate",
+    "calibrate_result",
     "run_rollouts",
     "to_sft_jsonl",
 ]
