@@ -62,7 +62,6 @@ customer_profile_agent = Agent(
     markdown=True,
     instructions="You are a customer profile agent. You are asked to get customer profiles.",
     tools=[get_customer_profile],
-    debug_mode=True,
 )
 
 customer_team = Team(

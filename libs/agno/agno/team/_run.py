@@ -5540,6 +5540,8 @@ def _route_requirements_to_members(
             from agno.team._tools import _propagate_member_pause
 
             _propagate_member_pause(run_response, member, member_response)
+            # Persist paused member run so continue_run can find it after session reload
+            session.upsert_run(member_response)
         else:
             # Update the member's run in the team session so its status is persisted
             # (member agents skip save_session when team_id is set)
@@ -5677,6 +5679,8 @@ def _route_requirements_to_members_stream(
             from agno.team._tools import _propagate_member_pause
 
             _propagate_member_pause(run_response, member, member_response)
+            # Persist paused member run so continue_run can find it after session reload
+            session.upsert_run(member_response)
         else:
             session.upsert_run(member_response)
             content = getattr(member_response, "content", None) or "Task completed"
@@ -5774,6 +5778,8 @@ async def _aroute_requirements_to_members(
             from agno.team._tools import _propagate_member_pause
 
             _propagate_member_pause(run_response, member, member_response)
+            # Persist paused member run so continue_run can find it after session reload
+            session.upsert_run(member_response)
             return None
         else:
             # Update the member's run in the team session so its status is persisted
@@ -5920,6 +5926,8 @@ async def _aroute_requirements_to_members_stream(
             from agno.team._tools import _propagate_member_pause
 
             _propagate_member_pause(run_response, member, member_response)
+            # Persist paused member run so continue_run can find it after session reload
+            session.upsert_run(member_response)
         else:
             session.upsert_run(member_response)
             content = getattr(member_response, "content", None) or "Task completed"

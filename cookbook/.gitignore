@@ -1,2 +1,7 @@
 data/
 docs/examples/
+
+# data_labeling numbered folders commit hand-written fixtures in data/;
+# generated output stays ignored via data/generated/
+!data_labeling/_*/data/
+data_labeling/_*/data/generated/
