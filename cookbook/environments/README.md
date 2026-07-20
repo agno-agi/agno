@@ -118,6 +118,18 @@ cookbook/environments/
 - [`_28_ci_gating/`](_28_ci_gating/): turn `summary()` and per-task floors into a
   process exit decision suitable for CI.
 
+### Closing the loop
+
+Everything above verifies an agent and exports what it got right. These two train on
+that export and keep the reward honest while doing it.
+
+- [`_29_expert_iteration/`](_29_expert_iteration/): the full round — sample the base,
+  export the learning zone, fine-tune, re-measure, diff. Offline by default; runs a
+  real Tinker fine-tune when `TINKER_API_KEY` is set.
+- [`_30_reward_calibration/`](_30_reward_calibration/): `calibrate` a scorer against
+  labelled traces, and read the per-round train-vs-audit gap that exposes reward
+  hacking. Both files are offline.
+
 ## Running a cookbook
 
 From the Agno repository root, create the demo environment if needed:
