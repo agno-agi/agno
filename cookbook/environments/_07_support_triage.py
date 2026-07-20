@@ -15,8 +15,7 @@ learning zone called out.
 """
 
 from agno.agent import Agent
-from agno.environments import Environment, Task, run_rollouts
-from agno.environments import to_sft_jsonl
+from agno.environments import Environment, Task, run_rollouts, to_sft_jsonl
 from agno.models.openai import OpenAIResponses
 from agno.scorer import CodeScorer
 from pydantic import BaseModel
@@ -53,12 +52,36 @@ env = Environment(
     name="support-ticket-triage",
     agent=agent,
     tasks=(
-        Task(id="double-charge", input="I was charged twice for my July invoice. Refund one.", expected="billing"),
-        Task(id="export-bug", input="The export button does nothing; the console shows a TypeError.", expected="bug"),
-        Task(id="dark-mode", input="Please add a dark mode -- half my team works nights.", expected="feature_request"),
-        Task(id="locked-out", input="Can't log in since this morning and the reset email never arrives.", expected="account_access"),
-        Task(id="crash-charge", input="The app crashed mid-payment and now I see two pending charges.", expected="billing"),
-        Task(id="slow-then-refund", input="Reports take 30s to load and I want a refund for the trouble.", expected="billing"),
+        Task(
+            id="double-charge",
+            input="I was charged twice for my July invoice. Refund one.",
+            expected="billing",
+        ),
+        Task(
+            id="export-bug",
+            input="The export button does nothing; the console shows a TypeError.",
+            expected="bug",
+        ),
+        Task(
+            id="dark-mode",
+            input="Please add a dark mode -- half my team works nights.",
+            expected="feature_request",
+        ),
+        Task(
+            id="locked-out",
+            input="Can't log in since this morning and the reset email never arrives.",
+            expected="account_access",
+        ),
+        Task(
+            id="crash-charge",
+            input="The app crashed mid-payment and now I see two pending charges.",
+            expected="billing",
+        ),
+        Task(
+            id="slow-then-refund",
+            input="Reports take 30s to load and I want a refund for the trouble.",
+            expected="billing",
+        ),
     ),
     # Compare the typed field, not a string: cookbook _01 shows why this matters.
     scorer=CodeScorer(lambda run, expected: run.content.category == expected),
@@ -78,4 +101,6 @@ if __name__ == "__main__":
     # Keep only the passing attempts on the learnable tasks -- a supervised
     # fine-tuning file, no extra labelling.
     report = to_sft_jsonl(zone, "data/generated/triage_sft.jsonl")
-    print(f"\nexported {report.n_written} passing trajectories -> data/generated/triage_sft.jsonl")
+    print(
+        f"\nexported {report.n_written} passing trajectories -> data/generated/triage_sft.jsonl"
+    )

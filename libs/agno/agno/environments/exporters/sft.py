@@ -142,7 +142,9 @@ def to_sft_jsonl(result: EnvironmentRunResult, path: Union[str, Path], *, only_p
     return report
 
 
-async def ato_sft_jsonl(result: EnvironmentRunResult, path: Union[str, Path], *, only_passed: bool = True) -> ExportReport:
+async def ato_sft_jsonl(
+    result: EnvironmentRunResult, path: Union[str, Path], *, only_passed: bool = True
+) -> ExportReport:
     """Async twin of to_sft_jsonl."""
     return await asyncio.to_thread(to_sft_jsonl, result, path, only_passed=only_passed)
 

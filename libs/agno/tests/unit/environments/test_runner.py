@@ -9,7 +9,15 @@ import pytest
 from agno.agent import Agent
 from agno.agent._utils import SHARED_BY_REFERENCE_FIELDS
 from agno.db.in_memory import InMemoryDb
-from agno.environments import Environment, EnvironmentRunResult, Task, StopReason, TaskResult, arun_rollouts, run_rollouts
+from agno.environments import (
+    Environment,
+    EnvironmentRunResult,
+    StopReason,
+    Task,
+    TaskResult,
+    arun_rollouts,
+    run_rollouts,
+)
 from agno.environments._engine import AttemptResult
 from agno.environments.runner import _ISOLATE_FIELD_ACTIONS
 from agno.models.base import Model
@@ -477,15 +485,39 @@ async def test_scorer_exception_captured():
 
 
 async def test_error_storm_stops_early():
-    # A uniform misconfiguration is not data about the agent: first `concurrency`
-    # completions all errored with one exception type -> stop scheduling, drain, and
-    # return the partial result.
+    # A uniform misconfiguration is not data about the agent: a single-task run whose
+    # opening completions (past a small sample floor) all errored with one exception
+    # type stops scheduling, drains, and returns the partial result. Single-task only:
+    # a multi-task run never globally aborts (test_error_storm_ignores_multi_task_runs).
+    env = _stub_env(tasks=(Task(input="one"),), error=RuntimeError("bad api key"))
+    result = await arun_rollouts(env, k=8, concurrency=2)
+
+    assert result.stopped_early == "error-storm"
+    assert result.n_attempts < 8  # the unscheduled attempts are absent
+    assert result.summary()["stopped_early"] == "error-storm"
+
+
+async def test_error_storm_ignores_multi_task_runs():
+    # A multi-task run must never globally abort. Scheduling is input-major, so a
+    # front-loaded failing task would otherwise skip healthy tasks and make
+    # completeness depend on task order. Even a uniformly failing multi-task env runs
+    # every attempt rather than aborting.
     env = _stub_env(tasks=(Task(input="one"), Task(input="two")), error=RuntimeError("bad api key"))
     result = await arun_rollouts(env, k=4, concurrency=2)
 
-    assert result.stopped_early == "error-storm"
-    assert result.n_attempts == 2  # the unscheduled attempts are absent
-    assert result.summary()["stopped_early"] == "error-storm"
+    assert result.stopped_early is None
+    assert result.n_attempts == 8  # all attempts ran; no global abort
+
+
+async def test_error_storm_needs_sample_floor():
+    # A single error must not trip the storm: below the floor there is not yet enough
+    # signal that the failure is uniform rather than a flaky first sample.
+    recorder = Recorder()
+    env = _stub_env(recorder, tasks=(Task(input="one"),), error_on_calls={0})
+    result = await arun_rollouts(env, k=8, concurrency=1)
+
+    assert result.stopped_early is None
+    assert result.n_attempts == 8  # one early error does not abort the run
 
 
 async def test_partial_errors_do_not_stop():
@@ -755,11 +787,11 @@ async def test_error_storm_survives_grid_failure(monkeypatch):
     monkeypatch.setattr(runner_module, "LiveGrid", RenderBugGrid)
     monkeypatch.setattr("rich.console.Console.is_terminal", property(lambda self: True))
 
-    env = _stub_env(tasks=(Task(input="one"), Task(input="two")), error=RuntimeError("bad api key"))
-    result = await arun_rollouts(env, k=4, concurrency=2)
+    env = _stub_env(tasks=(Task(input="one"),), error=RuntimeError("bad api key"))
+    result = await arun_rollouts(env, k=8, concurrency=2)
 
     assert result.stopped_early == "error-storm"
-    assert result.n_attempts == 2
+    assert result.n_attempts < 8
 
 
 async def test_error_storm_uses_structured_error_type(monkeypatch):
@@ -777,11 +809,11 @@ async def test_error_storm_uses_structured_error_type(monkeypatch):
 
     env = Environment(
         name="storm",
-        tasks=(Task(input="one"), Task(input="two")),
+        tasks=(Task(input="one"),),
         scorer=CodeScorer(echo_scorer),
         agent=varying_error_factory,
     )
-    result = await arun_rollouts(env, k=4, concurrency=2)
+    result = await arun_rollouts(env, k=8, concurrency=2)
     assert result.stopped_early == "error-storm"
 
 
@@ -967,9 +999,9 @@ async def test_error_storm_detected_by_error_type_on_real_agent():
     # 8 attempts with stopped_early=None.
     env = _real_env(
         Agent(model=VaryingErrorModel(), telemetry=False),
-        tasks=(Task(input="one"), Task(input="two")),
+        tasks=(Task(input="one"),),
     )
-    result = await arun_rollouts(env, k=4, concurrency=2)
+    result = await arun_rollouts(env, k=8, concurrency=2)
 
     assert result.stopped_early == "error-storm"
     attempts = [attempt for task_result in result.task_results for attempt in task_result.attempts]
@@ -1229,9 +1261,68 @@ async def test_factory_env_with_mcp_tools_not_rejected():
         stub.tools = [MCPTools()]
         return stub
 
-    env = Environment(name="mcp-factory", tasks=(Task(input="one"),), scorer=CodeScorer(lambda r, e: True), agent=factory)
+    env = Environment(
+        name="mcp-factory", tasks=(Task(input="one"),), scorer=CodeScorer(lambda r, e: True), agent=factory
+    )
     result = await arun_rollouts(env, k=1, concurrency=1)
     assert result.n_attempts == 1
+
+
+async def test_live_agent_with_callable_tools_factory_mcp_rejected():
+    # A callable tools-factory hides MCP from a top-level list check; the guard resolves
+    # it and rejects, so a rollout can never silently green a toolless run (the factory
+    # tools resolve per attempt into run_context and the unconnected MCP is dropped).
+    shared = MCPTools()
+    caller = Agent(model=RecordingFakeModel("mcp"), tools=lambda: [shared], telemetry=False)
+    with pytest.raises(RuntimeError, match="MCPTools"):
+        await arun_rollouts(_real_env(caller), k=1)
+
+
+async def test_factory_env_with_callable_tools_factory_mcp_rejected():
+    # Even a factory env must not hide MCP behind a callable tools factory -- concrete
+    # tools=[MCPTools()] is the supported pattern, a callable is not.
+    recorder = Recorder()
+    shared = MCPTools()
+
+    def factory():
+        stub = StubRolloutAgent(recorder)
+        stub.tools = lambda: [shared]
+        return stub
+
+    env = Environment(
+        name="mcp-callable", tasks=(Task(input="one"),), scorer=CodeScorer(lambda r, e: True), agent=factory
+    )
+    with pytest.raises(RuntimeError, match="MCPTools"):
+        await arun_rollouts(env, k=1, concurrency=1)
+
+
+async def test_live_agent_with_composed_mcp_tools_rejected():
+    # MCP held by composition (a toolkit wrapping MCPTools) evades a top-level type
+    # check; one level of container composition is walked so it is still caught.
+    class WrapperToolkit:
+        def __init__(self):
+            self.tools = [MCPTools()]
+
+    caller = Agent(model=RecordingFakeModel("mcp"), tools=[WrapperToolkit()], telemetry=False)
+    with pytest.raises(RuntimeError, match="MCPTools"):
+        await arun_rollouts(_real_env(caller), k=1)
+
+
+async def test_opaque_learning_store_in_standard_slot_dropped():
+    # An opaque store in a standard slot satisfies the LearningStore protocol but
+    # carries no .config, so isolation cannot strip its write tools -- it must be
+    # dropped loudly, not shallow-copied with its writes (and caller state) intact.
+    from agno.environments.runner import _read_only_learning_machine
+    from agno.learn import LearningMachine
+
+    class OpaqueStore:
+        def get_tools(self, **kwargs):
+            return [lambda value: None]
+
+    machine = LearningMachine()
+    machine.user_profile = OpaqueStore()
+    isolated = _read_only_learning_machine(machine, source_db=InMemoryDb())
+    assert isolated.user_profile is False
 
 
 async def test_live_agent_with_nested_mcp_tools_rejected_at_run_start():

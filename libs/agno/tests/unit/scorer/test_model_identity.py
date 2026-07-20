@@ -87,7 +87,11 @@ def test_judge_digest_covers_enumerated_params_and_prompts():
 # Drift pins: a new upstream field fails here until it is classified
 # ---------------------------------------------------------------------------
 
+# Message-role fields (assistant_message_role, role_map, tool_message_role) are
+# enumerated policy: they relabel every message's wire role, which changes the
+# sampled distribution -- see the note on _LOCAL_BEHAVIOR_FIELDS in agno.scorer._model.
 _PINNED_OPENAI_RESPONSES_FIELDS = [
+    "assistant_message_role",
     "background",
     "extra_body",
     "include",
@@ -98,15 +102,18 @@ _PINNED_OPENAI_RESPONSES_FIELDS = [
     "reasoning_effort",
     "reasoning_summary",
     "request_params",
+    "role_map",
     "service_tier",
     "strict_output",
     "temperature",
+    "tool_message_role",
     "top_p",
     "truncation",
     "verbosity",
 ]
 
 _PINNED_OPENAI_CHAT_FIELDS = [
+    "assistant_message_role",
     "audio",
     "extra_body",
     "frequency_penalty",
@@ -118,11 +125,13 @@ _PINNED_OPENAI_CHAT_FIELDS = [
     "presence_penalty",
     "reasoning_effort",
     "request_params",
+    "role_map",
     "seed",
     "service_tier",
     "stop",
     "strict_output",
     "temperature",
+    "tool_message_role",
     "top_logprobs",
     "top_p",
     "verbosity",

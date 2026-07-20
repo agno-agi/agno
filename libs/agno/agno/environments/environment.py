@@ -195,9 +195,7 @@ def _sha256(payload: Any) -> str:
 def _scorer_digest(scorer: Scorer) -> str:
     digest = getattr(scorer, "digest", None)
     if digest is None or not callable(digest):
-        raise FingerprintError(
-            f"scorer {type(scorer).__name__} has no digest(); the env_fingerprint degrades to None"
-        )
+        raise FingerprintError(f"scorer {type(scorer).__name__} has no digest(); the env_fingerprint degrades to None")
     return digest()
 
 
@@ -272,6 +270,10 @@ def _env_fingerprint_of(env: "Environment", agent: Agent, model: Optional[Model]
             ],
             "scorer": _scorer_digest(env.scorer),
             "tools": _declared_tool_schemas(agent),
+            # tool_choice shapes which of the declared tools the model may call
+            # (none/auto/required/a named tool), so two envs with identical tools but
+            # different tool_choice are different environments.
+            "tool_choice": getattr(agent, "tool_choice", None),
             "instructions": _prompt_component(getattr(agent, "instructions", None), "instructions"),
             "description": _prompt_component(getattr(agent, "description", None), "description"),
             "system_message": _prompt_component(getattr(agent, "system_message", None), "system_message"),

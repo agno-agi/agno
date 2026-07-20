@@ -132,6 +132,16 @@ def test_model_level_prompt_is_env_not_policy():
     assert prompted.policy_fingerprint() == plain.policy_fingerprint()
 
 
+def test_tool_choice_is_env_not_policy():
+    # tool_choice shapes which of the declared tools the model may call, so two envs
+    # with identical tools but different tool_choice are different environments -- and
+    # it is a prompt/request-shaping field, not model sampling identity.
+    auto = _env(agent=Agent(model=OpenAIChat(id="gpt-5-mini"), tools=[search_tool], tool_choice="auto"))
+    none = _env(agent=Agent(model=OpenAIChat(id="gpt-5-mini"), tools=[search_tool], tool_choice="none"))
+    assert auto.env_fingerprint() != none.env_fingerprint()
+    assert auto.policy_fingerprint() == none.policy_fingerprint()
+
+
 def test_fingerprint_does_not_mutate_agent():
     env = _env()
     before = env.agent.__dict__.get("_tool_instructions")

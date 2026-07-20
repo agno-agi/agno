@@ -181,9 +181,7 @@ def test_tool_call_scorer_arguments_only_strict_mode_satisfiable():
 def test_tool_call_scorer_rejects_still_paused():
     # A still-paused call (awaiting confirmation, never resumed) has tool_call_error=None
     # but is_paused=True -- it never executed, so it must not satisfy the expectation.
-    paused = ToolExecution(
-        tool_name="delete_file", requires_confirmation=True, confirmed=None, tool_call_error=None
-    )
+    paused = ToolExecution(tool_name="delete_file", requires_confirmation=True, confirmed=None, tool_call_error=None)
     assert paused.is_paused is True
 
     result = ToolCallScorer(["delete_file"]).score(_run_with(paused))

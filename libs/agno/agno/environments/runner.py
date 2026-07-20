@@ -598,7 +598,19 @@ def _read_only_learning_machine(machine: Any, source_db: Any) -> Any:
         if value is True:
             setattr(machine_copy, field_name, _writes_off_learning_config(config_type()))
         elif value and not isinstance(value, bool):
-            setattr(machine_copy, field_name, _writes_off_learning_config(value))
+            # A config, or a built-in store carrying one (.config), can have its write
+            # flags stripped. An opaque LearningStore (the protocol accepts one in this
+            # slot) has neither -- isolation cannot neuter write tools it does not
+            # understand, so a rollout would keep the store's write tools and share its
+            # state by reference. Drop it loudly, exactly like custom_stores below; its
+            # per-attempt reads are severed either way.
+            if isinstance(value, config_type) or getattr(value, "config", None) is not None:
+                setattr(machine_copy, field_name, _writes_off_learning_config(value))
+            else:
+                log_warning(
+                    f"rollout isolation cannot make an opaque {field_name} learning store read-only; dropping it"
+                )
+                setattr(machine_copy, field_name, False)
 
     if getattr(machine_copy, "custom_stores", None):
         log_warning("rollout isolation cannot make custom learning stores read-only; dropping them")
@@ -626,24 +638,48 @@ def _field_names_of(agent: Any) -> List[str]:
     return list(vars(agent))
 
 
-def _mcp_tool_names(agent: Any, _seen: Optional[Set[int]] = None) -> List[str]:
+def _is_mcp_tool(tool: Any) -> bool:
+    mro = getattr(type(tool), "__mro__", ())
+    return any(c.__name__ in ("MCPTools", "MultiMCPTools") for c in mro)
+
+
+def _mcp_tool_names(agent: Any, _seen: Optional[Set[int]] = None, *, callable_only: bool = False) -> List[str]:
     """MCP tool class names on this agent or any nested agent the isolation walk
     reaches: deep_copy shares a reasoning agent's tools by reference exactly like
-    top-level ones, so a nested MCPTools corrupts attempts the same way."""
+    top-level ones, so a nested MCPTools corrupts attempts the same way.
+
+    A callable tools-factory is resolved here before inspection: production resolves it
+    per attempt into run_context (not agent.tools), so connect_mcp_tools never connects
+    it and aget_tools silently drops the unconnected MCP -- the agent runs toolless and
+    the rollout greens a run that never had its tools. One level of container
+    composition is walked so a toolkit wrapping MCPTools does not evade the top-level
+    type check. With callable_only, only MCP hidden behind a callable factory is
+    reported: a concrete tools=[MCPTools(...)] list is the supported per-attempt-factory
+    pattern (each attempt owns a fresh connection) and is left alone."""
     seen = _seen if _seen is not None else set()
     if id(agent) in seen:
         return []
     seen.add(id(agent))
     names: List[str] = []
     tools = getattr(agent, "tools", None)
-    if isinstance(tools, (list, tuple)):
+    tools_is_callable = callable(tools)
+    if callable(tools):
+        try:
+            tools = tools()
+        except Exception:
+            tools = None
+    if (tools_is_callable or not callable_only) and isinstance(tools, (list, tuple)):
         for tool in tools:
-            mro = getattr(type(tool), "__mro__", ())
-            if any(c.__name__ in ("MCPTools", "MultiMCPTools") for c in mro):
+            if _is_mcp_tool(tool):
                 names.append(type(tool).__name__)
+                continue
+            for attr in ("tools", "functions", "toolkits"):
+                inner = getattr(tool, attr, None)
+                if isinstance(inner, (list, tuple)):
+                    names.extend(type(sub).__name__ for sub in inner if _is_mcp_tool(sub))
     reasoning_agent = getattr(agent, "reasoning_agent", None)
     if reasoning_agent is not None:
-        names.extend(_mcp_tool_names(reasoning_agent, _seen=seen))
+        names.extend(_mcp_tool_names(reasoning_agent, _seen=seen, callable_only=callable_only))
     return names
 
 
@@ -933,18 +969,35 @@ async def arun_rollouts(
                 f"env.agent factory raised during run-start construction, before any attempt ran: {exc}"
             ) from exc
         source_agent = _validated_agent(constructed)
+        # Even a factory env must not hide MCP behind a CALLABLE tools factory: that
+        # resolves per attempt into run_context, never connects, and is silently
+        # dropped -- the attempt runs toolless and the rollout greens a run that never
+        # had its tools. Concrete tools=[MCPTools(...)] built fresh per attempt is fine
+        # and not flagged (callable_only).
+        hidden_mcp = _mcp_tool_names(source_agent, callable_only=True)
+        if hidden_mcp:
+            raise RuntimeError(
+                f"env.agent builds an agent whose tools are a callable factory hiding {hidden_mcp[0]}: "
+                "that MCP is resolved per run but never connected, so the attempt runs with none of "
+                "its tools and the rollout would report success for a toolless run. Put the MCP in a "
+                "concrete list -- agent=lambda: Agent(..., tools=[MCPTools(...)]) -- so each attempt "
+                "owns and connects its own."
+            )
     else:
         source_agent = env.agent
-        # Live path only: a factory constructs fresh MCP tools per attempt, which is
-        # exactly the workaround this error names. Raised before any connection or
-        # attempt exists.
+        # Live path: a factory constructs fresh MCP tools per attempt, which is exactly
+        # the workaround this error names. _mcp_tool_names resolves callable tool
+        # factories and walks one level of composition, so an MCP held by reference,
+        # behind a lambda, or wrapped in a toolkit is all caught. Raised before any
+        # connection or attempt exists.
         mcp_names = _mcp_tool_names(source_agent)
         if mcp_names:
             raise RuntimeError(
-                f"env.agent holds {mcp_names[0]} by reference: every attempt would share one MCP "
-                "session, and concurrent attempts connect and close that shared session mid-run, "
-                "losing the whole batch. Use a factory env -- agent=lambda: Agent(..., "
-                "tools=[MCPTools(...)]) -- so each attempt owns its connection."
+                f"env.agent holds {mcp_names[0]} (directly, behind a callable tools factory, or wrapped "
+                "in a toolkit): every attempt would share one MCP session -- concurrent attempts connect "
+                "and close it mid-run, losing the batch -- or, behind a factory, never connect it at all. "
+                "Use a factory env -- agent=lambda: Agent(..., tools=[MCPTools(...)]) -- so each attempt "
+                "owns its connection."
             )
 
     # The stamped policy fingerprint is computed from the EFFECTIVE model actually
@@ -980,14 +1033,21 @@ async def arun_rollouts(
     finished: List[AttemptResult] = []
     storm = {"stop": False}
 
+    # The storm check aborts a run whose opening completions all failed identically (a
+    # uniform misconfiguration -- a bad key, an unreachable base_url). It is confined to
+    # single-task runs: scheduling is input-major, so in a multi-task run the opening
+    # cohort is one task, and a single front-loaded failing task would otherwise abort
+    # healthy tasks that never got to run -- making completeness depend on task order. A
+    # floor keeps a tiny concurrency from aborting on the first error or two before there
+    # is enough signal that the failure is uniform, not a flaky first sample.
+    storm_floor = 4
+    storm_trip_at = min(k, max(concurrency, storm_floor)) if len(selected) == 1 else 0
+
     def check_error_storm(attempt: AttemptResult) -> None:
-        # A uniform misconfiguration is not data about the agent: when the first
-        # `concurrency` completions all errored with one exception type before any
-        # success, stop scheduling and return the partial result.
         finished.append(attempt)
-        if storm["stop"] or len(finished) != concurrency:
+        if storm["stop"] or storm_trip_at == 0 or len(finished) != storm_trip_at:
             return
-        first = finished[:concurrency]
+        first = finished[:storm_trip_at]
         if not all(candidate.stop_reason == StopReason.error for candidate in first):
             return
         # The structured error_type when the engine knows the exception class; the

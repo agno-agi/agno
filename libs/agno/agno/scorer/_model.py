@@ -40,12 +40,15 @@ _INFRASTRUCTURE_FIELDS = frozenset(
 # config would hash differently before and after its first run.
 _RUNTIME_FIELDS = frozenset({"model_type"})
 
-# Local client behavior -- retries, response cache, display names, message-role
-# plumbing, capability flags -- plus provider-side bookkeeping (metadata request
-# tags, store, the abuse-attribution user id). None of it changes the sampled
-# distribution. service_tier is NOT here: it routes requests to different
-# processing infrastructure and is not provably output-neutral, so it stays
-# enumerated.
+# Local client behavior -- retries, response cache, display names, capability
+# flags -- plus provider-side bookkeeping (metadata request tags, store, the
+# abuse-attribution user id). None of it changes the sampled distribution.
+# service_tier is NOT here: it routes requests to different processing
+# infrastructure and is not provably output-neutral, so it stays enumerated.
+# Message-role fields (role_map, tool_message_role, assistant_message_role) are NOT
+# here either: providers relabel every message's wire role through them (e.g. a
+# system prompt sent as a user turn), which changes the sampled distribution, so
+# they are policy identity and stay enumerated.
 _LOCAL_BEHAVIOR_FIELDS = frozenset(
     {
         "retries",
@@ -60,9 +63,6 @@ _LOCAL_BEHAVIOR_FIELDS = frozenset(
         "background_max_wait",
         "vector_store_name",
         "collect_metrics_on_completion",
-        "tool_message_role",
-        "assistant_message_role",
-        "role_map",
         "name",
         "supports_native_structured_outputs",
         "supports_json_schema_outputs",
