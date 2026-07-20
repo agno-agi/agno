@@ -99,7 +99,7 @@ class Environment:
         declared_ids: set = set()
         for index, task in enumerate(self.tasks):
             if not isinstance(task, Task):
-                raise TypeError(f"tasks[{index}] must be an Task, got {type(task).__name__}")
+                raise TypeError(f"tasks[{index}] must be a Task, got {type(task).__name__}")
             if task.id is not None:
                 # A duplicated id makes diff() silently pair rows with the wrong
                 # baseline task; positional collisions with auto-ids are caught at
