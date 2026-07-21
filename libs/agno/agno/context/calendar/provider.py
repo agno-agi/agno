@@ -21,6 +21,9 @@ tools; writes get CRUD plus lookup tools.
 2. OAuth (interactive, for personal Calendar):
    - Set ``GOOGLE_CLIENT_ID``, ``GOOGLE_CLIENT_SECRET``, ``GOOGLE_PROJECT_ID``
    - Opens browser on first use, caches token to ``calendar_token.json``
+   - On headless servers pass ``auth=AuthConfig(interactive=False)`` (or set
+     ``GOOGLE_OAUTH_NONINTERACTIVE=1``): expired credentials then raise a clear
+     error instead of blocking on a browser that never opens
 """
 
 from __future__ import annotations
