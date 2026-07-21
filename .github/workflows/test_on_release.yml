@@ -7,7 +7,7 @@ on:
     branches:
       - "*release*" # Run on release-* format
       - "release/*" # Run on release/1.2.3 branch format
-      - "feat/v2.7" # Release-bound branch: full matrix on every push
+      - "feat/environments"
   workflow_dispatch: # Allows manual triggering
     inputs:
       branch:

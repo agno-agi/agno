@@ -7,7 +7,7 @@ from types import SimpleNamespace
 import pytest
 
 from agno.eval import suite
-from agno.eval.suite import Case, JudgeMode, SuiteResult, acli, arun_cases, cli, run_cases
+from agno.eval.suite import Case, CaseResult, JudgeMode, SuiteResult, acli, arun_cases, cli, run_cases
 from agno.models.response import ToolExecution
 from agno.run.agent import RunErrorEvent, RunOutput, ToolCallCompletedEvent, ToolCallStartedEvent
 from agno.run.base import RunStatus
@@ -879,6 +879,9 @@ def test_to_dict_matches_contract(monkeypatch):
         "skipped",
         "passed",
         "error",
+        "score_value",
+        "score_passed",
+        "score_reason",
     ]
     assert case_payload["name"] == "capital_of_france"
     assert case_payload["agent_id"] == "geo-agent"
@@ -896,6 +899,9 @@ def test_to_dict_matches_contract(monkeypatch):
     assert case_payload["skipped"] is False
     assert case_payload["passed"] is True
     assert case_payload["error"] is None
+    assert case_payload["score_value"] is None  # no scorer configured
+    assert case_payload["score_passed"] is None
+    assert case_payload["score_reason"] is None
     json.dumps(payload)
 
 
@@ -1293,3 +1299,266 @@ def test_cli_default_timeout_parameter(monkeypatch, capsys):
 
     assert exit_code == 1
     assert "timeout: exceeded 1s" in capsys.readouterr().out
+
+
+# ---------------------------------------------------------------------------
+# The scorer seam (2.8.0)
+# ---------------------------------------------------------------------------
+
+
+class StubScorer:
+    """agno.scorer protocol stub: records (run, expected) calls, returns a fixed Score."""
+
+    def __init__(self, score=None, error=None, delay=0.0):
+        from agno.scorer import Score
+
+        self._score = score if score is not None else Score(value=1.0, passed=True, reason="stub ok")
+        self._error = error
+        self._delay = delay
+        self.calls = []
+
+    async def ascore(self, run, expected=None):
+        self.calls.append((run, expected))
+        if self._delay:
+            await asyncio.sleep(self._delay)
+        if self._error is not None:
+            raise self._error
+        return self._score
+
+
+def test_case_accepts_scorer_only(monkeypatch):
+    # A Case with scorer= and neither criteria nor expected_tool_calls constructs and
+    # runs; the scorer receives (result.response, case.expected).
+    judge_instances, reliability_instances = _install_fake_evals(monkeypatch)
+    output = _output(content="42")
+    scorer = StubScorer()
+    case = Case(name="scored", agent=StubAgent(output=output), input="q", scorer=scorer, expected=42)
+
+    suite_result = run_cases([case])
+    result = suite_result.results[0]
+
+    assert result.score is not None
+    assert result.score.passed is True
+    assert result.passed is True
+    assert result.judge_passed is None
+    assert result.reliability_passed is None
+    assert judge_instances == []
+    assert reliability_instances == []
+    assert scorer.calls == [(output, 42)]
+    case_payload = suite_result.to_dict()["cases"][0]
+    assert case_payload["score_value"] == 1.0
+    assert case_payload["score_passed"] is True
+    assert case_payload["score_reason"] == "stub ok"
+
+
+def test_case_still_rejects_no_checks():
+    with pytest.raises(ValueError, match="has no checks"):
+        Case(name="none", agent=StubAgent(), input="q")
+
+
+def test_failing_score_fails_the_case(monkeypatch):
+    from agno.scorer import Score
+
+    _install_fake_evals(monkeypatch)
+    scorer = StubScorer(score=Score(value=0.2, passed=False, reason="wrong"))
+
+    result = run_cases([Case(name="s", agent=StubAgent(), input="q", scorer=scorer)]).results[0]
+
+    assert result.score is not None
+    assert result.score.passed is False
+    assert result.passed is False
+
+
+def test_case_scorer_error_becomes_case_error(monkeypatch):
+    _install_fake_evals(monkeypatch)
+    scorer = StubScorer(error=ValueError("scorer broke"))
+
+    result = run_cases([Case(name="s", agent=StubAgent(), input="q", scorer=scorer)]).results[0]
+
+    assert result.error is not None
+    assert result.error.startswith("scorer: ValueError")
+    assert result.score is None
+    assert result.passed is False
+
+
+def test_case_scorer_inside_timeout_and_gradeable_only(monkeypatch):
+    _install_fake_evals(monkeypatch)
+
+    # Inside the case timeout, exactly as the judge: a slow scorer times the case out.
+    slow = StubScorer(delay=5.0)
+    timed = run_cases([Case(name="slow", agent=StubAgent(), input="q", scorer=slow, timeout_seconds=1)]).results[0]
+    assert timed.timed_out is True
+    assert timed.error == "timeout: exceeded 1s"
+    assert timed.score is None
+
+    # Gradeable runs only: on a paused run the scorer is skipped, not failed.
+    skipped_scorer = StubScorer()
+    paused_output = _output(content="hitl boilerplate", status=RunStatus.paused)
+    paused = run_cases(
+        [Case(name="paused", agent=StubAgent(output=paused_output), input="q", scorer=skipped_scorer)]
+    ).results[0]
+    assert skipped_scorer.calls == []
+    assert paused.score is None
+    assert "scorer:" not in (paused.error or "")
+
+
+def test_suite_to_dict_is_additive(monkeypatch):
+    # With no scorer configured the payload is byte-identical except for the three new
+    # null keys at the end of the case payload. This is the frozen CI contract.
+    _install_fake_evals(monkeypatch)
+
+    payload = run_cases([_make_case()]).to_dict()
+
+    case_payload = payload["cases"][0]
+    keys = list(case_payload.keys())
+    assert keys[-3:] == ["score_value", "score_passed", "score_reason"]
+    assert keys[:-3] == [
+        "name",
+        "agent_id",
+        "team_id",
+        "tags",
+        "session_id",
+        "duration_seconds",
+        "judge_passed",
+        "judge_reason",
+        "judge_score",
+        "reliability_passed",
+        "output",
+        "tools_called",
+        "timed_out",
+        "skipped",
+        "passed",
+        "error",
+    ]
+    assert case_payload["score_value"] is None
+    assert case_payload["score_passed"] is None
+    assert case_payload["score_reason"] is None
+    json.dumps(payload)
+
+
+def test_setup_teardown_ordering_unchanged(monkeypatch):
+    # The scorer seam must not move the lifecycle: setup runs OUTSIDE the timeout,
+    # teardown runs in the finally (even on error), and teardown is skipped when
+    # setup raised.
+    _install_fake_evals(monkeypatch)
+    events = []
+
+    async def slow_setup():
+        await asyncio.sleep(1.5)
+        events.append("setup")
+        return "ctx"
+
+    def teardown(context, result):
+        events.append(("teardown", context, result.timed_out))
+
+    case = Case(
+        name="ordering",
+        agent=StubAgent(),
+        input="q",
+        criteria="c",
+        timeout_seconds=1,
+        setup=slow_setup,
+        teardown=teardown,
+    )
+    result = run_cases([case]).results[0]
+    # Setup slept past the case timeout and the case still did not time out.
+    assert result.timed_out is False
+    assert result.passed is True
+    assert events == ["setup", ("teardown", "ctx", False)]
+
+    # Teardown still runs when the agent errors.
+    events.clear()
+    erroring = Case(
+        name="err",
+        agent=StubAgent(error=RuntimeError("boom")),
+        input="q",
+        criteria="c",
+        setup=lambda: "ctx2",
+        teardown=lambda context, result: events.append(("teardown", context)),
+    )
+    assert run_cases([erroring]).results[0].passed is False
+    assert events == [("teardown", "ctx2")]
+
+    # Teardown is skipped when setup raised.
+    events.clear()
+
+    def bad_setup():
+        raise KeyError("missing fixture")
+
+    skipped = Case(
+        name="skip",
+        agent=StubAgent(),
+        input="q",
+        criteria="c",
+        setup=bad_setup,
+        teardown=lambda context, result: events.append("teardown"),
+    )
+    assert run_cases([skipped]).results[0].passed is False
+    assert events == []
+
+
+def test_case_positional_construction_unchanged():
+    # The 2.7.4 positional signature must keep binding the same fields: the new
+    # scorer/expected sit after teardown, so a caller passing setup/teardown
+    # positionally does not silently hand its hooks to the scorer seam.
+    def setup_fn():
+        return "ctx"
+
+    def teardown_fn(context, result):
+        return None
+
+    agent = StubAgent()
+    case = Case(
+        "positional",  # name
+        "q",  # input
+        agent,
+        None,  # team
+        ("tag",),
+        30,  # timeout_seconds
+        "criteria",
+        None,  # judge_model
+        JudgeMode.BINARY,
+        7,  # judge_threshold
+        ("search",),  # expected_tool_calls
+        True,  # allow_additional_tool_calls
+        setup_fn,
+        teardown_fn,
+    )
+    assert case.setup is setup_fn
+    assert case.teardown is teardown_fn
+    assert case.scorer is None and case.expected is None
+
+
+def test_case_result_positional_construction_unchanged():
+    # Same guarantee for CaseResult: score is appended after response.
+    output = _output(content="42")
+    result = CaseResult(
+        "positional",  # name
+        (),  # tags
+        "agent-1",
+        None,  # team_id
+        "session-1",
+        1.5,  # duration_seconds
+        True,  # judge_passed
+        "reason",
+        9,  # judge_score
+        None,  # reliability_passed
+        "42",  # output
+        ("search",),  # tools_called
+        False,  # timed_out
+        False,  # skipped
+        None,  # error
+        output,  # response
+    )
+    assert result.output == "42"
+    assert result.response is output
+    assert result.score is None
+
+
+def test_case_and_case_result_type_hints_resolve():
+    # Score/Scorer are imported at module scope (from agno.scorer.base): runtime
+    # introspection over the public dataclasses must not NameError on forward refs.
+    import typing
+
+    assert typing.get_type_hints(Case)["scorer"] is not None
+    assert typing.get_type_hints(CaseResult)["score"] is not None
