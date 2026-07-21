@@ -32,7 +32,7 @@ paid trainer. Offline output unchanged.
 
 ### basic.py — live path
 
-**Status:** see `specs/agno/2.8.1/notes/live-proof.md`
+**Status:** see `specs/agno/2.8.3/notes/live-proof.md`
 
 **Description:** With `AGNO_RUN_TINKER_FINE_TUNE=1` and `TINKER_API_KEY` set,
 the same file swaps the stub for
