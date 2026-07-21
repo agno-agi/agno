@@ -324,8 +324,17 @@ def _require_tool_scopes(method: str, path: str) -> None:
     # surface). The sink is mirrored onto this sub-app's state; no sink -> no-op.
     # Same non-secret token reference the REST gate captures (jti, else a short hash),
     # so an MCP row correlates to the issuer's logs exactly like a REST row does.
-    auth_header = request.headers.get("Authorization") or ""
-    bearer = auth_header[7:] if auth_header[:7].lower() == "bearer " else None
+    # Best-effort ONLY: this is audit metadata, so it must never break enforcement --
+    # not every caller hands us a full Request (the fastmcp in-memory transport passes a
+    # minimal stand-in with no headers). Falling back to None just means the row is
+    # keyed by the token's jti, or carries no token reference at all.
+    bearer: Optional[str] = None
+    try:
+        raw = request.headers.get("Authorization") or ""
+        if raw[:7].lower() == "bearer ":
+            bearer = raw[7:]
+    except Exception:  # pragma: no cover - defensive: audit must not break the gate
+        bearer = None
     record_decision(
         request,
         allowed=allowed,
