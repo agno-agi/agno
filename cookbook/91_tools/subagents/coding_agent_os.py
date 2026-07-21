@@ -24,6 +24,7 @@ from agno.models.anthropic import Claude
 from agno.os import AgentOS
 from agno.tools.coding import CodingTools
 from agno.tools.file_generation import FileGenerationTools
+from agno.tools.shell import ShellTools
 from agno.tools.subagents import SubAgent
 from agno.tools.websearch import WebSearchTools
 from agno.tools.website import WebsiteTools
@@ -51,6 +52,8 @@ coding_agent = Agent(
         Workspace(root=PROJECTS_DIR, allowed=["list", "search", "move", "delete"]),
         # Generate downloadable artifacts (PDF, DOCX, CSV, JSON, HTML) into the workspace
         FileGenerationTools(output_directory=str(PROJECTS_DIR), save_files=True),
+        # General shell access scoped to the workspace (run_shell_command)
+        ShellTools(base_dir=PROJECTS_DIR),
         SubAgent(model=Claude(id="claude-haiku-4-5")),
     ],
     db=db,
