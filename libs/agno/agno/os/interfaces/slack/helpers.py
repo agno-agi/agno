@@ -290,8 +290,26 @@ async def open_chat_stream(
     )
 
 
+def slack_delivery_kwargs(unfurl_links: bool, unfurl_media: bool, mrkdwn: bool) -> Dict[str, Any]:
+    # mrkdwn=False means plaintext delivery: parse="none" stops Slack from linkifying
+    # bare URLs and link_names=False stops @name expansion, so pre-encoded mention
+    # control sequences in untrusted content stay inert.
+    kwargs: Dict[str, Any] = {"unfurl_links": unfurl_links, "unfurl_media": unfurl_media, "mrkdwn": mrkdwn}
+    if not mrkdwn:
+        kwargs["parse"] = "none"
+        kwargs["link_names"] = False
+    return kwargs
+
+
 async def send_slack_message_async(
-    async_client: Any, channel: str, thread_ts: str, message: str, italics: bool = False
+    async_client: Any,
+    channel: str,
+    thread_ts: str,
+    message: str,
+    italics: bool = False,
+    unfurl_links: bool = True,
+    unfurl_media: bool = True,
+    mrkdwn: bool = True,
 ) -> None:
     if not message or not message.strip():
         return
@@ -301,13 +319,17 @@ async def send_slack_message_async(
             return "\n".join([f"_{line}_" for line in text.split("\n")])
         return text
 
+    delivery = slack_delivery_kwargs(unfurl_links, unfurl_media, mrkdwn)
+
     # Under Slack's 40K char limit with margin for batch prefix overhead
     max_len = 39900
     if len(message) <= max_len:
-        await async_client.chat_postMessage(channel=channel, text=_format(message), thread_ts=thread_ts)
+        await async_client.chat_postMessage(channel=channel, text=_format(message), thread_ts=thread_ts, **delivery)
         return
 
     message_batches = [message[i : i + max_len] for i in range(0, len(message), max_len)]
     for i, batch in enumerate(message_batches, 1):
         batch_message = f"[{i}/{len(message_batches)}] {batch}"
-        await async_client.chat_postMessage(channel=channel, text=_format(batch_message), thread_ts=thread_ts)
+        await async_client.chat_postMessage(
+            channel=channel, text=_format(batch_message), thread_ts=thread_ts, **delivery
+        )

@@ -50,14 +50,35 @@ from agno.utils.serialize import json_serializer
 MAX_MESSAGE_BLOCKS = 50
 
 
-# Formats tool arg values for display in HITL approval cards; strings pass through, others JSON-encode
+# Untrusted values are embedded in Slack inline code spans: a backtick closes the span,
+# a newline exits it (inline code does not span lines), and <...> becomes a Slack control
+# sequence once outside the span. Swap each for an inert lookalike / visible escape.
+_CODE_SPAN_INERT = str.maketrans(
+    {
+        "`": "ˋ",  # modifier letter grave accent
+        "<": "‹",  # single left-pointing angle quotation mark
+        ">": "›",  # single right-pointing angle quotation mark
+        "\r": "\\r",
+        "\n": "\\n",
+    }
+)
+
+
+def inert_code_span_text(text: str) -> str:
+    return text.translate(_CODE_SPAN_INERT)
+
+
+# Formats tool arg values for display in HITL approval cards; strings pass through, others
+# JSON-encode. Output is always inerted so it cannot break out of the surrounding code span.
 def render_arg_value(value: Any) -> str:
     if isinstance(value, str):
-        return value
-    try:
-        return json.dumps(value, default=json_serializer)
-    except (TypeError, ValueError):
-        return str(value)
+        rendered = value
+    else:
+        try:
+            rendered = json.dumps(value, default=json_serializer)
+        except (TypeError, ValueError):
+            rendered = str(value)
+    return inert_code_span_text(rendered)
 
 
 # --- Type detection helpers ---
@@ -566,7 +587,7 @@ def response_blocks(
         action_id = element.get("action_id", "")
         submitted = (state_values.get(block_id) or {}).get(action_id) or {}
         value = _extract_input_value(element, submitted)
-        submissions.append(f"• {label}: `{value}`")
+        submissions.append(f"• {label}: `{inert_code_span_text(value)}`")
 
     if not submissions:
         return preserved
