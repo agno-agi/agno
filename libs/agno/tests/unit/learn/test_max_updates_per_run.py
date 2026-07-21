@@ -138,6 +138,8 @@ class _LoopingAddMemoryModel(Model):
 
 
 def _build_session_context_store(model: Any, **config_kwargs: Any) -> tuple[Any, dict[str, str]]:
+    # Default max_updates_per_run to 10 if not provided (simulates LearningMachine behavior)
+    config_kwargs.setdefault("max_updates_per_run", DEFAULT_MAX_UPDATES)
     store = SessionContextStore(
         config=SessionContextConfig(db=_RecordingLearningDb(), model=model, **config_kwargs)  # type: ignore[arg-type]
     )
@@ -145,6 +147,7 @@ def _build_session_context_store(model: Any, **config_kwargs: Any) -> tuple[Any,
 
 
 def _build_user_profile_store(model: Any, **config_kwargs: Any) -> tuple[Any, dict[str, str]]:
+    config_kwargs.setdefault("max_updates_per_run", DEFAULT_MAX_UPDATES)
     store = UserProfileStore(
         config=UserProfileConfig(db=_RecordingLearningDb(), model=model, **config_kwargs)  # type: ignore[arg-type]
     )
@@ -152,6 +155,7 @@ def _build_user_profile_store(model: Any, **config_kwargs: Any) -> tuple[Any, di
 
 
 def _build_user_memory_store(model: Any, **config_kwargs: Any) -> tuple[Any, dict[str, str]]:
+    config_kwargs.setdefault("max_updates_per_run", DEFAULT_MAX_UPDATES)
     store = UserMemoryStore(
         config=UserMemoryConfig(db=_RecordingLearningDb(), model=model, **config_kwargs)  # type: ignore[arg-type]
     )
@@ -159,6 +163,7 @@ def _build_user_memory_store(model: Any, **config_kwargs: Any) -> tuple[Any, dic
 
 
 def _build_entity_memory_store(model: Any, **config_kwargs: Any) -> tuple[Any, dict[str, str]]:
+    config_kwargs.setdefault("max_updates_per_run", DEFAULT_MAX_UPDATES)
     store = EntityMemoryStore(
         config=EntityMemoryConfig(db=_RecordingLearningDb(), model=model, **config_kwargs)  # type: ignore[arg-type]
     )
@@ -166,6 +171,7 @@ def _build_entity_memory_store(model: Any, **config_kwargs: Any) -> tuple[Any, d
 
 
 def _build_learned_knowledge_store(model: Any, **config_kwargs: Any) -> tuple[Any, dict[str, str]]:
+    config_kwargs.setdefault("max_updates_per_run", DEFAULT_MAX_UPDATES)
     store = LearnedKnowledgeStore(
         config=LearnedKnowledgeConfig(knowledge=_EmptyKnowledge(), model=model, **config_kwargs)
     )
@@ -202,7 +208,8 @@ def conversation_messages() -> list[Message]:
     ],
 )
 def test_config_default_max_updates_per_run(config_cls: type) -> None:
-    assert config_cls().max_updates_per_run == DEFAULT_MAX_UPDATES
+    # Config defaults to None (inherits from LearningMachine)
+    assert config_cls().max_updates_per_run is None
 
 
 # ---------------------------------------------------------------------------
@@ -315,3 +322,68 @@ async def test_aextract_and_save_caps_tool_writes_at_limit(conversation_messages
     assert provider_calls == [1, 2, 3, 4, 5]
     assert store.memories_updated is True
     assert result == "Memory extraction complete."
+
+
+# ---------------------------------------------------------------------------
+# LearningMachine global propagation tests
+# ---------------------------------------------------------------------------
+
+
+def test_learning_machine_propagates_global_limit_to_stores() -> None:
+    from agno.learn import LearningMachine
+
+    lm = LearningMachine(
+        db=_RecordingLearningDb(),  # type: ignore[arg-type]
+        model=_LimitCapturingModel(captured_limits=[]),
+        max_updates_per_run=25,
+        user_profile=True,
+        user_memory=True,
+        session_context=True,
+        entity_memory=True,
+    )
+
+    # Access stores to trigger initialization
+    assert lm.user_profile_store is not None
+    assert lm.user_memory_store is not None
+    assert lm.session_context_store is not None
+    assert lm.entity_memory_store is not None
+
+    # Each store should have the global limit
+    assert lm.user_profile_store.config.max_updates_per_run == 25
+    assert lm.user_memory_store.config.max_updates_per_run == 25
+    assert lm.session_context_store.config.max_updates_per_run == 25
+    assert lm.entity_memory_store.config.max_updates_per_run == 25
+
+
+def test_learning_machine_store_override_takes_precedence() -> None:
+    from agno.learn import LearningMachine
+
+    lm = LearningMachine(
+        db=_RecordingLearningDb(),  # type: ignore[arg-type]
+        model=_LimitCapturingModel(captured_limits=[]),
+        max_updates_per_run=25,
+        user_profile=True,
+        # Entity memory explicitly overrides the global
+        entity_memory=EntityMemoryConfig(max_updates_per_run=50),
+    )
+
+    # user_profile uses global default
+    assert lm.user_profile_store.config.max_updates_per_run == 25
+    # entity_memory uses its explicit override
+    assert lm.entity_memory_store.config.max_updates_per_run == 50
+
+
+def test_learning_machine_without_global_uses_store_defaults() -> None:
+    from agno.learn import LearningMachine
+
+    lm = LearningMachine(
+        db=_RecordingLearningDb(),  # type: ignore[arg-type]
+        model=_LimitCapturingModel(captured_limits=[]),
+        # No max_updates_per_run set
+        user_profile=True,
+        user_memory=True,
+    )
+
+    # Should use the default of 10
+    assert lm.user_profile_store.config.max_updates_per_run == DEFAULT_MAX_UPDATES
+    assert lm.user_memory_store.config.max_updates_per_run == DEFAULT_MAX_UPDATES

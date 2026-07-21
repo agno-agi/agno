@@ -95,7 +95,7 @@ class UserProfileConfig:
     enable_update_profile: bool = True  # Allow updating profile fields
 
     # Limits
-    max_updates_per_run: int = 10
+    max_updates_per_run: Optional[int] = None
 
     # Agent tools
     enable_agent_tools: bool = False
@@ -161,7 +161,7 @@ class UserMemoryConfig:
     enable_clear_memories: bool = False  # Dangerous - disabled by default
 
     # Limits
-    max_updates_per_run: int = 10
+    max_updates_per_run: Optional[int] = None
 
     # Agent tools
     enable_agent_tools: bool = False
@@ -232,7 +232,7 @@ class SessionContextConfig:
     enable_clear_context: bool = False
 
     # Limits
-    max_updates_per_run: int = 10
+    max_updates_per_run: Optional[int] = None
 
     # Prompt customization
     instructions: Optional[str] = None
@@ -294,7 +294,7 @@ class LearnedKnowledgeConfig:
     namespace: str = "global"
 
     # Limits
-    max_updates_per_run: int = 10
+    max_updates_per_run: Optional[int] = None
 
     # Agent tools
     enable_agent_tools: bool = True
@@ -384,7 +384,7 @@ class EntityMemoryConfig:
     enable_add_relationship: bool = True
 
     # Limits
-    max_updates_per_run: int = 10
+    max_updates_per_run: Optional[int] = None
 
     # Agent tools
     enable_agent_tools: bool = False
@@ -423,6 +423,9 @@ class DecisionLogConfig:
     # Mode and extraction
     mode: LearningMode = LearningMode.ALWAYS
     schema: Optional[Type[Any]] = None
+
+    # Extraction limits
+    max_updates_per_run: Optional[int] = None
 
     # Agent tools
     enable_agent_tools: bool = True

@@ -213,11 +213,18 @@ requesting tool calls.
 ```python
 from agno.learn import LearningMachine, EntityMemoryConfig
 
-# If your prompts contain dense information (many entities, facts, relationships),
-# you may want to increase the limit:
+# Option 1: Set a global limit for all stores
 learning = LearningMachine(
+    max_updates_per_run=25,  # Applied to all stores
+    user_profile=True,
+    user_memory=True,
+)
+
+# Option 2: Override per-store (takes precedence over global)
+learning = LearningMachine(
+    max_updates_per_run=15,  # Global default
     entity_memory=EntityMemoryConfig(
-        max_updates_per_run=25,  # Allow more updates for dense info
+        max_updates_per_run=30,  # Entity memory needs more for dense info
     ),
 )
 ```
