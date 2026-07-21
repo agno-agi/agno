@@ -65,7 +65,7 @@ def _make_event_context(**overrides: Any) -> EventContext:
         "thread_id": "1708123456.000100",
         "user": "U123",
         "message_text": "Summarize the incident timeline",
-        "session_id": "agent-1:1708123456.000100",
+        "session_id": "agent-1:C123:1708123456.000100",
         "team_id": "T123",
         "resolved_user_id": "U123",
         "display_name": None,
@@ -253,6 +253,45 @@ class TestNonStreamingRoutes:
 
         assert resp.status_code == 200
         await wait_for_call(agent_mock.arun)
+        assert agent_mock.arun.call_args.kwargs["session_id"] == f"researcher:C123:{thread_ts}"
+
+    @pytest.mark.asyncio
+    async def test_session_id_uses_legacy_key_when_session_exists(self):
+        """Backward compat: if a pre-channel-scoped session exists, use that key."""
+        agent_mock = make_agent_mock()
+        agent_mock.id = "researcher"
+        agent_mock.name = "Researcher"
+        thread_ts = "1708123456.000100"
+        # Simulate legacy session exists
+        agent_mock.aget_session = AsyncMock(return_value={"session_id": f"researcher:{thread_ts}"})
+        mock_slack = make_slack_mock(token="xoxb-test")
+
+        with (
+            patch("agno.os.interfaces.slack.router.verify_slack_signature", return_value=True),
+            patch("agno.os.interfaces.slack.router.SlackTools", return_value=mock_slack),
+            patch("agno.os.interfaces.slack.event_handler.AsyncWebClient", return_value=make_async_client_mock()),
+        ):
+            app = build_app(agent_mock, reply_to_mentions_only=False)
+            from fastapi.testclient import TestClient
+
+            client = TestClient(app)
+            body = {
+                "type": "event_callback",
+                "event": {
+                    "type": "message",
+                    "channel_type": "channel",
+                    "text": "hello",
+                    "user": "U123",
+                    "channel": "C123",
+                    "ts": "1708123456.000200",
+                    "thread_ts": thread_ts,
+                },
+            }
+            resp = make_signed_request(client, body)
+
+        assert resp.status_code == 200
+        await wait_for_call(agent_mock.arun)
+        # Legacy key without channel_id
         assert agent_mock.arun.call_args.kwargs["session_id"] == f"researcher:{thread_ts}"
 
     @pytest.mark.asyncio
@@ -884,6 +923,7 @@ class TestHITLFlow:
     async def test_submit_approval_opens_stream_with_shared_helper_and_continues_run(self):
         requirement = _make_requirement()
         entity = AsyncMock()
+        entity.aget_session = AsyncMock(return_value=None)
         entity.aget_run_output = AsyncMock(return_value=Mock(active_requirements=[requirement]))
         continued = {"called": False}
 
@@ -923,7 +963,7 @@ class TestHITLFlow:
         ):
             await handler.handle_submit(payload)
 
-        entity.aget_run_output.assert_awaited_once_with(run_id="run-1", session_id="agent-1:111.222")
+        entity.aget_run_output.assert_awaited_once_with(run_id="run-1", session_id="agent-1:C123:111.222")
         assert requirement.confirmation is True
         mock_client.chat_delete.assert_awaited_once_with(channel="C123", ts="await-1")
         mock_open.assert_awaited_once_with(mock_client, "C123", "111.222", "U123", "T123", "plan", 100)
@@ -936,6 +976,7 @@ class TestHITLFlow:
         regular_req = _make_requirement(req_id="r1")
         required_req = _make_requirement(req_id="r2", approval_type="required", approval_id="appr-1")
         entity = AsyncMock()
+        entity.aget_session = AsyncMock(return_value=None)
         entity.aget_run_output = AsyncMock(
             return_value=Mock(active_requirements=[regular_req, required_req], user_id="user@test.com")
         )
@@ -1021,6 +1062,7 @@ class TestAdminApprovalFlow:
         """When admin has approved via dashboard, Check Status resumes the run."""
         requirement = _make_requirement(approval_type="required", approval_id="appr-1")
         entity = AsyncMock()
+        entity.aget_session = AsyncMock(return_value=None)
         entity.aget_run_output = AsyncMock(
             return_value=Mock(active_requirements=[requirement], user_id="user@test.com")
         )
