@@ -39,6 +39,7 @@ class WorkspaceContextProvider(ContextProvider):
         model: Model | None = None,
         exclude_patterns: list[str] | None = None,
         allow_paths: list[str] | None = None,
+        enforce_excludes: bool = False,
         max_file_lines: int = 100_000,
         max_file_length: int = 10_000_000,
         stream_sub_agent_events: bool = True,
@@ -49,6 +50,7 @@ class WorkspaceContextProvider(ContextProvider):
         self.exclude_patterns = _validate_exclude_patterns(exclude_patterns)
         _resolve_allow_paths(self.root, allow_paths)
         self.allow_paths = list(allow_paths) if allow_paths else []
+        self.enforce_excludes = enforce_excludes
         self.max_file_lines = max_file_lines
         self.max_file_length = max_file_length
         self._agent: Agent | None = None
@@ -136,6 +138,7 @@ class WorkspaceContextProvider(ContextProvider):
             allowed=Workspace.READ_TOOLS,
             exclude_patterns=list(self.exclude_patterns),
             allow_paths=list(self.allow_paths),
+            enforce_excludes=self.enforce_excludes,
             max_file_lines=self.max_file_lines,
             max_file_length=self.max_file_length,
         )

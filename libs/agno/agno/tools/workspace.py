@@ -355,6 +355,11 @@ class Workspace(Toolkit):
     allowed path beneath an excluded directory is reachable by name; recursive listings
     still prune the excluded directory.
 
+    ``enforce_excludes`` (default ``False``) applies exclusion logic to direct-path tools
+    as well as listings. When ``True``, excluded paths return an error whether or not
+    they exist. This is a simpler "all or nothing" guard; ``allow_paths`` is more
+    granular when you need specific exceptions.
+
     ``run_command`` runs a process with ``cwd=root`` and is outside the path and exclude
     checks; gate it with ``confirm``.
 
@@ -389,6 +394,7 @@ class Workspace(Toolkit):
         max_file_length: int = 10_000_000,
         exclude_patterns: Optional[List[str]] = None,
         allow_paths: Optional[List[str]] = None,
+        enforce_excludes: bool = False,
         **kwargs,
     ):
         # Resolve root to an absolute path once — never re-read cwd later (reload-safe).
@@ -403,6 +409,7 @@ class Workspace(Toolkit):
         self.exclude_patterns: List[str] = _validate_exclude_patterns(exclude_patterns)
         _resolve_allow_paths(self.root, allow_paths)
         self.allow_paths: List[str] = list(allow_paths) if allow_paths else []
+        self.enforce_excludes = enforce_excludes
         # Components below root of each allow_paths entry, as written and resolved; rebuilt when allow_paths changes.
         self._allow_snapshot: Optional[Tuple[str, ...]] = None
         self._allowed_parts: List[Tuple[str, ...]] = []
