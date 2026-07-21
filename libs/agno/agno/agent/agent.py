@@ -59,7 +59,7 @@ from agno.run.requirement import RunRequirement
 from agno.session import AgentSession, SessionSummaryManager, TeamSession, WorkflowSession
 from agno.session.summary import SessionSummary
 from agno.skills import Skills
-from agno.tools import Toolkit
+from agno.tools import ToolRegistry, Toolkit
 from agno.tools.function import Function
 from agno.utils.log import log_warning
 from agno.utils.safe_formatter import SafeFormatter
@@ -170,8 +170,8 @@ class Agent:
     # --- Agent Tools ---
     # A list of tools provided to the Model.
     # Tools are functions the model may generate JSON inputs for.
-    # Can also be a callable factory that returns a list of tools at runtime.
-    tools: Optional[Union[List[Union[Toolkit, Callable, Function, Dict]], Callable[..., List]]] = None
+    # Can also be a callable factory or ToolRegistry for runtime tool lifecycles.
+    tools: Optional[Union[List[Union[Toolkit, Callable, Function, Dict]], Callable[..., List], ToolRegistry]] = None
 
     # Maximum number of tool calls allowed.
     tool_call_limit: Optional[int] = None
@@ -431,7 +431,9 @@ class Agent:
         references_format: Literal["json", "yaml"] = "json",
         skills: Optional[Skills] = None,
         metadata: Optional[Dict[str, Any]] = None,
-        tools: Optional[Union[Sequence[Union[Toolkit, Callable, Function, Dict]], Callable[..., List]]] = None,
+        tools: Optional[
+            Union[Sequence[Union[Toolkit, Callable, Function, Dict]], Callable[..., List], ToolRegistry]
+        ] = None,
         tool_call_limit: Optional[int] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         tool_hooks: Optional[List[Callable]] = None,
@@ -597,6 +599,8 @@ class Agent:
 
         if tools is None:
             self.tools = []
+        elif isinstance(tools, ToolRegistry):
+            self.tools = tools
         elif is_callable_factory(tools, excluded_types=(Toolkit, Function)):
             self.tools = tools  # type: ignore[assignment]
         else:

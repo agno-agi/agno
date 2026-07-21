@@ -593,10 +593,14 @@ def get_resolved_knowledge(entity: Any, run_context: Optional["RunContext"] = No
 
 
 def get_resolved_tools(entity: Any, run_context: Optional["RunContext"] = None) -> Optional[list]:
-    """Get the resolved tools: run_context.tools > entity.tools (if list)."""
+    """Get resolved tools from the run context, Agent list, or ToolRegistry."""
+    from agno.tools.tool_registry import ToolRegistry
+
     if run_context is not None and run_context.tools is not None:
         return run_context.tools
     tools = getattr(entity, "tools", None)
+    if isinstance(tools, ToolRegistry):
+        return list(tools.snapshot().tools)
     if tools is not None and isinstance(tools, list):
         return tools
     return None
