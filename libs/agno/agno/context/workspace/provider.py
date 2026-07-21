@@ -38,6 +38,7 @@ class WorkspaceContextProvider(ContextProvider):
         mode: ContextMode = ContextMode.default,
         model: Model | None = None,
         exclude_patterns: list[str] | None = None,
+        enforce_excludes: bool = False,
         max_file_lines: int = 100_000,
         max_file_length: int = 10_000_000,
     ) -> None:
@@ -45,6 +46,7 @@ class WorkspaceContextProvider(ContextProvider):
         self.root = Path(root).expanduser().resolve() if root is not None else Path.cwd().resolve()
         self.instructions_text = instructions if instructions is not None else DEFAULT_WORKSPACE_INSTRUCTIONS
         self.exclude_patterns = exclude_patterns if exclude_patterns is not None else list(DEFAULT_EXCLUDE_PATTERNS)
+        self.enforce_excludes = enforce_excludes
         self.max_file_lines = max_file_lines
         self.max_file_length = max_file_length
         self._agent: Agent | None = None
@@ -118,6 +120,7 @@ class WorkspaceContextProvider(ContextProvider):
             root=self.root,
             allowed=Workspace.READ_TOOLS,
             exclude_patterns=list(self.exclude_patterns),
+            enforce_excludes=self.enforce_excludes,
             max_file_lines=self.max_file_lines,
             max_file_length=self.max_file_length,
         )

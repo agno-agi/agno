@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from agno.tools.workspace import Workspace
+from agno.tools.workspace import DEFAULT_EXCLUDE_PATTERNS, Workspace
 
 # All registered tool names (the descriptive names the LLM sees, after alias translation).
 ALL_METHODS = [
@@ -839,3 +839,82 @@ def test_empty_exclude_patterns_opts_out():
         result = json.loads(ws.list_files(pattern="**/*.py"))
         paths = [e["path"] for e in result["files"]]
         assert any(".venv" in p for p in paths)
+
+
+EXCLUDED_ERROR = "Error: path is excluded from this workspace"
+
+
+def test_enforce_excludes_off_by_default_direct_ops_still_work():
+    """Control: flag off — excluded paths stay hidden from list/search but
+    direct-path ops (read/write/edit/move/delete) still accept them."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        base = Path(tmp_dir)
+        (base / ".env").write_text("SECRET=1")
+        ws = Workspace(tmp_dir)
+        assert ws.enforce_excludes is False
+
+        listing = json.loads(ws.list_files())
+        assert ".env" not in [e["path"] for e in listing["files"]]
+        search = json.loads(ws.search_content("SECRET"))
+        assert search["matches_found"] == 0
+
+        assert "SECRET=1" in ws.read_file(".env")
+        assert "Wrote" in ws.write_file(".env", "SECRET=2")
+        assert "Edited" in ws.edit_file(".env", "SECRET=2", "SECRET=3")
+        assert "Moved" in ws.move_file(".env", "plain.txt")
+        assert "Moved" in ws.move_file("plain.txt", ".env")
+        assert "Deleted" in ws.delete_file(".env")
+
+
+def test_enforce_excludes_blocks_all_direct_path_ops():
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        base = Path(tmp_dir)
+        (base / ".env").write_text("SECRET=1")
+        (base / "app_token.json").write_text('{"token": "t"}')
+        (base / "readme.md").write_text("hello")
+        patterns = list(DEFAULT_EXCLUDE_PATTERNS) + ["*_token.json"]
+        ws = Workspace(tmp_dir, exclude_patterns=patterns, enforce_excludes=True)
+
+        for target in (".env", "app_token.json"):
+            assert ws.read_file(target) == EXCLUDED_ERROR
+            assert ws.write_file(target, "clobber") == EXCLUDED_ERROR
+            assert ws.edit_file(target, "SECRET", "LEAKED") == EXCLUDED_ERROR
+            assert ws.move_file(target, "innocuous.txt") == EXCLUDED_ERROR
+            assert ws.delete_file(target) == EXCLUDED_ERROR
+
+        # Blocked ops left the excluded files untouched.
+        assert (base / ".env").read_text() == "SECRET=1"
+        assert (base / "app_token.json").read_text() == '{"token": "t"}'
+
+        # Non-excluded paths are unaffected by the flag.
+        assert "hello" in ws.read_file("readme.md")
+        assert "Wrote" in ws.write_file("notes.txt", "n")
+        assert "Edited" in ws.edit_file("readme.md", "hello", "hi")
+        assert "Moved" in ws.move_file("notes.txt", "notes2.txt")
+        assert "Deleted" in ws.delete_file("notes2.txt")
+
+
+def test_enforce_excludes_blocks_excluded_move_destination():
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        base = Path(tmp_dir)
+        (base / "plain.txt").write_text("data")
+        ws = Workspace(tmp_dir, enforce_excludes=True)
+
+        assert ws.move_file("plain.txt", ".env") == EXCLUDED_ERROR
+        assert (base / "plain.txt").read_text() == "data"
+
+
+def test_enforce_excludes_no_existence_oracle():
+    """Excluded paths error identically whether or not they exist."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        ws = Workspace(tmp_dir, enforce_excludes=True)
+        assert ws.read_file(".env") == EXCLUDED_ERROR
+        Path(tmp_dir, ".env").write_text("SECRET=1")
+        assert ws.read_file(".env") == EXCLUDED_ERROR
+
+
+def test_enforce_excludes_async_read_blocked():
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        Path(tmp_dir, ".env").write_text("SECRET=1")
+        ws = Workspace(tmp_dir, enforce_excludes=True)
+        assert asyncio.run(ws.aread_file(".env")) == EXCLUDED_ERROR
