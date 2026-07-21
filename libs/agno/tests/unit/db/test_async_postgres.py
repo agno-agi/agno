@@ -64,3 +64,42 @@ async def test_get_or_create_table_creates_when_not_available_and_create_flag_se
 
     assert result == mock_table
     async_postgres_db._create_table.assert_called_once_with(table_name="test_table", table_type="sessions")
+
+
+@pytest.mark.asyncio
+async def test_get_schedules_default_swallows_error(async_postgres_db, monkeypatch):
+    """Test that get_schedules returns ([], 0) on DB failure by default"""
+
+    async def _boom(table_type, create_table_if_not_found=False):
+        raise RuntimeError("forced failure")
+
+    monkeypatch.setattr(async_postgres_db, "_get_table", _boom)
+
+    assert await async_postgres_db.get_schedules() == ([], 0)
+
+
+@pytest.mark.asyncio
+async def test_get_schedules_raise_on_error_reraises(async_postgres_db, monkeypatch):
+    """Test that get_schedules(raise_on_error=True) re-raises DB failures"""
+
+    async def _boom(table_type, create_table_if_not_found=False):
+        raise RuntimeError("forced failure")
+
+    monkeypatch.setattr(async_postgres_db, "_get_table", _boom)
+
+    with pytest.raises(RuntimeError, match="forced failure"):
+        await async_postgres_db.get_schedules(raise_on_error=True)
+
+
+@pytest.mark.asyncio
+async def test_get_schedules_table_none_raises_under_flag(async_postgres_db, monkeypatch):
+    """Test that an unavailable schedules table raises under raise_on_error=True"""
+
+    async def _none(table_type, create_table_if_not_found=False):
+        return None
+
+    monkeypatch.setattr(async_postgres_db, "_get_table", _none)
+
+    assert await async_postgres_db.get_schedules() == ([], 0)
+    with pytest.raises(RuntimeError, match="schedules table unavailable"):
+        await async_postgres_db.get_schedules(raise_on_error=True)
