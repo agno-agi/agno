@@ -125,7 +125,9 @@ that export and keep the reward honest while doing it.
 
 - [`_29_expert_iteration/`](_29_expert_iteration/): the full round — sample the base,
   export the learning zone, fine-tune, re-measure, diff. Offline by default; runs a
-  real Tinker fine-tune when `TINKER_API_KEY` is set.
+  real Tinker fine-tune only on explicit opt-in (`AGNO_RUN_TINKER_FINE_TUNE=1` plus
+  `TINKER_API_KEY` — a key alone never spends). The live path installs `agno[tinker]`,
+  which needs Python 3.11+ (the tinker SDKs' floor; agno itself stays 3.9+).
 - [`_30_reward_calibration/`](_30_reward_calibration/): `calibrate` a scorer against
   labelled traces, and read the per-round train-vs-audit gap that exposes reward
   hacking. Both files are offline.

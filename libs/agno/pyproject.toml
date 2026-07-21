@@ -100,6 +100,8 @@ openai = ["openai"]
 portkey = ["portkey-ai"]
 # Pulls the PyTorch stack via tinker-cookbook -- a heavy install, which is the SDK's
 # shape rather than ours. Deliberately not added to the aggregate `models` extra.
+# Needs Python >= 3.11 (both tinker and tinker-cookbook declare that floor); agno's
+# own >= 3.9 floor is unchanged, so on 3.9/3.10 this extra fails to resolve.
 tinker = ["tinker>=0.23", "tinker-cookbook>=0.5.2"]
 
 # Dependencies for Token Counting
