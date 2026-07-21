@@ -492,6 +492,22 @@ def test_function_call_execution_with_error():
     assert "Test error" in result.error
 
 
+def test_function_call_execution_no_arguments():
+    """Test sync execution of a no-parameter tool called with no arguments."""
+
+    def test_func() -> str:
+        return "no-args-result"
+
+    func = Function(name="test_func", entrypoint=test_func)
+
+    call = FunctionCall(function=func, arguments=None)
+
+    result = call.execute()
+    assert result.status == "success"
+    assert result.result == "no-args-result"
+    assert result.error is None
+
+
 def test_function_call_with_hooks():
     """Test function call execution with pre and post hooks."""
     pre_hook_called = False
@@ -579,6 +595,23 @@ async def test_function_call_async_execution_with_error():
     assert result.status == "failure"
     assert result.error is not None
     assert "Test error" in result.error
+
+
+@pytest.mark.asyncio
+async def test_function_call_async_execution_no_arguments():
+    """Test async execution of a no-parameter tool called with no arguments."""
+
+    async def test_func() -> str:
+        return "no-args-result"
+
+    func = Function(name="test_func", entrypoint=test_func)
+
+    call = FunctionCall(function=func, arguments=None)
+
+    result = await call.aexecute()
+    assert result.status == "success"
+    assert result.result == "no-args-result"
+    assert result.error is None
 
 
 @pytest.mark.asyncio
