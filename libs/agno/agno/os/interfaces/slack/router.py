@@ -55,6 +55,9 @@ def attach_routes(
     max_file_size: int = 1_073_741_824,  # 1GB
     resolve_user_identity: bool = False,
     respond_to_other_apps: bool = False,
+    markdown: bool = True,
+    unfurl_links: bool = True,
+    unfurl_media: bool = True,
 ) -> APIRouter:
     # Inner functions capture config via closure to keep each instance isolated
     entity = agent or team or workflow
@@ -115,6 +118,9 @@ def attach_routes(
         task_display_mode=task_display_mode,
         buffer_size=buffer_size,
         suggested_prompts=suggested_prompts,
+        unfurl_links=unfurl_links,
+        unfurl_media=unfurl_media,
+        markdown=markdown,
     )
 
     @router.post(
