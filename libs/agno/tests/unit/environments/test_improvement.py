@@ -148,6 +148,23 @@ def test_improvement_loop_empty_export_short_circuits(tmp_path):
     assert failing_trainer.fit_calls == []
 
 
+def test_converged_reason_counters_decide_the_label():
+    # "no_learning_zone" must mean the zone was EMPTY. A zone row that existed but
+    # could not be carried -- skipped as tool-bearing/limit-hit/textless, or dropped
+    # over the dataset caps -- is "not_exportable"; only all-zero counters at an
+    # intermediate rate mean there was nothing to express in the first place.
+    from agno.environments.exporters import ExportReport
+    from agno.environments.improvement import _converged_reason_for
+
+    assert _converged_reason_for(1.0, ExportReport()) == "saturated"
+    assert _converged_reason_for(0.0, ExportReport()) == "all_failing"
+    assert _converged_reason_for(0.5, ExportReport()) == "no_learning_zone"
+    assert _converged_reason_for(0.5, ExportReport(n_skipped_tool_runs=1)) == "not_exportable"
+    assert _converged_reason_for(0.5, ExportReport(n_skipped_limit_hit=1)) == "not_exportable"
+    assert _converged_reason_for(0.5, ExportReport(n_skipped_no_text=1)) == "not_exportable"
+    assert _converged_reason_for(0.5, ExportReport(n_dropped_over_cap=1)) == "not_exportable"
+
+
 def test_empty_zone_at_intermediate_rate_converges_as_no_learning_zone(tmp_path):
     # One task always passes and one always fails: pass rate 0.5, but every task is
     # unanimous, so the learning zone -- and therefore the export -- is empty with

@@ -441,9 +441,11 @@ def _converged_reason_for(pass_rate: float, export_report: ExportReport) -> _Con
         export_report.n_skipped_tool_runs > 0
         or export_report.n_skipped_limit_hit > 0
         or export_report.n_skipped_no_text > 0
+        or export_report.n_dropped_over_cap > 0
     ):
         # A non-empty learning zone whose passing attempts were all tool-bearing,
-        # limit-hit, or textless: verifiable, but nothing the SFT format can carry.
+        # limit-hit, textless, or too large for the dataset caps: verifiable, but
+        # nothing the SFT file could carry.
         return "not_exportable"
     # An intermediate pass rate with nothing skipped: every task was unanimous --
     # some all-pass, some all-fail -- so the learning zone itself is empty. Nothing
