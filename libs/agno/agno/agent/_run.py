@@ -126,6 +126,7 @@ _CANCEL_BYPASS_EVENT_TYPES = (
     RunCompletedEvent,
 )
 
+
 # ---------------------------------------------------------------------------
 # Run dependency resolution
 # ---------------------------------------------------------------------------
@@ -3062,6 +3063,8 @@ def _fork_run(run_response: RunOutput, message_index: int) -> RunOutput:
     forked.created_at = int(_time())
     forked.events = None
     _truncate_run_to_checkpoint(forked, message_index)
+    # Snapshot executed tools AFTER truncation — fork gets fresh tool_call_limit budget
+    forked.tool_count_at_fork = sum(1 for t in forked.tools if t.result is not None) if forked.tools else 0
     return forked
 
 
