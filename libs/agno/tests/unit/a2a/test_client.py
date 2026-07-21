@@ -131,6 +131,29 @@ class TestA2AClient:
             assert completed_events
             assert completed_events[0].is_final
 
+    @pytest.mark.asyncio
+    async def test_get_sdk_client_card_resolution_failure(self):
+        """Test that _get_sdk_client raises RemoteServerUnavailableError with original_error preserved.
+
+        When the A2A server is unreachable or the agent card cannot be resolved,
+        ClientFactory.connect() raises an exception. _get_sdk_client should catch
+        that and re-raise as RemoteServerUnavailableError, preserving the original
+        exception so callers can inspect the root cause (e.g. connection refused,
+        card resolution failure, DNS failure).
+        """
+        from agno.exceptions import RemoteServerUnavailableError
+
+        original_exc = ConnectionError("Failed to resolve agent card: connection refused")
+
+        with patch("a2a.client.ClientFactory.connect", side_effect=original_exc):
+            client = A2AClient("http://localhost:7777")
+
+            with pytest.raises(RemoteServerUnavailableError) as exc_info:
+                await client._get_sdk_client()
+
+            assert exc_info.value.base_url == "http://localhost:7777"
+            assert exc_info.value.original_error is original_exc
+
     def test_get_agent_card_success(self):
         """Test get_agent_card (sync)."""
         with patch("agno.client.a2a.client.get_default_sync_client") as mock_get_client:
