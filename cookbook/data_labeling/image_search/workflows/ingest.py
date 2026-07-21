@@ -148,9 +148,9 @@ ingest_workflow = Workflow(
     id="image-ingest",
     name="Image Ingest",
     description=(
-        "Index images for natural-language search. For each image: download "
-        "the bytes, describe it with search-tuned metadata, embed, and store. "
-        "Idempotent — items already indexed are skipped."
+        "Index images for natural-language search. Clears the index, then "
+        "for each image: download the bytes, describe it with search-tuned "
+        "metadata, embed, and store. Each run is a full rebuild."
     ),
     db=get_db(),  # required for background runs (the Reindex button)
     steps=[Step(name="Ingest", executor=ingest)],

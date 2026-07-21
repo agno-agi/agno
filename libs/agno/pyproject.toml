@@ -1,6 +1,6 @@
 [project]
 name = "agno"
-version = "2.7.4"
+version = "2.8.0"
 description = "The programming language for agentic software."
 requires-python = ">=3.9,<4"
 readme = "README.md"
@@ -144,7 +144,7 @@ redmine = ["python-redmine"]
 redshift = ["redshift-connector"]
 reportlab = ["reportlab"]
 salesforce = ["simple-salesforce"]
-scavio = ["scavio"]
+scavio = ["scavio>=0.4.0"]
 scrapegraph = ["scrapegraph-py>=2.0.0"]
 seltz = ["seltz>=0.2.0"]
 superserve = ["superserve"]
