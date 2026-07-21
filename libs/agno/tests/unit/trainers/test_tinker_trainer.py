@@ -382,6 +382,40 @@ def test_tinker_trainer_rejects_bad_hyperparams():
         TinkerTrainer(base_model="Qwen/Qwen3.6-35B-A3B", sampling_temperature=float("inf"))
 
 
+@pytest.mark.parametrize(
+    ("kwargs", "match"),
+    [
+        ({"learning_rate": 0.0}, "learning_rate"),
+        ({"learning_rate": -2e-4}, "learning_rate"),
+        ({"learning_rate": float("nan")}, "learning_rate"),
+        ({"learning_rate": float("inf")}, "learning_rate"),
+        ({"rank": 0}, "rank"),
+        ({"rank": -8}, "rank"),
+        ({"rank": True}, "rank"),
+        ({"sampling_max_tokens": 0}, "sampling_max_tokens"),
+        ({"sampling_max_tokens": True}, "sampling_max_tokens"),
+        ({"epochs": True}, "epochs"),
+        ({"epochs": 1.5}, "epochs"),
+        ({"batch_size": True}, "batch_size"),
+        ({"batch_size": 2.0}, "batch_size"),
+        ({"base_model": ""}, "base_model"),
+        ({"base_model": "   "}, "base_model"),
+    ],
+)
+def test_tinker_trainer_guards_every_hyperparameter_before_any_paid_call(kwargs, match, monkeypatch):
+    # A NaN or non-positive learning_rate pays for a FULL fit and saves corrupt (or
+    # base-identical) weights as COMPLETED; a bool epochs/batch_size is an int
+    # subclass that sails past a plain < 1 check. Every hyperparameter is validated
+    # in __init__, so no service-client call can precede the refusal.
+    calls = []
+    monkeypatch.setattr(TinkerTrainer, "_get_service_client", lambda self: calls.append(1))
+
+    with pytest.raises(ValueError, match=match):
+        TinkerTrainer(**{"base_model": "Qwen/Qwen3.6-35B-A3B", **kwargs})
+
+    assert calls == []
+
+
 def test_tinker_trainer_skips_truncated_rows_and_trains_survivors(tmp_path, monkeypatch):
     # A row whose rendering is shortened by MAX_LENGTH either lost its whole target
     # (all-zero weights) or -- worse -- kept a positive-weight PREFIX and would train
@@ -438,10 +472,13 @@ def test_tinker_trainer_skips_truncated_rows_and_trains_survivors(tmp_path, monk
     assert doomed.forward_backward_calls == []
 
 
-def test_tinker_trainer_step_one_optim_raise_keeps_the_paid_forward_backward(tmp_path):
-    # forward_backward is submitted -- and paid for -- before optim_step runs. A
-    # synchronous optim_step raise on step 1 must therefore still produce a PARTIAL
-    # recovery checkpoint, not a FAILED result that discards the spent compute.
+def test_tinker_trainer_step_one_optim_raise_fails_instead_of_saving_base_weights(tmp_path):
+    # forward_backward only ACCUMULATES gradients; optim_step is what applies them to
+    # the weights. After a step-1 optim raise the weights are still base-identical, so
+    # a recovery save would checkpoint the pristine base as PARTIAL -- which the
+    # improvement loop would then measure as "tuned", advance its baseline on, and
+    # re-fit from every round. With zero APPLIED steps the fit is FAILED and nothing
+    # is saved.
     class OptimRaisesClient(FakeTrainingClient):
         def optim_step(self, adam_params):
             raise RuntimeError("optimizer rejected the step")
@@ -456,11 +493,41 @@ def test_tinker_trainer_step_one_optim_raise_keeps_the_paid_forward_backward(tmp
 
     result = trainer.fit(_dataset(tmp_path, rows=1))
 
-    assert len(training.forward_backward_calls) == 1  # the paid submission happened
+    assert len(training.forward_backward_calls) == 1  # the submission happened...
+    assert training.saved == []  # ...but base-identical weights are never checkpointed
+    assert result.status == TrainStatus.FAILED
+    assert result.checkpoint is None
+    assert "optimizer rejected" in result.error
+
+
+def test_tinker_trainer_late_optim_failure_still_recovers_applied_steps(tmp_path):
+    # The counterpart: once at least one optimizer step has been APPLIED, the weights
+    # genuinely moved and a mid-run failure still yields a PARTIAL recovery checkpoint.
+    class OptimResultFailsOnSecond(FakeTrainingClient):
+        def __init__(self):
+            super().__init__()
+            self._optim_count = 0
+
+        def optim_step(self, adam_params):
+            self._optim_count += 1
+            if self._optim_count >= 2:
+                return FakeFuture(raises=RuntimeError("optimizer died on step 2"))
+            return super().optim_step(adam_params)
+
+    training = OptimResultFailsOnSecond()
+    trainer = TinkerTrainer(
+        base_model="Qwen/Qwen3.6-35B-A3B",
+        epochs=1,
+        batch_size=1,
+        service_client=FakeServiceClient(training),
+    )
+
+    result = trainer.fit(_dataset(tmp_path, rows=2))
+
     assert result.status == TrainStatus.PARTIAL
     assert result.checkpoint is not None
     assert "recovery" in result.checkpoint.ref
-    assert "optimizer rejected" in result.error
+    assert "optimizer died on step 2" in result.error
 
 
 def test_tinker_trainer_as_model_rejects_foreign_checkpoint():
