@@ -39,7 +39,14 @@ if TYPE_CHECKING:
 
 
 class WikiContextProvider(ContextProvider):
-    """Read + write access to a directory of markdown files via two tools."""
+    """Read + write access to a directory of markdown files via two tools.
+
+    ``write_tools`` swaps the write sub-agent's workspace toolset
+    (default: a read + write ``Workspace`` over the backend path); the
+    ``web`` backend's tools are still appended when wired.
+    ``mode=ContextMode.tools`` is a read-only surface and deliberately
+    ignores ``write_tools``.
+    """
 
     def __init__(
         self,
@@ -49,6 +56,7 @@ class WikiContextProvider(ContextProvider):
         name: str | None = None,
         read_instructions: str | None = None,
         write_instructions: str | None = None,
+        write_tools: list | None = None,
         mode: ContextMode = ContextMode.default,
         model: Model | None = None,
         read: bool = True,
@@ -74,6 +82,7 @@ class WikiContextProvider(ContextProvider):
         # the wiki on purpose: a "what does the wiki say" query
         # should answer from the wiki, not silently consult the web.
         self.web: ContextBackend | None = web
+        self.write_tools = write_tools
         self.read_instructions_text = (
             read_instructions if read_instructions is not None else DEFAULT_WIKI_READ_INSTRUCTIONS
         )
@@ -278,7 +287,9 @@ class WikiContextProvider(ContextProvider):
 
     def _ensure_write_agent(self) -> Agent:
         if self._write_agent is None:
-            tools: list = [self._build_write_tools()]
+            # Copy the injected list so appending web tools below can't
+            # mutate the caller's list.
+            tools: list = list(self.write_tools) if self.write_tools is not None else [self._build_write_tools()]
             if self.web is not None:
                 # Append the web backend's tools so the same sub-agent
                 # can fetch a URL or run a web search before writing.
