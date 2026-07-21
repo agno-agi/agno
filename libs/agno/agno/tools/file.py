@@ -268,13 +268,13 @@ class FileTools(Toolkit):
             log_error(f"Error removing {file_name}: {str(e)}")
             return f"Error removing file: {e}"
 
-    def list_files(self, **kwargs) -> str:
+    def list_files(self, directory: Optional[str] = None) -> str:
         """Returns a list of files in directory
-        :param directory: (Optional) name of directory to list.
+        :param directory: (Optional) name of directory to list. Defaults to the base directory.
 
         :return: The contents of the file if successful, otherwise returns an error message.
         """
-        directory = kwargs.get("directory", ".")
+        directory = directory or "."
         try:
             log_debug(f"Reading files in : {self.base_dir}/{directory}")
             safe, d = self.check_escape(directory)
