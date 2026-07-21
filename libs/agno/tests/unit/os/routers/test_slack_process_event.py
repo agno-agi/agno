@@ -99,7 +99,6 @@ class TestToolLifecycle:
         await process_event(RunEvent.tool_call_started.value, chunk, state, stream)
         assert "research_agent_call_1" in state.task_cards
 
-
 class TestContent:
     @pytest.mark.asyncio
     async def test_run_content_buffers(self):
