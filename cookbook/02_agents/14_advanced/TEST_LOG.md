@@ -196,9 +196,10 @@
 
 ### background_execution_concurrency.py
 
-**Status:** NOT RUN
+**Status:** PASS (behavior verified live; Postgres variant pending)
 **Tier:** untagged
-**Description:** Demonstrates the process-wide concurrency limit for background runs (set_background_max_concurrency): 5 runs submitted, at most 2 execute at once, the rest wait as PENDING. Compile-checked only; live run requires OPENAI_API_KEY, which was not available in the test environment. The underlying limiter is covered by unit tests in libs/agno/tests/unit/run/test_background_concurrency.py and libs/agno/tests/unit/agent/test_background_execution.py.
-**Result:** Compile check passed; pending a live run with API access.
+**Description:** Demonstrates the process-wide concurrency limit for background runs (set_background_max_concurrency): 5 runs submitted, at most 2 execute at once, the rest wait as PENDING. Behavior verified live with real OpenAI calls through the actual _arun_background path using InMemoryDb (one session per run): max RUNNING observed at any sample was exactly 2, all 5 runs completed, no errors. The cookbook file itself (PostgresDb variant) was compile-checked only because the pgvector Docker container was unresponsive during testing. The limiter is also covered by unit tests in libs/agno/tests/unit/run/test_background_concurrency.py and libs/agno/tests/unit/agent/test_background_execution.py.
+**Result:** Live concurrency behavior PASS (cap held at 2, 5/5 completed); rerun the file against Postgres once the container is healthy.
+**Observation:** Testing surfaced a pre-existing issue unrelated to the limiter: multiple concurrent background runs sharing ONE session clobber each other's status updates (each background task saves its own session snapshot; last writer wins), leaving other runs' statuses stale (e.g. PENDING forever) when polled. Runs on distinct sessions are unaffected.
 
 ---
