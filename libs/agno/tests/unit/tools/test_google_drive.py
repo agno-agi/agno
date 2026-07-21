@@ -1,4 +1,5 @@
 import json
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -263,6 +264,24 @@ def test_download_file_success(tmp_path, drive_tools):
     assert result["status"] == "downloaded"
     assert result["fileId"] == "abc123"
     assert "file.txt" in result["path"]
+    assert Path(result["path"]).resolve().parent == tmp_path.resolve()
+
+
+@pytest.mark.parametrize("drive_name", ("../../escape.txt", r"..\..\escape.txt"))
+def test_download_file_sanitizes_path_components(tmp_path, drive_tools, drive_name):
+    drive_tools.download_dir = tmp_path
+    drive_tools.service.files.return_value.get.return_value.execute.return_value = {
+        "id": "abc123",
+        "name": drive_name,
+        "mimeType": "text/plain",
+    }
+    mock_downloader = MagicMock()
+    mock_downloader.next_chunk.side_effect = [(MagicMock(progress=lambda: 1.0), True)]
+    with patch("agno.tools.google.drive.MediaIoBaseDownload", return_value=mock_downloader):
+        result = json.loads(drive_tools.download_file("abc123"))
+    assert result["status"] == "downloaded"
+    assert "escape.txt" in result["path"]
+    assert Path(result["path"]).resolve().parent == tmp_path.resolve()
 
 
 def test_download_file_error(tmp_path, drive_tools):

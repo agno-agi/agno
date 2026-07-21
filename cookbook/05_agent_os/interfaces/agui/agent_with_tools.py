@@ -8,6 +8,7 @@ Demonstrates agent with tools.
 from typing import List
 
 from agno.agent.agent import Agent
+from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIResponses
 from agno.os import AgentOS
 from agno.os.interfaces.agui import AGUI
@@ -30,6 +31,7 @@ def generate_haiku(
 
 agent = Agent(
     model=OpenAIResponses(id="gpt-5.4"),
+    db=SqliteDb(db_file="/tmp/agui_agent_with_tools.db"),
     tools=[
         WebSearchTools(),
         generate_haiku,
@@ -48,7 +50,6 @@ agent = Agent(
     add_location_to_context=True,
     timezone_identifier="Etc/UTC",
     markdown=True,
-    debug_mode=True,
 )
 
 

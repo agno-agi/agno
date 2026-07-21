@@ -38,6 +38,10 @@ class RunContext:
     knowledge: Optional[Any] = None
     members: Optional[List[Any]] = None
 
+    # Per-run additive tools from the client (e.g., AG-UI frontend tools)
+    # Merged AFTER agent.tools during tool resolution
+    client_tools: Optional[List[Any]] = None
+
 
 @dataclass
 class BaseRunOutputEvent:

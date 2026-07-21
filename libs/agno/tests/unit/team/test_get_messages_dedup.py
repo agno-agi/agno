@@ -1,11 +1,7 @@
-"""Unit tests for TeamSession.get_messages() deduplication of member runs.
-
-Verifies fix for GitHub issue #7341: member runs stored both as standalone
-runs and inside member_responses should only appear once in get_messages output.
-"""
+"""Unit tests for TeamSession."""
 
 from agno.models.message import Message
-from agno.run.agent import RunOutput
+from agno.run.agent import RunInput, RunOutput
 from agno.run.base import RunStatus
 from agno.run.team import TeamRunOutput
 from agno.session.team import TeamSession
@@ -60,6 +56,22 @@ def _build_dual_storage_session(member_agent_id: str = "agent-001") -> TeamSessi
     session.runs = []
     session.upsert_run(member_run)
     session.upsert_run(team_run)
+    return session
+
+
+def _session_with_runs(n: int) -> TeamSession:
+    """Build a TeamSession with n completed team-leader runs (input/output pairs)."""
+    session = TeamSession(session_id="test-session")
+    session.runs = [
+        TeamRunOutput(
+            run_id=f"t{i}",
+            team_id="team-001",
+            status=RunStatus.completed,
+            input=RunInput(input_content=f"in{i}"),
+            content=f"out{i}",
+        )
+        for i in range(n)
+    ]
     return session
 
 
@@ -220,3 +232,15 @@ class TestGetMessagesMemberDedup:
 
         # Verify we got exactly one copy
         assert len(messages) == 4
+
+
+class TestGetTeamHistoryZeroCount:
+    """get_team_history() zero/negative num_runs must return empty, not the whole history."""
+
+    def test_get_team_history_zero_returns_empty(self):
+        """num_runs=0 returns no history rather than all runs."""
+        assert _session_with_runs(3).get_team_history(num_runs=0) == []
+
+    def test_get_team_history_positive_is_limited(self):
+        """A positive num_runs returns that many recent runs."""
+        assert len(_session_with_runs(3).get_team_history(num_runs=2)) == 2
