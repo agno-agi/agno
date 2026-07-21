@@ -25,6 +25,7 @@ from agno.run.agent import (
 )
 from agno.run.base import RunStatus
 from agno.session.agent import AgentSession
+from agno.utils.events import error_type_of
 from agno.utils.log import log_exception, log_warning
 
 
@@ -791,6 +792,7 @@ class BaseExternalAgent:
                 agent_name=self.name or "",
                 session_id=session_id,
                 content=str(run_error),
+                error_type=error_type_of(run_error),
             )
         else:
             yield RunCompletedEvent(
