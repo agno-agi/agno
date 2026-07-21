@@ -3,6 +3,7 @@ from os import getenv
 from typing import Any, Dict, List, Optional, Tuple
 
 from agno.knowledge.embedder.base import Embedder
+from agno.utils.gemini import inject_agno_client_header
 from agno.utils.log import log_error, log_info, log_warning
 
 try:
@@ -51,6 +52,8 @@ class GeminiEmbedder(Embedder):
 
         if self.client_params:
             _client_params.update(self.client_params)
+
+        _client_params = inject_agno_client_header(_client_params)
 
         self.gemini_client = genai.Client(**_client_params)
 

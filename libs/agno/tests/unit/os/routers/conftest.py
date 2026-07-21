@@ -45,6 +45,8 @@ def make_agent_mock():
             status="OK", content="done", reasoning_content=None, images=None, files=None, videos=None, audio=None
         )
     )
+    # Session lookup returns None by default so resolve_session_id uses the new key format
+    agent_mock.aget_session = AsyncMock(return_value=None)
     return agent_mock
 
 
@@ -109,6 +111,8 @@ def make_async_client_mock(stream_mock=None):
     client.assistant_threads_setTitle = AsyncMock()
     client.assistant_threads_setSuggestedPrompts = AsyncMock()
     client.chat_stream = AsyncMock(return_value=stream_mock or make_stream_mock())
+    client.chat_postMessage = AsyncMock()
+    # Used by resolve_slack_user() and bot_name_resolver.resolve()
     client.users_info = AsyncMock(
         return_value={
             "ok": True,
@@ -123,6 +127,8 @@ def make_async_client_mock(stream_mock=None):
             },
         }
     )
+    # Used by resolve_channel_name()
+    client.conversations_info = AsyncMock(return_value={"ok": True, "channel": {"name": "general"}})
     return client
 
 
@@ -154,6 +160,8 @@ def make_streaming_body(
 def make_streaming_agent(chunks=None):
     agent = AsyncMock()
     agent.name = "Test Agent"
+    # Session lookup returns None by default so resolve_session_id uses the new key format
+    agent.aget_session = AsyncMock(return_value=None)
 
     async def _arun_stream(*args, **kwargs):
         for c in chunks or []:

@@ -92,6 +92,9 @@ class WebContextProvider(ContextProvider):
     # Sub-agent — built lazily for agent mode and programmatic query()
     # ------------------------------------------------------------------
 
+    async def _aget_query_agent(self, run_context):
+        return self._ensure_agent()
+
     def _ensure_agent(self) -> Agent:
         if self._agent is None:
             self._agent = self._build_agent()

@@ -39,9 +39,11 @@ from typing import TYPE_CHECKING
 
 from agno.context.mode import ContextMode
 from agno.run import RunContext
+from agno.run.agent import RunOutput
 from agno.tools import tool
 
 if TYPE_CHECKING:
+    from agno.agent import Agent
     from agno.models.base import Model
 
 
@@ -82,15 +84,31 @@ class ContextProvider(ABC):
         name: str | None = None,
         mode: ContextMode = ContextMode.default,
         model: Model | None = None,
+        read: bool = True,
+        write: bool = True,
         query_tool_name: str | None = None,
         update_tool_name: str | None = None,
+        stream_sub_agent_events: bool = True,
     ) -> None:
+        if not read and not write:
+            raise ValueError(
+                f"{type(self).__name__}: at least one of `read` or `write` must be True "
+                "(a provider that exposes neither tool is meaningless)"
+            )
         self.id = id
         self.name = name or id
         self.mode = mode
         self.model = model
+        # Per-direction toggles for the default surface. `read=False`
+        # drops `query_<id>`; `write=False` drops `update_<id>`. Lets
+        # callers expose an asymmetric surface (e.g. read-only voice
+        # wiki, write-only event sink) without subclassing or
+        # reaching for `mode=tools` / `mode=agent`.
+        self.read = read
+        self.write = write
         self.query_tool_name = query_tool_name or f"query_{_sanitize_id(id)}"
         self.update_tool_name = update_tool_name or f"update_{_sanitize_id(id)}"
+        self.stream_sub_agent_events = stream_sub_agent_events
 
     @abstractmethod
     def query(self, question: str, *, run_context: RunContext | None = None) -> Answer: ...
@@ -167,6 +185,14 @@ class ContextProvider(ABC):
     # Internals
     # ------------------------------------------------------------------
 
+    async def _aget_query_agent(self, run_context: RunContext | None) -> "Agent | None":
+        """Override to return the read sub-agent for streaming; None falls back to aquery()."""
+        return None
+
+    async def _aget_update_agent(self, run_context: RunContext | None) -> "Agent | None":
+        """Override to return the write sub-agent for streaming; None falls back to aupdate()."""
+        return None
+
     def _run_kwargs_for_sub_agent(self, run_context: RunContext | None) -> dict:
         """Extract kwargs to pass to a sub-agent ``arun()`` from the
         caller's RunContext.
@@ -191,19 +217,78 @@ class ContextProvider(ABC):
         the provider's recommended exposure."""
         return [self._query_tool()]
 
+    async def _stream_from_agent(
+        self,
+        agent: "Agent",
+        message: str,
+        run_context: RunContext | None,
+    ):
+        """Shared streaming logic for query and update tools."""
+        kwargs = self._run_kwargs_for_sub_agent(run_context)
+        run_id = run_context.run_id if run_context else None
+        final_output: RunOutput | None = None
+
+        async for event in agent.arun(
+            message,
+            stream=True,
+            stream_events=self.stream_sub_agent_events,
+            yield_run_output=True,
+            **kwargs,
+        ):
+            if isinstance(event, RunOutput):
+                final_output = event
+                continue
+            event.parent_run_id = getattr(event, "parent_run_id", None) or run_id
+            yield event
+
+        if final_output is not None:
+            from agno.context._utils import answer_from_run
+
+            yield answer_from_run(final_output)
+
+    def _read_write_tools(self) -> list:
+        """Helper for subclasses with both query + update tools.
+
+        Honors the ``read`` / ``write`` flags so the same provider
+        can be instantiated as read-only, write-only, or both. Use
+        from a subclass's ``_default_tools`` when the provider's
+        recommended surface is the two-tool split.
+        """
+        tools: list = []
+        if self.read:
+            tools.append(self._query_tool())
+        if self.write:
+            tools.append(self._update_tool())
+        return tools
+
     def _query_tool(self):
         provider = self
 
         @tool(name=self.query_tool_name)
-        async def _query(question: str, run_context: RunContext | None = None) -> str:
+        async def _query(question: str, run_context: RunContext | None = None):
             try:
-                answer = await provider.aquery(question, run_context=run_context)
+                agent = await provider._aget_query_agent(run_context)
             except Exception as exc:
-                return json.dumps({"error": f"{type(exc).__name__}: {exc}"})
-            payload: dict = {"results": [asdict(r) for r in answer.results]}
-            if answer.text is not None:
-                payload["text"] = answer.text
-            return json.dumps(payload)
+                yield json.dumps({"error": f"{type(exc).__name__}: {exc}"})
+                return
+
+            if agent is None:
+                try:
+                    answer = await provider.aquery(question, run_context=run_context)
+                except Exception as exc:
+                    yield json.dumps({"error": f"{type(exc).__name__}: {exc}"})
+                    return
+                yield json.dumps(serialize_answer(answer))
+                return
+
+            try:
+                async for chunk in provider._stream_from_agent(agent, question, run_context):
+                    if isinstance(chunk, Answer):
+                        yield json.dumps(serialize_answer(chunk))
+                    else:
+                        yield chunk
+            except Exception as exc:
+                yield json.dumps({"error": f"{type(exc).__name__}: {exc}"})
 
         return _query
 
@@ -211,17 +296,36 @@ class ContextProvider(ABC):
         provider = self
 
         @tool(name=self.update_tool_name)
-        async def _update(instruction: str, run_context: RunContext | None = None) -> str:
+        async def _update(instruction: str, run_context: RunContext | None = None):
             try:
-                answer = await provider.aupdate(instruction, run_context=run_context)
+                agent = await provider._aget_update_agent(run_context)
             except NotImplementedError:
-                return json.dumps({"error": f"{provider.name} is read-only"})
+                yield json.dumps({"error": f"{provider.name} is read-only"})
+                return
             except Exception as exc:
-                return json.dumps({"error": f"{type(exc).__name__}: {exc}"})
-            payload: dict = {"results": [asdict(r) for r in answer.results]}
-            if answer.text is not None:
-                payload["text"] = answer.text
-            return json.dumps(payload)
+                yield json.dumps({"error": f"{type(exc).__name__}: {exc}"})
+                return
+
+            if agent is None:
+                try:
+                    answer = await provider.aupdate(instruction, run_context=run_context)
+                except NotImplementedError:
+                    yield json.dumps({"error": f"{provider.name} is read-only"})
+                    return
+                except Exception as exc:
+                    yield json.dumps({"error": f"{type(exc).__name__}: {exc}"})
+                    return
+                yield json.dumps(serialize_answer(answer))
+                return
+
+            try:
+                async for chunk in provider._stream_from_agent(agent, instruction, run_context):
+                    if isinstance(chunk, Answer):
+                        yield json.dumps(serialize_answer(chunk))
+                    else:
+                        yield chunk
+            except Exception as exc:
+                yield json.dumps({"error": f"{type(exc).__name__}: {exc}"})
 
         return _update
 
@@ -232,3 +336,22 @@ class ContextProvider(ABC):
 def _sanitize_id(raw: str) -> str:
     s = re.sub(r"[^a-z0-9]+", "_", raw.lower())
     return s.strip("_") or "context"
+
+
+def serialize_answer(answer: Answer) -> dict:
+    """Build the JSON payload returned to the calling agent.
+
+    Omit empty fields so the calling agent doesn't see filler. Today
+    no provider populates ``Answer.results`` (the ``Document`` slot
+    is reserved for providers that want to return structured hits
+    alongside synthesized text); shipping ``"results": []`` on every
+    call is dead weight in the prompt. ``text`` is omitted when None.
+    If both are absent the payload is ``{}`` — honest "this tool
+    returned nothing" signal to the calling agent.
+    """
+    payload: dict = {}
+    if answer.results:
+        payload["results"] = [asdict(r) for r in answer.results]
+    if answer.text is not None:
+        payload["text"] = answer.text
+    return payload

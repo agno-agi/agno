@@ -10,6 +10,7 @@ Requires `EXA_API_KEY`.
 
 from __future__ import annotations
 
+import asyncio
 import json
 from os import getenv
 from typing import Any
@@ -35,7 +36,7 @@ class ExaBackend(ContextBackend):
         return Status(ok=True, detail="exa.ai")
 
     async def astatus(self) -> Status:
-        return self.status()
+        return await asyncio.to_thread(self.status)
 
     def _get_client(self) -> Any:
         if self._client is None:

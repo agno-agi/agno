@@ -23,7 +23,7 @@ Supported Modes:
 
 import uuid
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from os import getenv
 from textwrap import dedent
 from typing import Any, Callable, List, Optional, Union
@@ -460,7 +460,7 @@ class DecisionLogStore(LearningStore):
                     user_id=user_id,
                     agent_id=agent_id,
                     team_id=team_id,
-                    created_at=datetime.utcnow().isoformat(),
+                    created_at=datetime.now(timezone.utc).isoformat(),
                 )
 
                 store.save(decision=decision_obj)
@@ -508,7 +508,7 @@ class DecisionLogStore(LearningStore):
                     user_id=user_id,
                     agent_id=agent_id,
                     team_id=team_id,
-                    created_at=datetime.utcnow().isoformat(),
+                    created_at=datetime.now(timezone.utc).isoformat(),
                 )
 
                 await store.asave(decision=decision_obj)
@@ -742,7 +742,7 @@ class DecisionLogStore(LearningStore):
             decisions = []
             cutoff_date = None
             if days:
-                cutoff_date = datetime.utcnow() - timedelta(days=days)
+                cutoff_date = datetime.now(timezone.utc) - timedelta(days=days)
 
             for record in results:
                 content = record.get("content") if isinstance(record, dict) else None
@@ -760,6 +760,9 @@ class DecisionLogStore(LearningStore):
                 if cutoff_date and decision.created_at:
                     try:
                         created = datetime.fromisoformat(decision.created_at.replace("Z", "+00:00"))
+                        # Records written before this fix are naive; assume UTC.
+                        if created.tzinfo is None:
+                            created = created.replace(tzinfo=timezone.utc)
                         if created < cutoff_date:
                             continue
                     except (ValueError, AttributeError):
@@ -815,7 +818,7 @@ class DecisionLogStore(LearningStore):
             decisions = []
             cutoff_date = None
             if days:
-                cutoff_date = datetime.utcnow() - timedelta(days=days)
+                cutoff_date = datetime.now(timezone.utc) - timedelta(days=days)
 
             for record in results:
                 content = record.get("content") if isinstance(record, dict) else None
@@ -832,6 +835,9 @@ class DecisionLogStore(LearningStore):
                 if cutoff_date and decision.created_at:
                     try:
                         created = datetime.fromisoformat(decision.created_at.replace("Z", "+00:00"))
+                        # Records written before this fix are naive; assume UTC.
+                        if created.tzinfo is None:
+                            created = created.replace(tzinfo=timezone.utc)
                         if created < cutoff_date:
                             continue
                     except (ValueError, AttributeError):
@@ -996,7 +1002,7 @@ class DecisionLogStore(LearningStore):
 
         decision.outcome = outcome
         decision.outcome_quality = outcome_quality
-        decision.updated_at = datetime.utcnow().isoformat()
+        decision.updated_at = datetime.now(timezone.utc).isoformat()
 
         self.save(decision=decision)
         return True
@@ -1014,7 +1020,7 @@ class DecisionLogStore(LearningStore):
 
         decision.outcome = outcome
         decision.outcome_quality = outcome_quality
-        decision.updated_at = datetime.utcnow().isoformat()
+        decision.updated_at = datetime.now(timezone.utc).isoformat()
 
         await self.asave(decision=decision)
         return True
@@ -1054,7 +1060,7 @@ class DecisionLogStore(LearningStore):
                     user_id=user_id,
                     agent_id=agent_id,
                     team_id=team_id,
-                    created_at=datetime.utcnow().isoformat(),
+                    created_at=datetime.now(timezone.utc).isoformat(),
                 )
 
                 self.save(decision=decision)
@@ -1090,7 +1096,7 @@ class DecisionLogStore(LearningStore):
                     user_id=user_id,
                     agent_id=agent_id,
                     team_id=team_id,
-                    created_at=datetime.utcnow().isoformat(),
+                    created_at=datetime.now(timezone.utc).isoformat(),
                 )
 
                 await self.asave(decision=decision)

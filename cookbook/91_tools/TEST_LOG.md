@@ -1,5 +1,15 @@
 # Test Log
 
+### file_generation_tools.py (generate_code_file)
+
+**Status:** PASS
+
+**Description:** Added `generate_code_file` to `FileGenerationTools` so agents can emit source code as downloadable file artifacts for any language (Python, JS, TS, Go, Rust, Java, etc.). The tool maps a `language` (or the filename extension) to a file extension and a valid MIME type, falling back to `text/plain` for languages without a dedicated allowlisted MIME type. Added `example_code_generation()` to the cookbook (Python + TypeScript) and wired it into `__main__`.
+
+**Result:** Unit tests pass (`pytest libs/agno/tests/unit/tools/test_file_generation.py` — 45 passed, 2 skipped) covering Python (`.py`, `text/x-python`), TypeScript fallback (`.ts`, `text/plain`), unknown-language default (`.txt`), extension inference from filename, alias resolution (`py`/`c++`/`c#`/`bash`/`golang`), and the `enable_code_generation` toggle. Standalone check confirmed `File` artifacts construct without raising (MIME type stays within `File.valid_mime_types()`) and content round-trips for python/typescript/go/rust. Live agent run not executed (no OpenAI credentials / demo venv in this environment).
+
+---
+
 ### file_tools.py (Examples 6-8: exclude_patterns)
 
 **Status:** PASS
@@ -27,5 +37,55 @@
 **Description:** Added GitLab toolkit example and validated sync + async GitLab toolkit behavior with mocked unit tests and live GitLab API checks using a real project (`SalimELMARDI/agno-gitlab-tools-test`).
 
 **Result:** Ran `pytest libs/agno/tests/unit/tools/test_gitlab.py -q` and all 18 tests passed, including async methods, internal async client handling coverage, and `enable_*` tool-toggle coverage (with `enable_get_projects` as the canonical project-read toggle). Also ran `ruff check` for changed files and both validation scripts (`libs/agno/scripts/validate.bat`, `libs/agno_infra/scripts/validate.bat`) with no issues. Live toolkit checks passed for `get_project`, `list_issues`, and `list_merge_requests` against `SalimELMARDI/agno-gitlab-tools-test`. Negative live check also passed: `get_project('wrong-group/wrong-project')` returned expected JSON error (`404 Project Not Found`). The cookbook agent runtime file was not executed because it requires model credentials.
+
+---
+
+### antigravity_tools.py
+
+**Status:** PENDING
+
+**Description:** Gemini-driven Agno agent delegates a research sub-task to an Antigravity sandbox via `AntigravityTools.run_antigravity_task`. The toolkit POSTs to the Gemini Agents API `/interactions` endpoint, caches `environment_id` in `agent.session_state` so the sandbox persists across calls in non-streaming mode, and returns the final text response.
+
+**Result:** Unit tests pass covering session-state caching, env-id reuse on subsequent calls, HTTP error surfacing, custom-agent creation, and the delete endpoint. Live cookbook run with a partner Gemini API key remains the gating verification before merge.
+
+---
+
+### antigravity_agents_crud_tools.py
+
+**Status:** PENDING
+
+**Description:** Gemini-driven Agno agent drives the full Agents API lifecycle via `AntigravityTools` — `create_custom_antigravity_agent`, `run_custom_antigravity_agent`, then `delete_antigravity_agent`. Toolkit also exposes `get_custom_antigravity_agent`, `update_custom_antigravity_agent`, `list_antigravity_agents`, and `list_antigravity_agent_versions` for full CRUD coverage of `/v1beta/agents`.
+
+**Result:** Unit tests pass. Live cookbook run with a partner Gemini API key remains the gating verification.
+
+---
+
+### antigravity_directory_tools.py
+
+**Status:** PENDING
+
+**Description:** `AntigravityTools(agent_directory=...)` parses a local agent folder (`agent.yaml` + `AGENTS.md` + `workspace/` + `skills/`), registers it via POST /agents (idempotent), and routes subsequent `run_antigravity_task` calls at the named agent. Re-uses the `example_agent/` folder from `cookbook/frameworks/antigravity/`.
+
+**Result:** Unit tests pass for the new constructor path (register=False parse-only, register=True POSTs, 409 = success, agent= / default_sources= conflict validation, required-key validation, run_antigravity_task routes at the named agent post-load). Live cookbook awaiting partner key.
+
+---
+
+### antigravity_snapshot_tools.py
+
+**Status:** PENDING
+
+**Description:** Gemini-driven Agno agent runs `run_antigravity_task` to write a few files in the sandbox, then calls `download_antigravity_environment_snapshot` with `environment_id="current"` to resolve the env id from `agent.session_state` and save the resulting tar to disk. Demonstrates the full sandbox-write → archive flow through tool calls.
+
+**Result:** Unit tests pass covering snapshot URL construction, byte-for-byte write to disk, "current" resolution from session_state, and the no-cached-env error path. Live cookbook awaiting partner key.
+
+---
+
+### tavily_tools_advanced.py
+
+**Status:** PASS
+
+**Description:** Runs two agents with advanced Tavily search parameters against the live API: domain-restricted research (include_domains=["arxiv.org", "github.com"], exclude_domains=["reddit.com"], time_range="month", country="united states") and recent news scoped by day count (topic="news", days=3). Request payloads were additionally verified at the wire level: configured parameters present in every request, unset parameters omitted (the {query, search_depth, include_answer, max_results} baseline is unchanged when nothing is configured).
+
+**Result:** Both examples completed without errors. Domain-restricted search returned arxiv-sourced MoE papers, and the news agent returned items from the last few days. Note: answer text is model-composed; the domain restriction applies to the search results feeding it.
 
 ---
