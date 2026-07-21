@@ -167,9 +167,14 @@ def deep_copy_field(agent: Agent, field_name: str, field_value: Any) -> Any:
 
     # For tools, return callable factories by reference; share MCP tools but copy others
     if field_name == "tools" and field_value is not None:
-        from agno.tools import Toolkit
+        from agno.tools import ToolRegistry, Toolkit
         from agno.tools.function import Function
         from agno.utils.callables import is_callable_factory
+
+        # A registry owns live runtime state and its lock; keep the shared registry
+        # when copying an Agent so mutations remain visible to the active run.
+        if isinstance(field_value, ToolRegistry):
+            return field_value
 
         # Callable-factory tools are shared by reference and resolved per-run
         if is_callable_factory(field_value, excluded_types=(Toolkit, Function)):

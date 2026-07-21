@@ -58,3 +58,11 @@
 **Result:** Timed out after 120s.
 
 ---
+
+### 05_runtime_tool_registry.py
+
+**Status:** NOT RUN
+**Description:** Requires an OpenAI API key and demonstrates versioned runtime tool registration after a completed tool batch.
+**Result:** Added as a cookbook example for the runtime tool registry feature.
+
+---
