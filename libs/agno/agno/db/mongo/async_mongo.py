@@ -3132,10 +3132,13 @@ class AsyncMongoDb(AsyncBaseDb):
         limit: int = 100,
         page: int = 1,
         user_id: Optional[str] = None,
+        raise_on_error: bool = False,
     ) -> Tuple[List[Dict[str, Any]], int]:
         try:
             collection = await self._get_collection(table_type="schedules")
             if collection is None:
+                if raise_on_error:
+                    raise RuntimeError("schedules table unavailable (database error or table never created)")
                 return [], 0
 
             query: Dict[str, Any] = {}
@@ -3153,6 +3156,8 @@ class AsyncMongoDb(AsyncBaseDb):
             return schedules, total_count
         except Exception as e:
             log_debug(f"Error listing schedules: {e}")
+            if raise_on_error:
+                raise
             return [], 0
 
     async def create_schedule(self, schedule_data: Dict[str, Any]) -> Dict[str, Any]:
