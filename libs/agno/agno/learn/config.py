@@ -407,21 +407,26 @@ class DecisionLogConfig:
         return f"DecisionLogConfig(mode={self.mode.value})"
 
 
-# =============================================================================
-# Placeholder Configurations (Not yet implemented)
-# =============================================================================
-
-
 @dataclass
 class FeedbackConfig:
     """Configuration for Behavioral Feedback learning type.
 
     Behavioral Feedback captures signals about what worked and what
-    didn't: thumbs up/down, corrections, regeneration requests.
+    didn't: thumbs up/down on a run, corrections, regeneration requests.
+    Recent feedback is injected into future runs so the agent adapts.
+
+    Feedback arrives three ways: explicitly via FeedbackStore.record()
+    (distills a lesson from the comment when a model is provided), over
+    the AgentOS run feedback endpoint (stores the raw comment), and in
+    ALWAYS mode extracted from the conversation itself after each run
+    ("that's wrong", "too long", "perfect") when a model is provided.
+    The ALWAYS-mode extraction pass adds one model call per run.
 
     Scope: AGENT (fixed) - Stored and retrieved by agent_id.
 
-    Note: Deferred to Phase 2.
+    Args:
+        system_message: Override the extraction system prompt entirely.
+        instructions: Override the distillation instructions used by record().
     """
 
     # Required fields
@@ -433,10 +438,16 @@ class FeedbackConfig:
     schema: Optional[Type[Any]] = None
 
     # Prompt customization
+    system_message: Optional[str] = None
     instructions: Optional[str] = None
 
     def __repr__(self) -> str:
-        return "FeedbackConfig(mode=ALWAYS)"
+        return f"FeedbackConfig(mode={self.mode.value})"
+
+
+# =============================================================================
+# Placeholder Configurations (Not yet implemented)
+# =============================================================================
 
 
 @dataclass
