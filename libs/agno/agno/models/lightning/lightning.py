@@ -1,7 +1,8 @@
 from dataclasses import dataclass, field
 from os import getenv
-from typing import Optional
+from typing import Any, Dict, Optional
 
+from agno.exceptions import ModelAuthenticationError
 from agno.models.openai.like import OpenAILike
 
 
@@ -26,3 +27,14 @@ class Lightning(OpenAILike):
     base_url: str = "https://lightning.ai/api/v1/"
 
     supports_native_structured_outputs: bool = False
+
+    def _get_client_params(self) -> Dict[str, Any]:
+        if not self.api_key:
+            self.api_key = getenv("LIGHTNING_API_KEY")
+            if not self.api_key:
+                raise ModelAuthenticationError(
+                    message="LIGHTNING_API_KEY not set. Please set the LIGHTNING_API_KEY environment variable.",
+                    model_name=self.name,
+                )
+
+        return super()._get_client_params()
