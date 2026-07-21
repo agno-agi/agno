@@ -61,6 +61,18 @@ def test_list_files_schema_exposes_directory():
     assert "directory" not in function.parameters.get("required", [])
 
 
+def test_list_files_empty_directory_falls_back_to_base_dir():
+    """Test that an empty directory string lists the base directory instead of returning nothing."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        base_dir = Path(tmp_dir)
+        file_tools = FileTools(base_dir=base_dir)
+
+        (base_dir / "file1.txt").write_text("content1")
+
+        assert json.loads(file_tools.list_files(directory="")) == ["file1.txt"]
+        assert file_tools.list_files(directory="") == file_tools.list_files()
+
+
 def test_search_files_returns_relative_paths():
     """Test that search_files returns relative paths in JSON structure."""
     with tempfile.TemporaryDirectory() as tmp_dir:
