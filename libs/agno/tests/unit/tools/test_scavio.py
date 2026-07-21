@@ -117,33 +117,26 @@ def test_google_search_returns_json(scavio_tools, mock_scavio_client):
     assert call.args[0] == "agno framework"
 
 
-def test_google_search_maps_v2_params(scavio_tools, mock_scavio_client):
-    """google_search maps the public params onto the v2 wire shape (gl/hl/start)."""
+def test_google_search_forwards_v2_params_verbatim(scavio_tools, mock_scavio_client):
+    """google_search mirrors the SDK: every v2 param is forwarded verbatim (no aliasing, no transform)."""
     mock_scavio_client.google.search.return_value = {"organic_results": []}
 
-    scavio_tools.google_search("agno framework", country_code="us", language="en", page=2)
+    kwargs = {
+        "gl": "us",
+        "hl": "en",
+        "start": 10,
+        "device": "mobile",
+        "nfpr": True,
+        "google_domain": "google.de",
+        "location": "Berlin,Germany",
+        "safe": "active",
+        "time_period": "last_week",
+    }
+    scavio_tools.google_search("agno framework", **kwargs)
 
     call = mock_scavio_client.google.search.call_args
     assert call.args[0] == "agno framework"
-    assert call.kwargs["gl"] == "us"
-    assert call.kwargs["hl"] == "en"
-    # page 2 -> result offset 10
-    assert call.kwargs["start"] == 10
-    # v1-only param names must no longer be forwarded to the v2 API
-    assert "country_code" not in call.kwargs
-    assert "language" not in call.kwargs
-    assert "page" not in call.kwargs
-    assert "search_type" not in call.kwargs
-    assert "light_request" not in call.kwargs
-
-
-def test_google_search_omits_start_on_first_page(scavio_tools, mock_scavio_client):
-    """No result offset is sent for page 1 (or an unset page)."""
-    mock_scavio_client.google.search.return_value = {"organic_results": []}
-
-    scavio_tools.google_search("agno framework", page=1)
-
-    assert mock_scavio_client.google.search.call_args.kwargs.get("start") is None
+    assert call.kwargs == kwargs
 
 
 def test_amazon_product_passes_asin(scavio_tools, mock_scavio_client):

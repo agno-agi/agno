@@ -106,37 +106,47 @@ class ScavioTools(Toolkit):
     def google_search(
         self,
         query: str,
-        country_code: Optional[str] = None,
-        language: Optional[str] = None,
-        page: Optional[int] = None,
+        gl: Optional[str] = None,
+        hl: Optional[str] = None,
+        start: Optional[int] = None,
         device: Optional[str] = None,
         nfpr: Optional[bool] = None,
+        google_domain: Optional[str] = None,
+        location: Optional[str] = None,
+        safe: Optional[str] = None,
+        time_period: Optional[str] = None,
     ) -> str:
         """Search Google for real-time organic web results.
 
         Args:
             query (str): The search query.
-            country_code (Optional[str]): Two-letter country code to localize results (e.g. "us").
-            language (Optional[str]): Two-letter language code for results (e.g. "en").
-            page (Optional[int]): Result page number (1-based); page 2 fetches the next 10 results.
+            gl (Optional[str]): Two-letter country code to localize results (e.g. "us").
+            hl (Optional[str]): Two-letter UI language code (e.g. "en").
+            start (Optional[int]): Result offset for pagination (0, 10, 20, ...).
             device (Optional[str]): "desktop" or "mobile".
             nfpr (Optional[bool]): Disable auto-correction / spelling suggestions when True.
+            google_domain (Optional[str]): Regional Google domain (e.g. "google.co.uk").
+            location (Optional[str]): Canonical location to search from (e.g. "New York,New York,United States").
+            safe (Optional[str]): SafeSearch filter; "active" filters adult content.
+            time_period (Optional[str]): Restrict to a recent window: "last_hour", "last_day",
+                "last_week", "last_month", or "last_year".
 
         Returns:
-            str: JSON string with an ``organic_results`` list (each item has title, link,
-            and snippet). Costs 1 credit.
+            str: JSON string with an ``organic_results`` list (each item has title and link,
+            and usually a snippet). Costs 1 credit.
         """
-        # The Scavio Google API is v2: localization uses gl/hl and paging uses a
-        # result offset (start). Map the public param names onto that wire shape.
-        start = (page - 1) * 10 if page and page > 1 else None
         return self._call(
             self.client.google.search,
             query,
-            gl=country_code,
-            hl=language,
+            gl=gl,
+            hl=hl,
             start=start,
             device=device,
             nfpr=nfpr,
+            google_domain=google_domain,
+            location=location,
+            safe=safe,
+            time_period=time_period,
         )
 
     # ------------------------------------------------------------------ Amazon
