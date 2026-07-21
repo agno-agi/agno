@@ -129,7 +129,7 @@ def _is_truncated(run: AnyRunOutput) -> bool:
     today, so content is the only cross-provider signal available; this is the
     content-side fallback rather than a guess from token counts.
 
-    Two deliberate narrowings, both of which would otherwise turn a scoreable attempt
+    Three deliberate narrowings, each of which would otherwise turn a scoreable attempt
     into an unscored one:
 
     - `is None`, not "empty or blank". An empty answer is an answer and stays scored.
@@ -137,9 +137,9 @@ def _is_truncated(run: AnyRunOutput) -> bool:
       its content is legitimately None. Those runs are exactly what `ToolCallScorer`
       grades -- it reads `run.tools`, not `run.content` -- and calling them truncated
       would convert a correct pass into no data at all.
-    - a run carrying media output (images, video, audio) answered in a non-text
-      modality: `content` is legitimately None and a scorer reading `run.images` must
-      still be invoked. Truncation means no output of ANY modality.
+    - a run carrying non-text output (images, video, audio, generated files) answered
+      in another modality: `content` is legitimately None and a scorer reading
+      `run.images` must still be invoked. Truncation means no output of ANY modality.
 
     Residual: an `output_schema` run truncated *mid-answer* keeps its partial text, so
     content is a `str` and this returns False. Detection stays on the licensed
@@ -147,7 +147,7 @@ def _is_truncated(run: AnyRunOutput) -> bool:
     """
     if run.content is not None:
         return False
-    if run.images or run.videos or run.audio or run.response_audio:
+    if run.images or run.videos or run.audio or run.response_audio or run.files:
         return False
     return not any(getattr(execution, "stop_after_tool_call", False) for execution in (run.tools or []))
 

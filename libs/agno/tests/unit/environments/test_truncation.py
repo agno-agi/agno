@@ -243,6 +243,8 @@ async def test_media_output_is_not_truncated():
         def digest(self):
             return "media-scorer"
 
+    from agno.media import File
+
     scorer = MediaScorer()
     outputs = {
         "image": _output(content=None, images=[Image(url="http://example.com/x.png")]),
@@ -258,10 +260,20 @@ async def test_media_output_is_not_truncated():
         assert attempt.score is not None and attempt.score.passed
     assert len(scorer.seen) == 3
 
+    # A generated-file answer is an answer too (files land on run.files, not content).
+    file_run = await arun_batch(
+        StubAgent(lambda value: _output(content=None, files=[File(url="http://example.com/x.csv")])),
+        ["file"],
+        k=1,
+        scorer=scorer,
+    )
+    assert file_run[0][0].stop_reason == StopReason.completed
+    assert len(scorer.seen) == 4
+
     # A contentless run with NO media output is still truncated.
     plain = await arun_batch(StubAgent(lambda value: _output(content=None)), ["a"], k=1, scorer=scorer)
     assert plain[0][0].stop_reason == StopReason.truncated
-    assert len(scorer.seen) == 3  # the truncated attempt never reached the scorer
+    assert len(scorer.seen) == 4  # the truncated attempt never reached the scorer
 
 
 def test_live_grid_tags_truncated_attempts():
