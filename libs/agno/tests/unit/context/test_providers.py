@@ -405,6 +405,41 @@ def test_db_read_false_drops_query_tool():
     assert [t.name for t in p.get_tools()] == ["update_crm"]
 
 
+def test_db_write_tools_replace_default_toolset():
+    from agno.tools import tool
+    from agno.tools.sql import SQLTools
+
+    @tool(name="create_crm_record")
+    def _create_crm_record(payload: str) -> str:
+        return "ok"
+
+    engine = create_engine("sqlite:///:memory:")
+    p = DatabaseContextProvider(
+        id="crm",
+        sql_engine=engine,
+        readonly_engine=engine,
+        write_tools=[_create_crm_record],
+    )
+    agent = p._ensure_write_agent()
+    assert agent.tools is not None
+    assert len(agent.tools) == 1
+    assert agent.tools[0] is _create_crm_record
+    assert not any(isinstance(t, SQLTools) for t in agent.tools)
+
+
+def test_db_default_write_agent_keeps_sqltools():
+    from agno.tools.sql import SQLTools
+
+    engine = create_engine("sqlite:///:memory:")
+    p = DatabaseContextProvider(
+        id="crm",
+        sql_engine=engine,
+        readonly_engine=engine,
+    )
+    agent = p._ensure_write_agent()
+    assert any(isinstance(t, SQLTools) for t in agent.tools or [])
+
+
 # ---------------------------------------------------------------------------
 # Slack
 # ---------------------------------------------------------------------------
@@ -452,6 +487,30 @@ def test_slack_status_reports_configured():
     status = p.status()
     assert status.ok is True
     assert "token configured" in status.detail
+
+
+def test_slack_write_tools_replace_default_toolset():
+    from agno.tools import tool
+    from agno.tools.slack import SlackTools
+
+    @tool(name="post_release_note")
+    def _post_release_note(text: str) -> str:
+        return "ok"
+
+    p = SlackContextProvider(token="xoxb-x", write_tools=[_post_release_note])
+    agent = p._ensure_write_agent()
+    assert agent.tools is not None
+    assert len(agent.tools) == 1
+    assert agent.tools[0] is _post_release_note
+    assert not any(isinstance(t, SlackTools) for t in agent.tools)
+
+
+def test_slack_default_write_agent_keeps_slack_tools():
+    from agno.tools.slack import SlackTools
+
+    p = SlackContextProvider(token="xoxb-x")
+    agent = p._ensure_write_agent()
+    assert any(isinstance(t, SlackTools) for t in agent.tools or [])
 
 
 def test_slack_read_surfaces_are_split_by_mode():
@@ -745,6 +804,33 @@ def test_gmail_write_enabled_adds_update_tool(monkeypatch):
     p = GmailContextProvider(write=True)
     tools = p.get_tools()
     assert [t.name for t in tools] == ["query_gmail", "update_gmail"]
+
+
+def test_gmail_write_tools_replace_default_toolkit(monkeypatch):
+    from agno.tools import tool
+    from agno.tools.google.gmail import GmailTools
+
+    monkeypatch.delenv("GOOGLE_SERVICE_ACCOUNT_FILE", raising=False)
+
+    @tool(name="create_draft_only")
+    def _create_draft_only(subject: str) -> str:
+        return "ok"
+
+    p = GmailContextProvider(write=True, write_tools=[_create_draft_only])
+    agent = p._ensure_write_agent()
+    assert agent.tools is not None
+    assert len(agent.tools) == 1
+    assert agent.tools[0] is _create_draft_only
+    assert not any(isinstance(t, GmailTools) for t in agent.tools)
+
+
+def test_gmail_default_write_agent_keeps_gmail_toolkit(monkeypatch):
+    from agno.tools.google.gmail import GmailTools
+
+    monkeypatch.delenv("GOOGLE_SERVICE_ACCOUNT_FILE", raising=False)
+    p = GmailContextProvider(write=True)
+    agent = p._ensure_write_agent()
+    assert any(isinstance(t, GmailTools) for t in agent.tools or [])
 
 
 # ---------------------------------------------------------------------------
