@@ -23,13 +23,19 @@ written to the loop's temp workdir.
 Re-run after Phase E (the `agno.trainers.tinker` module now exists): still PASS
 offline, confirming the lazy SDK import is not reached when no key is set.
 
+Re-run after the consent gate landed: with `TINKER_API_KEY` present but
+`AGNO_RUN_TINKER_FINE_TUNE` unset, the file prints the capability-not-consent
+notice and runs the offline stub — key presence alone no longer selects the
+paid trainer. Offline output unchanged.
+
 ---
 
 ### basic.py — live path
 
 **Status:** see `specs/agno/2.8.1/notes/live-proof.md`
 
-**Description:** With `TINKER_API_KEY` set, the same file swaps the stub for
+**Description:** With `AGNO_RUN_TINKER_FINE_TUNE=1` and `TINKER_API_KEY` set,
+the same file swaps the stub for
 `TinkerTrainer(base_model="Qwen/Qwen3.6-35B-A3B", epochs=1)` and performs a real
 fine-tune. That run is bounded and recorded separately rather than as part of
 routine cookbook testing, because it spends real training compute.

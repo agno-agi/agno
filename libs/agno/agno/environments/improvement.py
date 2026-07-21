@@ -34,7 +34,7 @@ from agno.scorer import FingerprintError, Scorer
 from agno.trainers.base import Checkpoint, Trainer, TrainOn, TrainResult
 from agno.utils.log import log_warning
 
-_ConvergedReason = Literal["saturated", "all_failing", "not_exportable", "baseline_unscored"]
+_ConvergedReason = Literal["saturated", "all_failing", "not_exportable", "no_learning_zone", "baseline_unscored"]
 
 
 @dataclass(frozen=True)
@@ -255,7 +255,7 @@ class ImprovementLoop:
                 train_result=None,
                 audit_scorer_digest=audit_digest,
                 converged=True,
-                converged_reason=_converged_reason_for(baseline.pass_rate),
+                converged_reason=_converged_reason_for(baseline.pass_rate, export_report),
             )
 
         # 4. Cumulative dataset. `fit` retrains the pristine base every round, and the
@@ -432,14 +432,23 @@ class ImprovementLoop:
         )
 
 
-def _converged_reason_for(pass_rate: float) -> _ConvergedReason:
+def _converged_reason_for(pass_rate: float, export_report: ExportReport) -> _ConvergedReason:
     if pass_rate >= 1.0:
         return "saturated"
     if pass_rate <= 0.0:
         return "all_failing"
-    # A non-empty learning zone whose passing attempts were all tool-bearing,
-    # limit-hit, or textless: verifiable, but nothing the SFT format can carry.
-    return "not_exportable"
+    if (
+        export_report.n_skipped_tool_runs > 0
+        or export_report.n_skipped_limit_hit > 0
+        or export_report.n_skipped_no_text > 0
+    ):
+        # A non-empty learning zone whose passing attempts were all tool-bearing,
+        # limit-hit, or textless: verifiable, but nothing the SFT format can carry.
+        return "not_exportable"
+    # An intermediate pass rate with nothing skipped: every task was unanimous --
+    # some all-pass, some all-fail -- so the learning zone itself is empty. Nothing
+    # was inexpressible; there was nothing to express.
+    return "no_learning_zone"
 
 
 def _refuse_running_loop(sync_name: str, async_name: str) -> None:

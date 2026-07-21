@@ -7,8 +7,10 @@ already gets right, a trainer fine-tunes on it, and the tuned checkpoint is run
 back through the same environment so the gain is measured, not assumed.
 
 This runs offline by default against a stub trainer defined below, so the shape
-of the loop is visible without a GPU or an API key. Set TINKER_API_KEY to run it
-against a real Tinker fine-tune instead.
+of the loop is visible without a GPU or an API key. The live path spends real
+training compute, so it requires an explicit opt-in on top of the key: set
+AGNO_RUN_TINKER_FINE_TUNE=1 (and TINKER_API_KEY) to run a real Tinker fine-tune.
+A key alone never triggers spend -- a key is capability, not consent.
 """
 
 import os
@@ -27,9 +29,11 @@ BASE_MODEL = "Qwen/Qwen3.6-35B-A3B"
 
 
 def is_three_lines(run, expected):
-    """The verifier: a haiku is three non-empty lines. Fast, exact, no judge."""
-    if run.content is None:
-        return False
+    """The verifier: a haiku is three non-empty lines. Fast, exact, no judge.
+
+    It reads run.content directly: the engine never scores a truncated run, so a
+    None guard here would only hide truncation inside the pass rate.
+    """
     lines = [line for line in run.content.strip().split("\n") if line.strip()]
     return len(lines) == 3
 
@@ -160,13 +164,26 @@ env = Environment(
 
 
 def build_trainer():
-    """A real trainer when a key is present, the stub otherwise."""
-    if os.environ.get("TINKER_API_KEY"):
+    """The paid trainer only on explicit opt-in. A key is capability, not consent:
+    TINKER_API_KEY alone selects the stub, so an environment where the key is
+    always loaded (direnv) cannot spend a fine-tune by accident."""
+    if os.environ.get("AGNO_RUN_TINKER_FINE_TUNE") == "1":
+        if not os.environ.get("TINKER_API_KEY"):
+            raise RuntimeError(
+                "AGNO_RUN_TINKER_FINE_TUNE=1 but TINKER_API_KEY is not set; "
+                "the live fine-tune needs both."
+            )
         from agno.trainers.tinker import TinkerTrainer
 
-        print(f"TINKER_API_KEY found: fine-tuning {BASE_MODEL} for real.")
+        print(f"AGNO_RUN_TINKER_FINE_TUNE=1: fine-tuning {BASE_MODEL} for real.")
         return TinkerTrainer(base_model=BASE_MODEL, epochs=1)
-    print("No TINKER_API_KEY: running the loop against the offline stub trainer.")
+    if os.environ.get("TINKER_API_KEY"):
+        print(
+            "TINKER_API_KEY found but AGNO_RUN_TINKER_FINE_TUNE is not set: "
+            "using the offline stub. Set AGNO_RUN_TINKER_FINE_TUNE=1 to spend a real fine-tune."
+        )
+    else:
+        print("No TINKER_API_KEY: running the loop against the offline stub trainer.")
     return StubTrainer(offline_base, [offline_tuned])
 
 

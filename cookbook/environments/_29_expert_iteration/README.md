@@ -16,8 +16,14 @@ agent design — the only thing that changes is the weights.
 
 `basic.py` defines a small scripted model and stub trainer inline so the loop
 runs with no GPU and no API key. They are stand-ins, not agno API: a real
-trainer serves real checkpoints. Set `TINKER_API_KEY` and the same file runs
-against `TinkerTrainer`, fine-tuning `Qwen/Qwen3.6-35B-A3B` for real.
+trainer serves real checkpoints. Set `AGNO_RUN_TINKER_FINE_TUNE=1` (with
+`TINKER_API_KEY` available) and the same file runs against `TinkerTrainer`,
+fine-tuning `Qwen/Qwen3.6-35B-A3B` for real.
+
+The live path costs money, so it is gated on that explicit opt-in flag — a key
+alone never triggers spend. A key is capability, not consent: with only
+`TINKER_API_KEY` set (as direnv does in many shells) the file still runs the
+free offline stub.
 
 ## What has to be true for a gain to exist
 
@@ -68,4 +74,5 @@ python cookbook/environments/_29_expert_iteration/basic.py
 | Variable | Needed for |
 |---|---|
 | none | the offline run |
+| `AGNO_RUN_TINKER_FINE_TUNE=1` | opting in to the live fine-tune (spends money) |
 | `TINKER_API_KEY` | the live fine-tune branch |

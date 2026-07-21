@@ -31,9 +31,11 @@ WRONG = "I do not know."
 
 
 def training_scorer(run, expected):
-    """Too lenient: it accepts the shortcut phrasing as well as a real answer."""
-    if run.content is None:
-        return False
+    """Too lenient: it accepts the shortcut phrasing as well as a real answer.
+
+    It reads run.content directly: the engine never scores a truncated run, so a
+    None guard here would only hide truncation inside the pass rate.
+    """
     return run.content == GOOD or run.content.startswith("answer:")
 
 

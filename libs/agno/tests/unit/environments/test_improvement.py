@@ -148,6 +148,27 @@ def test_improvement_loop_empty_export_short_circuits(tmp_path):
     assert failing_trainer.fit_calls == []
 
 
+def test_empty_zone_at_intermediate_rate_converges_as_no_learning_zone(tmp_path):
+    # One task always passes and one always fails: pass rate 0.5, but every task is
+    # unanimous, so the learning zone -- and therefore the export -- is empty with
+    # every skip counter at zero. Nothing was inexpressible ("not_exportable" would
+    # blame the SFT format); there was simply nothing to express.
+    base = ScriptedModel({"the sea": RIGHT, "autumn": WRONG}, tag="unanimous", default=WRONG)
+    trainer = StubTrainer(base, [ScriptedModel(RIGHT, tag="tuned-1")])
+    loop = ImprovementLoop(_env(base), trainer=trainer, k=2, workdir=tmp_path)
+
+    report = loop.step()
+
+    assert report.converged is True
+    assert report.baseline_pass_rate == 0.5
+    assert report.converged_reason == "no_learning_zone"
+    assert report.export_report.n_written == 0
+    assert report.export_report.n_skipped_tool_runs == 0
+    assert report.export_report.n_skipped_limit_hit == 0
+    assert report.export_report.n_skipped_no_text == 0
+    assert trainer.fit_calls == []  # never spent
+
+
 def test_improvement_loop_refuses_degraded_fingerprint_before_fit(tmp_path):
     # A sourceless scorer degrades env_fingerprint to None, which makes the round
     # unmeasurable. Fail before the fine-tune, not after paying for one.
