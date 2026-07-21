@@ -515,9 +515,7 @@ def test_pin_message_api_error(monkeypatch):
     from agno.tools.telegram import TelegramTools
 
     tools = TelegramTools(chat_id="12345", enable_pin_message=True)
-    tools.bot.pin_chat_message = MagicMock(
-        side_effect=_FakeApiTelegramException("pinChatMessage", "Bad Request", 400)
-    )
+    tools.bot.pin_chat_message = MagicMock(side_effect=_FakeApiTelegramException("pinChatMessage", "Bad Request", 400))
 
     result = tools.pin_message(message_id=42)
     parsed = json.loads(result)
@@ -593,9 +591,7 @@ def test_get_file_save_downloads_to_disk(monkeypatch, tmp_path):
     monkeypatch.setenv("TELEGRAM_TOKEN", "fake-token")
     from agno.tools.telegram import TelegramTools
 
-    tools = TelegramTools(
-        chat_id="12345", enable_get_file=True, save_downloads=True, output_directory=str(tmp_path)
-    )
+    tools = TelegramTools(chat_id="12345", enable_get_file=True, save_downloads=True, output_directory=str(tmp_path))
     mock_file = MagicMock()
     mock_file.file_id = "ABC123"
     mock_file.file_path = "photos/file_0.jpg"
