@@ -132,6 +132,15 @@ class Environment:
                 f"Environment.scorer must be a Scorer instance, got {received}; "
                 "wrap a callable in CodeScorer, or use JudgeScorer / ToolCallScorer"
             )
+        # The structural check above only proves the ATTRIBUTE exists -- a
+        # runtime_checkable Protocol never checks callability -- so an `ascore` that
+        # is data rather than a method would pass construction and crash every
+        # attempt at score time, after the whole batch has been paid for.
+        if not callable(getattr(self.scorer, "ascore", None)):
+            raise TypeError(
+                f"Environment.scorer has a non-callable ascore: {type(self.scorer).__name__}.ascore is "
+                f"{type(getattr(self.scorer, 'ascore', None)).__name__}, so it could never score an attempt"
+            )
         received = type(self.agent).__name__
         # The Team check runs before the Agent accept: a hybrid subclassing both must
         # not slip through as an Agent.
