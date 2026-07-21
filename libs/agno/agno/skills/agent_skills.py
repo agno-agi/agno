@@ -213,7 +213,7 @@ class Skills:
             }
         )
 
-    def _get_skill_reference(self, skill_name: str, reference_path: str) -> str:
+    def _get_skill_reference(self, skill_name: str, reference_path: Optional[str]) -> str:
         """Load a reference document from a skill.
 
         Args:
@@ -223,6 +223,9 @@ class Skills:
         Returns:
             A JSON string with the reference content.
         """
+        if not reference_path:
+            return json.dumps({"error": "reference_path is required"})
+
         skill = self.get_skill(skill_name)
         if skill is None:
             available = ", ".join(self.get_skill_names())
@@ -273,7 +276,7 @@ class Skills:
     def _get_skill_script(
         self,
         skill_name: str,
-        script_path: str,
+        script_path: Optional[str],
         execute: bool = False,
         args: Optional[List[str]] = None,
         timeout: int = 30,
@@ -290,6 +293,9 @@ class Skills:
         Returns:
             A JSON string with either the script content or execution results.
         """
+        if not script_path:
+            return json.dumps({"error": "script_path is required"})
+
         skill = self.get_skill(skill_name)
         if skill is None:
             available = ", ".join(self.get_skill_names())

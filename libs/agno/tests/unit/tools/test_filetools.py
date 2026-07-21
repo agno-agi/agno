@@ -21,6 +21,56 @@ def test_save_and_read_file():
         assert read_content == content
 
 
+def test_list_files_directory_param_visible_in_schema():
+    """list_files must expose `directory` in its tool schema so the LLM can discover it.
+
+    Previously the signature was ``**kwargs``, which hid the parameter from the
+    schema generator entirely — the model had no way to know the parameter existed.
+    """
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        base_dir = Path(tmp_dir)
+        file_tools = FileTools(base_dir=base_dir)
+
+        # Find the list_files Function in the registered tools
+        list_files_func = next(t for t in file_tools.functions.values() if t.name == "list_files")
+        # process_entrypoint() is normally called by the agent before tool use; call it explicitly here.
+        list_files_func.process_entrypoint()
+        params = list_files_func.parameters or {}
+        properties = params.get("properties", {})
+        assert "directory" in properties, (
+            "directory parameter must appear in list_files tool schema so the LLM can use it"
+        )
+
+
+def test_list_files_with_none_directory():
+    """list_files(directory=None) must default to the base directory without error."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        base_dir = Path(tmp_dir)
+        file_tools = FileTools(base_dir=base_dir)
+
+        (base_dir / "a.txt").write_text("a")
+        result = file_tools.list_files(directory=None)
+        files = json.loads(result)
+        assert "a.txt" in files
+
+
+def test_list_files_with_explicit_directory():
+    """list_files(directory=<subdir>) must list only that subdirectory."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        base_dir = Path(tmp_dir)
+        file_tools = FileTools(base_dir=base_dir)
+
+        sub = base_dir / "sub"
+        sub.mkdir()
+        (base_dir / "root.txt").write_text("root")
+        (sub / "nested.txt").write_text("nested")
+
+        result = file_tools.list_files(directory="sub")
+        files = json.loads(result)
+        assert any("nested.txt" in f for f in files)
+        assert not any("root.txt" in f for f in files)
+
+
 def test_list_files_returns_relative_paths():
     """Test that list_files returns relative paths, not absolute paths."""
     with tempfile.TemporaryDirectory() as tmp_dir:

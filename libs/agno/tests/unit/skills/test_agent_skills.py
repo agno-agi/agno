@@ -301,6 +301,16 @@ def test_get_skill_instructions_not_found(mock_loader: MockSkillLoader) -> None:
 # --- Skill Reference Tool Tests ---
 
 
+def test_get_skill_reference_none_path_returns_error(mock_loader: MockSkillLoader) -> None:
+    """Passing None for reference_path must return a graceful error, not raise ValidationError."""
+    skills = Skills(loaders=[mock_loader])
+    result_json = skills._get_skill_reference("test-skill", None)  # type: ignore[arg-type]
+    result = json.loads(result_json)
+
+    assert "error" in result
+    assert "reference_path" in result["error"]
+
+
 def test_get_skill_reference_skill_not_found(mock_loader: MockSkillLoader) -> None:
     """Test reference retrieval for non-existent skill."""
     skills = Skills(loaders=[mock_loader])
@@ -337,6 +347,16 @@ def test_get_skill_reference_with_real_file(temp_skill_dir: Path) -> None:
 
 
 # --- Skill Script Tool Tests ---
+
+
+def test_get_skill_script_none_path_returns_error(mock_loader: MockSkillLoader) -> None:
+    """Passing None for script_path must return a graceful error, not raise ValidationError."""
+    skills = Skills(loaders=[mock_loader])
+    result_json = skills._get_skill_script("test-skill", None)  # type: ignore[arg-type]
+    result = json.loads(result_json)
+
+    assert "error" in result
+    assert "script_path" in result["error"]
 
 
 def test_skill_script_read_skill_not_found(mock_loader: MockSkillLoader) -> None:
