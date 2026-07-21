@@ -83,7 +83,7 @@ subsequent attempts and a connectivity probe failed to reach the Tinker auth end
 (intermittent network, `APIConnectionError`, upstream of any agno code), so the one
 bounded `fit` was not attempted — spending training money on a run that cannot
 authenticate for the follow-on sampling would break the spend policy. Full detail and
-the by-hand completion command are in `specs/agno/2.8.1/notes/live-proof.md`. Re-run by
+the by-hand completion command are in `specs/agno/2.8.3/notes/live-proof.md`. Re-run by
 hand from a network where the Tinker host is reachable.
 
 ---
