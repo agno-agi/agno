@@ -25,29 +25,23 @@ only affects which provider is consulted first, not the outcome;
 implementation detail — prefer the list form above.
 """
 
-from typing import Any, Callable, List, Set, TypeVar
+from typing import Any, List, Set
 
 from agno.os.authz.provider import AuthorizationContext, AuthorizationProvider
 from agno.utils.log import log_warning
 
-_T = TypeVar("_T")
 
-
-def _abstain_on_error(provider: AuthorizationProvider, fn: Callable[[], _T], default: _T) -> _T:
-    """Call one plane's decision, treating a raised exception as ABSTAIN.
+def _abstained(provider: AuthorizationProvider, e: Exception) -> None:
+    """Log that one plane errored and is being treated as ABSTAIN.
 
     The composition is an OR of grant sources, so a plane that errors (e.g. an
     OpenFGA backend that's unreachable) must not fail the whole request — that would
     turn one plane's outage into a 500 even when a healthy peer plane would grant.
-    Treat the error as "this plane grants nothing" and defer to the other planes; if
-    every plane errors the OR collapses to deny (fail-closed). The error is logged so
-    the outage is visible rather than silent.
+    Each call site treats the error as "this plane grants nothing" and defers to the
+    other planes; if every plane errors the OR collapses to deny (fail-closed). The
+    error is logged so the outage is visible rather than silent.
     """
-    try:
-        return fn()
-    except Exception as e:
-        log_warning(f"Authorization plane {type(provider).__name__} errored; treating as abstain: {e}")
-        return default
+    log_warning(f"Authorization plane {type(provider).__name__} errored; treating as abstain: {e}")
 
 
 class CompositeAuthorizationProvider(AuthorizationProvider):
@@ -75,17 +69,31 @@ class CompositeAuthorizationProvider(AuthorizationProvider):
         # mean to deny a non-resource check would be silently overridden.
         if not ctx.resource_type or not ctx.action:
             return True
-        return any(_abstain_on_error(p, lambda p=p: p.check(ctx), False) for p in self.providers)
+        for provider in self.providers:
+            try:
+                if provider.check(ctx):
+                    return True
+            except Exception as e:
+                _abstained(provider, e)
+        return False
 
     def authorize_route(self, ctx: AuthorizationContext, required_scopes: List[str]) -> bool:
-        return any(
-            _abstain_on_error(p, lambda p=p: p.authorize_route(ctx, required_scopes), False) for p in self.providers
-        )
+        for provider in self.providers:
+            try:
+                if provider.authorize_route(ctx, required_scopes):
+                    return True
+            except Exception as e:
+                _abstained(provider, e)
+        return False
 
     def accessible_resource_ids(self, ctx: AuthorizationContext) -> Set[str]:
         ids: Set[str] = set()
-        for p in self.providers:
-            got = _abstain_on_error(p, lambda p=p: p.accessible_resource_ids(ctx), set())
+        for provider in self.providers:
+            try:
+                got = provider.accessible_resource_ids(ctx)
+            except Exception as e:
+                _abstained(provider, e)
+                continue
             if "*" in got:
                 return {"*"}
             ids |= got
@@ -97,7 +105,12 @@ class CompositeAuthorizationProvider(AuthorizationProvider):
         # carves that provider's grant) and never as a peer plane — under the union a
         # peer's allow still wins, exactly as the INVARIANT above requires.
         keep: Set[Any] = set()
-        for p in self.providers:
-            for r in _abstain_on_error(p, lambda p=p: p.filter_accessible(ctx, resources), []):
-                keep.add(getattr(r, "id", None))
+        for provider in self.providers:
+            try:
+                kept = provider.filter_accessible(ctx, resources)
+            except Exception as e:
+                _abstained(provider, e)
+                continue
+            for resource in kept:
+                keep.add(getattr(resource, "id", None))
         return [r for r in resources if getattr(r, "id", None) in keep]
