@@ -335,3 +335,82 @@ class TestBackgroundConcurrencyLimit:
         finally:
             set_background_max_concurrency(None)
             concurrency._semaphores.clear()
+
+    @pytest.mark.asyncio
+    async def test_cancel_while_waiting_for_slot_persists_cancelled(self, monkeypatch: pytest.MonkeyPatch):
+        """A background run cancelled while queued behind the concurrency limit
+        persists CANCELLED and never executes."""
+        from agno.run import concurrency
+        from agno.run.cancel import acancel_run
+        from agno.run.concurrency import set_background_max_concurrency
+
+        set_background_max_concurrency(1)
+        concurrency._semaphores.clear()
+        try:
+            agent = Agent(name="test-agent")
+
+            first_started = asyncio.Event()
+            release_first = asyncio.Event()
+            executed_run_ids: list[str] = []
+            persisted_by_run: dict[str, list[RunStatus]] = {}
+
+            async def fake_aread_or_create_session(agent, session_id=None, user_id=None):
+                return AgentSession(session_id=session_id or "test-session", user_id=user_id, runs=[])
+
+            async def fake_asave_session(agent, session=None):
+                if session and session.runs:
+                    for run in session.runs:
+                        persisted_by_run.setdefault(run.run_id, []).append(run.status)
+
+            async def fake_arun(agent, run_response, run_context, **kwargs):
+                executed_run_ids.append(run_response.run_id)
+                if run_response.run_id == "bg-cancel-holder":
+                    first_started.set()
+                    await release_first.wait()
+                run_response.status = RunStatus.completed
+                return run_response
+
+            monkeypatch.setattr(_storage, "aread_or_create_session", fake_aread_or_create_session)
+            monkeypatch.setattr(_storage, "update_metadata", lambda agent, session=None: None)
+            monkeypatch.setattr("agno.agent._session.asave_session", fake_asave_session)
+            monkeypatch.setattr(_run, "_arun", fake_arun)
+
+            await _run._arun_background(
+                agent,
+                run_response=RunOutput(run_id="bg-cancel-holder", session_id="s1"),
+                run_context=RunContext(run_id="bg-cancel-holder", session_id="s1"),
+                session_id="s1",
+            )
+            queued = await _run._arun_background(
+                agent,
+                run_response=RunOutput(run_id="bg-cancel-queued", session_id="s2"),
+                run_context=RunContext(run_id="bg-cancel-queued", session_id="s2"),
+                session_id="s2",
+            )
+
+            await asyncio.wait_for(first_started.wait(), timeout=2)
+            await asyncio.sleep(0.05)
+            assert queued.status == RunStatus.pending
+
+            # Cancel the queued run while it waits for a slot
+            await acancel_run("bg-cancel-queued")
+
+            # Wait for the cancellation poll to pick it up (poll interval 0.5s)
+            for _ in range(40):
+                await asyncio.sleep(0.05)
+                if RunStatus.cancelled in persisted_by_run.get("bg-cancel-queued", []):
+                    break
+
+            assert queued.status == RunStatus.cancelled
+            assert RunStatus.cancelled in persisted_by_run["bg-cancel-queued"]
+            # The queued run never executed and never went RUNNING
+            assert "bg-cancel-queued" not in executed_run_ids
+            assert RunStatus.running not in persisted_by_run["bg-cancel-queued"]
+
+            # The slot holder is unaffected
+            release_first.set()
+            await asyncio.sleep(0.1)
+            assert "bg-cancel-holder" in executed_run_ids
+        finally:
+            set_background_max_concurrency(None)
+            concurrency._semaphores.clear()

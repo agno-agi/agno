@@ -4193,9 +4193,10 @@ class Workflow:
 
         async def execute_workflow_background():
             """Background execution: waits for a concurrency slot (background_run_slot);
-            the run stays PENDING while waiting in line."""
+            the run stays PENDING while waiting in line and can be cancelled without
+            consuming a slot."""
             try:
-                async with background_run_slot():
+                async with background_run_slot(run_id=workflow_run_response.run_id):
                     # Update status to RUNNING and save
                     workflow_run_response.status = RunStatus.running
                     if self._has_async_db():
@@ -4226,6 +4227,16 @@ class Workflow:
 
                     log_debug(f"Background execution completed with status: {workflow_run_response.status}")
 
+            except RunCancelledException:
+                # Cancelled while waiting for a slot — execution never started,
+                # so persist CANCELLED and deregister the run here.
+                log_info(f"Background run {workflow_run_response.run_id} cancelled while waiting for a slot")
+                workflow_run_response.status = RunStatus.cancelled
+                if self._has_async_db():
+                    await self.asave_session(session=workflow_session)
+                else:
+                    self.save_session(session=workflow_session)
+                await acleanup_run(run_id)
             except Exception as e:
                 logger.exception("Background workflow execution failed")
                 workflow_run_response.status = RunStatus.error

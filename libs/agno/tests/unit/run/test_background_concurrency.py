@@ -143,3 +143,97 @@ class TestBackgroundRunSlot:
         async with background_run_slot():
             done = True
         assert done is True
+
+
+class TestCancellationWhileWaiting:
+    @pytest.fixture(autouse=True)
+    def reset_cancellation_manager(self):
+        from agno.run.cancel import get_cancellation_manager, set_cancellation_manager
+        from agno.run.cancellation_management.in_memory_cancellation_manager import (
+            InMemoryRunCancellationManager,
+        )
+
+        original = get_cancellation_manager()
+        set_cancellation_manager(InMemoryRunCancellationManager())
+        try:
+            yield
+        finally:
+            set_cancellation_manager(original)
+
+    @pytest.mark.asyncio
+    async def test_cancelled_before_wait_raises_immediately(self):
+        from agno.exceptions import RunCancelledException
+        from agno.run.cancel import cancel_run
+
+        set_background_max_concurrency(1)
+        cancel_run("cancelled-run")
+
+        with pytest.raises(RunCancelledException):
+            async with background_run_slot(run_id="cancelled-run"):
+                pytest.fail("slot body must not execute for a cancelled run")
+
+    @pytest.mark.asyncio
+    async def test_cancel_while_waiting_raises_and_frees_no_slot(self):
+        """A run cancelled while queued raises RunCancelledException without
+        consuming a slot, and the slot holder is unaffected."""
+        from agno.exceptions import RunCancelledException
+        from agno.run.cancel import cancel_run, register_run
+
+        set_background_max_concurrency(1)
+
+        release_holder = asyncio.Event()
+        holder_started = asyncio.Event()
+
+        async def holder():
+            async with background_run_slot():
+                holder_started.set()
+                await release_holder.wait()
+
+        async def waiter():
+            async with background_run_slot(run_id="queued-run", cancellation_poll_interval=0.02):
+                pytest.fail("cancelled waiter must never execute")
+
+        register_run("queued-run")
+        holder_task = asyncio.create_task(holder())
+        await holder_started.wait()
+        waiter_task = asyncio.create_task(waiter())
+        await asyncio.sleep(0.05)  # let the waiter start waiting on the semaphore
+
+        cancel_run("queued-run")
+        with pytest.raises(RunCancelledException):
+            await asyncio.wait_for(waiter_task, timeout=2)
+
+        # The slot holder is unaffected and the slot is still usable afterwards
+        release_holder.set()
+        await asyncio.wait_for(holder_task, timeout=2)
+        async with background_run_slot(run_id="fresh-run", cancellation_poll_interval=0.02):
+            pass
+
+    @pytest.mark.asyncio
+    async def test_uncancelled_run_acquires_after_wait(self):
+        """A run that is never cancelled acquires the slot once it frees up."""
+        set_background_max_concurrency(1)
+
+        release_holder = asyncio.Event()
+        holder_started = asyncio.Event()
+        executed = asyncio.Event()
+
+        async def holder():
+            async with background_run_slot():
+                holder_started.set()
+                await release_holder.wait()
+
+        async def waiter():
+            async with background_run_slot(run_id="patient-run", cancellation_poll_interval=0.02):
+                executed.set()
+
+        holder_task = asyncio.create_task(holder())
+        await holder_started.wait()
+        waiter_task = asyncio.create_task(waiter())
+        await asyncio.sleep(0.05)
+        assert not executed.is_set()
+
+        release_holder.set()
+        await asyncio.wait_for(waiter_task, timeout=2)
+        assert executed.is_set()
+        await asyncio.wait_for(holder_task, timeout=2)

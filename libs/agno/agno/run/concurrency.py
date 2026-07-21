@@ -1,24 +1,28 @@
 """Concurrency limiting for background runs.
 
 Bounds how many background runs (``arun(background=True)`` on agents, teams and
-workflows) execute concurrently in this process. Acceptance stays unbounded: a
-background run is persisted with PENDING status and its task is spawned
-immediately; the limiter only gates the transition into execution. Runs beyond
-the limit wait in line, still visible to pollers as PENDING.
+workflows) execute concurrently. Acceptance stays unbounded: a background run
+is persisted with PENDING status and its task is spawned immediately; the
+limiter only gates the transition into execution. Runs beyond the limit wait in
+line, still visible to pollers as PENDING.
 
-The limit is process-wide and shared across agents, teams and workflows. It can
-be set via the ``AGNO_BACKGROUND_MAX_CONCURRENCY`` environment variable or
-programmatically (e.g. ``AgentOS(background_max_concurrency=...)``). A limit of
-0 or below disables limiting. The limit is intended to be configured once at
-startup; changing it only affects runs that start waiting after the change.
+The limit is shared across agents, teams and workflows, and is enforced per
+event loop — in the standard deployment (one event loop per process, e.g.
+AgentOS under uvicorn) that is a process-wide cap. A process running multiple
+event loops gets one cap per loop. It can be set via the
+``AGNO_BACKGROUND_MAX_CONCURRENCY`` environment variable or programmatically
+(e.g. ``AgentOS(background_max_concurrency=...)``). A limit of 0 or below
+disables limiting. The limit is intended to be configured once at startup;
+changing it only affects runs that start waiting after the change.
 """
 
 import asyncio
 import os
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from typing import AsyncIterator, Optional, Tuple
 from weakref import WeakKeyDictionary
 
+from agno.exceptions import RunCancelledException
 from agno.utils.log import log_warning
 
 DEFAULT_BACKGROUND_MAX_CONCURRENCY = 32
@@ -62,11 +66,19 @@ def set_background_max_concurrency(limit: Optional[int]) -> None:
 
 
 @asynccontextmanager
-async def background_run_slot() -> AsyncIterator[None]:
+async def background_run_slot(
+    run_id: Optional[str] = None,
+    cancellation_poll_interval: float = 0.5,
+) -> AsyncIterator[None]:
     """Hold an execution slot for a background run.
 
     Waits until a slot is free when the number of executing background runs is
     at the configured limit. No-op when limiting is disabled.
+
+    When ``run_id`` is given, cancellation is polled while waiting for a slot:
+    if the run is cancelled before a slot is acquired, ``RunCancelledException``
+    is raised and no slot is consumed. Cancellation after execution has started
+    is the responsibility of the run itself.
     """
     limit = get_background_max_concurrency()
     if limit <= 0:
@@ -77,5 +89,44 @@ async def background_run_slot() -> AsyncIterator[None]:
     if cached is None or cached[0] != limit:
         cached = (limit, asyncio.Semaphore(limit))
         _semaphores[loop] = cached
-    async with cached[1]:
+    semaphore = cached[1]
+
+    if run_id is None:
+        async with semaphore:
+            yield
+        return
+
+    from agno.run.cancel import ais_cancelled
+
+    if await ais_cancelled(run_id):
+        raise RunCancelledException(run_id)
+
+    # Race the semaphore acquire against cancellation. asyncio.wait with a
+    # timeout does not cancel the acquire task, so the semaphore's waiter queue
+    # is only ever cancelled once, at the final decision point.
+    acquire_task = asyncio.ensure_future(semaphore.acquire())
+    try:
+        while True:
+            done, _ = await asyncio.wait({acquire_task}, timeout=cancellation_poll_interval)
+            if acquire_task in done:
+                acquire_task.result()
+                break
+            if await ais_cancelled(run_id):
+                raise RunCancelledException(run_id)
+    except BaseException:
+        if acquire_task.done() and not acquire_task.cancelled() and acquire_task.exception() is None:
+            # The acquire won the race against the exception: give the slot back
+            semaphore.release()
+        else:
+            acquire_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await acquire_task
+            # cancel() can land after the acquire already succeeded
+            if not acquire_task.cancelled() and acquire_task.exception() is None:
+                semaphore.release()
+        raise
+
+    try:
         yield
+    finally:
+        semaphore.release()

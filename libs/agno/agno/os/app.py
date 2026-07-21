@@ -311,10 +311,11 @@ class AgentOS:
             cors_allowed_origins: List of allowed CORS origins (will be merged with default Agno domains)
             tracing: If True, enables OpenTelemetry tracing for all agents and teams in the OS
             run_hooks_in_background: If True, run agent/team pre/post hooks as FastAPI background tasks (non-blocking)
-            background_max_concurrency: Max background runs (background=True) executing concurrently in this
-                process, shared across agents, teams and workflows. Runs beyond the cap wait in line as PENDING.
-                None keeps the AGNO_BACKGROUND_MAX_CONCURRENCY env var or the default (32); 0 or below disables
-                limiting.
+            background_max_concurrency: Max background runs (background=True) executing concurrently, shared
+                across agents, teams and workflows. Enforced per event loop — process-wide in the standard
+                one-loop-per-process deployment. Runs beyond the cap wait in line as PENDING and can still be
+                cancelled while waiting. None keeps the AGNO_BACKGROUND_MAX_CONCURRENCY env var or the default
+                (32); 0 or below disables limiting.
             telemetry: Whether to enable telemetry
             registry: Optional registry to use for the AgentOS
             scheduler: Whether to enable the cron scheduler

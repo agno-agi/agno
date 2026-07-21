@@ -3397,10 +3397,11 @@ async def _arun_background(
     log_info(f"Background run {run_response.run_id} created with PENDING status")
 
     # 4. Spawn the background task. Execution waits for a concurrency slot
-    # (background_run_slot); the run stays PENDING while waiting in line.
+    # (background_run_slot); the run stays PENDING while waiting in line and
+    # can be cancelled without consuming a slot.
     async def _background_task() -> None:
         try:
-            async with background_run_slot():
+            async with background_run_slot(run_id=run_response.run_id):
                 # Transition to RUNNING
                 run_response.status = RunStatus.running
                 team_session.upsert_run(run_response=run_response)
@@ -3422,6 +3423,17 @@ async def _arun_background(
                     background_tasks=background_tasks,
                     **kwargs,
                 )
+        except RunCancelledException:
+            # Cancelled while waiting for a slot — _arun never started, so
+            # persist CANCELLED and deregister the run here.
+            log_info(f"Background run {run_response.run_id} cancelled while waiting for a slot")
+            try:
+                run_response.status = RunStatus.cancelled
+                team_session.upsert_run(run_response=run_response)
+                await asave_session(team, session=team_session)
+            except Exception as e:
+                log_error(f"Failed to persist cancelled state for background run {run_response.run_id}: {str(e)}")
+            await acleanup_run(run_context.run_id)
         except Exception as e:
             log_error(f"Background run {run_response.run_id} failed: {str(e)}")
             # Persist ERROR status
