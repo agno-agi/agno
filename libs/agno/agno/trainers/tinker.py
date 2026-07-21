@@ -72,10 +72,11 @@ class TinkerTrainer:
             )
         if batch_size < 1:
             raise ValueError(f"batch_size must be >= 1, got {batch_size}")
-        if sampling_temperature <= 0:
+        if not (math.isfinite(sampling_temperature) and sampling_temperature > 0):
+            # The negated form also rejects NaN, which passes every plain comparison.
             raise ValueError(
-                f"sampling_temperature must be > 0, got {sampling_temperature}: at temperature 0 "
-                "all k attempts are identical and the learning zone is empty by construction"
+                f"sampling_temperature must be a finite value > 0, got {sampling_temperature}: at "
+                "temperature 0 all k attempts are identical and the learning zone is empty by construction"
             )
         self.base_model = base_model
         self.rank = rank
@@ -308,8 +309,8 @@ def _trainable_data(conversations: List[List[Dict[str, str]]], renderer: Any, tr
         if len(weights) < len(full_weights):
             skipped += 1
             log_warning(
-                f"TinkerTrainer: conversation {index} renders to {len(full_weights)} tokens, over "
-                f"max_length={MAX_LENGTH}; its training target is cut or gone, so the row is skipped."
+                f"TinkerTrainer: conversation {index} renders past max_length={MAX_LENGTH}; "
+                "its training target is cut or gone, so the row is skipped."
             )
             continue
         if not any(weight > 0 for weight in weights):
