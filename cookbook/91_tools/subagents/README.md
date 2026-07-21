@@ -14,6 +14,11 @@ Each `run_task` call runs in its own `<parent id>-subagent-task-<uuid>` session 
 `user_id` set to the main agent's id, so subagent runs show up as separate live
 sessions in the db / AgentOS UI.
 
+When a db is set, subagent runs execute as detached background runs on the server —
+the same pipeline as the AgentOS "Run in background" toggle — so a page refresh never
+kills them. The main agent's run is controlled by the toggle itself: turn it on so
+the orchestrator also survives refreshes and can collect the subagent results.
+
 ## Cookbooks
 
 | File | Description |
