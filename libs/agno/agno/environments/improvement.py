@@ -21,7 +21,7 @@ trusting a delta.
 import asyncio
 import hashlib
 import tempfile
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Dict, List, Literal, Optional, Tuple
 
@@ -36,6 +36,11 @@ from agno.trainers.base import Checkpoint, Trainer, TrainOn, TrainResult
 from agno.utils.log import log_info, log_warning
 
 _ConvergedReason = Literal["saturated", "all_failing", "not_exportable", "no_learning_zone", "baseline_unscored"]
+
+# Why a round that PAID for a checkpoint reports no tuned numbers. A round carrying
+# one of these is terminal for run()/arun(): repeating it would re-fit from the
+# pristine base and pay again while the measurement outage persists.
+_UnmeasuredReason = Literal["serving_prompt_mismatch", "measurement_failed", "tuned_unscored"]
 
 # Matches the rollout runner's default concurrency: the audit is the same shape of
 # work (one model call per attempt) and should not be the serial part of a round.
@@ -91,6 +96,10 @@ class IterationReport:
     audit_scorer_digest: Optional[str] = None
     converged: bool = False
     converged_reason: Optional[_ConvergedReason] = None
+    # Set exactly when `checkpoint` exists but `tuned_pass_rate` is None: the fine-tune
+    # was paid for and nothing was measured. Not convergence -- there IS a checkpoint --
+    # and terminal for run()/arun(), which must not pay for the same round again.
+    unmeasured_reason: Optional[_UnmeasuredReason] = None
 
     def to_dict(self) -> Dict[str, Any]:
         """A json-ready report. Byte-stable under `json.dumps(..., sort_keys=True)` for
@@ -136,6 +145,7 @@ class IterationReport:
             "audit_scorer_digest": self.audit_scorer_digest,
             "converged": self.converged,
             "converged_reason": self.converged_reason,
+            "unmeasured_reason": self.unmeasured_reason,
         }
 
 
@@ -186,7 +196,8 @@ class ImprovementLoop:
         return asyncio.run(self.astep())
 
     def run(self, rounds: int = 1) -> List[IterationReport]:
-        """Repeated `step()`, stopping early on convergence or a failed fit. Sync door."""
+        """Repeated `step()`, stopping early on convergence, a failed fit, or a round
+        that paid for a checkpoint it could not measure (`unmeasured_reason`). Sync door."""
         _refuse_running_loop("run", "arun")
         return asyncio.run(self.arun(rounds=rounds))
 
@@ -196,6 +207,11 @@ class ImprovementLoop:
             try:
                 report = await self.astep()
             except Exception as exc:
+                if not reports:
+                    # Nothing has been paid for yet, so there is no record to protect:
+                    # an empty list would read as "ran zero rounds cleanly" when the
+                    # truth is the first round blew up.
+                    raise
                 # Returning what completed beats raising away the record of rounds that
                 # were already paid for. The rounds that ran are in `reports`; the
                 # failure is logged rather than silently swallowed.
@@ -206,6 +222,17 @@ class ImprovementLoop:
                 break
             if report.train_result is not None and report.train_result.checkpoint is None:
                 break  # a fit that produced nothing: the next round would train on the same data
+            if report.checkpoint is not None and report.tuned_pass_rate is None:
+                # Paid but unmeasured is terminal: the tuned policy never became the
+                # next baseline, so repeating the round would re-fit the pristine base
+                # -- paying for the same fine-tune again -- while the measurement
+                # outage persists. The checkpoint is preserved on the report;
+                # re-measure it with run_rollouts(env, model=trainer.as_model(...)).
+                log_warning(
+                    f"ImprovementLoop.run stopped after round {report.round}: the round trained a "
+                    f"checkpoint but could not measure it ({report.unmeasured_reason})."
+                )
+                break
         return reports
 
     # -- the round ---------------------------------------------------------------
@@ -344,8 +371,18 @@ class ImprovementLoop:
                     "an env_fingerprint and could not be compared. Serve the checkpoint without a "
                     "model-level prompt. The checkpoint is preserved on the report."
                 )
-                return unmeasured
+                return replace(unmeasured, unmeasured_reason="serving_prompt_mismatch")
             tuned = await arun_rollouts(self.env, k=self.k, model=tuned_model)
+            if tuned.pass_rate is None:
+                # Zero scored attempts is a serving or scorer outage, not a measurement:
+                # presenting this rollout as measured (or letting it become the next
+                # round's baseline) would launder an outage into a number.
+                log_warning(
+                    f"ImprovementLoop round {round_number}: the tuned rollout produced zero scored "
+                    "attempts, so the checkpoint is paid for but unmeasured. The checkpoint is "
+                    "preserved on the report."
+                )
+                return replace(unmeasured, unmeasured_reason="tuned_unscored")
             diff = tuned.diff(baseline)
         except Exception as exc:
             log_warning(
@@ -353,7 +390,7 @@ class ImprovementLoop:
                 f"({type(exc).__name__}: {exc}). The checkpoint is preserved on the report; "
                 "re-measure it with run_rollouts(env, model=trainer.as_model(report.checkpoint))."
             )
-            return unmeasured
+            return replace(unmeasured, unmeasured_reason="measurement_failed")
 
         if tuned.policy_fingerprint is None:
             # diff.policy_changed reads True for a None fingerprint, which is
