@@ -809,6 +809,8 @@ class TeamRunOutput:
     # for team-as-workflow-member); see the corresponding fields on RunOutput.
     forked_from_run_id: Optional[str] = None
     forked_from_message_index: Optional[int] = None
+    # Executed tool count at fork time (after truncation) — forks get fresh tool_call_limit
+    tool_count_at_fork: int = 0
 
     # Branching lineage: the source session_id this team run was originally
     # created in (set when a session is forked; preserved across nested forks).
@@ -836,6 +838,13 @@ class TeamRunOutput:
     @property
     def is_cancelled(self):
         return self.status == RunStatus.cancelled
+
+    @property
+    def executed_tool_count(self) -> int:
+        if not self.tools:
+            return 0
+        total = sum(1 for t in self.tools if t.result is not None)
+        return max(0, total - self.tool_count_at_fork)
 
     # Fields hand-serialized in to_dict below; nulled on a shallow copy before
     # asdict so their (deep, expensive) recursive serialization never runs.
