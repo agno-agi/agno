@@ -580,6 +580,29 @@ def test_unscored_tuned_rollout_is_not_presented_as_measured(tmp_path):
     assert loop._last_tuned_result is None  # the outage never becomes a baseline
 
 
+def test_prompt_bearing_tuned_model_is_unmeasured(tmp_path):
+    # A trainer that bakes a serving prompt into the tuned model would move the ENV
+    # fingerprint and make diff() raise after a paid rollout. The loop refuses before
+    # that rollout, reports the checkpoint as unmeasured, and run() stops.
+    class PromptBakingTrainer(StubTrainer):
+        def as_model(self, checkpoint):
+            model = super().as_model(checkpoint)
+            model.system_prompt = "always answer in haiku"
+            return model
+
+    base = _partial_base()
+    trainer = PromptBakingTrainer(base, [ScriptedModel(RIGHT, tag="tuned-1")])
+    loop = ImprovementLoop(_env(base), trainer=trainer, k=2, workdir=tmp_path)
+
+    reports = loop.run(rounds=3)
+
+    assert len(trainer.fit_calls) == 1
+    assert len(reports) == 1
+    assert reports[0].checkpoint is not None
+    assert reports[0].tuned_pass_rate is None
+    assert reports[0].unmeasured_reason == "serving_prompt_mismatch"
+
+
 def test_round_one_total_failure_raises_instead_of_empty_list(tmp_path):
     # Before any round has been paid for there is no record to protect: an empty
     # list would read as "ran zero rounds cleanly" when the first round blew up.

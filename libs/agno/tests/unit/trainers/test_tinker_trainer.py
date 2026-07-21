@@ -375,6 +375,11 @@ def test_tinker_trainer_rejects_bad_hyperparams():
         TinkerTrainer(base_model="Qwen/Qwen3.6-35B-A3B", sampling_temperature=0.0)
     with pytest.raises(ValueError, match="sampling_temperature"):
         TinkerTrainer(base_model="Qwen/Qwen3.6-35B-A3B", sampling_temperature=-0.5)
+    # NaN passes every plain comparison, so the guard must be written to catch it.
+    with pytest.raises(ValueError, match="sampling_temperature"):
+        TinkerTrainer(base_model="Qwen/Qwen3.6-35B-A3B", sampling_temperature=float("nan"))
+    with pytest.raises(ValueError, match="sampling_temperature"):
+        TinkerTrainer(base_model="Qwen/Qwen3.6-35B-A3B", sampling_temperature=float("inf"))
 
 
 def test_tinker_trainer_skips_truncated_rows_and_trains_survivors(tmp_path, monkeypatch):
