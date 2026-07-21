@@ -281,3 +281,86 @@ def test_team_acontinue_run_stream_executes_pre_hooks(monkeypatch):
         assert calls == ["session-1"]
 
     asyncio.run(main())
+
+
+# ---------------------------------------------------------------------------
+# Background hooks mode (run_hooks_in_background=True)
+# ---------------------------------------------------------------------------
+
+
+class _FakeBackgroundTasks:
+    """Minimal stand-in for fastapi.BackgroundTasks."""
+
+    def __init__(self):
+        self.queued = []
+
+    def add_task(self, func, **kwargs):
+        self.queued.append(func)
+
+
+def test_team_continue_run_background_mode_queues_non_guardrail_hooks(monkeypatch):
+    executed = []
+
+    def audit_hook(run_input=None, session=None):
+        executed.append(1)
+
+    team = Team(name="bg-continue-team", members=[], pre_hooks=[audit_hook])
+    team._run_hooks_in_background = True
+    _patch_team_sync_model(monkeypatch)
+    monkeypatch.setattr(team_run, "_cleanup_and_store", lambda *a, **k: None)
+    monkeypatch.setattr(team_telemetry, "log_team_telemetry", lambda *a, **k: None)
+    background_tasks = _FakeBackgroundTasks()
+
+    result = team_run._continue_run(
+        team,
+        run_response=_make_paused_team_run(),
+        run_messages=_make_run_messages(),
+        run_context=_make_run_context(),
+        tools=[],
+        session=_make_team_session(),
+        user_id="user-1",
+        background_tasks=background_tasks,
+    )
+
+    assert result.status == RunStatus.completed
+    assert executed == [], "non-guardrail pre-hook must not run inline in background mode"
+    assert background_tasks.queued == [audit_hook], "pre-hook should be queued for background execution"
+
+
+def test_team_continue_run_stream_emits_pre_hook_events(monkeypatch):
+    calls = []
+
+    def pre_hook(run_input=None, session=None):
+        calls.append(1)
+
+    team = Team(name="stream-ev-team", members=[], pre_hooks=[pre_hook])
+
+    def empty_model_stream(*args, **kwargs):
+        return
+        yield
+
+    import agno.team._response as team_response
+
+    monkeypatch.setattr(team_response, "_handle_model_response_stream", empty_model_stream)
+    monkeypatch.setattr(team_response, "parse_response_with_parser_model_stream", empty_model_stream)
+    monkeypatch.setattr(team_response, "generate_response_with_output_model_stream", empty_model_stream)
+    monkeypatch.setattr(team_run, "_cleanup_and_store", lambda *a, **k: None)
+    monkeypatch.setattr(team_telemetry, "log_team_telemetry", lambda *a, **k: None)
+
+    events = list(
+        team_run._continue_run_stream(
+            team,
+            run_response=_make_paused_team_run(),
+            run_messages=_make_run_messages(),
+            run_context=_make_run_context(),
+            tools=[],
+            session=_make_team_session(),
+            user_id="user-1",
+            stream_events=True,
+        )
+    )
+
+    assert calls == [1]
+    event_names = [type(e).__name__ for e in events]
+    assert any("PreHookStarted" in name for name in event_names), event_names
+    assert any("PreHookCompleted" in name for name in event_names), event_names

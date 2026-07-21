@@ -305,3 +305,158 @@ def test_acontinue_run_stream_executes_pre_hooks(monkeypatch):
         assert calls == ["session-1"]
 
     asyncio.run(main())
+
+
+# ---------------------------------------------------------------------------
+# Background hooks mode (run_hooks_in_background=True)
+# ---------------------------------------------------------------------------
+
+
+class _FakeBackgroundTasks:
+    """Minimal stand-in for fastapi.BackgroundTasks."""
+
+    def __init__(self):
+        self.queued = []
+
+    def add_task(self, func, **kwargs):
+        self.queued.append(func)
+
+
+def test_continue_run_background_mode_queues_non_guardrail_hooks(monkeypatch):
+    """With background mode on, non-guardrail pre-hooks must be queued (not run
+    inline) on continue_run — they must not silently vanish."""
+    executed = []
+
+    def audit_hook(run_input=None, session=None):
+        executed.append(1)
+
+    agent = Agent(name="bg-continue-agent", pre_hooks=[audit_hook])
+    agent._run_hooks_in_background = True
+    _patch_sync_model(monkeypatch)
+    monkeypatch.setattr(agent_run, "cleanup_and_store", lambda *a, **k: None)
+    monkeypatch.setattr(agent_telemetry, "log_agent_telemetry", lambda *a, **k: None)
+    background_tasks = _FakeBackgroundTasks()
+
+    result = agent_run._continue_run(
+        agent,
+        run_response=_make_paused_run(),
+        run_messages=_make_run_messages(),
+        run_context=_make_run_context(),
+        session=_make_session(),
+        tools=[],
+        user_id="user-1",
+        background_tasks=background_tasks,
+    )
+
+    assert result.status == RunStatus.completed
+    assert executed == [], "non-guardrail pre-hook must not run inline in background mode"
+    assert background_tasks.queued == [audit_hook], "pre-hook should be queued for background execution"
+
+
+def test_continue_run_background_mode_guardrail_runs_sync_and_blocks(monkeypatch):
+    """Guardrail-shaped pre-hooks must still run synchronously in background mode
+    so rejection propagates before the model loop (same as run())."""
+    from agno.guardrails.base import BaseGuardrail
+
+    class BlockingGuardrail(BaseGuardrail):
+        def check(self, run_input=None):
+            raise InputCheckError("blocked on resume")
+
+        async def async_check(self, run_input=None):
+            raise InputCheckError("blocked on resume (async)")
+
+    agent = Agent(name="bg-guard-agent", pre_hooks=[BlockingGuardrail().check])
+    agent._run_hooks_in_background = True
+    model_calls = _patch_sync_model(monkeypatch)
+    monkeypatch.setattr(agent_run, "cleanup_and_store", lambda *a, **k: None)
+    monkeypatch.setattr(agent_telemetry, "log_agent_telemetry", lambda *a, **k: None)
+    background_tasks = _FakeBackgroundTasks()
+
+    result = agent_run._continue_run(
+        agent,
+        run_response=_make_paused_run(),
+        run_messages=_make_run_messages(),
+        run_context=_make_run_context(),
+        session=_make_session(),
+        tools=[],
+        user_id="user-1",
+        background_tasks=background_tasks,
+    )
+
+    assert model_calls == [], "guardrail must block the model call even in background mode"
+    assert result.status == RunStatus.error
+    assert "blocked on resume" in str(result.content)
+    assert background_tasks.queued == [], "no hooks should be queued once a guardrail rejects"
+
+
+def test_acontinue_run_background_mode_guardrail_runs_sync_and_blocks(monkeypatch):
+    async def main():
+        from agno.guardrails.base import BaseGuardrail
+
+        class BlockingGuardrail(BaseGuardrail):
+            def check(self, run_input=None):
+                raise InputCheckError("blocked on resume")
+
+            async def async_check(self, run_input=None):
+                raise InputCheckError("blocked on resume (async)")
+
+        agent = Agent(name="bg-guard-agent-async", pre_hooks=[BlockingGuardrail().check])
+        agent._run_hooks_in_background = True
+        model_calls = []
+        _patch_async_storage_and_tail(monkeypatch, model_calls)
+        background_tasks = _FakeBackgroundTasks()
+
+        result = await agent_run._acontinue_run(
+            agent,
+            session_id="session-1",
+            run_context=_make_run_context(),
+            run_response=_make_paused_run(),
+            updated_tools=[],
+            user_id="user-1",
+            background_tasks=background_tasks,
+        )
+
+        assert model_calls == [], "guardrail must block the model call even in background mode"
+        assert result.status == RunStatus.error
+        assert "blocked on resume" in str(result.content)
+
+    asyncio.run(main())
+
+
+# ---------------------------------------------------------------------------
+# Streaming hook events (stream_events=True)
+# ---------------------------------------------------------------------------
+
+
+def test_continue_run_stream_emits_pre_hook_events(monkeypatch):
+    """With stream_events=True, continue_run must emit the same hook lifecycle
+    events as run()."""
+    calls = []
+
+    def pre_hook(run_input=None, session=None):
+        calls.append(1)
+
+    agent = Agent(name="stream-ev-agent", pre_hooks=[pre_hook])
+    monkeypatch.setattr(agent_response, "handle_model_response_stream", _empty_generator)
+    monkeypatch.setattr(agent_response, "parse_response_with_parser_model_stream", _empty_generator)
+    monkeypatch.setattr(agent_response, "generate_followups_stream", _empty_generator)
+    monkeypatch.setattr(agent_run, "cleanup_and_store", lambda *a, **k: None)
+    monkeypatch.setattr(agent_telemetry, "log_agent_telemetry", lambda *a, **k: None)
+
+    events = list(
+        agent_run._continue_run_stream(
+            agent,
+            run_response=_make_paused_run(),
+            run_messages=_make_run_messages(),
+            run_context=_make_run_context(),
+            session=_make_session(),
+            tools=[],
+            user_id="user-1",
+            stream_events=True,
+        )
+    )
+
+    assert calls == [1]
+    event_names = [type(e).__name__ for e in events]
+    assert any(name.startswith("PreHookStarted") for name in event_names), event_names
+    assert any(name.startswith("PreHookCompleted") for name in event_names), event_names
