@@ -15,7 +15,7 @@ from agno.models.groq import Groq
 def run_example() -> None:
     agent = Agent(
         model=Groq(
-            id="qwen/qwen3-32b",
+            id="openai/gpt-oss-20b",
             temperature=0.6,
             max_tokens=1024,
             top_p=0.95,
