@@ -3,6 +3,13 @@ Structured output with the Claude Agent SDK, using a Pydantic schema.
 
 The schema can be set on the agent, or passed per-run to override it.
 
+Claude enforces the schema natively: the adapter sets output_format on the SDK
+query and reads back the validated result, so the model is constrained and
+re-prompted on mismatch rather than parsed from prose after the fact.
+
+Note: when a schema is set, streaming yields the validated object once at the end
+rather than live tokens, since the structured result is only final on completion.
+
 Requirements:
     uv pip install claude-agent-sdk
 
