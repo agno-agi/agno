@@ -221,6 +221,74 @@ async def test_tool_terminated_run_is_not_truncated():
     assert plain[0][0].stop_reason == StopReason.truncated
 
 
+async def test_media_output_is_not_truncated():
+    # A run that answered in a non-text modality carries content=None legitimately:
+    # its media scorer must still be invoked. Truncation means no output of ANY
+    # modality, not "no text".
+    from agno.media import Audio, Image, Video
+
+    class MediaScorer:
+        """Reads run.images, the way a media scorer actually grades."""
+
+        def __init__(self):
+            self.seen = []
+
+        async def ascore(self, run, expected=None):
+            self.seen.append(run)
+            from agno.scorer import Score
+
+            has_media = bool(run.images or run.videos or run.audio)
+            return Score(value=1.0 if has_media else 0.0, passed=has_media)
+
+        def digest(self):
+            return "media-scorer"
+
+    scorer = MediaScorer()
+    outputs = {
+        "image": _output(content=None, images=[Image(url="http://example.com/x.png")]),
+        "video": _output(content=None, videos=[Video(url="http://example.com/x.mp4")]),
+        "audio": _output(content=None, audio=[Audio(url="http://example.com/x.wav")]),
+    }
+    agent = StubAgent(lambda value: outputs[value])
+
+    results = await arun_batch(agent, ["image", "video", "audio"], k=1, scorer=scorer)
+
+    for (attempt,) in results:
+        assert attempt.stop_reason == StopReason.completed
+        assert attempt.score is not None and attempt.score.passed
+    assert len(scorer.seen) == 3
+
+    # A contentless run with NO media output is still truncated.
+    plain = await arun_batch(StubAgent(lambda value: _output(content=None)), ["a"], k=1, scorer=scorer)
+    assert plain[0][0].stop_reason == StopReason.truncated
+    assert len(scorer.seen) == 3  # the truncated attempt never reached the scorer
+
+
+def test_live_grid_tags_truncated_attempts():
+    # The live grid's truncation counter compared str(StopReason.truncated) --
+    # "StopReason.truncated" -- against "truncated", so it could never tick. The
+    # static grid after the run showed the count; the live one silently did not.
+    from io import StringIO
+
+    from rich.console import Console
+
+    from agno.environments._engine import AttemptResult
+    from agno.environments._render import LiveGrid
+
+    attempt = AttemptResult(
+        run=_output(content=None),
+        score=None,
+        stop_reason=StopReason.truncated,
+        duration_seconds=0.1,
+    )
+    buffer = StringIO()
+    console = Console(file=buffer, force_terminal=True, width=120)
+    with LiveGrid(console, "truncation", k=1, task_ids=["t1"]) as grid:
+        grid.on_attempt(0, 0, attempt)
+
+    assert "1 truncated" in buffer.getvalue()
+
+
 async def test_completed_with_content_scores_as_before():
     # The regression that matters: a normal completed response is untouched -- scored,
     # counted, and still `completed`. Only `content is None` changes category, so an

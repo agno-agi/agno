@@ -10,6 +10,8 @@ answer -- so a red glyph is explainable without walking the result objects by ha
 
 from typing import Any, Dict, List, Optional, Sequence
 
+from agno.environments._engine import StopReason
+
 PASS_GLYPH = "█"  # full block
 FAIL_GLYPH = "░"  # light shade
 UNSCORED_GLYPH = "▲"  # triangle
@@ -198,7 +200,7 @@ class LiveGrid:
                     glyphs += " "
                     continue
                 glyphs += attempt_glyph(attempt.score)
-                if str(attempt.stop_reason) == "truncated":
+                if attempt.stop_reason == StopReason.truncated:
                     n_truncated += 1
                 if attempt.score is None:
                     n_unscored += 1
