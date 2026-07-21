@@ -55,6 +55,11 @@ def _require_triples(labeled_traces: Sequence[Any]) -> None:
                 "The scorer needs the task's expected value; a bare (run, gold) pair would score "
                 "every trace against expected=None."
             )
+        gold = trace[2]
+        if not isinstance(gold, bool):
+            # Any non-empty string is truthy -- including "False" -- so a string label
+            # would silently count as gold-pass and corrupt every rate.
+            raise ValueError(f"labeled_traces[{index}] gold label must be a bool, got {type(gold).__name__} ({gold!r})")
 
 
 async def acalibrate(scorer: Scorer, labeled_traces: Sequence[LabeledTrace]) -> CalibrationReport:
@@ -118,6 +123,22 @@ def calibrate(scorer: Scorer, labeled_traces: Sequence[LabeledTrace]) -> Calibra
     return asyncio.run(acalibrate(scorer, labeled_traces))
 
 
+def _require_gold_keys(gold: Dict[Tuple[str, int], bool]) -> None:
+    """Gold keys must be exact (task_id, attempt_index) pairs.
+
+    bool is an int subclass that hashes and compares equal to 0/1, so a
+    (task_id, True) key would silently label attempt index 1 rather than fail to
+    match. The label VALUES are validated by `_require_triples` once the traces are
+    built, so a bad value is caught on either door.
+    """
+    for key in gold:
+        if not isinstance(key, tuple) or len(key) != 2:
+            raise ValueError(f"gold key {key!r} must be a (task_id, attempt_index) 2-tuple")
+        attempt_index = key[1]
+        if isinstance(attempt_index, bool) or not isinstance(attempt_index, int):
+            raise ValueError(f"gold key {key!r}: attempt_index must be an int, got {type(attempt_index).__name__}")
+
+
 async def acalibrate_result(
     scorer: Scorer,
     result: EnvironmentRunResult,
@@ -132,6 +153,7 @@ async def acalibrate_result(
     labels naming an attempt that does not exist -- with a warning, since that is a
     labelling bug rather than a scorer result.
     """
+    _require_gold_keys(gold)
     traces: List[LabeledTrace] = []
     task_ids: List[str] = []
     matched: set = set()

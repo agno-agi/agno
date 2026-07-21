@@ -157,6 +157,30 @@ def test_calibrate_result_pairs_expected():
     assert stray.agreement is None
 
 
+def test_calibrate_rejects_non_bool_gold_labels():
+    # "False" is a truthy string: silently coerced, it would count as gold-pass and
+    # corrupt every rate. Both doors validate, since acalibrate_result builds its
+    # traces from the same labels.
+    with pytest.raises(ValueError, match="gold label must be a bool"):
+        calibrate(CodeScorer(exact_match), [(_run(RIGHT), RIGHT, "False")])
+    with pytest.raises(ValueError, match="gold label must be a bool"):
+        calibrate(CodeScorer(exact_match), [(_run(RIGHT), RIGHT, 1)])
+
+
+def test_calibrate_result_rejects_inexact_gold_keys():
+    # bool is an int subclass: ("t1", True) hashes and compares equal to ("t1", 1), so
+    # a bool index would silently label attempt 1 instead of failing to match.
+    result = _labeled_env_result()
+
+    with pytest.raises(ValueError, match="attempt_index must be an int"):
+        calibrate_result(CodeScorer(exact_match), result, {("t1", True): True})
+    with pytest.raises(ValueError, match="2-tuple"):
+        calibrate_result(CodeScorer(exact_match), result, {"t1": True})
+    # A bool LABEL arriving through the result door is caught too.
+    with pytest.raises(ValueError, match="gold label must be a bool"):
+        calibrate_result(CodeScorer(exact_match), result, {("t1", 0): "False"})
+
+
 def test_acalibrate_matches_calibrate():
     traces = [
         (_run(RIGHT), RIGHT, True),
