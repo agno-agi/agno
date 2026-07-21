@@ -65,13 +65,29 @@ class TinkerTrainer:
         sampling_max_tokens: int = 2000,
         service_client: Optional[Any] = None,
     ) -> None:
-        if epochs < 1:
+        # Every hyperparameter is validated here, before any service-client call could
+        # possibly be made: a bad value that only fails inside fit() has already paid
+        # for a training client -- and a NaN or non-positive learning rate pays for a
+        # FULL fit and saves corrupt or base-identical weights as COMPLETED.
+        if not isinstance(base_model, str) or not base_model.strip():
+            raise ValueError(f"base_model must be a non-blank model name, got {base_model!r}")
+        if isinstance(epochs, bool) or not isinstance(epochs, int) or epochs < 1:
             raise ValueError(
-                f"epochs must be >= 1, got {epochs}: zero epochs runs zero optimizer steps and "
+                f"epochs must be an int >= 1, got {epochs!r}: zero epochs runs zero optimizer steps and "
                 "saves the pristine base as a COMPLETED checkpoint"
             )
-        if batch_size < 1:
-            raise ValueError(f"batch_size must be >= 1, got {batch_size}")
+        if isinstance(batch_size, bool) or not isinstance(batch_size, int) or batch_size < 1:
+            raise ValueError(f"batch_size must be an int >= 1, got {batch_size!r}")
+        if isinstance(rank, bool) or not isinstance(rank, int) or rank < 1:
+            raise ValueError(f"rank must be an int >= 1, got {rank!r}")
+        if isinstance(sampling_max_tokens, bool) or not isinstance(sampling_max_tokens, int) or sampling_max_tokens < 1:
+            raise ValueError(f"sampling_max_tokens must be an int >= 1, got {sampling_max_tokens!r}")
+        if (
+            isinstance(learning_rate, bool)
+            or not isinstance(learning_rate, (int, float))
+            or not (math.isfinite(learning_rate) and learning_rate > 0)
+        ):
+            raise ValueError(f"learning_rate must be a finite value > 0, got {learning_rate!r}")
         if not (math.isfinite(sampling_temperature) and sampling_temperature > 0):
             # The negated form also rejects NaN, which passes every plain comparison.
             raise ValueError(
@@ -129,7 +145,7 @@ class TinkerTrainer:
 
         training_client: Optional[Any] = None
         step_metrics: List[Dict[str, Any]] = []
-        submitted_steps = 0
+        applied_steps = 0
 
         try:
             service_client = self._get_service_client()
@@ -154,13 +170,15 @@ class TinkerTrainer:
                 for start in range(0, len(data), self.batch_size):
                     batch = data[start : start + self.batch_size]
                     forward_backward = training_client.forward_backward(batch, "cross_entropy")
-                    # Counted the moment paid work is submitted: a synchronous
-                    # optim_step raise on step 1 must still leave a recovery save
-                    # covering the forward/backward that was already paid for.
-                    submitted_steps += 1
                     optim = training_client.optim_step(types.AdamParams(learning_rate=self.learning_rate))
                     result = forward_backward.result()
                     optim.result()
+                    # Counted only once the optimizer step is APPLIED: forward/backward
+                    # alone accumulates gradients without touching the weights, so a
+                    # recovery save before the first applied step would checkpoint
+                    # base-identical weights -- which the improvement loop would then
+                    # measure as "tuned" and advance its baseline on.
+                    applied_steps += 1
                     step: Dict[str, Any] = {"step": len(step_metrics) + 1, "mean_nll": None}
                     try:
                         step["mean_nll"] = _mean_nll(result.loss_fn_outputs, batch)
@@ -198,9 +216,12 @@ class TinkerTrainer:
             )
         except Exception as exc:
             error = f"{type(exc).__name__}: {str(exc).strip() or 'no details'}"
-            # Compute was already spent, so try to keep something for it. A recovery
-            # checkpoint turns a total loss into a PARTIAL the caller can still measure.
-            if training_client is not None and submitted_steps > 0:
+            # Applied compute was spent, so try to keep something for it. A recovery
+            # checkpoint turns a total loss into a PARTIAL the caller can still
+            # measure. Below one APPLIED step there is nothing worth saving: the
+            # weights are still base-identical, and checkpointing them would hand the
+            # caller the pristine base wearing a tuned checkpoint's identity.
+            if training_client is not None and applied_steps > 0:
                 try:
                     ref = (
                         training_client.save_weights_for_sampler(

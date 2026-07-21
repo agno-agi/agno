@@ -325,6 +325,49 @@ def test_tinker_model_developer_role_becomes_system():
     assert sent[1] == {"role": "user", "content": "the sea"}
 
 
+def test_tinker_model_multipart_text_prompt_preserves_every_part():
+    # `get_content_string` returns only the FIRST part of a parts-list message, so a
+    # multipart prompt would silently sample against truncated text -- and the scored
+    # answer would be to a different question. Every text part reaches the renderer,
+    # byte-for-byte, joined with no separator.
+    renderer = FakeRenderer()
+    model = _model(renderer=renderer)
+
+    model.invoke(
+        messages=[
+            Message(
+                role="user",
+                content=[
+                    {"type": "text", "text": "count the syllables"},
+                    {"type": "text", "text": " and answer in haiku"},
+                ],
+            )
+        ]
+    )
+
+    assert renderer.prompts[-1] == [{"role": "user", "content": "count the syllables and answer in haiku"}]
+
+
+def test_tinker_model_non_text_content_part_errors_the_attempt():
+    # A media (or unknown) part has no representation in the prompt. Sampling anyway
+    # would answer a silently different question and score it normally; raising makes
+    # the attempt errored/unscored instead -- the same contract as the tool-call raise.
+    model = _model()
+
+    with pytest.raises(ValueError, match="content part"):
+        model.invoke(
+            messages=[
+                Message(
+                    role="user",
+                    content=[
+                        {"type": "text", "text": "what is in this image?"},
+                        {"type": "image_url", "image_url": {"url": "https://example.test/x.png"}},
+                    ],
+                )
+            ]
+        )
+
+
 def test_tinker_model_all_unrenderable_messages_raise():
     # If every message is dropped the prompt would be empty -- and an empty prompt
     # samples a clean, plausible, task-unrelated answer that scores normally.

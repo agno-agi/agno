@@ -56,7 +56,10 @@ class TinkerModel(Model):
 
     Residual, stated honestly: a sample dispatched via `asyncio.to_thread` cannot be
     cancelled, so an attempt the engine times out still runs to completion server-side
-    and is billed. Budget `max_tokens` accordingly.
+    and is billed -- and because that worker keeps running alongside the attempts that
+    replaced it, the engine's `concurrency` cap bounds ATTEMPTS, not in-flight
+    samples: timed-out samples can exceed it while they continue to bill. Budget
+    `max_tokens` accordingly.
     """
 
     def __init__(
@@ -236,10 +239,7 @@ def _to_renderer_messages(messages: List[Message]) -> List[Dict[str, str]]:
             # Tool turns have no representation on this path; tool-calling through the
             # renderer is a follow-up.
             continue
-        content = getattr(message, "content", None)
-        if not isinstance(content, str):
-            content = message.get_content_string() if hasattr(message, "get_content_string") else str(content or "")
-        converted.append({"role": role, "content": content})
+        converted.append({"role": role, "content": _renderer_text(message)})
     if not converted:
         # Every message was dropped. Sampling anyway would run on an empty prompt: a
         # clean, plausible, task-unrelated answer that scores normally.
@@ -248,6 +248,39 @@ def _to_renderer_messages(messages: List[Message]) -> List[Dict[str, str]]:
             "renderer cannot represent (only system/user/assistant reach the prompt)"
         )
     return converted
+
+
+def _renderer_text(message: Any) -> str:
+    """The message's full text, byte-for-byte.
+
+    Deliberately NOT `Message.get_content_string`: that returns only the FIRST part
+    of a parts-list message, so a multipart prompt would silently sample against
+    different text than the agent sent. All text parts are concatenated with no
+    separator and never stripped. A part that is not text has no representation in
+    the prompt, so it raises and the attempt becomes errored/unscored -- the same
+    contract as the tool-call raise -- rather than scoring an answer to a stripped
+    question.
+    """
+    content = getattr(message, "content", None)
+    if content is None:
+        return ""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        texts: List[str] = []
+        for part in content:
+            kind = part.get("type") if isinstance(part, dict) else getattr(part, "type", None)
+            if kind != "text":
+                label = kind if kind else type(part).__name__
+                raise ValueError(
+                    f"TinkerModel cannot render a {label!r} content part: only text reaches the renderer "
+                    "prompt, so sampling anyway would answer a silently different question"
+                )
+            texts.append(_part_field(part, "text"))
+        return "".join(texts)
+    raise ValueError(
+        f"TinkerModel cannot render {type(content).__name__} message content: only text reaches the renderer prompt"
+    )
 
 
 def _split_content(message: Any) -> Tuple[str, Optional[str]]:
