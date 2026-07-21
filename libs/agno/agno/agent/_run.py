@@ -3598,6 +3598,7 @@ def _continue_run(
 
     Steps:
     1. Handle any updated tools
+    1.5. Execute pre-hooks
     2. Generate a response from the Model
     3. Update the RunOutput with the model response
     4. Convert response to structured format
@@ -3607,7 +3608,7 @@ def _continue_run(
     8. Cleanup and store (scrub, stop timer, save to file, add to session, calculate metrics, save session)
     """
     # Register run for cancellation tracking
-    from agno.agent._hooks import execute_post_hooks
+    from agno.agent._hooks import execute_post_hooks, execute_pre_hooks
     from agno.agent._init import disconnect_connectable_tools
     from agno.agent._response import (
         convert_response_to_structured_format,
@@ -3632,6 +3633,23 @@ def _continue_run(
             try:
                 # Check for cancellation before model call
                 raise_if_cancelled(run_response.run_id)  # type: ignore
+
+                # 1.5 Execute pre-hooks (consistent with run(): hooks fire before the model loop)
+                run_input = cast(RunInput, run_response.input)
+                if agent.pre_hooks is not None:
+                    pre_hook_iterator = execute_pre_hooks(
+                        agent,
+                        hooks=agent.pre_hooks,  # type: ignore
+                        run_response=run_response,
+                        run_input=run_input,
+                        run_context=run_context,
+                        session=session,
+                        user_id=user_id,
+                        debug_mode=debug_mode,
+                        background_tasks=background_tasks,
+                        **kwargs,
+                    )
+                    deque(pre_hook_iterator, maxlen=0)
 
                 # 2. Generate a response from the Model (includes running function calls)
                 agent.model = cast(Model, agent.model)
@@ -3822,13 +3840,14 @@ def _continue_run_stream(
     Steps:
     1. Resolve dependencies
     2. Handle any updated tools
+    2.5. Execute pre-hooks
     3. Process model response
     4. Execute post-hooks
     5. Create session summary
     6. Cleanup and store the run response and session
     """
 
-    from agno.agent._hooks import execute_post_hooks
+    from agno.agent._hooks import execute_post_hooks, execute_pre_hooks
     from agno.agent._init import disconnect_connectable_tools
     from agno.agent._response import (
         generate_followups_stream,
@@ -3869,6 +3888,25 @@ def _continue_run_stream(
                     if not isinstance(event, _CANCEL_BYPASS_EVENT_TYPES):
                         raise_if_cancelled(run_response.run_id)  # type: ignore
                     yield event
+
+                # 2.5 Execute pre-hooks (consistent with run(): hooks fire before the model loop)
+                run_input = cast(RunInput, run_response.input)
+                if agent.pre_hooks is not None:
+                    pre_hook_iterator = execute_pre_hooks(
+                        agent,
+                        hooks=agent.pre_hooks,  # type: ignore
+                        run_response=run_response,
+                        run_input=run_input,
+                        run_context=run_context,
+                        session=session,
+                        user_id=user_id,
+                        debug_mode=debug_mode,
+                        stream_events=stream_events,
+                        background_tasks=background_tasks,
+                        **kwargs,
+                    )
+                    for event in pre_hook_iterator:
+                        yield event
 
                 # 3. Process model response
                 for event in handle_model_response_stream(
@@ -4501,6 +4539,7 @@ async def _acontinue_run(
     5. Determine tools for model
     6. Prepare run messages
     7. Handle the updated tools
+    7.5. Execute pre-hooks
     8. Get model response
     9. Update the RunOutput with the model response
     10. Convert response to structured format
@@ -4509,7 +4548,7 @@ async def _acontinue_run(
     13. Create session summary
     14. Cleanup and store (scrub, stop timer, save to file, add to session, calculate metrics, save session)
     """
-    from agno.agent._hooks import aexecute_post_hooks
+    from agno.agent._hooks import aexecute_post_hooks, aexecute_pre_hooks
     from agno.agent._init import disconnect_connectable_tools, disconnect_mcp_tools
     from agno.agent._messages import get_continue_run_messages
     from agno.agent._response import (
@@ -4729,6 +4768,25 @@ async def _acontinue_run(
                 await ahandle_tool_call_updates(
                     agent, run_response=run_response, run_messages=run_messages, tools=_tools
                 )
+
+                # 7.5 Execute pre-hooks (consistent with arun(): hooks fire before the model loop)
+                run_input = cast(RunInput, run_response.input)
+                if agent.pre_hooks is not None:
+                    pre_hook_iterator = aexecute_pre_hooks(
+                        agent,
+                        hooks=agent.pre_hooks,  # type: ignore
+                        run_response=run_response,
+                        run_input=run_input,
+                        run_context=run_context,
+                        session=agent_session,
+                        user_id=user_id,
+                        debug_mode=debug_mode,
+                        background_tasks=background_tasks,
+                        **kwargs,
+                    )
+                    # Consume the async iterator without yielding
+                    async for _ in pre_hook_iterator:
+                        pass
 
                 # 8. Get model response
                 model_response: ModelResponse = await acall_model_with_fallback(
@@ -4997,12 +5055,13 @@ async def _acontinue_run_stream(
     5. Determine tools for model
     6. Prepare run messages
     7. Handle the updated tools
+    7.5. Execute pre-hooks
     8. Process model response
     9. Create session summary
     10. Execute post-hooks
     11. Cleanup and store the run response and session
     """
-    from agno.agent._hooks import aexecute_post_hooks
+    from agno.agent._hooks import aexecute_post_hooks, aexecute_pre_hooks
     from agno.agent._init import disconnect_connectable_tools, disconnect_mcp_tools
     from agno.agent._messages import get_continue_run_messages
     from agno.agent._response import (
@@ -5236,6 +5295,25 @@ async def _acontinue_run_stream(
                     if not isinstance(event, _CANCEL_BYPASS_EVENT_TYPES):
                         await araise_if_cancelled(run_response.run_id)  # type: ignore
                     yield event
+
+                # 7.5 Execute pre-hooks (consistent with arun(): hooks fire before the model loop)
+                run_input = cast(RunInput, run_response.input)
+                if agent.pre_hooks is not None:
+                    pre_hook_iterator = aexecute_pre_hooks(
+                        agent,
+                        hooks=agent.pre_hooks,  # type: ignore
+                        run_response=run_response,
+                        run_input=run_input,
+                        run_context=run_context,
+                        session=agent_session,
+                        user_id=user_id,
+                        debug_mode=debug_mode,
+                        stream_events=stream_events,
+                        background_tasks=background_tasks,
+                        **kwargs,
+                    )
+                    async for event in pre_hook_iterator:
+                        yield event
 
                 # 8. Process model response
                 if agent.output_model is None:
