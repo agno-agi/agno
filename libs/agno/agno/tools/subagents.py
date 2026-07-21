@@ -25,6 +25,10 @@ DEFAULT_INSTRUCTIONS = dedent("""\
     the result. Use them to parallelize independent work.
     - Call run_task once per independent sub-task. Call it multiple times in the same
       response to run subagents in parallel.
+    - Subagents run in parallel, so total time equals the largest task, not the sum.
+      Keep each task small and atomic: one topic, component, or question per subagent.
+      Never give one subagent a numbered list of independent items - split the list
+      into one run_task call per item. Prefer many small subagents over few big ones.
     - Subagents do not see this conversation. Give each one a complete, self-contained
       task description with all the context it needs.
     - Keep the hardest parts of the work for yourself and combine the subagent results
@@ -39,6 +43,12 @@ class SubAgent(Toolkit):
     "<parent id>-subagent-task-<uuid>" session with the user_id inherited from the
     current run (falling back to the parent agent's id when the run has no user), so
     subagent runs can be inspected as separate sessions in the db / AgentOS UI.
+
+    When a db is set, subagent runs execute as detached background runs on the server
+    (the same pipeline as AgentOS "Run in background"), so they survive client
+    disconnects and page refreshes. Note the parent run is controlled separately: to
+    keep the whole tree alive across a refresh, start the parent run in background
+    mode too (the "Run in background" toggle in the AgentOS UI).
 
     Args:
         model: Model for subagents. Defaults to the parent agent's model.
