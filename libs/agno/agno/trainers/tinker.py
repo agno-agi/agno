@@ -65,6 +65,18 @@ class TinkerTrainer:
         sampling_max_tokens: int = 2000,
         service_client: Optional[Any] = None,
     ) -> None:
+        if epochs < 1:
+            raise ValueError(
+                f"epochs must be >= 1, got {epochs}: zero epochs runs zero optimizer steps and "
+                "saves the pristine base as a COMPLETED checkpoint"
+            )
+        if batch_size < 1:
+            raise ValueError(f"batch_size must be >= 1, got {batch_size}")
+        if sampling_temperature <= 0:
+            raise ValueError(
+                f"sampling_temperature must be > 0, got {sampling_temperature}: at temperature 0 "
+                "all k attempts are identical and the learning zone is empty by construction"
+            )
         self.base_model = base_model
         self.rank = rank
         self.learning_rate = learning_rate
@@ -99,7 +111,6 @@ class TinkerTrainer:
         """
         from tinker import types
         from tinker_cookbook.renderers import TrainOnWhat
-        from tinker_cookbook.supervised.data import conversation_to_datum
 
         path = Path(dataset)
         # The runtime gate, before anything is spent.
@@ -131,21 +142,9 @@ class TinkerTrainer:
             # inverse of ours -- so it is passed explicitly on every call, including
             # the default path.
             train_on_what = getattr(TrainOnWhat, _TRAIN_ON_WHAT[train_on])
-            data = [
-                conversation_to_datum(
-                    conversation,
-                    renderer,
-                    max_length=MAX_LENGTH,
-                    train_on_what=train_on_what,
-                )
-                for conversation in conversations
-            ]
-            # Before the first paid step. Rendering truncates from the end at
-            # MAX_LENGTH, so a long conversation can lose the very assistant turn it
-            # was supposed to teach and arrive with all-zero weights -- contributing no
-            # gradient while the loss curve still looks healthy. Refuse the run instead
-            # of paying to train on rows that carry nothing.
-            _reject_untrainable(data)
+            # Before the first paid step: skip rows truncation broke, refuse only an
+            # empty batch.
+            data = _trainable_data(conversations, renderer, train_on_what)
 
             telemetry_error: Optional[str] = None
             for _ in range(self.epochs):
@@ -154,8 +153,11 @@ class TinkerTrainer:
                 for start in range(0, len(data), self.batch_size):
                     batch = data[start : start + self.batch_size]
                     forward_backward = training_client.forward_backward(batch, "cross_entropy")
-                    optim = training_client.optim_step(types.AdamParams(learning_rate=self.learning_rate))
+                    # Counted the moment paid work is submitted: a synchronous
+                    # optim_step raise on step 1 must still leave a recovery save
+                    # covering the forward/backward that was already paid for.
                     submitted_steps += 1
+                    optim = training_client.optim_step(types.AdamParams(learning_rate=self.learning_rate))
                     result = forward_backward.result()
                     optim.result()
                     step: Dict[str, Any] = {"step": len(step_metrics) + 1, "mean_nll": None}
@@ -231,6 +233,12 @@ class TinkerTrainer:
     def as_model(self, checkpoint: Checkpoint) -> Model:
         """Serve a tuned checkpoint. Sampling params match `base_as_model`'s, so the
         only difference between the two policies is the weights."""
+        if checkpoint.base_model != self.base_model:
+            raise ValueError(
+                f"checkpoint was trained from base_model {checkpoint.base_model!r} but this trainer "
+                f"serves {self.base_model!r}: serving it here would pick the wrong renderer and stamp "
+                "a false policy identity. Serve it from a trainer built on its own base model."
+            )
         return TinkerModel(
             base_model=self.base_model,
             model_path=checkpoint.ref,
@@ -242,7 +250,11 @@ class TinkerTrainer:
         )
 
     async def aas_model(self, checkpoint: Checkpoint) -> Model:
-        return self.as_model(checkpoint)
+        # Serving builds a sampling client -- a network auth handshake -- so it runs
+        # off-thread: dispatched inline it would freeze every concurrent rollout
+        # coroutine for as long as that handshake hangs, before any engine timeout
+        # can fire.
+        return await asyncio.to_thread(self.as_model, checkpoint)
 
     def base_as_model(self) -> Model:
         """Serve the untuned base -- the baseline a tuned checkpoint is measured against."""
@@ -254,7 +266,7 @@ class TinkerTrainer:
         )
 
     async def abase_as_model(self) -> Model:
-        return self.base_as_model()
+        return await asyncio.to_thread(self.base_as_model)
 
 
 def _read_conversations(path: Path) -> List[List[Dict[str, str]]]:
@@ -271,17 +283,47 @@ def _read_conversations(path: Path) -> List[List[Dict[str, str]]]:
     return conversations
 
 
-def _reject_untrainable(data: List[Any]) -> None:
-    """Every datum must carry at least one positive training weight."""
-    for index, datum in enumerate(data, start=1):
-        weights = _tensor_values(datum.loss_fn_inputs.get("weights"))
+def _trainable_data(conversations: List[List[Dict[str, str]]], renderer: Any, train_on_what: Any) -> List[Any]:
+    """Render each conversation, skipping the rows truncation broke.
+
+    Rendering truncates from the end at MAX_LENGTH, so a long conversation can lose
+    part or all of the assistant turn it was supposed to teach: cut entirely, the row
+    carries all-zero weights and no gradient; cut mid-answer, it keeps positive-weight
+    prefix tokens and would train the model to stop mid-answer. Both are detected by
+    rendering twice -- capped and uncapped -- and comparing lengths; a shortened row is
+    skipped with a warning, mirroring the exporter's skip-not-abort. Only an empty
+    surviving batch refuses the run, before the first paid step.
+    """
+    from tinker_cookbook.supervised.data import conversation_to_datum
+
+    data: List[Any] = []
+    skipped = 0
+    for index, conversation in enumerate(conversations, start=1):
+        capped = conversation_to_datum(conversation, renderer, max_length=MAX_LENGTH, train_on_what=train_on_what)
+        weights = _tensor_values(capped.loss_fn_inputs.get("weights"))
         if not weights or any(not math.isfinite(weight) or weight < 0 for weight in weights):
             raise ValueError(f"conversation {index} produced invalid training weights")
+        full = conversation_to_datum(conversation, renderer, max_length=None, train_on_what=train_on_what)
+        full_weights = _tensor_values(full.loss_fn_inputs.get("weights"))
+        if len(weights) < len(full_weights):
+            skipped += 1
+            log_warning(
+                f"TinkerTrainer: conversation {index} renders to {len(full_weights)} tokens, over "
+                f"max_length={MAX_LENGTH}; its training target is cut or gone, so the row is skipped."
+            )
+            continue
         if not any(weight > 0 for weight in weights):
             raise ValueError(
-                f"conversation {index} has no trainable target after rendering "
-                f"(longer than max_length={MAX_LENGTH}, so its assistant turn was truncated away)"
+                f"conversation {index} has no trainable target after rendering: "
+                "its assistant turn carries no positive training weight"
             )
+        data.append(capped)
+    if not data:
+        raise ValueError(
+            f"no trainable conversation remains: all {skipped} of {len(conversations)} were cut by "
+            f"max_length={MAX_LENGTH} rendering, so there is nothing to train on"
+        )
+    return data
 
 
 def _tensor_values(tensor: Any) -> List[float]:

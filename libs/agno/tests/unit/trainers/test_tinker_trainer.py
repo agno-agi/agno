@@ -195,7 +195,11 @@ def test_tinker_trainer_train_on_passthrough(tmp_path, fake_sdk):
 
     trainer.fit(_dataset(tmp_path))
     assert set(fake_sdk["train_on_what"]) == {"LAST_ASSISTANT_MESSAGE"}
-    assert all(call["max_length"] == 1024 for call in fake_sdk["datum_calls"])
+    # Each conversation renders twice: capped at MAX_LENGTH for training, uncapped to
+    # detect rows the cap would silently shorten.
+    max_lengths = [call["max_length"] for call in fake_sdk["datum_calls"]]
+    assert set(max_lengths) == {1024, None}
+    assert max_lengths.count(1024) == max_lengths.count(None)
 
     fake_sdk["train_on_what"].clear()
     trainer.fit(_dataset(tmp_path), train_on=TrainOn.ALL_ASSISTANT)
@@ -357,6 +361,168 @@ def test_tinker_trainer_rejects_untrainable_dataset(tmp_path, fake_sdk, monkeypa
     assert result.checkpoint is None
     assert "no trainable target" in result.error
     assert training.forward_backward_calls == []  # refused before the first paid step
+
+
+def test_tinker_trainer_rejects_bad_hyperparams():
+    # epochs=0 or batch_size=0 would run zero optimizer steps and save the PRISTINE
+    # BASE as a COMPLETED checkpoint; temperature 0 makes all k measurement attempts
+    # identical. All three are caller bugs the constructor refuses, before any spend.
+    with pytest.raises(ValueError, match="epochs"):
+        TinkerTrainer(base_model="Qwen/Qwen3.6-35B-A3B", epochs=0)
+    with pytest.raises(ValueError, match="batch_size"):
+        TinkerTrainer(base_model="Qwen/Qwen3.6-35B-A3B", batch_size=0)
+    with pytest.raises(ValueError, match="sampling_temperature"):
+        TinkerTrainer(base_model="Qwen/Qwen3.6-35B-A3B", sampling_temperature=0.0)
+    with pytest.raises(ValueError, match="sampling_temperature"):
+        TinkerTrainer(base_model="Qwen/Qwen3.6-35B-A3B", sampling_temperature=-0.5)
+
+
+def test_tinker_trainer_skips_truncated_rows_and_trains_survivors(tmp_path, monkeypatch):
+    # A row whose rendering is shortened by MAX_LENGTH either lost its whole target
+    # (all-zero weights) or -- worse -- kept a positive-weight PREFIX and would train
+    # the model to stop mid-answer. Both are skipped with a warning, mirroring the
+    # exporter's skip-not-abort; the fit runs on the survivors.
+    import sys
+
+    def shaped_datum(conversation, renderer, *, max_length, train_on_what):
+        marker = conversation[-1]["content"]
+        if marker == "partial":  # capped render keeps a positive-weight prefix
+            return FakeDatum([0.0, 0.0, 0.5, 0.5] if max_length is not None else [0.0, 0.0, 0.2, 0.2, 0.2, 0.2])
+        if marker == "gone":  # capped render lost the whole target
+            return FakeDatum([0.0, 0.0, 0.0, 0.0] if max_length is not None else [0.0, 0.0, 0.0, 0.0, 0.5, 0.5])
+        return FakeDatum()  # "good": identical capped and uncapped
+
+    monkeypatch.setitem(
+        sys.modules, "tinker_cookbook.supervised.data", SimpleNamespace(conversation_to_datum=shaped_datum)
+    )
+
+    import agno.trainers.tinker as trainer_module
+
+    warnings = []
+    monkeypatch.setattr(trainer_module, "log_warning", warnings.append)
+
+    def _write(path, markers):
+        rows = [
+            json.dumps({"messages": [{"role": "user", "content": "the sea"}, {"role": "assistant", "content": m}]})
+            for m in markers
+        ]
+        path.write_text("\n".join(rows) + "\n", encoding="utf-8")
+        return path
+
+    training = FakeTrainingClient()
+    trainer = TinkerTrainer(base_model="Qwen/Qwen3.6-35B-A3B", epochs=1, service_client=FakeServiceClient(training))
+
+    result = trainer.fit(_write(tmp_path / "mixed.jsonl", ["partial", "gone", "good"]))
+
+    assert result.status == TrainStatus.COMPLETED
+    assert len([w for w in warnings if "skipped" in str(w)]) == 2
+    assert len(training.forward_backward_calls) == 1
+    batch, _ = training.forward_backward_calls[0]
+    assert len(batch) == 1  # only the untruncated survivor trained
+
+    # When NO trainable row remains the fit refuses, before the first paid step.
+    doomed = FakeTrainingClient()
+    doomed_trainer = TinkerTrainer(
+        base_model="Qwen/Qwen3.6-35B-A3B", epochs=1, service_client=FakeServiceClient(doomed)
+    )
+    doomed_result = doomed_trainer.fit(_write(tmp_path / "empty.jsonl", ["partial", "gone"]))
+
+    assert doomed_result.status == TrainStatus.FAILED
+    assert doomed_result.checkpoint is None
+    assert "no trainable conversation remains" in doomed_result.error
+    assert doomed.forward_backward_calls == []
+
+
+def test_tinker_trainer_step_one_optim_raise_keeps_the_paid_forward_backward(tmp_path):
+    # forward_backward is submitted -- and paid for -- before optim_step runs. A
+    # synchronous optim_step raise on step 1 must therefore still produce a PARTIAL
+    # recovery checkpoint, not a FAILED result that discards the spent compute.
+    class OptimRaisesClient(FakeTrainingClient):
+        def optim_step(self, adam_params):
+            raise RuntimeError("optimizer rejected the step")
+
+    training = OptimRaisesClient()
+    trainer = TinkerTrainer(
+        base_model="Qwen/Qwen3.6-35B-A3B",
+        epochs=1,
+        batch_size=1,
+        service_client=FakeServiceClient(training),
+    )
+
+    result = trainer.fit(_dataset(tmp_path, rows=1))
+
+    assert len(training.forward_backward_calls) == 1  # the paid submission happened
+    assert result.status == TrainStatus.PARTIAL
+    assert result.checkpoint is not None
+    assert "recovery" in result.checkpoint.ref
+    assert "optimizer rejected" in result.error
+
+
+def test_tinker_trainer_as_model_rejects_foreign_checkpoint():
+    # A checkpoint from another base would be served with the wrong renderer and
+    # stamped with a false policy id (this trainer's base_model in the fingerprint).
+    trainer = TinkerTrainer(base_model="Qwen/Qwen3.6-35B-A3B", service_client=FakeServiceClient())
+    foreign = Checkpoint(
+        ref="tinker://checkpoint/other",
+        base_model="Qwen/Qwen2-7B",
+        dataset_digest="abc",
+        hyperparams={},
+    )
+
+    with pytest.raises(ValueError, match="Qwen/Qwen2-7B"):
+        trainer.as_model(foreign)
+
+    async def async_door():
+        with pytest.raises(ValueError, match="Qwen/Qwen2-7B"):
+            await trainer.aas_model(foreign)
+
+    import asyncio
+
+    asyncio.run(async_door())
+
+
+async def test_tinker_trainer_serving_doors_do_not_block_the_event_loop():
+    # Serving builds a sampling client -- a network auth handshake. Dispatched inline
+    # on the loop thread, a hanging handshake would freeze every concurrent rollout
+    # coroutine before any engine timeout could fire.
+    import asyncio
+    import threading
+    import time
+
+    loop_thread = threading.current_thread()
+    construction_threads = []
+
+    class BlockingServiceClient(FakeServiceClient):
+        def create_sampling_client(self, **kwargs):
+            construction_threads.append(threading.current_thread())
+            time.sleep(0.2)  # a slow auth handshake
+            return super().create_sampling_client(**kwargs)
+
+    trainer = TinkerTrainer(base_model="Qwen/Qwen3.6-35B-A3B", service_client=BlockingServiceClient())
+    checkpoint = Checkpoint(
+        ref="tinker://checkpoint/run-1",
+        base_model="Qwen/Qwen3.6-35B-A3B",
+        dataset_digest="abc",
+        hyperparams={},
+    )
+
+    ticks = 0
+
+    async def tick_while_serving():
+        nonlocal ticks
+        while True:
+            ticks += 1
+            await asyncio.sleep(0.01)
+
+    ticker = asyncio.ensure_future(tick_while_serving())
+    try:
+        await trainer.aas_model(checkpoint)
+        await trainer.abase_as_model()
+    finally:
+        ticker.cancel()
+
+    assert ticks >= 5  # the event loop kept turning through both constructions
+    assert construction_threads and all(thread is not loop_thread for thread in construction_threads)
 
 
 def test_tinker_trainer_checkpoints_carry_a_ttl(tmp_path):

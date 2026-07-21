@@ -53,6 +53,10 @@ class TinkerModel(Model):
     `instructions` stay None -- those are model-level *prompt* fields, which fold into
     the ENVIRONMENT fingerprint, and base and tuned must agree there or `diff()` raises
     instead of measuring.
+
+    Residual, stated honestly: a sample dispatched via `asyncio.to_thread` cannot be
+    cancelled, so an attempt the engine times out still runs to completion server-side
+    and is billed. Budget `max_tokens` accordingly.
     """
 
     def __init__(
@@ -166,10 +170,12 @@ class TinkerModel(Model):
             )
             raise ValueError(f"Tinker returned an unclean sample ({termination})")
 
-        if isinstance(message, dict) and message.get("tool_calls"):
-            # The renderer parsed a tool call even though none were offered. Raising
-            # makes it an errored (unscored) attempt rather than an empty answer scored
-            # as wrong.
+        if isinstance(message, dict) and (message.get("tool_calls") or message.get("unparsed_tool_calls")):
+            # The renderer parsed a tool-call block even though none were offered.
+            # `unparsed_tool_calls` is where malformed or unterminated <tool_call>
+            # blocks land; either key means the visible text is not the answer, and
+            # scoring it would count an emission failure as a wrong answer. Raising
+            # makes it an errored (unscored) attempt instead.
             log_warning("TinkerModel received a sample containing a tool call, which it cannot represent")
             raise ValueError("Tinker returned a tool call; TinkerModel supports text answers only")
 
@@ -222,6 +228,10 @@ def _to_renderer_messages(messages: List[Message]) -> List[Dict[str, str]]:
     converted: List[Dict[str, str]] = []
     for message in messages:
         role = getattr(message, "role", None)
+        if role == "developer":
+            # Developer instructions are system instructions to the renderer's chat
+            # template, which knows only system/user/assistant.
+            role = "system"
         if role not in ("system", "user", "assistant"):
             # Tool turns have no representation on this path; tool-calling through the
             # renderer is a follow-up.
@@ -230,6 +240,13 @@ def _to_renderer_messages(messages: List[Message]) -> List[Dict[str, str]]:
         if not isinstance(content, str):
             content = message.get_content_string() if hasattr(message, "get_content_string") else str(content or "")
         converted.append({"role": role, "content": content})
+    if not converted:
+        # Every message was dropped. Sampling anyway would run on an empty prompt: a
+        # clean, plausible, task-unrelated answer that scores normally.
+        raise ValueError(
+            "TinkerModel was invoked with no renderable messages: every message carried a role the "
+            "renderer cannot represent (only system/user/assistant reach the prompt)"
+        )
     return converted
 
 

@@ -284,6 +284,56 @@ def test_tinker_model_async_sample_off_loop_thread():
     assert len(client.calls) == 2
 
 
+@pytest.mark.parametrize("tool_key", ["tool_calls", "unparsed_tool_calls"])
+def test_tinker_model_tool_shaped_sample_errors_the_attempt(tool_key):
+    # No tools are ever offered, so a tool-shaped parse is an emission failure. That
+    # includes `unparsed_tool_calls` -- where the renderer puts malformed or
+    # unterminated <tool_call> blocks -- whose visible text parses clean and would
+    # otherwise be SCORED as a wrong answer, corrupting the pass rate with fake fails.
+    message = {
+        "role": "assistant",
+        "content": "half an answer",
+        tool_key: [{"raw_text": "<tool_call>{bad", "error": "invalid JSON"}],
+    }
+
+    model = _model(renderer=FakeRenderer(message=message))
+    with pytest.raises(ValueError, match="tool call"):
+        model.invoke(messages=_messages())
+
+    # Through the engine: errored and unscored, never a scored fake-fail.
+    result = run_rollouts(_haiku_env(_model(renderer=FakeRenderer(message=message))), k=2)
+    assert result.n_scored == 0
+    assert result.n_unscored == 2
+    assert result.pass_rate is None
+
+
+def test_tinker_model_developer_role_becomes_system():
+    # An agent that issues developer-role instructions must not have them silently
+    # dropped from the prompt: the renderer's chat template knows system.
+    renderer = FakeRenderer()
+    model = _model(renderer=renderer)
+
+    model.invoke(
+        messages=[
+            Message(role="developer", content="answer in exactly three lines"),
+            Message(role="user", content="the sea"),
+        ]
+    )
+
+    sent = renderer.prompts[-1]
+    assert sent[0] == {"role": "system", "content": "answer in exactly three lines"}
+    assert sent[1] == {"role": "user", "content": "the sea"}
+
+
+def test_tinker_model_all_unrenderable_messages_raise():
+    # If every message is dropped the prompt would be empty -- and an empty prompt
+    # samples a clean, plausible, task-unrelated answer that scores normally.
+    model = _model()
+
+    with pytest.raises(ValueError, match="renderable"):
+        model.invoke(messages=[Message(role="tool", content="tool result")])
+
+
 def test_tinker_model_unclean_sample_errors_the_attempt():
     # A cut-off sample is a fragment, not an answer: it must surface as an errored
     # (unscored) attempt rather than be scored as a wrong one.

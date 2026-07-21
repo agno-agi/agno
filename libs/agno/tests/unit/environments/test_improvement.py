@@ -524,6 +524,107 @@ def test_improvement_loop_refuses_none_policy_fingerprint(tmp_path):
     assert trainer.fit_calls == []
 
 
+class _ErroringModel(ScriptedModel):
+    """Every attempt errors: a rollout through this model scores nothing."""
+
+    def _respond(self, args, kwargs):
+        raise RuntimeError("serving outage")
+
+    async def ainvoke_stream(self, *args, **kwargs):
+        raise RuntimeError("serving outage")
+        yield  # pragma: no cover -- makes this an async generator
+
+
+def test_unmeasured_round_is_terminal_for_run(tmp_path):
+    # A paid checkpoint whose measurement failed must stop run(): the tuned policy
+    # never became the next baseline, so a second round would re-fit the pristine
+    # base -- paying for the same fine-tune again -- while the outage persists.
+    class ServingDownTrainer(StubTrainer):
+        async def aas_model(self, checkpoint):
+            raise RuntimeError("sampler auth is down")
+
+    base = _partial_base()
+    trainer = ServingDownTrainer(base, [ScriptedModel(RIGHT, tag="tuned-1")])
+    loop = ImprovementLoop(_env(base), trainer=trainer, k=2, workdir=tmp_path)
+
+    reports = loop.run(rounds=3)
+
+    assert len(trainer.fit_calls) == 1  # exactly one paid fit, then stop
+    assert len(reports) == 1
+    report = reports[0]
+    assert report.checkpoint is not None  # the paid artifact is preserved
+    assert report.tuned_pass_rate is None
+    assert report.diff is None
+    assert report.converged is False  # training happened; this is not convergence
+    assert report.unmeasured_reason == "measurement_failed"
+
+
+def test_unscored_tuned_rollout_is_not_presented_as_measured(tmp_path):
+    # A tuned rollout with zero scored attempts is an outage, not a measurement.
+    # It must not carry a diff, must not become the next round's baseline, and must
+    # stop run() like any other paid-but-unmeasured round.
+    base = _partial_base()
+    trainer = StubTrainer(base, [_ErroringModel(RIGHT, tag="tuned-1")])
+    loop = ImprovementLoop(_env(base), trainer=trainer, k=2, workdir=tmp_path)
+
+    reports = loop.run(rounds=3)
+
+    assert len(trainer.fit_calls) == 1
+    assert len(reports) == 1
+    report = reports[0]
+    assert report.checkpoint is not None
+    assert report.tuned_pass_rate is None
+    assert report.diff is None
+    assert report.tuned_policy_fingerprint is None
+    assert report.unmeasured_reason == "tuned_unscored"
+    assert loop._last_tuned_result is None  # the outage never becomes a baseline
+
+
+def test_round_one_total_failure_raises_instead_of_empty_list(tmp_path):
+    # Before any round has been paid for there is no record to protect: an empty
+    # list would read as "ran zero rounds cleanly" when the first round blew up.
+    class DeadTrainer(StubTrainer):
+        async def abase_as_model(self):
+            raise RuntimeError("no baseline model")
+
+    base = _partial_base()
+    trainer = DeadTrainer(base, [ScriptedModel(RIGHT, tag="tuned-1")])
+    loop = ImprovementLoop(_env(base), trainer=trainer, k=2, workdir=tmp_path)
+
+    with pytest.raises(RuntimeError, match="no baseline model"):
+        loop.run(rounds=2)
+
+    assert trainer.fit_calls == []
+
+
+def test_later_round_failure_still_returns_completed_rounds(tmp_path, monkeypatch):
+    # The counterpart: once round 1 is paid for, a round-2 explosion must not raise
+    # away its record -- run() returns the completed rounds and logs the failure.
+    import agno.environments.improvement as improvement_module
+
+    real_export = improvement_module.ato_sft_jsonl
+    calls = {"n": 0}
+
+    async def export_fails_second_time(result, path):
+        calls["n"] += 1
+        if calls["n"] >= 2:
+            raise RuntimeError("disk gone")
+        return await real_export(result, path)
+
+    monkeypatch.setattr(improvement_module, "ato_sft_jsonl", export_fails_second_time)
+
+    base = ScriptedModel({"the sea": [RIGHT, WRONG], "autumn": WRONG}, tag="base", default=WRONG)
+    tuned_1 = ScriptedModel({"the sea": RIGHT, "autumn": [RIGHT, WRONG]}, tag="tuned-1", default=WRONG)
+    trainer = StubTrainer(base, [tuned_1, ScriptedModel(RIGHT, tag="tuned-2")])
+    loop = ImprovementLoop(_env(base), trainer=trainer, k=2, workdir=tmp_path)
+
+    reports = loop.run(rounds=3)
+
+    assert len(reports) == 1  # round 1's record survives round 2's failure
+    assert reports[0].checkpoint is not None
+    assert len(trainer.fit_calls) == 1
+
+
 def test_partial_fit_is_measured(tmp_path):
     # PARTIAL carries a paid recovery checkpoint: measure what was paid for.
     base = _partial_base()
