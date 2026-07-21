@@ -113,3 +113,13 @@
 **Description:** Example showing how to use AgentOS with SurrealDB as database.
 
 ---
+
+### valkey_db.py
+
+**Status:** PASS
+
+**Description:** Example showing how to use AgentOS with Valkey as database. Served the app and exercised the config endpoint, a non-streaming agent run, a streaming (SSE) agent run, and the sessions endpoint, all backed by ValkeyDb.
+
+**Result:** Server started, agent runs completed with content, and the run session was persisted and listed via the sessions endpoint.
+
+---

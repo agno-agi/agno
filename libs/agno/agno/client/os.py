@@ -576,13 +576,15 @@ class AgentOSClient:
         if user_id is not None:
             data["user_id"] = user_id
         if images:
-            data["images"] = json.dumps([img.model_dump() for img in images])
+            data["images"] = json.dumps([img.to_dict() for img in images])
         if audio:
-            data["audio"] = json.dumps([a.model_dump() for a in audio])
+            data["audio"] = json.dumps([a.to_dict() for a in audio])
         if videos:
-            data["videos"] = json.dumps([v.model_dump() for v in videos])
+            data["videos"] = json.dumps([v.to_dict() for v in videos])
         if files:
-            data["files"] = json.dumps([f.model_dump() for f in files])
+            # Sent as "input_files" because the run endpoints already use the "files"
+            # field for multipart uploads (List[UploadFile]).
+            data["input_files"] = json.dumps([f.to_dict() for f in files])
 
         # Add kwargs to data, serializing dicts as JSON
         for key, value in kwargs.items():
@@ -636,13 +638,15 @@ class AgentOSClient:
         if user_id is not None:
             data["user_id"] = user_id
         if images:
-            data["images"] = json.dumps([img.model_dump() for img in images])
+            data["images"] = json.dumps([img.to_dict() for img in images])
         if audio:
-            data["audio"] = json.dumps([a.model_dump() for a in audio])
+            data["audio"] = json.dumps([a.to_dict() for a in audio])
         if videos:
-            data["videos"] = json.dumps([v.model_dump() for v in videos])
+            data["videos"] = json.dumps([v.to_dict() for v in videos])
         if files:
-            data["files"] = json.dumps([f.model_dump() for f in files])
+            # Sent as "input_files" because the run endpoints already use the "files"
+            # field for multipart uploads (List[UploadFile]).
+            data["input_files"] = json.dumps([f.to_dict() for f in files])
 
         for key, value in kwargs.items():
             if isinstance(value, dict):
@@ -848,13 +852,15 @@ class AgentOSClient:
         if user_id is not None:
             data["user_id"] = user_id
         if images:
-            data["images"] = json.dumps(images)
+            data["images"] = json.dumps([img.to_dict() for img in images])
         if audio:
-            data["audio"] = json.dumps(audio)
+            data["audio"] = json.dumps([a.to_dict() for a in audio])
         if videos:
-            data["videos"] = json.dumps(videos)
+            data["videos"] = json.dumps([v.to_dict() for v in videos])
         if files:
-            data["files"] = json.dumps(files)
+            # Sent as "input_files" because the run endpoints already use the "files"
+            # field for multipart uploads (List[UploadFile]).
+            data["input_files"] = json.dumps([f.to_dict() for f in files])
 
         # Add kwargs to data, serializing dicts as JSON
         for key, value in kwargs.items():
@@ -908,13 +914,15 @@ class AgentOSClient:
         if user_id is not None:
             data["user_id"] = user_id
         if images:
-            data["images"] = json.dumps(images)
+            data["images"] = json.dumps([img.to_dict() for img in images])
         if audio:
-            data["audio"] = json.dumps(audio)
+            data["audio"] = json.dumps([a.to_dict() for a in audio])
         if videos:
-            data["videos"] = json.dumps(videos)
+            data["videos"] = json.dumps([v.to_dict() for v in videos])
         if files:
-            data["files"] = json.dumps(files)
+            # Sent as "input_files" because the run endpoints already use the "files"
+            # field for multipart uploads (List[UploadFile]).
+            data["input_files"] = json.dumps([f.to_dict() for f in files])
 
         # Add kwargs to data, serializing dicts as JSON
         for key, value in kwargs.items():
@@ -1152,13 +1160,15 @@ class AgentOSClient:
         if user_id is not None:
             data["user_id"] = user_id
         if images:
-            data["images"] = json.dumps(images)
+            data["images"] = json.dumps([img.to_dict() for img in images])
         if audio:
-            data["audio"] = json.dumps(audio)
+            data["audio"] = json.dumps([a.to_dict() for a in audio])
         if videos:
-            data["videos"] = json.dumps(videos)
+            data["videos"] = json.dumps([v.to_dict() for v in videos])
         if files:
-            data["files"] = json.dumps(files)
+            # Sent as "input_files" because the run endpoints already use the "files"
+            # field for multipart uploads (List[UploadFile]).
+            data["input_files"] = json.dumps([f.to_dict() for f in files])
 
         # Add kwargs to data, serializing dicts as JSON
         for key, value in kwargs.items():
@@ -1212,13 +1222,15 @@ class AgentOSClient:
         if user_id is not None:
             data["user_id"] = user_id
         if images:
-            data["images"] = json.dumps(images)
+            data["images"] = json.dumps([img.to_dict() for img in images])
         if audio:
-            data["audio"] = json.dumps(audio)
+            data["audio"] = json.dumps([a.to_dict() for a in audio])
         if videos:
-            data["videos"] = json.dumps(videos)
+            data["videos"] = json.dumps([v.to_dict() for v in videos])
         if files:
-            data["files"] = json.dumps(files)
+            # Sent as "input_files" because the run endpoints already use the "files"
+            # field for multipart uploads (List[UploadFile]).
+            data["input_files"] = json.dumps([f.to_dict() for f in files])
 
         # Add kwargs to data, serializing dicts as JSON
         for key, value in kwargs.items():

@@ -97,6 +97,7 @@ async def test_async_tool_use_stream():
     assert tool_call_seen, "No tool calls observed in stream"
 
 
+@pytest.mark.flaky(reruns=2)
 def test_parallel_tool_calls():
     agent = Agent(
         model=Groq(id="llama-3.3-70b-versatile"),

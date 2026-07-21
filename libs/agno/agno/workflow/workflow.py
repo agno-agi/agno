@@ -1778,6 +1778,9 @@ class Workflow:
         if isinstance(event, (RunOutput, TeamRunOutput)):
             return event
 
+        if isinstance(event, WorkflowCompletedEvent) and event.metrics is None:
+            event.metrics = workflow_run_response.metrics
+
         if self.store_events:
             # Check if this event type should be skipped
             if self.events_to_skip:

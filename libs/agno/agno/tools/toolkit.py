@@ -1,7 +1,7 @@
 from collections import OrderedDict
 from inspect import iscoroutinefunction
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple, Union
+from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple, Union, cast, get_type_hints
 
 from agno.exceptions import PathSecurityError
 from agno.tools.function import Function
@@ -30,6 +30,7 @@ class Toolkit:
         cache_results: bool = False,
         cache_ttl: int = 3600,
         cache_dir: Optional[str] = None,
+        timeout: Optional[int] = None,
         auto_register: bool = True,
     ):
         """Initialize a new Toolkit.
@@ -49,6 +50,12 @@ class Toolkit:
             cache_results (bool): Enable in-memory caching of function results.
             cache_ttl (int): Time-to-live for cached results in seconds.
             cache_dir (Optional[str]): Directory to store cache files. Defaults to system temp dir.
+            timeout (Optional[int]): Timeout in seconds for the primary I/O operation this toolkit
+                performs (e.g. HTTP request, SDK call, sandbox execution). Subclasses that talk to
+                external systems should accept their own ``timeout`` and forward it via
+                ``super().__init__(timeout=...)`` so agents have a uniform override path. Toolkits
+                that also expose secondary timers (job-poll intervals, per-task budgets) should keep
+                their own explicit names for those.
             auto_register (bool): Whether to automatically register all methods in the class.
             stop_after_tool_call_tools (Optional[List[str]]): List of function names that should stop the agent after execution.
             show_result_tools (Optional[List[str]]): List of function names whose results should be shown.
@@ -81,6 +88,16 @@ class Toolkit:
         self.cache_results: bool = cache_results
         self.cache_ttl: int = cache_ttl
         self.cache_dir: Optional[str] = cache_dir
+
+        # Only assign timeout when the caller explicitly passed one, or when the
+        # subclass hasn't already set it before calling super().__init__(). This
+        # lets subclasses either forward timeout via super() (recommended) or set
+        # self.timeout locally without either pattern clobbering the other.
+        #
+        # Widen the value to Any at assignment: subclasses own the semantic type
+        # (int, float, or httpx.Timeout) and a base Optional[int] would break them.
+        if timeout is not None or not hasattr(self, "timeout"):
+            self.timeout = cast(Any, timeout)
 
         # Automatically register all methods if auto_register is True
         if auto_register:
@@ -260,6 +277,23 @@ class Toolkit:
                     return bound
 
             bound_method = make_bound_method(original_func, self)
+            # Expose the original signature (minus self) and annotations on the wrapper.
+            # FunctionCall._build_entrypoint_args inspects the entrypoint's signature to
+            # inject run_context/agent/team/etc.; without this it sees (*args, **kwargs)
+            # and skips the injection.
+            bound_method.__signature__ = sig.replace(  # type: ignore[attr-defined]
+                parameters=[param for param_name, param in sig.parameters.items() if param_name != "self"]
+            )
+            # Resolve annotations against the original method's own module so type-based
+            # Agent/Team injection still works when the user's module uses
+            # `from __future__ import annotations` (PEP 563). The @tool wrapper's globals
+            # point at the decorator module, so unwrap to the underlying method first;
+            # otherwise the raw string annotations stay unresolvable and injection is skipped.
+            try:
+                resolved_annotations = get_type_hints(inspect.unwrap(original_func))
+            except Exception:
+                resolved_annotations = getattr(original_func, "__annotations__", {})
+            bound_method.__annotations__ = {k: v for k, v in resolved_annotations.items() if k != "self"}
         else:
             # Function doesn't expect self (e.g., static method or already bound)
             bound_method = original_func
