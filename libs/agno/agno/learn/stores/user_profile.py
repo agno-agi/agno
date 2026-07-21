@@ -882,7 +882,7 @@ class UserProfileStore(LearningStore):
 
         messages_for_model = [
             self._get_system_message(existing_profile=existing_profile),
-            Message(role="user", content=conversation_text),
+            Message(role="user", content=f"Extract profile information from this conversation:\n\n{conversation_text}"),
         ]
 
         model_copy = deepcopy(self.model)
@@ -941,7 +941,7 @@ class UserProfileStore(LearningStore):
 
         messages_for_model = [
             self._get_system_message(existing_profile=existing_profile),
-            Message(role="user", content=conversation_text),
+            Message(role="user", content=f"Extract profile information from this conversation:\n\n{conversation_text}"),
         ]
 
         model_copy = deepcopy(self.model)
