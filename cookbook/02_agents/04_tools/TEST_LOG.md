@@ -58,3 +58,11 @@
 **Result:** Timed out after 120s.
 
 ---
+
+### 05_refresh_tools_per_step.py
+
+**Status:** NOT RUN
+**Description:** Requires an OpenAI API key and demonstrates opt-in tool refresh after a completed tool batch.
+**Result:** Added as a cookbook example for the dynamic callable-tools feature.
+
+---

@@ -185,6 +185,10 @@ class Agent:
 
     # A function that acts as middleware and is called around tool calls.
     tool_hooks: Optional[List[Callable]] = None
+    # If True, callable tool factories are re-resolved before each model step.
+    # This lets tools become available during a run after state changes caused by
+    # earlier tool calls, while preserving the default run-level tool snapshot.
+    refresh_tools_per_step: bool = False
 
     # --- Agent Hooks ---
     # Functions called right after agent-session is loaded, before processing starts
@@ -435,6 +439,7 @@ class Agent:
         tool_call_limit: Optional[int] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         tool_hooks: Optional[List[Callable]] = None,
+        refresh_tools_per_step: bool = False,
         pre_hooks: Optional[List[Union[Callable[..., Any], BaseGuardrail, BaseEval]]] = None,
         post_hooks: Optional[List[Union[Callable[..., Any], BaseGuardrail, BaseEval]]] = None,
         reasoning: bool = False,
@@ -604,6 +609,7 @@ class Agent:
         self.tool_call_limit = tool_call_limit
         self.tool_choice = tool_choice
         self.tool_hooks = tool_hooks
+        self.refresh_tools_per_step = refresh_tools_per_step
 
         self.pre_hooks = pre_hooks
         self.post_hooks = post_hooks

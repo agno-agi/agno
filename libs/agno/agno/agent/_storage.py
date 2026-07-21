@@ -730,6 +730,8 @@ def to_dict(agent: Agent) -> Dict[str, Any]:
     # --- Callable factory settings ---
     if not agent.cache_callables:
         config["cache_callables"] = agent.cache_callables
+    if agent.refresh_tools_per_step:
+        config["refresh_tools_per_step"] = agent.refresh_tools_per_step
 
     # --- Debug and telemetry settings ---
     if agent.debug_mode:

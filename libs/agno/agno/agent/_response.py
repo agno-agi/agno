@@ -7,6 +7,7 @@ from typing import (
     TYPE_CHECKING,
     Any,
     AsyncIterator,
+    Callable,
     Dict,
     Iterator,
     List,
@@ -1055,6 +1056,7 @@ def handle_model_response_stream(
     stream_events: bool = False,
     session_state: Optional[Dict[str, Any]] = None,
     run_context: Optional[RunContext] = None,
+    tools_resolver: Optional[Callable[[], Optional[List[Union[Function, dict]]]]] = None,
 ) -> Iterator[RunOutputEvent]:
     agent.model = cast(Model, agent.model)
 
@@ -1094,6 +1096,7 @@ def handle_model_response_stream(
             run_messages=run_messages,
             run_context=run_context,
         ),
+        tools_resolver=tools_resolver,
     ):
         # Handle LLM request events and compression events from ModelResponse
         if isinstance(model_response_event, ModelResponse):
@@ -1215,6 +1218,7 @@ async def ahandle_model_response_stream(
     stream_events: bool = False,
     session_state: Optional[Dict[str, Any]] = None,
     run_context: Optional[RunContext] = None,
+    tools_resolver: Optional[Callable[[], Any]] = None,
 ) -> AsyncIterator[RunOutputEvent]:
     agent.model = cast(Model, agent.model)
 
@@ -1254,6 +1258,7 @@ async def ahandle_model_response_stream(
             run_messages=run_messages,
             run_context=run_context,
         ),
+        tools_resolver=tools_resolver,
     )  # type: ignore
 
     async for model_response_event in model_response_stream:  # type: ignore

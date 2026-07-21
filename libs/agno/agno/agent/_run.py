@@ -546,6 +546,13 @@ def _run(
                         run_messages=run_messages,
                         run_context=run_context,
                     ),
+                    **model_tool_refresh_kwargs(
+                        agent,
+                        run_response=run_response,
+                        session=agent_session,
+                        run_context=run_context,
+                        user_id=user_id,
+                    ),
                 )
 
                 # Check for cancellation after model call
@@ -962,6 +969,13 @@ def _run_stream(
                         stream_events=stream_events,
                         session_state=run_context.session_state,
                         run_context=run_context,
+                        **model_tool_refresh_kwargs(
+                            agent,
+                            run_response=run_response,
+                            session=agent_session,
+                            run_context=run_context,
+                            user_id=user_id,
+                        ),
                     ):
                         if not isinstance(event, _CANCEL_BYPASS_EVENT_TYPES):
                             raise_if_cancelled(run_response.run_id)  # type: ignore
@@ -982,6 +996,13 @@ def _run_stream(
                         stream_events=stream_events,
                         session_state=run_context.session_state,
                         run_context=run_context,
+                        **model_tool_refresh_kwargs(
+                            agent,
+                            run_response=run_response,
+                            session=agent_session,
+                            run_context=run_context,
+                            user_id=user_id,
+                        ),
                     ):
                         if not isinstance(event, _CANCEL_BYPASS_EVENT_TYPES):
                             raise_if_cancelled(run_response.run_id)  # type: ignore
@@ -1685,6 +1706,13 @@ async def _arun(
                         run_messages=run_messages,
                         run_context=run_context,
                     ),
+                    **amodel_tool_refresh_kwargs(
+                        agent,
+                        run_response=run_response,
+                        session=agent_session,
+                        run_context=run_context,
+                        user_id=user_id,
+                    ),
                 )
 
                 # Check for cancellation after model call
@@ -2363,6 +2391,13 @@ async def _arun_stream(
                         stream_events=stream_events,
                         session_state=run_context.session_state,
                         run_context=run_context,
+                        **amodel_tool_refresh_kwargs(
+                            agent,
+                            run_response=run_response,
+                            session=agent_session,
+                            run_context=run_context,
+                            user_id=user_id,
+                        ),
                     ):
                         if not isinstance(event, _CANCEL_BYPASS_EVENT_TYPES):
                             await araise_if_cancelled(run_response.run_id)  # type: ignore
@@ -2383,6 +2418,13 @@ async def _arun_stream(
                         stream_events=stream_events,
                         session_state=run_context.session_state,
                         run_context=run_context,
+                        **amodel_tool_refresh_kwargs(
+                            agent,
+                            run_response=run_response,
+                            session=agent_session,
+                            run_context=run_context,
+                            user_id=user_id,
+                        ),
                     ):
                         if not isinstance(event, _CANCEL_BYPASS_EVENT_TYPES):
                             await araise_if_cancelled(run_response.run_id)  # type: ignore
@@ -3652,6 +3694,13 @@ def _continue_run(
                         run_messages=run_messages,
                         run_context=run_context,
                     ),
+                    **model_tool_refresh_kwargs(
+                        agent,
+                        run_response=run_response,
+                        session=session,
+                        run_context=run_context,
+                        user_id=user_id,
+                    ),
                 )
 
                 # Check for cancellation after model processing
@@ -3880,6 +3929,13 @@ def _continue_run_stream(
                     stream_events=stream_events,
                     session_state=run_context.session_state,
                     run_context=run_context,
+                    **model_tool_refresh_kwargs(
+                        agent,
+                        run_response=run_response,
+                        session=session,
+                        run_context=run_context,
+                        user_id=user_id,
+                    ),
                 ):
                     if not isinstance(event, _CANCEL_BYPASS_EVENT_TYPES):
                         raise_if_cancelled(run_response.run_id)  # type: ignore
@@ -4748,6 +4804,13 @@ async def _acontinue_run(
                         run_messages=run_messages,
                         run_context=run_context,
                     ),
+                    **amodel_tool_refresh_kwargs(
+                        agent,
+                        run_response=run_response,
+                        session=agent_session,
+                        run_context=run_context,
+                        user_id=user_id,
+                    ),
                 )
                 # Check for cancellation after model call
                 await araise_if_cancelled(run_response.run_id)  # type: ignore
@@ -5247,6 +5310,13 @@ async def _acontinue_run_stream(
                         response_format=response_format,
                         stream_events=stream_events,
                         run_context=run_context,
+                        **amodel_tool_refresh_kwargs(
+                            agent,
+                            run_response=run_response,
+                            session=agent_session,
+                            run_context=run_context,
+                            user_id=user_id,
+                        ),
                     ):
                         if not isinstance(event, _CANCEL_BYPASS_EVENT_TYPES):
                             await araise_if_cancelled(run_response.run_id)  # type: ignore
@@ -5266,6 +5336,13 @@ async def _acontinue_run_stream(
                         response_format=response_format,
                         stream_events=stream_events,
                         run_context=run_context,
+                        **amodel_tool_refresh_kwargs(
+                            agent,
+                            run_response=run_response,
+                            session=agent_session,
+                            run_context=run_context,
+                            user_id=user_id,
+                        ),
                     ):
                         if not isinstance(event, _CANCEL_BYPASS_EVENT_TYPES):
                             await araise_if_cancelled(run_response.run_id)  # type: ignore
@@ -6049,6 +6126,121 @@ def build_after_tool_results_callback(
         checkpoint_run(agent, run_response, session, run_context)
 
     return _callback
+
+
+def agent_tools_refresh_enabled(agent: Agent) -> bool:
+    """True when the agent should install a run-time tools resolver."""
+    return bool(getattr(agent, "refresh_tools_per_step", False))
+
+
+def model_tool_refresh_kwargs(
+    agent: Agent,
+    *,
+    run_response: RunOutput,
+    session: AgentSession,
+    run_context: RunContext,
+    user_id: Optional[str] = None,
+) -> dict:
+    """Kwargs for model.response/stream calls that support run-time tool refresh."""
+    return {
+        "tools_resolver": build_tools_resolver(
+            agent,
+            run_response=run_response,
+            session=session,
+            run_context=run_context,
+            user_id=user_id,
+        ),
+    }
+
+
+def amodel_tool_refresh_kwargs(
+    agent: Agent,
+    *,
+    run_response: RunOutput,
+    session: AgentSession,
+    run_context: RunContext,
+    user_id: Optional[str] = None,
+) -> dict:
+    """Async runs — same surface as :func:`model_tool_refresh_kwargs`."""
+    return {
+        "tools_resolver": abuild_tools_resolver(
+            agent,
+            run_response=run_response,
+            session=session,
+            run_context=run_context,
+            user_id=user_id,
+        ),
+    }
+
+
+def build_tools_resolver(
+    agent: Agent,
+    run_response: RunOutput,
+    session: AgentSession,
+    run_context: RunContext,
+    user_id: Optional[str] = None,
+) -> Optional[Any]:
+    """Build a sync resolver that refreshes model-visible tools between model steps.
+
+    The resolver intentionally reuses the normal Agent tool pipeline so callable
+    factories, default tools, skills, tool hooks, and model-specific tool
+    formatting all stay consistent with the initial run setup.
+    """
+    if not agent_tools_refresh_enabled(agent):
+        return None
+
+    from agno.agent._tools import determine_tools_for_model
+
+    def _resolver() -> List[Union[Function, dict]]:
+        processed_tools = agent.get_tools(
+            run_response=run_response,
+            run_context=run_context,
+            session=session,
+            user_id=user_id,
+        )
+        return determine_tools_for_model(
+            agent,
+            model=cast(Model, agent.model),
+            processed_tools=processed_tools,
+            run_response=run_response,
+            session=session,
+            run_context=run_context,
+        )
+
+    return _resolver
+
+
+def abuild_tools_resolver(
+    agent: Agent,
+    run_response: RunOutput,
+    session: AgentSession,
+    run_context: RunContext,
+    user_id: Optional[str] = None,
+) -> Optional[Any]:
+    """Async variant of :func:`build_tools_resolver`."""
+    if not agent_tools_refresh_enabled(agent):
+        return None
+
+    from agno.agent._tools import determine_tools_for_model
+
+    async def _resolver() -> List[Union[Function, dict]]:
+        processed_tools = await agent.aget_tools(
+            run_response=run_response,
+            run_context=run_context,
+            session=session,
+            user_id=user_id,
+        )
+        return determine_tools_for_model(
+            agent,
+            model=cast(Model, agent.model),
+            processed_tools=processed_tools,
+            run_response=run_response,
+            run_context=run_context,
+            session=session,
+            async_mode=True,
+        )
+
+    return _resolver
 
 
 def abuild_after_tool_results_callback(
