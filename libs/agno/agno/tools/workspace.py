@@ -227,7 +227,13 @@ class Workspace(Toolkit):
     Listing results from ``list_files`` and ``search_content`` skip common noise directories
     (``.venv``, ``.venvs``, ``.context``, ``.git``, ``__pycache__``,
     ``node_modules``, etc.) by default. Pass ``exclude_patterns=[]`` to disable,
-    or ``exclude_patterns=[...]`` to override.
+    or ``exclude_patterns=[...]`` to override. By default exclusion is a
+    listing/search filter only — direct-path tools still accept excluded paths.
+    Pass ``enforce_excludes=True`` to make excluded paths fully off-limits to
+    ``read_file`` / ``write_file`` / ``edit_file`` / ``move_file`` (source and
+    destination) / ``delete_file``; excluded paths return the same error whether
+    or not they exist. ``run_command`` is not bounded by the flag — a shell
+    command can still touch excluded files.
 
     Optional ``require_read_before_write=True`` blocks ``write_file`` / ``edit_file`` /
     ``move_file`` / ``delete_file`` on existing files until the agent has read them in
@@ -259,6 +265,7 @@ class Workspace(Toolkit):
         max_file_lines: int = 100_000,
         max_file_length: int = 10_000_000,
         exclude_patterns: Optional[List[str]] = None,
+        enforce_excludes: bool = False,
         **kwargs,
     ):
         # Resolve root to an absolute path once — never re-read cwd later (reload-safe).
@@ -273,6 +280,7 @@ class Workspace(Toolkit):
         self.exclude_patterns: List[str] = (
             exclude_patterns if exclude_patterns is not None else list(DEFAULT_EXCLUDE_PATTERNS)
         )
+        self.enforce_excludes = enforce_excludes
         # Tracks which paths have been read this session — used by require_read_before_write.
         # Resolved absolute paths so move/rename interactions are unambiguous.
         self._read_paths: Set[Path] = set()
@@ -426,6 +434,10 @@ class Workspace(Toolkit):
             if not safe:
                 log_error(f"Path escapes workspace: {path}")
                 return "Error: path escapes workspace root"
+            # Before the existence check so excluded paths error identically
+            # whether or not they exist (no existence oracle).
+            if self.enforce_excludes and self._is_excluded(file_path):
+                return "Error: path is excluded from this workspace"
             if not file_path.is_file():
                 return f"Error: file not found: {path}"
             contents = file_path.read_text(encoding=encoding)
@@ -650,6 +662,8 @@ class Workspace(Toolkit):
             if not safe:
                 log_error(f"Path escapes workspace: {path}")
                 return "Error: path escapes workspace root"
+            if self.enforce_excludes and self._is_excluded(file_path):
+                return "Error: path is excluded from this workspace"
             if file_path.exists() and not overwrite:
                 return f"Error: file exists and overwrite=False: {path}"
             check_err = self._check_read_before_write(file_path, op="write")
@@ -701,6 +715,8 @@ class Workspace(Toolkit):
             safe, file_path = self._check_path(path, self.root)
             if not safe:
                 return "Error: path escapes workspace root"
+            if self.enforce_excludes and self._is_excluded(file_path):
+                return "Error: path is excluded from this workspace"
             if not file_path.is_file():
                 return f"Error: file not found: {path}"
             check_err = self._check_read_before_write(file_path, op="edit")
@@ -748,6 +764,10 @@ class Workspace(Toolkit):
             safe_dst, dst_path = self._check_path(dst, self.root)
             if not safe_dst:
                 return "Error: dst escapes workspace root"
+            # Destination too — otherwise a move could smuggle content into (or
+            # rename it out of) the excluded set.
+            if self.enforce_excludes and (self._is_excluded(src_path) or self._is_excluded(dst_path)):
+                return "Error: path is excluded from this workspace"
             if not src_path.exists():
                 return f"Error: src not found: {src}"
             if src_path.is_dir():
@@ -779,6 +799,8 @@ class Workspace(Toolkit):
             safe, file_path = self._check_path(path, self.root)
             if not safe:
                 return "Error: path escapes workspace root"
+            if self.enforce_excludes and self._is_excluded(file_path):
+                return "Error: path is excluded from this workspace"
             if not file_path.exists():
                 return f"Error: file not found: {path}"
             if file_path.is_dir():
