@@ -41,6 +41,8 @@ How to Get These Credentials:
 
 Note: The first time you run the application, it will open a browser window for OAuth authentication.
 A token.json file will be created to store the authentication credentials for future use.
+On headless servers pass auth=AuthConfig(interactive=False) (or set GOOGLE_OAUTH_NONINTERACTIVE=1):
+expired credentials then raise a clear error instead of blocking on a browser that never opens.
 
 Service Account Authentication (Alternative):
 ---------------------------------------------
