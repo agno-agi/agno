@@ -77,7 +77,12 @@ You manage Gmail — searching, reading, and composing emails.
 
 
 class GmailContextProvider(ContextProvider):
-    """Gmail context for agents via service account or OAuth."""
+    """Gmail context for agents via service account or OAuth.
+
+    ``write_tools`` swaps the write sub-agent's toolset (default: a
+    write-scoped ``GmailTools``). ``mode=ContextMode.tools`` is a
+    read-only surface and deliberately ignores ``write_tools``.
+    """
 
     def __init__(
         self,
@@ -94,6 +99,7 @@ class GmailContextProvider(ContextProvider):
         name: str = "Gmail",
         read_instructions: str | None = None,
         write_instructions: str | None = None,
+        write_tools: list | None = None,
         mode: ContextMode = ContextMode.default,
         model: Model | None = None,
         read: bool = True,
@@ -112,6 +118,7 @@ class GmailContextProvider(ContextProvider):
 
         # Store auth config for toolkit creation
         self._auth = auth
+        self.write_tools = write_tools
 
         # Resolve auth at init — fail fast if misconfigured
         self._sa_path = service_account_path or getenv("GOOGLE_SERVICE_ACCOUNT_FILE")
@@ -207,12 +214,13 @@ class GmailContextProvider(ContextProvider):
 
     def _ensure_write_agent(self) -> Agent:
         if self._write_agent is None:
+            tools = self.write_tools if self.write_tools is not None else [self._ensure_write_toolkit()]
             self._write_agent = Agent(
                 id=f"{self.id}_write",
                 name=f"{self.name} (write)",
                 model=self.model,
                 instructions=self._write_instructions,
-                tools=[self._ensure_write_toolkit()],
+                tools=tools,
                 markdown=True,
             )
         return self._write_agent

@@ -164,6 +164,30 @@ def test_calendar_write_mode_creates_update_tool():
     assert "update_calendar" in tool_names
 
 
+def test_calendar_write_tools_replace_default_toolkit():
+    from agno.tools import tool
+    from agno.tools.google.calendar import GoogleCalendarTools
+
+    @tool(name="book_meeting_room")
+    def _book_meeting_room(room: str) -> str:
+        return "ok"
+
+    provider = GoogleCalendarContextProvider(write=True, write_tools=[_book_meeting_room])
+    agent = provider._ensure_write_agent()
+    assert agent.tools is not None
+    assert len(agent.tools) == 1
+    assert agent.tools[0] is _book_meeting_room
+    assert not any(isinstance(t, GoogleCalendarTools) for t in agent.tools)
+
+
+def test_calendar_default_write_agent_keeps_calendar_toolkit():
+    from agno.tools.google.calendar import GoogleCalendarTools
+
+    provider = GoogleCalendarContextProvider(write=True)
+    agent = provider._ensure_write_agent()
+    assert any(isinstance(t, GoogleCalendarTools) for t in agent.tools or [])
+
+
 # ============================================================================
 # CALENDAR TOOLKIT TIMEOUT TESTS
 # ============================================================================

@@ -69,7 +69,12 @@ You manage Google Calendar — searching, reading, and modifying events.
 
 
 class GoogleCalendarContextProvider(ContextProvider):
-    """Google Calendar context for agents via service account or OAuth."""
+    """Google Calendar context for agents via service account or OAuth.
+
+    ``write_tools`` swaps the write sub-agent's toolset (default: a
+    write-scoped ``GoogleCalendarTools``). ``mode=ContextMode.tools`` is
+    a read-only surface and deliberately ignores ``write_tools``.
+    """
 
     def __init__(
         self,
@@ -87,6 +92,7 @@ class GoogleCalendarContextProvider(ContextProvider):
         name: str = "Calendar",
         read_instructions: str | None = None,
         write_instructions: str | None = None,
+        write_tools: list | None = None,
         mode: ContextMode = ContextMode.default,
         model: Model | None = None,
         read: bool = True,
@@ -105,6 +111,7 @@ class GoogleCalendarContextProvider(ContextProvider):
 
         # Store auth config for toolkit creation
         self._auth = auth
+        self.write_tools = write_tools
 
         self._sa_path = service_account_path or getenv("GOOGLE_SERVICE_ACCOUNT_FILE")
         self._credentials_path = credentials_path
@@ -192,12 +199,13 @@ class GoogleCalendarContextProvider(ContextProvider):
 
     def _ensure_write_agent(self) -> Agent:
         if self._write_agent is None:
+            tools = self.write_tools if self.write_tools is not None else [self._ensure_write_toolkit()]
             self._write_agent = Agent(
                 id=f"{self.id}_write",
                 name=f"{self.name} (write)",
                 model=self.model,
                 instructions=self._write_instructions,
-                tools=[self._ensure_write_toolkit()],
+                tools=tools,
                 markdown=True,
             )
         return self._write_agent
