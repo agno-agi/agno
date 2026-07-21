@@ -21,20 +21,52 @@ trusting a delta.
 import asyncio
 import hashlib
 import tempfile
-from dataclasses import dataclass, field
+import threading
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Dict, List, Literal, Optional, Tuple
 
 from agno.agent import Agent
-from agno.environments.environment import Environment
+from agno.environments._engine import StopReason
+from agno.environments.environment import Environment, _env_fingerprint_of
 from agno.environments.exporters import ExportReport, ato_sft_jsonl
 from agno.environments.exporters._validate import MAX_CONVERSATIONS, MAX_DATASET_BYTES
 from agno.environments.runner import EnvironmentDiff, EnvironmentRunResult, arun_rollouts
 from agno.scorer import FingerprintError, Scorer
+from agno.scorer._model import model_prompt_payload
 from agno.trainers.base import Checkpoint, Trainer, TrainOn, TrainResult
-from agno.utils.log import log_warning
+from agno.utils.log import log_info, log_warning
 
-_ConvergedReason = Literal["saturated", "all_failing", "not_exportable", "no_learning_zone", "baseline_unscored"]
+_ConvergedReason = Literal["saturated", "all_failing", "not_exportable", "no_learning_zone"]
+
+# Why a round reports no tuned numbers. Every one is terminal for run()/arun():
+# repeating the round would pay again -- to re-fit from the pristine base when a
+# checkpoint exists, or to re-roll a baseline into the same outage when none does
+# ("baseline_unscored"). "measurement_cancelled" is never returned: it appears only
+# on `last_unmeasured_report`, because a cancelled astep re-raises.
+_UnmeasuredReason = Literal[
+    "serving_prompt_mismatch",
+    "measurement_failed",
+    "measurement_cancelled",
+    "tuned_unscored",
+    "coverage_regressed",
+    "checkpoint_provenance_mismatch",
+    "baseline_unscored",
+]
+
+# Matches the rollout runner's default concurrency: the audit is the same shape of
+# work (one model call per attempt) and should not be the serial part of a round.
+_AUDIT_CONCURRENCY = 4
+
+# The audit is diagnostics over an already-measured round; unbounded, a hung judge
+# model would hold the round's record -- and its paid checkpoint -- hostage.
+_AUDIT_TIMEOUT_SECONDS = 600.0
+
+# How far tuned coverage (scored / planned attempts) may fall below baseline coverage
+# before the round is routed through the unmeasured channel: pass_rate excludes
+# unscored attempts, so a tuned model that got WORSE by truncating most attempts
+# would otherwise read as improved on the surviving few.
+_COVERAGE_DROP_THRESHOLD = 0.1
 
 
 @dataclass(frozen=True)
@@ -86,6 +118,20 @@ class IterationReport:
     audit_scorer_digest: Optional[str] = None
     converged: bool = False
     converged_reason: Optional[_ConvergedReason] = None
+    # Set when the round measured nothing. With a checkpoint: the fine-tune was paid
+    # for and could not be measured. Without one ("baseline_unscored"): the round-1
+    # baseline itself had zero scored attempts -- an outage, not convergence. Terminal
+    # for run()/arun() either way, which must not pay to repeat a round while the
+    # outage persists.
+    unmeasured_reason: Optional[_UnmeasuredReason] = None
+    # Scored attempts over PLANNED attempts (k x tasks) per rollout, with a breakdown
+    # of why the rest went unscored. pass_rate's denominator is n_scored -- correct
+    # for accuracy, blind to how much of the plan was measured -- so coverage is the
+    # second axis that keeps a truncation-heavy rollout from reading as improvement.
+    baseline_coverage: Optional[float] = None
+    tuned_coverage: Optional[float] = None
+    baseline_unscored_breakdown: Optional[Dict[str, int]] = None
+    tuned_unscored_breakdown: Optional[Dict[str, int]] = None
 
     def to_dict(self) -> Dict[str, Any]:
         """A json-ready report. Byte-stable under `json.dumps(..., sort_keys=True)` for
@@ -131,6 +177,11 @@ class IterationReport:
             "audit_scorer_digest": self.audit_scorer_digest,
             "converged": self.converged,
             "converged_reason": self.converged_reason,
+            "unmeasured_reason": self.unmeasured_reason,
+            "baseline_coverage": self.baseline_coverage,
+            "tuned_coverage": self.tuned_coverage,
+            "baseline_unscored_breakdown": self.baseline_unscored_breakdown,
+            "tuned_unscored_breakdown": self.tuned_unscored_breakdown,
         }
 
 
@@ -156,8 +207,17 @@ class ImprovementLoop:
 
     _round: int = field(default=0, init=False)
     _last_tuned_result: Optional[EnvironmentRunResult] = field(default=None, init=False)
+    _last_tuned_model: Optional[Any] = field(default=None, init=False)
     _rows: List[str] = field(default_factory=list, init=False)
     _warned_output_schema: bool = field(default=False, init=False)
+    # Single-flight over the whole round: a plain threading lock so it also covers
+    # step()/run() called from another thread. Acquired non-blocking -- a concurrent
+    # round is rejected, never queued, because a queued round would still pay for a
+    # second fit against a stale baseline.
+    _step_guard: threading.Lock = field(default_factory=threading.Lock, init=False)
+    # The report astep could not RETURN: set before re-raising a cancellation, so the
+    # paid checkpoint stays reachable after the CancelledError propagates.
+    last_unmeasured_report: Optional[IterationReport] = field(default=None, init=False)
 
     def __post_init__(self) -> None:
         if self.workdir is None:
@@ -170,29 +230,74 @@ class ImprovementLoop:
     # -- doors ------------------------------------------------------------------
 
     def step(self) -> IterationReport:
-        """One round: generate a dataset, train on it, re-measure. Sync door."""
+        """One round: generate a dataset, train on it, re-measure. Sync door.
+
+        Each call runs its own event loop, so a trainer or model adapter that caches an
+        async client across rounds should be loop-agnostic; `run(rounds=n)` uses a
+        single loop for the whole sequence.
+        """
         _refuse_running_loop("step", "astep")
         return asyncio.run(self.astep())
 
     def run(self, rounds: int = 1) -> List[IterationReport]:
-        """Repeated `step()`, stopping early on convergence or a failed fit. Sync door."""
+        """Repeated `step()`, stopping early on convergence, a failed fit, or a round
+        that measured nothing (`unmeasured_reason`) -- a paid checkpoint the round
+        could not measure, or a baseline outage. Sync door."""
         _refuse_running_loop("run", "arun")
         return asyncio.run(self.arun(rounds=rounds))
 
     async def arun(self, rounds: int = 1) -> List[IterationReport]:
         reports: List[IterationReport] = []
         for _ in range(rounds):
-            report = await self.astep()
+            try:
+                report = await self.astep()
+            except Exception as exc:
+                if not reports:
+                    # Nothing has been paid for yet, so there is no record to protect:
+                    # an empty list would read as "ran zero rounds cleanly" when the
+                    # truth is the first round blew up.
+                    raise
+                # Returning what completed beats raising away the record of rounds that
+                # were already paid for. The rounds that ran are in `reports`; the
+                # failure is logged rather than silently swallowed.
+                log_warning(f"ImprovementLoop.run stopped after {len(reports)} round(s): {type(exc).__name__}: {exc}")
+                break
             reports.append(report)
             if report.converged:
                 break
             if report.train_result is not None and report.train_result.checkpoint is None:
                 break  # a fit that produced nothing: the next round would train on the same data
+            if report.unmeasured_reason is not None:
+                # Unmeasured is terminal: with a checkpoint, repeating the round would
+                # re-fit the pristine base -- paying for the same fine-tune again --
+                # while the measurement outage persists; without one
+                # ("baseline_unscored") it would re-pay a rollout to measure nothing.
+                # Any checkpoint is preserved on the report; re-measure it with
+                # run_rollouts(env, model=trainer.as_model(...)).
+                log_warning(
+                    f"ImprovementLoop.run stopped after round {report.round}: the round measured "
+                    f"nothing ({report.unmeasured_reason})."
+                )
+                break
         return reports
 
     # -- the round ---------------------------------------------------------------
 
     async def astep(self) -> IterationReport:
+        # Single-flight: a second concurrent astep()/step() would advance _round and
+        # pay for a second fit against a stale baseline (last-writer-wins). Rejected
+        # rather than serialized -- a queued round would still double-fit.
+        if not self._step_guard.acquire(blocking=False):
+            raise RuntimeError(
+                "ImprovementLoop.astep is already running; a concurrent round would pay for a second "
+                "fine-tune against a stale baseline. Await the running round instead."
+            )
+        try:
+            return await self._astep_locked()
+        finally:
+            self._step_guard.release()
+
+    async def _astep_locked(self) -> IterationReport:
         self._round += 1
         round_number = self._round
 
@@ -201,21 +306,28 @@ class ImprovementLoop:
         #    reuse the previous round's tuned result: it is the same policy, already
         #    measured, and re-rolling it would pay twice to print sampling noise as
         #    disagreement.
+        reused_baseline = self._last_tuned_result is not None
         if self._last_tuned_result is not None:
             baseline = self._last_tuned_result
+            baseline_model = self._last_tuned_model
         else:
             baseline_model = await self.trainer.abase_as_model()
             baseline = await arun_rollouts(self.env, k=self.k, model=baseline_model)
 
         # 2. Pre-flight, before any spend.
-        self._preflight(baseline, round_number)
+        self._preflight(baseline, round_number, baseline_model=baseline_model, reused=reused_baseline)
         env_fingerprint = str(baseline.env_fingerprint)
         baseline_policy_fingerprint = str(baseline.policy_fingerprint)
         audit_digest = self._audit_digest()
+        baseline_coverage = _coverage_of(baseline)
+        baseline_breakdown = _unscored_breakdown(baseline)
 
         if baseline.pass_rate is None:
-            # Zero scored attempts is a scorer outage or an error storm, not
-            # convergence -- but there is nothing to train on either way.
+            # Zero scored attempts is a scorer outage or an error storm -- a
+            # transient, not a finished run. Routed through the unmeasured channel
+            # (converged stays False) so automation keying on `converged` cannot read
+            # an outage as convergence; arun() still stops, because repeating the
+            # round would re-pay a rollout to measure nothing.
             return IterationReport(
                 round=round_number,
                 baseline_pass_rate=None,
@@ -230,8 +342,9 @@ class ImprovementLoop:
                 export_report=ExportReport(),
                 train_result=None,
                 audit_scorer_digest=audit_digest,
-                converged=True,
-                converged_reason="baseline_unscored",
+                unmeasured_reason="baseline_unscored",
+                baseline_coverage=baseline_coverage,
+                baseline_unscored_breakdown=baseline_breakdown,
             )
 
         # 3. Fresh export of this round's learning zone.
@@ -256,6 +369,8 @@ class ImprovementLoop:
                 audit_scorer_digest=audit_digest,
                 converged=True,
                 converged_reason=_converged_reason_for(baseline.pass_rate, export_report),
+                baseline_coverage=baseline_coverage,
+                baseline_unscored_breakdown=baseline_breakdown,
             )
 
         # 4. Cumulative dataset. `fit` retrains the pristine base every round, and the
@@ -284,17 +399,162 @@ class ImprovementLoop:
                 export_report=export_report,
                 train_result=train_result,
                 audit_scorer_digest=audit_digest,
+                baseline_coverage=baseline_coverage,
+                baseline_unscored_breakdown=baseline_breakdown,
             )
 
         # The rows are kept only once a checkpoint exists to show for them.
         self._rows = cumulative_rows
+        # Logged the moment it exists, so the paid artifact is recoverable from the
+        # log even if this process is cancelled before the report is returned.
+        log_info(f"ImprovementLoop round {round_number}: checkpoint {train_result.checkpoint.ref}")
 
         # 6. Measure what was paid for -- including a PARTIAL run's recovery checkpoint.
-        tuned_model = await self.trainer.aas_model(train_result.checkpoint)
-        tuned = await arun_rollouts(self.env, k=self.k, model=tuned_model)
-        diff = tuned.diff(baseline)
-        reward_hack = await self._audit(tuned, round_number)
+        #
+        # Everything from here on is measurement, and the fine-tune is already paid
+        # for. A sampler timeout, a serving failure or a fingerprint mismatch must not
+        # take the checkpoint down with it: on any failure the round still reports the
+        # checkpoint, with the tuned fields left None because nothing was measured.
+        unmeasured = IterationReport(
+            round=round_number,
+            baseline_pass_rate=baseline.pass_rate,
+            tuned_pass_rate=None,
+            diff=None,
+            env_fingerprint=env_fingerprint,
+            baseline_policy_fingerprint=baseline_policy_fingerprint,
+            tuned_policy_fingerprint=None,
+            dataset_path=str(dataset_path),
+            dataset_digest=dataset_digest,
+            checkpoint=train_result.checkpoint,
+            export_report=export_report,
+            train_result=train_result,
+            audit_scorer_digest=audit_digest,
+            baseline_coverage=baseline_coverage,
+            baseline_unscored_breakdown=baseline_breakdown,
+        )
+
+        # A checkpoint claiming provenance over data the loop did not train on must
+        # not be served: the measurement would be attributed, in the report, to a
+        # dataset digest the trainer contradicts.
+        if train_result.checkpoint.dataset_digest != dataset_digest:
+            log_warning(
+                f"ImprovementLoop round {round_number}: the trainer returned a checkpoint whose "
+                f"dataset_digest ({train_result.checkpoint.dataset_digest!r}) does not match the file "
+                f"this round trained on ({dataset_digest!r}). Refusing to serve it; the checkpoint is "
+                "preserved on the report."
+            )
+            return replace(unmeasured, unmeasured_reason="checkpoint_provenance_mismatch")
+
+        try:
+            tuned_model = await self.trainer.aas_model(train_result.checkpoint)
+            # Model-level prompt fields fold into the ENV fingerprint, so a trainer that
+            # bakes a serving prompt into the model it returns would make diff() raise
+            # after a full tuned rollout. Catch it before paying for that rollout.
+            if model_prompt_payload(tuned_model) != model_prompt_payload(baseline_model):
+                log_warning(
+                    "ImprovementLoop: the tuned model carries different model-level prompt fields "
+                    "(system_prompt/instructions) than the baseline, so the two runs would not share "
+                    "an env_fingerprint and could not be compared. Serve the checkpoint without a "
+                    "model-level prompt. The checkpoint is preserved on the report."
+                )
+                return replace(unmeasured, unmeasured_reason="serving_prompt_mismatch")
+            tuned = await arun_rollouts(self.env, k=self.k, model=tuned_model)
+            tuned_coverage = _coverage_of(tuned)
+            tuned_breakdown = _unscored_breakdown(tuned)
+            if tuned.pass_rate is None:
+                # Zero scored attempts is a serving or scorer outage, not a measurement:
+                # presenting this rollout as measured (or letting it become the next
+                # round's baseline) would launder an outage into a number.
+                log_warning(
+                    f"ImprovementLoop round {round_number}: the tuned rollout produced zero scored "
+                    "attempts, so the checkpoint is paid for but unmeasured. The checkpoint is "
+                    "preserved on the report."
+                )
+                return replace(
+                    unmeasured,
+                    unmeasured_reason="tuned_unscored",
+                    tuned_coverage=tuned_coverage,
+                    tuned_unscored_breakdown=tuned_breakdown,
+                )
+            if (
+                baseline_coverage is not None
+                and tuned_coverage is not None
+                and baseline_coverage - tuned_coverage > _COVERAGE_DROP_THRESHOLD
+            ):
+                # pass_rate excludes unscored attempts, so a tuned model that
+                # truncates most attempts and passes the survivors would read as
+                # improved -- SFT can genuinely regress a model into over-generating.
+                # Neither an improvement nor a saturation: the round is unmeasured,
+                # never audited (a survivors-only audit would print a clean gap), and
+                # never the next baseline.
+                log_warning(
+                    f"ImprovementLoop round {round_number}: tuned coverage "
+                    f"({tuned_coverage:.2f}) fell more than {_COVERAGE_DROP_THRESHOLD} below baseline "
+                    f"coverage ({baseline_coverage:.2f}); the surviving pass rate is not comparable, so "
+                    "the checkpoint is paid for but unmeasured. The checkpoint is preserved on the "
+                    "report; see tuned_unscored_breakdown for what went unscored."
+                )
+                return replace(
+                    unmeasured,
+                    unmeasured_reason="coverage_regressed",
+                    tuned_coverage=tuned_coverage,
+                    tuned_unscored_breakdown=tuned_breakdown,
+                )
+            diff = tuned.diff(baseline)
+        except asyncio.CancelledError:
+            # Cancellation is BaseException: without this clause the paid checkpoint
+            # would vanish with the coroutine. Recorded, then re-raised -- a
+            # cancellation must still propagate.
+            self.last_unmeasured_report = replace(unmeasured, unmeasured_reason="measurement_cancelled")
+            log_warning(
+                f"ImprovementLoop round {round_number}: cancelled during measurement; checkpoint "
+                f"{train_result.checkpoint.ref} is preserved on loop.last_unmeasured_report."
+            )
+            raise
+        except Exception as exc:
+            log_warning(
+                f"ImprovementLoop round {round_number}: measuring the tuned checkpoint failed "
+                f"({type(exc).__name__}: {exc}). The checkpoint is preserved on the report; "
+                "re-measure it with run_rollouts(env, model=trainer.as_model(report.checkpoint))."
+            )
+            return replace(unmeasured, unmeasured_reason="measurement_failed")
+
+        if tuned.policy_fingerprint is None:
+            # diff.policy_changed reads True for a None fingerprint, which is
+            # indistinguishable from a real policy change. Say so rather than let the
+            # next round's pre-flight raise about it.
+            log_warning(
+                f"ImprovementLoop round {round_number}: the tuned policy fingerprint degraded to None, "
+                "so diff.policy_changed is not evidence of a policy change this round."
+            )
+
+        try:
+            reward_hack = await asyncio.wait_for(self._audit(tuned, round_number), timeout=_AUDIT_TIMEOUT_SECONDS)
+        except asyncio.CancelledError:
+            self.last_unmeasured_report = replace(unmeasured, unmeasured_reason="measurement_cancelled")
+            log_warning(
+                f"ImprovementLoop round {round_number}: cancelled during the audit; checkpoint "
+                f"{train_result.checkpoint.ref} is preserved on loop.last_unmeasured_report."
+            )
+            raise
+        except Exception as exc:
+            # The audit is diagnostics over an already-measured round: its failure (or
+            # hang, bounded above) must not take the round's record down with it. Same
+            # no-audit-rate shape as a partial audit failure -- never a fabricated
+            # clean gap.
+            log_warning(
+                f"ImprovementLoop round {round_number}: the audit failed ({type(exc).__name__}: {exc}); "
+                "the measured numbers stand and no audit rate is reported for this round."
+            )
+            reward_hack = (
+                None
+                if self.audit_scorer is None
+                else RewardHackReport(
+                    round=round_number, train_pass_rate=tuned.pass_rate, audit_pass_rate=None, gap=None
+                )
+            )
         self._last_tuned_result = tuned
+        self._last_tuned_model = tuned_model
 
         return IterationReport(
             round=round_number,
@@ -311,16 +571,30 @@ class ImprovementLoop:
             train_result=train_result,
             reward_hack=reward_hack,
             audit_scorer_digest=audit_digest,
+            baseline_coverage=baseline_coverage,
+            tuned_coverage=tuned_coverage,
+            baseline_unscored_breakdown=baseline_breakdown,
+            tuned_unscored_breakdown=tuned_breakdown,
         )
 
     # -- internals ---------------------------------------------------------------
 
-    def _preflight(self, baseline: EnvironmentRunResult, round_number: int) -> None:
+    def _preflight(
+        self,
+        baseline: EnvironmentRunResult,
+        round_number: int,
+        *,
+        baseline_model: Optional[Any] = None,
+        reused: bool = False,
+    ) -> None:
         """Fail here, not after a paid fine-tune.
 
         A None env fingerprint makes `diff()` raise, and a None policy fingerprint
         silently forces `policy_changed=True` -- both make the round unmeasurable, so
-        neither is worth training through.
+        neither is worth training through. A REUSED baseline additionally re-verifies
+        the environment against its cached fingerprint: it was measured in a past
+        round, and a drifted env would otherwise only be caught by diff() -- after
+        this round's fit and tuned rollout were already paid for.
         """
         if baseline.env_fingerprint is None:
             raise FingerprintError(
@@ -335,6 +609,21 @@ class ImprovementLoop:
                 "the baseline model produced no identity payload (an agent with no model, or a "
                 "model whose identity could not be built). Refusing to train."
             )
+        if reused and baseline.env_fingerprint is not None:
+            try:
+                current = _env_fingerprint_of(self.env, self.env._source_agent(), model=baseline_model)
+            except Exception as exc:
+                raise FingerprintError(
+                    f"the environment can no longer be fingerprinted ({type(exc).__name__}: {exc}), so "
+                    "this round could not be measured against the cached baseline. Refusing to train."
+                ) from exc
+            if current != baseline.env_fingerprint:
+                raise FingerprintError(
+                    "env_fingerprint drifted since the cached baseline was measured: the environment "
+                    "(instructions, tools, scorer, or model-level prompt fields) changed between rounds, "
+                    "so diff() would compare across two different environments. Refusing to train; "
+                    "rebuild the loop to re-baseline the edited environment."
+                )
         if round_number == 1 and not self._warned_output_schema:
             self._warned_output_schema = True
             try:
@@ -361,27 +650,45 @@ class ImprovementLoop:
         """
         assert self.workdir is not None
         fresh_lines = [line for line in fresh_path.read_text(encoding="utf-8").split("\n") if line.strip()]
-        rows = fresh_lines + self._rows
+        # Exact duplicates are pure cost: they multiply the effective epoch count on
+        # whatever they duplicate, and at the caps they evict genuinely distinct rows.
+        # dict.fromkeys keeps the newest-first order.
+        rows = list(dict.fromkeys(fresh_lines + self._rows))
 
         kept: List[str] = []
         total_bytes = 0
         for line in rows:
-            line_bytes = len(line.encode("utf-8")) + 1
-            if len(kept) >= MAX_CONVERSATIONS or total_bytes + line_bytes > MAX_DATASET_BYTES:
+            if len(kept) >= MAX_CONVERSATIONS:
                 break
+            line_bytes = len(line.encode("utf-8")) + 1
+            if total_bytes + line_bytes > MAX_DATASET_BYTES:
+                # Skip rather than stop: one oversized row must not starve every
+                # smaller row behind it and leave the byte budget unused.
+                continue
             kept.append(line)
             total_bytes += line_bytes
         dropped = len(rows) - len(kept)
         if dropped:
             log_warning(
                 f"ImprovementLoop round {round_number}: cumulative dataset hit the validator caps "
-                f"({MAX_CONVERSATIONS} conversations / {MAX_DATASET_BYTES} bytes); dropped the "
-                f"{dropped} oldest row(s)."
+                f"({MAX_CONVERSATIONS} conversations / {MAX_DATASET_BYTES} bytes); "
+                f"{dropped} row(s) did not fit this round's training file."
+            )
+        if not kept:
+            raise ValueError(
+                f"ImprovementLoop round {round_number}: no exported row fits the validator caps "
+                f"({MAX_CONVERSATIONS} conversations / {MAX_DATASET_BYTES} bytes)"
             )
 
         dataset_path = self.workdir / f"round_{round_number}.jsonl"
-        dataset_path.write_text("\n".join(kept) + "\n", encoding="utf-8")
-        return dataset_path, kept
+        # newline="" for the same reason the exporter uses it: translated line endings
+        # would push an exact-fit file past the byte cap and move the sha256.
+        with open(dataset_path, "w", encoding="utf-8", newline="") as handle:
+            handle.write("\n".join(kept) + "\n")
+        # The full history is retained even when this round's file could not hold it
+        # all; capping the FILE is specced, dropping the rows would reintroduce exactly
+        # the forgetting the cumulative dataset exists to prevent.
+        return dataset_path, rows
 
     def _audit_digest(self) -> Optional[str]:
         if self.audit_scorer is None:
@@ -391,10 +698,19 @@ class ImprovementLoop:
             log_warning(f"audit_scorer_digest degraded to None: {type(self.audit_scorer).__name__} has no digest()")
             return None
         try:
-            return str(digest())
+            value = digest()
         except FingerprintError as exc:
             log_warning(f"audit_scorer_digest degraded to None: {exc}")
             return None
+        if not isinstance(value, str) or not value.strip():
+            # str(None) would be the string "None" -- one shared false identity across
+            # every sourceless scorer, which is exactly what a digest exists to prevent.
+            log_warning(
+                f"audit_scorer_digest degraded to None: {type(self.audit_scorer).__name__}.digest() "
+                f"returned {value!r}; a non-empty string is required"
+            )
+            return None
+        return value
 
     async def _audit(self, tuned: EnvironmentRunResult, round_number: int) -> Optional[RewardHackReport]:
         """Re-score the tuned rollout's scored attempts with the held-out verifier.
@@ -405,24 +721,49 @@ class ImprovementLoop:
         """
         if self.audit_scorer is None:
             return None
-        n_audited = 0
-        n_passed = 0
-        for task_result in tuned.task_results:
-            for attempt in task_result.attempts:
-                if attempt.score is None or attempt.run is None:
-                    continue
+
+        scored = [
+            (task_result.task, attempt)
+            for task_result in tuned.task_results
+            for attempt in task_result.attempts
+            if attempt.score is not None and attempt.run is not None
+        ]
+
+        # A real audit scorer is usually a judge model, one network call per attempt.
+        # Serially that is minutes per round while the rollout itself runs four wide.
+        semaphore = asyncio.Semaphore(_AUDIT_CONCURRENCY)
+
+        async def score_one(task: Any, attempt: Any) -> Optional[bool]:
+            async with semaphore:
                 try:
-                    audit_score = await self.audit_scorer.ascore(attempt.run, task_result.task.expected)
+                    audit_score = await self.audit_scorer.ascore(attempt.run, task.expected)  # type: ignore[union-attr]
                 except Exception as exc:
-                    # An audit failure is not a verdict: leave it out of both sides of
-                    # the rate rather than counting it as a fail.
-                    log_warning(f"audit_scorer raised on {task_result.task.id}: {type(exc).__name__}: {exc}")
-                    continue
-                n_audited += 1
-                if audit_score.passed:
-                    n_passed += 1
-        audit_pass_rate = (n_passed / n_audited) if n_audited else None
+                    log_warning(f"audit_scorer raised on {task.id}: {type(exc).__name__}: {exc}")
+                    return None
+                return bool(audit_score.passed)
+
+        verdicts = await asyncio.gather(*(score_one(task, attempt) for task, attempt in scored))
+
+        n_errors = sum(1 for verdict in verdicts if verdict is None)
         train_pass_rate = tuned.pass_rate
+        if n_errors:
+            # `train_pass_rate` is the rate over ALL scored attempts, so a rate over the
+            # subset the audit survived is not comparable with it and the gap between
+            # them would be arithmetic over two different denominators. Report no audit
+            # rate rather than a biased one -- an audit that fails preferentially on
+            # malformed output would otherwise read clean, defeating its whole purpose.
+            log_warning(
+                f"ImprovementLoop round {round_number}: audit_scorer failed on {n_errors} of "
+                f"{len(verdicts)} attempts, so no audit rate is reported for this round."
+            )
+            return RewardHackReport(
+                round=round_number,
+                train_pass_rate=train_pass_rate,
+                audit_pass_rate=None,
+                gap=None,
+            )
+
+        audit_pass_rate = (sum(1 for verdict in verdicts if verdict) / len(verdicts)) if verdicts else None
         gap = None if (audit_pass_rate is None or train_pass_rate is None) else train_pass_rate - audit_pass_rate
         return RewardHackReport(
             round=round_number,
@@ -430,6 +771,40 @@ class ImprovementLoop:
             audit_pass_rate=audit_pass_rate,
             gap=gap,
         )
+
+
+def _coverage_of(result: EnvironmentRunResult) -> Optional[float]:
+    """Scored attempts over PLANNED attempts (k x tasks), not over attempts run.
+
+    pass_rate's denominator is n_scored -- correct for accuracy, blind to how much of
+    the plan was measured: a rollout that truncates three of four attempts and passes
+    the survivor is 1/1 = 1.0. Coverage is the axis that makes that legible.
+    """
+    planned = result.k * len(result.task_results)
+    if planned <= 0:
+        return None
+    return result.n_scored / planned
+
+
+def _unscored_breakdown(result: EnvironmentRunResult) -> Dict[str, int]:
+    """Why attempts went unscored, keyed by stop reason.
+
+    A completed-but-unscored attempt is a scorer failure ("scorer_error"); planned
+    attempts that never ran (an error-storm stop) are "not_run".
+    """
+    counts: Dict[str, int] = {}
+    n_ran = 0
+    for task_result in result.task_results:
+        for attempt in task_result.attempts:
+            n_ran += 1
+            if attempt.score is not None:
+                continue
+            reason = "scorer_error" if attempt.stop_reason == StopReason.completed else attempt.stop_reason.value
+            counts[reason] = counts.get(reason, 0) + 1
+    planned = result.k * len(result.task_results)
+    if planned > n_ran:
+        counts["not_run"] = planned - n_ran
+    return counts
 
 
 def _converged_reason_for(pass_rate: float, export_report: ExportReport) -> _ConvergedReason:

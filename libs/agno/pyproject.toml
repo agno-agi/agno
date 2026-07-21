@@ -98,6 +98,9 @@ mistral = ["mistralai"]
 ollama = ["ollama"]
 openai = ["openai"]
 portkey = ["portkey-ai"]
+# Pulls the PyTorch stack via tinker-cookbook -- a heavy install, which is the SDK's
+# shape rather than ours. Deliberately not added to the aggregate `models` extra.
+tinker = ["tinker>=0.23", "tinker-cookbook>=0.5.2"]
 
 # Dependencies for Token Counting
 tokenizers = ["tiktoken", "tokenizers"]
@@ -638,6 +641,8 @@ module = [
   "trafilatura.*",
   "xlrd.*",
   "celpy.*",
-  "glide_sync.*"
+  "glide_sync.*",
+  "tinker.*",
+  "tinker_cookbook.*"
 ]
 ignore_missing_imports = true
