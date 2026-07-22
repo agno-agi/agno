@@ -24,6 +24,8 @@ from agno.models.openai import OpenAIResponses
 
 db = PostgresDb(db_url="postgresql+psycopg://ai:ai@localhost:5532/ai")
 
+# Dense entity info (many facts/events) can trigger many updates per message.
+# max_updates_per_run (default: 10) caps updates per extraction.
 agent = Agent(
     model=OpenAIResponses(id="gpt-5.5"),
     db=db,
