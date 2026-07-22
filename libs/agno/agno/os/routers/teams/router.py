@@ -339,7 +339,7 @@ async def _resume_stream_generator(
         # from buffer instead of waiting on the queue (the sentinel was already pushed
         # before our subscription existed).
         updated_status = event_buffer.get_run_status(run_id)
-        if updated_status is not None and updated_status != RunStatus.running:
+        if updated_status is not None and updated_status not in (RunStatus.running, RunStatus.pending):
             # Run completed while we were catching up -- replay remaining from buffer
             remaining = event_buffer.get_events(run_id, last_event_index=last_replayed_index)
             if remaining:

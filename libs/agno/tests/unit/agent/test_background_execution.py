@@ -414,3 +414,143 @@ class TestBackgroundConcurrencyLimit:
         finally:
             set_background_max_concurrency(None)
             concurrency._semaphores.clear()
+
+
+class TestBackgroundStreamConcurrencyLimit:
+    @pytest.fixture(autouse=True)
+    def _limiter(self):
+        from agno.run import concurrency
+        from agno.run.concurrency import set_background_max_concurrency
+
+        set_background_max_concurrency(1)
+        concurrency._semaphores.clear()
+        try:
+            yield
+        finally:
+            set_background_max_concurrency(None)
+            concurrency._semaphores.clear()
+
+    def _patch_stream_deps(self, monkeypatch, stream_started, release_stream):
+        async def fake_aread_or_create_session(agent, session_id=None, user_id=None):
+            return AgentSession(session_id=session_id or "test-session", user_id=None, runs=[])
+
+        async def fake_asave_session(agent, session=None):
+            pass
+
+        async def fake_arun_stream(agent, run_response, run_context, **kwargs):
+            stream_started.set()
+            await release_stream.wait()
+            run_response.status = RunStatus.completed
+            from agno.run.agent import RunContentEvent
+
+            yield RunContentEvent(content="hello", run_id=run_response.run_id)
+
+        monkeypatch.setattr(_storage, "aread_or_create_session", fake_aread_or_create_session)
+        monkeypatch.setattr(_storage, "update_metadata", lambda agent, session=None: None)
+        monkeypatch.setattr("agno.agent._session.asave_session", fake_asave_session)
+        monkeypatch.setattr(_run, "_arun_stream", fake_arun_stream)
+
+    @pytest.mark.asyncio
+    async def test_stream_run_waits_for_slot_as_pending(self, monkeypatch: pytest.MonkeyPatch):
+        """A background stream run behind a full limiter stays PENDING, produces
+        no events, and starts once the slot frees."""
+        from agno.os.managers import event_buffer
+        from agno.run.concurrency import background_run_slot
+
+        agent = Agent(name="test-agent")
+        stream_started = asyncio.Event()
+        release_stream = asyncio.Event()
+        release_stream.set()  # do not block execution once started
+        self._patch_stream_deps(monkeypatch, stream_started, release_stream)
+
+        holder_started = asyncio.Event()
+        release_holder = asyncio.Event()
+
+        async def holder():
+            async with background_run_slot():
+                holder_started.set()
+                await release_holder.wait()
+
+        holder_task = asyncio.create_task(holder())
+        await holder_started.wait()
+
+        run_response = RunOutput(run_id="bg-stream-1", session_id="test-session", status=RunStatus.pending)
+        run_context = RunContext(run_id="bg-stream-1", session_id="test-session")
+
+        chunks: list = []
+
+        async def consume():
+            async for chunk in _run._arun_background_stream(
+                agent, run_response=run_response, run_context=run_context, session_id="test-session"
+            ):
+                chunks.append(chunk)
+
+        consumer = asyncio.create_task(consume())
+        await asyncio.sleep(0.1)
+
+        # Queued: PENDING everywhere, stream not started, no events emitted
+        assert stream_started.is_set() is False
+        assert run_response.status == RunStatus.pending
+        assert event_buffer.get_run_status("bg-stream-1") == RunStatus.pending
+        assert chunks == []
+
+        # Free the slot: the stream should start and complete
+        release_holder.set()
+        await asyncio.wait_for(stream_started.wait(), timeout=2)
+        await asyncio.wait_for(consumer, timeout=2)
+        await asyncio.wait_for(holder_task, timeout=2)
+
+        assert len(chunks) == 1
+        assert event_buffer.get_run_status("bg-stream-1") == RunStatus.completed
+        event_buffer.cleanup_run("bg-stream-1")
+
+    @pytest.mark.asyncio
+    async def test_stream_run_cancelled_while_queued(self, monkeypatch: pytest.MonkeyPatch):
+        """Cancelling a queued background stream run ends the stream without
+        executing and persists CANCELLED."""
+        from agno.os.managers import event_buffer
+        from agno.run.cancel import cancel_run
+        from agno.run.concurrency import background_run_slot
+
+        agent = Agent(name="test-agent")
+        stream_started = asyncio.Event()
+        release_stream = asyncio.Event()
+        self._patch_stream_deps(monkeypatch, stream_started, release_stream)
+
+        holder_started = asyncio.Event()
+        release_holder = asyncio.Event()
+
+        async def holder():
+            async with background_run_slot():
+                holder_started.set()
+                await release_holder.wait()
+
+        holder_task = asyncio.create_task(holder())
+        await holder_started.wait()
+
+        run_response = RunOutput(run_id="bg-stream-2", session_id="test-session", status=RunStatus.pending)
+        run_context = RunContext(run_id="bg-stream-2", session_id="test-session")
+
+        chunks: list = []
+
+        async def consume():
+            async for chunk in _run._arun_background_stream(
+                agent, run_response=run_response, run_context=run_context, session_id="test-session"
+            ):
+                chunks.append(chunk)
+
+        consumer = asyncio.create_task(consume())
+        await asyncio.sleep(0.05)
+
+        cancel_run("bg-stream-2")
+
+        # Stream must terminate without ever executing (poll interval is 0.5s)
+        await asyncio.wait_for(consumer, timeout=3)
+        assert stream_started.is_set() is False
+        assert chunks == []
+        assert run_response.status == RunStatus.cancelled
+        assert event_buffer.get_run_status("bg-stream-2") == RunStatus.cancelled
+
+        release_holder.set()
+        await asyncio.wait_for(holder_task, timeout=2)
+        event_buffer.cleanup_run("bg-stream-2")

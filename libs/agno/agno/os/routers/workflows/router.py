@@ -925,7 +925,7 @@ async def _resume_stream_generator(
 
         # Re-check buffer status after subscribing
         updated_status = event_buffer.get_run_status(run_id)
-        if updated_status is not None and updated_status != RunStatus.running:
+        if updated_status is not None and updated_status not in (RunStatus.running, RunStatus.pending):
             remaining = event_buffer.get_events(run_id, last_event_index=last_replayed_index)
             if remaining:
                 for ev_index, buffered_event in remaining:

@@ -27,6 +27,10 @@ from agno.utils.log import log_warning
 
 DEFAULT_BACKGROUND_MAX_CONCURRENCY = 32
 
+# Idle interval after which background SSE streams emit a keepalive comment, so
+# proxies do not kill connections while a run waits for a slot or is silent.
+SSE_KEEPALIVE_INTERVAL_SECONDS = 15.0
+
 _configured_limit: Optional[int] = None
 
 # Semaphores are bound to an event loop, so cache one per loop. Keyed weakly so

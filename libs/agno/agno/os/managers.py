@@ -303,6 +303,29 @@ class EventsBuffer:
             return -1
         return next_idx - 1
 
+    def register_run(self, run_id: str, status: RunStatus = RunStatus.pending) -> None:
+        """Pre-register a run so its status is visible before any event is buffered.
+
+        Used by background streaming runs waiting for a concurrency slot: the run
+        exists (PENDING) but has produced no events yet, and reconnecting clients
+        must be able to attach and wait rather than get a not-found error.
+        """
+        if run_id not in self.run_metadata:
+            current_time = time()
+            self.events.setdefault(run_id, [])
+            self._next_index.setdefault(run_id, 0)
+            self.run_metadata[run_id] = {
+                "status": status,
+                "created_at": current_time,
+                "last_updated": current_time,
+            }
+
+    def set_run_status(self, run_id: str, status: RunStatus) -> None:
+        """Update the status of a registered run (e.g. PENDING -> RUNNING on slot acquire)."""
+        if run_id in self.run_metadata:
+            self.run_metadata[run_id]["status"] = status
+            self.run_metadata[run_id]["last_updated"] = time()
+
     def set_run_completed(self, run_id: str, status: RunStatus) -> None:
         """Mark a run as completed/cancelled/error for future cleanup"""
         if run_id in self.run_metadata:

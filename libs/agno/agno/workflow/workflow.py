@@ -68,7 +68,7 @@ from agno.run.cancel import (
 from agno.run.cancel import (
     cancel_run as cancel_run_global,
 )
-from agno.run.concurrency import background_run_slot
+from agno.run.concurrency import SSE_KEEPALIVE_INTERVAL_SECONDS, background_run_slot
 from agno.run.team import (
     RunCancelledEvent as TeamRunCancelledEvent,
 )
@@ -4340,9 +4340,26 @@ class Workflow:
 
         self.update_agents_and_teams_session_info()
 
+        # Persist the PENDING run so it is visible (e.g. to polling) while it
+        # waits for a concurrency slot.
+        workflow_session.upsert_run(run=workflow_run_response)
+        if self._has_async_db():
+            await self.asave_session(session=workflow_session)
+        else:
+            self.save_session(session=workflow_session)
+
         async def execute_workflow_background_stream():
-            """Background execution with streaming and WebSocket broadcasting"""
+            """Background execution with streaming and WebSocket broadcasting.
+
+            Execution waits for a concurrency slot (background_run_slot); the run
+            stays PENDING while waiting in line and can be cancelled without
+            consuming a slot."""
+            slot_cm = background_run_slot(run_id=run_context.run_id)
+            slot_held = False
             try:
+                await slot_cm.__aenter__()
+                slot_held = True
+
                 if self.agent is not None:
                     result = self._aexecute_workflow_agent(
                         user_input=input,  # type: ignore
@@ -4421,6 +4438,17 @@ class Workflow:
                     except Exception as e:
                         log_debug(f"Failed to update event buffer status: {e}")
 
+            except RunCancelledException:
+                # Cancelled while waiting for a slot — execution never started, so
+                # persist CANCELLED and deregister the run here.
+                log_info(f"Background stream run {run_context.run_id} cancelled while waiting for a slot")
+                workflow_run_response.status = RunStatus.cancelled
+                workflow_session.upsert_run(run=workflow_run_response)
+                if self._has_async_db():
+                    await self.asave_session(session=workflow_session)
+                else:
+                    self.save_session(session=workflow_session)
+                await acleanup_run(run_context.run_id)
             except Exception as e:
                 logger.exception("Background streaming workflow execution failed")
                 workflow_run_response.status = RunStatus.error
@@ -4429,6 +4457,9 @@ class Workflow:
                     await self.asave_session(session=workflow_session)
                 else:
                     self.save_session(session=workflow_session)
+            finally:
+                if slot_held:
+                    await slot_cm.__aexit__(None, None, None)
 
         # Create and start asyncio task for background streaming execution
         loop = asyncio.get_running_loop()
@@ -4495,7 +4526,8 @@ class Workflow:
 
         self._prepare_steps()
 
-        # Create workflow run response with RUNNING status
+        # Create workflow run response with PENDING status. Execution (and the
+        # RUNNING transition) waits for a concurrency slot.
         workflow_run_response = WfRunOutput(
             run_id=run_id,
             input=input,
@@ -4504,21 +4536,27 @@ class Workflow:
             workflow_id=self.id,
             workflow_name=self.name,
             created_at=int(datetime.now().timestamp()),
-            status=RunStatus.running,
+            status=RunStatus.pending,
         )
 
         # Start the run metrics timer
         workflow_run_response.metrics = WorkflowMetrics(steps={})
         workflow_run_response.metrics.start_timer()
 
-        # Persist RUNNING status so the run is visible in the DB immediately
+        # Persist PENDING status so the run is visible in the DB immediately
         workflow_session.upsert_run(run=workflow_run_response)
         if self._has_async_db():
             await self.asave_session(session=workflow_session)
         else:
             self.save_session(session=workflow_session)
 
-        log_info(f"Background stream workflow run {run_id} persisted with RUNNING status")
+        # Pre-register with the event buffer so reconnecting clients can attach
+        # and wait while the run is still queued (no events buffered yet).
+        from agno.os.managers import event_buffer as _event_buffer
+
+        _event_buffer.register_run(run_id, RunStatus.pending)
+
+        log_info(f"Background stream workflow run {run_id} persisted with PENDING status")
 
         # Prepare execution input
         inputs = WorkflowExecutionInput(
@@ -4545,7 +4583,21 @@ class Workflow:
             # Instead, we read the current buffer count to derive the event_index
             # that _handle_event just assigned.
 
+            slot_cm = background_run_slot(run_id=run_id)
+            slot_held = False
             try:
+                await slot_cm.__aenter__()
+                slot_held = True
+
+                # Transition to RUNNING now that a slot is held
+                workflow_run_response.status = RunStatus.running
+                workflow_session.upsert_run(run=workflow_run_response)
+                if self._has_async_db():
+                    await self.asave_session(session=workflow_session)
+                else:
+                    self.save_session(session=workflow_session)
+                event_buffer.set_run_status(run_id, RunStatus.running)
+
                 if self.agent is not None:
                     result = self._aexecute_workflow_agent(
                         user_input=input,  # type: ignore
@@ -4615,6 +4667,22 @@ class Workflow:
                     f"Background stream workflow run {run_id} completed with status: {workflow_run_response.status}"
                 )
 
+            except RunCancelledException:
+                # Cancelled while waiting for a slot — execution never started, so
+                # persist CANCELLED and deregister the run here.
+                log_info(f"Background stream workflow run {run_id} cancelled while waiting for a slot")
+                try:
+                    workflow_run_response.status = RunStatus.cancelled
+                    workflow_session.upsert_run(run=workflow_run_response)
+                    if self._has_async_db():
+                        await self.asave_session(session=workflow_session)
+                    else:
+                        self.save_session(session=workflow_session)
+                except Exception:
+                    log_error(
+                        f"Failed to persist cancelled state for background stream workflow run {run_id}", exc_info=True
+                    )
+                await acleanup_run(run_id)
             except Exception:
                 log_error(f"Background stream workflow run {run_id} failed", exc_info=True)
                 # Persist ERROR status
@@ -4631,6 +4699,9 @@ class Workflow:
                     )
 
             finally:
+                if slot_held:
+                    await slot_cm.__aexit__(None, None, None)
+
                 # Signal primary queue FIRST — unblocks the original client
                 try:
                     await sse_queue.put(None)
@@ -4656,9 +4727,15 @@ class Workflow:
         _workflow_background_tasks.add(task)
         task.add_done_callback(_workflow_background_tasks.discard)
 
-        # Yield SSE strings from the queue
+        # Yield SSE strings from the queue. Emit SSE keepalive comments on idle
+        # so proxies do not kill the connection while the run waits for a slot
+        # (or during long silent stretches of execution).
         while True:
-            sse_data = await sse_queue.get()
+            try:
+                sse_data = await asyncio.wait_for(sse_queue.get(), timeout=SSE_KEEPALIVE_INTERVAL_SECONDS)
+            except asyncio.TimeoutError:
+                yield ": keepalive\n\n"
+                continue
             if sse_data is None:
                 break
             yield sse_data
@@ -9322,7 +9399,14 @@ class Workflow:
         """
 
         async def _execute_continue_background():
+            # Execution waits for a concurrency slot (background_run_slot); the
+            # run can be cancelled without consuming a slot while it waits.
+            slot_cm = background_run_slot(run_id=workflow_run_response.run_id)
+            slot_held = False
             try:
+                await slot_cm.__aenter__()
+                slot_held = True
+
                 async for _event in self._acontinue_execute_stream(
                     session=session,
                     execution_input=execution_input,
@@ -9360,6 +9444,20 @@ class Workflow:
                     )
                     self._handle_event(paused_event, workflow_run_response, websocket_handler=websocket_handler)
 
+            except RunCancelledException:
+                # Cancelled while waiting for a slot — execution never started, so
+                # persist CANCELLED and deregister the run here.
+                log_info(
+                    f"Background continue-run stream {workflow_run_response.run_id} cancelled while waiting for a slot"
+                )
+                workflow_run_response.status = RunStatus.cancelled
+                session.upsert_run(run=workflow_run_response)
+                if self._has_async_db():
+                    await self.asave_session(session=session)
+                else:
+                    self.save_session(session=session)
+                if workflow_run_response.run_id:
+                    await acleanup_run(workflow_run_response.run_id)
             except Exception as e:
                 logger.exception("Background continue streaming workflow execution failed")
                 workflow_run_response.status = RunStatus.error
@@ -9369,6 +9467,9 @@ class Workflow:
                 else:
                     self.save_session(session=session)
             finally:
+                if slot_held:
+                    await slot_cm.__aexit__(None, None, None)
+
                 # Update event buffer with the final status (paused, completed, error,
                 # cancelled) so reconnecting clients take the correct replay path.
                 # Without this the buffer would still report 'running' for terminal runs.

@@ -71,7 +71,7 @@ from agno.run.cancel import (
 from agno.run.cancel import (
     cancel_run as cancel_run_global,
 )
-from agno.run.concurrency import background_run_slot
+from agno.run.concurrency import SSE_KEEPALIVE_INTERVAL_SECONDS, background_run_slot
 from agno.run.messages import RunMessages
 from agno.run.team import (
     RunCancelledEvent as TeamRunCancelledEvent,
@@ -3480,6 +3480,7 @@ async def _arun_background_stream(
     The detached task keeps running even if the client disconnects.
     The caller (router) just yields the SSE strings to the client.
     """
+    from agno.os.managers import event_buffer as _event_buffer
     from agno.team._session import asave_session
     from agno.team._storage import _aread_or_create_session, _update_metadata
 
@@ -3487,25 +3488,43 @@ async def _arun_background_stream(
     if not run_id:
         raise ValueError("run_id is required for background streaming")
 
-    # 1. Persist RUNNING status so the run is visible in the DB immediately
-    run_response.status = RunStatus.running
+    # 1. Persist PENDING status so the run is visible in the DB immediately.
+    # Execution (and the RUNNING transition) waits for a concurrency slot.
+    run_response.status = RunStatus.pending
 
     team_session = await _aread_or_create_session(team, session_id=session_id, user_id=user_id)
     _update_metadata(team, session=team_session)
     team_session.upsert_run(run_response=run_response)
     await asave_session(team, session=team_session)
 
-    log_info(f"Background stream run {run_id} persisted with RUNNING status")
+    # Pre-register with the event buffer so reconnecting clients can attach and
+    # wait while the run is still queued (no events buffered yet).
+    _event_buffer.register_run(run_id, RunStatus.pending)
+
+    log_info(f"Background stream run {run_id} persisted with PENDING status")
 
     # 2. Create queue for forwarding SSE strings to the caller
     sse_queue: asyncio.Queue[Optional[str]] = asyncio.Queue()
 
-    # 3. Spawn detached background task
+    # 3. Spawn detached background task. Execution waits for a concurrency slot
+    # (background_run_slot); the run stays PENDING while waiting in line and
+    # can be cancelled without consuming a slot.
     async def _background_producer() -> None:
         from agno.os.managers import event_buffer, sse_subscriber_manager
         from agno.os.utils import format_sse_event_with_index
 
+        slot_cm = background_run_slot(run_id=run_id)
+        slot_held = False
         try:
+            await slot_cm.__aenter__()
+            slot_held = True
+
+            # Transition to RUNNING now that a slot is held
+            run_response.status = RunStatus.running
+            team_session.upsert_run(run_response=run_response)
+            await asave_session(team, session=team_session)
+            event_buffer.set_run_status(run_id, RunStatus.running)
+
             async for event in _arun_stream(
                 team,
                 run_response=run_response,
@@ -3549,6 +3568,17 @@ async def _arun_background_stream(
                 except Exception:
                     log_warning(f"Failed to publish SSE data to subscribers for run {run_id}")
 
+        except RunCancelledException:
+            # Cancelled while waiting for a slot — execution never started, so
+            # persist CANCELLED and deregister the run here.
+            log_info(f"Background stream run {run_id} cancelled while waiting for a slot")
+            try:
+                run_response.status = RunStatus.cancelled
+                team_session.upsert_run(run_response=run_response)
+                await asave_session(team, session=team_session)
+            except Exception:
+                log_error(f"Failed to persist cancelled state for background stream run {run_id}", exc_info=True)
+            await acleanup_run(run_id)
         except Exception:
             log_error(f"Background stream run {run_id} failed", exc_info=True)
             # Persist ERROR status
@@ -3561,6 +3591,9 @@ async def _arun_background_stream(
                 log_error(f"Failed to persist error state for background stream run {run_id}", exc_info=True)
 
         finally:
+            if slot_held:
+                await slot_cm.__aexit__(None, None, None)
+
             # Signal primary queue FIRST — unblocks the original client
             try:
                 await sse_queue.put(None)
@@ -3583,9 +3616,15 @@ async def _arun_background_stream(
     _background_tasks.add(task)
     task.add_done_callback(_background_tasks.discard)
 
-    # 4. Yield SSE strings from the queue
+    # 4. Yield SSE strings from the queue. Emit SSE keepalive comments on idle
+    # so proxies do not kill the connection while the run waits for a slot (or
+    # during long silent stretches of execution).
     while True:
-        sse_data = await sse_queue.get()
+        try:
+            sse_data = await asyncio.wait_for(sse_queue.get(), timeout=SSE_KEEPALIVE_INTERVAL_SECONDS)
+        except asyncio.TimeoutError:
+            yield ": keepalive\n\n"
+            continue
         if sse_data is None:
             break
         yield sse_data
@@ -7603,26 +7642,47 @@ async def _acontinue_run_background_stream(
     if not _run_id:
         raise ValueError("run_id is required for background streaming continue-run")
 
-    # 1. Persist RUNNING status so the run is visible in the DB immediately
+    from agno.os.managers import event_buffer as _event_buffer
+
+    # 1. Persist PENDING status so the run is visible in the DB immediately.
+    # Execution (and the RUNNING transition) waits for a concurrency slot.
     team_session = await _aread_or_create_session(team, session_id=session_id, user_id=user_id)
     _update_metadata(team, session=team_session)
 
     if run_response is not None:
-        run_response.status = RunStatus.running
+        run_response.status = RunStatus.pending
         team_session.upsert_run(run_response=run_response)
     await asave_session(team, session=team_session)
 
-    log_info(f"Background continue-run stream {_run_id} persisted with RUNNING status")
+    # Pre-register with the event buffer so reconnecting clients can attach and
+    # wait while the continue-run is still queued (no events buffered yet).
+    _event_buffer.register_run(_run_id, RunStatus.pending)
+
+    log_info(f"Background continue-run stream {_run_id} persisted with PENDING status")
 
     # 2. Create queue for forwarding SSE strings to the caller
     sse_queue: asyncio.Queue[Optional[str]] = asyncio.Queue()
 
-    # 3. Spawn detached background task
+    # 3. Spawn detached background task. Execution waits for a concurrency slot
+    # (background_run_slot); the run stays PENDING while waiting in line and
+    # can be cancelled without consuming a slot.
     async def _background_producer() -> None:
         from agno.os.managers import event_buffer, sse_subscriber_manager
         from agno.os.utils import format_sse_event_with_index
 
+        slot_cm = background_run_slot(run_id=_run_id)
+        slot_held = False
         try:
+            await slot_cm.__aenter__()
+            slot_held = True
+
+            # Transition to RUNNING now that a slot is held
+            if run_response is not None:
+                run_response.status = RunStatus.running
+                team_session.upsert_run(run_response=run_response)
+                await asave_session(team, session=team_session)
+            event_buffer.set_run_status(_run_id, RunStatus.running)
+
             async for event in _acontinue_run_stream(
                 team,
                 run_response=run_response,
@@ -7671,6 +7731,21 @@ async def _acontinue_run_background_stream(
                 except Exception:
                     log_warning(f"Failed to publish SSE data to subscribers for continue-run {_run_id}")
 
+        except RunCancelledException:
+            # Cancelled while waiting for a slot — execution never started, so
+            # persist CANCELLED and deregister the run here.
+            log_info(f"Background continue-run stream {_run_id} cancelled while waiting for a slot")
+            try:
+                if run_response is not None:
+                    run_response.status = RunStatus.cancelled
+                    team_session.upsert_run(run_response=run_response)
+                    await asave_session(team, session=team_session)
+            except Exception:
+                log_error(
+                    f"Failed to persist cancelled state for background continue-run stream {_run_id}",
+                    exc_info=True,
+                )
+            await acleanup_run(_run_id)
         except Exception:
             log_error(f"Background continue-run stream {_run_id} failed", exc_info=True)
             # Persist ERROR status
@@ -7686,6 +7761,9 @@ async def _acontinue_run_background_stream(
                 )
 
         finally:
+            if slot_held:
+                await slot_cm.__aexit__(None, None, None)
+
             # Signal primary queue FIRST — unblocks the original client
             try:
                 await sse_queue.put(None)
@@ -7709,9 +7787,15 @@ async def _acontinue_run_background_stream(
     _background_tasks.add(task)
     task.add_done_callback(_background_tasks.discard)
 
-    # 4. Yield SSE strings from the queue
+    # 4. Yield SSE strings from the queue. Emit SSE keepalive comments on idle
+    # so proxies do not kill the connection while the run waits for a slot (or
+    # during long silent stretches of execution).
     while True:
-        sse_data = await sse_queue.get()
+        try:
+            sse_data = await asyncio.wait_for(sse_queue.get(), timeout=SSE_KEEPALIVE_INTERVAL_SECONDS)
+        except asyncio.TimeoutError:
+            yield ": keepalive\n\n"
+            continue
         if sse_data is None:
             break
         yield sse_data
