@@ -70,6 +70,9 @@ class UserProfileConfig:
         # Extraction operations
         enable_update_profile: Allow updating profile fields (name, etc).
 
+        # Limits
+        max_updates_per_run: Max updates per extraction run. Default: 10.
+
         # Agent tools
         enable_agent_tools: Expose tools to the agent.
         agent_can_update_profile: If agent_tools enabled, provide update_user_profile tool.
@@ -90,6 +93,9 @@ class UserProfileConfig:
 
     # Extraction operations
     enable_update_profile: bool = True  # Allow updating profile fields
+
+    # Limits
+    max_updates_per_run: Optional[int] = None
 
     # Agent tools
     enable_agent_tools: bool = False
@@ -126,6 +132,10 @@ class UserMemoryConfig:
         enable_delete_memory: Allow deleting memories.
         enable_clear_memories: Allow clearing all memories (dangerous).
 
+        # Limits
+        max_updates_per_run: Max updates per extraction run. Default: 10.
+            Memory extraction often needs multiple updates (add, update, delete).
+
         # Agent tools
         enable_agent_tools: Expose tools to the agent.
         agent_can_update_memories: If agent_tools enabled, provide update_user_memory tool.
@@ -149,6 +159,9 @@ class UserMemoryConfig:
     enable_update_memory: bool = True
     enable_delete_memory: bool = True
     enable_clear_memories: bool = False  # Dangerous - disabled by default
+
+    # Limits
+    max_updates_per_run: Optional[int] = None
 
     # Agent tools
     enable_agent_tools: bool = False
@@ -193,6 +206,9 @@ class SessionContextConfig:
         enable_delete_context: Allow deleting context.
         enable_clear_context: Allow clearing context.
 
+        # Limits
+        max_updates_per_run: Max updates per extraction run. Default: 10.
+
         # Prompt customization
         instructions: Custom instructions for extraction.
         additional_instructions: Extra instructions appended to default.
@@ -214,6 +230,9 @@ class SessionContextConfig:
     enable_update_context: bool = True
     enable_delete_context: bool = True
     enable_clear_context: bool = False
+
+    # Limits
+    max_updates_per_run: Optional[int] = None
 
     # Prompt customization
     instructions: Optional[str] = None
@@ -249,6 +268,9 @@ class LearnedKnowledgeConfig:
         # Sharing boundary
         namespace: Sharing boundary ("user", "global", or custom).
 
+        # Limits
+        max_updates_per_run: Max updates per extraction run. Default: 10.
+
         # Agent tools
         enable_agent_tools: Expose tools to the agent.
         agent_can_save: If agent_tools enabled, provide save_learning tool.
@@ -270,6 +292,9 @@ class LearnedKnowledgeConfig:
 
     # Sharing boundary
     namespace: str = "global"
+
+    # Limits
+    max_updates_per_run: Optional[int] = None
 
     # Agent tools
     enable_agent_tools: bool = True
@@ -323,6 +348,9 @@ class EntityMemoryConfig:
         enable_add_event: Allow adding events to entities.
         enable_add_relationship: Allow adding relationships.
 
+        # Limits
+        max_updates_per_run: Max updates per extraction run. Default: 10.
+
         # Agent tools
         enable_agent_tools: Expose tools to the agent.
         agent_can_create_entity: If agent_tools enabled, provide create_entity tool.
@@ -354,6 +382,9 @@ class EntityMemoryConfig:
     enable_delete_fact: bool = True
     enable_add_event: bool = True
     enable_add_relationship: bool = True
+
+    # Limits
+    max_updates_per_run: Optional[int] = None
 
     # Agent tools
     enable_agent_tools: bool = False
@@ -392,6 +423,9 @@ class DecisionLogConfig:
     # Mode and extraction
     mode: LearningMode = LearningMode.ALWAYS
     schema: Optional[Type[Any]] = None
+
+    # Extraction limits
+    max_updates_per_run: Optional[int] = None
 
     # Agent tools
     enable_agent_tools: bool = True

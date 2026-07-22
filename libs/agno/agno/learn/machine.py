@@ -91,6 +91,9 @@ class LearningMachine:
     # Namespace for entity_memory and learned_knowledge
     namespace: str = "global"
 
+    # Global default for max_updates_per_run (applied to all stores unless overridden)
+    max_updates_per_run: int = 10
+
     # Custom stores
     custom_stores: Optional[Dict[str, LearningStore]] = None
 
@@ -217,11 +220,14 @@ class LearningMachine:
                 config.db = self.db
             if config.model is None:
                 config.model = self.model
+            if config.max_updates_per_run is None:
+                config.max_updates_per_run = self.max_updates_per_run
         else:
             config = UserProfileConfig(
                 db=self.db,
                 model=self.model,
                 mode=LearningMode.ALWAYS,
+                max_updates_per_run=self.max_updates_per_run,
             )
 
         return UserProfileStore(config=config, debug_mode=self.debug_mode)
@@ -235,11 +241,14 @@ class LearningMachine:
                 config.db = self.db
             if config.model is None:
                 config.model = self.model
+            if config.max_updates_per_run is None:
+                config.max_updates_per_run = self.max_updates_per_run
         else:
             config = UserMemoryConfig(
                 db=self.db,
                 model=self.model,
                 mode=LearningMode.ALWAYS,
+                max_updates_per_run=self.max_updates_per_run,
             )
 
         return UserMemoryStore(config=config, debug_mode=self.debug_mode)
@@ -253,11 +262,14 @@ class LearningMachine:
                 config.db = self.db
             if config.model is None:
                 config.model = self.model
+            if config.max_updates_per_run is None:
+                config.max_updates_per_run = self.max_updates_per_run
         else:
             config = SessionContextConfig(
                 db=self.db,
                 model=self.model,
                 enable_planning=False,
+                max_updates_per_run=self.max_updates_per_run,
             )
 
         return SessionContextStore(config=config, debug_mode=self.debug_mode)
@@ -271,12 +283,15 @@ class LearningMachine:
                 config.db = self.db
             if config.model is None:
                 config.model = self.model
+            if config.max_updates_per_run is None:
+                config.max_updates_per_run = self.max_updates_per_run
         else:
             config = EntityMemoryConfig(
                 db=self.db,
                 model=self.model,
                 namespace=self.namespace,
                 mode=LearningMode.ALWAYS,
+                max_updates_per_run=self.max_updates_per_run,
             )
 
         return EntityMemoryStore(config=config, debug_mode=self.debug_mode)
@@ -290,11 +305,14 @@ class LearningMachine:
                 config.model = self.model
             if config.knowledge is None and self.knowledge is not None:
                 config.knowledge = self.knowledge
+            if config.max_updates_per_run is None:
+                config.max_updates_per_run = self.max_updates_per_run
         else:
             config = LearnedKnowledgeConfig(
                 model=self.model,
                 knowledge=self.knowledge,
                 mode=LearningMode.AGENTIC,
+                max_updates_per_run=self.max_updates_per_run,
             )
 
         return LearnedKnowledgeStore(config=config, debug_mode=self.debug_mode)
@@ -308,11 +326,14 @@ class LearningMachine:
                 config.db = self.db
             if config.model is None:
                 config.model = self.model
+            if config.max_updates_per_run is None:
+                config.max_updates_per_run = self.max_updates_per_run
         else:
             config = DecisionLogConfig(
                 db=self.db,
                 model=self.model,
                 mode=LearningMode.AGENTIC,  # Default to AGENTIC for explicit logging
+                max_updates_per_run=self.max_updates_per_run,
             )
 
         return DecisionLogStore(config=config, debug_mode=self.debug_mode)
