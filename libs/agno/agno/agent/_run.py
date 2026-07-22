@@ -3064,7 +3064,7 @@ def _fork_run(run_response: RunOutput, message_index: int) -> RunOutput:
     forked.created_at = int(_time())
     forked.events = None
     _truncate_run_to_checkpoint(forked, message_index)
-    # Snapshot executed tools AFTER truncation — fork gets fresh tool_call_limit budget
+    # Capture AFTER truncation so fork's executed_tool_count starts at 0
     forked.tool_count_at_fork = sum(1 for t in forked.tools if t.result is not None) if forked.tools else 0
     return forked
 

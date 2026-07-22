@@ -671,7 +671,8 @@ class RunOutput:
     # parentage); see ADR-007 in specs/agno/features/checkpointing/decisions.md.
     forked_from_run_id: Optional[str] = None
     forked_from_message_index: Optional[int] = None
-    # Executed tool count at fork time (after truncation) — forks get fresh tool_call_limit
+    # Snapshot of executed tools at fork time. Subtracted from total in executed_tool_count
+    # so forked runs start with a fresh tool_call_limit budget.
     tool_count_at_fork: int = 0
 
     # Branching lineage: the source session_id this run was originally created in
@@ -715,11 +716,6 @@ class RunOutput:
 
     @property
     def executed_tool_count(self) -> int:
-        """Count of tools executed in this run segment.
-
-        For forked runs, subtracts tool_count_at_fork (captured after truncation).
-        For HITL resume (same run), counts all executed tools.
-        """
         if not self.tools:
             return 0
         total = sum(1 for t in self.tools if t.result is not None)

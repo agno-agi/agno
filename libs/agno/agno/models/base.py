@@ -692,7 +692,7 @@ class Model(ABC):
         _log_messages(messages)
         model_response = ModelResponse()
 
-        # Prior tool count for HITL resume (issue #7962) — forks get fresh budget
+        # Seed from prior executions so HITL resume respects tool_call_limit
         function_call_count = run_response.executed_tool_count if run_response else 0
 
         _tool_dicts = self._format_tools(tools) if tools is not None else []
@@ -921,8 +921,7 @@ class Model(ABC):
         _compress_tool_results = compression_manager is not None and compression_manager.compress_tool_results
         _compression_manager = compression_manager if _compress_tool_results else None
 
-        # Derive prior tool count from run_response for HITL resume (issue #7962)
-        # Prior tool count for HITL resume (issue #7962) — forks get fresh budget
+        # Seed from prior executions so HITL resume respects tool_call_limit
         function_call_count = run_response.executed_tool_count if run_response else 0
 
         while True:
@@ -1412,8 +1411,7 @@ class Model(ABC):
         _compress_tool_results = compression_manager is not None and compression_manager.compress_tool_results
         _compression_manager = compression_manager if _compress_tool_results else None
 
-        # Derive prior tool count from run_response for HITL resume (issue #7962)
-        # Prior tool count for HITL resume (issue #7962) — forks get fresh budget
+        # Seed from prior executions so HITL resume respects tool_call_limit
         function_call_count = run_response.executed_tool_count if run_response else 0
 
         while True:
@@ -1693,8 +1691,7 @@ class Model(ABC):
         _compress_tool_results = compression_manager is not None and compression_manager.compress_tool_results
         _compression_manager = compression_manager if _compress_tool_results else None
 
-        # Derive prior tool count from run_response for HITL resume (issue #7962)
-        # Prior tool count for HITL resume (issue #7962) — forks get fresh budget
+        # Seed from prior executions so HITL resume respects tool_call_limit
         function_call_count = run_response.executed_tool_count if run_response else 0
 
         while True:
