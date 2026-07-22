@@ -229,24 +229,50 @@ class RunQueueWorker:
             log_warning(f"Run queue: swept job {job['id']} to failed ({error})")
 
     async def _persist_run_error(self, job: Dict[str, Any], error: str) -> None:
-        """Persist a terminal ERROR on the run row so pollers see it (agents
-        in this release; teams/workflows follow with their queue seams)."""
-        if job["component_type"] != "agent":
-            return
+        """Persist a terminal ERROR on the run row so pollers see it, never a
+        stuck RUNNING/PENDING."""
         component = self.resolve_component(job["component_type"], job["component_id"])
         if component is None:
             return
-        from agno.agent._session import asave_session
-        from agno.agent._storage import aread_or_create_session
-        from agno.run.agent import RunOutput
         from agno.run.base import RunStatus
 
-        session = await aread_or_create_session(component, session_id=job["session_id"], user_id=job.get("user_id"))
-        run = session.get_run(job["id"])
-        if isinstance(run, RunOutput):
-            run.status = RunStatus.error
-            session.upsert_run(run=run)
-            await asave_session(component, session=session)
+        component_type = job["component_type"]
+        if component_type == "agent":
+            from agno.agent._session import asave_session
+            from agno.agent._storage import aread_or_create_session
+            from agno.run.agent import RunOutput
+
+            session = await aread_or_create_session(component, session_id=job["session_id"], user_id=job.get("user_id"))
+            run = session.get_run(job["id"])
+            if isinstance(run, RunOutput):
+                run.status = RunStatus.error
+                session.upsert_run(run=run)
+                await asave_session(component, session=session)
+        elif component_type == "team":
+            from agno.run.team import TeamRunOutput
+            from agno.team._session import asave_session as team_asave_session
+            from agno.team._storage import _aread_or_create_session
+
+            team_session = await _aread_or_create_session(
+                component, session_id=job["session_id"], user_id=job.get("user_id")
+            )
+            team_run = team_session.get_run(job["id"])
+            if isinstance(team_run, TeamRunOutput):
+                team_run.status = RunStatus.error
+                team_session.upsert_run(run_response=team_run)
+                await team_asave_session(component, session=team_session)
+        elif component_type == "workflow":
+            workflow_session, _ = await component._aload_or_create_session(
+                session_id=job["session_id"], user_id=job.get("user_id"), session_state=None
+            )
+            workflow_run = workflow_session.get_run(job["id"])
+            if workflow_run is not None:
+                workflow_run.status = RunStatus.error
+                workflow_session.upsert_run(run=workflow_run)
+                if component._has_async_db():
+                    await component.asave_session(session=workflow_session)
+                else:
+                    component.save_session(session=workflow_session)
 
     async def _execute_claimed(self, job: Dict[str, Any]) -> None:
         from agno.run.base import RunStatus
@@ -305,29 +331,81 @@ class RunQueueWorker:
             )
 
 
-async def aprepare_queued_agent_run(
-    agent: Any, run_id: str, session_id: str, user_id: Optional[str], input: Any
+async def aprepare_queued_run(
+    component: Any, component_type: str, run_id: str, session_id: str, user_id: Optional[str], input: Any
 ) -> None:
     """Persist the PENDING run row at accept time so pollers find the run
     immediately, before any worker claims the job."""
-    from agno.agent._session import asave_session
-    from agno.agent._storage import aread_or_create_session, update_metadata
-    from agno.run.agent import RunOutput
     from agno.run.base import RunStatus
 
-    run_response = RunOutput(
-        run_id=run_id,
-        session_id=session_id,
-        agent_id=getattr(agent, "id", None),
-        agent_name=getattr(agent, "name", None),
-        user_id=user_id,
-        input=input,
-        status=RunStatus.pending,
-    )
-    session = await aread_or_create_session(agent, session_id=session_id, user_id=user_id)
-    update_metadata(agent, session=session)
-    session.upsert_run(run=run_response)
-    await asave_session(agent, session=session)
+    if component_type == "agent":
+        from agno.agent._session import asave_session
+        from agno.agent._storage import aread_or_create_session, update_metadata
+        from agno.run.agent import RunOutput
+
+        run_response = RunOutput(
+            run_id=run_id,
+            session_id=session_id,
+            agent_id=getattr(component, "id", None),
+            agent_name=getattr(component, "name", None),
+            user_id=user_id,
+            input=input,
+            status=RunStatus.pending,
+        )
+        session = await aread_or_create_session(component, session_id=session_id, user_id=user_id)
+        update_metadata(component, session=session)
+        session.upsert_run(run=run_response)
+        await asave_session(component, session=session)
+    elif component_type == "team":
+        from agno.run.team import TeamRunOutput
+        from agno.team._session import asave_session as team_asave_session
+        from agno.team._storage import _aread_or_create_session, _update_metadata
+
+        team_run = TeamRunOutput(
+            run_id=run_id,
+            session_id=session_id,
+            team_id=getattr(component, "id", None),
+            team_name=getattr(component, "name", None),
+            user_id=user_id,
+            input=input,
+            status=RunStatus.pending,
+        )
+        team_session = await _aread_or_create_session(component, session_id=session_id, user_id=user_id)
+        _update_metadata(component, session=team_session)
+        team_session.upsert_run(run_response=team_run)
+        await team_asave_session(component, session=team_session)
+    elif component_type == "workflow":
+        from datetime import datetime
+
+        from agno.run.workflow import WorkflowRunOutput
+
+        workflow_run = WorkflowRunOutput(
+            run_id=run_id,
+            input=input,
+            session_id=session_id,
+            user_id=user_id,
+            workflow_id=getattr(component, "id", None),
+            workflow_name=getattr(component, "name", None),
+            created_at=int(datetime.now().timestamp()),
+            status=RunStatus.pending,
+        )
+        workflow_session, _ = await component._aload_or_create_session(
+            session_id=session_id, user_id=user_id, session_state=None
+        )
+        workflow_session.upsert_run(run=workflow_run)
+        if component._has_async_db():
+            await component.asave_session(session=workflow_session)
+        else:
+            component.save_session(session=workflow_session)
+    else:
+        raise ValueError(f"Unknown component type: {component_type}")
+
+
+async def aprepare_queued_agent_run(
+    agent: Any, run_id: str, session_id: str, user_id: Optional[str], input: Any
+) -> None:
+    """Back-compat wrapper; see aprepare_queued_run."""
+    await aprepare_queued_run(agent, "agent", run_id, session_id, user_id, input)
 
 
 @contextlib.asynccontextmanager
@@ -337,11 +415,14 @@ async def run_queue_lifespan(app: Any, agent_os: Any):
     store = resolve_run_queue_store(config, agent_os.db)
 
     def resolve_component(component_type: str, component_id: str) -> Any:
-        if component_type == "agent":
-            for candidate in agent_os.agents or []:
-                if getattr(candidate, "id", None) == component_id:
-                    return candidate
-        # Teams and workflows join the queue with their router seams (3b)
+        registry = {
+            "agent": agent_os.agents,
+            "team": agent_os.teams,
+            "workflow": agent_os.workflows,
+        }.get(component_type)
+        for candidate in registry or []:
+            if getattr(candidate, "id", None) == component_id:
+                return candidate
         return None
 
     worker = RunQueueWorker(store=store, resolve_component=resolve_component, config=config)
