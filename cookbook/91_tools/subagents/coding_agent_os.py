@@ -7,10 +7,17 @@ Terra, plans the project, then delegates research, frontend, backend, database
 and scripts work to GPT-5.6 Luna subagents that build the project in parallel
 inside a shared workspace.
 
-Projects are created under the tmp/projects directory next to this file. The
-subagents inherit every tool except SubAgent itself, so they can research and
-write code too. Each subagent run streams live in the AgentOS UI as its own
-"<parent id>-subagent-task-<uuid>" session.
+This example restricts what subagents may use: SubagentsConfig(tools=[...])
+declares an explicit allowed set (websearch, website reading and the coding
+surface). The orchestrator keeps FileGenerationTools and the Workspace
+move/delete surface to itself - subagents build code, the orchestrator manages
+the workspace and produces downloadable artifacts. Within the allowed set, the
+model can restrict each spawn further by name (a pure research spawn only
+needs websearch).
+
+Projects are created under the tmp/projects directory next to this file.
+Subagent activity streams live into the parent's chat as nested sub-agent
+runs; nothing about them is persisted.
 
 Run: .venvs/demo/bin/python cookbook/91_tools/subagents/coding_agent_os.py
 Then open http://localhost:7777 (config at http://localhost:7777/config).
@@ -22,9 +29,9 @@ from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIResponses
 from agno.os import AgentOS
+from agno.subagent import SubagentsConfig
 from agno.tools.coding import CodingTools
 from agno.tools.file_generation import FileGenerationTools
-from agno.tools.subagents import SubAgent
 from agno.tools.websearch import WebSearchTools
 from agno.tools.website import WebsiteTools
 from agno.tools.workspace import Workspace
@@ -51,18 +58,40 @@ coding_agent = Agent(
         Workspace(root=PROJECTS_DIR, allowed=["list", "search", "move", "delete"]),
         # Generate downloadable artifacts (PDF, DOCX, CSV, JSON, HTML) into the workspace
         FileGenerationTools(output_directory=str(PROJECTS_DIR), save_files=True),
-        SubAgent(model=OpenAIResponses(id="gpt-5.6-luna")),
     ],
+    subagents_config=SubagentsConfig(
+        models={
+            "fast": (
+                OpenAIResponses(id="gpt-5.6-luna"),
+                "scaffolding, boilerplate and lookups",
+            ),
+            "deep": (
+                OpenAIResponses(id="gpt-5.6-terra"),
+                "tricky logic and architecture",
+            ),
+        },
+        # Subagents get the build and research surface only - artifact generation
+        # and workspace move/delete stay with the orchestrator
+        tools=[
+            WebSearchTools(),
+            WebsiteTools(),
+            CodingTools(base_dir=PROJECTS_DIR, all=True),
+        ],
+    ),
     db=db,
     instructions=(
         "You are a coding orchestrator. Subagents do the build work; you plan, "
         "delegate, review and answer the user.\n"
         "How subagents work:\n"
         "- spawn_agent(task) runs one task on a subagent and returns its result. "
-        "Subagents have the same tools as you, but they do not see this conversation, "
-        "so every brief must be self-contained: project folder path, the files that "
-        "subagent owns, exactly what to build or research, and what to report back "
-        "(files created plus a short summary - never full file contents).\n"
+        "Subagents can search, read websites and write code, but they do not see "
+        "this conversation, so every brief must be self-contained: project folder "
+        "path, the files that subagent owns, exactly what to build or research, and "
+        "what to report back (files created plus a short summary - never full file "
+        "contents).\n"
+        "- Pick the model per task (fast for scaffolding and lookups, deep for tricky "
+        "logic) and pass a tools subset when a spawn only needs part of the allowed "
+        "set (a research spawn only needs websearch).\n"
         "- spawn_agent calls made in the same response run in parallel, so total time "
         "equals the largest brief, not the sum.\n"
         "How to use them:\n"
@@ -79,9 +108,11 @@ coding_agent = Agent(
         "- Delegate a wave of spawn_agent calls in one response, review the results, "
         "re-plan, then delegate the next wave. Repeat until done; testing and "
         "verification are subagent tasks too.\n"
+        "- Workspace cleanup and downloadable artifacts (PDF, DOCX, CSV) are yours "
+        "alone - subagents cannot generate artifacts or move and delete files.\n"
         "- Finish with a summary of the project structure and how to run it."
     ),
-    markdown=True,debug_mode=True,
+    markdown=True,
 )
 
 # ---------------------------------------------------------------------------
