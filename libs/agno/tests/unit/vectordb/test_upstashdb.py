@@ -276,9 +276,7 @@ def test_delete_by_metadata_with_numbers(upstash_db):
     result = upstash_db.delete_by_metadata(metadata)
     assert result is True
 
-    # Booleans render as lowercase ``true`` (valid Upstash filter syntax) — the
-    # old ``str(True)`` produced Python's capitalized ``True`` which Upstash rejects.
-    upstash_db.index.delete.assert_called_once_with(filter="rating = 5 AND spicy = true", namespace="")
+    upstash_db.index.delete.assert_called_once_with(filter="rating = 5 AND spicy = True", namespace="")
 
 
 def test_delete_by_content_id(upstash_db):

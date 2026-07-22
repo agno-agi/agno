@@ -1,12 +1,39 @@
-"""
-Per-User Knowledge Isolation with Qdrant
-========================================
-Give each user a private view of one shared knowledge base. Documents a user
-uploads are visible only to them; documents uploaded with no user are shared
-with everyone, and an admin (no user id) sees all of it.
+"""Per-user knowledge isolation with Qdrant.
 
-Qdrant does this by storing the owner as an indexed payload field and filtering
-on it, using its multi-tenancy support to keep each user's vectors grouped.
+Same isolation contract as the pgvector / LanceDB / Chroma cookbooks in
+this directory, against a different backend. The
+``Knowledge.asearch(user_id=...)`` API is identical — only the underlying
+primitive changes:
+
+  * Qdrant uses Qdrant's vendor-recommended multi-tenancy primitive:
+    a single collection with a payload field ``user_id`` indexed as
+    ``KEYWORD`` with ``is_tenant=True``. The flag tells Qdrant to store
+    points for the same tenant contiguously on disk so the engine can
+    prune by tenant BEFORE walking the HNSW graph. Without that flag the
+    isolation predicate still works correctly but every query traverses
+    cross-tenant graph regions — fine for hundreds of tenants, slow at
+    scale.
+
+  * Scoped reads use a ``Filter`` with ``should=[user_id == X,
+    is_empty(user_id)]`` — caller's bucket OR shared bucket.
+
+Three uploads, four scoped queries:
+
+  1. Alice and Bob each upload private content.
+  2. An admin uploads org-wide content (``user_id`` left ``None``).
+  3. Alice asks about Alice — sees her chunk plus shared content.
+  4. Alice asks about Bob — sees ZERO bob chunks (assertion below).
+  5. Bob asks about holidays — sees the shared bucket.
+  6. Admin (``user_id=None``) sees everything.
+
+Prerequisites:
+
+  * ``pip install qdrant-client`` — we run Qdrant in-memory so no server.
+  * ``OPENAI_API_KEY`` set in your environment (or swap the model below).
+
+Run:
+
+    python cookbook/07_knowledge/04_advanced/07_per_user_isolation/qdrant.py
 """
 
 import asyncio

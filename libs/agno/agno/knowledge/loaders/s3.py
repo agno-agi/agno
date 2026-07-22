@@ -135,7 +135,6 @@ class S3Loader(BaseLoader):
                 status=ContentStatus.PROCESSING,
                 metadata=merged_metadata,
                 file_type="s3",
-                user_id=content.user_id,
             )
             content_entry.content_hash = self._build_content_hash(content_entry)
             content_entry.id = generate_id(content_entry.content_hash)
@@ -236,7 +235,6 @@ class S3Loader(BaseLoader):
                 status=ContentStatus.PROCESSING,
                 metadata=merged_metadata,
                 file_type="s3",
-                user_id=content.user_id,
             )
             content_entry.content_hash = self._build_content_hash(content_entry)
             content_entry.id = generate_id(content_entry.content_hash)

@@ -1,15 +1,45 @@
-"""
-Per-User Knowledge Isolation with PgVector
-==========================================
-Give each user a private view of one shared knowledge base. Documents a user
-uploads are visible only to them; documents uploaded with no user are shared
-with everyone, and an admin (no user id) sees all of it.
+"""Per-user knowledge isolation with pgvector.
 
-PgVector does this by storing each chunk's owner in a user_id column and
-filtering on it at query time, so a search reads only that user's rows plus
-the shared ones.
+Demonstrates the two halves of the K2 vector-DB isolation feature:
 
-Setup: ./cookbook/scripts/run_pgvector.sh
+  1. Alice and Bob each upload their own private documents. When an agent
+     runs as Alice, RAG retrieval finds only Alice's chunks (plus shared
+     content). Bob's chunks are invisible to her agent — and vice-versa.
+
+  2. An admin uploads "company-wide" content without an owner. That ends
+     up in the SHARED bucket and is visible to BOTH Alice and Bob.
+
+How it works under the hood (pgvector):
+
+  * The pgvector schema has a top-level ``user_id`` column (nullable,
+    B-tree indexed). Owned chunks carry the uploader's id; shared chunks
+    carry ``NULL``.
+
+  * Retrieval (``Knowledge.asearch(user_id=...)``) compiles to a
+    server-side WHERE clause: ``WHERE user_id = 'alice' OR user_id IS
+    NULL``. The filter is pushed down before vector ranking via the
+    user_id B-tree, so top-K math stays correct AND the planner can
+    prune most rows before doing distance math.
+
+  * When you pass ``user_id=None``, no owner predicate is added — admin
+    / debugging path. Admins see everything.
+
+Each vector backend implements isolation using whatever primitive it was
+designed for. pgvector uses a column; Chroma uses per-user collections;
+Pinecone uses namespaces. The ``Knowledge.asearch(user_id=...)`` API is
+identical across all of them — the per-backend translation is internal.
+
+Prerequisites:
+
+  * pgvector running locally. From the repo root::
+
+      ./cookbook/scripts/run_pgvector.sh
+
+  * OPENAI_API_KEY set in your environment (or swap the model below).
+
+Run:
+
+    python cookbook/07_knowledge/04_advanced/07_per_user_isolation.py
 """
 
 import asyncio
@@ -99,7 +129,7 @@ async def main() -> None:
     )
     print(f"Alice asks about Alice's salary -> {len(alice_salary)} results")
     for d in alice_salary:
-        print(f"  - {d.content[:80]}")
+        print(f"  - {d.content[:80]}  (owner={d.meta_data.get('user_id')!r})")
 
     # 2. Alice asks about Bob — she should NOT see Bob's chunk. Best she can
     #    do is the shared holidays doc, which is unrelated.
@@ -108,12 +138,14 @@ async def main() -> None:
     )
     print(f"\nAlice asks about Bob's salary -> {len(alice_about_bob)} results")
     for d in alice_about_bob:
-        print(f"  - {d.content[:80]}")
-    # This backend keeps user_id internal (not surfaced in returned meta_data),
-    # so verify isolation by content rather than by reading an owner off the row.
-    bob_leak = [d for d in alice_about_bob if "215,000" in d.content]
-    assert not bob_leak, "Isolation broken: Alice's retrieval surfaced Bob's salary"
-    print("  isolation holds: Bob's salary is NOT visible to Alice")
+        print(f"  - {d.content[:80]}  (owner={d.meta_data.get('user_id')!r})")
+    bob_chunks_in_alices_results = [
+        d for d in alice_about_bob if d.meta_data.get("user_id") == "bob"
+    ]
+    assert not bob_chunks_in_alices_results, (
+        "Isolation broken: Alice's retrieval surfaced Bob's chunks"
+    )
+    print("  isolation holds: Bob's chunks are NOT visible to Alice")
 
     # 3. Bob asks about company holidays — he should see the SHARED chunk.
     bob_holidays = await knowledge.asearch(
@@ -121,13 +153,13 @@ async def main() -> None:
     )
     print(f"\nBob asks about holidays -> {len(bob_holidays)} results")
     for d in bob_holidays:
-        print(f"  - {d.content[:80]}")
+        print(f"  - {d.content[:80]}  (owner={d.meta_data.get('user_id')!r})")
 
     # 4. Admin / no scope passed — sees everything.
     admin_view = await knowledge.asearch(query="salary", user_id=None)
     print(f"\nAdmin asks about salary (user_id=None) -> {len(admin_view)} results")
     for d in admin_view:
-        print(f"  - {d.content[:80]}")
+        print(f"  - {d.content[:80]}  (owner={d.meta_data.get('user_id')!r})")
 
     # ------------------------------------------------------------------
     # End-to-end: an Agent doing RAG-as-Alice never sees Bob's chunks.

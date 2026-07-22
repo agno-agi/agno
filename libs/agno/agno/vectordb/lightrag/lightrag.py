@@ -71,76 +71,37 @@ class LightRag(VectorDb):
         """Check if content with the given hash exists"""
         return False
 
-    def insert(
-        self,
-        content_hash: str,
-        documents: List[Document],
-        filters: Optional[Dict[str, Any]] = None,
-        user_id: Optional[str] = None,
-    ) -> None:
+    def insert(self, content_hash: str, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
         """Insert documents into the vector database"""
-        if user_id is not None:
-            raise NotImplementedError("per-user isolation not supported for LightRag")
+        pass
 
     async def async_insert(
-        self,
-        content_hash: str,
-        documents: List[Document],
-        filters: Optional[Dict[str, Any]] = None,
-        user_id: Optional[str] = None,
+        self, content_hash: str, documents: List[Document], filters: Optional[Dict[str, Any]] = None
     ) -> None:
         """Async insert documents into the vector database"""
-        if user_id is not None:
-            raise NotImplementedError("per-user isolation not supported for LightRag")
+        pass
 
-    def upsert(
-        self,
-        content_hash: str,
-        documents: List[Document],
-        filters: Optional[Dict[str, Any]] = None,
-        user_id: Optional[str] = None,
-    ) -> None:
+    def upsert(self, content_hash: str, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
         """Upsert documents into the vector database"""
-        if user_id is not None:
-            raise NotImplementedError("per-user isolation not supported for LightRag")
+        pass
 
-    def delete_by_content_id(self, content_id: str, user_id: Optional[str] = None) -> None:
+    def delete_by_content_id(self, content_id: str) -> None:
         """Delete documents by content ID"""
-        if user_id is not None:
-            raise NotImplementedError("per-user isolation not supported for LightRag")
+        pass
 
-    async def async_upsert(
-        self,
-        content_hash: str,
-        documents: List[Document],
-        filters: Optional[Dict[str, Any]] = None,
-        user_id: Optional[str] = None,
-    ) -> None:
+    async def async_upsert(self, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
         """Async upsert documents into the vector database"""
-        if user_id is not None:
-            raise NotImplementedError("per-user isolation not supported for LightRag")
+        pass
 
     def search(
-        self,
-        query: str,
-        limit: int = 5,
-        filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
-        user_id: Optional[str] = None,
+        self, query: str, limit: int = 5, filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None
     ) -> List[Document]:
-        if user_id is not None:
-            raise NotImplementedError("per-user isolation not supported for LightRag")
-        result = asyncio.run(self.async_search(query, limit=limit, filters=filters, user_id=user_id))
+        result = asyncio.run(self.async_search(query, limit=limit, filters=filters))
         return result if result is not None else []
 
     async def async_search(
-        self,
-        query: str,
-        limit: Optional[int] = None,
-        filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
-        user_id: Optional[str] = None,
+        self, query: str, limit: Optional[int] = None, filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None
     ) -> Optional[List[Document]]:
-        if user_id is not None:
-            raise NotImplementedError("per-user isolation not supported for LightRag")
         mode: str = "hybrid"  # Default mode, can be "local", "global", or "hybrid"
         if filters is not None:
             log_warning("Filters are not supported in LightRAG. No filters will be applied.")
