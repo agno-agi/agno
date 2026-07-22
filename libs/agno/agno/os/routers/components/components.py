@@ -1,6 +1,6 @@
 import logging
 import time
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Path, Query
 
@@ -85,6 +85,77 @@ def _resolve_db_in_config(
         config.pop("db", None)
 
     return config
+
+
+def _resolve_member_links(
+    config: Dict[str, Any],
+    db: BaseDb,
+    registry: Optional[Registry] = None,
+) -> Tuple[List[Dict[str, Any]], List[str]]:
+    """Build ``component_links`` rows for a team config's ``members``.
+
+    A team config references its members as
+    ``{"type": "agent", "agent_id": "..."}`` / ``{"type": "team", "team_id": "..."}``.
+    This resolves each reference and returns the links that should be persisted
+    alongside the config, plus any references that could not be resolved.
+
+    - Members that are persisted DB components get a link row (with the child's
+      current version) so the component graph reflects the team structure.
+    - Members that are code-defined components (registered with the AgentOS
+      instance but not persisted as DB components) are resolved from the
+      registry at load time and therefore do not get a link row.
+    - Members that resolve to neither are returned as unresolved so the caller
+      can surface an error instead of silently creating a team with no members.
+
+    Returns:
+        A tuple of (links, unresolved_member_ids).
+    """
+    links: List[Dict[str, Any]] = []
+    unresolved: List[str] = []
+
+    members = config.get("members") or []
+    for position, member in enumerate(members):
+        if not isinstance(member, dict):
+            continue
+
+        member_type = member.get("type")
+        if member_type == "agent":
+            child_id = member.get("agent_id")
+            in_registry = bool(registry and child_id and registry.get_agent(child_id) is not None)
+        elif member_type == "team":
+            child_id = member.get("team_id")
+            in_registry = bool(registry and child_id and registry.get_team(child_id) is not None)
+        else:
+            continue
+
+        if not child_id:
+            continue
+
+        # Prefer a persisted DB component: create a link so the graph is complete.
+        child_component = db.get_component(child_id)
+        if child_component is not None:
+            child_version = child_component.get("current_version")
+            if child_version is not None:
+                links.append(
+                    {
+                        "link_kind": "member",
+                        "link_key": f"member_{position}",
+                        "child_component_id": child_id,
+                        "child_version": child_version,
+                        "position": position,
+                        "meta": {"type": member_type},
+                    }
+                )
+            # A draft-only component (no current_version) still exists; leave it
+            # to be resolved at load time rather than flagging it as unresolved.
+            continue
+
+        # Not a DB component. If it is a code-defined component it will be
+        # resolved from the registry at load time; otherwise it is unresolved.
+        if not in_registry:
+            unresolved.append(child_id)
+
+    return links, unresolved
 
 
 def get_components_router(
@@ -176,13 +247,13 @@ def attach_routes(
             if component_id is None:
                 component_id = generate_id_from_name(body.name)
 
-            # TODO: Create links from config
-
             # Prepare config - ensure it's a dict and resolve db reference
             config = body.config or {}
             config = _resolve_db_in_config(config, db, registry)
 
-            # Warn if creating a team without members
+            # Resolve member references into component links so the component
+            # graph reflects the team structure (implements the members TODO).
+            links: Optional[List[Dict[str, Any]]] = None
             if body.component_type == ComponentType.TEAM:
                 members = config.get("members")
                 if not members or len(members) == 0:
@@ -190,6 +261,20 @@ def attach_routes(
                         f"Creating team '{body.name}' without members. "
                         "If this is unintended, add members to the config."
                     )
+                else:
+                    member_links, unresolved = _resolve_member_links(config, db, registry)
+                    # Surface unresolved members instead of silently creating a
+                    # team whose members render as "unknown" in the UI.
+                    if unresolved:
+                        raise HTTPException(
+                            status_code=400,
+                            detail=(
+                                f"Cannot create team '{body.name}': the following members could not be "
+                                f"resolved: {', '.join(unresolved)}. Referenced agents/teams must exist "
+                                "as components or be registered with the AgentOS instance."
+                            ),
+                        )
+                    links = member_links or None
 
             component, _config = db.create_component_with_config(
                 component_id=component_id,
@@ -201,9 +286,12 @@ def attach_routes(
                 label=body.label,
                 stage=body.stage or "draft",
                 notes=body.notes,
+                links=links,
             )
 
             return ComponentResponse(**component)
+        except HTTPException:
+            raise
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))
         except Exception as e:
