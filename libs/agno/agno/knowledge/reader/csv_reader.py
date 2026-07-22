@@ -69,7 +69,7 @@ class CSVReader(Reader):
         """Read a CSV file and return a list of documents.
 
         Args:
-            file: Path to CSV file or file-like object.
+            file: Path to CSV file, file path string, or file-like object.
             delimiter: CSV field delimiter. Default is comma.
             quotechar: CSV quote character. Default is double quote.
             name: Optional name override for the document.
@@ -138,7 +138,7 @@ class CSVReader(Reader):
         """Read a CSV file asynchronously, processing batches of rows concurrently.
 
         Args:
-            file: Path to CSV file or file-like object.
+            file: Path to CSV file, file path string, or file-like object.
             delimiter: CSV field delimiter. Default is comma.
             quotechar: CSV quote character. Default is double quote.
             page_size: Number of rows per page for large files.

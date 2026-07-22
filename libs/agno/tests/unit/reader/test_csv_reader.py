@@ -123,6 +123,12 @@ def test_read_nonexistent_file(csv_reader, temp_dir):
         csv_reader.read(nonexistent_path)
 
 
+def test_read_nonexistent_str_path(csv_reader, temp_dir):
+    nonexistent_path = temp_dir / "nonexistent.csv"
+    with pytest.raises(FileNotFoundError, match="Could not find file"):
+        csv_reader.read(str(nonexistent_path))
+
+
 def test_read_with_chunking(csv_reader, csv_file):
     def mock_chunk(doc):
         return [
@@ -167,6 +173,13 @@ async def test_async_read_str_path(csv_reader, csv_file):
     assert documents[1].content == "John, 30, New York"
     assert documents[2].content == "Jane, 25, San Francisco"
     assert documents[3].content == "Bob, 40, Chicago"
+
+
+@pytest.mark.asyncio
+async def test_async_read_nonexistent_str_path(csv_reader, temp_dir):
+    nonexistent_path = temp_dir / "nonexistent.csv"
+    with pytest.raises(FileNotFoundError, match="Could not find file"):
+        await csv_reader.async_read(str(nonexistent_path))
 
 
 @pytest.fixture
