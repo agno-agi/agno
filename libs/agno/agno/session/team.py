@@ -288,19 +288,37 @@ class TeamSession:
                                 return tool_calls
         return tool_calls
 
-    def get_team_history(self, num_runs: Optional[int] = None) -> List[Tuple[str, str]]:
-        """Get team history as structured data (input, response pairs) -> This is the history of the team leader, not the members.
+    def get_team_history(
+        self, num_runs: Optional[int] = None, team_id: Optional[str] = None
+    ) -> List[Tuple[str, str]]:
+        """Get team history as structured data (input, response pairs).
 
         Args:
             num_runs: Number of recent runs to include. If None, returns all available history.
+            team_id: If provided, returns history for this specific team (including sub-teams).
+                     If None, returns history for the top-level team only (parent_run_id is None).
         """
         if not self.runs:
             return []
 
         from agno.run.base import RunStatus
 
-        # Get completed runs only (exclude current/pending run)
-        completed_runs = [run for run in self.runs if run.status == RunStatus.completed and run.parent_run_id is None]
+        if team_id is not None:
+            # Return history for a specific team (sub-team or nested team)
+            completed_runs = [
+                run
+                for run in self.runs
+                if run.status == RunStatus.completed
+                and hasattr(run, "team_id")
+                and run.team_id == team_id
+            ]
+        else:
+            # Return history for the top-level team (runs with no parent)
+            completed_runs = [
+                run
+                for run in self.runs
+                if run.status == RunStatus.completed and run.parent_run_id is None
+            ]
 
         if num_runs is not None:
             if num_runs <= 0:
@@ -333,13 +351,16 @@ class TeamSession:
 
         return history_data
 
-    def get_team_history_context(self, num_runs: Optional[int] = None) -> Optional[str]:
+    def get_team_history_context(
+        self, num_runs: Optional[int] = None, team_id: Optional[str] = None
+    ) -> Optional[str]:
         """Get formatted team history context for steps
 
         Args:
             num_runs: Number of recent runs to include. If None, returns all available history.
+            team_id: If provided, returns history for this specific team (including sub-teams).
         """
-        history_data = self.get_team_history(num_runs)
+        history_data = self.get_team_history(num_runs, team_id=team_id)
 
         if not history_data:
             return None
