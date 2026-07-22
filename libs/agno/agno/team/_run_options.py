@@ -20,8 +20,8 @@ class ResolvedRunOptions:
 
     All values are fully resolved (call-site > team default > fallback)
     at construction time. Two fields merge instead of replacing: ``metadata``
-    (team-level values win on conflicting keys) and ``dependencies``
-    (call-site values win on conflicting keys).
+    (team < session < call-site, later layers win on conflicting keys) and
+    ``dependencies`` (call-site values win on conflicting keys).
     """
 
     stream: bool
@@ -78,12 +78,19 @@ def resolve_run_options(
     dependencies: Optional[Dict[str, Any]] = None,
     knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
     metadata: Optional[Dict[str, Any]] = None,
+    session_metadata: Optional[Dict[str, Any]] = None,
     output_schema: Optional[Union[Type[BaseModel], Dict[str, Any]]] = None,
 ) -> ResolvedRunOptions:
     """Resolve all run options from call-site values and team defaults.
 
     Reads from ``team`` but does not mutate it.
+
+    ``session_metadata`` is the session-stored metadata read by the dispatch
+    function; it sits between team defaults and call-site values in the
+    metadata merge (team < session < call-site).
     """
+    from copy import deepcopy
+
     from agno.team._utils import _get_effective_filters
     from agno.utils.merge_dict import merge_dictionaries
 
@@ -139,15 +146,21 @@ def resolve_run_options(
     if team.knowledge_filters or knowledge_filters:
         resolved_filters = _get_effective_filters(team, knowledge_filters=knowledge_filters)
 
-    # metadata: merge call-site + team.metadata (team values take precedence)
+    # metadata: layered merge, call-site wins (team < session < call-site),
+    # matching how dependencies resolve. The team layer is deep-copied because
+    # merge_dictionaries mutates nested dicts of its first argument in place;
+    # a shallow copy would let session/call-site values bleed into team.metadata.
     resolved_metadata: Optional[Dict[str, Any]] = None
-    if metadata is not None and team.metadata is not None:
-        resolved_metadata = metadata.copy()
-        merge_dictionaries(resolved_metadata, team.metadata)
-    elif metadata is not None:
-        resolved_metadata = metadata.copy()
-    elif team.metadata is not None:
-        resolved_metadata = team.metadata.copy()
+    if team.metadata is not None:
+        resolved_metadata = deepcopy(team.metadata)
+    if session_metadata is not None:
+        if resolved_metadata is None:
+            resolved_metadata = {}
+        merge_dictionaries(resolved_metadata, session_metadata)
+    if metadata is not None:
+        if resolved_metadata is None:
+            resolved_metadata = {}
+        merge_dictionaries(resolved_metadata, metadata)
 
     # output_schema: call-site > team.output_schema
     resolved_output_schema = output_schema if output_schema is not None else team.output_schema

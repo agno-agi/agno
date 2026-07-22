@@ -1935,10 +1935,15 @@ def run_dispatch(
         )
 
         # Read existing session from database
+        from copy import deepcopy
+
         team_session = _read_or_create_session(team, session_id=session_id, user_id=user_id)
+        # Snapshot BEFORE _update_metadata merges team.metadata into the session dict,
+        # so the session layer keeps the session's own values (team < session < call-site).
+        session_metadata = deepcopy(team_session.metadata)
         _update_metadata(team, session=team_session)
 
-        # Resolve run options AFTER _update_metadata so session-stored metadata is visible
+        # Resolve run options with session-stored metadata as the middle layer
         opts = resolve_run_options(
             team,
             stream=stream,
@@ -1950,6 +1955,7 @@ def run_dispatch(
             dependencies=dependencies,
             knowledge_filters=knowledge_filters,
             metadata=metadata,
+            session_metadata=session_metadata,
             output_schema=output_schema,
         )
 
@@ -4130,7 +4136,9 @@ def arun_dispatch(  # type: ignore
     # Initialize Team
     team.initialize_team(debug_mode=debug_mode)
 
-    # Resolve run options centrally
+    # Resolve run options centrally. No session pre-read happens here: the session
+    # is read inside _arun/_arun_stream AFTER options are resolved, so session-stored
+    # metadata does not reach this run's resolved options (matches the agent async-DB path).
     opts = resolve_run_options(
         team,
         stream=stream,
