@@ -35,7 +35,7 @@ from agno.scorer import CodeScorer
 from agno.trainers import Checkpoint, TrainOn, TrainResult, TrainStatus
 
 BASE_MODEL = "Qwen/Qwen3.6-35B-A3B"  # the stub's checkpoint identity, and Tinker's base
-FIREWORKS_BASE_MODEL = "accounts/fireworks/models/qwen3-8b"
+FIREWORKS_BASE_MODEL = "accounts/fireworks/models/qwen3-4b-instruct-2507"
 
 
 def is_three_lines(run, expected):
@@ -230,7 +230,12 @@ def build_trainer():
             "Serving both sides of the before/after uses one on-demand deployment; "
             "GPU time bills while it serves, and it is deleted at the end of the run."
         )
-        return FireworksTrainer(base_model=FIREWORKS_BASE_MODEL, epochs=1)
+        # reasoning_effort="none" keeps this instruct model's answer in `content`;
+        # otherwise Fireworks' reasoning parser routes the whole completion into the
+        # reasoning channel and every attempt reads as empty.
+        return FireworksTrainer(
+            base_model=FIREWORKS_BASE_MODEL, epochs=1, sampling_reasoning_effort="none"
+        )
 
     if choice != "stub":
         raise RuntimeError(

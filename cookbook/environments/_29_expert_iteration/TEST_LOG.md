@@ -77,17 +77,21 @@ routine cookbook testing, because it spends real training compute.
 
 ### basic.py — live path, Fireworks
 
-**Status:** NOT RUN (owner-gated)
+**Status:** PASS (ran live, 2026-07-22) — the loop closed on open weights.
 
 **Description:** With `AGNO_TRAINER=fireworks`, `AGNO_RUN_FINE_TUNE=1`,
 `FIREWORKS_API_KEY` and `FIREWORKS_ACCOUNT_ID` set, the same file runs
-`FireworksTrainer(base_model="accounts/fireworks/models/qwen3-8b", epochs=1)`:
-a managed LoRA SFT job (~pennies at $0.50/1M training tokens), then one
-on-demand BF16 deployment with addons enabled serving both base and tuned
-(order $7/hour of GPU time while serving; `teardown()` deletes it at the end of
-the run). Readiness notes in `specs/agno/2.8.3/notes/FIREWORKS_BUILD.md`.
+`FireworksTrainer(base_model="accounts/fireworks/models/qwen3-4b-instruct-2507",
+epochs=1, sampling_reasoning_effort="none")`: a managed LoRA SFT job (~pennies at
+$0.50/1M training tokens), then one on-demand BF16 deployment with addons enabled
+serving both base and tuned (order $7/hour of GPU time while serving; `teardown()`
+deletes it at the end of the run).
 
-**Result:** deliberately not executed in this pass — the paid run is the
-owner's step.
+**Result:** one bounded managed SFT job (1 epoch, 21 rows, never retried) moved the
+pass rate on the real 5-7-5 verifier from **baseline 0.333 to tuned 0.548**
+(14/42 -> 23/42, same deployment, same H100/BF16, 42/42 scored both sides); per-task
+highlights `debugger_3am` 2/6 -> 6/6, `prod_friday` 1/6 -> 4/6. Teardown verified 0
+deployments / 0 deployedModels left. Full narrative, the base-vs-tuned haiku, the five
+live-surfaced adapter fixes, and cost are in `specs/agno/2.8.3/notes/live-proof.md`.
 
 ---

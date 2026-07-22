@@ -45,7 +45,7 @@ python cookbook/environments/_29_expert_iteration/basic.py
 # live Tinker fine-tune of Qwen/Qwen3.6-35B-A3B
 AGNO_TRAINER=tinker AGNO_RUN_FINE_TUNE=1 python cookbook/environments/_29_expert_iteration/basic.py
 
-# live Fireworks fine-tune of accounts/fireworks/models/qwen3-8b
+# live Fireworks fine-tune of accounts/fireworks/models/qwen3-4b-instruct-2507
 AGNO_TRAINER=fireworks AGNO_RUN_FINE_TUNE=1 python cookbook/environments/_29_expert_iteration/basic.py
 ```
 
