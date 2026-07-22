@@ -872,6 +872,9 @@ class SessionContextStore(LearningStore):
 
                 func = Function.from_callable(tool, strict=True)
                 func.strict = True
+                # The save result is not consumed, so avoid a second model call for confirmation.
+                if func.name == "save_session_context":
+                    func.stop_after_tool_call = True
                 functions.append(func)
                 log_debug(f"Added function {func.name}")
             except Exception as e:

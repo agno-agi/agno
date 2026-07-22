@@ -6,6 +6,7 @@ from uuid import uuid4
 if TYPE_CHECKING:
     from agno.tracing.schemas import Span, Trace
 
+from agno.db import mcp_oauth_store
 from agno.db.base import BaseDb, ComponentType, SessionType
 from agno.db.migrations.manager import MigrationManager
 from agno.db.postgres.schemas import get_table_schema_definition
@@ -24,6 +25,14 @@ from agno.db.postgres.utils import (
 from agno.db.schemas.culture import CulturalKnowledge
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
+from agno.db.schemas.mcp_oauth import (
+    MCP_OAUTH_CLIENTS,
+    MCP_OAUTH_CODES,
+    MCP_OAUTH_KEYS,
+    MCP_OAUTH_REFRESH_TOKENS,
+    MCP_OAUTH_TABLE_NAME_ATTRS,
+    MCP_OAUTH_TRANSACTIONS,
+)
 from agno.db.schemas.memory import UserMemory
 from agno.db.schemas.service_accounts import (
     resolve_service_account_sort_column,
@@ -85,6 +94,11 @@ class PostgresDb(BaseDb):
         approvals_table: Optional[str] = None,
         auth_tokens_table: Optional[str] = None,
         service_accounts_table: Optional[str] = None,
+        mcp_oauth_clients_table: Optional[str] = None,
+        mcp_oauth_transactions_table: Optional[str] = None,
+        mcp_oauth_codes_table: Optional[str] = None,
+        mcp_oauth_refresh_tokens_table: Optional[str] = None,
+        mcp_oauth_keys_table: Optional[str] = None,
         id: Optional[str] = None,
         create_schema: bool = True,
     ):
@@ -115,6 +129,11 @@ class PostgresDb(BaseDb):
             learnings_table (Optional[str]): Name of the table to store learnings.
             schedules_table (Optional[str]): Name of the table to store cron schedules.
             schedule_runs_table (Optional[str]): Name of the table to store schedule run history.
+            mcp_oauth_clients_table (Optional[str]): Name of the table to store MCP OAuth client registrations.
+            mcp_oauth_transactions_table (Optional[str]): Name of the table to store MCP OAuth transactions.
+            mcp_oauth_codes_table (Optional[str]): Name of the table to store MCP OAuth authorization codes.
+            mcp_oauth_refresh_tokens_table (Optional[str]): Name of the table to store MCP OAuth refresh tokens.
+            mcp_oauth_keys_table (Optional[str]): Name of the table to store MCP OAuth signing keys.
             id (Optional[str]): ID of the database.
             create_schema (bool): Whether to automatically create the database schema if it doesn't exist.
                 Set to False if schema is managed externally (e.g., via migrations). Defaults to True.
@@ -163,6 +182,11 @@ class PostgresDb(BaseDb):
             approvals_table=approvals_table,
             auth_tokens_table=auth_tokens_table,
             service_accounts_table=service_accounts_table,
+            mcp_oauth_clients_table=mcp_oauth_clients_table,
+            mcp_oauth_transactions_table=mcp_oauth_transactions_table,
+            mcp_oauth_codes_table=mcp_oauth_codes_table,
+            mcp_oauth_refresh_tokens_table=mcp_oauth_refresh_tokens_table,
+            mcp_oauth_keys_table=mcp_oauth_keys_table,
         )
 
         self.db_schema: str = db_schema if db_schema is not None else "ai"
@@ -622,6 +646,13 @@ class PostgresDb(BaseDb):
                 create_table_if_not_found=create_table_if_not_found,
             )
             return self.service_accounts_table
+
+        if table_type in MCP_OAUTH_TABLE_NAME_ATTRS:
+            return self._get_or_create_table(
+                table_name=getattr(self, MCP_OAUTH_TABLE_NAME_ATTRS[table_type]),
+                table_type=table_type,
+                create_table_if_not_found=create_table_if_not_found,
+            )
 
         raise ValueError(f"Unknown table type: {table_type}")
 
@@ -5178,6 +5209,105 @@ class PostgresDb(BaseDb):
         except Exception as e:
             log_debug(f"Error updating approval run_status: {e}")
             return 0
+
+    # --- Built-in MCP OAuth server store ---
+    # Thin delegations to agno.db.mcp_oauth_store (shared with SqliteDb); each fetches the
+    # table via the normal schema-aware _get_table path, so the store is created on first
+    # use like every other agno table.
+
+    def get_mcp_oauth_client(self, client_id: str) -> Optional[str]:
+        table = self._get_table(table_type=MCP_OAUTH_CLIENTS, create_table_if_not_found=True)
+        return mcp_oauth_store.get_client(self.db_engine, table, client_id)
+
+    def create_mcp_oauth_client(
+        self, *, client_id: str, client_metadata: str, now: int, unconsumed_ttl: int, max_clients: int
+    ) -> bool:
+        table = self._get_table(table_type=MCP_OAUTH_CLIENTS, create_table_if_not_found=True)
+        return mcp_oauth_store.create_client(
+            self.db_engine,
+            table,
+            client_id=client_id,
+            client_metadata=client_metadata,
+            now=now,
+            unconsumed_ttl=unconsumed_ttl,
+            max_clients=max_clients,
+        )
+
+    def mark_mcp_oauth_client_consumed(self, client_id: str, now: int) -> None:
+        table = self._get_table(table_type=MCP_OAUTH_CLIENTS, create_table_if_not_found=True)
+        mcp_oauth_store.mark_client_consumed(self.db_engine, table, client_id, now)
+
+    def store_mcp_oauth_transaction(
+        self, *, txn_id: str, client_id: str, params: str, expires_at: int, now: int, max_pending: int
+    ) -> None:
+        table = self._get_table(table_type=MCP_OAUTH_TRANSACTIONS, create_table_if_not_found=True)
+        mcp_oauth_store.store_transaction(
+            self.db_engine,
+            table,
+            txn_id=txn_id,
+            client_id=client_id,
+            params=params,
+            expires_at=expires_at,
+            now=now,
+            max_pending=max_pending,
+        )
+
+    def get_mcp_oauth_transaction(self, txn_id: str) -> Optional[tuple]:
+        table = self._get_table(table_type=MCP_OAUTH_TRANSACTIONS, create_table_if_not_found=True)
+        return mcp_oauth_store.get_transaction(self.db_engine, table, txn_id)
+
+    def consume_mcp_oauth_transaction(self, txn_id: str, now: int) -> Optional[tuple]:
+        table = self._get_table(table_type=MCP_OAUTH_TRANSACTIONS, create_table_if_not_found=True)
+        return mcp_oauth_store.consume_transaction(self.db_engine, table, txn_id, now)
+
+    def store_mcp_oauth_code(self, *, code_hash: str, payload: str, expires_at: int, now: int) -> None:
+        table = self._get_table(table_type=MCP_OAUTH_CODES, create_table_if_not_found=True)
+        mcp_oauth_store.store_code(
+            self.db_engine, table, code_hash=code_hash, payload=payload, expires_at=expires_at, now=now
+        )
+
+    def get_mcp_oauth_code(self, code_hash: str) -> Optional[tuple]:
+        table = self._get_table(table_type=MCP_OAUTH_CODES, create_table_if_not_found=True)
+        return mcp_oauth_store.get_code(self.db_engine, table, code_hash)
+
+    def delete_mcp_oauth_code(self, code_hash: str) -> bool:
+        table = self._get_table(table_type=MCP_OAUTH_CODES, create_table_if_not_found=True)
+        return mcp_oauth_store.delete_code(self.db_engine, table, code_hash)
+
+    def store_mcp_oauth_refresh(
+        self, *, token_hash: str, client_id: str, scopes: str, expires_at: int, now: int, family_id: str
+    ) -> None:
+        table = self._get_table(table_type=MCP_OAUTH_REFRESH_TOKENS, create_table_if_not_found=True)
+        mcp_oauth_store.store_refresh(
+            self.db_engine,
+            table,
+            token_hash=token_hash,
+            client_id=client_id,
+            scopes=scopes,
+            expires_at=expires_at,
+            now=now,
+            family_id=family_id,
+        )
+
+    def get_mcp_oauth_refresh(self, token_hash: str) -> Optional[tuple]:
+        table = self._get_table(table_type=MCP_OAUTH_REFRESH_TOKENS, create_table_if_not_found=True)
+        return mcp_oauth_store.get_refresh(self.db_engine, table, token_hash)
+
+    def delete_mcp_oauth_refresh(self, token_hash: str) -> bool:
+        table = self._get_table(table_type=MCP_OAUTH_REFRESH_TOKENS, create_table_if_not_found=True)
+        return mcp_oauth_store.delete_refresh(self.db_engine, table, token_hash)
+
+    def delete_mcp_oauth_refresh_family(self, family_id: str) -> int:
+        table = self._get_table(table_type=MCP_OAUTH_REFRESH_TOKENS, create_table_if_not_found=True)
+        return mcp_oauth_store.delete_refresh_family(self.db_engine, table, family_id)
+
+    def get_mcp_oauth_keys(self) -> List[tuple]:
+        table = self._get_table(table_type=MCP_OAUTH_KEYS, create_table_if_not_found=True)
+        return mcp_oauth_store.get_keys(self.db_engine, table)
+
+    def insert_mcp_oauth_key(self, *, kid: str, secret: str, created_at: int) -> bool:
+        table = self._get_table(table_type=MCP_OAUTH_KEYS, create_table_if_not_found=True)
+        return mcp_oauth_store.insert_key(self.db_engine, table, kid=kid, secret=secret, created_at=created_at)
 
     # --- Auth Tokens ---
 

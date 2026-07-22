@@ -41,7 +41,9 @@ class CSVReader(Reader):
         ```
     """
 
-    def __init__(self, chunking_strategy: Optional[ChunkingStrategy] = RowChunking(), **kwargs):
+    def __init__(self, chunking_strategy: Optional[ChunkingStrategy] = None, **kwargs):
+        if chunking_strategy is None:
+            chunking_strategy = RowChunking()
         super().__init__(chunking_strategy=chunking_strategy, **kwargs)
 
     @classmethod

@@ -205,6 +205,14 @@ class DoclingReader(Reader):
                 doc_name = name or Path(url_path).stem
                 log_debug(f"Reading from URL: {file}")
                 source = file
+            elif isinstance(file, str):
+                # Handle local file path strings
+                file_path = Path(file)
+                if not file_path.exists():
+                    raise FileNotFoundError(f"Could not find file: {file_path}")
+                log_debug(f"Reading: {file_path}")
+                doc_name = name or file_path.stem
+                source = file_path
             elif isinstance(file, BytesIO):
                 # Handle BytesIO objects
                 log_debug(f"Reading uploaded file: {getattr(file, 'name', 'BytesIO')}")

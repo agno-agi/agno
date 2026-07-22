@@ -105,6 +105,7 @@ from agno.utils.events import (
     create_team_run_started_event,
     create_team_session_summary_completed_event,
     create_team_session_summary_started_event,
+    error_type_of,
     handle_event,
 )
 from agno.utils.hooks import (
@@ -519,7 +520,7 @@ def _run_tasks(
     except Exception as e:
         run_response.status = RunStatus.error
         flush_in_flight_messages_on_error_team(run_response, locals().get("run_messages"))
-        run_error = create_team_run_error_event(run_response, error=str(e))
+        run_error = create_team_run_error_event(run_response, error=str(e), error_type=error_type_of(e))
         run_response.events = add_team_error_event(error=run_error, events=run_response.events)
         if run_response.content is None:
             run_response.content = str(e)
@@ -1011,7 +1012,7 @@ def _run_tasks_stream(
     except Exception as e:
         run_response.status = RunStatus.error
         flush_in_flight_messages_on_error_team(run_response, locals().get("run_messages"))
-        run_error = create_team_run_error_event(run_response, error=str(e))
+        run_error = create_team_run_error_event(run_response, error=str(e), error_type=error_type_of(e))
         run_response.events = add_team_error_event(error=run_error, events=run_response.events)
         if run_response.content is None:
             run_response.content = str(e)
@@ -1362,7 +1363,7 @@ def _run(
 
                 run_response.status = RunStatus.error
                 flush_in_flight_messages_on_error_team(run_response, locals().get("run_messages"))
-                run_error = create_team_run_error_event(run_response, error=str(e))
+                run_error = create_team_run_error_event(run_response, error=str(e), error_type=error_type_of(e))
                 run_response.events = add_team_error_event(error=run_error, events=run_response.events)
 
                 # If the content is None, set it to the error message
@@ -1826,7 +1827,7 @@ def _run_stream(
 
                 run_response.status = RunStatus.error
                 flush_in_flight_messages_on_error_team(run_response, locals().get("run_messages"))
-                run_error = create_team_run_error_event(run_response, error=str(e))
+                run_error = create_team_run_error_event(run_response, error=str(e), error_type=error_type_of(e))
                 run_response.events = add_team_error_event(error=run_error, events=run_response.events)
                 if run_response.content is None:
                     run_response.content = str(e)
@@ -2386,7 +2387,7 @@ async def _arun_tasks(
     except Exception as e:
         run_response.status = RunStatus.error
         flush_in_flight_messages_on_error_team(run_response, locals().get("run_messages"))
-        run_error = create_team_run_error_event(run_response, error=str(e))
+        run_error = create_team_run_error_event(run_response, error=str(e), error_type=error_type_of(e))
         run_response.events = add_team_error_event(error=run_error, events=run_response.events)
         if run_response.content is None:
             run_response.content = str(e)
@@ -2919,7 +2920,7 @@ async def _arun_tasks_stream(
     except Exception as e:
         run_response.status = RunStatus.error
         flush_in_flight_messages_on_error_team(run_response, locals().get("run_messages"))
-        run_error = create_team_run_error_event(run_response, error=str(e))
+        run_error = create_team_run_error_event(run_response, error=str(e), error_type=error_type_of(e))
         run_response.events = add_team_error_event(error=run_error, events=run_response.events)
         if run_response.content is None:
             run_response.content = str(e)
@@ -3319,7 +3320,7 @@ async def _arun(
 
                 run_response.status = RunStatus.error
                 flush_in_flight_messages_on_error_team(run_response, locals().get("run_messages"))
-                run_error = create_team_run_error_event(run_response, error=str(e))
+                run_error = create_team_run_error_event(run_response, error=str(e), error_type=error_type_of(e))
                 run_response.events = add_team_error_event(error=run_error, events=run_response.events)
 
                 if run_response.content is None:
@@ -4055,7 +4056,7 @@ async def _arun_stream(
 
                 run_response.status = RunStatus.error
                 flush_in_flight_messages_on_error_team(run_response, locals().get("run_messages"))
-                run_error = create_team_run_error_event(run_response, error=str(e))
+                run_error = create_team_run_error_event(run_response, error=str(e), error_type=error_type_of(e))
                 run_response.events = add_team_error_event(error=run_error, events=run_response.events)
                 if run_response.content is None:
                     run_response.content = str(e)
@@ -5474,6 +5475,8 @@ def _route_requirements_to_members(
             from agno.team._tools import _propagate_member_pause
 
             _propagate_member_pause(run_response, member, member_response)
+            # Persist paused member run so continue_run can find it after session reload
+            session.upsert_run(member_response)
         else:
             # Update the member's run in the team session so its status is persisted
             # (member agents skip save_session when team_id is set)
@@ -5611,6 +5614,8 @@ def _route_requirements_to_members_stream(
             from agno.team._tools import _propagate_member_pause
 
             _propagate_member_pause(run_response, member, member_response)
+            # Persist paused member run so continue_run can find it after session reload
+            session.upsert_run(member_response)
         else:
             session.upsert_run(member_response)
             content = getattr(member_response, "content", None) or "Task completed"
@@ -5708,6 +5713,8 @@ async def _aroute_requirements_to_members(
             from agno.team._tools import _propagate_member_pause
 
             _propagate_member_pause(run_response, member, member_response)
+            # Persist paused member run so continue_run can find it after session reload
+            session.upsert_run(member_response)
             return None
         else:
             # Update the member's run in the team session so its status is persisted
@@ -5854,6 +5861,8 @@ async def _aroute_requirements_to_members_stream(
             from agno.team._tools import _propagate_member_pause
 
             _propagate_member_pause(run_response, member, member_response)
+            # Persist paused member run so continue_run can find it after session reload
+            session.upsert_run(member_response)
         else:
             session.upsert_run(member_response)
             content = getattr(member_response, "content", None) or "Task completed"
@@ -7241,7 +7250,7 @@ def _continue_run(
 
                 run_response.status = RunStatus.error
                 flush_in_flight_messages_on_error_team(run_response, locals().get("run_messages"))
-                run_error = create_team_run_error_event(run_response, error=str(e))
+                run_error = create_team_run_error_event(run_response, error=str(e), error_type=error_type_of(e))
                 run_response.events = add_team_error_event(error=run_error, events=run_response.events)
                 if run_response.content is None:
                     run_response.content = str(e)
@@ -7521,7 +7530,7 @@ def _continue_run_stream(
 
                 run_response.status = RunStatus.error
                 flush_in_flight_messages_on_error_team(run_response, locals().get("run_messages"))
-                run_error = create_team_run_error_event(run_response, error=str(e))
+                run_error = create_team_run_error_event(run_response, error=str(e), error_type=error_type_of(e))
                 run_response.events = add_team_error_event(error=run_error, events=run_response.events)
                 if run_response.content is None:
                     run_response.content = str(e)
@@ -8275,7 +8284,7 @@ async def _acontinue_run(
 
                 run_response.status = RunStatus.error
                 flush_in_flight_messages_on_error_team(run_response, locals().get("run_messages"))
-                run_error = create_team_run_error_event(run_response, error=str(e))
+                run_error = create_team_run_error_event(run_response, error=str(e), error_type=error_type_of(e))
                 run_response.events = add_team_error_event(error=run_error, events=run_response.events)
                 if run_response.content is None:
                     run_response.content = str(e)
@@ -8938,7 +8947,7 @@ async def _acontinue_run_stream(
 
                 run_response.status = RunStatus.error
                 flush_in_flight_messages_on_error_team(run_response, locals().get("run_messages"))
-                run_error = create_team_run_error_event(run_response, error=str(e))
+                run_error = create_team_run_error_event(run_response, error=str(e), error_type=error_type_of(e))
                 run_response.events = add_team_error_event(error=run_error, events=run_response.events)
                 if run_response.content is None:
                     run_response.content = str(e)
