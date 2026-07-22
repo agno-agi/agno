@@ -364,11 +364,26 @@ class TestMetadataMerge:
         assert opts.metadata["policy"] == {"read_only": False, "source": "session"}
         assert team.metadata == {"policy": {"read_only": True}, "flat": "team_value"}
 
+    def test_merge_does_not_mutate_session_nested_dicts(self):
+        # merge_dictionaries recurses in place: a shallow copy of session_metadata
+        # would let call-site values contaminate the caller's nested dicts.
+        team = _make_team(metadata={"policy": {"read_only": True}})
+        session_meta = {"policy": {"source": "session"}}
+        resolve_run_options(team, metadata={"policy": {"read_only": False}}, session_metadata=session_meta)
+        assert session_meta == {"policy": {"source": "session"}}
+
     def test_resolved_metadata_mutation_does_not_reach_team(self):
         team = _make_team(metadata={"policy": {"read_only": True}})
         opts = resolve_run_options(team)
         opts.metadata["policy"]["read_only"] = False  # type: ignore[index]
         assert team.metadata == {"policy": {"read_only": True}}
+
+    def test_resolved_metadata_does_not_alias_callsite_nested_dicts(self):
+        team = _make_team()
+        callsite = {"labels": {"team": "ops"}}
+        opts = resolve_run_options(team, metadata=callsite)
+        opts.metadata["labels"]["team"] = "sre"  # type: ignore[index]
+        assert callsite == {"labels": {"team": "ops"}}
 
 
 # ---------------------------------------------------------------------------
@@ -599,7 +614,7 @@ class TestTeamSingletonIsolation:
         _update_metadata(team, session=session)
         assert team.metadata is not session.metadata
         assert team.metadata == {"env": "test"}
-        # Session-side behavior is unchanged: team metadata is merged onto the session
+        # Session side: team metadata fills keys the session does not set
         assert session.metadata == {"k": "v", "env": "test"}
 
     def test_new_session_seeding_not_aliased(self):
@@ -658,3 +673,38 @@ class TestTeamRunSessionMetadataPrecedence:
         out = team.run(input="hi", session_id="s1")
         assert out.metadata["leak"] == "from_session"
         assert team.metadata == {"env": "test"}
+
+    def test_session_beats_team_stays_stable_across_runs(self):
+        # The session value must survive persistence: _update_metadata merges team
+        # defaults as the losing layer, so the session's own value is not clobbered
+        # in the record and every subsequent run resolves it identically.
+        db = InMemoryDb()
+        _seed_team_session(db, "s1", "team-1", {"tier": "gold"})
+        team = self._make_run_team(db, metadata={"tier": "standard"})
+        first = team.run(input="hi", session_id="s1").metadata["tier"]
+        record = db.get_session(session_id="s1").metadata["tier"]
+        second = team.run(input="hi", session_id="s1").metadata["tier"]
+        assert (first, record, second) == ("gold", "gold", "gold")
+
+    def test_continue_run_sees_session_metadata(self):
+        db = InMemoryDb()
+        _seed_team_session(db, "s1", "team-1", {"policy": "capture-only"})
+        team = self._make_run_team(db, metadata={"env": "test"})
+        run_out = team.run(input="hi", session_id="s1")
+        cont = team.continue_run(run_id=run_out.run_id, session_id="s1", requirements=[])
+        assert cont.metadata["policy"] == "capture-only"
+        assert cont.metadata["env"] == "test"
+
+    @pytest.mark.asyncio
+    async def test_arun_sync_db_matches_async_db_path(self):
+        # Unlike agent.arun, team.arun does NOT pre-read the session even with a
+        # sync DB (arun_dispatch resolves options before the session id is known),
+        # so session metadata does not reach the resolved options. Pinned so a
+        # future change to either side is a conscious decision, not a silent drift.
+        db = InMemoryDb()
+        _seed_team_session(db, "s1", "team-1", {"shared": "session_value"})
+        team = self._make_run_team(db, metadata={"shared": "team_value"})
+        out = await team.arun(input="hi", session_id="s1", metadata={"run_only": "r"})
+        assert out.metadata["shared"] == "team_value"
+        assert out.metadata["run_only"] == "r"
+        assert "session_value" not in out.metadata.values()

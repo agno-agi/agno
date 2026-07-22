@@ -292,6 +292,22 @@ class TestMetadataMerge:
         opts.metadata["policy"]["read_only"] = False  # type: ignore[index]
         assert agent.metadata == {"policy": {"read_only": True}}
 
+    def test_resolved_metadata_does_not_alias_callsite_nested_dicts(self):
+        # Every layer is deep-copied, so a later mutation of the resolved metadata
+        # cannot reach the caller's nested dict (a shared module-level default).
+        agent = _make_agent()
+        callsite = {"labels": {"team": "ops"}}
+        opts = resolve_run_options(agent, metadata=callsite)
+        opts.metadata["labels"]["team"] = "sre"  # type: ignore[index]
+        assert callsite == {"labels": {"team": "ops"}}
+
+    def test_resolved_metadata_does_not_alias_session_nested_dicts(self):
+        agent = _make_agent()
+        session_meta = {"labels": {"tenant": "acme"}}
+        opts = resolve_run_options(agent, session_metadata=session_meta)
+        opts.metadata["labels"]["tenant"] = "other"  # type: ignore[index]
+        assert session_meta == {"labels": {"tenant": "acme"}}
+
 
 class TestDependenciesMerge:
     """Call-site dependencies merge with agent.dependencies instead of replacing them.
@@ -530,6 +546,28 @@ class TestRunSessionMetadataPrecedence:
         assert out.metadata["shared"] == "session_value"
         assert out.metadata["run_only"] == "r"
 
+    def test_session_beats_agent_stays_stable_across_runs(self):
+        # The session value must survive persistence: update_metadata merges agent
+        # defaults as the losing layer, so the session's own value is not clobbered
+        # in the record and every subsequent run resolves it identically.
+        db = InMemoryDb()
+        _seed_session(db, "s1", "agent-1", {"tier": "gold"})
+        agent = Agent(id="agent-1", model=MockModel(), db=db, metadata={"tier": "standard"})
+        first = agent.run("hi", session_id="s1").metadata["tier"]
+        record = db.get_session(session_id="s1").metadata["tier"]
+        second = agent.run("hi", session_id="s1").metadata["tier"]
+        assert (first, record, second) == ("gold", "gold", "gold")
+
+    def test_continue_run_sees_session_metadata(self):
+        # continue_run resolves options through the same session_metadata layer as run.
+        db = InMemoryDb()
+        _seed_session(db, "s1", "agent-1", {"policy": "capture-only"})
+        agent = Agent(id="agent-1", model=MockModel(), db=db, metadata={"env": "test"})
+        run_out = agent.run("hi", session_id="s1")
+        cont = agent.continue_run(run_id=run_out.run_id, session_id="s1", requirements=[])
+        assert cont.metadata["policy"] == "capture-only"
+        assert cont.metadata["env"] == "test"
+
 
 # ---------------------------------------------------------------------------
 # Singleton isolation: runs never mutate the shared Agent instance
@@ -566,7 +604,7 @@ class TestSingletonIsolation:
         update_metadata(agent, session=session)
         assert agent.metadata is not session.metadata
         assert agent.metadata == {"env": "test"}
-        # Session-side behavior is unchanged: agent metadata is merged onto the session
+        # Session side: agent metadata fills keys the session does not set
         assert session.metadata == {"k": "v", "env": "test"}
 
     def test_new_session_seeding_not_aliased(self):

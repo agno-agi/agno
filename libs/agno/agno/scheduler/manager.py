@@ -221,9 +221,8 @@ class ScheduleManager:
         raises when the schedules table is unavailable (database error or table
         never created), instead of masquerading as an empty catalog.
 
-        Third-party Db subclasses implementing the old get_schedules signature
-        (without raise_on_error) will raise TypeError here; that is expected
-        for this strict API.
+        Db subclasses whose get_schedules does not accept raise_on_error will
+        raise TypeError here; that is expected for this strict API.
 
         Args:
             enabled: Optional filter on the enabled flag.
@@ -236,12 +235,19 @@ class ScheduleManager:
         page_size = 100
         while True:
             result = self._call(
-                "get_schedules", enabled=enabled, limit=page_size, page=page, user_id=user_id, raise_on_error=raise_on_error
+                "get_schedules",
+                enabled=enabled,
+                limit=page_size,
+                page=page,
+                user_id=user_id,
+                raise_on_error=raise_on_error,
             )
             if not isinstance(result, tuple):
                 # Legacy third-party Dbs may return a bare list: treat it as complete
                 return self._to_schedule_list(result)
-            rows = result[0]
+            # A (None, total) result means no rows; normalize so the short-page
+            # check below matches list()'s tolerance instead of raising on len(None).
+            rows = result[0] or []
             schedules.extend(self._to_schedule_list(rows))
             # Stop on a short page; totals can shift mid-sweep, so total_count is
             # not reconciled against the row count
@@ -421,9 +427,8 @@ class ScheduleManager:
         raises when the schedules table is unavailable (database error or table
         never created), instead of masquerading as an empty catalog.
 
-        Third-party Db subclasses implementing the old get_schedules signature
-        (without raise_on_error) will raise TypeError here; that is expected
-        for this strict API.
+        Db subclasses whose get_schedules does not accept raise_on_error will
+        raise TypeError here; that is expected for this strict API.
 
         Args:
             enabled: Optional filter on the enabled flag.
@@ -436,12 +441,19 @@ class ScheduleManager:
         page_size = 100
         while True:
             result = await self._acall(
-                "get_schedules", enabled=enabled, limit=page_size, page=page, user_id=user_id, raise_on_error=raise_on_error
+                "get_schedules",
+                enabled=enabled,
+                limit=page_size,
+                page=page,
+                user_id=user_id,
+                raise_on_error=raise_on_error,
             )
             if not isinstance(result, tuple):
                 # Legacy third-party Dbs may return a bare list: treat it as complete
                 return self._to_schedule_list(result)
-            rows = result[0]
+            # A (None, total) result means no rows; normalize so the short-page
+            # check below matches list()'s tolerance instead of raising on len(None).
+            rows = result[0] or []
             schedules.extend(self._to_schedule_list(rows))
             # Stop on a short page; totals can shift mid-sweep, so total_count is
             # not reconciled against the row count

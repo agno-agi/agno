@@ -983,6 +983,14 @@ def test_query_timeout_unset_skips_python_guard(monkeypatch):
     _EchoProvider(id="e")
 
 
+@pytest.mark.parametrize("bad", [0, 0.0, -1, -5.5])
+def test_query_timeout_must_be_positive(bad):
+    # A zero/negative deadline is already expired: reject it at construction
+    # instead of producing load-dependent "timed out after 0s" errors at runtime.
+    with pytest.raises(ValueError, match="query_timeout must be positive"):
+        _EchoProvider(id="e", query_timeout=bad)
+
+
 @pytest.mark.asyncio
 async def test_query_timeout_none_leaves_slow_query_unbounded():
     class _SlowButFine(_EchoProvider):

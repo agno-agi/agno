@@ -43,9 +43,11 @@ class WikiContextProvider(ContextProvider):
 
     ``write_tools`` swaps the write sub-agent's workspace toolset
     (default: a read + write ``Workspace`` over the backend path); the
-    ``web`` backend's tools are still appended when wired.
-    ``mode=ContextMode.tools`` is a read-only surface and deliberately
-    ignores ``write_tools``.
+    ``web`` backend's tools are still appended when wired. The default
+    ``write_instructions`` name the default workspace tools, so a custom
+    ``write_tools`` usually needs a matching ``write_instructions``
+    override. ``mode=ContextMode.tools`` is a read-only surface and
+    deliberately ignores ``write_tools``.
     """
 
     def __init__(
