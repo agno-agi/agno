@@ -58,12 +58,7 @@ if __name__ == "__main__":
     # Test 2: The complaint was recorded as feedback automatically
     print("\n=== Test 2: Extracted feedback ===\n")
     feedback_store = agent.learning_machine.feedback_store
-    for feedback in feedback_store.search(
-        agent_id="conversational-feedback-agent", limit=5
-    ):
-        print(f"[{feedback.signal}] {feedback.comment}")
-        if feedback.learning:
-            print(f"  Lesson: {feedback.learning}")
+    feedback_store.print(agent_id="conversational-feedback-agent", limit=5)
 
     # Test 3: A brand new session starts already adapted
     print("\n=== Test 3: New session, agent adapted ===\n")

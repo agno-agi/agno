@@ -1060,6 +1060,54 @@ class FeedbackStore(LearningStore):
     # Representation
     # =========================================================================
 
+    def print(
+        self,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+        signal: Optional[str] = None,
+        limit: int = 10,
+        *,
+        raw: bool = False,
+    ) -> None:
+        """Print formatted feedback.
+
+        Args:
+            agent_id: Filter by agent.
+            team_id: Filter by team.
+            session_id: Filter by session.
+            signal: Filter by signal.
+            limit: Maximum feedback entries to show.
+            raw: If True, print raw dict using pprint.
+        """
+        from agno.learn.utils import print_panel
+
+        entries = self.search(
+            agent_id=agent_id,
+            team_id=team_id,
+            session_id=session_id,
+            signal=signal,
+            limit=limit,
+        )
+
+        lines = []
+        for entry in entries:
+            lines.append(f"[{entry.signal}] {entry.comment or ''}")
+            if entry.learning:
+                lines.append(f"  Lesson: {entry.learning}")
+            lines.append("")
+
+        subtitle = agent_id or team_id or session_id or "all"
+
+        print_panel(
+            title="Feedback",
+            subtitle=subtitle,
+            lines=lines,
+            empty_message="No feedback recorded",
+            raw_data=entries,
+            raw=raw,
+        )
+
     def __repr__(self) -> str:
         db_name = self.db.__class__.__name__ if self.db else None
         model_name = self.model.id if self.model and hasattr(self.model, "id") else None
