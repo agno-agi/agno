@@ -22,6 +22,7 @@ from agno.agent.factory import AgentFactory
 from agno.agent.protocol import AgentProtocol
 from agno.agent.remote import RemoteAgent
 from agno.db.base import BaseDb
+from agno.db.schemas.run_queue import RunQueueJob
 from agno.exceptions import InputCheckError, OutputCheckError, RunNotContinuableError, RunNotFoundError
 from agno.media import Audio, Image, Video
 from agno.media import File as FileMedia
@@ -42,6 +43,7 @@ from agno.os.middleware.user_scope import (
     verify_run_in_session_via_db,
 )
 from agno.os.routers.agents.schema import AgentResponse
+from agno.os.run_queue import aprepare_queued_agent_run
 from agno.os.schema import (
     BadRequestResponse,
     InternalServerErrorResponse,
@@ -708,6 +710,54 @@ def get_agent_router(
             if not getattr(agent, "db", None):
                 raise HTTPException(
                     status_code=400, detail="Background execution requires a database to be configured on the agent"
+                )
+
+            # Durable queue path: acceptance is a committed row; whichever
+            # replica's worker claims the job executes it, surviving crashes
+            # and deploys. Client contract identical: 202 + poll.
+            queue_worker = getattr(request.app.state, "run_queue_worker", None)
+            if queue_worker is not None and not isinstance(agent, RemoteAgent):
+                if base64_images or base64_audios or base64_videos or input_files:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="Media inputs are not supported for durable queued background runs yet",
+                    )
+                queued_run_id = str(uuid4())
+                queued_session_id = session_id or str(uuid4())
+                job = RunQueueJob(
+                    id=queued_run_id,
+                    component_type="agent",
+                    component_id=getattr(agent, "id", None) or agent_id,
+                    session_id=queued_session_id,
+                    user_id=user_id,
+                    payload={"input": message, "kwargs": kwargs},
+                    max_attempts=queue_worker.config.max_attempts,
+                    idempotency_key=request.headers.get("idempotency-key"),
+                ).to_dict()
+
+                await aprepare_queued_agent_run(
+                    agent, run_id=queued_run_id, session_id=queued_session_id, user_id=user_id, input=message
+                )
+                enqueue_result = await queue_worker.store.enqueue_run_job(
+                    job, max_depth=queue_worker.config.max_queue_depth
+                )
+                if enqueue_result["reason"] == "queue_full":
+                    raise HTTPException(status_code=429, detail="Run queue is full")
+                if enqueue_result["reason"] == "duplicate" and enqueue_result["job"] is not None:
+                    existing = enqueue_result["job"]
+                    return JSONResponse(
+                        status_code=202,
+                        content={
+                            "run_id": existing["id"],
+                            "session_id": existing["session_id"],
+                            "status": "PENDING"
+                            if existing["status"] in ("queued", "running")
+                            else existing["status"].upper(),
+                        },
+                    )
+                return JSONResponse(
+                    status_code=202,
+                    content={"run_id": queued_run_id, "session_id": queued_session_id, "status": "PENDING"},
                 )
 
             run_response = cast(

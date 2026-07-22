@@ -63,7 +63,7 @@ from agno.os.routers.session import get_session_router
 from agno.os.routers.teams import get_team_router
 from agno.os.routers.traces import get_traces_router
 from agno.os.routers.workflows import get_workflow_router
-from agno.os.run_queue import apply_run_queue_config
+from agno.os.run_queue import apply_run_queue_config, run_queue_lifespan
 from agno.os.settings import AgnoAPISettings
 from agno.os.utils import (
     _generate_knowledge_id,
@@ -1083,6 +1083,10 @@ class AgentOS:
             if self._scheduler_enabled and self.db is not None:
                 lifespans.append(partial(scheduler_lifespan, agent_os=self))
 
+            # The durable run queue worker (after db so tables exist)
+            if self.run_queue is not None and self.run_queue.durable:
+                lifespans.append(partial(run_queue_lifespan, agent_os=self))
+
             # The httpx client cleanup lifespan (should be last to close after other lifespans)
             lifespans.append(http_client_lifespan)
 
@@ -1122,6 +1126,10 @@ class AgentOS:
             # The scheduler lifespan (after db so tables exist)
             if self._scheduler_enabled and self.db is not None:
                 lifespans.append(partial(scheduler_lifespan, agent_os=self))
+
+            # The durable run queue worker (after db so tables exist)
+            if self.run_queue is not None and self.run_queue.durable:
+                lifespans.append(partial(run_queue_lifespan, agent_os=self))
 
             # The httpx client cleanup lifespan (should be last to close after other lifespans)
             lifespans.append(http_client_lifespan)

@@ -91,6 +91,7 @@ class PostgresDb(BaseDb):
         learnings_table: Optional[str] = None,
         schedules_table: Optional[str] = None,
         schedule_runs_table: Optional[str] = None,
+        run_queue_table: Optional[str] = None,
         approvals_table: Optional[str] = None,
         auth_tokens_table: Optional[str] = None,
         service_accounts_table: Optional[str] = None,
@@ -129,6 +130,7 @@ class PostgresDb(BaseDb):
             learnings_table (Optional[str]): Name of the table to store learnings.
             schedules_table (Optional[str]): Name of the table to store cron schedules.
             schedule_runs_table (Optional[str]): Name of the table to store schedule run history.
+            run_queue_table (Optional[str]): Name of the table to store durable background run jobs.
             mcp_oauth_clients_table (Optional[str]): Name of the table to store MCP OAuth client registrations.
             mcp_oauth_transactions_table (Optional[str]): Name of the table to store MCP OAuth transactions.
             mcp_oauth_codes_table (Optional[str]): Name of the table to store MCP OAuth authorization codes.
@@ -179,6 +181,7 @@ class PostgresDb(BaseDb):
             learnings_table=learnings_table,
             schedules_table=schedules_table,
             schedule_runs_table=schedule_runs_table,
+            run_queue_table=run_queue_table,
             approvals_table=approvals_table,
             auth_tokens_table=auth_tokens_table,
             service_accounts_table=service_accounts_table,
@@ -622,6 +625,14 @@ class PostgresDb(BaseDb):
                 create_table_if_not_found=create_table_if_not_found,
             )
             return self.schedule_runs_table
+
+        if table_type == "run_queue":
+            self.run_queue_table = self._get_or_create_table(
+                table_name=self.run_queue_table_name,
+                table_type="run_queue",
+                create_table_if_not_found=create_table_if_not_found,
+            )
+            return self.run_queue_table
 
         if table_type == "approvals":
             self.approvals_table = self._get_or_create_table(
@@ -5043,6 +5054,309 @@ class PostgresDb(BaseDb):
         except Exception as e:
             log_debug(f"Error getting schedule runs: {e}")
             return [], 0
+
+    # -- Run queue methods --
+    #
+    # Durable background run queue: one row per accepted run. Claim/lease with
+    # SKIP LOCKED (modeled on claim_due_schedule), stale-lock reclaim gated on
+    # the attempt budget, and terminal writes fenced on (locked_by, attempt) so
+    # a zombie executor that finishes after reclaim has its write discarded.
+
+    def enqueue_run_job(self, job: Dict[str, Any], max_depth: int = 0) -> Dict[str, Any]:
+        """Insert an accepted run job.
+
+        Returns {"accepted": bool, "reason": None | "queue_full" | "duplicate",
+        "job": row}. On an idempotency-key conflict the existing row is
+        returned with reason "duplicate" (client resubmit dedup). The depth
+        gate is best-effort (count + insert, not serialized) per the queue's
+        portability contract.
+        """
+        from sqlalchemy.exc import IntegrityError
+
+        table = self._get_table(table_type="run_queue", create_table_if_not_found=True)
+        if table is None:
+            raise RuntimeError("Failed to get or create run queue table")
+        try:
+            with self.Session() as sess, sess.begin():
+                if max_depth and max_depth > 0:
+                    count_stmt = select(func.count()).select_from(table).where(table.c.status == "queued")
+                    queued = sess.execute(count_stmt).scalar() or 0
+                    if queued >= max_depth:
+                        return {"accepted": False, "reason": "queue_full", "job": None}
+                sess.execute(table.insert().values(**job))
+            return {"accepted": True, "reason": None, "job": job}
+        except IntegrityError:
+            existing = None
+            if job.get("idempotency_key"):
+                with self.Session() as sess:
+                    row = sess.execute(
+                        select(table).where(table.c.idempotency_key == job["idempotency_key"])
+                    ).fetchone()
+                    existing = dict(row._mapping) if row is not None else None
+            return {"accepted": False, "reason": "duplicate", "job": existing}
+
+    def claim_run_job(self, worker_id: str, lock_grace_seconds: int = 60) -> Optional[Dict[str, Any]]:
+        """Atomically claim the oldest executable job for this worker.
+
+        Executable: queued, or running with a stale lock while the attempt
+        budget is not exhausted (crash reclaim). Claiming increments attempt,
+        which doubles as the fencing generation.
+        """
+        try:
+            table = self._get_table(table_type="run_queue")
+            if table is None:
+                return None
+            now = int(time.time())
+            stale = now - lock_grace_seconds
+            with self.Session() as sess, sess.begin():
+                subq = (
+                    select(table.c.id)
+                    .where(
+                        table.c.available_at <= now,
+                        or_(
+                            table.c.status == "queued",
+                            and_(
+                                table.c.status == "running",
+                                table.c.locked_at <= stale,
+                                table.c.attempt < table.c.max_attempts,
+                            ),
+                        ),
+                    )
+                    .order_by(table.c.created_at.asc())
+                    .limit(1)
+                    .with_for_update(skip_locked=True)
+                    .scalar_subquery()
+                )
+                stmt = (
+                    update(table)
+                    .where(table.c.id == subq)
+                    .values(
+                        status="running",
+                        locked_by=worker_id,
+                        locked_at=now,
+                        attempt=table.c.attempt + 1,
+                        updated_at=now,
+                    )
+                    .returning(*table.c)
+                )
+                row = sess.execute(stmt).fetchone()
+                return dict(row._mapping) if row is not None else None
+        except Exception as e:
+            log_debug(f"Error claiming run job: {e}")
+            return None
+
+    def heartbeat_run_jobs(self, worker_id: str, job_ids: List[str]) -> int:
+        """Refresh locked_at for this worker's in-flight jobs (keeps the lock
+        grace small without long runs being reclaimed while alive)."""
+        if not job_ids:
+            return 0
+        try:
+            table = self._get_table(table_type="run_queue")
+            if table is None:
+                return 0
+            now = int(time.time())
+            with self.Session() as sess, sess.begin():
+                result = sess.execute(
+                    update(table)
+                    .where(
+                        table.c.id.in_(job_ids),
+                        table.c.locked_by == worker_id,
+                        table.c.status == "running",
+                    )
+                    .values(locked_at=now)
+                )
+                return result.rowcount or 0
+        except Exception as e:
+            log_debug(f"Error heartbeating run jobs: {e}")
+            return 0
+
+    def complete_run_job(
+        self, job_id: str, worker_id: str, attempt: int, status: str, error: Optional[str] = None
+    ) -> bool:
+        """Fenced terminal transition: only the claim holder of this attempt
+        may complete the job. A zombie's late write is silently discarded."""
+        try:
+            table = self._get_table(table_type="run_queue")
+            if table is None:
+                return False
+            now = int(time.time())
+            with self.Session() as sess, sess.begin():
+                result = sess.execute(
+                    update(table)
+                    .where(
+                        table.c.id == job_id,
+                        table.c.locked_by == worker_id,
+                        table.c.attempt == attempt,
+                        table.c.status == "running",
+                    )
+                    .values(
+                        status=status,
+                        error=error,
+                        locked_by=None,
+                        locked_at=None,
+                        completed_at=now,
+                        updated_at=now,
+                    )
+                )
+                return (result.rowcount or 0) > 0
+        except Exception as e:
+            log_debug(f"Error completing run job: {e}")
+            return False
+
+    def retry_or_fail_run_job(
+        self, job_id: str, worker_id: str, attempt: int, error: str, retry_delay_seconds: int = 30
+    ) -> Optional[str]:
+        """Fenced failure handling: requeue with backoff while the attempt
+        budget lasts, else fail terminally. Returns the resulting status
+        ("queued" | "failed") or None if the fence rejected the write."""
+        try:
+            table = self._get_table(table_type="run_queue")
+            if table is None:
+                return None
+            now = int(time.time())
+            with self.Session() as sess, sess.begin():
+                fence = (
+                    select(table)
+                    .where(
+                        table.c.id == job_id,
+                        table.c.locked_by == worker_id,
+                        table.c.attempt == attempt,
+                        table.c.status == "running",
+                    )
+                    .with_for_update()
+                )
+                row = sess.execute(fence).fetchone()
+                if row is None:
+                    return None
+                job = dict(row._mapping)
+                if job["attempt"] < job["max_attempts"]:
+                    new_status = "queued"
+                    values: Dict[str, Any] = {
+                        "status": new_status,
+                        "error": error,
+                        "locked_by": None,
+                        "locked_at": None,
+                        "available_at": now + retry_delay_seconds,
+                        "updated_at": now,
+                    }
+                else:
+                    new_status = "failed"
+                    values = {
+                        "status": new_status,
+                        "error": error,
+                        "locked_by": None,
+                        "locked_at": None,
+                        "completed_at": now,
+                        "updated_at": now,
+                    }
+                sess.execute(update(table).where(table.c.id == job_id).values(**values))
+                return new_status
+        except Exception as e:
+            log_debug(f"Error retrying/failing run job: {e}")
+            return None
+
+    def cancel_run_job(self, job_id: str) -> bool:
+        """Tombstone cancellation: only jobs still waiting can be cancelled
+        here (contract: 'this job will not execute'). Claimed jobs fall
+        through to the running-run cancellation path."""
+        try:
+            table = self._get_table(table_type="run_queue")
+            if table is None:
+                return False
+            now = int(time.time())
+            with self.Session() as sess, sess.begin():
+                result = sess.execute(
+                    update(table)
+                    .where(table.c.id == job_id, table.c.status == "queued")
+                    .values(status="cancelled", completed_at=now, updated_at=now)
+                )
+                return (result.rowcount or 0) > 0
+        except Exception as e:
+            log_debug(f"Error cancelling run job: {e}")
+            return False
+
+    def sweep_exhausted_run_jobs(self, lock_grace_seconds: int = 60, limit: int = 20) -> List[Dict[str, Any]]:
+        """Return stale running jobs whose attempt budget is exhausted.
+
+        These are NOT claimable (attempt >= max_attempts): the worker persists
+        a terminal error on the run row first, then calls
+        fail_swept_run_job — ordering + idempotence instead of cross-store
+        atomicity."""
+        try:
+            table = self._get_table(table_type="run_queue")
+            if table is None:
+                return []
+            stale = int(time.time()) - lock_grace_seconds
+            with self.Session() as sess:
+                result = sess.execute(
+                    select(table)
+                    .where(
+                        table.c.status == "running",
+                        table.c.locked_at <= stale,
+                        table.c.attempt >= table.c.max_attempts,
+                    )
+                    .order_by(table.c.locked_at.asc())
+                    .limit(limit)
+                )
+                return [dict(row._mapping) for row in result.fetchall()]
+        except Exception as e:
+            log_debug(f"Error sweeping run jobs: {e}")
+            return []
+
+    def fail_swept_run_job(self, job_id: str, lock_grace_seconds: int = 60, error: str = "worker lost") -> bool:
+        """Mark an exhausted stale job failed. Re-checks staleness inside the
+        write so a live heartbeat between sweep and write wins."""
+        try:
+            table = self._get_table(table_type="run_queue")
+            if table is None:
+                return False
+            now = int(time.time())
+            stale = now - lock_grace_seconds
+            with self.Session() as sess, sess.begin():
+                result = sess.execute(
+                    update(table)
+                    .where(
+                        table.c.id == job_id,
+                        table.c.status == "running",
+                        table.c.locked_at <= stale,
+                    )
+                    .values(
+                        status="failed",
+                        error=error,
+                        locked_by=None,
+                        locked_at=None,
+                        completed_at=now,
+                        updated_at=now,
+                    )
+                )
+                return (result.rowcount or 0) > 0
+        except Exception as e:
+            log_debug(f"Error failing swept run job: {e}")
+            return False
+
+    def get_run_job(self, job_id: str) -> Optional[Dict[str, Any]]:
+        try:
+            table = self._get_table(table_type="run_queue")
+            if table is None:
+                return None
+            with self.Session() as sess:
+                row = sess.execute(select(table).where(table.c.id == job_id)).fetchone()
+                return dict(row._mapping) if row is not None else None
+        except Exception as e:
+            log_debug(f"Error getting run job: {e}")
+            return None
+
+    def count_queued_run_jobs(self) -> int:
+        try:
+            table = self._get_table(table_type="run_queue")
+            if table is None:
+                return 0
+            with self.Session() as sess:
+                result = sess.execute(select(func.count()).select_from(table).where(table.c.status == "queued"))
+                return result.scalar() or 0
+        except Exception as e:
+            log_debug(f"Error counting queued run jobs: {e}")
+            return 0
 
     # -- Approval methods --
 
