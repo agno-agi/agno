@@ -19,14 +19,12 @@ def resolve_run_index(
 ) -> Optional[int]:
     """Find the position of ``run`` within ``session.runs``.
 
-    Called after ``session.upsert_run(...)``. Returns the 0-based index of the
-    run that matches ``run.run_id``. Falls back to ``len(runs) - 1`` if no match
-    is found (defensive: upsert_run always places the run somewhere). Returns
-    ``None`` if there are no runs.
-
-    Used by the agent / team / workflow run loops to pass ``run_index`` to
-    ``save_run`` / ``asave_run`` so the runs table row gets a meaningful index
-    instead of NULL.
+    Called after ``session.upsert_run(...)``: returns the 0-based index of the
+    run that matches ``run.run_id``. Returns ``None`` when the run cannot be
+    located (missing ``run_id``, no runs on the session, or ``run_id`` not
+    present in ``session.runs``) — callers pass the result straight through to
+    ``save_run``/``asave_run`` as ``run_index``, so ``None`` stores NULL rather
+    than silently colliding with an unrelated run's position.
     """
     runs = session.runs or []
     if not runs:
@@ -36,11 +34,13 @@ def resolve_run_index(
     if target_id is None and isinstance(run, dict):
         target_id = run.get("run_id")
 
-    if target_id is not None:
-        for idx, existing in enumerate(runs):
-            existing_id = (
-                existing.get("run_id") if isinstance(existing, dict) else getattr(existing, "run_id", None)
-            )
-            if existing_id == target_id:
-                return idx
-    return len(runs) - 1
+    if target_id is None:
+        return None
+
+    for idx, existing in enumerate(runs):
+        existing_id = (
+            existing.get("run_id") if isinstance(existing, dict) else getattr(existing, "run_id", None)
+        )
+        if existing_id == target_id:
+            return idx
+    return None
