@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from dataclasses import asdict, dataclass
 from typing import Any, Dict, List, Mapping, Optional, Tuple, Union
 
@@ -10,6 +11,21 @@ from agno.run.agent import RunOutput, RunStatus
 from agno.run.team import TeamRunOutput
 from agno.session.summary import SessionSummary
 from agno.utils.log import log_debug, log_warning
+
+
+def _coerce_run_content_for_history(content: Any) -> Optional[Union[List[Any], str]]:
+    if content is None:
+        return None
+    if isinstance(content, str):
+        return content if content.strip() else None
+    if isinstance(content, list):
+        return content or None
+    if isinstance(content, BaseModel):
+        return content.model_dump_json()
+    try:
+        return json.dumps(content, ensure_ascii=False)
+    except TypeError:
+        return str(content)
 
 
 @dataclass
@@ -121,6 +137,7 @@ class TeamSession:
         skip_statuses: Optional[List[RunStatus]] = None,
         skip_history_messages: bool = True,
         skip_member_messages: bool = True,
+        include_run_response_content: bool = False,
     ) -> List[Message]:
         """Returns the messages belonging to the session that fit the given criteria.
 
@@ -133,6 +150,8 @@ class TeamSession:
             skip_statuses: Skip messages with these statuses.
             skip_history_messages: Skip messages that were tagged as history in previous runs.
             skip_member_messages: Skip messages created by members of the team.
+            include_run_response_content: Include the visible run output as an assistant message when it is not
+                already represented by a stored assistant message.
 
         Returns:
             A list of Messages belonging to the session.
@@ -150,6 +169,32 @@ class TeamSession:
             if skip_roles and message.role in skip_roles:
                 return True
             return False
+
+        def _has_visible_assistant_response(messages: List[Message]) -> bool:
+            return any(
+                message.role == "assistant" and not message.tool_calls and message.content not in (None, "")
+                for message in messages
+            )
+
+        def _append_run_response_content_if_needed(
+            run_response: Union[TeamRunOutput, RunOutput], messages: List[Message]
+        ) -> None:
+            if not include_run_response_content:
+                return
+            if skip_roles and "assistant" in skip_roles:
+                return
+            if getattr(run_response, "status", None) != RunStatus.completed:
+                return
+
+            content = _coerce_run_content_for_history(getattr(run_response, "content", None))
+            if content is None:
+                return
+            if not any(message.role == "user" for message in messages):
+                return
+            if _has_visible_assistant_response(messages):
+                return
+
+            messages.append(Message(role="assistant", content=content))
 
         if member_ids is not None and skip_member_messages:
             log_debug("Member IDs to filter by were provided. The skip_member_messages flag will be ignored.")
@@ -209,6 +254,7 @@ class TeamSession:
                 if not run_response or not run_response.messages:
                     continue
 
+                run_messages: List[Message] = []
                 for message in run_response.messages or []:
                     if _should_skip_message(message, skip_roles, skip_history_messages):
                         continue
@@ -218,7 +264,10 @@ class TeamSession:
                         if system_message is None:
                             system_message = message
                     else:
-                        messages_from_history.append(message)
+                        run_messages.append(message)
+
+                _append_run_response_content_if_needed(run_response, run_messages)
+                messages_from_history.extend(run_messages)
 
             if system_message:
                 if limit <= 1:
@@ -241,6 +290,7 @@ class TeamSession:
                 if not (run_response and run_response.messages):
                     continue
 
+                run_messages = []
                 for message in run_response.messages or []:
                     if _should_skip_message(message, skip_roles, skip_history_messages):
                         continue
@@ -249,9 +299,12 @@ class TeamSession:
                         # Only add the system message once
                         if system_message is None:
                             system_message = message
-                            messages_from_history.append(system_message)
+                            run_messages.append(system_message)
                     else:
-                        messages_from_history.append(message)
+                        run_messages.append(message)
+
+                _append_run_response_content_if_needed(run_response, run_messages)
+                messages_from_history.extend(run_messages)
 
         log_debug(f"Getting messages from previous runs: {len(messages_from_history)}")
         return messages_from_history
