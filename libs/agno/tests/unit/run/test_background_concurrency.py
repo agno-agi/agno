@@ -237,3 +237,19 @@ class TestCancellationWhileWaiting:
         await asyncio.wait_for(waiter_task, timeout=2)
         assert executed.is_set()
         await asyncio.wait_for(holder_task, timeout=2)
+
+
+class TestRunQueueConfig:
+    def test_default_matches_limiter_default(self):
+        """RunQueueConfig duplicates the default as a literal (pure-data module);
+        this guards against the two drifting apart."""
+        from agno.run.queue import RunQueueConfig
+
+        assert RunQueueConfig().max_concurrency == DEFAULT_BACKGROUND_MAX_CONCURRENCY
+
+    def test_config_value_applies_via_setter(self):
+        from agno.run.queue import RunQueueConfig
+
+        config = RunQueueConfig(max_concurrency=4)
+        set_background_max_concurrency(config.max_concurrency)
+        assert get_background_max_concurrency() == 4

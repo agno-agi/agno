@@ -11,7 +11,7 @@ event loop — in the standard deployment (one event loop per process, e.g.
 AgentOS under uvicorn) that is a process-wide cap. A process running multiple
 event loops gets one cap per loop. It can be set via the
 ``AGNO_BACKGROUND_MAX_CONCURRENCY`` environment variable or programmatically
-(e.g. ``AgentOS(background_max_concurrency=...)``). A limit of 0 or below
+(e.g. ``AgentOS(run_queue=RunQueueConfig(max_concurrency=...))``). A limit of 0 or below
 disables limiting. The limit is intended to be configured once at startup;
 changing it only affects runs that start waiting after the change.
 """
