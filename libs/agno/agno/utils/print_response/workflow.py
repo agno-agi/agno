@@ -742,18 +742,22 @@ def print_response_stream(
 
                         # Check if this is a streaming content event from agent or team
                         if isinstance(response, (TeamRunContentEvent, WorkflowRunOutputEvent)):  # type: ignore
-                            # Check if this is a team's final structured output
-                            is_structured_output = (
-                                isinstance(response, TeamRunContentEvent)
-                                and hasattr(response, "content_type")
-                                and response.content_type != "str"
-                                and response.content_type != ""
-                            )
-                            response_str = response.content  # type: ignore
+                            # Handle WorkflowErrorEvent specifically
+                            if isinstance(response, WorkflowErrorEvent):  # type: ignore
+                                response_str = response.error or "Workflow execution error"  # type: ignore
+                            else:
+                                # Check if this is a team's final structured output
+                                is_structured_output = (
+                                    isinstance(response, TeamRunContentEvent)
+                                    and hasattr(response, "content_type")
+                                    and response.content_type != "str"
+                                    and response.content_type != ""
+                                )
+                                response_str = response.content  # type: ignore
 
-                            if isinstance(response, RunContentEvent) and not workflow_started:
-                                is_workflow_agent_response = True
-                                continue
+                                if isinstance(response, RunContentEvent) and not workflow_started:
+                                    is_workflow_agent_response = True
+                                    continue
 
                         elif isinstance(response, RunContentEvent) and current_step_executor_type != "team":
                             response_str = response.content  # type: ignore
