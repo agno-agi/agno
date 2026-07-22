@@ -28,6 +28,7 @@ classifiers = [
 ]
 
 dependencies = [
+  "agno>=3.0.0",
   "gitpython",
   "httpx",
   "python-dotenv",
@@ -73,7 +74,6 @@ build-backend = "setuptools.build_meta"
 include = ["agno*"]
 
 [tool.setuptools.package-data]
-agno = ["py.typed"]
 include = ["LICENSE"]
 
 [tool.pytest.ini_options]
