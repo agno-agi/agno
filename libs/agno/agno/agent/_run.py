@@ -3624,38 +3624,50 @@ def _continue_run(
 
     agent.model = cast(Model, agent.model)
 
+    # 1. Execute pre-hooks BEFORE any side effects (tool execution)
+    # Check if any requirement wants pre-hooks (default True)
+    should_run_pre_hooks = (
+        any(getattr(req, "execute_pre_hooks", True) for req in (run_response.requirements or []))
+        or not run_response.requirements
+    )
+    run_input = cast(RunInput, run_response.input)
+    if agent.pre_hooks is not None and should_run_pre_hooks:
+        try:
+            pre_hook_iterator = execute_pre_hooks(
+                agent,
+                hooks=agent.pre_hooks,  # type: ignore
+                run_response=run_response,
+                run_input=run_input,
+                run_context=run_context,
+                session=session,
+                user_id=user_id,
+                debug_mode=debug_mode,
+                background_tasks=background_tasks,
+                is_continue=True,
+                **kwargs,
+            )
+            deque(pre_hook_iterator, maxlen=0)
+        except InputCheckError as e:
+            run_response = cast(RunOutput, run_response)
+            run_response.status = RunStatus.error
+            flush_in_flight_messages_on_error(run_response, locals().get("run_messages"))
+            if run_response.content is None:
+                run_response.content = str(e)
+            log_error(f"Validation failed: {str(e)} | Check trigger: {e.check_trigger}")
+            cleanup_and_store(
+                agent, run_response=run_response, session=session, run_context=run_context, user_id=user_id
+            )
+            return run_response
+
+    # 2. Handle the updated tools (executes confirmed HITL tools)
+    handle_tool_call_updates(agent, run_response=run_response, run_messages=run_messages, tools=tools)
+
     try:
         num_attempts = agent.retries + 1
         for attempt in range(num_attempts):
             try:
                 # Check for cancellation before model call
                 raise_if_cancelled(run_response.run_id)  # type: ignore
-
-                # 1. Execute pre-hooks BEFORE any side effects (tool execution)
-                # Check if any requirement wants pre-hooks (default True)
-                should_run_pre_hooks = (
-                    any(getattr(req, "execute_pre_hooks", True) for req in (run_response.requirements or []))
-                    or not run_response.requirements
-                )
-                run_input = cast(RunInput, run_response.input)
-                if agent.pre_hooks is not None and should_run_pre_hooks:
-                    pre_hook_iterator = execute_pre_hooks(
-                        agent,
-                        hooks=agent.pre_hooks,  # type: ignore
-                        run_response=run_response,
-                        run_input=run_input,
-                        run_context=run_context,
-                        session=session,
-                        user_id=user_id,
-                        debug_mode=debug_mode,
-                        background_tasks=background_tasks,
-                        is_continue=True,
-                        **kwargs,
-                    )
-                    deque(pre_hook_iterator, maxlen=0)
-
-                # 2. Handle the updated tools (executes confirmed HITL tools)
-                handle_tool_call_updates(agent, run_response=run_response, run_messages=run_messages, tools=tools)
 
                 # 3. Generate a response from the Model (includes running function calls)
                 agent.model = cast(Model, agent.model)
