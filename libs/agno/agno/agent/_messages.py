@@ -103,6 +103,31 @@ def format_message_with_state_variables(
 # ---------------------------------------------------------------------------
 
 
+def _get_datetime_context_message(agent: Agent) -> Optional[Message]:
+    if not agent.add_datetime_to_context or agent.system_message is not None or not agent.build_context:
+        return None
+
+    from datetime import datetime
+
+    tz = None
+    if agent.timezone_identifier:
+        try:
+            from zoneinfo import ZoneInfo
+
+            tz = ZoneInfo(agent.timezone_identifier)
+        except Exception as e:
+            log_warning(f"Invalid timezone identifier: {str(e)}")
+
+    time = datetime.now(tz) if tz else datetime.now()
+    formatted_time = time.strftime(agent.datetime_format) if agent.datetime_format else str(time)
+
+    return Message(
+        role="user",
+        content=f"The current time is {formatted_time}.",
+        add_to_agent_memory=False,
+    )
+
+
 def get_system_message(
     agent: Agent,
     session: AgentSession,
@@ -183,30 +208,7 @@ def get_system_message(
     # 3.2.1 Add instructions for using markdown
     if agent.markdown and output_schema is None:
         additional_information.append("Use markdown to format your answers.")
-    # 3.2.2 Add the current datetime
-    if agent.add_datetime_to_context:
-        from datetime import datetime
-
-        tz = None
-
-        if agent.timezone_identifier:
-            try:
-                from zoneinfo import ZoneInfo
-
-                tz = ZoneInfo(agent.timezone_identifier)
-            except Exception as e:
-                log_warning(f"Invalid timezone identifier: {str(e)}")
-
-        time = datetime.now(tz) if tz else datetime.now()
-
-        if agent.datetime_format:
-            formatted_time = time.strftime(agent.datetime_format)
-        else:
-            formatted_time = str(time)
-
-        additional_information.append(f"The current time is {formatted_time}.")
-
-    # 3.2.3 Add the current location
+    # 3.2.2 Add the current location
     if agent.add_location_to_context:
         from agno.utils.location import get_location
 
@@ -225,7 +227,7 @@ def get_system_message(
             if location_str:
                 additional_information.append(f"Your approximate location is: {location_str}.")
 
-    # 3.2.4 Add agent name if provided
+    # 3.2.3 Add agent name if provided
     if agent.name is not None and agent.add_name_to_context:
         additional_information.append(f"Your name is: {agent.name}.")
 
@@ -531,30 +533,7 @@ async def aget_system_message(
     # 3.2.1 Add instructions for using markdown
     if agent.markdown and output_schema is None:
         additional_information.append("Use markdown to format your answers.")
-    # 3.2.2 Add the current datetime
-    if agent.add_datetime_to_context:
-        from datetime import datetime
-
-        tz = None
-
-        if agent.timezone_identifier:
-            try:
-                from zoneinfo import ZoneInfo
-
-                tz = ZoneInfo(agent.timezone_identifier)
-            except Exception as e:
-                log_warning(f"Invalid timezone identifier: {str(e)}")
-
-        time = datetime.now(tz) if tz else datetime.now()
-
-        if agent.datetime_format:
-            formatted_time = time.strftime(agent.datetime_format)
-        else:
-            formatted_time = str(time)
-
-        additional_information.append(f"The current time is {formatted_time}.")
-
-    # 3.2.3 Add the current location
+    # 3.2.2 Add the current location
     if agent.add_location_to_context:
         from agno.utils.location import get_location
 
@@ -573,7 +552,7 @@ async def aget_system_message(
             if location_str:
                 additional_information.append(f"Your approximate location is: {location_str}.")
 
-    # 3.2.4 Add agent name if provided
+    # 3.2.3 Add agent name if provided
     if agent.name is not None and agent.add_name_to_context:
         additional_information.append(f"Your name is: {agent.name}.")
 
@@ -1180,8 +1159,9 @@ def get_run_messages(
     1. Add system message to run_messages
     2. Add extra messages to run_messages if provided
     3. Add history to run_messages
-    4. Add user message to run_messages (if input is single content)
-    5. Add input messages to run_messages if provided (if input is List[Message])
+    4. Add datetime context to run_messages if enabled
+    5. Add user message to run_messages (if input is single content)
+    6. Add input messages to run_messages if provided (if input is List[Message])
 
     Returns:
         RunMessages object with the following attributes:
@@ -1271,10 +1251,15 @@ def get_run_messages(
 
             run_messages.messages += history_copy
 
-    # 4. Add user message to run_messages
+    # 4. Add datetime context to run_messages
+    datetime_context_message = _get_datetime_context_message(agent)
+    if datetime_context_message is not None:
+        run_messages.messages.append(datetime_context_message)
+
+    # 5. Add user message to run_messages
     user_message: Optional[Message] = None
 
-    # 4.1 Build user message if input is None, str or list and not a list of Message/dict objects
+    # 5.1 Build user message if input is None, str or list and not a list of Message/dict objects
     if (
         input is None
         or isinstance(input, str)
@@ -1299,11 +1284,11 @@ def get_run_messages(
             **kwargs,
         )
 
-    # 4.2 If input is provided as a Message, use it directly
+    # 5.2 If input is provided as a Message, use it directly
     elif isinstance(input, Message):
         user_message = input
 
-    # 4.3 If input is provided as a dict, try to validate it as a Message
+    # 5.3 If input is provided as a dict, try to validate it as a Message
     elif isinstance(input, dict):
         try:
             if agent.input_schema and is_typed_dict(agent.input_schema):
@@ -1316,7 +1301,7 @@ def get_run_messages(
         except Exception as e:
             log_warning(f"Failed to validate message: {str(e)}")
 
-    # 4.4 If input is provided as a BaseModel, convert it to a Message
+    # 5.4 If input is provided as a BaseModel, convert it to a Message
     elif isinstance(input, BaseModel):
         try:
             # Create a user message with the BaseModel content
@@ -1325,7 +1310,7 @@ def get_run_messages(
         except Exception as e:
             log_warning(f"Failed to convert BaseModel to message: {str(e)}")
 
-    # 5. Add input messages to run_messages if provided (List[Message] or List[Dict])
+    # 6. Add input messages to run_messages if provided (List[Message] or List[Dict])
     if (
         isinstance(input, list)
         and len(input) > 0
@@ -1385,8 +1370,9 @@ async def aget_run_messages(
     1. Add system message to run_messages
     2. Add extra messages to run_messages if provided
     3. Add history to run_messages
-    4. Add user message to run_messages (if input is single content)
-    5. Add input messages to run_messages if provided (if input is List[Message])
+    4. Add datetime context to run_messages if enabled
+    5. Add user message to run_messages (if input is single content)
+    6. Add input messages to run_messages if provided (if input is List[Message])
 
     Returns:
         RunMessages object with the following attributes:
@@ -1476,10 +1462,15 @@ async def aget_run_messages(
 
             run_messages.messages += history_copy
 
-    # 4. Add user message to run_messages
+    # 4. Add datetime context to run_messages
+    datetime_context_message = _get_datetime_context_message(agent)
+    if datetime_context_message is not None:
+        run_messages.messages.append(datetime_context_message)
+
+    # 5. Add user message to run_messages
     user_message: Optional[Message] = None
 
-    # 4.1 Build user message if input is None, str or list and not a list of Message/dict objects
+    # 5.1 Build user message if input is None, str or list and not a list of Message/dict objects
     if (
         input is None
         or isinstance(input, str)
@@ -1504,11 +1495,11 @@ async def aget_run_messages(
             **kwargs,
         )
 
-    # 4.2 If input is provided as a Message, use it directly
+    # 5.2 If input is provided as a Message, use it directly
     elif isinstance(input, Message):
         user_message = input
 
-    # 4.3 If input is provided as a dict, try to validate it as a Message
+    # 5.3 If input is provided as a dict, try to validate it as a Message
     elif isinstance(input, dict):
         try:
             if agent.input_schema and is_typed_dict(agent.input_schema):
@@ -1521,7 +1512,7 @@ async def aget_run_messages(
         except Exception as e:
             log_warning(f"Failed to validate message: {str(e)}")
 
-    # 4.4 If input is provided as a BaseModel, convert it to a Message
+    # 5.4 If input is provided as a BaseModel, convert it to a Message
     elif isinstance(input, BaseModel):
         try:
             # Create a user message with the BaseModel content
@@ -1530,7 +1521,7 @@ async def aget_run_messages(
         except Exception as e:
             log_warning(f"Failed to convert BaseModel to message: {str(e)}")
 
-    # 5. Add input messages to run_messages if provided (List[Message] or List[Dict])
+    # 6. Add input messages to run_messages if provided (List[Message] or List[Dict])
     if (
         isinstance(input, list)
         and len(input) > 0

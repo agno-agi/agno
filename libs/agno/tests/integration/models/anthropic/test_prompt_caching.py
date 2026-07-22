@@ -8,15 +8,19 @@ Tests the basic caching features including:
 - Multi-block system prompt caching (static/dynamic split)
 """
 
+import time
 from pathlib import Path
 from unittest.mock import Mock
 
 import pytest
 
 from agno.agent import Agent, RunOutput
+from agno.agent._messages import get_run_messages
 from agno.models.anthropic import Claude, SystemPromptBlock
+from agno.run import RunContext
 from agno.session.agent import AgentSession
 from agno.utils.media import download_file
+from agno.utils.models.claude import format_messages
 
 
 def _get_large_system_prompt() -> str:
@@ -395,22 +399,42 @@ def test_build_system_shared_between_request_and_count_tokens():
     assert texts == ["Agent content.", "User static.", "User dynamic."]
 
 
-def test_agent_system_message_stays_string():
-    """Agent system message is a plain string; Claude-level blocks live on the model."""
+@pytest.mark.parametrize("user_message_role", ["user", "developer"])
+def test_agent_datetime_stays_outside_cached_system_prompt(user_message_role):
+    """Dynamic datetime context does not invalidate Claude's cached system block."""
+    claude = Claude(id="claude-sonnet-4-5-20250929", cache_system_prompt=True)
     agent = Agent(
-        model=Claude(id="claude-sonnet-4-5-20250929", cache_system_prompt=True),
+        model=claude,
         description="Test agent",
         instructions=["Be helpful"],
         add_datetime_to_context=True,
+        datetime_format="%Y-%m-%d %H:%M:%S.%f",
+        user_message_role=user_message_role,
         telemetry=False,
     )
     session = AgentSession(session_id="test")
-    msg = agent.get_system_message(session=session)
 
-    assert msg is not None
-    assert isinstance(msg.content, str)
-    assert "Test agent" in msg.content
-    assert "The current time is" in msg.content
+    def build_request(run_id: str):
+        run_messages = get_run_messages(
+            agent,
+            run_response=RunOutput(run_id=run_id, session_id=session.session_id),
+            run_context=RunContext(run_id=run_id, session_id=session.session_id),
+            input="What time is it?",
+            session=session,
+        )
+        api_messages, system_prompt = format_messages(run_messages.messages)
+        return api_messages, system_prompt, claude._prepare_request_kwargs(system_prompt)["system"]
+
+    first_messages, first_system_prompt, first_cached_system = build_request("run-1")
+    time.sleep(0.01)
+    second_messages, second_system_prompt, second_cached_system = build_request("run-2")
+
+    assert first_system_prompt == second_system_prompt
+    assert first_cached_system == second_cached_system
+    assert first_cached_system[0]["cache_control"] == {"type": "ephemeral"}
+    assert "The current time is" not in first_system_prompt
+    assert "The current time is" in str(first_messages)
+    assert "The current time is" in str(second_messages)
 
 
 # --- Per-block TTL tests ---
