@@ -1,7 +1,7 @@
 import json
 from os import getenv, path
 from pathlib import Path
-from typing import Any, Dict, List, Literal, Optional, Union
+from typing import Any, Dict, List, Literal, Optional, Union, get_args
 from uuid import uuid4
 
 import httpx
@@ -23,6 +23,7 @@ SmallestModel = Literal[
     "lightning_v3.1",  # 12 languages, supports cloned voices
     "lightning_v3.1_pro",  # premium voice pool, 29 languages
 ]
+SMALLEST_MODELS = get_args(SmallestModel)
 
 SmallestOutputFormat = Literal["wav", "mp3", "pcm", "ulaw", "alaw"]
 
@@ -55,6 +56,9 @@ class SmallestTools(Toolkit):
         self.api_key = api_key or getenv("SMALLEST_API_KEY")
         if not self.api_key:
             log_error("SMALLEST_API_KEY not set. Please set the SMALLEST_API_KEY environment variable.")
+
+        if model not in SMALLEST_MODELS:
+            raise ValueError(f"Invalid model '{model}'. Valid options are: {', '.join(SMALLEST_MODELS)}")
 
         self.voice_id = voice_id
         self.model = model
@@ -100,7 +104,12 @@ class SmallestTools(Toolkit):
 
             voices_data = response.json()
             if isinstance(voices_data, dict):
-                voices = voices_data.get("voices") or voices_data.get("data") or voices_data
+                if "voices" in voices_data:
+                    voices = voices_data["voices"]
+                elif "data" in voices_data:
+                    voices = voices_data["data"]
+                else:
+                    voices = voices_data
             else:
                 voices = voices_data
 
@@ -181,6 +190,8 @@ class SmallestTools(Toolkit):
                 id=str(uuid4()),
                 content=audio_data,
                 mime_type=mime_type,
+                format=self.output_format,
+                sample_rate=self.sample_rate,
             )
 
             return ToolResult(

@@ -3,6 +3,7 @@
 import json
 from unittest.mock import MagicMock, patch
 
+import httpx
 import pytest
 
 from agno.agent import Agent
@@ -65,6 +66,12 @@ def test_init_override_defaults():
     assert tools.output_format == "mp3"
 
 
+def test_init_invalid_model_raises():
+    """Test that an invalid model name raises a clear error instead of failing later."""
+    with pytest.raises(ValueError, match="Invalid model"):
+        SmallestTools(api_key="test_key", model="lightning")
+
+
 def test_feature_registration(smallest_tools):
     """Test that the expected tools are registered."""
     assert "get_voices" in smallest_tools.functions
@@ -101,6 +108,7 @@ def test_text_to_speech_success(smallest_tools, mock_agent):
     assert kwargs["json"]["voice_id"] == "magnus"
     assert kwargs["json"]["model"] == "lightning_v3.1"
     assert kwargs["json"]["sample_rate"] == 24000
+    assert kwargs["json"]["speed"] == 1.0
     assert kwargs["json"]["output_format"] == "wav"
     assert kwargs["headers"]["Authorization"] == "Bearer test_key"
     assert kwargs["headers"]["X-Source"] == "agno"
@@ -168,9 +176,28 @@ def test_text_to_speech_saves_to_target_directory(mock_agent, tmp_path):
     assert saved_files[0].read_bytes() == b"audio data"
 
 
+def test_text_to_speech_saves_multiple_times_without_overwriting(mock_agent, tmp_path):
+    """Test that repeated saves get unique filenames instead of overwriting each other."""
+    target_dir = tmp_path / "audio"
+    tools = SmallestTools(api_key="test_key", target_directory=str(target_dir))
+    mock_response = MagicMock()
+    mock_response.content = b"audio data"
+    mock_response.raise_for_status.return_value = None
+
+    with patch("agno.tools.smallest.httpx.post", return_value=mock_response):
+        tools.text_to_speech(mock_agent, "Hello world")
+        tools.text_to_speech(mock_agent, "Hello again")
+
+    saved_files = list(target_dir.glob("*.wav"))
+    assert len(saved_files) == 2
+
+
 def test_text_to_speech_error(smallest_tools, mock_agent):
-    """Test text-to-speech error handling."""
-    with patch("agno.tools.smallest.httpx.post", side_effect=Exception("API error")):
+    """Test text-to-speech error handling against a real HTTP error response."""
+    request = httpx.Request("POST", SMALLEST_TTS_URL)
+    error_response = httpx.Response(401, json={"error": "unauthorized"}, request=request)
+
+    with patch("agno.tools.smallest.httpx.post", return_value=error_response):
         result = smallest_tools.text_to_speech(mock_agent, "Hello world")
 
     assert isinstance(result, ToolResult)
@@ -235,15 +262,19 @@ def test_get_voices_pro_model_uses_pro_catalog():
     mock_response.json.return_value = {"voices": []}
 
     with patch("agno.tools.smallest.httpx.get", return_value=mock_response) as mock_get:
-        tools.get_voices()
+        result = tools.get_voices()
 
     args, _ = mock_get.call_args
     assert args[0] == SMALLEST_VOICES_URLS["lightning_v3.1_pro"]
+    assert json.loads(result) == []
 
 
 def test_get_voices_error(smallest_tools):
-    """Test voice listing error handling."""
-    with patch("agno.tools.smallest.httpx.get", side_effect=Exception("API error")):
+    """Test voice listing error handling against a real HTTP error response."""
+    request = httpx.Request("GET", SMALLEST_VOICES_URLS["lightning_v3.1"])
+    error_response = httpx.Response(400, json={"error": "bad request"}, request=request)
+
+    with patch("agno.tools.smallest.httpx.get", return_value=error_response):
         result = smallest_tools.get_voices()
 
     assert result.startswith("Error")
