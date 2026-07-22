@@ -1,46 +1,62 @@
-# SubAgent
+# Subagents
 
-Let an agent spin up subagents (copies of itself) to get tasks done in parallel.
+Let an agent spin up subagents (restricted copies of itself) to get tasks done in
+parallel.
 
-The toolkit exposes one tool, `spawn_agent(task)`: it runs the task on a subagent and
-returns the result. The main agent parallelizes by calling `spawn_agent` multiple times
-in the same response.
+Set `Agent(enable_subagents=True)` for the defaults, or attach a `SubagentsConfig` via
+`Agent(subagents_config=...)` to control the options. The agent then gets one tool,
+`spawn_agent(task, model=None, tools=None)`: it runs the task on a subagent and
+returns the result. The main agent parallelizes by calling `spawn_agent` multiple
+times in the same response.
 
-Subagents inherit the main agent's **model**, **tools** and **db** by default. Any of
-these can be overridden in the `SubAgent` constructor. Subagents cannot spawn subagents
-of their own.
+The model controls each spawn from the allowed options declared on the config:
 
-Each `spawn_agent` call runs in its own `<parent id>-subagent-task-<uuid>` session with
-`user_id` set to the main agent's id, so subagent runs show up as separate live
-sessions in the db / AgentOS UI.
+- **model** — named model options (`models={"fast": ..., "deep": ...}`); the model
+  picks the option per task, the first entry is the default. A value can also be a
+  `(Model, "when to use it")` tuple - the description is shown next to the option
+  name in the spawn_agent tool description. A single model
+  (`model=OpenAIResponses(id="gpt-5.6-luna")`) runs every subagent on it. Omitting
+  both inherits the main agent's model.
+- **tools** — the allowed tools (defaults to the main agent's tools); the model may
+  restrict a spawn to a subset by name (a pure research spawn only needs websearch).
 
-When a db is set, subagent runs execute as detached background runs on the server —
-the same pipeline as the AgentOS "Run in background" toggle — so a page refresh never
-kills them. The main agent's run is controlled by the toggle itself: turn it on so
-the orchestrator also survives refreshes and can collect the subagent results.
-
-Subagent events are also streamed back into the main agent's run tagged with
-`parent_run_id`, so each `spawn_agent` call renders as nested sub-agent activity inside
-the main chat in the AgentOS UI (the same treatment as team member delegation and
-context-provider sub-agents) — in addition to the separate per-task session.
+Subagents run **in-process inside the parent's run and session**, the same way team
+members run inside a team's session. Their events stream nested into the parent's chat
+tagged with `parent_run_id` (the same rendering as team member delegation and
+context-provider sub-agents), and the tool result is the subagent's answer. Subagent
+runs are **ephemeral**: they are never written to the database, and subagents cannot
+spawn subagents of their own.
 
 ## Cookbooks
 
 | File | Description |
 |------|-------------|
-| `subagents_os.py` | AgentOS app: GPT-5.6 Terra research orchestrator with GPT-5.6 Luna subagents |
-| `coding_agent_os.py` | AgentOS coding orchestrator: GPT-5.6 Terra plans and integrates, GPT-5.6 Luna subagents build frontend/backend/database/scripts in parallel in a shared `tmp/projects` workspace |
+| `subagents_enabled.py` | The one-liner: `Agent(enable_subagents=True)` - default config, subagents inherit the agent's model and tools |
+| `subagents_defaults.py` | Minimal config: `SubagentsConfig()` with no options - same defaults, ready to grow options |
+| `subagents_single_model.py` | Single model: `SubagentsConfig(model=OpenAIResponses(id="gpt-5.6-luna"))` - the orchestrator thinks on GPT-5.6 Terra, every subagent runs on Luna |
+| `subagents_os.py` | AgentOS app: GPT-5.6 Terra research orchestrator picking "fast" (Luna) or "deep" (Terra) subagents per topic |
+| `coding_agent_os.py` | AgentOS coding orchestrator with an explicit allowed toolset: subagents get websearch + website + coding tools, while artifact generation and workspace move/delete stay with the orchestrator |
+| `subagents_combined_os.py` | One AgentOS app serving all four configuration styles side by side |
 
 ## Quick Start
 
 ```python
 from agno.agent import Agent
 from agno.models.openai import OpenAIResponses
-from agno.tools.subagents import SubAgent
+from agno.subagent import SubagentsConfig
 
+# The one-liner: subagents inherit this agent's model and tools
+agent = Agent(model=OpenAIResponses(id="gpt-5.6-terra"), enable_subagents=True)
+
+# Full control: named model options and allowed tools
 agent = Agent(
     model=OpenAIResponses(id="gpt-5.6-terra"),
-    tools=[SubAgent(model=OpenAIResponses(id="gpt-5.6-luna"))],
+    subagents_config=SubagentsConfig(
+        models={
+            "fast": OpenAIResponses(id="gpt-5.6-luna"),
+            "deep": OpenAIResponses(id="gpt-5.6-terra"),
+        }
+    ),
 )
 ```
 
