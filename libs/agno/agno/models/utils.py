@@ -36,6 +36,7 @@ _PROVIDERS: Dict[str, Tuple[str, str, str, str]] = {
     "ibm": ("agno.models.ibm", "WatsonX", "WatsonX", "ibm"),
     "inception": ("agno.models.inception", "Inception", "Inception", "inceptionlabs"),
     "internlm": ("agno.models.internlm", "InternLM", "InternLM", "internlm"),
+    "kenari": ("agno.models.kenari", "Kenari", "Kenari", "kenari"),
     "langdb": ("agno.models.langdb", "LangDB", "LangDB", "langdb"),
     "litellm": ("agno.models.litellm", "LiteLLM", "LiteLLM", "litellm"),
     "litellm-openai": ("agno.models.litellm", "LiteLLMOpenAI", "LiteLLMOpenAI", "litellm"),
