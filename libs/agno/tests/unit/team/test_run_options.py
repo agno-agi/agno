@@ -237,18 +237,76 @@ class TestMetadataMerge:
         opts = resolve_run_options(team)
         assert opts.metadata == {"team": "value"}
 
-    def test_merge_team_takes_precedence(self):
-        team = _make_team(metadata={"shared": "team_wins", "team_only": "t"})
+    def test_merge_callsite_takes_precedence(self):
+        # Metadata resolves like dependencies: call-site keys win on conflict.
+        team = _make_team(metadata={"shared": "team_value", "team_only": "t"})
         opts = resolve_run_options(team, metadata={"shared": "run_value", "run_only": "r"})
-        assert opts.metadata["shared"] == "team_wins"
+        assert opts.metadata["shared"] == "run_value"
         assert opts.metadata["team_only"] == "t"
         assert opts.metadata["run_only"] == "r"
 
+    def test_only_session(self):
+        team = _make_team()
+        opts = resolve_run_options(team, session_metadata={"session": "value"})
+        assert opts.metadata == {"session": "value"}
+
+    def test_session_beats_team(self):
+        team = _make_team(metadata={"shared": "team_value", "team_only": "t"})
+        opts = resolve_run_options(team, session_metadata={"shared": "session_value", "session_only": "s"})
+        assert opts.metadata["shared"] == "session_value"
+        assert opts.metadata["team_only"] == "t"
+        assert opts.metadata["session_only"] == "s"
+
+    def test_callsite_beats_session(self):
+        team = _make_team()
+        opts = resolve_run_options(
+            team,
+            metadata={"shared": "run_value", "run_only": "r"},
+            session_metadata={"shared": "session_value", "session_only": "s"},
+        )
+        assert opts.metadata["shared"] == "run_value"
+        assert opts.metadata["session_only"] == "s"
+        assert opts.metadata["run_only"] == "r"
+
+    def test_three_layer_merge_non_conflicting_keys(self):
+        team = _make_team(metadata={"team_only": "t", "shared": "team_value"})
+        opts = resolve_run_options(
+            team,
+            metadata={"run_only": "r", "shared": "run_value"},
+            session_metadata={"session_only": "s"},
+        )
+        assert opts.metadata == {
+            "team_only": "t",
+            "session_only": "s",
+            "run_only": "r",
+            "shared": "run_value",
+        }
+
     def test_merge_does_not_mutate_callsite(self):
-        team = _make_team(metadata={"a": 1})
-        callsite_meta = {"b": 2}
+        # Includes a nested dict: the recursive in-place merge must never write
+        # other layers' values into the caller's nested dicts.
+        team = _make_team(metadata={"a": 1, "nested": {"team": True}})
+        callsite_meta = {"b": 2, "nested": {"call": True}}
         resolve_run_options(team, metadata=callsite_meta)
-        assert callsite_meta == {"b": 2}
+        assert callsite_meta == {"b": 2, "nested": {"call": True}}
+
+    def test_merge_does_not_mutate_team_nested_dicts(self):
+        # merge_dictionaries recurses in place: a shallow copy of team.metadata
+        # would let call-site values contaminate the team's nested dicts.
+        team = _make_team(metadata={"policy": {"read_only": True}, "flat": "team_value"})
+        opts = resolve_run_options(
+            team,
+            metadata={"policy": {"read_only": False}, "flat": "run_value"},
+            session_metadata={"policy": {"source": "session"}},
+        )
+        assert opts.metadata["policy"] == {"read_only": False, "source": "session"}
+        assert team.metadata == {"policy": {"read_only": True}, "flat": "team_value"}
+
+    def test_resolved_metadata_mutation_does_not_reach_team(self):
+        team = _make_team(metadata={"policy": {"read_only": True}})
+        opts = resolve_run_options(team)
+        opts.metadata["policy"]["read_only"] = False  # type: ignore[index]
+        assert team.metadata == {"policy": {"read_only": True}}
 
 
 # ---------------------------------------------------------------------------
@@ -451,3 +509,52 @@ class TestParityWithAgent:
         agent_types = {f.name: f.type for f in dataclasses.fields(AgentOpts)}
         team_types = {f.name: f.type for f in dataclasses.fields(TeamOpts)}
         assert agent_types == team_types
+
+
+# ---------------------------------------------------------------------------
+# Singleton isolation: session reads never mutate the shared Team instance
+# ---------------------------------------------------------------------------
+
+
+class TestTeamSingletonIsolation:
+    def _seed_session(self, db, session_id: str, team_id: str, metadata) -> None:
+        import time
+
+        from agno.session import TeamSession
+
+        db.upsert_session(
+            TeamSession(session_id=session_id, team_id=team_id, metadata=metadata, created_at=int(time.time()))
+        )
+
+    def test_team_metadata_not_aliased_to_session(self):
+        from agno.db.in_memory import InMemoryDb
+        from agno.team._storage import _read_or_create_session, _update_metadata
+
+        db = InMemoryDb()
+        self._seed_session(db, "session-a", "team-1", {"k": "v"})
+        team = _make_team(id="team-1", db=db, metadata={"env": "test"})
+        session = _read_or_create_session(team, session_id="session-a")
+        _update_metadata(team, session=session)
+        assert team.metadata is not session.metadata
+        assert team.metadata == {"env": "test"}
+        # Session-side behavior is unchanged: team metadata is merged onto the session
+        assert session.metadata == {"k": "v", "env": "test"}
+
+    def test_new_session_seeding_not_aliased(self):
+        from agno.db.in_memory import InMemoryDb
+        from agno.team._storage import _read_or_create_session
+
+        team = _make_team(id="team-1", db=InMemoryDb(), metadata={"env": "test"})
+        session = _read_or_create_session(team, session_id="fresh")
+        assert session.metadata == {"env": "test"}
+        assert session.metadata is not team.metadata
+
+    @pytest.mark.asyncio
+    async def test_new_session_seeding_not_aliased_async(self):
+        from agno.db.in_memory import InMemoryDb
+        from agno.team._storage import _aread_or_create_session
+
+        team = _make_team(id="team-1", db=InMemoryDb(), metadata={"env": "test"})
+        session = await _aread_or_create_session(team, session_id="fresh")
+        assert session.metadata == {"env": "test"}
+        assert session.metadata is not team.metadata
