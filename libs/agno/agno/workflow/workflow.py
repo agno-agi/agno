@@ -1962,17 +1962,17 @@ class Workflow:
             log_debug(f"Failed to mark run as completed in buffer: {buffer_err}")
 
     def _update_metadata(self, session: WorkflowSession):
-        """Update the extra_data in the session"""
+        """Merge the workflow's metadata into the session's metadata.
+
+        Only the session is updated; the shared Workflow instance is never mutated.
+        """
         from agno.utils.merge_dict import merge_dictionaries
 
-        # Read metadata from the database
         if session.metadata is not None:
             # If metadata is set in the workflow, update the database metadata with the workflow's metadata
             if self.metadata is not None:
-                # Updates workflow's session metadata in place
+                # Updates the session metadata in place
                 merge_dictionaries(session.metadata, self.metadata)
-            # Update the current metadata with the metadata from the database which is updated in place
-            self.metadata = session.metadata
 
     def _load_session_state(self, session: WorkflowSession, session_state: Dict[str, Any]):
         """Load and return the stored session_state from the database, optionally merging it with the given one"""
