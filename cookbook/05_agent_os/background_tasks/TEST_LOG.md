@@ -57,3 +57,13 @@
 **Description:** Simple example creating a session and using the AgentOS with a SessionApp to expose it.
 
 ---
+
+### redis_event_stream.py
+
+**Status:** NOT RUN (compile-checked)
+**Tier:** untagged
+**Description:** AgentOS configured with RedisEventStream + RedisRunCancellationManager + RedisDb sharing one Redis, enabling cross-replica background streaming resume (start a run on one replica, hit /resume on another). Serve-style example; requires a running Redis and multiple replicas to demonstrate. The underlying event stream behavior is covered by unit tests (libs/agno/tests/unit/os/test_event_streams_redis.py) and the library-level cookbook cookbook/02_agents/14_advanced/redis_event_stream_resume.py.
+**Result:** Compile check passed; full run requires Redis and a multi-replica setup.
+
+---
+

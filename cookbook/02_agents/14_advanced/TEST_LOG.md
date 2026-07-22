@@ -194,6 +194,15 @@
 
 ---
 
+### redis_event_stream_resume.py
+
+**Status:** PASS (verified via fakeredis; live Redis pending)
+**Tier:** untagged
+**Description:** Demonstrates cross-process streaming resume with RedisEventStream: a producer starts a background streaming run writing events to Redis Streams; a separate observer (own RedisEventStream instance and client, sharing only Redis) replays missed events and tails live ones to completion. Verified with real OpenAI calls and fakeredis substituted for the Redis client (shared FakeServer = two clients of one Redis) - the exact cookbook code path minus the server: observer replayed missed events, tailed to terminal state, saw COMPLETED and the full output. Rerun against real Redis (./cookbook/scripts/run_redis.sh) when available.
+**Result:** Code-path verification PASS end to end; live Redis run pending (no local Redis during testing).
+
+---
+
 ### background_streaming_resume.py
 
 **Status:** PASS
