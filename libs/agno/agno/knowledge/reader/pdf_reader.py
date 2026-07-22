@@ -96,7 +96,7 @@ async def _async_ocr_reader(page: Any) -> str:
 
 def _clean_page_numbers(
     page_content_list: List[str],
-    extra_content: List[str] = [],
+    extra_content: Optional[List[str]] = None,
     page_start_numbering_format: str = PAGE_START_NUMBERING_FORMAT_DEFAULT,
     page_end_numbering_format: str = PAGE_END_NUMBERING_FORMAT_DEFAULT,
 ) -> Tuple[List[str], Optional[int]]:

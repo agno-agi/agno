@@ -104,7 +104,7 @@ class MCPToolbox(MCPTools, metaclass=MCPToolsMeta):
 
     def _handle_auth_params(
         self,
-        auth_token_getters: dict[str, Callable[[], str]] = {},
+        auth_token_getters: Optional[dict[str, Callable[[], str]]] = None,
         auth_tokens: Optional[dict[str, Callable[[], str]]] = None,
         auth_headers: Optional[dict[str, Callable[[], str]]] = None,
     ):
@@ -139,10 +139,10 @@ class MCPToolbox(MCPTools, metaclass=MCPToolsMeta):
     async def load_tool(
         self,
         tool_name: str,
-        auth_token_getters: dict[str, Callable[[], str]] = {},
+        auth_token_getters: Optional[dict[str, Callable[[], str]]] = None,
         auth_tokens: Optional[dict[str, Callable[[], str]]] = None,
         auth_headers: Optional[dict[str, Callable[[], str]]] = None,
-        bound_params: dict[str, Union[Any, Callable[[], Any]]] = {},
+        bound_params: Optional[dict[str, Union[Any, Callable[[], Any]]]] = None,
     ) -> Function:
         """Loads the tool with the given tool name from the Toolbox service.
 
@@ -163,12 +163,12 @@ class MCPToolbox(MCPTools, metaclass=MCPToolsMeta):
             auth_token_getters=auth_token_getters,
             auth_tokens=auth_tokens,
             auth_headers=auth_headers,
-        )
+        ) or {}
 
         core_sync_tool = await self.__core_client.load_tool(
             name=tool_name,
             auth_token_getters=auth_token_getters,
-            bound_params=bound_params,
+            bound_params=bound_params or {},
         )
         # Return the Function object from our MCP functions registry
         if core_sync_tool._name in self.functions:
@@ -179,10 +179,10 @@ class MCPToolbox(MCPTools, metaclass=MCPToolsMeta):
     async def load_toolset(
         self,
         toolset_name: Optional[str] = None,
-        auth_token_getters: dict[str, Callable[[], str]] = {},
+        auth_token_getters: Optional[dict[str, Callable[[], str]]] = None,
         auth_tokens: Optional[dict[str, Callable[[], str]]] = None,
         auth_headers: Optional[dict[str, Callable[[], str]]] = None,
-        bound_params: dict[str, Union[Any, Callable[[], Any]]] = {},
+        bound_params: Optional[dict[str, Union[Any, Callable[[], Any]]]] = None,
         strict: bool = False,
     ) -> List[Function]:
         """Loads tools from the configured toolset.
@@ -206,12 +206,12 @@ class MCPToolbox(MCPTools, metaclass=MCPToolsMeta):
             auth_token_getters=auth_token_getters,
             auth_tokens=auth_tokens,
             auth_headers=auth_headers,
-        )
+        ) or {}
 
         core_sync_tools = await self.__core_client.load_toolset(
             name=toolset_name,
             auth_token_getters=auth_token_getters,
-            bound_params=bound_params,
+            bound_params=bound_params or {},
             strict=strict,
         )
 
@@ -226,16 +226,16 @@ class MCPToolbox(MCPTools, metaclass=MCPToolsMeta):
     async def load_multiple_toolsets(
         self,
         toolset_names: List[str],
-        auth_token_getters: dict[str, Callable[[], str]] = {},
-        bound_params: dict[str, Union[Any, Callable[[], Any]]] = {},
+        auth_token_getters: Optional[dict[str, Callable[[], str]]] = None,
+        bound_params: Optional[dict[str, Union[Any, Callable[[], Any]]]] = None,
         strict: bool = False,
     ) -> List[Function]:
         """Load tools from multiple toolsets.
 
         Args:
             toolset_names (List[str]): A list of toolset names to load.
-            auth_token_getters (dict[str, Callable[[], str]], optional): A mapping of authentication source names to functions that retrieve ID tokens. Defaults to {}.
-            bound_params (dict[str, Union[Any, Callable[[], Any]]], optional): A mapping of parameter names to their bound values. Defaults to {}.
+            auth_token_getters (Optional[dict[str, Callable[[], str]]], optional): A mapping of authentication source names to functions that retrieve ID tokens. Defaults to None.
+            bound_params (Optional[dict[str, Union[Any, Callable[[], Any]]]], optional): A mapping of parameter names to their bound values. Defaults to None.
             strict (bool, optional): If True, raises an error if *any* loaded tool instance fails to utilize all of the given parameters or auth tokens. Defaults to False.
 
         Returns:
