@@ -69,6 +69,7 @@ class MCPContextProvider(ContextProvider):
         base_instructions: str | None = None,
         mode: ContextMode = ContextMode.default,
         model: Model | None = None,
+        query_timeout: float | None = None,
         stream_sub_agent_events: bool = True,
     ) -> None:
         resolved_id = id or f"mcp_{_sanitize_id(server_name)}"
@@ -77,6 +78,7 @@ class MCPContextProvider(ContextProvider):
             name=name or server_name,
             mode=mode,
             model=model,
+            query_timeout=query_timeout,
             stream_sub_agent_events=stream_sub_agent_events,
         )
         self.server_name = server_name

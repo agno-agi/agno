@@ -1106,3 +1106,45 @@ async def test_mcp_aclose_noop_when_never_connected():
     p = MCPContextProvider("srv", transport="streamable-http", url="https://example.com/mcp")
     # Must not raise even though asetup was never called.
     await p.aclose()
+
+
+# ---------------------------------------------------------------------------
+# query_timeout plumbing — every concrete provider forwards the knob to the
+# base class, where the query-tool deadline reads it.
+# ---------------------------------------------------------------------------
+
+
+def test_query_timeout_reaches_base_from_every_provider(tmp_path: Path, monkeypatch):
+    monkeypatch.delenv("GOOGLE_SERVICE_ACCOUNT_FILE", raising=False)
+    engine = create_engine("sqlite:///:memory:")
+    providers = [
+        FilesystemContextProvider(root=tmp_path, query_timeout=2.5),
+        WorkspaceContextProvider(root=tmp_path, query_timeout=2.5),
+        WebContextProvider(backend=ExaBackend(api_key="x"), query_timeout=2.5),
+        DatabaseContextProvider(sql_engine=engine, readonly_engine=engine, query_timeout=2.5),
+        SlackContextProvider(token="xoxb-x", query_timeout=2.5),
+        GmailContextProvider(query_timeout=2.5),
+        GoogleCalendarContextProvider(query_timeout=2.5),
+        GoogleDriveContextProvider(query_timeout=2.5),
+        MCPContextProvider("srv", transport="streamable-http", url="https://example.com/mcp", query_timeout=2.5),
+    ]
+    for p in providers:
+        assert p.query_timeout == 2.5, type(p).__name__
+
+
+def test_query_timeout_defaults_to_none_per_provider(tmp_path: Path, monkeypatch):
+    monkeypatch.delenv("GOOGLE_SERVICE_ACCOUNT_FILE", raising=False)
+    engine = create_engine("sqlite:///:memory:")
+    providers = [
+        FilesystemContextProvider(root=tmp_path),
+        WorkspaceContextProvider(root=tmp_path),
+        WebContextProvider(backend=ExaBackend(api_key="x")),
+        DatabaseContextProvider(sql_engine=engine, readonly_engine=engine),
+        SlackContextProvider(token="xoxb-x"),
+        GmailContextProvider(),
+        GoogleCalendarContextProvider(),
+        GoogleDriveContextProvider(),
+        MCPContextProvider("srv", transport="streamable-http", url="https://example.com/mcp"),
+    ]
+    for p in providers:
+        assert p.query_timeout is None, type(p).__name__
