@@ -240,6 +240,12 @@ class GitBackend(WikiBackend):
     ``git_ops.run`` call so token leakage from git's own stderr is
     blocked at the source.
 
+    Requires git >= 2.31: credential injection rides on the
+    ``GIT_CONFIG_COUNT``/``GIT_CONFIG_KEY_n``/``GIT_CONFIG_VALUE_n``
+    environment entries, which older git ignores — remote operations
+    then fail with ``GitError`` ("could not read Username ... terminal
+    prompts disabled").
+
     ``file://`` remotes are accepted for local mirrors and tests. Git
     does not consult credential helpers for local transports, so the
     token is unused there.

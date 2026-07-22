@@ -918,3 +918,70 @@ def test_enforce_excludes_async_read_blocked():
         Path(tmp_dir, ".env").write_text("SECRET=1")
         ws = Workspace(tmp_dir, enforce_excludes=True)
         assert asyncio.run(ws.aread_file(".env")) == EXCLUDED_ERROR
+
+
+def test_enforce_excludes_blocks_case_variants():
+    """Enforcement casefolds: case variants of excluded names are blocked on
+    every platform, so case-insensitive filesystems (macOS, Windows) cannot be
+    used to reach an excluded file. The guard fires before the existence check,
+    so these assertions hold whether or not the case variant resolves."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        base = Path(tmp_dir)
+        (base / "plain.txt").write_text("data")
+        patterns = list(DEFAULT_EXCLUDE_PATTERNS) + ["*_token.json"]
+        ws = Workspace(tmp_dir, exclude_patterns=patterns, enforce_excludes=True)
+
+        assert ws.read_file(".ENV") == EXCLUDED_ERROR
+        assert ws.write_file(".Env", "clobber") == EXCLUDED_ERROR
+        assert ws.write_file("App_Token.JSON", "{}") == EXCLUDED_ERROR
+        assert ws.edit_file(".eNv", "SECRET", "LEAKED") == EXCLUDED_ERROR
+        assert ws.move_file(".ENV", "innocuous.txt") == EXCLUDED_ERROR
+        assert ws.move_file("plain.txt", ".ENV") == EXCLUDED_ERROR
+        assert ws.delete_file(".ENV") == EXCLUDED_ERROR
+
+        # Blocked ops left the workspace untouched.
+        assert (base / "plain.txt").read_text() == "data"
+
+
+def test_enforce_excludes_blocks_unicode_normalization_variants():
+    """NFD spellings of excluded names are blocked against NFC patterns."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        # Escapes, not literals, so source-file normalization cannot collapse the forms.
+        nfc_pattern = "caf\u00e9*"
+        nfd_name = "cafe\u0301.txt"
+        ws = Workspace(tmp_dir, exclude_patterns=[nfc_pattern], enforce_excludes=True)
+
+        assert ws.read_file(nfd_name) == EXCLUDED_ERROR
+        assert ws.write_file(nfd_name, "x") == EXCLUDED_ERROR
+        assert ws.delete_file(nfd_name) == EXCLUDED_ERROR
+
+
+def test_enforce_excludes_off_case_variants_not_blocked():
+    """Control: with the flag off, case variants never hit the exclusion error.
+    The result depends on filesystem case sensitivity (contents or not-found),
+    but it is never the enforcement guard."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        (Path(tmp_dir) / ".env").write_text("SECRET=1")
+        ws = Workspace(tmp_dir)
+
+        assert ws.read_file(".ENV") != EXCLUDED_ERROR
+        assert ws.write_file(".Env", "SECRET=2") != EXCLUDED_ERROR
+        assert ws.delete_file(".env") != EXCLUDED_ERROR
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="fnmatch normcases pattern matching on Windows")
+def test_list_files_matching_stays_case_sensitive():
+    """The casefold guard is enforcement-only: list_files keeps case-sensitive
+    matching, so a case-variant directory name is not pruned from listings."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        base = Path(tmp_dir)
+        (base / "keep.txt").write_text("keep")
+        (base / ".VENV").mkdir()
+        (base / "node_modules").mkdir()
+        ws = Workspace(tmp_dir, enforce_excludes=True)
+
+        result = json.loads(ws.list_files())
+        paths = [e["path"] for e in result["files"]]
+        assert "keep.txt" in paths
+        assert ".VENV" in paths
+        assert "node_modules" not in paths

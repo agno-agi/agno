@@ -636,6 +636,44 @@ class TestRenderArgValueInerting:
         assert ">" not in body
         assert "\n" not in body
 
+    def test_card_body_inerts_untrusted_arg_keys(self):
+        # Keys sit outside the code span, where <...> is an active Slack control sequence
+        card = build_pause_message("A1", [_make_requirement(tool_args={"<!channel>": "v"})])[0]
+        body = card.body.text
+        assert "<" not in body
+        assert ">" not in body
+        assert "‹" in body
+        assert "›" in body
+
+    def test_card_body_key_backticks_and_newlines_neutralized(self):
+        card = build_pause_message("A1", [_make_requirement(tool_args={"a`b\nc\rd": "v"})])[0]
+        body = card.body.text
+        # Only the two wrapping code-span backticks survive
+        assert body.count("`") == 2
+        assert "ˋ" in body
+        assert "\n" not in body
+        assert "\r" not in body
+
+    def test_response_blocks_inerts_submitted_labels(self):
+        from agno.os.interfaces.slack.builders import response_blocks
+
+        original = [
+            {
+                "type": "input",
+                "block_id": "row:r1:user_input:field1",
+                "label": {"type": "plain_text", "text": "<!here> `label`\nx"},
+                "element": {"type": "plain_text_input", "action_id": "input_field:field1"},
+            }
+        ]
+        state_values = {"row:r1:user_input:field1": {"input_field:field1": {"type": "plain_text_input", "value": "ok"}}}
+        result = response_blocks(original, state_values, [])
+        body = result[-1]["body"]["text"]
+        assert "<" not in body
+        assert ">" not in body
+        # Only the two wrapping code-span backticks survive
+        assert body.count("`") == 2
+        assert "\n" not in body
+
     def test_response_blocks_inerts_submitted_values(self):
         from agno.os.interfaces.slack.builders import response_blocks
 

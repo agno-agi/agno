@@ -181,6 +181,62 @@ async def test_remote_git_calls_inject_env_and_bare_url(monkeypatch, tmp_path: P
     assert all(args[3] == "https://github.com/owner/repo.git" for args in set_url_calls)
 
 
+@pytest.mark.asyncio
+async def test_staged_commit_pull_and_push_inject_env_and_bare_origin(monkeypatch, tmp_path: Path):
+    # Companion to the test above: there `diff --cached --quiet` reports
+    # nothing staged, so only the idle-push branch runs. Here the diff
+    # check returns 1 (changes staged) so the commit -> rebase -> push
+    # sequence runs, and the staged-path pull/push must carry the
+    # credential env and address the bare `origin` remote.
+    import agno.context.wiki.backend as backend_module
+
+    b = GitBackend(
+        repo_url="https://github.com/owner/repo.git",
+        github_token=TOKEN,
+        local_path=tmp_path / "clone",
+    )
+
+    sha = "0123456789abcdef0123456789abcdef01234567"
+    stat = " notes.md | 2 ++\n 1 file changed, 2 insertions(+)\n"
+    calls: list[tuple[list[str], dict | None]] = []
+
+    async def _fake_run(args, *, cwd, scrubber=None, check=True, env=None, **kwargs):  # noqa: ANN001
+        args = list(args)
+        calls.append((args, env))
+        if args[:3] == ["diff", "--cached", "--quiet"]:
+            return GitResult(returncode=1, stdout="", stderr="")
+        if args[:3] == ["diff", "--cached", "--stat"]:
+            return GitResult(returncode=0, stdout=stat, stderr="")
+        if args[:2] == ["rev-parse", "HEAD"]:
+            return GitResult(returncode=0, stdout=sha + "\n", stderr="")
+        return GitResult(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(backend_module, "git_run", _fake_run)
+
+    summary = await b.commit_after_write(model=None)
+
+    assert summary is not None
+    assert summary.sha == sha
+    assert summary.files_changed == 1
+
+    # The token must never ride on argv.
+    for args, _ in calls:
+        assert all(TOKEN not in a for a in args)
+
+    pull_calls = [(args, env) for args, env in calls if args[0] == "pull"]
+    push_calls = [(args, env) for args, env in calls if args[0] == "push"]
+    assert [args for args, _ in pull_calls] == [["pull", "--rebase", "origin", "main"]]
+    assert [args for args, _ in push_calls] == [["push", "origin", "main"]]
+    for args, env in pull_calls + push_calls:
+        assert env is not None, f"remote op {args} missing credential env"
+        assert env["AGNO_GIT_TOKEN"] == TOKEN
+        assert env["GIT_CONFIG_COUNT"] == "3"
+        assert env["GIT_CONFIG_VALUE_1"] == _GIT_CREDENTIAL_HELPER
+
+    first_args = [args[0] for args, _ in calls]
+    assert first_args.index("commit") < first_args.index("pull") < first_args.index("push")
+
+
 # ---------------------------------------------------------------------------
 # real git against a local bare remote
 # ---------------------------------------------------------------------------
