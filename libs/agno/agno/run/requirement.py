@@ -36,16 +36,16 @@ class RunRequirement:
     member_run_id: Optional[str] = None
 
     # Pre-hook execution control
-    # When True (default), pre-hooks run before executing this confirmed tool
-    # Set to False to skip pre-hooks for simple confirmations that don't need guardrails
-    execute_pre_hooks: bool = True
+    # When False (default), pre-hooks are skipped on continue_run
+    # Set to True to explicitly run pre-hooks (e.g., for security-sensitive tools)
+    execute_pre_hooks: bool = False
 
     def __init__(
         self,
         tool_execution: ToolExecution,
         id: Optional[str] = None,
         created_at: Optional[datetime] = None,
-        execute_pre_hooks: bool = True,
+        execute_pre_hooks: bool = False,
     ):
         self.id = id or str(uuid4())
         self.tool_execution = tool_execution
@@ -270,7 +270,7 @@ class RunRequirement:
             tool_execution=tool_execution,
             id=data.get("id"),
             created_at=created_at,
-            execute_pre_hooks=data.get("execute_pre_hooks", True),
+            execute_pre_hooks=data.get("execute_pre_hooks", False),
         )
 
         # Set optional fields

@@ -3624,14 +3624,11 @@ def _continue_run(
 
     agent.model = cast(Model, agent.model)
 
-    # 1. Execute pre-hooks BEFORE any side effects (tool execution)
-    # Skip only if ALL requirements explicitly opt out (execute_pre_hooks=False)
+    # 1. Execute pre-hooks only if ANY requirement explicitly opts in (execute_pre_hooks=True)
     requirements = run_response.requirements or []
-    should_skip_pre_hooks = requirements and all(
-        getattr(req, "execute_pre_hooks", True) is False for req in requirements
-    )
+    should_run_pre_hooks = any(getattr(req, "execute_pre_hooks", False) for req in requirements)
     run_input = cast(RunInput, run_response.input)
-    if agent.pre_hooks is not None and not should_skip_pre_hooks:
+    if agent.pre_hooks is not None and should_run_pre_hooks:
         try:
             pre_hook_iterator = execute_pre_hooks(
                 agent,
@@ -3895,14 +3892,11 @@ def _continue_run_stream(
                         store_events=agent.store_events,
                     )
 
-                # 2. Execute pre-hooks BEFORE any side effects (tool execution)
-                # Skip only if ALL requirements explicitly opt out (execute_pre_hooks=False)
+                # 2. Execute pre-hooks only if ANY requirement explicitly opts in (execute_pre_hooks=True)
                 requirements = run_response.requirements or []
-                should_skip_pre_hooks = requirements and all(
-                    getattr(req, "execute_pre_hooks", True) is False for req in requirements
-                )
+                should_run_pre_hooks = any(getattr(req, "execute_pre_hooks", False) for req in requirements)
                 run_input = cast(RunInput, run_response.input)
-                if agent.pre_hooks is not None and not should_skip_pre_hooks:
+                if agent.pre_hooks is not None and should_run_pre_hooks:
                     pre_hook_iterator = execute_pre_hooks(
                         agent,
                         hooks=agent.pre_hooks,  # type: ignore
@@ -4788,14 +4782,11 @@ async def _acontinue_run(
                 # Register run for cancellation tracking
                 await aregister_run(run_response.run_id)  # type: ignore
 
-                # 7. Execute pre-hooks BEFORE any side effects (tool execution)
-                # Skip only if ALL requirements explicitly opt out (execute_pre_hooks=False)
+                # 7. Execute pre-hooks only if ANY requirement explicitly opts in (execute_pre_hooks=True)
                 requirements = run_response.requirements or []
-                should_skip_pre_hooks = requirements and all(
-                    getattr(req, "execute_pre_hooks", True) is False for req in requirements
-                )
+                should_run_pre_hooks = any(getattr(req, "execute_pre_hooks", False) for req in requirements)
                 run_input = cast(RunInput, run_response.input)
-                if agent.pre_hooks is not None and not should_skip_pre_hooks:
+                if agent.pre_hooks is not None and should_run_pre_hooks:
                     pre_hook_iterator = aexecute_pre_hooks(
                         agent,
                         hooks=agent.pre_hooks,  # type: ignore
@@ -5314,14 +5305,11 @@ async def _acontinue_run_stream(
                         store_events=agent.store_events,
                     )
 
-                # 7. Execute pre-hooks BEFORE any side effects (tool execution)
-                # Skip only if ALL requirements explicitly opt out (execute_pre_hooks=False)
+                # 7. Execute pre-hooks only if ANY requirement explicitly opts in (execute_pre_hooks=True)
                 requirements = run_response.requirements or []
-                should_skip_pre_hooks = requirements and all(
-                    getattr(req, "execute_pre_hooks", True) is False for req in requirements
-                )
+                should_run_pre_hooks = any(getattr(req, "execute_pre_hooks", False) for req in requirements)
                 run_input = cast(RunInput, run_response.input)
-                if agent.pre_hooks is not None and not should_skip_pre_hooks:
+                if agent.pre_hooks is not None and should_run_pre_hooks:
                     pre_hook_iterator = aexecute_pre_hooks(
                         agent,
                         hooks=agent.pre_hooks,  # type: ignore
