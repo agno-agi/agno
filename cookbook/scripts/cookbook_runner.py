@@ -97,7 +97,9 @@ def _first_exception_line(output: str) -> Optional[str]:
     in the report."""
     for line in reversed(output.splitlines()):
         stripped = line.strip()
-        if stripped and (("Error" in stripped and ":" in stripped) or stripped.startswith("assert")):
+        if stripped and (
+            ("Error" in stripped and ":" in stripped) or stripped.startswith("assert")
+        ):
             return stripped[:200]
     return None
 
@@ -151,7 +153,9 @@ def run_once(script: Path, python_bin: str, timeout: int) -> Result:
     )
 
 
-def run_with_retries(script: Path, python_bin: str, timeout: int, retries: int) -> Result:
+def run_with_retries(
+    script: Path, python_bin: str, timeout: int, retries: int
+) -> Result:
     result = run_once(script, python_bin, timeout)
     attempt = 1
     while not result.ok and attempt <= retries:
@@ -199,15 +203,33 @@ def render_summary(results: List[Result], root: Path) -> None:
 
 @app.command()
 def main(
-    directory: Path = typer.Argument(..., exists=True, file_okay=False, help="Folder of cookbooks to run."),
-    recursive: bool = typer.Option(False, "--recursive", "-r", help="Include subfolders."),
-    pattern: Optional[str] = typer.Option(None, "--pattern", help="Only run files matching a glob, e.g. basic.py"),
-    concurrency: int = typer.Option(1, "--concurrency", "-c", min=1, help="Scripts to run at once."),
-    timeout_seconds: int = typer.Option(1800, "--timeout-seconds", help="Per-script timeout. 0 disables."),
-    retries: int = typer.Option(0, "--retries", min=0, help="Retries for a failing script."),
-    python_bin: Optional[str] = typer.Option(None, "--python-bin", help="Defaults to .venvs/demo/bin/python."),
-    json_report: Optional[Path] = typer.Option(None, "--json-report", help="Write machine-readable results."),
-    list_only: bool = typer.Option(False, "--list", help="List what would run, then exit."),
+    directory: Path = typer.Argument(
+        ..., exists=True, file_okay=False, help="Folder of cookbooks to run."
+    ),
+    recursive: bool = typer.Option(
+        False, "--recursive", "-r", help="Include subfolders."
+    ),
+    pattern: Optional[str] = typer.Option(
+        None, "--pattern", help="Only run files matching a glob, e.g. basic.py"
+    ),
+    concurrency: int = typer.Option(
+        1, "--concurrency", "-c", min=1, help="Scripts to run at once."
+    ),
+    timeout_seconds: int = typer.Option(
+        1800, "--timeout-seconds", help="Per-script timeout. 0 disables."
+    ),
+    retries: int = typer.Option(
+        0, "--retries", min=0, help="Retries for a failing script."
+    ),
+    python_bin: Optional[str] = typer.Option(
+        None, "--python-bin", help="Defaults to .venvs/demo/bin/python."
+    ),
+    json_report: Optional[Path] = typer.Option(
+        None, "--json-report", help="Write machine-readable results."
+    ),
+    list_only: bool = typer.Option(
+        False, "--list", help="List what would run, then exit."
+    ),
 ) -> None:
     scripts = discover(directory, recursive, pattern)
     if not scripts:
@@ -238,12 +260,16 @@ def main(
         if concurrency == 1:
             for script in scripts:
                 progress.update(task, description=script.name)
-                results.append(run_with_retries(script, interpreter, timeout_seconds, retries))
+                results.append(
+                    run_with_retries(script, interpreter, timeout_seconds, retries)
+                )
                 progress.advance(task)
         else:
             with ThreadPoolExecutor(max_workers=concurrency) as pool:
                 futures = {
-                    pool.submit(run_with_retries, script, interpreter, timeout_seconds, retries): script
+                    pool.submit(
+                        run_with_retries, script, interpreter, timeout_seconds, retries
+                    ): script
                     for script in scripts
                 }
                 for future in as_completed(futures):
