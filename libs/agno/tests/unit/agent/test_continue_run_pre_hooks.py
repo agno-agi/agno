@@ -7,7 +7,6 @@ them — allowing HITL-resumed runs to bypass guardrail/authz hooks.
 
 import asyncio
 
-
 import agno.agent._messages as agent_messages
 import agno.agent._response as agent_response
 import agno.agent._storage as agent_storage
@@ -460,3 +459,83 @@ def test_continue_run_stream_emits_pre_hook_events(monkeypatch):
     event_names = [type(e).__name__ for e in events]
     assert any(name.startswith("PreHookStarted") for name in event_names), event_names
     assert any(name.startswith("PreHookCompleted") for name in event_names), event_names
+
+
+# ---------------------------------------------------------------------------
+# execute_pre_hooks flag on RunRequirement
+# ---------------------------------------------------------------------------
+
+
+def test_continue_run_skips_pre_hooks_when_requirement_opts_out(monkeypatch):
+    """When all requirements have execute_pre_hooks=False, pre-hooks should be skipped."""
+    from agno.models.response import ToolExecution
+    from agno.run.requirement import RunRequirement
+
+    calls = []
+
+    def pre_hook(run_input=None, session=None):
+        calls.append(1)
+
+    agent = Agent(name="opt-out-hook-agent", pre_hooks=[pre_hook])
+    _patch_sync_model(monkeypatch)
+    monkeypatch.setattr(agent_run, "cleanup_and_store", lambda *a, **k: None)
+    monkeypatch.setattr(agent_telemetry, "log_agent_telemetry", lambda *a, **k: None)
+
+    # Create a requirement with execute_pre_hooks=False
+    tool_exec = ToolExecution(tool_name="simple_confirm", tool_args={}, confirmed=True)
+    requirement = RunRequirement(tool_execution=tool_exec, execute_pre_hooks=False)
+
+    run_response = _make_paused_run()
+    run_response.requirements = [requirement]
+
+    result = agent_run._continue_run(
+        agent,
+        run_response=run_response,
+        run_messages=_make_run_messages(),
+        run_context=_make_run_context(),
+        session=_make_session(),
+        tools=[],
+        user_id="user-1",
+    )
+
+    assert result.status == RunStatus.completed
+    assert calls == [], "pre-hooks should be skipped when requirement opts out"
+
+
+def test_continue_run_runs_pre_hooks_when_any_requirement_wants_them(monkeypatch):
+    """When at least one requirement has execute_pre_hooks=True (default), run pre-hooks."""
+    from agno.models.response import ToolExecution
+    from agno.run.requirement import RunRequirement
+
+    calls = []
+
+    def pre_hook(run_input=None, session=None):
+        calls.append(1)
+
+    agent = Agent(name="mixed-hook-agent", pre_hooks=[pre_hook])
+    _patch_sync_model(monkeypatch)
+    monkeypatch.setattr(agent_run, "cleanup_and_store", lambda *a, **k: None)
+    monkeypatch.setattr(agent_telemetry, "log_agent_telemetry", lambda *a, **k: None)
+
+    # One requirement opts out, one uses default (True)
+    tool_exec1 = ToolExecution(tool_name="simple_confirm", tool_args={}, confirmed=True)
+    requirement1 = RunRequirement(tool_execution=tool_exec1, execute_pre_hooks=False)
+
+    tool_exec2 = ToolExecution(tool_name="sensitive_action", tool_args={}, confirmed=True)
+    requirement2 = RunRequirement(tool_execution=tool_exec2)  # default: execute_pre_hooks=True
+
+    run_response = _make_paused_run()
+    run_response.requirements = [requirement1, requirement2]
+
+    result = agent_run._continue_run(
+        agent,
+        run_response=run_response,
+        run_messages=_make_run_messages(),
+        run_context=_make_run_context(),
+        session=_make_session(),
+        tools=[],
+        user_id="user-1",
+    )
+
+    assert result.status == RunStatus.completed
+    assert calls == [1], "pre-hooks should run when any requirement wants them"

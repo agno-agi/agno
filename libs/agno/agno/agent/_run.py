@@ -3597,15 +3597,15 @@ def _continue_run(
     """Continue a previous run.
 
     Steps:
-    1. Handle any updated tools
-    1.5. Execute pre-hooks
-    2. Generate a response from the Model
-    3. Update the RunOutput with the model response
-    4. Convert response to structured format
-    5. Store media if enabled
-    6. Execute post-hooks
-    7. Create session summary
-    8. Cleanup and store (scrub, stop timer, save to file, add to session, calculate metrics, save session)
+    1. Execute pre-hooks (before any side effects)
+    2. Handle any updated tools
+    3. Generate a response from the Model
+    4. Update the RunOutput with the model response
+    5. Convert response to structured format
+    6. Store media if enabled
+    7. Execute post-hooks
+    8. Create session summary
+    9. Cleanup and store (scrub, stop timer, save to file, add to session, calculate metrics, save session)
     """
     # Register run for cancellation tracking
     from agno.agent._hooks import execute_post_hooks, execute_pre_hooks
@@ -3624,9 +3624,6 @@ def _continue_run(
 
     agent.model = cast(Model, agent.model)
 
-    # 1. Handle the updated tools
-    handle_tool_call_updates(agent, run_response=run_response, run_messages=run_messages, tools=tools)
-
     try:
         num_attempts = agent.retries + 1
         for attempt in range(num_attempts):
@@ -3634,9 +3631,14 @@ def _continue_run(
                 # Check for cancellation before model call
                 raise_if_cancelled(run_response.run_id)  # type: ignore
 
-                # 1.5 Execute pre-hooks (consistent with run(): hooks fire before the model loop)
+                # 1. Execute pre-hooks BEFORE any side effects (tool execution)
+                # Check if any requirement wants pre-hooks (default True)
+                should_run_pre_hooks = (
+                    any(getattr(req, "execute_pre_hooks", True) for req in (run_response.requirements or []))
+                    or not run_response.requirements
+                )
                 run_input = cast(RunInput, run_response.input)
-                if agent.pre_hooks is not None:
+                if agent.pre_hooks is not None and should_run_pre_hooks:
                     pre_hook_iterator = execute_pre_hooks(
                         agent,
                         hooks=agent.pre_hooks,  # type: ignore
@@ -3647,11 +3649,15 @@ def _continue_run(
                         user_id=user_id,
                         debug_mode=debug_mode,
                         background_tasks=background_tasks,
+                        is_continue=True,
                         **kwargs,
                     )
                     deque(pre_hook_iterator, maxlen=0)
 
-                # 2. Generate a response from the Model (includes running function calls)
+                # 2. Handle the updated tools (executes confirmed HITL tools)
+                handle_tool_call_updates(agent, run_response=run_response, run_messages=run_messages, tools=tools)
+
+                # 3. Generate a response from the Model (includes running function calls)
                 agent.model = cast(Model, agent.model)
                 model_response: ModelResponse = call_model_with_fallback(
                     agent.model,
@@ -3839,12 +3845,12 @@ def _continue_run_stream(
 
     Steps:
     1. Resolve dependencies
-    2. Handle any updated tools
-    2.5. Execute pre-hooks
-    3. Process model response
-    4. Execute post-hooks
-    5. Create session summary
-    6. Cleanup and store the run response and session
+    2. Execute pre-hooks (before any side effects)
+    3. Handle any updated tools
+    4. Process model response
+    5. Execute post-hooks
+    6. Create session summary
+    7. Cleanup and store the run response and session
     """
 
     from agno.agent._hooks import execute_post_hooks, execute_pre_hooks
@@ -3877,21 +3883,14 @@ def _continue_run_stream(
                         store_events=agent.store_events,
                     )
 
-                # 2. Handle the updated tools
-                for event in handle_tool_call_updates_stream(
-                    agent,
-                    run_response=run_response,
-                    run_messages=run_messages,
-                    tools=tools,
-                    stream_events=stream_events,
-                ):
-                    if not isinstance(event, _CANCEL_BYPASS_EVENT_TYPES):
-                        raise_if_cancelled(run_response.run_id)  # type: ignore
-                    yield event
-
-                # 2.5 Execute pre-hooks (consistent with run(): hooks fire before the model loop)
+                # 2. Execute pre-hooks BEFORE any side effects (tool execution)
+                # Check if any requirement wants pre-hooks (default True)
+                should_run_pre_hooks = (
+                    any(getattr(req, "execute_pre_hooks", True) for req in (run_response.requirements or []))
+                    or not run_response.requirements
+                )
                 run_input = cast(RunInput, run_response.input)
-                if agent.pre_hooks is not None:
+                if agent.pre_hooks is not None and should_run_pre_hooks:
                     pre_hook_iterator = execute_pre_hooks(
                         agent,
                         hooks=agent.pre_hooks,  # type: ignore
@@ -3903,12 +3902,25 @@ def _continue_run_stream(
                         debug_mode=debug_mode,
                         stream_events=stream_events,
                         background_tasks=background_tasks,
+                        is_continue=True,
                         **kwargs,
                     )
                     for event in pre_hook_iterator:
                         yield event
 
-                # 3. Process model response
+                # 3. Handle the updated tools (executes confirmed HITL tools)
+                for event in handle_tool_call_updates_stream(
+                    agent,
+                    run_response=run_response,
+                    run_messages=run_messages,
+                    tools=tools,
+                    stream_events=stream_events,
+                ):
+                    if not isinstance(event, _CANCEL_BYPASS_EVENT_TYPES):
+                        raise_if_cancelled(run_response.run_id)  # type: ignore
+                    yield event
+
+                # 4. Process model response
                 for event in handle_model_response_stream(
                     agent,
                     session=session,
@@ -4538,15 +4550,15 @@ async def _acontinue_run(
     4. Prepare run response
     5. Determine tools for model
     6. Prepare run messages
-    7. Handle the updated tools
-    7.5. Execute pre-hooks
-    8. Get model response
-    9. Update the RunOutput with the model response
-    10. Convert response to structured format
-    11. Store media if enabled
-    12. Execute post-hooks
-    13. Create session summary
-    14. Cleanup and store (scrub, stop timer, save to file, add to session, calculate metrics, save session)
+    7. Execute pre-hooks (before any side effects)
+    8. Handle the updated tools
+    9. Get model response
+    10. Update the RunOutput with the model response
+    11. Convert response to structured format
+    12. Store media if enabled
+    13. Execute post-hooks
+    14. Create session summary
+    15. Cleanup and store (scrub, stop timer, save to file, add to session, calculate metrics, save session)
     """
     from agno.agent._hooks import aexecute_post_hooks, aexecute_pre_hooks
     from agno.agent._init import disconnect_connectable_tools, disconnect_mcp_tools
@@ -4764,14 +4776,14 @@ async def _acontinue_run(
                 # Register run for cancellation tracking
                 await aregister_run(run_response.run_id)  # type: ignore
 
-                # 7. Handle the updated tools
-                await ahandle_tool_call_updates(
-                    agent, run_response=run_response, run_messages=run_messages, tools=_tools
+                # 7. Execute pre-hooks BEFORE any side effects (tool execution)
+                # Check if any requirement wants pre-hooks (default True)
+                should_run_pre_hooks = (
+                    any(getattr(req, "execute_pre_hooks", True) for req in (run_response.requirements or []))
+                    or not run_response.requirements
                 )
-
-                # 7.5 Execute pre-hooks (consistent with arun(): hooks fire before the model loop)
                 run_input = cast(RunInput, run_response.input)
-                if agent.pre_hooks is not None:
+                if agent.pre_hooks is not None and should_run_pre_hooks:
                     pre_hook_iterator = aexecute_pre_hooks(
                         agent,
                         hooks=agent.pre_hooks,  # type: ignore
@@ -4782,13 +4794,19 @@ async def _acontinue_run(
                         user_id=user_id,
                         debug_mode=debug_mode,
                         background_tasks=background_tasks,
+                        is_continue=True,
                         **kwargs,
                     )
                     # Consume the async iterator without yielding
                     async for _ in pre_hook_iterator:
                         pass
 
-                # 8. Get model response
+                # 8. Handle the updated tools (executes confirmed HITL tools)
+                await ahandle_tool_call_updates(
+                    agent, run_response=run_response, run_messages=run_messages, tools=_tools
+                )
+
+                # 9. Get model response
                 model_response: ModelResponse = await acall_model_with_fallback(
                     agent.model,
                     agent.fallback_config,
@@ -5054,12 +5072,12 @@ async def _acontinue_run_stream(
     4. Prepare run response
     5. Determine tools for model
     6. Prepare run messages
-    7. Handle the updated tools
-    7.5. Execute pre-hooks
-    8. Process model response
-    9. Create session summary
-    10. Execute post-hooks
-    11. Cleanup and store the run response and session
+    7. Execute pre-hooks (before any side effects)
+    8. Handle the updated tools
+    9. Process model response
+    10. Create session summary
+    11. Execute post-hooks
+    12. Cleanup and store the run response and session
     """
     from agno.agent._hooks import aexecute_post_hooks, aexecute_pre_hooks
     from agno.agent._init import disconnect_connectable_tools, disconnect_mcp_tools
@@ -5284,19 +5302,8 @@ async def _acontinue_run_stream(
                         store_events=agent.store_events,
                     )
 
-                # 7. Handle the updated tools
-                async for event in ahandle_tool_call_updates_stream(
-                    agent,
-                    run_response=run_response,
-                    run_messages=run_messages,
-                    tools=_tools,
-                    stream_events=stream_events,
-                ):
-                    if not isinstance(event, _CANCEL_BYPASS_EVENT_TYPES):
-                        await araise_if_cancelled(run_response.run_id)  # type: ignore
-                    yield event
-
-                # 7.5 Execute pre-hooks (consistent with arun(): hooks fire before the model loop)
+                # 7. Execute pre-hooks BEFORE any side effects (tool execution)
+                # Pass is_continue=True so hooks can distinguish run vs continue
                 run_input = cast(RunInput, run_response.input)
                 if agent.pre_hooks is not None:
                     pre_hook_iterator = aexecute_pre_hooks(
@@ -5310,12 +5317,25 @@ async def _acontinue_run_stream(
                         debug_mode=debug_mode,
                         stream_events=stream_events,
                         background_tasks=background_tasks,
+                        is_continue=True,
                         **kwargs,
                     )
                     async for event in pre_hook_iterator:
                         yield event
 
-                # 8. Process model response
+                # 8. Handle the updated tools (executes confirmed HITL tools)
+                async for event in ahandle_tool_call_updates_stream(
+                    agent,
+                    run_response=run_response,
+                    run_messages=run_messages,
+                    tools=_tools,
+                    stream_events=stream_events,
+                ):
+                    if not isinstance(event, _CANCEL_BYPASS_EVENT_TYPES):
+                        await araise_if_cancelled(run_response.run_id)  # type: ignore
+                    yield event
+
+                # 9. Process model response
                 if agent.output_model is None:
                     async for event in ahandle_model_response_stream(
                         agent,

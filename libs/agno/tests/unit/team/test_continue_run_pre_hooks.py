@@ -7,7 +7,6 @@ them — allowing HITL-resumed team runs to bypass guardrail/authz hooks.
 
 import asyncio
 
-
 import agno.team._telemetry as team_telemetry
 from agno.exceptions import InputCheckError
 from agno.models.message import Message
