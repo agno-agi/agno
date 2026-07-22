@@ -10,20 +10,43 @@ agent design — the only thing that changes is the weights.
 
 ## Files
 
-- `basic.py` — one round end to end, offline by default.
+- `basic.py` — one round end to end, offline by default, with a swappable
+  trainer backend.
 
-## Offline by default
+## One loop, swappable trainers
 
-`basic.py` defines a small scripted model and stub trainer inline so the loop
-runs with no GPU and no API key. They are stand-ins, not agno API: a real
-trainer serves real checkpoints. Set `AGNO_RUN_TINKER_FINE_TUNE=1` (with
-`TINKER_API_KEY` available) and the same file runs against `TinkerTrainer`,
-fine-tuning `Qwen/Qwen3.6-35B-A3B` for real.
+The trainer is the `Trainer` protocol's seam, and `basic.py` demonstrates it:
+the same `ImprovementLoop` runs against three backends, selected with
+`AGNO_TRAINER`:
 
-The live path costs money, so it is gated on that explicit opt-in flag — a key
-alone never triggers spend. A key is capability, not consent: with only
-`TINKER_API_KEY` set (as direnv does in many shells) the file still runs the
-free offline stub.
+| `AGNO_TRAINER` | Backend | What it shows |
+|---|---|---|
+| `stub` (default) | inline stand-ins | the shape of the loop; no GPU, no key, no spend |
+| `tinker` | `TinkerTrainer` | agno drives the training loop (forward/backward per batch) |
+| `fireworks` | `FireworksTrainer` | a managed fine-tuning job + on-demand serving |
+
+The stub trainer and scripted models are stand-ins defined in the file, not agno
+API: a real trainer serves real checkpoints.
+
+## Offline by default, and what consent means
+
+The live paths cost money, so they are gated on an explicit opt-in flag *on top
+of* the provider key: `AGNO_RUN_FINE_TUNE=1`. A key alone never triggers spend.
+A key is capability, not consent: with only `TINKER_API_KEY` or
+`FIREWORKS_API_KEY` set (as direnv does in many shells) the file still runs the
+free offline stub. (`AGNO_RUN_TINKER_FINE_TUNE=1`, the original Tinker-only
+spelling, still works and implies `AGNO_TRAINER=tinker`.)
+
+```bash
+# offline (default)
+python cookbook/environments/_29_expert_iteration/basic.py
+
+# live Tinker fine-tune of Qwen/Qwen3.6-35B-A3B
+AGNO_TRAINER=tinker AGNO_RUN_FINE_TUNE=1 python cookbook/environments/_29_expert_iteration/basic.py
+
+# live Fireworks fine-tune of accounts/fireworks/models/qwen3-8b
+AGNO_TRAINER=fireworks AGNO_RUN_FINE_TUNE=1 python cookbook/environments/_29_expert_iteration/basic.py
+```
 
 ## What has to be true for a gain to exist
 
@@ -37,7 +60,7 @@ Tool-using agents export nothing in this release — the text-only SFT format ha
 no tool representation, so the loop reports `"not_exportable"` and trains
 nothing. See [`_10_export_sft/`](../_10_export_sft/).
 
-## If you run the live path
+## If you run the live Tinker path
 
 A thinking model spends a long time inside `<think>` before the visible answer: a
 2000-token sample from a 35B MoE routinely takes minutes. The environment here sets
@@ -47,6 +70,25 @@ timeout you would notice.
 
 Budget for that: at 3 tasks and k=4 the loop samples 12 attempts for the baseline and
 12 more to measure the tuned checkpoint, either side of the fine-tune itself.
+
+## If you run the live Fireworks path
+
+Fireworks trains as a managed job (LoRA SFT is around $0.50 per million training
+tokens for this model tier — a run this size costs pennies) but **serving is the
+real cost**: neither the tuned LoRA nor the small tunable bases are serverless,
+so measuring either side of the before/after needs an on-demand deployment.
+`FireworksTrainer` creates one (BF16, addons enabled, scale-to-zero, max one
+replica, order $7/hour of GPU time while serving) and serves base and tuned from
+it so the comparison runs on identical hardware. `basic.py` calls
+`trainer.teardown()` at the end of the run to delete it; if a run dies hard,
+check the Fireworks dashboard for deployments named `agno-*`.
+
+The first request after a scale-up pays a cold-start delay — another reason the
+environment's `timeout_seconds` is generous. You will also need
+`FIREWORKS_ACCOUNT_ID` set (the trainer refuses before any spend without it),
+and the key must belong to a user or service account allowed to create
+fine-tuning jobs — an inference-scoped role gets `403` on the training
+endpoints.
 
 ## Reading the numbers honestly
 
@@ -74,5 +116,7 @@ python cookbook/environments/_29_expert_iteration/basic.py
 | Variable | Needed for |
 |---|---|
 | none | the offline run |
-| `AGNO_RUN_TINKER_FINE_TUNE=1` | opting in to the live fine-tune (spends money) |
-| `TINKER_API_KEY` | the live fine-tune branch |
+| `AGNO_TRAINER` | `stub` (default), `tinker`, or `fireworks` |
+| `AGNO_RUN_FINE_TUNE=1` | opting in to a live fine-tune (spends money) |
+| `TINKER_API_KEY` | the Tinker live path (`pip install agno[tinker]`) |
+| `FIREWORKS_API_KEY`, `FIREWORKS_ACCOUNT_ID` | the Fireworks live path (`pip install agno[fireworks]`) |
