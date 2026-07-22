@@ -1,7 +1,6 @@
 from dataclasses import asdict, dataclass, field
 from inspect import iscoroutinefunction
 from os import getenv
-from textwrap import dedent
 from typing import TYPE_CHECKING, Any, Callable, Dict, List, Literal, Optional, Union
 from uuid import uuid4
 
@@ -11,7 +10,7 @@ from agno.agent import Agent
 from agno.db.base import AsyncBaseDb, BaseDb
 from agno.db.schemas.evals import EvalType
 from agno.eval.base import BaseEval
-from agno.eval.utils import async_log_eval, log_eval_run, store_result_in_file
+from agno.eval.utils import async_log_eval, log_eval_run, spinner_live, store_result_in_file
 from agno.exceptions import EvalError
 from agno.models.base import Model
 from agno.run.agent import RunInput, RunOutput
@@ -36,6 +35,23 @@ class BinaryJudgeResponse(BaseModel):
 
     passed: bool = Field(..., description="Pass/fail result.")
     reason: str = Field(..., description="Detailed reasoning for the evaluation.")
+
+
+def _build_judge_prompt(input: str, output: str) -> str:
+    """The prompt for one input/output evaluation, shared by the sync and async judge
+    sites so they cannot drift apart.
+
+    The judged output is untrusted: it is fenced behind a per-call random nonce, and
+    the untrusted-data instruction lives inside the prompt itself -- a caller-supplied
+    evaluator_agent bypasses instruction building, so prompt-carried protection is the
+    only kind that holds there.
+    """
+    # Function-level import: pulling agno.scorer at module scope would re-enter the
+    # Agent import cycle the eval package's lazy __getattr__ exists to avoid.
+    from agno.scorer._fence import fence_untrusted
+
+    fenced_output = fence_untrusted(output, label="output")
+    return f"<input>\n{input}\n</input>\n\n{fenced_output}\n"
 
 
 @dataclass
@@ -184,6 +200,9 @@ class AgentAsJudgeEval(BaseEval):
     # Output options
     print_summary: bool = False
     print_results: bool = False
+    # Render the transient progress spinner. Embedders that must not write to the
+    # console (e.g. the suite runner) disable it.
+    show_spinner: bool = True
     file_path_to_save_results: Optional[str] = None
     debug_mode: bool = getenv("AGNO_DEBUG", "false").lower() == "true"
     db: Optional[Union[BaseDb, AsyncBaseDb]] = None
@@ -279,15 +298,7 @@ class AgentAsJudgeEval(BaseEval):
     ) -> Optional[AgentAsJudgeEvaluation]:
         """Evaluate a single input/output pair."""
         try:
-            prompt = dedent(f"""\
-                <input>
-                {input}
-                </input>
-
-                <output>
-                {output}
-                </output>
-            """)
+            prompt = _build_judge_prompt(input=input, output=output)
 
             response = evaluator_agent.run(prompt, stream=False)
 
@@ -344,15 +355,7 @@ class AgentAsJudgeEval(BaseEval):
     ) -> Optional[AgentAsJudgeEvaluation]:
         """Evaluate a single input/output pair asynchronously."""
         try:
-            prompt = dedent(f"""\
-                <input>
-                {input}
-                </input>
-
-                <output>
-                {output}
-                </output>
-            """)
+            prompt = _build_judge_prompt(input=input, output=output)
 
             response = await evaluator_agent.arun(prompt, stream=False)  # type: ignore[misc]
 
@@ -514,7 +517,6 @@ class AgentAsJudgeEval(BaseEval):
 
         # Single evaluation logic
         from rich.console import Console
-        from rich.live import Live
         from rich.status import Status
 
         if isinstance(self.db, AsyncBaseDb):
@@ -524,7 +526,7 @@ class AgentAsJudgeEval(BaseEval):
         result = AgentAsJudgeResult(run_id=run_id)
 
         console = Console()
-        with Live(console=console, transient=True) as live_log:
+        with spinner_live(console, self.show_spinner) as live_log:
             evaluator = self.get_evaluator_agent()
 
             status = Status("Running evaluation...", spinner="dots", speed=1.0, refresh_per_second=10)
@@ -620,14 +622,13 @@ class AgentAsJudgeEval(BaseEval):
 
         # Single evaluation logic
         from rich.console import Console
-        from rich.live import Live
         from rich.status import Status
 
         set_log_level_to_debug() if self.debug_mode else set_log_level_to_info()
         result = AgentAsJudgeResult(run_id=run_id)
 
         console = Console()
-        with Live(console=console, transient=True) as live_log:
+        with spinner_live(console, self.show_spinner) as live_log:
             evaluator = self.get_evaluator_agent()
 
             status = Status("Running evaluation...", spinner="dots", speed=1.0, refresh_per_second=10)
@@ -691,7 +692,6 @@ class AgentAsJudgeEval(BaseEval):
             run_id: Unique ID for this evaluation run
         """
         from rich.console import Console
-        from rich.live import Live
         from rich.status import Status
 
         if isinstance(self.db, AsyncBaseDb):
@@ -701,7 +701,7 @@ class AgentAsJudgeEval(BaseEval):
         result = AgentAsJudgeResult(run_id=run_id)
 
         console = Console()
-        with Live(console=console, transient=True) as live_log:
+        with spinner_live(console, self.show_spinner) as live_log:
             evaluator = self.get_evaluator_agent()
 
             for i, case in enumerate(cases):
@@ -765,14 +765,13 @@ class AgentAsJudgeEval(BaseEval):
             run_id: Unique ID for this evaluation run
         """
         from rich.console import Console
-        from rich.live import Live
         from rich.status import Status
 
         set_log_level_to_debug() if self.debug_mode else set_log_level_to_info()
         result = AgentAsJudgeResult(run_id=run_id)
 
         console = Console()
-        with Live(console=console, transient=True) as live_log:
+        with spinner_live(console, self.show_spinner) as live_log:
             evaluator = self.get_evaluator_agent()
 
             for i, case in enumerate(cases):

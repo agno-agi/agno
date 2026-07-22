@@ -43,7 +43,7 @@ class JinaEmbedder(Embedder):
         return headers
 
     def _response(self, text: str) -> Dict[str, Any]:
-        data = {
+        data: Dict[str, Any] = {
             "model": self.id,
             "late_chunking": self.late_chunking,
             "dimensions": self.dimensions,

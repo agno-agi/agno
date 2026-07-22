@@ -151,8 +151,8 @@ class TeamSession:
                 return True
             return False
 
-        if member_ids is not None and skip_member_messages:
-            log_debug("Member IDs to filter by were provided. The skip_member_messages flag will be ignored.")
+        if (member_ids is not None or team_id is not None) and skip_member_messages:
+            log_debug("Member or team IDs to filter by were provided. The skip_member_messages flag will be ignored.")
             skip_member_messages = False
 
         if not self.runs:
@@ -302,7 +302,9 @@ class TeamSession:
         # Get completed runs only (exclude current/pending run)
         completed_runs = [run for run in self.runs if run.status == RunStatus.completed and run.parent_run_id is None]
 
-        if num_runs is not None and len(completed_runs) > num_runs:
+        if num_runs is not None:
+            if num_runs <= 0:
+                return []
             recent_runs = completed_runs[-num_runs:]
         else:
             recent_runs = completed_runs
