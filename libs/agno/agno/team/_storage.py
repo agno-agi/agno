@@ -223,7 +223,9 @@ async def _aupsert_session(team: "Team", session: TeamSession) -> Optional[TeamS
     return None
 
 
-def _read_or_create_session(team: "Team", session_id: str, user_id: Optional[str] = None) -> TeamSession:
+def _read_or_create_session(
+    team: "Team", session_id: str, user_id: Optional[str] = None, shared_session: Optional[bool] = None
+) -> TeamSession:
     """Load the TeamSession from storage
 
     Returns:
@@ -234,18 +236,23 @@ def _read_or_create_session(team: "Team", session_id: str, user_id: Optional[str
     from agno.session.team import TeamSession
     from agno.team._telemetry import get_team_data
 
+    # Resolve: per-run override > team default
+    is_shared = shared_session if shared_session is not None else team.shared_sessions
+    # For shared sessions, read without user_id filter
+    read_user_id = None if is_shared else user_id
+
     # Return existing session if we have one
     if (
         team._cached_session is not None
         and team._cached_session.session_id == session_id
-        and (user_id is None or team._cached_session.user_id == user_id)
+        and (read_user_id is None or team._cached_session.user_id == read_user_id)
     ):
         return team._cached_session
 
     # Try to load from database
     team_session = None
     if team.db is not None and team.parent_team_id is None and team.workflow_id is None:
-        team_session = cast(TeamSession, _read_session(team, session_id=session_id, user_id=user_id))
+        team_session = cast(TeamSession, _read_session(team, session_id=session_id, user_id=read_user_id))
 
     # Create new session if none found
     if team_session is None:
@@ -286,7 +293,9 @@ def _read_or_create_session(team: "Team", session_id: str, user_id: Optional[str
     return team_session
 
 
-async def _aread_or_create_session(team: "Team", session_id: str, user_id: Optional[str] = None) -> TeamSession:
+async def _aread_or_create_session(
+    team: "Team", session_id: str, user_id: Optional[str] = None, shared_session: Optional[bool] = None
+) -> TeamSession:
     """Load the TeamSession from storage
 
     Returns:
@@ -298,11 +307,16 @@ async def _aread_or_create_session(team: "Team", session_id: str, user_id: Optio
     from agno.team._init import _has_async_db
     from agno.team._telemetry import get_team_data
 
+    # Resolve: per-run override > team default
+    is_shared = shared_session if shared_session is not None else team.shared_sessions
+    # For shared sessions, read without user_id filter
+    read_user_id = None if is_shared else user_id
+
     # Return existing session if we have one
     if (
         team._cached_session is not None
         and team._cached_session.session_id == session_id
-        and (user_id is None or team._cached_session.user_id == user_id)
+        and (read_user_id is None or team._cached_session.user_id == read_user_id)
     ):
         return team._cached_session
 
@@ -310,9 +324,9 @@ async def _aread_or_create_session(team: "Team", session_id: str, user_id: Optio
     team_session = None
     if team.db is not None and team.parent_team_id is None and team.workflow_id is None:
         if _has_async_db(team):
-            team_session = cast(TeamSession, await _aread_session(team, session_id=session_id, user_id=user_id))
+            team_session = cast(TeamSession, await _aread_session(team, session_id=session_id, user_id=read_user_id))
         else:
-            team_session = cast(TeamSession, _read_session(team, session_id=session_id, user_id=user_id))
+            team_session = cast(TeamSession, _read_session(team, session_id=session_id, user_id=read_user_id))
 
     # Create new session if none found
     if team_session is None:

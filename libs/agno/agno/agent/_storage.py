@@ -289,15 +289,21 @@ def read_or_create_session(
     agent: Agent,
     session_id: str,
     user_id: Optional[str] = None,
+    shared_session: Optional[bool] = None,
 ) -> AgentSession:
     from time import time
     from uuid import uuid4
+
+    # Resolve: per-run override > agent default
+    is_shared = shared_session if shared_session is not None else agent.shared_sessions
+    # For shared sessions, read without user_id filter
+    read_user_id = None if is_shared else user_id
 
     # Returning cached session if we have one
     if (
         agent._cached_session is not None
         and agent._cached_session.session_id == session_id
-        and (user_id is None or agent._cached_session.user_id == user_id)
+        and (read_user_id is None or agent._cached_session.user_id == read_user_id)
     ):
         return agent._cached_session
 
@@ -306,7 +312,7 @@ def read_or_create_session(
     if agent.db is not None and agent.team_id is None and agent.workflow_id is None:
         log_debug(f"Reading AgentSession: {session_id}")
 
-        agent_session = cast(AgentSession, read_session(agent, session_id=session_id, user_id=user_id))
+        agent_session = cast(AgentSession, read_session(agent, session_id=session_id, user_id=read_user_id))
 
     if agent_session is None:
         # Creating new session if none found
@@ -350,17 +356,23 @@ async def aread_or_create_session(
     agent: Agent,
     session_id: str,
     user_id: Optional[str] = None,
+    shared_session: Optional[bool] = None,
 ) -> AgentSession:
     from time import time
     from uuid import uuid4
 
     from agno.agent import _init
 
+    # Resolve: per-run override > agent default
+    is_shared = shared_session if shared_session is not None else agent.shared_sessions
+    # For shared sessions, read without user_id filter
+    read_user_id = None if is_shared else user_id
+
     # Returning cached session if we have one
     if (
         agent._cached_session is not None
         and agent._cached_session.session_id == session_id
-        and (user_id is None or agent._cached_session.user_id == user_id)
+        and (read_user_id is None or agent._cached_session.user_id == read_user_id)
     ):
         return agent._cached_session
 
@@ -369,9 +381,9 @@ async def aread_or_create_session(
     if agent.db is not None and agent.team_id is None and agent.workflow_id is None:
         log_debug(f"Reading AgentSession: {session_id}")
         if _init.has_async_db(agent):
-            agent_session = cast(AgentSession, await aread_session(agent, session_id=session_id, user_id=user_id))
+            agent_session = cast(AgentSession, await aread_session(agent, session_id=session_id, user_id=read_user_id))
         else:
-            agent_session = cast(AgentSession, read_session(agent, session_id=session_id, user_id=user_id))
+            agent_session = cast(AgentSession, read_session(agent, session_id=session_id, user_id=read_user_id))
 
     if agent_session is None:
         # Creating new session if none found

@@ -130,6 +130,9 @@ class Team:
     overwrite_db_session_state: bool = False
     # If True, cache the current Team session in memory for faster access
     cache_session: bool = False
+    # If True, session is shared across users (e.g., Slack group threads).
+    # Reads ignore user_id filter; writes preserve original owner.
+    shared_sessions: bool = False
 
     # Add this flag to control if the workflow should send the team history to the members. This means sending the team-level history to the members, not the agent-level history.
     add_team_history_to_members: bool = False
@@ -456,6 +459,7 @@ class Team:
         overwrite_db_session_state: bool = False,
         resolve_in_context: bool = True,
         cache_session: bool = False,
+        shared_sessions: bool = False,
         add_team_history_to_members: bool = False,
         num_team_history_runs: int = 3,
         search_past_sessions: Optional[bool] = False,
@@ -580,6 +584,7 @@ class Team:
             overwrite_db_session_state=overwrite_db_session_state,
             resolve_in_context=resolve_in_context,
             cache_session=cache_session,
+            shared_sessions=shared_sessions,
             add_team_history_to_members=add_team_history_to_members,
             num_team_history_runs=num_team_history_runs,
             search_past_sessions=search_past_sessions,

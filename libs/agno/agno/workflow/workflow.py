@@ -480,6 +480,7 @@ class Workflow:
         add_dependencies_to_context: Optional[bool] = None,
         add_session_state_to_context: Optional[bool] = None,
         cache_session: bool = False,
+        shared_sessions: bool = False,
         telemetry: bool = True,
         add_workflow_history_to_steps: bool = False,
         num_history_runs: int = 3,
@@ -511,6 +512,7 @@ class Workflow:
         self._stage: Optional[str] = None
 
         self.cache_session = cache_session
+        self.shared_sessions = shared_sessions
         self.db = db
         self.telemetry = telemetry
         self.add_workflow_history_to_steps = add_workflow_history_to_steps
@@ -1264,14 +1266,20 @@ class Workflow:
         self,
         session_id: str,
         user_id: Optional[str] = None,
+        shared_session: Optional[bool] = None,
     ) -> WorkflowSession:
         from time import time
+
+        # Resolve: per-run override > workflow default
+        is_shared = shared_session if shared_session is not None else self.shared_sessions
+        # For shared sessions, read without user_id filter
+        read_user_id = None if is_shared else user_id
 
         # Returning cached session if we have one
         if (
             self._workflow_session is not None
             and self._workflow_session.session_id == session_id
-            and (user_id is None or self._workflow_session.user_id == user_id)
+            and (read_user_id is None or self._workflow_session.user_id == read_user_id)
         ):
             return self._workflow_session
 
@@ -1285,7 +1293,7 @@ class Workflow:
         if self.db is not None:
             log_debug(f"Reading WorkflowSession: {session_id}")
 
-            workflow_session = cast(WorkflowSession, self._read_session(session_id=session_id, user_id=user_id))
+            workflow_session = cast(WorkflowSession, self._read_session(session_id=session_id, user_id=read_user_id))
 
         if workflow_session is None:
             # Creating new session if none found
@@ -1315,14 +1323,20 @@ class Workflow:
         self,
         session_id: str,
         user_id: Optional[str] = None,
+        shared_session: Optional[bool] = None,
     ) -> WorkflowSession:
         from time import time
+
+        # Resolve: per-run override > workflow default
+        is_shared = shared_session if shared_session is not None else self.shared_sessions
+        # For shared sessions, read without user_id filter
+        read_user_id = None if is_shared else user_id
 
         # Returning cached session if we have one
         if (
             self._workflow_session is not None
             and self._workflow_session.session_id == session_id
-            and (user_id is None or self._workflow_session.user_id == user_id)
+            and (read_user_id is None or self._workflow_session.user_id == read_user_id)
         ):
             return self._workflow_session
 
@@ -1331,7 +1345,9 @@ class Workflow:
         if self.db is not None:
             log_debug(f"Reading WorkflowSession: {session_id}")
 
-            workflow_session = cast(WorkflowSession, await self._aread_session(session_id=session_id, user_id=user_id))
+            workflow_session = cast(
+                WorkflowSession, await self._aread_session(session_id=session_id, user_id=read_user_id)
+            )
 
         if workflow_session is None:
             # Creating new session if none found

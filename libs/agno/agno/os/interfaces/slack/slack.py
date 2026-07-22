@@ -38,6 +38,7 @@ class Slack(BaseInterface):
         buffer_size: int = 100,
         max_file_size: int = 1_073_741_824,  # 1GB
         resolve_user_identity: bool = False,
+        multi_user_threads: bool = True,
     ):
         self.agent = agent
         self.team = team
@@ -56,6 +57,7 @@ class Slack(BaseInterface):
         self.buffer_size = buffer_size
         self.max_file_size = max_file_size
         self.resolve_user_identity = resolve_user_identity
+        self.multi_user_threads = multi_user_threads
 
         if not (self.agent or self.team or self.workflow):
             raise ValueError("Slack requires an agent, team, or workflow")
@@ -78,6 +80,7 @@ class Slack(BaseInterface):
             buffer_size=self.buffer_size,
             max_file_size=self.max_file_size,
             resolve_user_identity=self.resolve_user_identity,
+            multi_user_threads=self.multi_user_threads,
         )
 
         return self.router

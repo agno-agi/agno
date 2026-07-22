@@ -60,6 +60,7 @@ class SlackEventHandler:
     bot_name_resolver: BotNameResolver
     reply_to_mentions_only: bool
     resolve_user_identity: bool
+    multi_user_threads: bool
     loading_text: str
     loading_messages: Optional[List[str]]
     task_display_mode: str
@@ -88,6 +89,14 @@ class SlackEventHandler:
         display_name = None
         if self.resolve_user_identity:
             resolved_user_id, display_name = await resolve_slack_user(client, raw_ctx["user"])
+
+        # TEST MODE: Generate random user_id to simulate multi-user threads
+        import os
+
+        if os.environ.get("SLACK_TEST_RANDOM_USERS") == "true":
+            from uuid import uuid4
+
+            resolved_user_id = f"test_user_{uuid4().hex[:8]}"
 
         channel_name = await resolve_channel_name(client, raw_ctx["channel_id"])
 
@@ -144,6 +153,8 @@ class SlackEventHandler:
         if streaming:
             kwargs["stream"] = True
             kwargs["stream_events"] = True
+        if self.multi_user_threads:
+            kwargs["shared_session"] = True
         return kwargs
 
     async def set_status(self, ctx: EventContext, status: str) -> None:

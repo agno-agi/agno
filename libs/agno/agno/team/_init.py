@@ -82,6 +82,7 @@ def __init__(
     overwrite_db_session_state: bool = False,
     resolve_in_context: bool = True,
     cache_session: bool = False,
+    shared_sessions: bool = False,
     add_team_history_to_members: bool = False,
     num_team_history_runs: int = 3,
     search_past_sessions: Optional[bool] = False,
@@ -238,6 +239,7 @@ def __init__(
     team.overwrite_db_session_state = overwrite_db_session_state
     team.resolve_in_context = resolve_in_context
     team.cache_session = cache_session
+    team.shared_sessions = shared_sessions
 
     team.add_history_to_context = add_history_to_context
     team.num_history_runs = num_history_runs

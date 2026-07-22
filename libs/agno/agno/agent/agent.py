@@ -96,6 +96,10 @@ class Agent:
     overwrite_db_session_state: bool = False
     # If True, cache the current Agent session in memory for faster access
     cache_session: bool = False
+    # If True, session is shared across users (e.g., Slack group threads).
+    # Reads ignore user_id filter; writes preserve original owner.
+    # Per-run user_id still flows to memory/tools/attribution.
+    shared_sessions: bool = False
 
     search_past_sessions: Optional[bool] = False
     num_past_sessions_to_search: Optional[int] = None
@@ -396,6 +400,7 @@ class Agent:
         overwrite_db_session_state: bool = False,
         enable_agentic_state: bool = False,
         cache_session: bool = False,
+        shared_sessions: bool = False,
         search_past_sessions: Optional[bool] = False,
         num_past_sessions_to_search: Optional[int] = None,
         num_past_session_runs_in_search: Optional[int] = None,
@@ -520,6 +525,7 @@ class Agent:
         self.overwrite_db_session_state = overwrite_db_session_state
         self.enable_agentic_state = enable_agentic_state
         self.cache_session = cache_session
+        self.shared_sessions = shared_sessions
 
         # Deprecated param mapping
         if search_session_history is not None and not search_past_sessions:
@@ -1412,6 +1418,7 @@ class Agent:
         output_schema: Optional[Union[Type[BaseModel], Dict[str, Any]]] = None,
         yield_run_output: Optional[bool] = None,
         debug_mode: Optional[bool] = None,
+        shared_session: Optional[bool] = None,
         **kwargs: Any,
     ) -> Union[RunOutput, Iterator[Union[RunOutputEvent, RunOutput]]]:
         return _run.run_dispatch(
@@ -1437,6 +1444,7 @@ class Agent:
             output_schema=output_schema,
             yield_run_output=yield_run_output,
             debug_mode=debug_mode,
+            shared_session=shared_session,
             **kwargs,
         )
 
@@ -1520,6 +1528,7 @@ class Agent:
         yield_run_output: Optional[bool] = None,
         debug_mode: Optional[bool] = None,
         background: bool = False,
+        shared_session: Optional[bool] = None,
         **kwargs: Any,
     ) -> Union[RunOutput, AsyncIterator[RunOutputEvent]]:
         return _run.arun_dispatch(
@@ -1546,6 +1555,7 @@ class Agent:
             yield_run_output=yield_run_output,
             debug_mode=debug_mode,
             background=background,
+            shared_session=shared_session,
             **kwargs,
         )
 
