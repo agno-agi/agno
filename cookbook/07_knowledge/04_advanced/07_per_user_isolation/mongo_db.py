@@ -1,47 +1,24 @@
-"""Per-user knowledge isolation with MongoDB.
+"""
+Per-User Knowledge Isolation with MongoDB
+=========================================
+Each user gets a private view of one shared knowledge base. Documents
+uploaded with a user_id are visible only to that user; documents uploaded
+without one are shared with everyone.
 
-Same isolation contract as the pgvector / Qdrant / Chroma cookbooks in this
-directory, against a different backend. The ``Knowledge.asearch(user_id=...)``
-API is identical — only the underlying primitive changes:
+MongoDB stores the owner in a top-level user_id field declared as a filter
+field on the vector index, and pre-filters $vectorSearch on caller OR null.
 
-  * MongoDB Atlas stores the owner in a top-level ``user_id`` field (kept out
-    of meta_data) that is declared as a ``filter`` field on the vector search
-    index. Owned chunks carry the uploader's id; shared chunks store null.
+- Search as Alice: her chunks plus shared content, never Bob's
+- Search as Bob: his chunks plus shared content, never Alice's
+- Search with user_id=None: admin view, sees everything
 
-  * Scoped reads push the owner predicate INTO the ``$vectorSearch`` stage as
-    a pre-filter: ``{"$or": [{"user_id": "alice"}, {"user_id": null}]}`` —
-    caller's bucket OR the shared bucket. Filtering before ranking keeps
-    top-K recall correct.
-
-  * When you pass ``user_id=None``, no predicate is added — the admin /
-    debugging path sees everything.
-
-Three uploads, four scoped queries:
-
-  1. Alice and Bob each upload private content.
-  2. An admin uploads org-wide content (``user_id`` left ``None``).
-  3. Alice asks about Alice — sees her chunk plus shared content.
-  4. Alice asks about Bob — sees ZERO bob chunks (assertion below).
-  5. Bob asks about holidays — sees the shared bucket.
-  6. Admin (``user_id=None``) sees everything.
-
-Prerequisites:
-
-  * A MongoDB Atlas-Local container (plain ``mongo`` has no ``$vectorSearch``)::
-
-      docker run -d -p 27017:27017 mongodb/mongodb-atlas-local:latest
-
-    Override the connection with ``MONGODB_CONN_STRING`` if it lives elsewhere.
-
-  * ``OPENAI_API_KEY`` set in your environment (or swap the model below).
-
-Run:
-
-    python cookbook/07_knowledge/04_advanced/07_per_user_isolation/mongo_db.py
+Requirements: OPENAI_API_KEY and an Atlas-Local container (plain mongo has
+no $vectorSearch): docker run -d -p 27017:27017 mongodb/mongodb-atlas-local:latest
+Run: python cookbook/07_knowledge/04_advanced/07_per_user_isolation/mongo_db.py
 """
 
 import asyncio
-import os
+from os import getenv
 from pathlib import Path
 
 from agno.agent import Agent
@@ -49,9 +26,8 @@ from agno.knowledge.knowledge import Knowledge
 from agno.models.openai import OpenAIResponses
 from agno.vectordb.mongodb import MongoDb
 
-MONGO_URI = os.getenv(
+MONGO_URI = getenv(
     "MONGODB_CONN_STRING",
-    # Default assumes the Atlas-Local docker image — no auth, standalone.
     "mongodb://localhost:27017/?directConnection=true",
 )
 DB_NAME = "agno_demo"
@@ -66,23 +42,16 @@ def _write_temp_doc(name: str, body: str) -> str:
 
 
 async def main() -> None:
-    # ------------------------------------------------------------------
-    # Set up a Knowledge instance backed by MongoDB Atlas.
-    # ------------------------------------------------------------------
     vector_db = MongoDb(
         database=DB_NAME,
         collection_name=COLLECTION,
         db_url=MONGO_URI,
         # Atlas-Local builds the vector index in the background; give it room.
-        # Builds run slower when many other DB containers share the Docker VM.
         wait_until_index_ready_in_seconds=300,
     )
 
-    # Build the collection + search index via the SYNC path. The rest of the
-    # demo (ainsert / asearch) is async, but async_create's index-readiness
-    # poll trips over the async driver cursor on Atlas-Local and stalls until
-    # timeout. The sync create path is unaffected and produces the same index.
-    # Drop-and-recreate so the demo starts clean; in production you'd migrate.
+    # Build the collection + index via the sync path: async_create's
+    # readiness poll stalls on Atlas-Local; the sync path is unaffected.
     vector_db.drop()
     vector_db.create()
 
@@ -92,11 +61,8 @@ async def main() -> None:
         vector_db=vector_db,
     )
 
-    # ------------------------------------------------------------------
-    # Three uploads: Alice (private), Bob (private), Admin (shared).
-    # The ``user_id`` kwarg on ``ainsert`` flows through to the MongoDB
-    # backend, which stamps it into the top-level ``user_id`` field.
-    # ------------------------------------------------------------------
+    # Alice and Bob upload private docs; the last upload has no user_id,
+    # which makes it shared / org-wide content.
     await knowledge.ainsert(
         path=_write_temp_doc(
             "alice_salary.txt",
@@ -121,14 +87,8 @@ async def main() -> None:
             "The company is closed on January 1, July 4, and December 25.",
         ),
         name="company_holidays",
-        # No ``user_id`` — org-wide / admin-uploaded shared content. MongoDB
-        # stores null in the ``user_id`` field; scoped queries match it via
-        # the ``{"user_id": null}`` branch of the $vectorSearch pre-filter.
     )
 
-    # ------------------------------------------------------------------
-    # Demonstrate the isolation contract DIRECTLY against Knowledge.
-    # ------------------------------------------------------------------
     print("\n=== Direct asearch tests ===\n")
 
     alice_salary = await knowledge.asearch(
@@ -137,6 +97,7 @@ async def main() -> None:
     print(f"Alice asks about Alice's salary -> {len(alice_salary)} results")
     for d in alice_salary:
         print(f"  - {d.content[:80]}")
+    assert alice_salary, "expected Alice's own results, got none"
 
     alice_about_bob = await knowledge.asearch(
         query="What is Bob's salary?", user_id="alice"
@@ -144,16 +105,10 @@ async def main() -> None:
     print(f"\nAlice asks about Bob's salary -> {len(alice_about_bob)} results")
     for d in alice_about_bob:
         print(f"  - {d.content[:80]}")
-    # This backend keeps user_id internal (not surfaced in returned meta_data),
-    # so verify isolation by content rather than by reading an owner off the row.
-    bob_phrases = ["Bob's salary", "$215"]
-    for d in alice_about_bob:
-        for phrase in bob_phrases:
-            assert phrase not in d.content, (
-                f"Isolation broken: Alice's retrieval surfaced Bob's chunk "
-                f"(matched {phrase!r}): {d.content!r}"
-            )
-    print("  isolation holds: Bob's chunks are NOT visible to Alice")
+    # user_id stays internal to this backend, so verify isolation by content.
+    bob_leak = [d for d in alice_about_bob if "215,000" in d.content]
+    assert not bob_leak, "Isolation broken: Alice's retrieval surfaced Bob's salary"
+    print("  isolation holds: Bob's salary is NOT visible to Alice")
 
     bob_holidays = await knowledge.asearch(
         query="When is the company closed?", user_id="bob"
@@ -167,14 +122,9 @@ async def main() -> None:
     for d in admin_view:
         print(f"  - {d.content[:80]}")
 
-    # ------------------------------------------------------------------
-    # End-to-end: an Agent doing RAG-as-Alice never sees Bob's chunks.
-    # The ``user_id`` on the Agent flows into ``run_context.user_id``,
-    # which the knowledge search reads and forwards to ``knowledge.search``.
-    # In a real deployment this comes from ``get_scoped_user_id(request)``.
-    # ------------------------------------------------------------------
     print("\n=== Agent-mediated test ===\n")
 
+    # The agent's user_id flows into run_context and scopes its retrieval.
     alice_agent = Agent(
         name="Alice's Assistant",
         model=OpenAIResponses(id="gpt-5.5"),

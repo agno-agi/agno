@@ -18,6 +18,7 @@ from agno.utils.log import log_debug, log_error, log_info, log_warning, logger
 from agno.vectordb.base import VectorDb
 from agno.vectordb.distance import Distance
 from agno.vectordb.search import SearchType
+
 # Empty string marks a shared/unowned chunk in the user_id String column.
 SHARED_OWNER = ""
 
@@ -270,6 +271,12 @@ class Clickhouse(VectorDb):
         )
         return len(result.result_rows) > 0 if result.result_rows else False
 
+    def _validate_user_id(self, user_id: Optional[str]) -> None:
+        """Reject an empty user_id: "" is the reserved shared-owner sentinel, so a
+        scoped caller passing "" would target the shared bucket. Use None for shared."""
+        if user_id == "":
+            raise ValueError("user_id must not be an empty string; use None for shared/unscoped access")
+
     def insert(
         self,
         content_hash: str,
@@ -277,6 +284,7 @@ class Clickhouse(VectorDb):
         filters: Optional[Dict[str, Any]] = None,
         user_id: Optional[str] = None,
     ) -> None:
+        self._validate_user_id(user_id)
         owner = user_id if user_id is not None else SHARED_OWNER
         rows: List[List[Any]] = []
         for document in documents:
@@ -326,6 +334,7 @@ class Clickhouse(VectorDb):
         user_id: Optional[str] = None,
     ) -> None:
         """Insert documents asynchronously."""
+        self._validate_user_id(user_id)
         owner = user_id if user_id is not None else SHARED_OWNER
         rows: List[List[Any]] = []
         async_client = await self._ensure_async_client()
@@ -420,6 +429,7 @@ class Clickhouse(VectorDb):
         """
         Upsert documents into the database.
         """
+        self._validate_user_id(user_id)
         if self.content_hash_exists(content_hash, user_id=user_id):
             self._delete_by_content_hash(content_hash, user_id=user_id)
         self.insert(content_hash=content_hash, documents=documents, filters=filters, user_id=user_id)
@@ -457,6 +467,7 @@ class Clickhouse(VectorDb):
         user_id: Optional[str] = None,
     ) -> None:
         """Upsert documents asynchronously."""
+        self._validate_user_id(user_id)
         if self.content_hash_exists(content_hash, user_id=user_id):
             self._delete_by_content_hash(content_hash, user_id=user_id)
         await self._async_upsert(content_hash=content_hash, documents=documents, filters=filters, user_id=user_id)
@@ -496,6 +507,7 @@ class Clickhouse(VectorDb):
         filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
         user_id: Optional[str] = None,
     ) -> List[Document]:
+        self._validate_user_id(user_id)
         if filters is not None:
             log_warning("Filters are not yet supported in Clickhouse. No filters will be applied.")
         query_embedding = self.embedder.get_embedding(query)
@@ -558,6 +570,7 @@ class Clickhouse(VectorDb):
         user_id: Optional[str] = None,
     ) -> List[Document]:
         """Search for documents asynchronously."""
+        self._validate_user_id(user_id)
         async_client = await self._ensure_async_client()
 
         if filters is not None:
@@ -766,6 +779,7 @@ class Clickhouse(VectorDb):
         Returns:
             bool: True if documents were deleted, False otherwise
         """
+        self._validate_user_id(user_id)
         try:
             log_debug(f"ClickHouse VectorDB : Deleting documents with content_id {content_id}")
             parameters = self._get_base_parameters()
@@ -793,6 +807,7 @@ class Clickhouse(VectorDb):
             content_hash (str): Content hash to check
             user_id (Optional[str]): Owner to scope the check to (shared owner "" for None).
         """
+        self._validate_user_id(user_id)
         parameters = self._get_base_parameters()
         parameters["content_hash"] = content_hash
         parameters["user_id"] = user_id if user_id is not None else SHARED_OWNER
@@ -813,6 +828,7 @@ class Clickhouse(VectorDb):
                 the shared bucket ("") so a shared re-upsert never wipes a scoped
                 owner's identical-content row. The value is bound, never interpolated.
         """
+        self._validate_user_id(user_id)
         try:
             parameters = self._get_base_parameters()
             parameters["content_hash"] = content_hash

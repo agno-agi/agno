@@ -1,19 +1,20 @@
 """
-Per-User Knowledge Isolation with ClickHouse
-============================================
+Per-User Knowledge Isolation with Qdrant
+========================================
 Each user gets a private view of one shared knowledge base. Documents
 uploaded with a user_id are visible only to that user; documents uploaded
 without one are shared with everyone.
 
-ClickHouse stores the owner in a non-nullable String column; shared chunks
-store the empty string sentinel and scoped reads match caller OR ''.
+Qdrant keeps a single collection with a keyword-indexed user_id payload
+field (is_tenant=True) and filters scoped reads to the caller's tenant OR
+chunks with no owner.
 
 - Search as Alice: her chunks plus shared content, never Bob's
 - Search as Bob: his chunks plus shared content, never Alice's
 - Search with user_id=None: admin view, sees everything
 
-Requirements: ./cookbook/scripts/run_clickhouse.sh and OPENAI_API_KEY
-Run: python cookbook/07_knowledge/04_advanced/07_per_user_isolation/clickhouse_db.py
+Requirements: pip install qdrant-client (runs in-memory) and OPENAI_API_KEY
+Run: python cookbook/07_knowledge/04_advanced/07_per_user_isolation/qdrant_db.py
 """
 
 import asyncio
@@ -22,7 +23,9 @@ from pathlib import Path
 from agno.agent import Agent
 from agno.knowledge.knowledge import Knowledge
 from agno.models.openai import OpenAIResponses
-from agno.vectordb.clickhouse import Clickhouse
+from agno.vectordb.qdrant import Qdrant
+
+COLLECTION_NAME = "per_user_isolation_demo"
 
 
 def _write_temp_doc(name: str, body: str) -> str:
@@ -33,21 +36,14 @@ def _write_temp_doc(name: str, body: str) -> str:
 
 
 async def main() -> None:
-    # Start clean: a legacy table without the user_id column would make
-    # every row look like shared content.
-    vector_db = Clickhouse(
-        table_name="per_user_isolation_demo",
-        host="localhost",
-        port=8123,
-        username="ai",
-        password="ai",
-    )
-    vector_db.drop()
-    vector_db.create()
+    # Qdrant's sync and async clients get disjoint :memory: storage, so
+    # create the collection via the async client the demo uses throughout.
+    vector_db = Qdrant(collection=COLLECTION_NAME, location=":memory:")
+    await vector_db.async_create()
 
     knowledge = Knowledge(
         name="per_user_demo",
-        description="Per-user RAG isolation demo (ClickHouse)",
+        description="Per-user RAG isolation demo (Qdrant)",
         vector_db=vector_db,
     )
 
@@ -117,7 +113,7 @@ async def main() -> None:
     # The agent's user_id flows into run_context and scopes its retrieval.
     alice_agent = Agent(
         name="Alice's Assistant",
-        model=OpenAIResponses(id="gpt-5.5"),
+        model=OpenAIResponses(id="gpt-5.4"),
         knowledge=knowledge,
         user_id="alice",
         instructions=[
@@ -130,9 +126,6 @@ async def main() -> None:
     response = await alice_agent.arun("What is Bob's salary?")
     print("Alice's agent on 'What is Bob's salary?':")
     print(response.content)
-
-    if vector_db.async_client is not None:
-        await vector_db.async_client.close()
 
     print("\nDone.")
 

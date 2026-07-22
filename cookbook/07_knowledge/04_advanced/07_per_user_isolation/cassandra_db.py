@@ -1,14 +1,19 @@
 """
 Per-User Knowledge Isolation with Cassandra
 ===========================================
-Give each user a private view of one shared knowledge base. Documents a user
-uploads are visible only to them; documents uploaded with no user are shared
-with everyone, and an admin (no user id) sees all of it.
+Each user gets a private view of one shared knowledge base. Documents
+uploaded with a user_id are visible only to that user; documents uploaded
+without one are shared with everyone.
 
-Cassandra does this by storing the owner in each chunk's metadata, marking
-shared chunks with a special value, and searching each user's bucket separately.
+Cassandra stores the owner in each chunk's metadata, marks shared chunks
+with a __shared__ sentinel, and searches the caller's and shared buckets.
 
-Setup: ./cookbook/scripts/run_cassandra.sh
+- Search as Alice: her chunks plus shared content, never Bob's
+- Search as Bob: his chunks plus shared content, never Alice's
+- Search with user_id=None: admin view, sees everything
+
+Requirements: ./cookbook/scripts/run_cassandra.sh and OPENAI_API_KEY
+Run: python cookbook/07_knowledge/04_advanced/07_per_user_isolation/cassandra_db.py
 """
 
 import asyncio
@@ -36,11 +41,7 @@ def _write_temp_doc(name: str, body: str) -> str:
 
 
 async def main() -> None:
-    # ------------------------------------------------------------------
-    # Set up a Knowledge instance backed by Cassandra. The keyspace has
-    # to exist before cassio can attach to it, so create it first, then
-    # point cassio at the session.
-    # ------------------------------------------------------------------
+    # The keyspace has to exist before cassio can attach to it.
     cluster = Cluster([CASSANDRA_HOST], port=CASSANDRA_PORT)
     session = cluster.connect()
     session.execute(
@@ -49,9 +50,8 @@ async def main() -> None:
     )
     cassio.init(session=session, keyspace=KEYSPACE)
 
-    # The Cassandra backend fixes its vector column at 1024 dimensions, so
-    # the embedder must emit vectors of that exact width. text-embedding-3
-    # models support a ``dimensions`` override, so pin it to 1024.
+    # The Cassandra backend fixes its vector column at 1024 dimensions,
+    # so pin the embedder to that width.
     vector_db = Cassandra(
         table_name="per_user_isolation_demo",
         keyspace=KEYSPACE,
@@ -59,11 +59,7 @@ async def main() -> None:
         embedder=OpenAIEmbedder(id="text-embedding-3-small", dimensions=1024),
     )
 
-    # Drop any pre-existing table so we start with the current schema. A
-    # legacy table created before the ``user_id`` metadata convention
-    # existed would make every row look like shared content and isolation
-    # would silently fail. Starting clean avoids that footgun. In
-    # production, run a real migration; here we just drop-and-reingest.
+    # Start clean; drop() raises if the table does not exist yet.
     try:
         vector_db.drop()
     except Exception:
@@ -76,11 +72,8 @@ async def main() -> None:
         vector_db=vector_db,
     )
 
-    # ------------------------------------------------------------------
-    # Three uploads: Alice (private), Bob (private), Admin (shared).
-    # The ``user_id`` kwarg on ``ainsert`` flows through to every chunk
-    # written to Cassandra — it is stamped onto ``meta_data["user_id"]``.
-    # ------------------------------------------------------------------
+    # Alice and Bob upload private docs; the last upload has no user_id,
+    # which makes it shared / org-wide content.
     await knowledge.ainsert(
         path=_write_temp_doc(
             "alice_salary.txt",
@@ -105,39 +98,29 @@ async def main() -> None:
             "The company is closed on January 1, July 4, and December 25.",
         ),
         name="company_holidays",
-        # No ``user_id`` — this is org-wide / admin-uploaded shared content.
-        # In Cassandra the metadata stores the ``"__shared__"`` sentinel;
-        # scoped searches match it via a second ANN search over that bucket.
     )
 
-    # ------------------------------------------------------------------
-    # Demonstrate the isolation contract DIRECTLY against Knowledge.
-    # ------------------------------------------------------------------
     print("\n=== Direct asearch tests ===\n")
 
-    # 1. Alice asks about her own salary — she should find HER chunk.
     alice_salary = await knowledge.asearch(
         query="What is Alice's salary?", user_id="alice"
     )
     print(f"Alice asks about Alice's salary -> {len(alice_salary)} results")
     for d in alice_salary:
         print(f"  - {d.content[:80]}")
+    assert alice_salary, "expected Alice's own results, got none"
 
-    # 2. Alice asks about Bob — she should NOT see Bob's chunk. Best she can
-    #    do is the shared holidays doc, which is unrelated.
     alice_about_bob = await knowledge.asearch(
         query="What is Bob's salary?", user_id="alice"
     )
     print(f"\nAlice asks about Bob's salary -> {len(alice_about_bob)} results")
     for d in alice_about_bob:
         print(f"  - {d.content[:80]}")
-    # Cassandra keeps user_id internal (never surfaced in returned meta_data),
-    # so verify isolation by content rather than by reading an owner off the row.
+    # user_id stays internal to this backend, so verify isolation by content.
     bob_leak = [d for d in alice_about_bob if "215,000" in d.content]
     assert not bob_leak, "Isolation broken: Alice's retrieval surfaced Bob's salary"
     print("  isolation holds: Bob's salary is NOT visible to Alice")
 
-    # 3. Bob asks about company holidays — he should see the SHARED chunk.
     bob_holidays = await knowledge.asearch(
         query="When is the company closed?", user_id="bob"
     )
@@ -145,30 +128,22 @@ async def main() -> None:
     for d in bob_holidays:
         print(f"  - {d.content[:80]}")
 
-    # 4. Admin / no scope passed — sees everything.
     admin_view = await knowledge.asearch(query="salary", user_id=None)
     print(f"\nAdmin asks about salary (user_id=None) -> {len(admin_view)} results")
     for d in admin_view:
         print(f"  - {d.content[:80]}")
 
-    # ------------------------------------------------------------------
-    # End-to-end: an Agent doing RAG-as-Alice never sees Bob's chunks.
-    # The ``user_id`` is threaded through Knowledge.asearch from whatever
-    # caller (an OS router, a custom tool, your own code) decides the
-    # right owner is. For this demo we pass it explicitly.
-    # ------------------------------------------------------------------
     print("\n=== Agent-mediated test ===\n")
 
+    # The agent's user_id flows into run_context and scopes its retrieval.
     alice_agent = Agent(
         name="Alice's Assistant",
         model=OpenAIResponses(id="gpt-5.5"),
         knowledge=knowledge,
-        # Pin the agent to Alice's identity for retrieval. In a real
-        # deployment this comes from JWT.sub / get_scoped_user_id(request).
         user_id="alice",
         instructions=[
             "Answer questions using ONLY the knowledge you can retrieve.",
-            "If you don't know, say so — do not invent salary figures.",
+            "If you don't know, say so - do not invent salary figures.",
         ],
         markdown=True,
     )

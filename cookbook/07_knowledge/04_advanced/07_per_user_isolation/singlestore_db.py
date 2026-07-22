@@ -1,42 +1,20 @@
-"""Per-user knowledge isolation with SingleStore.
+"""
+Per-User Knowledge Isolation with SingleStore
+=============================================
+Each user gets a private view of one shared knowledge base. Documents
+uploaded with a user_id are visible only to that user; documents uploaded
+without one are shared with everyone.
 
-Same isolation contract as the pgvector / Qdrant / Chroma cookbooks in this
-directory, against a different backend. The ``Knowledge.asearch(user_id=...)``
-API is identical — only the underlying primitive changes:
+SingleStore stores the owner in a nullable user_id column and scopes reads
+with WHERE user_id = X OR user_id IS NULL.
 
-  * Alice and Bob each upload their own private documents. When an agent runs
-    as Alice, RAG retrieval finds only Alice's chunks (plus shared content).
-    Bob's chunks are invisible to her agent — and vice-versa.
+- Search as Alice: her chunks plus shared content, never Bob's
+- Search as Bob: his chunks plus shared content, never Alice's
+- Search with user_id=None: admin view, sees everything
 
-  * An admin uploads "company-wide" content without an owner. That ends up in
-    the SHARED bucket and is visible to BOTH Alice and Bob.
-
-How it works under the hood (SingleStore):
-
-  * The table has a dedicated ``user_id VARCHAR(255)`` column. Owned chunks
-    carry the uploader's id; shared chunks store NULL.
-
-  * Retrieval (``Knowledge.asearch(user_id=...)``) compiles to a server-side
-    predicate: ``WHERE user_id = 'alice' OR user_id IS NULL`` — caller's rows
-    plus shared rows. The value is bound, never interpolated.
-
-  * When you pass ``user_id=None``, no owner predicate is added — the admin /
-    debugging path. Admins see everything.
-
-Prerequisites:
-
-  * SingleStore running (local container or SingleStore Cloud). Locally::
-
-      ./cookbook/scripts/run_singlestore.sh
-
-    Connection details are read from ``SINGLESTORE_HOST`` / ``_PORT`` /
-    ``_USERNAME`` / ``_PASSWORD`` / ``_DATABASE``.
-
-  * ``OPENAI_API_KEY`` set in your environment (or swap the model below).
-
-Run:
-
-    python cookbook/07_knowledge/04_advanced/07_per_user_isolation/singlestore_db.py
+Requirements: ./cookbook/scripts/run_singlestore.sh, the SINGLESTORE_HOST /
+_PORT / _USERNAME / _PASSWORD / _DATABASE env vars and OPENAI_API_KEY
+Run: python cookbook/07_knowledge/04_advanced/07_per_user_isolation/singlestore_db.py
 """
 
 import asyncio
@@ -71,14 +49,13 @@ def _build_engine():
 
 
 async def main() -> None:
-    # ------------------------------------------------------------------
-    # Set up a Knowledge instance backed by SingleStore.
-    # ------------------------------------------------------------------
     vector_db = SingleStore(
         collection="per_user_isolation_demo",
         schema=DATABASE,
         db_engine=_build_engine(),
     )
+
+    # Start clean; drop() raises if the table does not exist yet.
     try:
         vector_db.drop()
     except Exception:
@@ -91,12 +68,8 @@ async def main() -> None:
         vector_db=vector_db,
     )
 
-    # ------------------------------------------------------------------
-    # Three uploads: Alice (private), Bob (private), Admin (shared).
-    # The ``user_id`` kwarg on ``ainsert`` flows through to every chunk
-    # written to SingleStore — it is stored in the dedicated ``user_id``
-    # column that the search predicate filters on.
-    # ------------------------------------------------------------------
+    # Alice and Bob upload private docs; the last upload has no user_id,
+    # which makes it shared / org-wide content.
     await knowledge.ainsert(
         path=_write_temp_doc(
             "alice_salary.txt",
@@ -105,6 +78,7 @@ async def main() -> None:
         name="alice_salary",
         user_id="alice",
     )
+
     await knowledge.ainsert(
         path=_write_temp_doc(
             "bob_salary.txt",
@@ -113,43 +87,36 @@ async def main() -> None:
         name="bob_salary",
         user_id="bob",
     )
+
     await knowledge.ainsert(
         path=_write_temp_doc(
             "company_holidays.txt",
             "The company is closed on January 1, July 4, and December 25.",
         ),
         name="company_holidays",
-        # No ``user_id`` — this is org-wide / admin-uploaded shared content.
-        # In SingleStore the ``user_id`` column stores NULL; scoped searches
-        # match it via ``OR user_id IS NULL``.
     )
 
-    # ------------------------------------------------------------------
-    # Demonstrate the isolation contract DIRECTLY against Knowledge.
-    # ------------------------------------------------------------------
     print("\n=== Direct asearch tests ===\n")
 
-    # 1. Alice asks about her own salary — she should find HER chunk.
     alice_salary = await knowledge.asearch(
         query="What is Alice's salary?", user_id="alice"
     )
     print(f"Alice asks about Alice's salary -> {len(alice_salary)} results")
     for d in alice_salary:
         print(f"  - {d.content[:80]}")
+    assert alice_salary, "expected Alice's own results, got none"
 
-    # 2. Alice asks about Bob — she should NOT see Bob's chunk. Best she can
-    #    do is the shared holidays doc, which is unrelated.
     alice_about_bob = await knowledge.asearch(
         query="What is Bob's salary?", user_id="alice"
     )
     print(f"\nAlice asks about Bob's salary -> {len(alice_about_bob)} results")
     for d in alice_about_bob:
         print(f"  - {d.content[:80]}")
+    # user_id stays internal to this backend, so verify isolation by content.
     bob_leak = [d for d in alice_about_bob if "215,000" in d.content]
     assert not bob_leak, "Isolation broken: Alice's retrieval surfaced Bob's salary"
     print("  isolation holds: Bob's salary is NOT visible to Alice")
 
-    # 3. Bob asks about company holidays — he should see the SHARED chunk.
     bob_holidays = await knowledge.asearch(
         query="When is the company closed?", user_id="bob"
     )
@@ -157,35 +124,30 @@ async def main() -> None:
     for d in bob_holidays:
         print(f"  - {d.content[:80]}")
 
-    # 4. Admin / no scope passed — sees everything.
     admin_view = await knowledge.asearch(query="salary", user_id=None)
     print(f"\nAdmin asks about salary (user_id=None) -> {len(admin_view)} results")
     for d in admin_view:
         print(f"  - {d.content[:80]}")
 
-    # ------------------------------------------------------------------
-    # End-to-end: an Agent doing RAG-as-Alice never sees Bob's chunks.
-    # The ``user_id`` is threaded through Knowledge.asearch from whatever
-    # caller (an OS router, a custom tool, your own code) decides the
-    # right owner is. For this demo we pass it explicitly.
-    # ------------------------------------------------------------------
     print("\n=== Agent-mediated test ===\n")
+
+    # The agent's user_id flows into run_context and scopes its retrieval.
     alice_agent = Agent(
         name="Alice's Assistant",
         model=OpenAIResponses(id="gpt-5.5"),
         knowledge=knowledge,
-        # Pin the agent to Alice's identity for retrieval. In a real
-        # deployment this comes from JWT.sub / get_scoped_user_id(request).
         user_id="alice",
         instructions=[
             "Answer questions using ONLY the knowledge you can retrieve.",
-            "If you don't know, say so — do not invent salary figures.",
+            "If you don't know, say so - do not invent salary figures.",
         ],
         markdown=True,
     )
+
     response = await alice_agent.arun("What is Bob's salary?")
     print("Alice's agent on 'What is Bob's salary?':")
     print(response.content)
+
     print("\nDone.")
 
 

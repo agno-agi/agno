@@ -13,11 +13,8 @@ from unittest.mock import Mock, patch
 
 import pytest
 
-# Skip the whole module cleanly if the optional dep is absent.
-pytest.importorskip("upstash_vector")
-
-from agno.knowledge.document import Document  # noqa: E402
-from agno.vectordb.upstashdb.upstashdb import _ALWAYS_FALSE, UpstashVectorDb  # noqa: E402
+from agno.knowledge.document import Document
+from agno.vectordb.upstashdb.upstashdb import _ALWAYS_FALSE, UpstashVectorDb
 
 
 @pytest.fixture
@@ -58,8 +55,8 @@ def _docs() -> List[Document]:
 
 
 class TestWritePersistsOwner:
-    """On write the owner is stamped into ``metadata.user_id``; ``None``/``""``
-    collapse to the SHARED bucket (no ``user_id`` key)."""
+    """On write the owner is stamped into ``metadata.user_id``; only ``None``
+    is the SHARED bucket (no ``user_id`` key). ``""`` is a real, isolated tenant."""
 
     def test_explicit_user_id_stamped_into_metadata(self, upstash_db):
         upstash_db.upsert(content_hash="h1", documents=_docs(), user_id="alice")
@@ -73,12 +70,13 @@ class TestWritePersistsOwner:
         for v in vectors:
             assert "user_id" not in v.metadata
 
-    def test_empty_string_user_id_is_shared(self, upstash_db):
-        """normalize_user_id collapses "" to None => shared bucket."""
+    def test_empty_string_user_id_is_a_real_tenant(self, upstash_db):
+        """ "" is a coherent isolated tenant (stamped verbatim), never the shared
+        bucket: only None omits the owner key."""
         upstash_db.upsert(content_hash="h1", documents=_docs(), user_id="")
         vectors = upstash_db.index.upsert.call_args[0][0]
         for v in vectors:
-            assert "user_id" not in v.metadata
+            assert v.metadata["user_id"] == ""
 
     def test_caller_filter_cannot_override_owner(self, upstash_db):
         """A caller passing their own user_id in filters must not reassign tenancy."""

@@ -1,43 +1,20 @@
-"""Per-user knowledge isolation with SurrealDB.
+"""
+Per-User Knowledge Isolation with SurrealDB
+===========================================
+Each user gets a private view of one shared knowledge base. Documents
+uploaded with a user_id are visible only to that user; documents uploaded
+without one are shared with everyone.
 
-Same isolation contract as the pgvector / Qdrant / Chroma cookbooks in
-this directory, against a different backend. The
-``Knowledge.asearch(user_id=...)`` API is identical — only the underlying
-primitive changes:
+SurrealDB stores the owner in an option<string> user_id field and appends
+user_id = $scope_user_id OR user_id = NONE to the vector search, binding
+the scope separately so metadata filters cannot collide with it.
 
-  * The SurrealDB table has a top-level ``user_id`` field typed
-    ``option<string>``. Owned chunks carry the uploader's id; shared
-    chunks store ``NONE``.
+- Search as Alice: her chunks plus shared content, never Bob's
+- Search as Bob: his chunks plus shared content, never Alice's
+- Search with user_id=None: admin view, sees everything
 
-  * Scoped reads compile to a server-side predicate appended to the
-    vector search: ``AND (user_id = $scope_user_id OR user_id = NONE)`` —
-    the caller's own rows OR the shared bucket. The owner is bound as
-    ``$scope_user_id`` so a caller's metadata filter can't collide with
-    the scope.
-
-  * When you pass ``user_id=None``, no owner predicate is added — the
-    admin / debugging path. Admins see everything.
-
-Three uploads, four scoped queries:
-
-  1. Alice and Bob each upload private content.
-  2. An admin uploads org-wide content (``user_id`` left ``None``).
-  3. Alice asks about Alice — sees her chunk plus shared content.
-  4. Alice asks about Bob — sees ZERO bob chunks (assertion below).
-  5. Bob asks about holidays — sees the shared bucket.
-  6. Admin (``user_id=None``) sees everything.
-
-Prerequisites:
-
-  * SurrealDB running locally. From the repo root::
-
-      ./cookbook/scripts/run_surrealdb.sh
-
-  * ``OPENAI_API_KEY`` set in your environment (or swap the model below).
-
-Run:
-
-    python cookbook/07_knowledge/04_advanced/07_per_user_isolation/surreal_db.py
+Requirements: ./cookbook/scripts/run_surrealdb.sh and OPENAI_API_KEY
+Run: python cookbook/07_knowledge/04_advanced/07_per_user_isolation/surreal_db.py
 """
 
 import asyncio
@@ -60,14 +37,8 @@ def _write_temp_doc(name: str, body: str) -> str:
 
 
 async def main() -> None:
-    # ------------------------------------------------------------------
-    # Set up a Knowledge instance backed by SurrealDB. The demo path is
-    # async (Knowledge's ``ainsert`` / ``asearch``), but SurrealDB's sync
-    # and async connections are independent objects, and Knowledge's
-    # constructor runs a synchronous ``exists()`` / ``create()``. So we
-    # hand the backend BOTH: a blocking client for the constructor and an
-    # async client for the async reads and writes below.
-    # ------------------------------------------------------------------
+    # Knowledge's constructor runs sync exists()/create(), so the backend
+    # needs both a blocking client and an async one for the demo below.
     client = Surreal("ws://localhost:8000/rpc")
     client.signin({"username": "root", "password": "root"})
     client.use("agno", "demo")
@@ -80,12 +51,7 @@ async def main() -> None:
         client=client, async_client=async_client, collection=COLLECTION_NAME
     )
 
-    # Drop any pre-existing table so we start with the current schema. A
-    # legacy table created before SurrealDB grew a ``user_id`` field would
-    # make every row look like shared content and isolation would silently
-    # fail. In production, run a real migration; here we drop-and-reingest.
-    # SurrealDB's REMOVE TABLE errors if the table isn't there, so on the
-    # first run we swallow that.
+    # Start clean; REMOVE TABLE errors if the table is absent (first run).
     try:
         await vector_db.async_drop()
     except Exception:
@@ -98,16 +64,8 @@ async def main() -> None:
         vector_db=vector_db,
     )
 
-    # ------------------------------------------------------------------
-    # Three uploads: Alice (private), Bob (private), Admin (shared).
-    # The ``user_id`` kwarg on ``ainsert`` flows through to the SurrealDB
-    # backend, which stamps it onto the row's ``user_id`` field. The API
-    # call is identical to pgvector / Qdrant / Chroma.
-    #
-    # The default upsert path binds each reader-assigned UUID id via
-    # ``UPSERT type::record($table, $record_id)`` and folds the owner into
-    # the id, so identical content from two owners never collides.
-    # ------------------------------------------------------------------
+    # Alice and Bob upload private docs; the last upload has no user_id,
+    # which makes it shared / org-wide content.
     await knowledge.ainsert(
         path=_write_temp_doc(
             "alice_salary.txt",
@@ -132,14 +90,8 @@ async def main() -> None:
             "The company is closed on January 1, July 4, and December 25.",
         ),
         name="company_holidays",
-        # No ``user_id`` — this is org-wide / admin-uploaded shared content.
-        # SurrealDB stores NONE in the ``user_id`` field; scoped queries
-        # match it via the ``user_id = NONE`` branch of the scope predicate.
     )
 
-    # ------------------------------------------------------------------
-    # Demonstrate the isolation contract DIRECTLY against Knowledge.
-    # ------------------------------------------------------------------
     print("\n=== Direct asearch tests ===\n")
 
     alice_salary = await knowledge.asearch(
@@ -148,6 +100,7 @@ async def main() -> None:
     print(f"Alice asks about Alice's salary -> {len(alice_salary)} results")
     for d in alice_salary:
         print(f"  - {d.content[:80]}")
+    assert alice_salary, "expected Alice's own results, got none"
 
     alice_about_bob = await knowledge.asearch(
         query="What is Bob's salary?", user_id="alice"
@@ -155,18 +108,10 @@ async def main() -> None:
     print(f"\nAlice asks about Bob's salary -> {len(alice_about_bob)} results")
     for d in alice_about_bob:
         print(f"  - {d.content[:80]}")
-    # The canonical isolation assertion: Bob's content must never surface
-    # in Alice's retrieval, no matter how relevant it is to her query. This
-    # backend keeps user_id in a top-level field (not in returned meta_data),
-    # so we assert on content rather than reading an owner off the row.
-    bob_phrases = ["Bob's salary", "$215"]
-    for d in alice_about_bob:
-        for phrase in bob_phrases:
-            assert phrase not in d.content, (
-                f"Isolation broken: Alice's retrieval surfaced Bob's chunk "
-                f"(matched {phrase!r}): {d.content!r}"
-            )
-    print("  isolation holds: Bob's chunks are NOT visible to Alice")
+    # user_id stays internal to this backend, so verify isolation by content.
+    bob_leak = [d for d in alice_about_bob if "215,000" in d.content]
+    assert not bob_leak, "Isolation broken: Alice's retrieval surfaced Bob's salary"
+    print("  isolation holds: Bob's salary is NOT visible to Alice")
 
     bob_holidays = await knowledge.asearch(
         query="When is the company closed?", user_id="bob"
@@ -180,15 +125,9 @@ async def main() -> None:
     for d in admin_view:
         print(f"  - {d.content[:80]}")
 
-    # ------------------------------------------------------------------
-    # End-to-end: an Agent doing RAG-as-Alice never sees Bob's chunks.
-    # The ``user_id`` on the Agent flows into ``run_context.user_id``,
-    # which ``KnowledgeTools.search_knowledge`` reads and forwards to
-    # ``knowledge.search``. In a real deployment this comes from
-    # ``get_scoped_user_id(request)`` (the JWT sub).
-    # ------------------------------------------------------------------
     print("\n=== Agent-mediated test ===\n")
 
+    # The agent's user_id flows into run_context and scopes its retrieval.
     alice_agent = Agent(
         name="Alice's Assistant",
         model=OpenAIResponses(id="gpt-5.5"),

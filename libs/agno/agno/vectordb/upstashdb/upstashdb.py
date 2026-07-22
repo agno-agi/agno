@@ -229,13 +229,18 @@ class UpstashVectorDb(VectorDb):
             filter_str = _equals_predicate("content_hash", content_hash)
             if user_id is not None:
                 filter_str = f"{filter_str} AND {_equals_predicate(self.USER_ID_KEY, user_id)}"
+            else:
+                filter_str = f"{filter_str} AND HAS NOT FIELD {self.USER_ID_KEY}"
 
             if not self.use_upstash_embeddings and self.embedder is not None:
-                # For custom embeddings, we need a dummy vector for the query
-                # Use a zero vector as we only care about the filter match
+                # For custom embeddings, we need a dummy vector for the query.
+                # It must be non-zero: a zero vector has no cosine similarity to any
+                # row, so the query returns nothing regardless of the filter and the
+                # existence check would always report False. The value is irrelevant
+                # since we only care about the filter match, not the ranking.
                 info = self.index.info()
                 dimension = info.dimension
-                dummy_vector = [0.0] * dimension
+                dummy_vector = [1.0] * dimension
 
                 response = self.index.query(
                     vector=dummy_vector,
@@ -290,7 +295,7 @@ class UpstashVectorDb(VectorDb):
         """Owner-scope predicate for a scoped read: the caller's own chunks plus
         the shared bucket. Returns "" when user_id is None (no scope, admin view).
         """
-        if not user_id:
+        if user_id is None:
             return ""
         return f"({_equals_predicate(self.USER_ID_KEY, user_id)} OR HAS NOT FIELD {self.USER_ID_KEY})"
 
@@ -357,10 +362,10 @@ class UpstashVectorDb(VectorDb):
             meta_data["content_hash"] = content_hash
 
             # Stamp the owner after caller filters so it can't be overwritten (None omits the key)
-            if user_id:
-                meta_data[self.USER_ID_KEY] = user_id
-            else:
+            if user_id is None:
                 meta_data.pop(self.USER_ID_KEY, None)
+            else:
+                meta_data[self.USER_ID_KEY] = user_id
 
             # Add name to metadata if it exists
             if document.name:
@@ -597,7 +602,7 @@ class UpstashVectorDb(VectorDb):
             bool: True if deletion was successful, False otherwise
         """
         metadata: Dict[str, Any] = {"content_id": content_id}
-        if user_id:
+        if user_id is not None:
             metadata[self.USER_ID_KEY] = user_id
         return self.delete_by_metadata(metadata)
 
@@ -721,10 +726,10 @@ class UpstashVectorDb(VectorDb):
             meta_data["content_hash"] = content_hash
 
             # Stamp the owner after caller filters so it can't be overwritten (None omits the key)
-            if user_id:
-                meta_data[self.USER_ID_KEY] = user_id
-            else:
+            if user_id is None:
                 meta_data.pop(self.USER_ID_KEY, None)
+            else:
+                meta_data[self.USER_ID_KEY] = user_id
 
             # Add name to metadata if it exists
             if document.name:

@@ -1,28 +1,33 @@
 """
-Per-User Knowledge Isolation with ClickHouse
-============================================
+Per-User Knowledge Isolation with LanceDB
+=========================================
 Each user gets a private view of one shared knowledge base. Documents
 uploaded with a user_id are visible only to that user; documents uploaded
 without one are shared with everyone.
 
-ClickHouse stores the owner in a non-nullable String column; shared chunks
-store the empty string sentinel and scoped reads match caller OR ''.
+LanceDB stores the owner in a user_id column and prefilters the vector
+search with user_id = X OR user_id IS NULL, so top-K ranking only sees
+rows the caller is allowed to read.
 
 - Search as Alice: her chunks plus shared content, never Bob's
 - Search as Bob: his chunks plus shared content, never Alice's
 - Search with user_id=None: admin view, sees everything
 
-Requirements: ./cookbook/scripts/run_clickhouse.sh and OPENAI_API_KEY
-Run: python cookbook/07_knowledge/04_advanced/07_per_user_isolation/clickhouse_db.py
+Requirements: pip install lancedb pyarrow (embedded, no server) and OPENAI_API_KEY
+Run: python cookbook/07_knowledge/04_advanced/07_per_user_isolation/lance_db.py
 """
 
 import asyncio
+import shutil
 from pathlib import Path
 
 from agno.agent import Agent
 from agno.knowledge.knowledge import Knowledge
 from agno.models.openai import OpenAIResponses
-from agno.vectordb.clickhouse import Clickhouse
+from agno.vectordb.lancedb import LanceDb
+
+DB_PATH = "/tmp/agno_per_user_isolation_lancedb"
+TABLE_NAME = "per_user_isolation_demo"
 
 
 def _write_temp_doc(name: str, body: str) -> str:
@@ -33,21 +38,16 @@ def _write_temp_doc(name: str, body: str) -> str:
 
 
 async def main() -> None:
-    # Start clean: a legacy table without the user_id column would make
-    # every row look like shared content.
-    vector_db = Clickhouse(
-        table_name="per_user_isolation_demo",
-        host="localhost",
-        port=8123,
-        username="ai",
-        password="ai",
-    )
-    vector_db.drop()
-    vector_db.create()
+    # Start clean: a legacy on-disk schema without the user_id column
+    # would make every row look like shared content.
+    if Path(DB_PATH).exists():
+        shutil.rmtree(DB_PATH)
+
+    vector_db = LanceDb(uri=DB_PATH, table_name=TABLE_NAME)
 
     knowledge = Knowledge(
         name="per_user_demo",
-        description="Per-user RAG isolation demo (ClickHouse)",
+        description="Per-user RAG isolation demo (LanceDB)",
         vector_db=vector_db,
     )
 
@@ -117,7 +117,7 @@ async def main() -> None:
     # The agent's user_id flows into run_context and scopes its retrieval.
     alice_agent = Agent(
         name="Alice's Assistant",
-        model=OpenAIResponses(id="gpt-5.5"),
+        model=OpenAIResponses(id="gpt-5.4"),
         knowledge=knowledge,
         user_id="alice",
         instructions=[
@@ -130,9 +130,6 @@ async def main() -> None:
     response = await alice_agent.arun("What is Bob's salary?")
     print("Alice's agent on 'What is Bob's salary?':")
     print(response.content)
-
-    if vector_db.async_client is not None:
-        await vector_db.async_client.close()
 
     print("\nDone.")
 

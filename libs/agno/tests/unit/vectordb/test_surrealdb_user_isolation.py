@@ -1,46 +1,30 @@
-"""SurrealDB per-user RAG isolation contract (pure unit test, no server).
+"""SurrealDB per-user RAG isolation contract.
 
 Inserts stamp ``user_id`` as a first-class field (NONE/NULL == the SHARED
 bucket). Scoped searches return the caller's own chunks OR shared chunks, but
-never another owner's. Unscoped (``user_id=None``) searches are the admin view
-and see everything. The upsert path folds the owner into the bound record id so
-two owners' identical content lands on distinct records. ``delete_by_content_id``
-is owner-scoped so one user can't wipe another's chunks by guessing a content_id.
+never another owner's; unscoped (``user_id=None``) searches are the admin view.
+The upsert path folds the owner into the bound record id so two owners'
+identical content lands on distinct records.
 
-The SurrealDb adapter takes its client via dependency injection (``client=`` /
-``async_client=``) rather than constructing a ``Surreal`` internally, so we
-inject a fake connection that captures every ``query``/``create`` call — the SQL
-text, the bound variables, and the written record body. No ``Surreal(...)`` is
-ever constructed, so the test cannot open a real connection even though a server
-happens to be running locally. Because the isolation logic lives in the SQL text
-and the bound variables, those captured values ARE the contract we assert on —
-the same approach the base ``test_pineconedb_user_isolation`` /
-``test_upstashdb_user_isolation`` suites take against their mocked clients.
+The adapter takes its client via dependency injection (``client=`` /
+``async_client=``), so we inject a fake connection that captures every
+``query``/``create`` call — the SQL text, the bound variables, and the written
+record body — and assert on those captured values. No server is contacted.
 """
 
 import uuid
 
 import pytest
 
-# Skip cleanly if the optional dependency isn't installed. Kept as the ONLY
-# skip gate — there is no server probe.
-pytest.importorskip("surrealdb")
+from agno.knowledge.document import Document
+from agno.vectordb.surrealdb import SurrealDb
 
-from agno.knowledge.document import Document  # noqa: E402
-from agno.vectordb.surrealdb import SurrealDb  # noqa: E402
-from agno.vectordb.surrealdb.surrealdb import SurrealDb as _SurrealDbModuleClass  # noqa: E402
-
-# The shared-bucket marker as it lands in SurrealDB: the adapter writes the raw
-# Python ``user_id`` into the record body, so a shared row carries ``None`` (which
-# SurrealDB persists as NONE/NULL). Confirmed from the adapter: no sentinel string.
+# A shared row carries ``None`` in the record body (persisted as NONE/NULL).
 SHARED_MARKER = None
 
 
 class _DeterministicEmbedder:
-    """A tiny embedder that needs no network or API key. Content steers the
-    vector deterministically; it exposes both the sync and async surfaces the
-    adapter calls (``get_embedding`` on search, ``get_embedding_and_usage`` via
-    ``Document.embed``)."""
+    """A tiny embedder that needs no network or API key."""
 
     dimensions = 8
     enable_batch = False
@@ -67,14 +51,13 @@ class _DeterministicEmbedder:
 
 
 class FakeSurreal:
-    """A fake blocking SurrealDB connection that records every call instead of
-    talking to a server. ``queries`` holds (sql, bound_vars) tuples; ``creates``
-    holds (table, record_body) tuples."""
+    """A fake blocking SurrealDB connection that records every call. ``queries``
+    holds (sql, bound_vars) tuples; ``creates`` holds (table, record_body)."""
 
     def __init__(self):
-        self.queries = []  # list[tuple[str, dict | None]]
-        self.creates = []  # list[tuple[str, dict]]
-        self.query_return = []  # what query() hands back (iterated as rows on search)
+        self.queries = []
+        self.creates = []
+        self.query_return = []
 
     def query(self, sql, vars=None):
         self.queries.append((sql, vars))
@@ -86,8 +69,7 @@ class FakeSurreal:
 
 
 class FakeAsyncSurreal:
-    """Async twin of :class:`FakeSurreal` — its ``query``/``create`` are awaitable
-    so the adapter's ``await self.async_client...`` paths run unchanged."""
+    """Async twin of ``FakeSurreal``."""
 
     def __init__(self):
         self.queries = []
@@ -227,10 +209,8 @@ class TestIdFolding:
 class TestSearchIsolationContract:
     """The load-bearing contract: a scoped search restricts the WHERE clause to
     the caller's own rows OR the shared (NONE) bucket, and binds the owner as
-    ``$scope_user_id`` — so another owner is excluded by construction. Admin
-    (``None``) applies no scope. With the client captured, the SQL text + bound
-    vars ARE the contract (the adapter delegates the actual row filtering to
-    SurrealDB executing this WHERE clause)."""
+    ``$scope_user_id`` — another owner is excluded by construction. Admin
+    (``None``) applies no scope."""
 
     OWN_OR_SHARED = "AND (user_id = $scope_user_id OR user_id = NONE)"
 
@@ -259,8 +239,8 @@ class TestSearchIsolationContract:
 
     def test_scope_condition_helper_matches(self):
         # Guards the exact predicate the two search methods share.
-        assert _SurrealDbModuleClass._user_scope_condition("alice") == self.OWN_OR_SHARED
-        assert _SurrealDbModuleClass._user_scope_condition(None) == ""
+        assert SurrealDb._user_scope_condition("alice") == self.OWN_OR_SHARED
+        assert SurrealDb._user_scope_condition(None) == ""
 
 
 class TestScopedDedup:
@@ -314,9 +294,7 @@ class TestDeleteByContentIdIsolation:
 class TestKeyInjectionSafety:
     """A quote/keyword-laden ``user_id`` must be bound as a variable, never
     string-interpolated into the SQL — so it lands verbatim as the owner and
-    cannot widen the scope. Each assertion below fails LOUDLY if the adapter were
-    ever changed to splice ``user_id`` into the query text: the evil string would
-    then appear in the SQL and ``evil not in sql`` would break."""
+    cannot widen the scope."""
 
     EVIL = "alice' OR user_id = NONE OR '1'='1"
 

@@ -30,11 +30,12 @@ from agno.utils.log import log_debug, log_error, log_warning, logger
 from agno.utils.string import hash_string_sha256
 from agno.vectordb.base import VectorDb
 from agno.vectordb.search import SearchType
-# Per-user RAG isolation. Owner is stored as a top-level metadata field
-# user_id and reads/deletes are scoped with a metadata filter.
-# * Upserts with user_id stamp the field; user_id=None omits it (shared bucket).
-# * Searches with user_id=X AND an $or of own OR shared onto the caller
-#   filter; user_id=None applies no scope (admin view).
+
+# Per-user RAG isolation. The owner is stored in a top-level ``user_id``
+# metadata field and reads/deletes are scoped with a metadata filter.
+# * Upserts with ``user_id`` stamp the field; ``user_id=None`` omits it (the SHARED bucket).
+# * Searches with ``user_id=X`` AND an own-OR-shared ``$or`` onto the caller's filter.
+# * Searches with ``user_id=None`` apply no scope (admin view, sees all).
 USER_ID_METADATA_KEY = "user_id"
 
 
@@ -603,10 +604,42 @@ class PineconeDb(VectorDb):
     async def async_drop(self) -> None:
         raise NotImplementedError(f"Async not supported on {self.__class__.__name__}.")
 
+    def _collect_ids_by_filter(self, filter_conditions: Dict[str, Any]) -> List[str]:
+        """Collect the ids of the vectors matching a metadata filter.
+
+        Serverless indexes do not support metadata-filtered deletes, so a
+        filter has to be resolved to concrete ids first. A dummy vector is
+        fine here since only the ids under the filter are needed, not ranking.
+        """
+        if self.dimension is None:
+            raise ValueError("Dimension is not set for this Pinecone index")
+        dummy_vector = [0.0] * self.dimension
+        response = self.index.query(
+            vector=dummy_vector,
+            top_k=10000,
+            namespace=self.namespace,
+            filter=filter_conditions,
+            include_metadata=False,
+            include_values=False,
+        )
+        return [match.id for match in response.matches]
+
+    def _delete_by_filter(self, filter_conditions: Dict[str, Any]) -> bool:
+        """Resolve a metadata filter to ids and delete them.
+
+        Metadata-filtered deletes silently no-op on serverless indexes, so the
+        matching ids are collected first and deleted by id (supported on both
+        serverless and pod indexes).
+        """
+        ids = self._collect_ids_by_filter(filter_conditions)
+        if ids:
+            self.index.delete(ids=ids, namespace=self.namespace)
+        return True
+
     def delete_by_id(self, id: str) -> bool:
         """Delete a document by ID."""
         try:
-            self.index.delete(ids=[id])
+            self.index.delete(ids=[id], namespace=self.namespace)
             return True
         except Exception as e:
             log_warning(f"Error deleting document with ID {id}: {str(e)}")
@@ -616,8 +649,7 @@ class PineconeDb(VectorDb):
         """Delete documents by name (stored in metadata)."""
         try:
             # Delete all documents where metadata.name equals the given name
-            self.index.delete(filter={"name": {"$eq": name}})
-            return True
+            return self._delete_by_filter({"name": {"$eq": name}})
         except Exception as e:
             log_warning(f"Error deleting documents with name {name}: {str(e)}")
             return False
@@ -630,8 +662,7 @@ class PineconeDb(VectorDb):
             for key, value in metadata.items():
                 filter_conditions[key] = {"$eq": value}
 
-            self.index.delete(filter=filter_conditions)
-            return True
+            return self._delete_by_filter(filter_conditions)
         except Exception as e:
             log_warning(f"Error deleting documents with metadata {metadata}: {str(e)}")
             return False
@@ -647,8 +678,7 @@ class PineconeDb(VectorDb):
         if user_id is not None:
             filter_conditions[self.USER_ID_KEY] = {"$eq": user_id}
         try:
-            self.index.delete(filter=filter_conditions)
-            return True
+            return self._delete_by_filter(filter_conditions)
         except Exception as e:
             log_warning(f"Error deleting documents with content_id {content_id}: {str(e)}")
             return False
@@ -733,8 +763,7 @@ class PineconeDb(VectorDb):
                 filter_conditions[self.USER_ID_KEY] = {"$eq": user_id}
             else:
                 filter_conditions[self.USER_ID_KEY] = {"$exists": False}
-            self.index.delete(filter=filter_conditions, namespace=self.namespace)
-            return True
+            return self._delete_by_filter(filter_conditions)
         except Exception as e:
             log_warning(f"Error deleting documents with content_hash {content_hash}: {str(e)}")
             return False

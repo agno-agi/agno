@@ -644,6 +644,12 @@ class SingleStore(VectorDb):
             filters (Optional[Dict[str, Any]]): Optional filters for the upsert.
             user_id (Optional[str]): Explicit owner for per-user RAG isolation.
         """
+        # The table has no unique key, so ON DUPLICATE KEY UPDATE never fires;
+        # clear the caller's existing rows for this hash first (mirrors sync upsert)
+        # so re-upserting the same content doesn't accumulate duplicate rows.
+        if self.content_hash_exists(content_hash, user_id=user_id):
+            self._delete_by_content_hash(content_hash, user_id=user_id)
+
         if self.embedder.enable_batch and hasattr(self.embedder, "async_get_embeddings_batch_and_usage"):
             # Use batch embedding when enabled and supported
             try:

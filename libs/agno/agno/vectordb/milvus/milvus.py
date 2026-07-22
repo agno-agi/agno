@@ -755,16 +755,28 @@ class Milvus(VectorDb):
         """
         return MILVUS_DISTANCE_MAP.get(self.distance, "COSINE")
 
-    def _scoped_expr(self, filters: Optional[Dict[str, Any]], user_id: Optional[str]) -> Optional[str]:
+    @staticmethod
+    def _escape_expr_literal(value: str) -> str:
+        """Escape a value interpolated into a double-quoted Milvus expression literal
+        so a quote or backslash in the value cannot break out of the string.
+        """
+        return value.replace("\\", "\\\\").replace('"', '\\"')
+
+    def _scoped_expr(
+        self, filters: Optional[Union[Dict[str, Any], List[FilterExpr]]], user_id: Optional[str]
+    ) -> Optional[str]:
         """Combine the metadata filter with the per-user owner scope.
 
         A set user_id restricts results to the caller's own chunks plus the shared
         (null) bucket; None applies no scope (admin view, sees everything).
         """
+        if isinstance(filters, list):
+            filters = None
         base = self._build_expr(filters)
-        if not user_id:
+        if user_id is None:
             return base
-        scope = f'({self.USER_ID_KEY} == "{user_id}" or {self.USER_ID_KEY} is null)'
+        owner = self._escape_expr_literal(user_id)
+        scope = f'({self.USER_ID_KEY} == "{owner}" or {self.USER_ID_KEY} is null)'
         if base:
             return f"({base}) and {scope}"
         return scope
@@ -1243,9 +1255,9 @@ class Milvus(VectorDb):
         try:
             log_debug(f"Milvus VectorDB : Deleting documents with content_id {content_id} (user_id={user_id})")
 
-            expr = f'content_id == "{content_id}"'
-            if user_id:
-                expr += f' and {self.USER_ID_KEY} == "{user_id}"'
+            expr = f'content_id == "{self._escape_expr_literal(content_id)}"'
+            if user_id is not None:
+                expr += f' and {self.USER_ID_KEY} == "{self._escape_expr_literal(user_id)}"'
 
             self.client.delete(collection_name=self.collection, filter=expr)
             log_info(f"Deleted documents with content_id '{content_id}' from collection '{self.collection}'.")

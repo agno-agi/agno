@@ -9,6 +9,7 @@ We run against milvus-lite (a fresh ``.db`` file per test) so this is a true
 end-to-end test with no mocking of the database itself.
 """
 
+import logging
 from typing import List, Optional
 
 import pytest
@@ -37,13 +38,16 @@ pytestmark = pytest.mark.skipif(
 if MILVUS_AVAILABLE and MILVUS_LITE_AVAILABLE:
     from agno.vectordb.milvus import Milvus
 
+# milvus-lite's embedded server does not implement the AllocTimestamp RPC and
+# logs a NotImplementedError at ERROR on every connection; pymilvus handles the
+# fallback, so keep that noise out of the test output.
+logging.getLogger("grpc._server").setLevel(logging.CRITICAL)
+
 TEST_COLLECTION = "isolation_test"
 
 
 class _DeterministicEmbedder:
-    """A tiny embedder that needs no network or API key. The content steers the
-    vector so distinct documents land in distinct buckets, and it gives us a real
-    async surface too."""
+    """A tiny embedder that needs no network or API key."""
 
     dimensions = 8
     enable_batch = False
@@ -171,6 +175,15 @@ class TestScopeExpressionBuilder:
     def test_scoped_expr_ands_metadata_and_scope(self, milvus_db):
         expr = milvus_db._scoped_expr({"tag": "x"}, "alice")
         assert expr == '(meta_data["tag"] == "x") and (user_id == "alice" or user_id is null)'
+
+    def test_empty_string_is_a_scoped_tenant_not_unscoped(self, milvus_db):
+        # "" is a real owner, not an admin bypass — it scopes to its own bucket plus shared.
+        assert milvus_db._scoped_expr(None, "") == '(user_id == "" or user_id is null)'
+
+    def test_scope_expr_escapes_quotes_to_block_injection(self, milvus_db):
+        # A quote in user_id cannot break out of the literal and widen the scope.
+        expr = milvus_db._scoped_expr(None, 'zzz" or user_id == "bob')
+        assert expr == '(user_id == "zzz\\" or user_id == \\"bob" or user_id is null)'
 
 
 class TestVectorSearchIsolation:

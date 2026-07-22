@@ -1,18 +1,23 @@
 """
 Per-User Knowledge Isolation with Pinecone
 ==========================================
-Give each user a private view of one shared knowledge base. Documents a user
-uploads are visible only to them; documents uploaded with no user are shared
-with everyone, and an admin (no user id) sees all of it.
+Each user gets a private view of one shared knowledge base. Documents
+uploaded with a user_id are visible only to that user; documents uploaded
+without one are shared with everyone.
 
-Pinecone does this by storing the owner in each vector's metadata and filtering
-on it, treating vectors with no owner as shared.
+Pinecone stores the owner in each vector's metadata; shared chunks omit
+the field and scoped reads filter on caller OR field-not-present.
 
-Setup: export PINECONE_API_KEY and OPENAI_API_KEY (Pinecone is cloud-hosted).
+- Search as Alice: her chunks plus shared content, never Bob's
+- Search as Bob: his chunks plus shared content, never Alice's
+- Search with user_id=None: admin view, sees everything
+
+Requirements: PINECONE_API_KEY (cloud-hosted) and OPENAI_API_KEY
+Run: python cookbook/07_knowledge/04_advanced/07_per_user_isolation/pinecone_db.py
 """
 
 import asyncio
-import os
+from os import getenv
 from pathlib import Path
 
 from agno.agent import Agent
@@ -24,6 +29,7 @@ INDEX_NAME = "per-user-isolation-demo"
 
 
 def _write_temp_doc(name: str, body: str) -> str:
+    """Write a tiny text file we can ingest. Returns the absolute path."""
     p = Path(f"/tmp/{name}")
     p.write_text(body)
     return str(p)
@@ -35,12 +41,11 @@ async def main() -> None:
         dimension=1536,
         metric="cosine",
         spec={"serverless": {"cloud": "aws", "region": "us-east-1"}},
-        api_key=os.getenv("PINECONE_API_KEY"),
+        api_key=getenv("PINECONE_API_KEY"),
     )
     await vector_db.async_create()
-    # Index reuse is fine; clear any vectors left by a prior run so counts
-    # start clean. Pinecone's async_drop is not implemented, so clear the
-    # existing index off-thread; on a brand-new index this is a no-op.
+    # Clear vectors left by a prior run (async_drop is not implemented);
+    # on a brand-new index this is a no-op.
     await asyncio.to_thread(vector_db.delete)
 
     knowledge = Knowledge(
@@ -49,6 +54,8 @@ async def main() -> None:
         vector_db=vector_db,
     )
 
+    # Alice and Bob upload private docs; the last upload has no user_id,
+    # which makes it shared / org-wide content.
     await knowledge.ainsert(
         path=_write_temp_doc(
             "alice_salary.txt",
@@ -57,6 +64,7 @@ async def main() -> None:
         name="alice_salary",
         user_id="alice",
     )
+
     await knowledge.ainsert(
         path=_write_temp_doc(
             "bob_salary.txt",
@@ -65,6 +73,7 @@ async def main() -> None:
         name="bob_salary",
         user_id="bob",
     )
+
     await knowledge.ainsert(
         path=_write_temp_doc(
             "company_holidays.txt",
@@ -74,12 +83,14 @@ async def main() -> None:
     )
 
     print("\n=== Direct asearch tests ===\n")
+
     alice_salary = await knowledge.asearch(
         query="What is Alice's salary?", user_id="alice"
     )
     print(f"Alice asks about Alice's salary -> {len(alice_salary)} results")
     for d in alice_salary:
         print(f"  - {d.content[:80]}  (owner={d.meta_data.get('user_id')!r})")
+    assert alice_salary, "expected Alice's own results, got none"
 
     alice_about_bob = await knowledge.asearch(
         query="What is Bob's salary?", user_id="alice"
@@ -104,6 +115,8 @@ async def main() -> None:
         print(f"  - {d.content[:80]}  (owner={d.meta_data.get('user_id')!r})")
 
     print("\n=== Agent-mediated test ===\n")
+
+    # The agent's user_id flows into run_context and scopes its retrieval.
     alice_agent = Agent(
         name="Alice's Assistant",
         model=OpenAIResponses(id="gpt-5.5"),
@@ -115,9 +128,11 @@ async def main() -> None:
         ],
         markdown=True,
     )
+
     response = await alice_agent.arun("What is Bob's salary?")
     print("Alice's agent on 'What is Bob's salary?':")
     print(response.content)
+
     print("\nDone.")
 
 

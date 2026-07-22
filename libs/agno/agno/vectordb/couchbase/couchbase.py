@@ -324,7 +324,7 @@ class CouchbaseSearch(VectorDb):
         Args:
             documents: List of documents to insert
             filters: Optional filters to apply to the documents
-            user_id: Owner of the chunks. None => shared / org-wide bucket.
+            user_id: Owner of the chunks for per-user isolation. None means shared.
         """
         log_debug(f"Inserting {len(documents)} documents")
 
@@ -430,7 +430,7 @@ class CouchbaseSearch(VectorDb):
         Args:
             documents: List of documents to upsert
             filters: Optional filters to apply to the documents
-            user_id: Owner of the chunks. None => shared / org-wide bucket.
+            user_id: Owner of the chunks for per-user isolation. None means shared.
         """
         logger.info(f"Upserting {len(documents)} documents")
 
@@ -634,7 +634,7 @@ class CouchbaseSearch(VectorDb):
 
         Args:
             document: Document to prepare
-            user_id: Owner of the chunk. None => shared / org-wide bucket.
+            user_id: Owner of the chunk for per-user isolation. None means shared.
 
         Returns:
             Dictionary containing document data ready for insertion

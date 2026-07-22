@@ -4,13 +4,10 @@ MongoDB stamps ``user_id`` as a top-level field on every chunk (NULL == the
 SHARED bucket) and scopes reads via a ``$vectorSearch.filter`` pre-filter that
 matches the caller's id OR NULL.
 
-Atlas ``$vectorSearch`` is not available on a plain server or in CI, so this
-suite runs with NO server: it patches ``MongoClient``/``AsyncMongoClient`` with
-an in-memory fake collection that stores what the adapter inserts and applies
-the scope filter the adapter builds. The adapter's real logic (owner stamping,
-owner-folded ``_id``, the ``$vectorSearch`` scope predicate, the scoped delete
-filter, and the metadata-strip) runs unchanged, so a regression that breaks
-isolation makes these tests fail rather than skip.
+Atlas ``$vectorSearch`` is not available on a plain server, so this suite
+patches ``MongoClient``/``AsyncMongoClient`` with an in-memory fake collection
+that stores what the adapter inserts and applies the scope filter the adapter
+builds — the adapter's real isolation logic runs unchanged.
 """
 
 from hashlib import md5
@@ -21,25 +18,14 @@ from unittest.mock import patch
 import pytest
 
 from agno.knowledge.document import Document
-
-pytest.importorskip("pymongo")
-
-from agno.vectordb.mongodb import MongoVectorDb  # noqa: E402
+from agno.vectordb.mongodb import MongoVectorDb
 
 TEST_DATABASE = "agno_iso_test"
 USER_ID_FIELD = "user_id"
 
 
-# --------------------------------------------------------------------------- #
-# In-memory fake MongoDB collection/client (no server, no $vectorSearch engine)
-# --------------------------------------------------------------------------- #
 def _match(doc: Dict[str, Any], query: Dict[str, Any]) -> bool:
-    """Minimal MongoDB query matcher: top-level equality plus ``$or``.
-
-    Covers every predicate the adapter builds for isolation (owner equality,
-    the own-OR-null scope, content_hash/content_id lookups). ``None`` compares
-    as MongoDB null equality, which is what the scope filter relies on.
-    """
+    """Minimal MongoDB query matcher: top-level equality plus ``$or``."""
     for key, cond in query.items():
         if key == "$or":
             if not any(_match(doc, sub) for sub in cond):
@@ -127,12 +113,7 @@ class _FakeCollection:
         return sum(1 for d in self.docs if _match(d, flt))
 
     def run_aggregate(self, pipeline):
-        """Record the pipeline and apply the ``$vectorSearch`` scope filter.
-
-        No ANN engine here: with a scope filter set, only the matching owner's
-        (plus null) docs come back; with none set, everything does. That makes
-        the scope predicate load-bearing for the returned result set.
-        """
+        """Record the pipeline and apply the ``$vectorSearch`` scope filter."""
         self.last_pipeline = pipeline
         scope = None
         for stage in pipeline:
@@ -235,8 +216,7 @@ class _AsyncFakeClient:
 
 
 class _DeterministicEmbedder:
-    """Every doc/query embeds to the same vector; isolation is decided purely
-    by the scope filter, never by ANN ordering (which the fake doesn't run)."""
+    """A tiny embedder that needs no network or API key."""
 
     dimensions = 8
     enable_batch = False

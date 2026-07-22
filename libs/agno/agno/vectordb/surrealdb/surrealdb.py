@@ -219,6 +219,24 @@ class SurrealDb(VectorDb):
             return ""
         return "AND (user_id = $scope_user_id OR user_id = NONE)"
 
+    @staticmethod
+    def _fold_record_id(doc_id: str, user_id: Optional[str]) -> str:
+        """Fold the owner into the record id so two owners' identical content
+        don't collide onto one record. user_id=None keeps the bare doc id.
+
+        ':' is both the fold delimiter and a legal char in doc_id/user_id, so
+        each side is percent-escaped before joining — otherwise ("a:x", "y") and
+        ("a", "x:y") would both fold to "a:x:y" and clobber each other. Stable,
+        so re-upserting the same pair updates the same record in place.
+        """
+        if user_id is None:
+            return doc_id
+
+        def _esc(value: str) -> str:
+            return value.replace("%", "%25").replace(":", "%3A")
+
+        return f"{_esc(doc_id)}:{_esc(user_id)}"
+
     # Synchronous methods
     def create(self) -> None:
         """Create the vector collection and index."""
@@ -340,13 +358,11 @@ class SurrealDb(VectorDb):
             if filters:
                 data["meta_data"].update(filters)
             if doc.id:
-                # Bind the record id as a parameter via type::record so a
-                # reader-assigned UUID (hyphenated, digit-leading) is accepted
-                # instead of being rejected by the record-id parser. Fold the
-                # owner into the id so two owners' identical content don't
-                # collide on the same base id; None keeps the base id.
+                # Bind the record id via type::record so a reader-assigned UUID
+                # (hyphenated, digit-leading) is accepted, and fold the owner into
+                # the id so two owners' identical content don't collide; None keeps the base id.
                 data["table"] = self.collection
-                data["record_id"] = doc.id if user_id is None else f"{doc.id}:{user_id}"
+                data["record_id"] = self._fold_record_id(doc.id, user_id)
                 self.client.query(self.UPSERT_QUERY, data)  # type: ignore[arg-type]
             else:
                 self.client.create(self.collection, data)
@@ -619,13 +635,11 @@ class SurrealDb(VectorDb):
                 data["meta_data"].update(filters)
             log_debug(f"Upserting document asynchronously: {doc.name} ({doc.meta_data})")
             if doc.id:
-                # Bind the record id as a parameter via type::record so a
-                # reader-assigned UUID (hyphenated, digit-leading) is accepted
-                # instead of being rejected by the record-id parser. Fold the
-                # owner into the id so two owners' identical content don't
-                # collide on the same base id; None keeps the base id.
+                # Bind the record id via type::record so a reader-assigned UUID
+                # (hyphenated, digit-leading) is accepted, and fold the owner into
+                # the id so two owners' identical content don't collide; None keeps the base id.
                 data["table"] = self.collection
-                data["record_id"] = doc.id if user_id is None else f"{doc.id}:{user_id}"
+                data["record_id"] = self._fold_record_id(doc.id, user_id)
                 await self.async_client.query(self.UPSERT_QUERY, data)  # type: ignore[arg-type]
             else:
                 await self.async_client.create(self.collection, data)

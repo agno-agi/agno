@@ -36,8 +36,7 @@ class RedisDB(VectorDb):
     """
 
     # TAG field storing a chunk's owner for per-user isolation. Shared chunks store
-    # the sentinel owner tag and the owner-OR-shared scope matches either, mirroring
-    # the Valkey backend.
+    # the sentinel owner tag and the owner-OR-shared scope matches either.
     USER_ID_FIELD: str = "user_id"
     SHARED_OWNER_TAG: str = "__shared__"
     # Reserved owner tag that is never stored by a real caller.
@@ -156,6 +155,10 @@ class RedisDB(VectorDb):
             raise ValueError("user_id must not contain brace characters ('{' or '}')")
         if "*" in user_id or "?" in user_id:
             raise ValueError("user_id must not contain wildcard characters ('*' or '?')")
+        if "|" in user_id:
+            raise ValueError("user_id must not contain the reserved TAG union character ('|')")
+        if user_id != user_id.strip():
+            raise ValueError("user_id must not have leading or trailing whitespace")
 
     def _scoped_doc_id(self, base_id: str, user_id: Optional[str]) -> str:
         """Fold the owner into the deterministic id so two users uploading the

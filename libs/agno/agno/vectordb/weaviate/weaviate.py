@@ -585,8 +585,8 @@ class Weaviate(VectorDb):
             return []
 
         search_results = []
+        client = await self.get_async_client()
         try:
-            client = await self.get_async_client()
             collection = client.collections.get(self.collection)
             filter_expr = self._scoped_filter_expression(filters, user_id)
 
@@ -610,6 +610,9 @@ class Weaviate(VectorDb):
         except Exception:
             logger.exception("Error searching for documents")
             return []
+
+        finally:
+            await client.close()
 
     def keyword_search(
         self,
@@ -665,8 +668,8 @@ class Weaviate(VectorDb):
             List[Document]: List of matching documents.
         """
         search_results = []
+        client = await self.get_async_client()
         try:
-            client = await self.get_async_client()
             collection = client.collections.get(self.collection)
 
             filter_expr = self._scoped_filter_expression(filters, user_id)
@@ -691,6 +694,9 @@ class Weaviate(VectorDb):
         except Exception:
             logger.exception("Error searching for documents")
             return []
+
+        finally:
+            await client.close()
 
     def hybrid_search(
         self,
@@ -758,8 +764,8 @@ class Weaviate(VectorDb):
             return []
 
         search_results = []
+        client = await self.get_async_client()
         try:
-            client = await self.get_async_client()
             collection = client.collections.get(self.collection)
 
             filter_expr = self._scoped_filter_expression(filters, user_id)
@@ -786,6 +792,9 @@ class Weaviate(VectorDb):
         except Exception:
             logger.exception("Error searching for documents")
             return []
+
+        finally:
+            await client.close()
 
     def exists(self) -> bool:
         """Check if the collection exists in Weaviate."""
@@ -1095,19 +1104,18 @@ class Weaviate(VectorDb):
                 current_properties = obj.properties or {}
 
                 # Merge existing metadata with new metadata
-                updated_properties = current_properties.copy()
+                updated_properties = dict(current_properties)
 
-                # Handle nested metadata updates
-                if "meta_data" in updated_properties and isinstance(updated_properties["meta_data"], dict):
-                    updated_properties["meta_data"].update(metadata)
-                else:
-                    # If no existing meta_data or it's not a dict, set it directly
-                    updated_properties["meta_data"] = metadata
-
-                if "filters" in updated_properties and isinstance(updated_properties["filters"], dict):
-                    updated_properties["filters"].update(metadata)
-                else:
-                    updated_properties["filters"] = metadata
+                # meta_data is stored as a JSON string (see insert); parse, merge and re-serialize so
+                # the property stays TEXT. Never emit a typeless `filters` object property here — insert
+                # folds filters into meta_data, and Weaviate rejects an empty/typeless object with a 422.
+                existing_meta = updated_properties.get("meta_data")
+                if isinstance(existing_meta, str):
+                    existing_meta = json.loads(existing_meta) if existing_meta else {}
+                elif not isinstance(existing_meta, dict):
+                    existing_meta = {}
+                existing_meta.update(metadata)
+                updated_properties["meta_data"] = json.dumps(existing_meta)
 
                 # Update the object
                 collection.data.update(uuid=obj.uuid, properties=updated_properties)

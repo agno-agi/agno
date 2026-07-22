@@ -107,19 +107,14 @@ class Cassandra(VectorDb):
         return hash_string_sha256(f"{base_id}_{user_id}")
 
     def content_hash_exists(self, content_hash: str, user_id: Optional[str] = None) -> bool:
-        """Check if a document exists by content hash, scoped to the owner when set."""
-        if user_id is not None:
-            query = (
-                f"SELECT COUNT(*) FROM {self.keyspace}.{self.table_name} "
-                "WHERE metadata_s['content_hash'] = %s AND metadata_s['user_id'] = %s ALLOW FILTERING"
-            )
-            result = self.session.execute(query, (content_hash, user_id))
-        else:
-            query = (
-                f"SELECT COUNT(*) FROM {self.keyspace}.{self.table_name} "
-                "WHERE metadata_s['content_hash'] = %s ALLOW FILTERING"
-            )
-            result = self.session.execute(query, (content_hash,))
+        """Check if a document exists by content hash, scoped to the owner; None scopes
+        to the shared bucket only so it never matches another user's owned row."""
+        owner = user_id if user_id is not None else SHARED_USER_ID_VALUE
+        query = (
+            f"SELECT COUNT(*) FROM {self.keyspace}.{self.table_name} "
+            "WHERE metadata_s['content_hash'] = %s AND metadata_s['user_id'] = %s ALLOW FILTERING"
+        )
+        result = self.session.execute(query, (content_hash, owner))
         return result.one()[0] > 0
 
     def insert(
@@ -494,11 +489,12 @@ class Cassandra(VectorDb):
         Args:
             content_hash (str): The content hash to delete
             user_id (Optional[str]): Restrict the delete to the owner's bucket. None
-                deletes across all owners (legacy / admin).
+                scopes to the shared bucket only so it can't wipe every owner.
 
         Returns:
             bool: True if documents were deleted, False otherwise
         """
+        owner = user_id if user_id is not None else SHARED_USER_ID_VALUE
         try:
             log_debug(f"Cassandra VectorDB : Deleting documents with content_hash {content_hash}")
             # Query to find documents with matching content_hash in metadata
@@ -510,8 +506,8 @@ class Cassandra(VectorDb):
                 # Use attribute access for Row objects
                 row_metadata = getattr(row, "metadata_s", {})
                 if row_metadata.get("content_hash") == content_hash:
-                    # Scope to the owner's bucket when user_id is set.
-                    if user_id is not None and row_metadata.get(USER_ID_METADATA_KEY) != user_id:
+                    # Scope to the owner's bucket (shared sentinel when user_id is None).
+                    if row_metadata.get(USER_ID_METADATA_KEY) != owner:
                         continue
                     # Delete this specific document
                     delete_query = f"DELETE FROM {self.keyspace}.{self.table_name} WHERE row_id = %s"
