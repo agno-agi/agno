@@ -412,7 +412,7 @@ class FeedbackConfig:
     """Configuration for Behavioral Feedback learning type.
 
     Behavioral Feedback captures signals about what worked and what
-    didn't: thumbs up/down on a run, corrections, regeneration requests.
+    didn't: positive or negative feedback on a run.
     Recent feedback is injected into future runs so the agent adapts.
 
     Feedback arrives three ways: explicitly via FeedbackStore.record()
@@ -421,6 +421,10 @@ class FeedbackConfig:
     ALWAYS mode extracted from the conversation itself after each run
     ("that's wrong", "too long", "perfect") when a model is provided.
     The ALWAYS-mode extraction pass adds one model call per run.
+
+    Modes: ALWAYS (background extraction, default) and AGENTIC (the agent
+    logs feedback itself via a record_feedback tool). PROPOSE and HITL are
+    not supported.
 
     Scope: AGENT (fixed) - Stored and retrieved by agent_id.
 

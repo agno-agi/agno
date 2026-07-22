@@ -38,7 +38,7 @@ def _make_feedback_record(**overrides):
         "agent_id": "agent-1",
         "content": {
             "id": "feedback_run-1",
-            "signal": "thumbs_down",
+            "signal": "negative",
             "comment": "too verbose",
             "run_id": "run-1",
             "session_id": "sess-1",
@@ -94,12 +94,12 @@ class TestCreateRunFeedback:
     def test_create(self, client, mock_db):
         resp = client.post(
             "/sessions/sess-1/runs/run-1/feedback",
-            json={"signal": "thumbs_down", "comment": "too verbose"},
+            json={"signal": "negative", "comment": "too verbose"},
         )
         assert resp.status_code == 201
         body = resp.json()
         assert body["feedback_id"] == "feedback_run-1"
-        assert body["signal"] == "thumbs_down"
+        assert body["signal"] == "negative"
         assert body["comment"] == "too verbose"
         assert body["run_id"] == "run-1"
         assert body["agent_id"] == "agent-1"
@@ -118,20 +118,20 @@ class TestCreateRunFeedback:
 
     def test_re_review_preserves_created_at(self, client, mock_db):
         mock_db.get_learning_by_id = MagicMock(return_value=_make_feedback_record())
-        resp = client.post("/sessions/sess-1/runs/run-1/feedback", json={"signal": "thumbs_up"})
+        resp = client.post("/sessions/sess-1/runs/run-1/feedback", json={"signal": "positive"})
         assert resp.status_code == 201
         body = resp.json()
-        assert body["signal"] == "thumbs_up"
+        assert body["signal"] == "positive"
         assert body["created_at"] == "2026-01-01T00:00:00+00:00"
         assert body["updated_at"] is not None
 
     def test_session_not_found(self, client, mock_db):
         mock_db.get_session = MagicMock(return_value=None)
-        resp = client.post("/sessions/missing/runs/run-1/feedback", json={"signal": "thumbs_up"})
+        resp = client.post("/sessions/missing/runs/run-1/feedback", json={"signal": "positive"})
         assert resp.status_code == 404
 
     def test_run_not_found(self, client):
-        resp = client.post("/sessions/sess-1/runs/missing/feedback", json={"signal": "thumbs_up"})
+        resp = client.post("/sessions/sess-1/runs/missing/feedback", json={"signal": "positive"})
         assert resp.status_code == 404
 
     def test_invalid_signal(self, client):
@@ -146,7 +146,7 @@ class TestGetRunFeedback:
         assert resp.status_code == 200
         body = resp.json()
         assert body["feedback_id"] == "feedback_run-1"
-        assert body["signal"] == "thumbs_down"
+        assert body["signal"] == "negative"
 
     def test_not_found(self, client):
         resp = client.get("/sessions/sess-1/runs/run-1/feedback")
@@ -177,7 +177,7 @@ class TestTeamRunFeedback:
             runs=[{"run_id": "run-1", "team_id": "team-1", "content": "Team answer."}],
         )
         mock_db.get_session = MagicMock(return_value=team_session)
-        resp = client.post("/sessions/sess-1/runs/run-1/feedback", json={"signal": "thumbs_down"})
+        resp = client.post("/sessions/sess-1/runs/run-1/feedback", json={"signal": "negative"})
         assert resp.status_code == 201
         body = resp.json()
         assert body["team_id"] == "team-1"
@@ -206,7 +206,7 @@ class TestFeedbackScoping:
 
     def test_scoped_overwrite_of_shared_feedback_rejected(self, scoped_client, mock_db):
         mock_db.get_learning_by_id = MagicMock(return_value=_make_feedback_record(user_id=None))
-        resp = scoped_client.post("/sessions/sess-1/runs/run-1/feedback", json={"signal": "thumbs_up"})
+        resp = scoped_client.post("/sessions/sess-1/runs/run-1/feedback", json={"signal": "positive"})
         assert resp.status_code == 403
         mock_db.upsert_learning.assert_not_called()
 
@@ -219,7 +219,7 @@ class TestFeedbackScoping:
     def test_scoped_caller_mutates_own_feedback(self, scoped_client, mock_db):
         mock_db.get_learning_by_id = MagicMock(return_value=_make_feedback_record(user_id="user-1"))
         assert (
-            scoped_client.post("/sessions/sess-1/runs/run-1/feedback", json={"signal": "thumbs_up"}).status_code == 201
+            scoped_client.post("/sessions/sess-1/runs/run-1/feedback", json={"signal": "positive"}).status_code == 201
         )
         assert scoped_client.delete("/sessions/sess-1/runs/run-1/feedback").status_code == 204
 
@@ -227,12 +227,12 @@ class TestFeedbackScoping:
 class TestRunFeedbackErrorBranches:
     def test_upsert_not_implemented_returns_501(self, client, mock_db):
         mock_db.upsert_learning.side_effect = NotImplementedError
-        resp = client.post("/sessions/sess-1/runs/run-1/feedback", json={"signal": "thumbs_up"})
+        resp = client.post("/sessions/sess-1/runs/run-1/feedback", json={"signal": "positive"})
         assert resp.status_code == 501
 
     def test_upsert_db_error_returns_500(self, client, mock_db):
         mock_db.upsert_learning.side_effect = RuntimeError("boom")
-        resp = client.post("/sessions/sess-1/runs/run-1/feedback", json={"signal": "thumbs_up"})
+        resp = client.post("/sessions/sess-1/runs/run-1/feedback", json={"signal": "positive"})
         assert resp.status_code == 500
 
     def test_get_db_error_returns_500(self, client, mock_db):
@@ -246,7 +246,7 @@ class TestRunFeedbackErrorBranches:
 
     def test_remote_db_returns_501(self):
         client = _make_client(MagicMock(spec=RemoteDb))
-        assert client.post("/sessions/sess-1/runs/run-1/feedback", json={"signal": "thumbs_up"}).status_code == 501
+        assert client.post("/sessions/sess-1/runs/run-1/feedback", json={"signal": "positive"}).status_code == 501
         assert client.get("/sessions/sess-1/runs/run-1/feedback").status_code == 501
         assert client.delete("/sessions/sess-1/runs/run-1/feedback").status_code == 501
 
@@ -263,7 +263,7 @@ class TestAsyncDbRunFeedback:
 
     def test_create(self, async_db):
         client = _make_client(async_db)
-        resp = client.post("/sessions/sess-1/runs/run-1/feedback", json={"signal": "thumbs_down", "comment": "hm"})
+        resp = client.post("/sessions/sess-1/runs/run-1/feedback", json={"signal": "negative", "comment": "hm"})
         assert resp.status_code == 201
         kwargs = async_db.upsert_learning.call_args[1]
         assert kwargs["id"] == "feedback_run-1"

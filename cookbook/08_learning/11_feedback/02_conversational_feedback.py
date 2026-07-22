@@ -47,14 +47,13 @@ agent = Agent(
 if __name__ == "__main__":
     # Test 1: The user asks, then complains in the same session
     print("=== Test 1: User gives feedback in the conversation ===\n")
-    run_output = agent.run("What is the population of Tokyo?", session_id="session-001")
-    print(run_output.content)
-
-    run_output = agent.run(
-        "Too long. Next time just give me the number, nothing else.",
-        session_id="session-001",
+    agent.print_response(
+        "What is the population of Tokyo?", session_id="conversational-1"
     )
-    print(run_output.content)
+    agent.print_response(
+        "Too long. Next time just give me the number, nothing else.",
+        session_id="conversational-1",
+    )
 
     # Test 2: The complaint was recorded as feedback automatically
     print("\n=== Test 2: Extracted feedback ===\n")
@@ -68,5 +67,6 @@ if __name__ == "__main__":
 
     # Test 3: A brand new session starts already adapted
     print("\n=== Test 3: New session, agent adapted ===\n")
-    run_output = agent.run("What is the population of Osaka?", session_id="session-002")
-    print(run_output.content)
+    agent.print_response(
+        "What is the population of Osaka?", session_id="conversational-2"
+    )

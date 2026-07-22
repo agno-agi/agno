@@ -1065,16 +1065,16 @@ Decision = DecisionLog
 class Feedback:
     """Schema for Behavioral Feedback.
 
-    Captures signals about what worked and what didn't: thumbs up/down
-    on a run, corrections, regeneration requests. Useful for:
-    - Reviewing runs (thumbs up/down with an optional comment)
+    Captures a positive or negative signal about what worked and what
+    didn't on a run. Useful for:
+    - Reviewing runs (positive/negative with an optional comment)
     - Adapting agent behavior based on what users liked or disliked
     - Building instruction-improvement loops on top of feedback patterns
 
     Example:
         Feedback(
             id="fbk_abc123",
-            signal="thumbs_down",
+            signal="negative",
             comment="Too verbose, I just wanted the number",
             context="User query: 'What is the population of Tokyo?'",
             run_id="run_xyz",
@@ -1082,7 +1082,7 @@ class Feedback:
 
     Attributes:
         id: Unique identifier for this feedback entry.
-        signal: The feedback signal (thumbs_up, thumbs_down, correction, regeneration).
+        signal: The feedback signal (positive or negative).
         comment: Free-text feedback provided by the user.
         learning: Distilled lesson extracted from the feedback (filled by the store).
         context: The situation the feedback refers to (e.g. run input/output snippet).
@@ -1096,7 +1096,7 @@ class Feedback:
     """
 
     id: str
-    signal: str = field(metadata={"description": "Feedback signal: thumbs_up, thumbs_down, correction, regeneration"})
+    signal: str = field(metadata={"description": "Feedback signal: positive or negative"})
     comment: Optional[str] = field(default=None, metadata={"description": "Free-text feedback from the user"})
     learning: Optional[str] = field(
         default=None, metadata={"description": "Distilled lesson extracted from the feedback"}

@@ -423,15 +423,13 @@ class UpdateSessionRequest(BaseModel):
 
 
 class CreateRunFeedbackRequest(BaseModel):
-    signal: Literal["thumbs_up", "thumbs_down", "correction", "regeneration"] = Field(
-        ..., description="Feedback signal for the run"
-    )
+    signal: Literal["positive", "negative"] = Field(..., description="Feedback signal for the run")
     comment: Optional[str] = Field(None, description="Free-text feedback from the user")
 
 
 class RunFeedbackSchema(BaseModel):
     feedback_id: str = Field(..., description="Unique feedback identifier")
-    signal: str = Field(..., description="Feedback signal (thumbs_up, thumbs_down, correction, regeneration)")
+    signal: str = Field(..., description="Feedback signal (positive or negative)")
     comment: Optional[str] = Field(None, description="Free-text feedback from the user")
     learning: Optional[str] = Field(None, description="Lesson distilled from the feedback")
     run_id: Optional[str] = Field(None, description="The run this feedback reviews")

@@ -3,11 +3,11 @@ Feedback: Basic Usage
 =====================
 
 This example demonstrates how to use FeedbackStore to record user
-feedback on agent runs (thumbs up/down with a comment) and have the
+feedback on agent runs (positive/negative with a comment) and have the
 agent learn from it.
 
 FeedbackStore is useful for:
-- Reviewing runs (thumbs up/down with an optional comment)
+- Reviewing runs (positive/negative with an optional comment)
 - Adapting agent behavior based on what users liked or disliked
 - Building instruction-improvement loops on top of feedback patterns
 
@@ -46,18 +46,18 @@ agent = Agent(
 if __name__ == "__main__":
     # Test 1: First run, before any feedback
     print("=== Test 1: First run ===\n")
-    run_output = agent.run("What is the population of Tokyo?", session_id="session-001")
+    run_output = agent.run("What is the population of Tokyo?", session_id="basic-1")
     print(run_output.content)
 
-    # Test 2: The user gives thumbs down with a comment (in AgentOS this comes
+    # Test 2: The user gives negative with a comment (in AgentOS this comes
     # from POST /sessions/{session_id}/runs/{run_id}/feedback)
-    print("\n=== Test 2: Record thumbs down feedback ===\n")
+    print("\n=== Test 2: Record negative feedback ===\n")
     feedback_store = agent.learning_machine.feedback_store
     feedback = feedback_store.record(
-        signal="thumbs_down",
+        signal="negative",
         comment="Too verbose. Just give me the number, no history lesson.",
         run_id=run_output.run_id,
-        session_id="session-001",
+        session_id="basic-1",
         agent_id="feedback-agent",
         context=f"User input: What is the population of Tokyo?\nAgent response: {str(run_output.content)[:300]}",
     )
@@ -67,5 +67,5 @@ if __name__ == "__main__":
 
     # Test 3: Next run, the agent sees the feedback and adapts
     print("\n=== Test 3: Run again with feedback applied ===\n")
-    run_output = agent.run("What is the population of Osaka?", session_id="session-002")
+    run_output = agent.run("What is the population of Osaka?", session_id="basic-2")
     print(run_output.content)

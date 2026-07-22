@@ -14,7 +14,7 @@ LearningMachine is a unified learning system that enables agents to learn from e
 | **Entity Memory** | Facts, events, relationships | Configurable | CRM, knowledge graph |
 | **Learned Knowledge** | Insights, patterns, best practices | Configurable | Collective intelligence |
 | **Decision Log** | Decisions with reasoning and alternatives | Per agent | Auditing, feedback loops |
-| **Feedback** | Run reviews (thumbs up/down with comments) | Per agent | Adapting to user feedback |
+| **Feedback** | Run reviews (positive/negative with comments) | Per agent | Adapting to user feedback |
 
 ## Quick Start
 
@@ -100,7 +100,8 @@ cookbook/08_learning/
 │
 └── 11_feedback/            # Run reviews and conversational feedback
     ├── 01_basic_feedback.py
-    └── 02_conversational_feedback.py
+    ├── 02_conversational_feedback.py
+    └── 03_agentic_feedback.py
 ```
 
 ## Running the Cookbooks
@@ -420,11 +421,11 @@ agent = Agent(
 
 #### 7. Feedback Store
 
-Records user feedback on agent runs. Feedback arrives three ways: explicit thumbs up/down over the AgentOS endpoint (stores the raw comment), programmatic `feedback_store.record()` (distills a lesson from the comment when a model is available), and - with no UI at all - extracted automatically from the conversation after each run ("too long", "that's wrong", "perfect"). Recent feedback is injected into future runs so the agent adapts to what users liked or disliked.
+Records user feedback on agent runs. Feedback arrives three ways: explicit positive/negative over the AgentOS endpoint (stores the raw comment), programmatic `feedback_store.record()` (distills a lesson from the comment when a model is available), and - with no UI at all - extracted automatically from the conversation after each run ("too long", "that's wrong", "perfect"). Recent feedback is injected into future runs so the agent adapts to what users liked or disliked.
 
 Note: in ALWAYS mode the extraction pass adds one LLM call after each run, like the other ALWAYS-mode stores.
 
-**Supported modes:** ALWAYS
+**Supported modes:** ALWAYS (background extraction), AGENTIC (the agent logs feedback itself via a `record_feedback` tool). PROPOSE and HITL are not supported.
 
 **Scope:** Per agent - stored and retrieved by `agent_id`.
 
@@ -441,7 +442,7 @@ agent = Agent(
 # POST /sessions/{session_id}/runs/{run_id}/feedback)
 run_output = agent.run("What is the population of Tokyo?")
 agent.learning_machine.feedback_store.record(
-    signal="thumbs_down",
+    signal="negative",
     comment="Too verbose, just give me the number",
     run_id=run_output.run_id,
     agent_id=agent.id,

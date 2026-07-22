@@ -765,9 +765,9 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
         operation_id="create_run_feedback",
         summary="Create Run Feedback",
         description=(
-            "Review a run with a feedback signal (thumbs up/down) and an optional comment. "
+            "Review a run with a feedback signal (positive/negative) and an optional comment. "
             "Feedback is keyed by run, so reviewing the same run again updates the existing "
-            "feedback (e.g. toggling thumbs up to thumbs down). Agents with feedback learning "
+            "feedback (e.g. toggling positive to negative). Agents with feedback learning "
             "enabled use this feedback to adapt their behavior in future runs."
         ),
         responses={

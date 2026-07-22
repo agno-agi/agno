@@ -39,9 +39,10 @@ class FeedbackModel(Model):
 
         if call_number == 1:
             arguments = {
-                "signal": "thumbs_down",
+                "signal": "negative",
                 "comment": "Too long, just give me the number next time.",
                 "learning": "Answer with just the number.",
+                "context": "the assistant's long answer",
             }
             return ModelResponse(
                 role="assistant",
@@ -105,27 +106,50 @@ def test_record_is_keyed_by_run():
     rows: dict = {}
     store = FeedbackStore(config=FeedbackConfig(db=_make_db(rows)))
 
-    feedback = store.record(signal="thumbs_down", comment="too verbose", run_id="run-1", agent_id="agent-1")
+    feedback = store.record(signal="negative", comment="too verbose", run_id="run-1", agent_id="agent-1")
     assert feedback is not None
     assert feedback.id == "feedback_run-1"
-    assert rows["feedback_run-1"]["content"]["signal"] == "thumbs_down"
+    assert rows["feedback_run-1"]["content"]["signal"] == "negative"
 
     # Re-reviewing the same run updates the entry instead of duplicating it
-    store.record(signal="thumbs_up", run_id="run-1", agent_id="agent-1")
+    store.record(signal="positive", run_id="run-1", agent_id="agent-1")
     assert len(rows) == 1
-    assert rows["feedback_run-1"]["content"]["signal"] == "thumbs_up"
+    assert rows["feedback_run-1"]["content"]["signal"] == "positive"
+
+
+def test_record_rereview_preserves_created_at():
+    rows: dict = {}
+    store = FeedbackStore(config=FeedbackConfig(db=_make_db(rows)))
+
+    first = store.record(signal="positive", run_id="run-1")
+    assert first is not None and first.created_at is not None and first.updated_at is None
+
+    second = store.record(signal="negative", run_id="run-1")
+    assert second is not None
+    assert second.created_at == first.created_at  # preserved, not reset
+    assert second.updated_at is not None  # stamped on re-review
+
+
+def test_get_returns_saved_feedback():
+    rows: dict = {}
+    store = FeedbackStore(config=FeedbackConfig(db=_make_db(rows)))
+    store.record(signal="negative", comment="too verbose", run_id="run-1")
+
+    got = store.get("feedback_run-1")
+    assert got is not None and got.signal == "negative" and got.comment == "too verbose"
+    assert store.get("feedback_missing") is None
 
 
 def test_record_distills_learning_with_model():
     rows: dict = {}
     store = FeedbackStore(config=FeedbackConfig(db=_make_db(rows), model=distilling_model()))
 
-    feedback = store.record(signal="thumbs_down", comment="too verbose", run_id="run-1")
+    feedback = store.record(signal="negative", comment="too verbose", run_id="run-1")
     assert feedback is not None
     assert feedback.learning == "Keep answers short."
 
     # No comment -> nothing to distill
-    feedback = store.record(signal="thumbs_up", run_id="run-2")
+    feedback = store.record(signal="positive", run_id="run-2")
     assert feedback is not None
     assert feedback.learning is None
 
@@ -134,7 +158,7 @@ def test_recall_is_agent_scoped():
     rows: dict = {}
     db = _make_db(rows)
     store = FeedbackStore(config=FeedbackConfig(db=db))
-    store.record(signal="thumbs_down", comment="wrong answer", run_id="run-1", agent_id="agent-1", user_id="user-a")
+    store.record(signal="negative", comment="wrong answer", run_id="run-1", agent_id="agent-1", user_id="user-a")
 
     # user_id from the machine context must not restrict recall to the reviewer
     recalled = store.recall(agent_id="agent-1", user_id="user-b")
@@ -145,10 +169,10 @@ def test_recall_is_agent_scoped():
 def test_search_filters_by_signal():
     rows: dict = {}
     store = FeedbackStore(config=FeedbackConfig(db=_make_db(rows)))
-    store.record(signal="thumbs_down", run_id="run-1")
-    store.record(signal="thumbs_up", run_id="run-2")
+    store.record(signal="negative", run_id="run-1")
+    store.record(signal="positive", run_id="run-2")
 
-    downs = store.search(signal="thumbs_down")
+    downs = store.search(signal="negative")
     assert [f.run_id for f in downs] == ["run-1"]
 
 
@@ -157,10 +181,10 @@ def test_search_filters_by_days_and_query():
     store = FeedbackStore(config=FeedbackConfig(db=_make_db(rows)))
     store.save(
         Feedback(
-            id="feedback_old", signal="thumbs_down", comment="ancient complaint", created_at="2020-01-01T00:00:00+00:00"
+            id="feedback_old", signal="negative", comment="ancient complaint", created_at="2020-01-01T00:00:00+00:00"
         )
     )
-    store.record(signal="thumbs_down", comment="fresh complaint", run_id="run-new")
+    store.record(signal="negative", comment="fresh complaint", run_id="run-new")
 
     recent = store.search(days=30)
     assert [f.comment for f in recent] == ["fresh complaint"]
@@ -171,15 +195,15 @@ def test_search_filters_by_days_and_query():
 
 def test_build_context_accepts_raw_dicts():
     store = FeedbackStore()
-    context = store.build_context([{"id": "feedback_run-1", "signal": "thumbs_down", "comment": "too verbose"}])
+    context = store.build_context([{"id": "feedback_run-1", "signal": "negative", "comment": "too verbose"}])
     assert "too verbose" in context
 
 
 def test_build_context_formats_feedback():
     store = FeedbackStore()
     entries = [
-        Feedback(id="feedback_run-1", signal="thumbs_down", comment="too verbose", context="User input: hi"),
-        Feedback(id="feedback_run-2", signal="thumbs_up", learning="Keep answers short."),
+        Feedback(id="feedback_run-1", signal="negative", comment="too verbose", context="User input: hi"),
+        Feedback(id="feedback_run-2", signal="positive", learning="Keep answers short."),
     ]
 
     context = store.build_context(entries)
@@ -197,7 +221,7 @@ def test_build_context_formats_feedback():
 
 def test_build_context_truncates_long_feedback_text():
     store = FeedbackStore()
-    entries = [Feedback(id="feedback_run-1", signal="thumbs_down", comment="x" * 600, context="y" * 600)]
+    entries = [Feedback(id="feedback_run-1", signal="negative", comment="x" * 600, context="y" * 600)]
 
     context = store.build_context(entries)
     assert "x" * 500 + "..." in context
@@ -205,13 +229,80 @@ def test_build_context_truncates_long_feedback_text():
     assert "y" * 500 + "..." in context
 
 
+def test_build_context_caps_at_five_entries():
+    store = FeedbackStore()
+    entries = [Feedback(id=f"feedback_run-{i}", signal="negative", comment=f"comment-{i}") for i in range(8)]
+
+    context = store.build_context(entries)
+    assert "comment-0" in context and "comment-4" in context
+    assert "comment-5" not in context and "comment-7" not in context
+
+
 def test_distillation_prompt_frames_feedback_as_data():
     store = FeedbackStore(config=FeedbackConfig(model=distilling_model()))
-    feedback = Feedback(id="feedback_run-1", signal="thumbs_down", comment="too verbose")
+    feedback = Feedback(id="feedback_run-1", signal="negative", comment="too verbose")
 
     messages = store._get_distillation_messages(feedback)
     assert messages[-1].content.startswith("Distill a lesson from this user feedback:\n\n")
     assert "too verbose" in messages[-1].content
+
+
+def test_always_mode_exposes_no_tool():
+    store = FeedbackStore(config=FeedbackConfig(mode=LearningMode.ALWAYS))
+    assert store.get_tools(agent_id="agent-1") == []
+    assert store._should_expose_tools is False
+
+
+def test_agentic_mode_exposes_record_tool():
+    store = FeedbackStore(config=FeedbackConfig(mode=LearningMode.AGENTIC))
+    tools = store.get_tools(agent_id="agent-1")
+    assert store._should_expose_tools is True
+    assert [t.__name__ for t in tools] == ["record_feedback"]
+
+
+async def test_agentic_aget_tools_exposes_record_tool():
+    store = FeedbackStore(config=FeedbackConfig(mode=LearningMode.AGENTIC))
+    tools = await store.aget_tools(agent_id="agent-1")
+    assert [t.__name__ for t in tools] == ["record_feedback"]
+    assert await FeedbackStore(config=FeedbackConfig(mode=LearningMode.ALWAYS)).aget_tools() == []
+
+
+def test_agentic_tool_records_feedback():
+    rows: dict = {}
+    store = FeedbackStore(config=FeedbackConfig(db=_make_db(rows), mode=LearningMode.AGENTIC))
+
+    record_feedback = store.get_tools(agent_id="agent-1", session_id="sess-1", user_id="user-1")[0]
+    # In AGENTIC mode the agent provides context itself (no auto-derived snippet).
+    record_feedback(signal="positive", comment="perfect", learning="Keep doing this.", context="my answer about X")
+
+    assert len(rows) == 1
+    content = next(iter(rows.values()))["content"]
+    assert content["signal"] == "positive"
+    assert content["comment"] == "perfect"
+    assert content["learning"] == "Keep doing this."
+    assert content["context"] == "my answer about X"
+    assert content["agent_id"] == "agent-1"
+
+
+def test_agentic_build_context_advertises_tool_with_no_data():
+    store = FeedbackStore(config=FeedbackConfig(mode=LearningMode.AGENTIC))
+    context = store.build_context(None)
+    assert "<feedback>" in context and "</feedback>" in context
+    assert "record_feedback" in context
+
+
+def test_propose_mode_warns(monkeypatch):
+    warnings = []
+    monkeypatch.setattr("agno.learn.stores.feedback.log_warning", lambda msg: warnings.append(msg))
+    FeedbackStore(config=FeedbackConfig(mode=LearningMode.PROPOSE))
+    assert any("PROPOSE" in w for w in warnings)
+
+
+def test_hitl_mode_warns(monkeypatch):
+    warnings = []
+    monkeypatch.setattr("agno.learn.stores.feedback.log_warning", lambda msg: warnings.append(msg))
+    FeedbackStore(config=FeedbackConfig(mode=LearningMode.HITL))
+    assert any("HITL" in w for w in warnings)
 
 
 def test_process_skips_without_model():
@@ -251,9 +342,11 @@ def test_process_extracts_conversational_feedback():
     assert store.was_updated
     assert len(rows) == 1
     content = next(iter(rows.values()))["content"]
-    assert content["signal"] == "thumbs_down"
+    assert content["signal"] == "negative"
     assert content["comment"] == "Too long, just give me the number next time."
     assert content["learning"] == "Answer with just the number."
+    # Context is auto-derived from the prior assistant turn the feedback reacts to.
+    assert content["context"] == "Tokyo has a long history... 14 million."
     assert content["session_id"] == "sess-1"
     assert content["user_id"] == "user-1"
     assert content["agent_id"] == "agent-1"
@@ -274,13 +367,14 @@ async def test_aprocess_extracts_conversational_feedback():
 
     assert store.was_updated
     assert len(rows) == 1
-    assert next(iter(rows.values()))["content"]["signal"] == "thumbs_down"
+    assert next(iter(rows.values()))["content"]["signal"] == "negative"
 
 
 def test_extraction_system_message_lists_already_recorded():
     rows: dict = {}
-    store = FeedbackStore(config=FeedbackConfig(db=_make_db(rows), model=extracting_model()))
-    store.record(signal="thumbs_down", comment="too verbose", session_id="sess-1", agent_id="agent-1")
+    # No model: this test only needs a recorded row, not distillation.
+    store = FeedbackStore(config=FeedbackConfig(db=_make_db(rows)))
+    store.record(signal="negative", comment="too verbose", session_id="sess-1", agent_id="agent-1")
 
     existing = store.search(session_id="sess-1")
     message = store._get_extraction_system_message(existing_feedback=existing)
@@ -293,6 +387,32 @@ def test_machine_wiring():
     assert isinstance(machine.feedback_store, FeedbackStore)
     assert machine.to_dict() == {"feedback": True}
     assert LearningMachine.from_dict({"feedback": True}).feedback is True
+
+
+def test_requires_history_for_always_feedback():
+    # ALWAYS-mode extraction reacts to the prior assistant turn, so it needs history.
+    assert LearningMachine(feedback=True).requires_history is True
+    assert LearningMachine(feedback=FeedbackConfig(mode=LearningMode.ALWAYS)).requires_history is True
+    # AGENTIC gets history via the agent's normal loop, not this special-case.
+    assert LearningMachine(feedback=FeedbackConfig(mode=LearningMode.AGENTIC)).requires_history is False
+    # No feedback -> no forced history.
+    assert LearningMachine(user_profile=True).requires_history is False
+
+
+def test_prior_response_snippet():
+    messages = [
+        Message(role="user", content="q1"),
+        Message(role="assistant", content="a1"),
+        Message(role="user", content="q2"),
+        Message(role="assistant", content="a2 the response being reacted to"),
+        Message(role="user", content="too long"),
+    ]
+    assert FeedbackStore._prior_response_snippet(messages) == "a2 the response being reacted to"
+    # No assistant turn -> None
+    assert FeedbackStore._prior_response_snippet([Message(role="user", content="only user")]) is None
+    # Truncated to 300 chars
+    long_snippet = FeedbackStore._prior_response_snippet([Message(role="assistant", content="z" * 400)])
+    assert long_snippet == "z" * 300 + "..."
 
 
 async def test_arecord_and_arecall():
@@ -314,7 +434,7 @@ async def test_arecord_and_arecall():
 
     store = FeedbackStore(config=FeedbackConfig(db=db, model=distilling_model()))
 
-    feedback = await store.arecord(signal="thumbs_down", comment="too verbose", run_id="run-1", agent_id="agent-1")
+    feedback = await store.arecord(signal="negative", comment="too verbose", run_id="run-1", agent_id="agent-1")
     assert feedback is not None
     assert feedback.learning == "Keep answers short."
     assert rows["feedback_run-1"]["content"]["comment"] == "too verbose"
@@ -323,4 +443,12 @@ async def test_arecord_and_arecall():
     assert recalled is not None and len(recalled) == 1
 
     got = await store.aget("feedback_run-1")
-    assert got is not None and got.signal == "thumbs_down"
+    assert got is not None and got.signal == "negative"
+
+    # Re-reviewing the same run preserves created_at and stamps updated_at (async path).
+    first_created = got.created_at
+    second = await store.arecord(signal="positive", run_id="run-1", agent_id="agent-1")
+    assert second is not None
+    assert second.created_at == first_created
+    assert second.updated_at is not None
+    assert len(rows) == 1

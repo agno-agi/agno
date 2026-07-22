@@ -395,6 +395,19 @@ class LearningMachine:
             mode = getattr(cfg, "mode", None) or getattr(getattr(cfg, "config", None), "mode", None)
             if mode in modes_needing_history:
                 return True
+
+        # ALWAYS-mode feedback extraction reacts to the assistant's prior turn, so the
+        # extractor needs history in context (a bare feedback message like "too long" is
+        # meaningless without the response it refers to). feedback=True defaults to ALWAYS.
+        if self.feedback:
+            feedback_mode = (
+                getattr(self.feedback, "mode", None)
+                or getattr(getattr(self.feedback, "config", None), "mode", None)
+                or LearningMode.ALWAYS
+            )
+            if feedback_mode == LearningMode.ALWAYS:
+                return True
+
         return False
 
     # =========================================================================
