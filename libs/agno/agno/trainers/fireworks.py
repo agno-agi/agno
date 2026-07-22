@@ -190,10 +190,14 @@ class FireworksTrainer:
             or not (math.isfinite(learning_rate) and learning_rate > 0)
         ):
             raise ValueError(f"learning_rate must be a finite value > 0, got {learning_rate!r}")
-        if not (math.isfinite(sampling_temperature) and sampling_temperature > 0):
+        if (
+            isinstance(sampling_temperature, bool)
+            or not isinstance(sampling_temperature, (int, float))
+            or not (math.isfinite(sampling_temperature) and sampling_temperature > 0)
+        ):
             # The negated form also rejects NaN, which passes every plain comparison.
             raise ValueError(
-                f"sampling_temperature must be a finite value > 0, got {sampling_temperature}: at "
+                f"sampling_temperature must be a finite value > 0, got {sampling_temperature!r}: at "
                 "temperature 0 all k attempts are identical and the learning zone is empty by construction"
             )
         if not (
@@ -270,16 +274,17 @@ class FireworksTrainer:
         """Upload `dataset`, run a managed supervised fine-tuning job, and poll it to
         a terminal state.
 
-        The dataset is validated before any call is made: a malformed file fails
-        here, for free, with no dataset record and no job created. A poll timeout
-        (`train_timeout_seconds`) returns `FAILED` but does NOT cancel the job -- it
-        keeps running on Fireworks and may still complete; the error names it. A job
-        is never retried.
+        The dataset is validated before any call is made: a file the gate rejects
+        becomes a `FAILED` result, for free, with no dataset record and no job
+        created. It is a result rather than a raise because the improvement loop
+        legitimately produces datasets below Fireworks' 3-example minimum (its own
+        floor is one exported row), and an exception out of `fit` would crash
+        `run()` mid-loop where a `FAILED` result ends it with a clean terminal
+        report. A poll timeout (`train_timeout_seconds`) returns `FAILED` but does
+        NOT cancel the job -- it keeps running on Fireworks and may still complete;
+        the error names it. A job is never retried.
         """
         path = Path(dataset)
-        # The runtime gate, before anything is created server-side.
-        n_examples = validate_fireworks_sft_jsonl(path)
-        dataset_digest = hashlib.sha256(path.read_bytes()).hexdigest()
 
         hyperparams: Dict[str, Any] = {
             "rank": self.rank,
@@ -291,6 +296,10 @@ class FireworksTrainer:
         step_metrics: List[Dict[str, Any]] = []
 
         try:
+            # The runtime gate, before anything is created server-side.
+            n_examples = validate_fireworks_sft_jsonl(path)
+            dataset_digest = hashlib.sha256(path.read_bytes()).hexdigest()
+
             client = self._get_client()
             account_id = self._resolve_account_id(client)
 
@@ -447,19 +456,28 @@ class FireworksTrainer:
                 )
             self._deployment_name = f"accounts/{account_id}/deployments/{self.deployment_id}"
             return self._deployment_name
-        deployment_id = f"agno-{uuid4().hex[:10]}"
-        client.deployments.create(
-            base_model=self.base_model,
-            deployment_id=deployment_id,
-            display_name=f"agno improvement loop {deployment_id}",
-            # BF16 because FP8/FP4 deployment shapes reject PEFT addons; addons are
-            # how the tuned LoRA is served next to its base on the same hardware.
-            enable_addons=True,
-            precision="BF16",
-            min_replica_count=0,
-            max_replica_count=1,
-        )
-        self._created_deployment_id = deployment_id
+        if self._created_deployment_id is None:
+            deployment_id = f"agno-{uuid4().hex[:10]}"
+            # Tracked BEFORE the billable call: a create whose response is lost (or
+            # whose readiness poll fails) must still leave teardown() a handle to
+            # delete, not an orphaned deployment only the dashboard knows about.
+            self._created_deployment_id = deployment_id
+            client.deployments.create(
+                base_model=self.base_model,
+                deployment_id=deployment_id,
+                display_name=f"agno improvement loop {deployment_id}",
+                # BF16 because FP8/FP4 deployment shapes reject PEFT addons; addons are
+                # how the tuned LoRA is served next to its base on the same hardware.
+                enable_addons=True,
+                precision="BF16",
+                min_replica_count=0,
+                max_replica_count=1,
+            )
+        else:
+            # A prior attempt created (or may have created) this deployment and then
+            # failed before it was ready; resolve it rather than provisioning a
+            # second one the teardown handle would no longer cover.
+            deployment_id = self._created_deployment_id
         self._wait_for_deployment(client, deployment_id)
         self._deployment_name = f"accounts/{account_id}/deployments/{deployment_id}"
         log_warning(

@@ -35,7 +35,8 @@ of* the provider key: `AGNO_RUN_FINE_TUNE=1`. A key alone never triggers spend.
 A key is capability, not consent: with only `TINKER_API_KEY` or
 `FIREWORKS_API_KEY` set (as direnv does in many shells) the file still runs the
 free offline stub. (`AGNO_RUN_TINKER_FINE_TUNE=1`, the original Tinker-only
-spelling, still works and implies `AGNO_TRAINER=tinker`.)
+spelling, still works and implies `AGNO_TRAINER=tinker`; combining it with an
+explicit different `AGNO_TRAINER` is an error rather than a silent override.)
 
 ```bash
 # offline (default)

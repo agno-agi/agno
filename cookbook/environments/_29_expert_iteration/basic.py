@@ -50,8 +50,9 @@ def is_three_lines(run, expected):
 
 # --- the offline stand-ins ---------------------------------------------------
 # A real trainer serves a real model. These two exist so this file runs with no
-# GPU and no network; the live branch at the bottom swaps in TinkerTrainer, whose
-# checkpoints are served as TinkerModel. Nothing here ships in agno.
+# GPU and no network; the live branches at the bottom swap in TinkerTrainer
+# (served as TinkerModel) or FireworksTrainer (served from an on-demand Fireworks
+# deployment). Nothing here ships in agno.
 
 
 class ScriptedModel(Model):
@@ -181,9 +182,19 @@ def build_trainer():
     an API key alone selects the stub, so an environment where keys are always
     loaded (direnv) cannot spend a fine-tune by accident. AGNO_TRAINER picks the
     backend; AGNO_RUN_FINE_TUNE=1 is the consent to spend."""
-    choice = os.environ.get("AGNO_TRAINER", "stub").strip().lower() or "stub"
+    explicit = os.environ.get("AGNO_TRAINER")
+    choice = (explicit or "stub").strip().lower() or "stub"
     consented = os.environ.get("AGNO_RUN_FINE_TUNE") == "1"
     if os.environ.get("AGNO_RUN_TINKER_FINE_TUNE") == "1":
+        # The legacy flag implies tinker-with-consent, but an explicit different
+        # AGNO_TRAINER must not be silently overridden into a paid Tinker run
+        # (a stale export of the legacy flag would otherwise beat AGNO_TRAINER=stub).
+        if explicit and choice != "tinker":
+            raise RuntimeError(
+                "AGNO_RUN_TINKER_FINE_TUNE=1 (legacy, implies tinker) conflicts with "
+                f"AGNO_TRAINER={choice!r}; unset one, or use AGNO_TRAINER=tinker "
+                "AGNO_RUN_FINE_TUNE=1."
+            )
         choice, consented = "tinker", True
 
     if choice == "tinker":
@@ -257,6 +268,19 @@ if __name__ == "__main__":
     if report.converged:
         print(f"nothing to train on: {report.converged_reason}")
         print(f"export counters: {report.export_report}")
+    elif report.unmeasured_reason is not None:
+        # A live-path shape: the baseline produced no scored attempts, or the
+        # tuned side could not be measured. With a checkpoint present, the
+        # fine-tune was paid for and is preserved on the report.
+        print(f"round measured nothing: {report.unmeasured_reason}")
+        print(f"baseline pass rate: {report.baseline_pass_rate}")
+        if report.checkpoint is not None:
+            print(
+                f"checkpoint paid for but unmeasured, preserved: {report.checkpoint.ref}"
+            )
+            print(
+                "re-measure it with run_rollouts(env, model=trainer.as_model(report.checkpoint))"
+            )
     else:
         print(f"baseline pass rate: {report.baseline_pass_rate}")
         print(f"tuned pass rate:    {report.tuned_pass_rate}")

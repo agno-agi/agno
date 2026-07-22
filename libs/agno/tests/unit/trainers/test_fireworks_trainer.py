@@ -8,6 +8,7 @@ path is exercised without a paid call.
 """
 
 import json
+import re
 import sys
 from types import SimpleNamespace
 
@@ -68,15 +69,16 @@ class FakeDatasetsResource:
 class FakeJobsResource:
     """Scripted job lifecycle: `create` returns the first snapshot, each `get` the next."""
 
-    def __init__(self, snapshots=None):
+    def __init__(self, snapshots=None, *, nameless=False):
         self.create_calls = []
         self.get_calls = []
         self.snapshots = snapshots
+        self._nameless = nameless
 
     def _job(self, snapshot, output_model):
         progress = snapshot.get("progress")
         return SimpleNamespace(
-            name="accounts/test-account/supervisedFineTuningJobs/job-1",
+            name=None if self._nameless else "accounts/test-account/supervisedFineTuningJobs/job-1",
             state=snapshot["state"],
             output_model=output_model,
             job_progress=SimpleNamespace(**progress) if progress else None,
@@ -120,11 +122,12 @@ class FakeDeploymentsResource:
 
 
 class FakeLoraResource:
-    def __init__(self, *, load_raises=None):
+    def __init__(self, *, load_raises=None, states=None):
         self.load_calls = []
         self.get_calls = []
         self.unload_calls = []
         self._load_raises = load_raises
+        self._states = list(states or ["DEPLOYED"])
 
     def load(self, *, model, deployment):
         self.load_calls.append({"model": model, "deployment": deployment})
@@ -136,7 +139,8 @@ class FakeLoraResource:
 
     def get(self, deployed_model_id):
         self.get_calls.append(deployed_model_id)
-        return SimpleNamespace(state="DEPLOYED", status=None)
+        state = self._states.pop(0) if len(self._states) > 1 else self._states[0]
+        return SimpleNamespace(state=state, status=None)
 
     def unload(self, deployed_model_id):
         self.unload_calls.append(deployed_model_id)
@@ -188,17 +192,22 @@ def _checkpoint(ref="accounts/test-account/models/agno-sft-abc", base_model=BASE
     ],
 )
 def test_fireworks_trainer_fit_validates_dataset(tmp_path, rows, match):
-    # The gate in front of a paid call: a malformed dataset is refused before any
-    # dataset record or job is created server-side.
+    # The gate in front of a paid call: a rejected dataset becomes a FAILED result
+    # before any dataset record or job is created server-side. A result, not a
+    # raise: ImprovementLoop legitimately exports 1-2 row datasets (its floor is
+    # one written row, Fireworks' minimum is 3) and calls afit unwrapped, so an
+    # exception here would crash run() where a FAILED result ends it cleanly.
     bad = tmp_path / "bad.jsonl"
     bad.write_text("\n".join(rows) + "\n", encoding="utf-8")
 
     client = FakeFireworksClient()
     trainer = _trainer(client)
 
-    with pytest.raises(ValueError, match=match):
-        trainer.fit(bad)
+    result = trainer.fit(bad)
 
+    assert result.status == TrainStatus.FAILED
+    assert result.checkpoint is None
+    assert re.search(match, result.error)
     assert client.datasets.create_calls == []
     assert client.supervised_fine_tuning_jobs.create_calls == []
 
@@ -326,6 +335,100 @@ def test_fireworks_trainer_fit_reuses_identical_dataset(tmp_path):
     assert client.supervised_fine_tuning_jobs.create_calls
 
 
+def test_fireworks_trainer_fit_early_stopped_is_a_success(tmp_path):
+    # EARLY_STOPPED is a fully-billed terminal-good state: the tune converged early
+    # and produced a servable model. It must become COMPLETED with a checkpoint --
+    # treating it as still-running would poll to a timeout and silently discard
+    # paid compute.
+    jobs = FakeJobsResource(
+        snapshots=[
+            {"state": "JOB_STATE_RUNNING"},
+            {"state": "JOB_STATE_EARLY_STOPPED"},
+        ]
+    )
+    trainer = _trainer(FakeFireworksClient(jobs=jobs))
+
+    result = trainer.fit(_dataset(tmp_path))
+
+    assert result.status == TrainStatus.COMPLETED
+    assert isinstance(result.checkpoint, Checkpoint)
+    assert result.checkpoint.ref.startswith("accounts/test-account/models/agno-sft-")
+
+
+def test_fireworks_trainer_fit_nameless_job_fails_before_polling(tmp_path):
+    # A create response without a job name cannot be polled; fit must say so as a
+    # FAILED result rather than crash or poll a nonsense id.
+    jobs = FakeJobsResource(nameless=True)
+    trainer = _trainer(FakeFireworksClient(jobs=jobs))
+
+    result = trainer.fit(_dataset(tmp_path))
+
+    assert result.status == TrainStatus.FAILED
+    assert result.checkpoint is None
+    assert "job name" in result.error
+    assert jobs.get_calls == []
+
+
+def test_fireworks_trainer_dataset_poll_rides_uploading_to_ready(tmp_path):
+    datasets = FakeDatasetsResource(states=["UPLOADING", "READY"])
+    trainer = _trainer(FakeFireworksClient(datasets=datasets))
+
+    result = trainer.fit(_dataset(tmp_path))
+
+    assert result.status == TrainStatus.COMPLETED
+    assert len(datasets.get_calls) >= 2  # the poll loop actually ran
+
+
+def test_fireworks_trainer_dataset_failure_state_fails_the_fit(tmp_path):
+    # A dataset that leaves the UPLOADING/READY lifecycle is a processing failure;
+    # the is_failed closure must catch it rather than poll it to a timeout.
+    datasets = FakeDatasetsResource(states=["EXAMPLE_VALIDATION_FAILED"])
+    client = FakeFireworksClient(datasets=datasets)
+    trainer = _trainer(client)
+
+    result = trainer.fit(_dataset(tmp_path))
+
+    assert result.status == TrainStatus.FAILED
+    assert "dataset" in result.error
+    assert client.supervised_fine_tuning_jobs.create_calls == []
+
+
+def test_fireworks_trainer_deployment_poll_rides_creating_to_ready():
+    deployments = FakeDeploymentsResource(states=["CREATING", "READY"])
+    trainer = _trainer(FakeFireworksClient(deployments=deployments))
+
+    base = trainer.base_as_model()
+
+    assert isinstance(base, Fireworks)
+    assert len(deployments.get_calls) >= 2
+
+
+def test_fireworks_trainer_deployment_failure_raises():
+    # A deployment ending FAILED must surface immediately from the serving door;
+    # the loop routes a serving raise through its paid-but-unmeasured channel.
+    deployments = FakeDeploymentsResource(states=["FAILED"])
+    trainer = _trainer(FakeFireworksClient(deployments=deployments))
+
+    with pytest.raises(RuntimeError, match="deployment"):
+        trainer.base_as_model()
+
+
+def test_fireworks_trainer_deployment_stuck_creating_times_out():
+    deployments = FakeDeploymentsResource(states=["CREATING"])
+    trainer = _trainer(FakeFireworksClient(deployments=deployments), ready_timeout_seconds=0.01)
+
+    with pytest.raises(TimeoutError, match="deployment"):
+        trainer.base_as_model()
+
+
+def test_fireworks_trainer_lora_stuck_deploying_times_out():
+    lora = FakeLoraResource(states=["DEPLOYING"])
+    trainer = _trainer(FakeFireworksClient(lora=lora), ready_timeout_seconds=0.01)
+
+    with pytest.raises(TimeoutError, match="LoRA"):
+        trainer.as_model(_checkpoint())
+
+
 def test_fireworks_trainer_train_on_values_coincide(tmp_path):
     # The validator admits only single-assistant-final conversations, on which
     # LAST_ASSISTANT and ALL_ASSISTANT train the same tokens; both are accepted and
@@ -344,35 +447,46 @@ def test_fireworks_trainer_train_on_values_coincide(tmp_path):
     }
 
 
-def test_fireworks_trainer_guards_every_hyperparameter_before_any_client_call():
-    calls = []
-
-    class Guarded(FireworksTrainer):
-        def _get_client(self):
-            calls.append(1)
-            raise AssertionError("client reached")
-
-    for kwargs, match in [
+@pytest.mark.parametrize(
+    ("kwargs", "match"),
+    [
         ({"base_model": ""}, "base_model"),
         ({"base_model": "   "}, "base_model"),
         ({"epochs": 0}, "epochs"),
         ({"epochs": True}, "epochs"),
+        ({"epochs": 1.5}, "epochs"),
         ({"rank": 0}, "rank"),
+        ({"rank": -8}, "rank"),
         ({"rank": True}, "rank"),
         ({"learning_rate": 0.0}, "learning_rate"),
+        ({"learning_rate": -1e-4}, "learning_rate"),
         ({"learning_rate": float("nan")}, "learning_rate"),
         ({"learning_rate": float("inf")}, "learning_rate"),
+        ({"learning_rate": True}, "learning_rate"),
         ({"sampling_temperature": 0.0}, "sampling_temperature"),
+        ({"sampling_temperature": -0.5}, "sampling_temperature"),
         ({"sampling_temperature": float("nan")}, "sampling_temperature"),
+        ({"sampling_temperature": float("inf")}, "sampling_temperature"),
+        ({"sampling_temperature": True}, "sampling_temperature"),
+        ({"sampling_temperature": "0.7"}, "sampling_temperature"),
         ({"sampling_max_tokens": 0}, "sampling_max_tokens"),
+        ({"sampling_max_tokens": True}, "sampling_max_tokens"),
         ({"poll_interval_seconds": -1}, "poll_interval_seconds"),
+        ({"poll_interval_seconds": float("nan")}, "poll_interval_seconds"),
         ({"ready_timeout_seconds": 0}, "ready_timeout_seconds"),
+        ({"ready_timeout_seconds": float("inf")}, "ready_timeout_seconds"),
         ({"train_timeout_seconds": 0}, "train_timeout_seconds"),
-    ]:
-        with pytest.raises(ValueError, match=match):
-            Guarded(**{"base_model": BASE_MODEL, **kwargs})
-
-    assert calls == []
+        ({"train_timeout_seconds": float("nan")}, "train_timeout_seconds"),
+    ],
+)
+def test_fireworks_trainer_guards_every_hyperparameter(kwargs, match):
+    # A bad value that only fails inside fit() has already created billable
+    # resources, so everything is validated in __init__ -- which builds no client
+    # (the SDK import and client construction are lazy in _get_client), so the
+    # refusal provably precedes any client call. Bools are int subclasses that
+    # sail past plain < 1 checks; NaN passes every plain comparison.
+    with pytest.raises(ValueError, match=match):
+        FireworksTrainer(**{"base_model": BASE_MODEL, **kwargs})
 
 
 # ---------------------------------------------------------------------------
