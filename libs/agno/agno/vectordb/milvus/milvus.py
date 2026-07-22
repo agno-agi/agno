@@ -1143,6 +1143,117 @@ class Milvus(VectorDb):
                 return default
         return value
 
+    @staticmethod
+    def _validate_filter_key(key: str) -> None:
+        """Validate metadata filter key to prevent expression injection."""
+        import re
+        if not re.match(r'^[a-zA-Z_][a-zA-Z0-9_]*
+            if isinstance(v, (list, tuple)):
+                # For array values, use json_contains_any
+                values_str = json.dumps(v)
+                expr = f'json_contains_any(meta_data["{k}"], {values_str})'
+            elif isinstance(v, str):
+                # For string values (escaped to prevent injection)
+                expr = f'meta_data["{k}"] == "{self._escape_milvus_string(v)}"'
+            elif isinstance(v, bool):
+                # For boolean values
+                expr = f'meta_data["{k}"] == {str(v).lower()}'
+            elif isinstance(v, (int, float)):
+                # For numeric values
+                expr = f'meta_data["{k}"] == {v}'
+            elif v is None:
+                # For null values
+                expr = f'meta_data["{k}"] is null'
+            else:
+                # For other types, convert to string
+                expr = f'meta_data["{k}"] == "{self._escape_milvus_string(str(v))}"'
+
+            expressions.append(expr)
+
+        if expressions:
+            return " and ".join(expressions)
+        return None
+
+    def async_name_exists(self, name: str) -> bool:
+        raise NotImplementedError(f"Async not supported on {self.__class__.__name__}.")
+
+    def update_metadata(self, content_id: str, metadata: Dict[str, Any]) -> None:
+        """
+        Update the metadata for documents with the given content_id.
+
+        Args:
+            content_id (str): The content ID to update
+            metadata (Dict[str, Any]): The metadata to update
+        """
+        try:
+            # Fetch the full row so we can do a complete upsert. Milvus only supports
+            # partial-field upsert from 2.6.2+, so we read every field and rewrite it.
+            # Vector fields are listed explicitly because some Milvus versions exclude
+            # them from output_fields=["*"].
+            search_expr = f'content_id == "{content_id}"'
+            output_fields = (
+                ["*", "dense_vector", "sparse_vector"] if self.search_type == SearchType.hybrid else ["*", "vector"]
+            )
+            results = self.client.query(
+                collection_name=self.collection,
+                filter=search_expr,
+                output_fields=output_fields,
+            )
+
+            if not results:
+                log_debug(f"No documents found with content_id: {content_id}")
+                return
+
+            updated_count = 0
+            for row in results:
+                current_metadata = self._decode_json_field(row.get("meta_data"), default={})
+                if not isinstance(current_metadata, dict):
+                    current_metadata = {}
+
+                updated_metadata = {**current_metadata, **metadata}
+
+                # Rebuild the full row
+                new_row: Dict[str, Any] = dict(row)
+                new_row["meta_data"] = json.dumps(updated_metadata)
+                if "filters" in row:
+                    current_filters = self._decode_json_field(row.get("filters"), default={})
+                    if not isinstance(current_filters, dict):
+                        current_filters = {}
+                    new_row["filters"] = json.dumps({**current_filters, **metadata})
+
+                usage_value = row.get("usage")
+                if isinstance(usage_value, (dict, list)):
+                    new_row["usage"] = json.dumps(usage_value)
+                elif usage_value is None:
+                    new_row["usage"] = "{}"
+
+                self.client.upsert(
+                    collection_name=self.collection,
+                    data=[new_row],
+                )
+                updated_count += 1
+
+            log_debug(f"Updated metadata for {updated_count} documents with content_id: {content_id}")
+
+        except Exception as e:
+            log_error(f"Error updating metadata for content_id '{content_id}': {str(e)}")
+            raise
+
+    def get_supported_search_types(self) -> List[str]:
+        """Get the supported search types for this vector database."""
+        return [SearchType.vector, SearchType.hybrid]
+, key):
+            raise ValueError(
+                f"Invalid metadata filter key: {key!r}. "
+                "Keys must contain only alphanumeric characters and underscores, "
+                "and must start with a letter or underscore."
+            )
+
+    @staticmethod
+    def _escape_milvus_string(value: str) -> str:
+        """Escape a string value for safe inclusion in a Milvus expression."""
+        return value.replace('\\', '\\\\').replace('"', '\\"')
+
     def _build_expr(self, filters: Optional[Dict[str, Any]]) -> Optional[str]:
         """Build Milvus expression from filters."""
         if not filters:
@@ -1150,6 +1261,7 @@ class Milvus(VectorDb):
 
         expressions = []
         for k, v in filters.items():
+            self._validate_filter_key(k)
             if isinstance(v, (list, tuple)):
                 # For array values, use json_contains_any
                 values_str = json.dumps(v)
