@@ -8,6 +8,7 @@ from agno.db.base import AsyncBaseDb, BaseDb
 from agno.models.base import Model
 from agno.run.agent import RunContentEvent, RunOutputEvent, run_output_event_from_dict
 from agno.run.base import RunContext
+from agno.tools.function import Function
 from agno.tools.toolkit import Toolkit
 from agno.utils.log import log_debug, log_error
 
@@ -31,16 +32,22 @@ def _event_from_sse(sse_data: Any) -> Optional[Any]:
 
 
 DEFAULT_INSTRUCTIONS = dedent("""\
-    You can delegate tasks to subagents: copies of yourself that work on a task and return
-    the result. Use them to parallelize independent work.
-    - Call run_task once per independent sub-task. Call it multiple times in the same
-      response to run subagents in parallel.
-    - Subagents run in parallel, so total time equals the largest task, not the sum.
-      Keep each task small and atomic: one topic, component, or question per subagent.
+    You can delegate tasks to subagents: isolated copies of yourself with a fresh
+    context that work on a task and return the result. Use them to parallelize
+    independent work and to keep noisy side-work out of this conversation.
+    - Call spawn_agent once per independent sub-task. Call it multiple times in the
+      same response to run subagents in parallel; total time equals the largest task,
+      not the sum.
+    - Only spawn when it pays off: several independent pieces, or one large
+      self-contained chunk of research or grunt work. Do small tasks, follow-up
+      questions and sequential work (where each step needs the previous step's
+      result) yourself - spawning costs more than doing it.
+    - Keep each task small and atomic: one topic, component, or question per subagent.
       Never give one subagent a numbered list of independent items - split the list
-      into one run_task call per item. Prefer many small subagents over few big ones.
-    - Subagents do not see this conversation. Give each one a complete, self-contained
-      task description with all the context it needs.
+      into one spawn_agent call per item. Never give two subagents overlapping work.
+    - Subagents start fresh and do not see this conversation. Every brief must be
+      self-contained - full context, precise scope, and the exact output to return
+      (a summary, a list of findings with sources - never raw dumps).
     - Keep the hardest parts of the work for yourself and combine the subagent results
       into your final answer.""")
 
@@ -49,7 +56,7 @@ class SubAgent(Toolkit):
     """Let an agent spin up subagents (copies of itself) to get tasks done in parallel.
 
     Subagents inherit the parent agent's model, tools and db by default; each can be
-    overridden via the constructor. Every run_task call runs in its own
+    overridden via the constructor. Every spawn_agent call runs in its own
     "<parent id>-subagent-task-<uuid>" session with the user_id inherited from the
     current run (falling back to the parent agent's id when the run has no user), so
     subagent runs can be inspected as separate sessions in the db / AgentOS UI.
@@ -57,7 +64,7 @@ class SubAgent(Toolkit):
     When a db is set, subagent runs execute as detached background runs on the server
     (the same pipeline as AgentOS "Run in background"), so they survive client
     disconnects and page refreshes. Their events are also re-emitted into the parent
-    run's stream tagged with parent_run_id, so each run_task call renders as nested
+    run's stream tagged with parent_run_id, so each spawn_agent call renders as nested
     sub-agent activity inside the parent's chat in the AgentOS UI (same as team member
     delegation) while still persisting as its own session. Note the parent run is
     controlled separately: to keep the whole tree alive across a refresh, start the
@@ -85,12 +92,15 @@ class SubAgent(Toolkit):
 
         super().__init__(
             name="subagent",
-            tools=[self.run_task],
-            async_tools=[(self.arun_task, "run_task")],
+            tools=[self.spawn_agent],
             instructions=kwargs.pop("instructions", DEFAULT_INSTRUCTIONS),
             add_instructions=kwargs.pop("add_instructions", True),
             **kwargs,
         )
+        # Toolkit.register auto-detects async via iscoroutinefunction, which does not
+        # recognize async generator functions - register the async variant directly so
+        # it lands in async_functions instead of overwriting the sync tool.
+        self.async_functions["spawn_agent"] = Function(name="spawn_agent", entrypoint=self.aspawn_agent)
 
     def _get_subagent(self, parent: Agent) -> Agent:
         """Build the subagent once and reuse it. Session and user ids are passed per run,
@@ -117,7 +127,7 @@ class SubAgent(Toolkit):
     def _session_id(self, parent: Agent) -> str:
         return f"{parent.id}-subagent-task-{uuid4()}"
 
-    def run_task(self, agent: Agent, run_context: RunContext, task: str) -> str:
+    def spawn_agent(self, agent: Agent, run_context: RunContext, task: str) -> str:
         """Delegate a task to a subagent and return its result.
 
         Args:
@@ -138,10 +148,10 @@ class SubAgent(Toolkit):
             log_error(f"Subagent task failed: {e}")
             return f"Subagent task failed: {str(e)}"
 
-    async def arun_task(
+    async def aspawn_agent(
         self, agent: Agent, run_context: RunContext, task: str
     ) -> AsyncIterator[Union[RunOutputEvent, str]]:
-        """Delegate a task to a subagent and return its result. Call run_task multiple
+        """Delegate a task to a subagent and return its result. Call spawn_agent multiple
         times in the same response to run subagents in parallel.
 
         Args:
