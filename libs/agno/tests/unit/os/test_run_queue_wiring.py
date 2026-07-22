@@ -1,0 +1,95 @@
+"""Unit tests for RunQueueConfig wiring (transports from run_queue.redis)."""
+
+import pytest
+
+fakeredis = pytest.importorskip("fakeredis", reason="fakeredis not installed")
+
+import agno.os.event_streams as event_streams_module  # noqa: E402
+from agno.os.event_streams import (  # noqa: E402
+    InMemoryEventStream,
+    RedisEventStream,
+    get_event_stream,
+    set_event_stream,
+)
+from agno.os.run_queue import apply_run_queue_config  # noqa: E402
+from agno.run.cancel import get_cancellation_manager, set_cancellation_manager  # noqa: E402
+from agno.run.cancellation_management.in_memory_cancellation_manager import (  # noqa: E402
+    InMemoryRunCancellationManager,
+)
+from agno.run.cancellation_management.redis_cancellation_manager import RedisRunCancellationManager  # noqa: E402
+from agno.run.concurrency import get_background_max_concurrency, set_background_max_concurrency  # noqa: E402
+from agno.run.queue import RedisCoordination, RunQueueConfig  # noqa: E402
+
+
+@pytest.fixture(autouse=True)
+def reset_globals():
+    original_manager = get_cancellation_manager()
+    original_stream = event_streams_module._event_stream
+    set_cancellation_manager(InMemoryRunCancellationManager())
+    event_streams_module._event_stream = None
+    try:
+        yield
+    finally:
+        set_cancellation_manager(original_manager)
+        event_streams_module._event_stream = original_stream
+        set_background_max_concurrency(None)
+
+
+def make_coordination() -> RedisCoordination:
+    return RedisCoordination(
+        url=None,
+        sync_client=fakeredis.FakeRedis(),
+        async_client=fakeredis.FakeAsyncRedis(),
+    )
+
+
+class TestRedisCoordinationValidation:
+    def test_url_alone_is_valid(self):
+        RedisCoordination(url="redis://localhost:6379")
+
+    def test_clients_alone_are_valid(self):
+        make_coordination()
+
+    def test_partial_clients_without_url_raise(self):
+        with pytest.raises(ValueError):
+            RedisCoordination(sync_client=fakeredis.FakeRedis())
+
+
+class TestApplyRunQueueConfig:
+    def test_concurrency_applied(self):
+        apply_run_queue_config(RunQueueConfig(max_concurrency=7))
+        assert get_background_max_concurrency() == 7
+
+    def test_no_redis_keeps_in_memory_transports(self):
+        apply_run_queue_config(RunQueueConfig())
+        assert isinstance(get_cancellation_manager(), InMemoryRunCancellationManager)
+        assert isinstance(get_event_stream(), InMemoryEventStream)
+
+    def test_redis_wires_both_transports(self):
+        apply_run_queue_config(RunQueueConfig(redis=make_coordination()))
+        assert isinstance(get_cancellation_manager(), RedisRunCancellationManager)
+        assert isinstance(get_event_stream(), RedisEventStream)
+
+    def test_url_string_accepted(self):
+        # from_url constructs lazily; no connection is made at wiring time
+        apply_run_queue_config(RunQueueConfig(redis="redis://localhost:6399"))
+        assert isinstance(get_cancellation_manager(), RedisRunCancellationManager)
+        assert isinstance(get_event_stream(), RedisEventStream)
+
+    def test_custom_cancellation_manager_not_clobbered(self):
+        """A non-in-memory manager configured before wiring must survive it."""
+        custom = RedisRunCancellationManager(
+            redis_client=fakeredis.FakeRedis(), async_redis_client=fakeredis.FakeAsyncRedis()
+        )
+        set_cancellation_manager(custom)
+        apply_run_queue_config(RunQueueConfig(redis=make_coordination()))
+        assert get_cancellation_manager() is custom
+
+    def test_custom_event_stream_not_clobbered(self):
+        class CustomStream(RedisEventStream):
+            pass
+
+        custom = CustomStream(fakeredis.FakeAsyncRedis())
+        set_event_stream(custom)
+        apply_run_queue_config(RunQueueConfig(redis=make_coordination()))
+        assert get_event_stream() is custom

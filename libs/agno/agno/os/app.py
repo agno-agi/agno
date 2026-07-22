@@ -63,6 +63,7 @@ from agno.os.routers.session import get_session_router
 from agno.os.routers.teams import get_team_router
 from agno.os.routers.traces import get_traces_router
 from agno.os.routers.workflows import get_workflow_router
+from agno.os.run_queue import apply_run_queue_config
 from agno.os.settings import AgnoAPISettings
 from agno.os.utils import (
     _generate_knowledge_id,
@@ -79,7 +80,6 @@ from agno.os.utils import (
 )
 from agno.registry import Registry
 from agno.remote.base import RemoteDb, RemoteKnowledge
-from agno.run.concurrency import set_background_max_concurrency
 from agno.run.queue import RunQueueConfig
 from agno.team import RemoteTeam, Team, TeamFactory
 from agno.utils.log import log_debug, log_error, log_info, log_warning
@@ -433,10 +433,12 @@ class AgentOS:
         self.run_hooks_in_background = run_hooks_in_background
 
         # Run queue configuration. None keeps the process defaults (env var or
-        # library default for the concurrency cap).
+        # library default for the concurrency cap, in-memory transports).
+        # run_queue.redis wires the cross-container transports; the explicit
+        # event_stream parameter below is applied after and wins by ordering.
         self.run_queue = run_queue
         if run_queue is not None:
-            set_background_max_concurrency(run_queue.max_concurrency)
+            apply_run_queue_config(run_queue)
 
         # Event stream for background run events. None keeps the in-memory
         # default (or whatever an earlier set_event_stream() call configured).

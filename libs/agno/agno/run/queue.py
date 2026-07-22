@@ -6,18 +6,50 @@ in line when the cap is reached. ``RunQueueConfig`` is the single place to
 configure this subsystem.
 
 The config grows with the queue's capabilities:
-- Execution capping (this release): ``max_concurrency``.
-- Coordination: a ``redis`` field enabling the cross-container transports
-  (cancellation in, events out) ships with the pluggable event stream.
-- Durability (planned): ``durable``, ``db``, depth/retry/timeout policy for the
-  DB-backed queue with crash recovery.
+- Execution capping: ``max_concurrency``.
+- Coordination: ``redis`` enables BOTH cross-container transports for
+  background runs - distributed cancellation (control in) and the Redis event
+  stream (events out) - from shared clients. Configuring one without the other
+  is the classic misconfiguration (cross-container cancel with process-local
+  resume, or vice versa), so one setting wires both. Granular overrides
+  (``AgentOS(event_stream=...)``, ``set_cancellation_manager()``) always win.
+- Durability (planned): ``durable``, ``db``, depth/retry/timeout policy for
+  the DB-backed queue with crash recovery.
+
+This module is pure data: it imports no transports and no redis package.
+Wiring happens in ``agno.os.run_queue``.
 """
 
 from dataclasses import dataclass
+from typing import Any, Optional, Union
 
 # Default mirrors agno.run.concurrency.DEFAULT_BACKGROUND_MAX_CONCURRENCY;
 # duplicated as a literal so this module stays a pure-data import.
 _DEFAULT_MAX_CONCURRENCY = 32
+
+
+@dataclass
+class RedisCoordination:
+    """Redis connection settings for run-queue coordination.
+
+    Provide either ``url`` (clients are constructed for you) or BOTH
+    ``sync_client`` and ``async_client`` (e.g. for connection tuning or an
+    existing pool). The cancellation manager needs sync and async clients; the
+    event stream uses the async client.
+
+    Args:
+        url: Redis URL, e.g. ``redis://localhost:6379``.
+        sync_client: Existing sync ``redis.Redis``/``RedisCluster`` client.
+        async_client: Existing ``redis.asyncio`` client.
+    """
+
+    url: Optional[str] = None
+    sync_client: Optional[Any] = None
+    async_client: Optional[Any] = None
+
+    def __post_init__(self) -> None:
+        if self.url is None and (self.sync_client is None or self.async_client is None):
+            raise ValueError("RedisCoordination requires either url or both sync_client and async_client")
 
 
 @dataclass
@@ -30,6 +62,14 @@ class RunQueueConfig:
             (process-wide in the standard one-loop-per-process deployment).
             Runs beyond the cap wait in line as PENDING and can be cancelled
             while waiting. 0 or below disables capping.
+        redis: Enables cross-container coordination for background runs. A URL
+            string for the common case, or ``RedisCoordination`` to inject
+            clients. Wires BOTH the distributed cancellation manager and the
+            Redis event stream from shared clients, so cancel and stream resume
+            work from any replica. Only replaces in-memory defaults: an
+            explicitly configured cancellation manager or event stream is never
+            overridden. Also works against Valkey (Redis-protocol compatible).
     """
 
     max_concurrency: int = _DEFAULT_MAX_CONCURRENCY
+    redis: Optional[Union[str, RedisCoordination]] = None
