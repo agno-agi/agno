@@ -268,17 +268,25 @@ def merge_runs_table_with_legacy_blob(
     the new ``agno_runs`` table and the legacy ``agno_sessions.runs`` column
     (e.g. when the v3.0.0 migration has not yet been applied to that session).
 
-    The runs table is the source of truth: any run_id present in ``table_runs``
-    wins over its blob counterpart. Runs that only exist in the legacy blob are
-    appended after the table runs so no history is silently lost.
+    Ordering guarantee: chronological insertion order is preserved. The legacy
+    blob is the historical order (v2.x wrote runs into that list in insertion
+    order), so we walk it first and substitute the table's version whenever a
+    run_id exists in both. Any runs that only exist in the table (writes made
+    after migration nulled the blob for this session) are appended after the
+    legacy-known runs, in the order the table returns them.
+
+    Conflict resolution: the runs table wins on run_id conflicts (it's the
+    source of truth for state changes like paused → completed).
 
     Args:
-        table_runs: Rows fetched from the runs table (already in insertion order).
-        legacy_runs: The raw value of the legacy ``runs`` column (may be a list,
-            a JSON-encoded string, or ``None``).
+        table_runs: Rows fetched from the runs table (in insertion order —
+            adapters sort by ``run_index`` then ``created_at``).
+        legacy_runs: The raw value of the legacy ``runs`` column (may be a
+            list, a JSON-encoded string, or ``None``).
 
     Returns:
-        Merged list of run dicts. Empty if both inputs are empty.
+        Merged list of run dicts in chronological insertion order. Empty if
+        both inputs are empty.
     """
     if isinstance(legacy_runs, str):
         try:
@@ -290,16 +298,42 @@ def merge_runs_table_with_legacy_blob(
     if not legacy_runs:
         return list(table_runs)
 
-    seen_run_ids = {run.get("run_id") for run in table_runs if isinstance(run, dict)}
-    merged = list(table_runs)
-    for run in legacy_runs:
+    # Index the table rows by run_id so we can substitute in O(1) while
+    # walking the legacy order.
+    table_by_id: Dict[Any, Dict[str, Any]] = {}
+    for run in table_runs:
         if not isinstance(run, dict):
             continue
-        run_id = run.get("run_id")
-        if run_id is None or run_id in seen_run_ids:
+        rid = run.get("run_id")
+        if rid is not None:
+            table_by_id[rid] = run
+
+    legacy_ids: set = set()
+    merged: List[Dict[str, Any]] = []
+
+    # Phase 1: walk the legacy blob in its stored (insertion) order. For each
+    # id, prefer the table's copy when it exists so state changes since
+    # migration are visible; fall back to the legacy copy otherwise.
+    for legacy_run in legacy_runs:
+        if not isinstance(legacy_run, dict):
             continue
-        merged.append(run)
-        seen_run_ids.add(run_id)
+        rid = legacy_run.get("run_id")
+        if rid is None:
+            continue
+        legacy_ids.add(rid)
+        merged.append(table_by_id.get(rid, legacy_run))
+
+    # Phase 2: append any table-only runs (added after migration) in the order
+    # the table returned them — these are strictly newer than everything the
+    # blob knew about.
+    for table_run in table_runs:
+        if not isinstance(table_run, dict):
+            continue
+        rid = table_run.get("run_id")
+        if rid is None or rid in legacy_ids:
+            continue
+        merged.append(table_run)
+
     return merged
 
 
