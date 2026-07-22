@@ -4195,14 +4195,23 @@ class Workflow:
             """Background execution: waits for a concurrency slot (background_run_slot);
             the run stays PENDING while waiting in line and can be cancelled without
             consuming a slot."""
+
+            async def _persist_status_fresh() -> None:
+                # Re-read the session so this save does not clobber concurrent
+                # background runs on the same session with the stale
+                # submit-time snapshot.
+                fresh_session, _ = await self._aload_or_create_session(session_id=session_id, user_id=user_id)
+                fresh_session.upsert_run(run=workflow_run_response)
+                if self._has_async_db():
+                    await self.asave_session(session=fresh_session)
+                else:
+                    self.save_session(session=fresh_session)
+
             try:
                 async with background_run_slot(run_id=workflow_run_response.run_id):
                     # Update status to RUNNING and save
                     workflow_run_response.status = RunStatus.running
-                    if self._has_async_db():
-                        await self.asave_session(session=workflow_session)
-                    else:
-                        self.save_session(session=workflow_session)
+                    await _persist_status_fresh()
 
                     if self.agent is not None:
                         await self._aexecute_workflow_agent(
@@ -4232,19 +4241,13 @@ class Workflow:
                 # so persist CANCELLED and deregister the run here.
                 log_info(f"Background run {workflow_run_response.run_id} cancelled while waiting for a slot")
                 workflow_run_response.status = RunStatus.cancelled
-                if self._has_async_db():
-                    await self.asave_session(session=workflow_session)
-                else:
-                    self.save_session(session=workflow_session)
+                await _persist_status_fresh()
                 await acleanup_run(run_id)
             except Exception as e:
                 logger.exception("Background workflow execution failed")
                 workflow_run_response.status = RunStatus.error
                 workflow_run_response.content = f"Background execution failed: {str(e)}"
-                if self._has_async_db():
-                    await self.asave_session(session=workflow_session)
-                else:
-                    self.save_session(session=workflow_session)
+                await _persist_status_fresh()
 
         # Create and start asyncio task
         loop = asyncio.get_running_loop()
