@@ -22,7 +22,7 @@ differ per backend.
 | `mongo_db.py`      | MongoDB     | Top-level `user_id` field, `$match {$in: [X, null]}` before `$vectorSearch`    |
 | `weaviate_db.py`   | Weaviate    | `user_id` text property (`tokenization: field`), `where` OR `is_none`          |
 | `redis_db.py`      | Redis       | `user_id` TAG field, `(@user_id:{X}) \| ismissing(@user_id)`                   |
-| `clickhouse.py`    | ClickHouse  | Non-nullable `String` column, `""` sentinel for shared, bound-param `WHERE`    |
+| `clickhouse_db.py` | ClickHouse  | Non-nullable `String` column, `""` sentinel for shared, bound-param `WHERE`    |
 | `cassandra_db.py`  | Cassandra   | `user_id` metadata, `__shared__` sentinel for unowned chunks                   |
 | `couchbase_db.py`  | Couchbase   | Keyword-indexed FTS `user_id` field, `__shared__` sentinel (no is-missing)     |
 | `singlestore_db.py`| SingleStore | Nullable `user_id` column, `WHERE user_id = X OR user_id IS NULL`              |

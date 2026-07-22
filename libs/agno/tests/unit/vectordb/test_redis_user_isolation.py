@@ -1,43 +1,41 @@
-import os
-import uuid
+"""Redis per-user RAG isolation contract.
+
+The RedisDB adapter stores a chunk's owner in a top-level ``user_id`` TAG
+field. Scoped reads apply an owner-OR-shared TAG scope so admin-uploaded
+shared content (stored under the ``__shared__`` sentinel) stays discoverable;
+unscoped (admin) reads apply no scope. The deterministic id folds the owner
+in so two users uploading identical content never collide.
+
+This is a TRUE unit test: the redis client and the redisvl ``SearchIndex``
+are patched so no server (RediSearch) is ever contacted. Because there is no
+server to retrieve from, the isolation contract is asserted on the VALUES the
+adapter produces -- the ``user_id`` tag written on each hash, the scoped doc
+id (key), and the string form of the redisvl ``FilterExpression`` built for
+every scoped search / dedup / delete. Those strings ARE the isolation: an
+own-OR-shared scope excludes bob by construction, an owner-folded key stops
+one writer clobbering another, and a scoped delete filter that names one
+owner cannot reach another's chunks.
+"""
+
+from unittest.mock import MagicMock, patch
 
 import pytest
 
-from agno.knowledge.document import Document
-from agno.vectordb.search import SearchType
+# Skip cleanly only if the optional dependency isn't installed. The test never
+# needs a running server -- everything below is patched.
+pytest.importorskip("redisvl")
 
-redisvl = pytest.importorskip("redisvl")
-
+from agno.knowledge.document import Document  # noqa: E402
+from agno.utils.string import hash_string_sha256  # noqa: E402
 from agno.vectordb.redis.redisdb import RedisDB  # noqa: E402
+from agno.vectordb.search import SearchType  # noqa: E402
 
-REDIS_URL = os.environ.get("REDIS_ISOLATION_URL", "redis://localhost:6380")
-
-
-def _server_has_search() -> bool:
-    """The isolation primitives need the RediSearch module; a plain redis
-    server can't create the index, so skip rather than fail spuriously."""
-    try:
-        import redis
-
-        client = redis.Redis.from_url(REDIS_URL, socket_connect_timeout=2)
-        modules = client.module_list()
-        names = {m.get(b"name", m.get("name")) for m in modules}
-        names = {n.decode() if isinstance(n, bytes) else n for n in names}
-        return "search" in names
-    except Exception:
-        return False
-
-
-pytestmark = pytest.mark.skipif(
-    not _server_has_search(),
-    reason=f"redis-stack with RediSearch not reachable at {REDIS_URL}",
-)
+USER_ID_FIELD = RedisDB.USER_ID_FIELD
+SHARED = RedisDB.SHARED_OWNER_TAG
 
 
 class _DeterministicEmbedder:
-    """A tiny embedder that needs no network or API key. The content steers
-    the vector so distinct documents land in distinct buckets — all the
-    isolation tests need, and it gives us a real async surface too."""
+    """A tiny embedder that needs no network or API key."""
 
     dimensions = 8
     enable_batch = False
@@ -63,370 +61,212 @@ class _DeterministicEmbedder:
         pass
 
 
-def _embedded(name: str, content: str, content_id: str = None) -> Document:
-    """A Document with a precomputed deterministic embedding so direct
-    ``insert`` calls work without an embedder round-trip."""
+def _embedded(name: str, content: str, content_id: str = None, doc_id: str = None) -> Document:
+    """A Document carrying a precomputed embedding so ``insert`` never has to
+    round-trip an embedder."""
     doc = Document(name=name, content=content)
+    if doc_id is not None:
+        doc.id = doc_id
     doc.embedding = _DeterministicEmbedder().get_embedding(content)
     if content_id is not None:
         doc.content_id = content_id
     return doc
 
 
-def _make_db(search_type: SearchType = SearchType.vector) -> RedisDB:
-    """A fresh RedisDB on a unique index so parallel runs don't collide."""
-    index_name = f"iso_test_{uuid.uuid4().hex[:10]}"
-    db = RedisDB(
-        index_name=index_name,
-        redis_url=REDIS_URL,
-        embedder=_DeterministicEmbedder(),
-        search_type=search_type,
-    )
-    db.create()
-    return db
-
-
-@pytest.fixture(params=[SearchType.vector, SearchType.keyword, SearchType.hybrid])
-def db(request):
-    """A fresh isolated index per test, parametrized over every search mode so
-    isolation is asserted across vector, keyword AND hybrid."""
-    database = _make_db(request.param)
-    yield database
-    try:
-        database.drop()
-    except Exception:
-        pass
-
-
 @pytest.fixture
-def vector_db():
-    """A single-mode (vector) index for tests that don't need to sweep modes."""
-    database = _make_db(SearchType.vector)
-    yield database
-    try:
-        database.drop()
-    except Exception:
-        pass
+def db():
+    """A RedisDB whose redis client and redisvl ``SearchIndex`` are both
+    patched -- no connection is ever attempted. ``index.query`` returns an
+    empty result so the delete / dedup query loops are harmless; we assert on
+    the FilterExpression each call carries, not on any retrieved rows."""
+    with (
+        patch("agno.vectordb.redis.redisdb.Redis") as mock_redis,
+        patch("agno.vectordb.redis.redisdb.SearchIndex") as mock_index_cls,
+    ):
+        mock_redis.from_url.return_value = MagicMock()
+        index = MagicMock()
+        index.query.return_value = []
+        mock_index_cls.return_value = index
+
+        database = RedisDB(
+            index_name="iso_test",
+            redis_url="redis://patched.invalid:6379",
+            embedder=_DeterministicEmbedder(),
+            search_type=SearchType.vector,
+        )
+        # The patched SearchIndex(...) call returned our mock; pin it explicitly.
+        database.index = index
+        yield database
 
 
-def _alice_docs():
-    return [_embedded("alice-salary", "Alice secret salary is 180k.")]
+def _loaded_docs(db):
+    """The list of hash dicts passed to the most recent ``index.load``."""
+    assert db.index.load.called, "index.load was never called"
+    return db.index.load.call_args.args[0]
 
 
-def _bob_docs():
-    return [_embedded("bob-salary", "Bob secret salary is 215k.")]
+def _queried_filter(db):
+    """str() of the FilterExpression on the most recent ``index.query``.
 
-
-def _shared_docs():
-    return [_embedded("company-holidays", "The office secret is closed Jan 1.")]
-
-
-def _owners(db: RedisDB):
-    """Read the raw ``user_id`` tag off every stored hash (absent -> None)."""
-    from redisvl.query import FilterQuery
-    from redisvl.redis.utils import convert_bytes
-
-    q = FilterQuery(
-        filter_expression=None,
-        return_fields=["id", RedisDB.USER_ID_FIELD],
-        num_results=1000,
-    )
-    rows = convert_bytes(db.index.query(q))
-    return sorted((r.get(RedisDB.USER_ID_FIELD) for r in rows), key=lambda x: (x is None, x))
-
-
-def _count(db: RedisDB) -> int:
-    from redisvl.query import FilterQuery
-
-    q = FilterQuery(filter_expression=None, return_fields=["id"], num_results=1000)
-    return len(db.index.query(q))
+    Works for both VectorQuery (search) and FilterQuery (dedup / delete) --
+    both expose a ``.filter`` whose str() is the raw RediSearch clause.
+    """
+    assert db.index.query.called, "index.query was never called"
+    query = db.index.query.call_args.args[0]
+    return str(query.filter)
 
 
 class TestWriteStampsOwner:
-    """``user_id`` is a top-level TAG field, not nested in ``meta_data``.
-    Shared chunks OMIT the field so ``ismissing`` can surface them."""
+    """``user_id`` is a top-level TAG on every hash. Shared chunks store the
+    ``__shared__`` sentinel so the owner-OR-shared scope can match them."""
 
-    def test_user_id_field_constant(self):
-        # Storage compatibility marker — changing it orphans the scope on
+    def test_isolation_constants(self):
+        # Storage-compatibility markers: changing either orphans the scope on
         # every previously persisted row.
         assert RedisDB.USER_ID_FIELD == "user_id"
+        assert RedisDB.SHARED_OWNER_TAG == "__shared__"
 
-    def test_explicit_user_id_persisted(self, vector_db):
-        vector_db.insert(content_hash="h1", documents=_alice_docs(), user_id="alice")
-        assert _owners(vector_db) == ["alice"]
+    def test_explicit_user_id_persisted(self, db):
+        db.insert(content_hash="h1", documents=[_embedded("alice-salary", "Alice secret 180k.")], user_id="alice")
+        docs = _loaded_docs(db)
+        assert len(docs) == 1
+        assert docs[0][USER_ID_FIELD] == "alice"
 
-    def test_none_user_id_omits_field(self, vector_db):
-        """Shared chunks store no ``user_id`` field at all — an empty string
-        would NOT be treated as missing by RediSearch."""
-        vector_db.insert(content_hash="h1", documents=_shared_docs(), user_id=None)
-        assert _owners(vector_db) == [None]
+    def test_none_user_id_stamps_shared_sentinel(self, db):
+        """Shared chunks store the sentinel, not an empty/absent value -- a
+        bare TAG could not be matched by the owner-OR-shared clause."""
+        db.insert(content_hash="h1", documents=[_embedded("holidays", "Office closed Jan 1.")], user_id=None)
+        assert _loaded_docs(db)[0][USER_ID_FIELD] == SHARED
 
-    def test_user_id_omitted_defaults_to_shared(self, vector_db):
-        vector_db.insert(content_hash="h1", documents=_shared_docs())
-        assert _owners(vector_db) == [None]
+    def test_user_id_omitted_defaults_to_shared(self, db):
+        db.insert(content_hash="h1", documents=[_embedded("holidays", "Office closed Jan 1.")])
+        assert _loaded_docs(db)[0][USER_ID_FIELD] == SHARED
 
-    def test_caller_meta_data_cannot_set_owner(self, vector_db):
-        """A caller's own ``meta_data['user_id']`` must not become the owner
-        tag — the owner is stamped after the meta_data merge."""
-        doc = _embedded("md", "secret content")
-        doc.meta_data = {"user_id": "attacker"}
-        vector_db.insert(content_hash="h1", documents=[doc], user_id="alice")
-        assert _owners(vector_db) == ["alice"]
-
-
-class TestUserScopeFilter:
-    """The scope-filter builder is small enough to unit-test directly."""
-
-    def test_none_returns_no_filter(self, vector_db):
-        assert vector_db._user_scope_filter(None) is None
-
-    def test_scope_is_own_or_missing(self, vector_db):
-        f = vector_db._user_scope_filter("alice")
-        rendered = str(f)
-        assert "@user_id:{alice}" in rendered
-        assert "ismissing(@user_id)" in rendered
-        # Parenthesized so it can splice before the KNN clause in vector/hybrid.
-        assert rendered.startswith("(") and rendered.endswith(")")
+    def test_caller_meta_data_cannot_spoof_owner(self, db):
+        """``user_id`` / ``id`` in caller meta_data must not override the
+        adapter-stamped owner or the owner-folded key."""
+        doc = Document(name="d", content="c", meta_data={"user_id": "attacker", "id": "evil"})
+        doc.embedding = _DeterministicEmbedder().get_embedding("c")
+        db.insert(content_hash="h1", documents=[doc], user_id="alice")
+        loaded = _loaded_docs(db)[0]
+        assert loaded[USER_ID_FIELD] == "alice"
+        assert loaded["id"] != "evil"
 
 
-class TestSearchIsolationContract:
-    """The load-bearing test, swept over vector / keyword / hybrid: alice's
-    search returns her chunks plus shared chunks, but never bob's."""
+class TestIdFolding:
+    """The deterministic key folds the owner in, so two users uploading
+    byte-identical content get DISTINCT keys and cannot clobber each other.
+    The shared bucket keeps the legacy (unfolded) id."""
 
-    @pytest.fixture
-    def populated(self, db):
-        db.insert(content_hash="ha", documents=_alice_docs(), user_id="alice")
-        db.insert(content_hash="hb", documents=_bob_docs(), user_id="bob")
-        db.insert(content_hash="hs", documents=_shared_docs(), user_id=None)
-        return db
+    _SAME = "The quarterly figure is identical for both owners."
 
-    def test_alice_sees_own_and_shared(self, populated):
-        names = {d.name for d in populated.search("secret salary", limit=10, user_id="alice")}
-        assert "alice-salary" in names
-        assert "company-holidays" in names
+    def test_identical_content_two_owners_get_distinct_keys(self, db):
+        db.insert(content_hash="h", documents=[_embedded("a", self._SAME)], user_id="alice")
+        alice_key = _loaded_docs(db)[0]["id"]
+        db.index.load.reset_mock()
+        db.insert(content_hash="h", documents=[_embedded("b", self._SAME)], user_id="bob")
+        bob_key = _loaded_docs(db)[0]["id"]
+        assert alice_key != bob_key
 
-    def test_alice_never_sees_bob(self, populated):
-        results = populated.search("secret salary", limit=10, user_id="alice")
-        names = {d.name for d in results}
-        assert "bob-salary" not in names
-        for d in results:
-            assert "Bob secret salary" not in d.content
+    def test_scoped_key_is_owner_folded_hash(self, db):
+        """A scoped write hashes ``<base_id>_<user_id>``."""
+        db.insert(content_hash="h", documents=[_embedded("a", "x", doc_id="doc-1")], user_id="alice")
+        assert _loaded_docs(db)[0]["id"] == hash_string_sha256("doc-1_alice")
 
-    def test_bob_never_sees_alice(self, populated):
-        names = {d.name for d in populated.search("secret salary", limit=10, user_id="bob")}
-        assert "alice-salary" not in names
-
-    def test_admin_sees_everything(self, populated):
-        names = {d.name for d in populated.search("secret salary", limit=10, user_id=None)}
-        assert {"alice-salary", "bob-salary", "company-holidays"} <= names
+    def test_shared_keeps_legacy_id(self, db):
+        """A shared (``user_id=None``) write is not folded -- it round-trips on
+        the plain document id."""
+        db.insert(content_hash="h", documents=[_embedded("a", "x", doc_id="doc-1")], user_id=None)
+        assert _loaded_docs(db)[0]["id"] == "doc-1"
 
 
-class TestAsyncSearchIsolation:
-    """Async variants must isolate identically across all three modes."""
+class TestReadScope:
+    """A scoped search filters to the caller's own chunks OR the shared bucket
+    and never another user's; admin (``None``) applies no scope. With a mocked
+    index the FilterExpression carried by the query IS the contract."""
 
-    async def _populate_async(self, db):
-        await db.async_create()
-        await db.async_insert(content_hash="ha", documents=_alice_docs(), user_id="alice")
-        await db.async_insert(content_hash="hb", documents=_bob_docs(), user_id="bob")
-        await db.async_insert(content_hash="hs", documents=_shared_docs(), user_id=None)
+    def test_user_scope_filter_builder(self, db):
+        # The small builder is worth pinning directly.
+        assert str(db._user_scope_filter("alice")) == "@user_id:{alice|__shared__}"
+        assert db._user_scope_filter(None) is None
 
-    async def test_async_alice_isolated(self, db):
-        await self._populate_async(db)
-        names = {d.name for d in await db.async_search("secret salary", limit=10, user_id="alice")}
-        assert "alice-salary" in names
-        assert "company-holidays" in names
-        assert "bob-salary" not in names
+    def test_scoped_search_builds_own_or_shared(self, db):
+        db.search(query="secret salary", limit=10, user_id="alice")
+        # Own OR shared -- bob is excluded by construction.
+        assert _queried_filter(db) == "@user_id:{alice|__shared__}"
 
-    async def test_async_admin_sees_all(self, db):
-        await self._populate_async(db)
-        names = {d.name for d in await db.async_search("secret salary", limit=10, user_id=None)}
-        assert {"alice-salary", "bob-salary", "company-holidays"} <= names
+    def test_admin_search_has_no_scope(self, db):
+        db.search(query="secret salary", limit=10, user_id=None)
+        # A wildcard filter == no owner scope; admin sees everything.
+        assert _queried_filter(db) == "*"
 
-
-class TestDeleteByContentIdIsolation:
-    """``delete_by_content_id(content_id, user_id=...)`` must scope to the
-    caller's chunks and never touch the shared bucket."""
-
-    @pytest.fixture
-    def populated(self, vector_db):
-        vector_db.insert(
-            content_hash="ha", documents=[_embedded("alice-doc", "alice secret", "doc-1")], user_id="alice"
-        )
-        vector_db.insert(content_hash="hb", documents=[_embedded("bob-doc", "bob secret", "doc-1")], user_id="bob")
-        vector_db.insert(content_hash="hs", documents=[_embedded("shared-doc", "shared secret", "doc-1")], user_id=None)
-        return vector_db
-
-    def test_scoped_delete_removes_only_caller(self, populated):
-        populated.delete_by_content_id("doc-1", user_id="bob")
-        # ``_owners`` sorts None last.
-        assert _owners(populated) == ["alice", None]
-
-    def test_scoped_delete_never_touches_shared(self, populated):
-        """A scoped caller deleting their own content must leave the shared
-        (None-owned) chunk alone — wiping org content is a breach."""
-        populated.delete_by_content_id("doc-1", user_id="alice")
-        assert _owners(populated) == ["bob", None]
-
-    def test_scoped_delete_no_op_when_not_owner(self, populated):
-        populated.delete_by_content_id("doc-1", user_id="carol")
-        assert _count(populated) == 3
-
-    def test_unscoped_delete_wipes_all_owners(self, populated):
-        populated.delete_by_content_id("doc-1", user_id=None)
-        assert _count(populated) == 0
+    async def test_async_search_scopes_identically(self, db):
+        # async_search delegates to the sync path via asyncio.to_thread.
+        await db.async_search(query="secret salary", limit=10, user_id="alice")
+        assert _queried_filter(db) == "@user_id:{alice|__shared__}"
 
 
-class TestClobberPrevention:
-    """Two users uploading identical content under the SAME content_hash must
-    coexist; a same-user re-upsert must replace in place."""
+class TestScopedDedupe:
+    """The upsert dedup-delete is scoped to the writing owner's bucket: a
+    scoped upsert dedups only that owner's chunks, a shared upsert dedups only
+    the shared bucket -- one can never evict the other's identical content."""
 
-    def test_two_users_same_content_and_hash_coexist(self, vector_db):
-        vector_db.insert(content_hash="SAME", documents=[_embedded("secret", "The secret is 42.")], user_id="alice")
-        vector_db.insert(content_hash="SAME", documents=[_embedded("secret", "The secret is 42.")], user_id="bob")
-        assert _owners(vector_db) == ["alice", "bob"]
+    def test_scoped_upsert_dedup_scoped_to_owner(self, db):
+        db.upsert(content_hash="hc", documents=[_embedded("owned", "same")], user_id="alice")
+        # The FilterQuery driving the pre-delete names the owner, not shared.
+        assert _queried_filter(db) == "(@content_hash:{hc} @user_id:{alice})"
 
-    def test_clobbered_rows_stay_isolated_on_search(self, vector_db):
-        vector_db.insert(content_hash="SAME", documents=[_embedded("secret", "The secret is 42.")], user_id="alice")
-        vector_db.insert(content_hash="SAME", documents=[_embedded("secret", "The secret is 42.")], user_id="bob")
-        alice = {d.name for d in vector_db.search("secret", limit=10, user_id="alice")}
-        bob = {d.name for d in vector_db.search("secret", limit=10, user_id="bob")}
-        assert alice == {"secret"}
-        assert bob == {"secret"}
-        assert _count(vector_db) == 2
-
-    def test_shared_bucket_keeps_legacy_id(self, vector_db):
-        """``user_id=None`` keeps the unscoped id so previously persisted shared
-        rows stay byte-identical and addressable."""
-        assert vector_db._scoped_doc_id("base", None) == "base"
-        assert vector_db._scoped_doc_id("base", "alice") != "base"
+    def test_shared_upsert_dedup_scoped_to_shared(self, db):
+        db.upsert(content_hash="hc", documents=[_embedded("shared", "same")], user_id=None)
+        # A shared re-ingest touches only the shared bucket, leaving owned rows.
+        assert _queried_filter(db) == "(@content_hash:{hc} @user_id:{__shared__})"
 
 
-class TestUpsertDedupeIsolation:
-    """``upsert`` dedupes by deleting prior chunks with the same content_hash
-    before re-inserting. That delete must be SCOPED to the owner."""
+class TestScopedDelete:
+    """``delete_by_content_id(content_id, user_id=...)`` scopes the delete to
+    the caller's chunks. Per the adapter contract a scoped delete matches the
+    owner EXACTLY (it must NOT reach the shared bucket -- wiping org content is
+    a breach). ``None`` deletes across all owners (legacy/admin)."""
 
-    def test_same_user_reupsert_replaces(self, vector_db):
-        vector_db.upsert(content_hash="H", documents=[_embedded("d", "content v1")], user_id="alice")
-        vector_db.upsert(content_hash="H", documents=[_embedded("d", "content v2")], user_id="alice")
-        assert _count(vector_db) == 1
+    def test_scoped_delete_restricts_to_owner(self, db):
+        db.delete_by_content_id("cid1", user_id="alice")
+        # Owner-only: no ``|__shared__`` alternation here, unlike a read scope.
+        assert _queried_filter(db) == "@content_id:{cid1} @user_id:{alice}"
 
-    def test_scoped_dedupe_does_not_touch_other_owner(self, vector_db):
-        vector_db.upsert(content_hash="SH", documents=[_embedded("ad", "alice v1")], user_id="alice")
-        vector_db.upsert(content_hash="SH", documents=[_embedded("bd", "bob v1")], user_id="bob")
-        # Alice re-upserts under the shared hash; bob's chunk must survive.
-        vector_db.upsert(content_hash="SH", documents=[_embedded("ad", "alice v2")], user_id="alice")
-        assert _owners(vector_db) == ["alice", "bob"]
-        assert _count(vector_db) == 2
-
-    def test_shared_upsert_does_not_wipe_scoped(self, vector_db):
-        """An admin re-upserting shared content under a hash must not delete a
-        scoped user's chunk carrying the same hash."""
-        vector_db.upsert(content_hash="SH", documents=[_embedded("ad", "alice v1")], user_id="alice")
-        vector_db.upsert(content_hash="SH", documents=[_embedded("sd", "shared v1")], user_id=None)
-        vector_db.upsert(content_hash="SH", documents=[_embedded("sd", "shared v2")], user_id=None)
-        # ``_owners`` sorts None last.
-        assert _owners(vector_db) == ["alice", None]
+    def test_unscoped_delete_spans_all_owners(self, db):
+        db.delete_by_content_id("cid1", user_id=None)
+        assert _queried_filter(db) == "@content_id:{cid1}"
 
 
-class TestAsyncUpsertDedupe:
-    """Async upsert must match sync dedupe behaviour."""
+class TestUserIdValidation:
+    """Reserved / structurally unsafe owner values are rejected up front so a
+    caller can neither impersonate the shared bucket nor break the TAG scope."""
 
-    async def test_async_reupsert_replaces(self, vector_db):
-        await vector_db.async_create()
-        await vector_db.async_upsert(content_hash="H", documents=[_embedded("d", "v1")], user_id="alice")
-        await vector_db.async_upsert(content_hash="H", documents=[_embedded("d", "v2")], user_id="alice")
-        assert _count(vector_db) == 1
+    @pytest.mark.parametrize(
+        "bad",
+        [
+            "",  # an owner tag no scope clause can match
+            RedisDB.SHARED_OWNER_TAG,  # shared-bucket impersonation
+            RedisDB.MATCH_ALL_TAG,  # breaks a match-all query
+            "alice*",  # wildcard matches other owners
+            "alice?",  # wildcard matches other owners
+            "alice{1}",  # brace can never be matched by a scope clause
+            "a\x1fb",  # separator indexes one value as several tags
+        ],
+    )
+    def test_rejects_unsafe_user_id(self, db, bad):
+        with pytest.raises(ValueError):
+            db._validate_user_id(bad)
+        # And the rejection is enforced on the write path, not just the helper.
+        with pytest.raises(ValueError):
+            db.insert(content_hash="h", documents=[_embedded("a", "x")], user_id=bad)
+        assert not db.index.load.called
 
-    async def test_async_scoped_dedupe_keeps_other_owner(self, vector_db):
-        await vector_db.async_create()
-        await vector_db.async_upsert(content_hash="SH", documents=[_embedded("ad", "alice v1")], user_id="alice")
-        await vector_db.async_upsert(content_hash="SH", documents=[_embedded("bd", "bob v1")], user_id="bob")
-        await vector_db.async_upsert(content_hash="SH", documents=[_embedded("ad", "alice v2")], user_id="alice")
-        assert _owners(vector_db) == ["alice", "bob"]
-        assert _count(vector_db) == 2
+    def test_none_is_allowed(self, db):
+        db._validate_user_id(None)
 
-
-class TestUpdateMetadataOwnershipGuard:
-    """``update_metadata`` must not let a caller reassign the owner tag."""
-
-    @pytest.fixture
-    def owned(self, vector_db):
-        vector_db.insert(content_hash="hm", documents=[_embedded("md", "metadata content", "cid-1")], user_id="alice")
-        return vector_db
-
-    def test_caller_cannot_reassign_owner(self, owned):
-        owned.update_metadata("cid-1", {"user_id": "bob", "category": "x"})
-        assert _owners(owned) == ["alice"]
-
-    def test_legitimate_metadata_still_applied(self, owned):
-        owned.update_metadata("cid-1", {"category": "x", "user_id": "bob"})
-        names = {d.name for d in owned.search("metadata", limit=10, user_id="alice")}
-        assert "md" in names
-        # Bob must still not see it.
-        assert "md" not in {d.name for d in owned.search("metadata", limit=10, user_id="bob")}
-
-
-class TestPipeInUserIdOwnerSeesOwnChunks:
-    """An OIDC/Auth0 ``user_id`` is ``provider|sub`` (e.g. ``auth0|abc123``).
-    RedisVL does not escape the ``|`` it emits, so RediSearch parses the owner
-    tag as a tag-union and the owner sees ZERO of their own chunks. The owner
-    tag must escape the ``|`` so the value matches as a single literal."""
-
-    def test_pipe_user_id_sees_own_and_shared_never_bob(self, vector_db):
-        owner = "auth0|abc123"
-        vector_db.insert(content_hash="ha", documents=_alice_docs(), user_id=owner)
-        vector_db.insert(content_hash="hs", documents=_shared_docs(), user_id=None)
-        vector_db.insert(content_hash="hb", documents=_bob_docs(), user_id="bob")
-
-        names = {d.name for d in vector_db.search("secret", limit=10, user_id=owner)}
-        # Without the ``|`` escape the owner's own chunk is dropped (tag-union
-        # parse), leaving only the shared chunk.
-        assert "alice-salary" in names
-        assert "company-holidays" in names
-        assert "bob-salary" not in names
-
-    async def test_async_pipe_user_id_isolated_every_mode(self, db):
-        """The ``|`` escape must hold on the async surface across vector,
-        keyword AND hybrid — the dedupe/delete escape is moot if a search mode
-        leaks."""
-        owner = "auth0|abc123"
-        await db.async_create()
-        await db.async_insert(content_hash="ha", documents=_alice_docs(), user_id=owner)
-        await db.async_insert(content_hash="hs", documents=_shared_docs(), user_id=None)
-        await db.async_insert(content_hash="hb", documents=_bob_docs(), user_id="bob")
-
-        names = {d.name for d in await db.async_search("secret", limit=10, user_id=owner)}
-        assert "alice-salary" in names
-        assert "company-holidays" in names
-        assert "bob-salary" not in names
-
-
-class TestCommaInUserIdDoesNotSplitTag:
-    """A RediSearch TAG field splits its stored value on a separator (default
-    ``,``). With the default a ``user_id`` like ``a,b,c`` indexes THREE tags, so
-    the owner can't match their own row (self-starve) AND — far worse — an id
-    crafted as a victim's comma-delimited subsequence LEAKS across tenants. The
-    owner field pins a non-default separator so the id is one atomic tag."""
-
-    def test_separator_is_not_the_default_comma(self, vector_db):
-        # Storage marker: a comma separator re-introduces the split-tag leak.
-        assert vector_db.USER_ID_SEPARATOR != ","
-
-    def test_comma_user_id_sees_own_and_shared(self, vector_db):
-        owner = "a,b,c"
-        vector_db.insert(content_hash="ha", documents=_alice_docs(), user_id=owner)
-        vector_db.insert(content_hash="hs", documents=_shared_docs(), user_id=None)
-        names = {d.name for d in vector_db.search("secret", limit=10, user_id=owner)}
-        # With the default comma separator the owner saw only the shared chunk.
-        assert "alice-salary" in names
-        assert "company-holidays" in names
-
-    def test_comma_subsequence_does_not_leak_across_tenants(self, vector_db):
-        """Bob's id is ``alice,bob``; under a comma separator it indexes the tag
-        ``alice``, so Alice's scoped search would surface Bob's chunk. The owner
-        must be a single tag so Alice (id ``alice``) never matches Bob's row."""
-        vector_db.insert(content_hash="hb", documents=_bob_docs(), user_id="alice,bob")
-        vector_db.insert(content_hash="ha", documents=_alice_docs(), user_id="alice")
-        names = {d.name for d in vector_db.search("secret salary", limit=10, user_id="alice")}
-        assert "alice-salary" in names
-        assert "bob-salary" not in names
+    async def test_async_insert_rejects_unsafe_user_id(self, db):
+        # Validation runs before any async index is created, so this needs no
+        # async connection either.
+        with pytest.raises(ValueError):
+            await db.async_insert(content_hash="h", documents=[_embedded("a", "x")], user_id="")

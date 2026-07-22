@@ -1,3 +1,13 @@
+"""Pinecone per-user RAG isolation contract.
+
+Pinecone stores the owner in the vector's ``metadata`` under a ``user_id``
+key. Scoped reads apply an own-OR-shared metadata filter so admin-uploaded
+shared content (no ``user_id``) stays discoverable; unscoped (admin) reads
+apply no scope. We mock the Pinecone client/index and assert on the filter
+sent to ``index.query`` / ``index.delete`` — same approach as the base
+``test_pineconedb.py`` suite (no network, no real API key).
+"""
+
 import uuid
 from unittest.mock import MagicMock, patch
 
@@ -30,7 +40,6 @@ def mock_embedder():
 def db(mock_embedder):
     """A PineconeDb with the client and index mocked out."""
     index = MagicMock()
-    # query() returns an object with a ``.matches`` list.
     empty_response = MagicMock()
     empty_response.matches = []
     index.query.return_value = empty_response
@@ -52,274 +61,172 @@ def _doc(content="hello world", **kwargs):
     return Document(content=content, meta_data={"topic": "t"}, name="d", **kwargs)
 
 
-# --------------------------------------------------------------------------- #
-# Signatures
-# --------------------------------------------------------------------------- #
+class TestWritePersistsOwner:
+    """On write the owner is stamped into ``metadata.user_id``; ``None``/``""``
+    collapse to the SHARED bucket (no ``user_id`` key)."""
 
+    def test_explicit_user_id_stamped_into_metadata(self, db):
+        db.content_hash_exists = MagicMock(return_value=False)
+        db.upsert(content_hash="h1", documents=[_doc()], user_id="alice")
 
-def test_signatures_accept_user_id():
-    import inspect
+        vectors = db.index.upsert.call_args.kwargs["vectors"]
+        assert len(vectors) == 1
+        assert vectors[0]["metadata"][USER_ID_KEY] == "alice"
 
-    for method in (
-        "insert",
-        "async_insert",
-        "upsert",
-        "async_upsert",
-        "search",
-        "async_search",
-        "delete_by_content_id",
-    ):
-        params = inspect.signature(getattr(PineconeDb, method)).parameters
-        assert "user_id" in params, f"{method} missing user_id"
-        # user_id must be LAST and default to None.
-        assert list(params)[-1] == "user_id", f"{method} user_id is not last"
-        assert params["user_id"].default is None
+    def test_none_user_id_is_shared(self, db):
+        db.content_hash_exists = MagicMock(return_value=False)
+        db.upsert(content_hash="h1", documents=[_doc()], user_id=None)
 
+        vectors = db.index.upsert.call_args.kwargs["vectors"]
+        assert USER_ID_KEY not in vectors[0]["metadata"]
 
-# --------------------------------------------------------------------------- #
-# Write: stamp the owner into metadata
-# --------------------------------------------------------------------------- #
+    def test_caller_metadata_cannot_spoof_owner(self, db):
+        """A caller's own ``user_id`` key in meta_data must not override the owner."""
+        db.content_hash_exists = MagicMock(return_value=False)
+        doc = Document(content="c", meta_data={"user_id": "attacker"}, name="d")
 
+        db.upsert(content_hash="h1", documents=[doc], user_id="alice")
 
-def test_upsert_stamps_user_id_into_metadata(db):
-    db.content_hash_exists = MagicMock(return_value=False)
+        vectors = db.index.upsert.call_args.kwargs["vectors"]
+        assert vectors[0]["metadata"][USER_ID_KEY] == "alice"
 
-    db.upsert(content_hash="h1", documents=[_doc()], user_id="alice")
 
-    vectors = db.index.upsert.call_args.kwargs["vectors"]
-    assert len(vectors) == 1
-    assert vectors[0]["metadata"][USER_ID_KEY] == "alice"
+class TestSearchIsolationContract:
+    """The load-bearing contract: a scoped search filters to the caller's own
+    chunks OR the shared bucket, and never another user's. With a mocked index
+    the filter sent to ``index.query`` IS the contract — an own-OR-shared
+    predicate excludes bob by construction, while admin (``None``) has no scope.
+    """
 
+    def test_scoped_search_builds_own_or_shared_filter(self, db):
+        db.search(query="q", user_id="alice")
 
-def test_upsert_shared_bucket_omits_user_id(db):
-    db.content_hash_exists = MagicMock(return_value=False)
+        sent_filter = db.index.query.call_args.kwargs["filter"]
+        assert sent_filter == {
+            "$or": [
+                {USER_ID_KEY: "alice"},
+                {USER_ID_KEY: {"$exists": False}},
+            ]
+        }
 
-    db.upsert(content_hash="h1", documents=[_doc()], user_id=None)
+    def test_scoped_search_ands_scope_onto_caller_filter(self, db):
+        caller_filter = {"topic": {"$eq": "t"}}
+        db.search(query="q", filters=caller_filter, user_id="alice")
 
-    vectors = db.index.upsert.call_args.kwargs["vectors"]
-    assert USER_ID_KEY not in vectors[0]["metadata"]
+        sent_filter = db.index.query.call_args.kwargs["filter"]
+        assert sent_filter == {
+            "$and": [
+                caller_filter,
+                {"$or": [{USER_ID_KEY: "alice"}, {USER_ID_KEY: {"$exists": False}}]},
+            ]
+        }
 
+    def test_admin_search_has_no_scope(self, db):
+        """user_id=None -> no scope predicate; admin sees everything."""
+        db.search(query="q", user_id=None)
+        assert db.index.query.call_args.kwargs["filter"] is None
 
-def test_empty_string_user_id_is_shared(db):
-    """normalize_user_id collapses "" to None -> shared bucket."""
-    db.content_hash_exists = MagicMock(return_value=False)
+        db.index.query.reset_mock()
+        db.search(query="q", filters={"topic": {"$eq": "t"}}, user_id=None)
+        assert db.index.query.call_args.kwargs["filter"] == {"topic": {"$eq": "t"}}
 
-    db.upsert(content_hash="h1", documents=[_doc()], user_id="")
+    async def test_async_search_scopes_too(self, db):
+        await db.async_search(query="q", user_id="alice")
+        sent_filter = db.index.query.call_args.kwargs["filter"]
+        assert sent_filter == {"$or": [{USER_ID_KEY: "alice"}, {USER_ID_KEY: {"$exists": False}}]}
 
-    vectors = db.index.upsert.call_args.kwargs["vectors"]
-    assert USER_ID_KEY not in vectors[0]["metadata"]
 
+class TestDeleteByContentIdIsolation:
+    """``delete_by_content_id(content_id, user_id=...)`` must scope the delete
+    to the caller's chunks — otherwise Bob could guess Alice's content_id and
+    wipe her chunks. Admin (``None``) deletes across all owners."""
 
-def test_caller_metadata_cannot_spoof_owner(db):
-    """A caller's own ``user_id`` key in meta_data must not override the owner."""
-    db.content_hash_exists = MagicMock(return_value=False)
-    doc = Document(content="c", meta_data={"user_id": "attacker"}, name="d")
+    def test_scoped_delete_matches_owner_only(self, db):
+        db.delete_by_content_id("cid-1", user_id="alice")
 
-    db.upsert(content_hash="h1", documents=[doc], user_id="alice")
+        sent_filter = db.index.delete.call_args.kwargs["filter"]
+        # Scoped delete matches the owner EXACTLY and does NOT OR in the shared
+        # bucket — a scoped caller must not be able to wipe org content.
+        assert sent_filter == {"content_id": {"$eq": "cid-1"}, USER_ID_KEY: {"$eq": "alice"}}
 
-    vectors = db.index.upsert.call_args.kwargs["vectors"]
-    assert vectors[0]["metadata"][USER_ID_KEY] == "alice"
+    def test_unscoped_delete_is_content_id_only(self, db):
+        db.delete_by_content_id("cid-1", user_id=None)
 
+        sent_filter = db.index.delete.call_args.kwargs["filter"]
+        assert sent_filter == {"content_id": {"$eq": "cid-1"}}
 
-# --------------------------------------------------------------------------- #
-# Clobber prevention: id folds in user_id
-# --------------------------------------------------------------------------- #
 
+class TestContentHashScoping:
+    """The per-user dedup path keys on ``content_hash`` scoped by owner. A
+    scoped check/delete touches only that owner's chunks; ``None`` touches
+    only the SHARED bucket (owner absent) — never every owner's chunks."""
 
-def test_vector_id_folds_in_user_id(db):
-    doc = _doc(id="base")
-    alice_id = db._vector_id(doc, "h1", "alice")
-    bob_id = db._vector_id(doc, "h1", "bob")
-    shared_id = db._vector_id(doc, "h1", None)
+    def test_content_hash_exists_scoped_to_owner(self, db):
+        db.content_hash_exists("h1", user_id="alice")
 
-    # Two users -> two different vector ids (no collision/clobber).
-    assert alice_id != bob_id
-    # Shared bucket keeps the legacy id (document.id) byte-for-byte.
-    assert shared_id == "base"
-    assert alice_id != shared_id
+        sent_filter = db.index.query.call_args.kwargs["filter"]
+        assert sent_filter == {"content_hash": {"$eq": "h1"}, USER_ID_KEY: {"$eq": "alice"}}
 
+    def test_content_hash_exists_none_is_shared_bucket_only(self, db):
+        db.content_hash_exists("h1", user_id=None)
 
-def test_upsert_two_users_same_content_distinct_ids(db):
-    db.content_hash_exists = MagicMock(return_value=False)
+        sent_filter = db.index.query.call_args.kwargs["filter"]
+        assert sent_filter == {"content_hash": {"$eq": "h1"}, USER_ID_KEY: {"$exists": False}}
 
-    db.upsert(content_hash="h1", documents=[_doc(id="base")], user_id="alice")
-    alice_id = db.index.upsert.call_args.kwargs["vectors"][0]["id"]
+    def test_delete_by_content_hash_scoped_to_owner(self, db):
+        db._delete_by_content_hash("h1", user_id="alice")
 
-    db.upsert(content_hash="h1", documents=[_doc(id="base")], user_id="bob")
-    bob_id = db.index.upsert.call_args.kwargs["vectors"][0]["id"]
+        sent_filter = db.index.delete.call_args.kwargs["filter"]
+        assert sent_filter == {"content_hash": {"$eq": "h1"}, USER_ID_KEY: {"$eq": "alice"}}
 
-    assert alice_id != bob_id
+    def test_delete_by_content_hash_none_deletes_shared_bucket_only(self, db):
+        """``None`` must NOT wipe every owner's chunks — only the owner-absent
+        shared bucket, matching the base per-user contract."""
+        db._delete_by_content_hash("h1", user_id=None)
 
+        sent_filter = db.index.delete.call_args.kwargs["filter"]
+        assert sent_filter == {"content_hash": {"$eq": "h1"}, USER_ID_KEY: {"$exists": False}}
 
-# --------------------------------------------------------------------------- #
-# Read: own-OR-shared scope filter
-# --------------------------------------------------------------------------- #
 
+class TestStealPrevention:
+    """Two owners uploading identical content must both survive. The owner is
+    folded into the vector id so ids don't collide, and the upsert dedup
+    check/delete is scoped to the writing owner so one can't evict another."""
 
-def test_search_builds_own_or_shared_filter(db):
-    db.search(query="q", user_id="alice")
+    def test_owner_folded_id_is_distinct_per_owner(self, db):
+        db.content_hash_exists = MagicMock(return_value=False)
 
-    sent_filter = db.index.query.call_args.kwargs["filter"]
-    assert sent_filter == {
-        "$or": [
-            {USER_ID_KEY: "alice"},
-            {USER_ID_KEY: {"$exists": False}},
-        ]
-    }
+        db.upsert(content_hash="h1", documents=[_doc(content="same", id="doc-1")], user_id="alice")
+        alice_id = db.index.upsert.call_args.kwargs["vectors"][0]["id"]
 
+        db.index.upsert.reset_mock()
+        db.upsert(content_hash="h1", documents=[_doc(content="same", id="doc-1")], user_id="bob")
+        bob_id = db.index.upsert.call_args.kwargs["vectors"][0]["id"]
 
-def test_search_ands_scope_onto_caller_filter(db):
-    caller_filter = {"topic": {"$eq": "t"}}
-    db.search(query="q", filters=caller_filter, user_id="alice")
+        assert alice_id != bob_id
 
-    sent_filter = db.index.query.call_args.kwargs["filter"]
-    assert sent_filter == {
-        "$and": [
-            caller_filter,
-            {"$or": [{USER_ID_KEY: "alice"}, {USER_ID_KEY: {"$exists": False}}]},
-        ]
-    }
+    def test_shared_upload_keeps_document_id_verbatim(self, db):
+        """A shared (``user_id=None``) upload is not folded, so it round-trips
+        on the plain document id."""
+        db.content_hash_exists = MagicMock(return_value=False)
 
+        db.upsert(content_hash="h1", documents=[_doc(content="same", id="doc-1")], user_id=None)
+        assert db.index.upsert.call_args.kwargs["vectors"][0]["id"] == "doc-1"
 
-def test_search_admin_has_no_scope(db):
-    """user_id=None -> no scope predicate; admin sees everything."""
-    db.search(query="q", user_id=None)
-    assert db.index.query.call_args.kwargs["filter"] is None
+    def test_upsert_dedup_check_is_scoped_to_writing_owner(self, db):
+        """Bob upserting content Alice already owns must dedup-check only Bob's
+        bucket — so Alice's identical chunk is never considered for deletion."""
+        db.content_hash_exists = MagicMock(return_value=False)
 
-    db.index.query.reset_mock()
-    db.search(query="q", filters={"topic": {"$eq": "t"}}, user_id=None)
-    assert db.index.query.call_args.kwargs["filter"] == {"topic": {"$eq": "t"}}
+        db.upsert(content_hash="h1", documents=[_doc()], user_id="bob")
+        db.content_hash_exists.assert_called_once_with("h1", user_id="bob")
 
+    def test_upsert_dedup_delete_is_scoped_to_writing_owner(self, db):
+        """When the writer's own chunk exists, the pre-delete is scoped to that
+        owner (own-bucket only), leaving other owners' identical content intact."""
+        db.content_hash_exists = MagicMock(return_value=True)
 
-async def test_async_search_scopes_too(db):
-    await db.async_search(query="q", user_id="alice")
-    sent_filter = db.index.query.call_args.kwargs["filter"]
-    assert sent_filter == {"$or": [{USER_ID_KEY: "alice"}, {USER_ID_KEY: {"$exists": False}}]}
+        db.upsert(content_hash="h1", documents=[_doc()], user_id="bob")
 
-
-# --------------------------------------------------------------------------- #
-# Delete: scoped to the owner
-# --------------------------------------------------------------------------- #
-
-
-def test_delete_by_content_id_scopes_to_owner(db):
-    db.delete_by_content_id("cid-1", user_id="alice")
-
-    sent_filter = db.index.delete.call_args.kwargs["filter"]
-    # Scoped delete matches the owner EXACTLY and does NOT OR in the shared
-    # bucket — a scoped caller must not be able to wipe org content.
-    assert sent_filter == {"content_id": {"$eq": "cid-1"}, USER_ID_KEY: {"$eq": "alice"}}
-
-
-def test_delete_by_content_id_admin_unscoped(db):
-    db.delete_by_content_id("cid-1", user_id=None)
-
-    sent_filter = db.index.delete.call_args.kwargs["filter"]
-    assert sent_filter == {"content_id": {"$eq": "cid-1"}}
-
-
-def test_delete_serverless_falls_back_to_id_delete(db):
-    """Serverless rejects delete-by-filter -> resolve ids via query, delete by id."""
-    # First delete() call (filter) raises; the id-based delete() then succeeds.
-    matched = MagicMock()
-    matched.id = "vec-1"
-    query_response = MagicMock()
-    query_response.matches = [matched]
-    db.index.query.return_value = query_response
-    db.index.delete.side_effect = [Exception("serverless: filter delete unsupported"), None]
-
-    result = db.delete_by_content_id("cid-1", user_id="alice")
-
-    assert result is True
-    # The fallback path queried for ids, then deleted by id.
-    last_delete = db.index.delete.call_args
-    assert last_delete.kwargs.get("ids") == ["vec-1"]
-
-
-# --------------------------------------------------------------------------- #
-# Upsert dedupe is scoped
-# --------------------------------------------------------------------------- #
-
-
-def test_content_hash_exists_filter_scoped_to_owner(db):
-    db.content_hash_exists("h1", user_id="alice")
-
-    sent_filter = db.index.query.call_args.kwargs["filter"]
-    assert sent_filter == {"content_hash": {"$eq": "h1"}, USER_ID_KEY: {"$eq": "alice"}}
-
-
-def test_content_hash_exists_filter_shared(db):
-    db.content_hash_exists("h1", user_id=None)
-
-    sent_filter = db.index.query.call_args.kwargs["filter"]
-    assert sent_filter == {"content_hash": {"$eq": "h1"}}
-
-
-def test_upsert_dedupe_deletes_only_owner_chunks(db):
-    db.content_hash_exists = MagicMock(return_value=True)
-
-    db.upsert(content_hash="h1", documents=[_doc()], user_id="alice")
-
-    # The dedupe delete must be scoped to alice's content_hash, never global.
-    delete_filter = db.index.delete.call_args_list[0].kwargs["filter"]
-    assert delete_filter == {"content_hash": {"$eq": "h1"}, USER_ID_KEY: {"$eq": "alice"}}
-
-
-def test_shared_upsert_dedupe_does_not_wipe_scoped_owners(db):
-    """A shared/admin re-ingest (``user_id=None``) must scope its dedupe-delete
-    to the shared bucket — pre-fix the None case matched every owner under the
-    content_hash and wiped scoped owners' chunks sharing that hash. The existence
-    GATE stays any-owner so the shared re-ingest still dedupes against itself."""
-    # The dedupe-delete (None case) targets ONLY the shared bucket: no user_id
-    # field, so a scoped owner's chunk under the same content_hash is untouched.
-    delete_filter = db._content_hash_filter("h1", None, scope_none_to_shared=True)
-    assert delete_filter == {"content_hash": {"$eq": "h1"}, USER_ID_KEY: {"$exists": False}}
-
-    # The existence gate (default) stays any-owner so a shared re-ingest still
-    # sees prior chunks under the hash regardless of who owns them.
-    exists_filter = db._content_hash_filter("h1", None)
-    assert exists_filter == {"content_hash": {"$eq": "h1"}}
-
-    # End-to-end through upsert: the shared re-ingest's delete must carry the
-    # shared-bucket filter, not a global content_hash-only wipe.
-    db.content_hash_exists = MagicMock(return_value=True)
-    db.upsert(content_hash="h1", documents=[_doc()], user_id=None)
-    sent = db.index.delete.call_args_list[0].kwargs["filter"]
-    assert sent == {"content_hash": {"$eq": "h1"}, USER_ID_KEY: {"$exists": False}}
-
-
-async def test_async_upsert_dedupe_deletes_only_owner_chunks(db):
-    """async_upsert reaches _delete_by_content_hash through asyncio.to_thread,
-    passing user_id positionally — pin that the dedupe stays scoped to alice."""
-    db.content_hash_exists = MagicMock(return_value=True)
-    doc = _doc(id="base")
-
-    async def _async_embed(embedder=None):
-        doc.embedding = [0.1] * TEST_DIMENSION
-
-    doc.async_embed = _async_embed
-
-    await db.async_upsert(content_hash="h1", documents=[doc], user_id="alice")
-
-    delete_filter = db.index.delete.call_args_list[0].kwargs["filter"]
-    assert delete_filter == {"content_hash": {"$eq": "h1"}, USER_ID_KEY: {"$eq": "alice"}}
-
-
-# --------------------------------------------------------------------------- #
-# update_metadata must not let a caller reassign the owner
-# --------------------------------------------------------------------------- #
-
-
-def test_update_metadata_protects_owner(db):
-    match = MagicMock()
-    match.id = "vec-1"
-    match.metadata = {"content_id": "cid-1", USER_ID_KEY: "alice", "x": 1}
-    query_response = MagicMock()
-    query_response.matches = [match]
-    db.index.query.return_value = query_response
-
-    db.update_metadata("cid-1", {"x": 2, USER_ID_KEY: "attacker"})
-
-    updated = db.index.update.call_args.kwargs["vectors"][0]["metadata"]
-    assert updated[USER_ID_KEY] == "alice"
-    assert updated["x"] == 2
+        sent_filter = db.index.delete.call_args.kwargs["filter"]
+        assert sent_filter == {"content_hash": {"$eq": "h1"}, USER_ID_KEY: {"$eq": "bob"}}

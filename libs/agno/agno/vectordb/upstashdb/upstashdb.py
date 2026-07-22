@@ -1,5 +1,4 @@
 import asyncio
-from hashlib import md5
 from typing import Any, Dict, List, Optional, Union
 
 try:
@@ -15,15 +14,15 @@ from agno.knowledge.document import Document
 from agno.knowledge.embedder import Embedder
 from agno.knowledge.reranker.base import Reranker
 from agno.utils.log import log_error, log_info, log_warning, logger
+from agno.utils.string import hash_string_sha256
 from agno.vectordb.base import VectorDb
+
 DEFAULT_NAMESPACE = ""
 
 # Per-user RAG isolation: Upstash has no per-tenant column, so the owner is
-# stamped into a top-level user_id metadata key and reads/deletes are scoped
-# with a filter string. Namespaces are not used for tenancy because you cannot
-# query across all namespaces at once (needed for the user_id=None view).
-# Writes with user_id stamp it; None omits it (the shared bucket).
-# Scoped reads match user_id = '<id>' OR HAS NOT FIELD user_id; None applies no scope.
+# stamped into a top-level user_id metadata key. Writes with user_id stamp it;
+# None omits it (the shared bucket). Scoped reads/deletes match the caller's own
+# chunks plus the shared bucket; user_id=None applies no scope (admin view).
 USER_ID_METADATA_KEY = "user_id"
 
 # A predicate that can never be true (a field cannot both exist and be absent).
@@ -46,62 +45,27 @@ def _quote_value(value: str) -> Optional[str]:
     return None
 
 
+def _reject_unrepresentable_user_id(user_id: Optional[str]) -> None:
+    """Reject a user_id that cannot be expressed as an Upstash filter literal.
+
+    A value with both quote chars has no literal form, so its owner-scope filter
+    fails closed (matches nothing). Stamping such a row would leave it readable
+    and deletable only by an admin, so fail loud at write time instead.
+    """
+    if user_id is not None and _quote_value(user_id) is None:
+        raise ValueError(
+            f"user_id {user_id!r} contains both quote characters and cannot be expressed "
+            "as an Upstash filter literal; its chunks would be unreadable by the owner."
+        )
+
+
 def _equals_predicate(key: str, value: str) -> str:
-    """key = <literal> for a string value, or an always-false predicate when
-    the value contains both quote chars (so the equality safely matches nothing)."""
+    """key = <literal> for a string value, or an always-false predicate when the
+    value contains both quote chars (so the equality safely matches nothing)."""
     quoted = _quote_value(value)
     if quoted is None:
         return _ALWAYS_FALSE
     return f"{key} = {quoted}"
-
-
-def _build_filter_str(filters: Optional[Dict[str, Any]]) -> str:
-    """Build an Upstash metadata filter string from a dict of equalities.
-
-    Upstash expects a SQL-like string (e.g. key = "value" AND n = 3). Strings are
-    quoted, bools render as true/false (checked before int), numbers are unquoted,
-    and None becomes HAS NOT FIELD key. Pairs are AND-combined; an empty dict
-    yields no filter.
-    """
-    if not filters:
-        return ""
-
-    parts: List[str] = []
-    for key, value in filters.items():
-        if value is None:
-            parts.append(f"HAS NOT FIELD {key}")
-        elif isinstance(value, bool):
-            # bool must be checked before int (bool is a subclass of int).
-            parts.append(f"{key} = {'true' if value else 'false'}")
-        elif isinstance(value, (int, float)):
-            parts.append(f"{key} = {value}")
-        else:
-            parts.append(_equals_predicate(key, str(value)))
-
-    return " AND ".join(parts)
-
-
-def _user_scope_filter_str(user_id: Optional[str]) -> str:
-    """Build the owner-scope predicate (own OR shared) for a scoped read/delete.
-
-    None gives "" (no scope); an id gives (user_id = "<id>" OR HAS NOT FIELD user_id)
-    so the caller sees their own chunks plus the shared bucket. An id that cannot be
-    quoted falls back to an always-false own-branch, leaving only the shared bucket.
-    """
-    if not user_id:
-        return ""
-    own = _equals_predicate(USER_ID_METADATA_KEY, user_id)
-    return f"({own} OR HAS NOT FIELD {USER_ID_METADATA_KEY})"
-
-
-def _combine_filter_strs(*filter_strs: str) -> str:
-    """AND-combine non-empty filter strings, parenthesising each part."""
-    non_empty = [f for f in filter_strs if f]
-    if not non_empty:
-        return ""
-    if len(non_empty) == 1:
-        return non_empty[0]
-    return " AND ".join(f"({f})" for f in non_empty)
 
 
 class UpstashVectorDb(VectorDb):
@@ -254,8 +218,7 @@ class UpstashVectorDb(VectorDb):
 
         Args:
             content_hash (str): The content hash to check.
-            user_id (Optional[str]): Restrict the check to the owner's chunks.
-                None checks across all owners.
+            user_id (Optional[str]): Restrict the check to the owner's chunks. None checks all.
 
         Returns:
             bool: True if documents with the content hash exist, False otherwise.
@@ -263,10 +226,9 @@ class UpstashVectorDb(VectorDb):
         try:
             # Use query with a filter to check if any documents exist with this content_hash
             # We only need to check existence, so limit to 1 result
-            filter_str = _combine_filter_strs(
-                _build_filter_str({"content_hash": content_hash}),
-                _build_filter_str({self.USER_ID_KEY: user_id}) if user_id else "",
-            )
+            filter_str = _equals_predicate("content_hash", content_hash)
+            if user_id is not None:
+                filter_str = f"{filter_str} AND {_equals_predicate(self.USER_ID_KEY, user_id)}"
 
             if not self.use_upstash_embeddings and self.embedder is not None:
                 # For custom embeddings, we need a dummy vector for the query
@@ -324,11 +286,21 @@ class UpstashVectorDb(VectorDb):
         namespaces = self.index.list_namespaces()
         return namespace in namespaces
 
-    def _vector_id(self, base_id: str, user_id: Optional[str]) -> str:
-        """Deterministic vector id with the owner folded in; the shared bucket keeps the raw base_id."""
-        if user_id:
-            return md5(f"{base_id}_{user_id}".encode()).hexdigest()
-        return base_id
+    def _user_scope_filter_str(self, user_id: Optional[str]) -> str:
+        """Owner-scope predicate for a scoped read: the caller's own chunks plus
+        the shared bucket. Returns "" when user_id is None (no scope, admin view).
+        """
+        if not user_id:
+            return ""
+        return f"({_equals_predicate(self.USER_ID_KEY, user_id)} OR HAS NOT FIELD {self.USER_ID_KEY})"
+
+    def _record_id(self, base_id: str, user_id: Optional[str]) -> str:
+        """Fold the owner into the deterministic id so two users uploading the same
+        content get distinct keys. The shared bucket (user_id=None) keeps the base id.
+        """
+        if user_id is None:
+            return base_id
+        return hash_string_sha256(f"{base_id}_{user_id}")
 
     def upsert(
         self,
@@ -347,7 +319,14 @@ class UpstashVectorDb(VectorDb):
             user_id (Optional[str], optional): Owner of these chunks for per-user isolation.
                 None (default) writes to the shared bucket.
         """
+        _reject_unrepresentable_user_id(user_id)
         _namespace = self.namespace if namespace is None else namespace
+
+        # Scoped dedup so re-upserting the same content replaces the owner's own
+        # chunks rather than accumulating them (and never touches another owner's).
+        if self.content_hash_exists(content_hash, user_id=user_id):
+            self._delete_by_content_hash(content_hash, user_id=user_id)
+
         vectors = []
 
         for i, document in enumerate(documents):
@@ -389,8 +368,8 @@ class UpstashVectorDb(VectorDb):
             else:
                 logger.warning(f"Document {document.id} has no name")
 
-            # Fold the owner into the vector id so two users don't clobber each other
-            vector_id = self._vector_id(document.id, user_id)
+            # Fold the owner into the id so two users' identical content never collide.
+            vector_id = self._record_id(document.id, user_id)
 
             if not self.use_upstash_embeddings:
                 if self.embedder is None:
@@ -462,8 +441,11 @@ class UpstashVectorDb(VectorDb):
         if isinstance(filters, List):
             log_warning("Filters Expressions are not supported in UpstashDB. No filters will be applied.")
             filters = None
-        # Build the Upstash filter string and AND it with the owner scope.
-        filter_str = _combine_filter_strs(_build_filter_str(filters), _user_scope_filter_str(user_id))
+        filter_str = "" if filters is None else str(filters)
+        # AND the owner scope onto the caller's filter (no-op when user_id is None).
+        scope_str = self._user_scope_filter_str(user_id)
+        if scope_str:
+            filter_str = f"{filter_str} AND {scope_str}" if filter_str else scope_str
 
         if not self.use_upstash_embeddings and self.embedder is not None:
             dense_embedding = self.embedder.get_embedding(query)
@@ -568,7 +550,7 @@ class UpstashVectorDb(VectorDb):
         """
         try:
             # Use Upstash's delete with metadata filter
-            response = self.index.delete(filter=_build_filter_str({"name": name}), namespace=self.namespace)
+            response = self.index.delete(filter=f'name = "{name}"', namespace=self.namespace)
             deleted_count = getattr(response, "deleted", 0)
             logger.info(f"Deleted {deleted_count} document(s) with name: {name}")
             return True
@@ -586,8 +568,15 @@ class UpstashVectorDb(VectorDb):
             bool: True if deletion was successful, False otherwise
         """
         try:
-            # Build a valid Upstash filter string for metadata filtering.
-            filter_str = _build_filter_str(metadata)
+            # Build filter string for Upstash metadata filtering
+            filter_parts = []
+            for key, value in metadata.items():
+                if isinstance(value, str):
+                    filter_parts.append(_equals_predicate(key, value))
+                else:
+                    filter_parts.append(f"{key} = {value}")
+
+            filter_str = " AND ".join(filter_parts)
 
             response = self.index.delete(filter=filter_str, namespace=self.namespace)
             deleted_count = getattr(response, "deleted", 0)
@@ -607,18 +596,10 @@ class UpstashVectorDb(VectorDb):
         Returns:
             bool: True if deletion was successful, False otherwise
         """
-        try:
-            filter_str = _combine_filter_strs(
-                _build_filter_str({"content_id": content_id}),
-                _build_filter_str({self.USER_ID_KEY: user_id}) if user_id else "",
-            )
-            response = self.index.delete(filter=filter_str, namespace=self.namespace)
-            deleted_count = getattr(response, "deleted", 0)
-            logger.info(f"Deleted {deleted_count} document(s) with content_id: {content_id} (user_id={user_id})")
-            return deleted_count > 0
-        except Exception:
-            logger.exception(f"Error deleting documents by content_id {content_id}")
-            return False
+        metadata: Dict[str, Any] = {"content_id": content_id}
+        if user_id:
+            metadata[self.USER_ID_KEY] = user_id
+        return self.delete_by_metadata(metadata)
 
     async def async_insert(
         self,
@@ -659,7 +640,14 @@ class UpstashVectorDb(VectorDb):
             user_id (Optional[str], optional): Owner of these chunks for per-user isolation.
                 None (default) writes to the shared bucket.
         """
+        _reject_unrepresentable_user_id(user_id)
         _namespace = self.namespace if namespace is None else namespace
+
+        # Scoped dedup so re-upserting the same content replaces the owner's own
+        # chunks rather than accumulating them (and never touches another owner's).
+        if self.content_hash_exists(content_hash, user_id=user_id):
+            self._delete_by_content_hash(content_hash, user_id=user_id)
+
         vectors = []
 
         if (
@@ -744,8 +732,8 @@ class UpstashVectorDb(VectorDb):
             else:
                 logger.warning(f"Document {document.id} has no name")
 
-            # Fold the owner into the vector id so two users don't clobber each other
-            vector_id = self._vector_id(document.id, user_id)
+            # Fold the owner into the id so two users' identical content never collide.
+            vector_id = self._record_id(document.id, user_id)
 
             if not self.use_upstash_embeddings:
                 if self.embedder is None:
@@ -798,18 +786,18 @@ class UpstashVectorDb(VectorDb):
 
         Args:
             content_hash (str): The content hash to delete.
-            user_id (Optional[str]): Restrict the delete to the owner's chunks.
+            user_id (Optional[str]): Restrict the delete to the owner's chunks when set;
                 None scopes to the shared bucket (HAS NOT FIELD user_id).
 
         Returns:
             bool: True if deletion was successful, False otherwise.
         """
         try:
-            # None scopes to the shared bucket so a shared dedupe never wipes a scoped owner
-            filter_str = _combine_filter_strs(
-                _build_filter_str({"content_hash": content_hash}),
-                _build_filter_str({self.USER_ID_KEY: user_id}),
-            )
+            filter_str = _equals_predicate("content_hash", content_hash)
+            if user_id is not None:
+                filter_str = f"{filter_str} AND {_equals_predicate(self.USER_ID_KEY, user_id)}"
+            else:
+                filter_str = f"{filter_str} AND HAS NOT FIELD {self.USER_ID_KEY}"
             response = self.index.delete(filter=filter_str, namespace=self.namespace)
             deleted_count = getattr(response, "deleted", 0)
             logger.info(f"Deleted {deleted_count} document(s) with content_hash: {content_hash}")
@@ -826,13 +814,12 @@ class UpstashVectorDb(VectorDb):
             content_id (str): The content ID to update
             metadata (Dict[str, Any]): The metadata to update
         """
+        # Ownership is set at write time; a caller must not reassign it via metadata.
+        metadata = {k: v for k, v in metadata.items() if k != self.USER_ID_KEY}
         try:
-            # The owner field is never caller-writable.
-            safe_metadata = {k: v for k, v in metadata.items() if k != self.USER_ID_KEY}
-
             # Query for vectors with the given content_id
             query_response = self.index.query(
-                filter=_build_filter_str({"content_id": content_id}),
+                filter=f'content_id = "{content_id}"',
                 top_k=1000,  # Get all matching vectors
                 include_metadata=True,
                 namespace=self.namespace,
@@ -849,18 +836,16 @@ class UpstashVectorDb(VectorDb):
                     vector_id = result.id
                     current_metadata = result.metadata or {}
 
-                    # Merge new metadata, preserving the original owner.
+                    # Merge existing metadata with new metadata
                     updated_metadata = current_metadata.copy()
-                    updated_metadata.update(safe_metadata)
-                    if self.USER_ID_KEY in current_metadata:
-                        updated_metadata[self.USER_ID_KEY] = current_metadata[self.USER_ID_KEY]
+                    updated_metadata.update(metadata)
 
                     if "filters" not in updated_metadata:
                         updated_metadata["filters"] = {}
                     if isinstance(updated_metadata["filters"], dict):
-                        updated_metadata["filters"].update(safe_metadata)
+                        updated_metadata["filters"].update(metadata)
                     else:
-                        updated_metadata["filters"] = safe_metadata
+                        updated_metadata["filters"] = metadata
 
                     # Update the vector metadata
                     self.index.update(id=vector_id, metadata=updated_metadata, namespace=self.namespace)

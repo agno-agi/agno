@@ -7,6 +7,8 @@ with everyone, and an admin (no user id) sees all of it.
 
 Pinecone does this by storing the owner in each vector's metadata and filtering
 on it, treating vectors with no owner as shared.
+
+Setup: export PINECONE_API_KEY and OPENAI_API_KEY (Pinecone is cloud-hosted).
 """
 
 import asyncio
@@ -35,12 +37,11 @@ async def main() -> None:
         spec={"serverless": {"cloud": "aws", "region": "us-east-1"}},
         api_key=os.getenv("PINECONE_API_KEY"),
     )
-    # Pinecone-side index reuse is fine; just clear vectors from a prior run.
-    try:
-        await vector_db.async_drop()
-    except Exception:
-        pass
     await vector_db.async_create()
+    # Index reuse is fine; clear any vectors left by a prior run so counts
+    # start clean. Pinecone's async_drop is not implemented, so clear the
+    # existing index off-thread; on a brand-new index this is a no-op.
+    await asyncio.to_thread(vector_db.delete)
 
     knowledge = Knowledge(
         name="per_user_demo",
@@ -105,7 +106,7 @@ async def main() -> None:
     print("\n=== Agent-mediated test ===\n")
     alice_agent = Agent(
         name="Alice's Assistant",
-        model=OpenAIResponses(id="gpt-5.4"),
+        model=OpenAIResponses(id="gpt-5.5"),
         knowledge=knowledge,
         user_id="alice",
         instructions=[

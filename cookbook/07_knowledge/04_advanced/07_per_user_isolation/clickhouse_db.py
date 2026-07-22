@@ -1,14 +1,40 @@
-"""
-Per-User Knowledge Isolation with ClickHouse
-============================================
-Give each user a private view of one shared knowledge base. Documents a user
-uploads are visible only to them; documents uploaded with no user are shared
-with everyone, and an admin (no user id) sees all of it.
+"""Per-user knowledge isolation with ClickHouse.
 
-ClickHouse does this by storing the owner in a user_id column and filtering on
-it, using an empty string to mark shared chunks (its columns can't be null).
+Same isolation contract as the pgvector / Qdrant / Chroma cookbooks in this
+directory, against a different backend. The ``Knowledge.asearch(user_id=...)``
+API is identical — only the underlying primitive changes:
 
-Setup: ./cookbook/scripts/run_clickhouse.sh
+  * ClickHouse uses a top-level ``user_id`` String column on the table. Owned
+    chunks carry the uploader's id; shared chunks carry the empty string ``''``
+    (ClickHouse columns can't be NULL, so ``''`` is the shared sentinel).
+
+  * Scoped reads compile to a server-side WHERE clause:
+    ``WHERE (user_id = 'alice' OR user_id = '')`` — caller's bucket OR the
+    shared bucket. The owner is bound as a parameter, never interpolated.
+
+  * When you pass ``user_id=None``, no owner predicate is added — the admin /
+    debugging path. Admins see everything.
+
+Three uploads, four scoped queries:
+
+  1. Alice and Bob each upload private content.
+  2. An admin uploads org-wide content (``user_id`` left ``None``).
+  3. Alice asks about Alice — sees her chunk plus shared content.
+  4. Alice asks about Bob — sees ZERO bob chunks (assertion below).
+  5. Bob asks about holidays — sees the shared bucket.
+  6. Admin (``user_id=None``) sees everything.
+
+Prerequisites:
+
+  * ClickHouse running locally. From the repo root::
+
+      ./cookbook/scripts/run_clickhouse.sh
+
+  * ``OPENAI_API_KEY`` set in your environment (or swap the model below).
+
+Run:
+
+    python cookbook/07_knowledge/04_advanced/07_per_user_isolation/clickhouse_db.py
 """
 
 import asyncio
@@ -21,12 +47,21 @@ from agno.vectordb.clickhouse import Clickhouse
 
 
 def _write_temp_doc(name: str, body: str) -> str:
+    """Write a tiny text file we can ingest. Returns the absolute path."""
     p = Path(f"/tmp/{name}")
     p.write_text(body)
     return str(p)
 
 
 async def main() -> None:
+    # ------------------------------------------------------------------
+    # Set up a Knowledge instance backed by ClickHouse. Drop any
+    # pre-existing table so we start with the current schema — a legacy
+    # table created before ClickHouse grew a ``user_id`` column would
+    # make every row look shared and isolation would silently fail. We
+    # use the sync create()/drop() here (the whole demo is otherwise
+    # async, but table DDL is a one-off).
+    # ------------------------------------------------------------------
     vector_db = Clickhouse(
         table_name="per_user_isolation_demo",
         host="localhost",
@@ -34,10 +69,7 @@ async def main() -> None:
         username="ai",
         password="ai",
     )
-    try:
-        vector_db.drop()
-    except Exception:
-        pass
+    vector_db.drop()
     vector_db.create()
 
     knowledge = Knowledge(
@@ -46,6 +78,12 @@ async def main() -> None:
         vector_db=vector_db,
     )
 
+    # ------------------------------------------------------------------
+    # Three uploads: Alice (private), Bob (private), Admin (shared).
+    # The ``user_id`` kwarg on ``ainsert`` flows through to the ClickHouse
+    # backend, which stamps it into the ``user_id`` column. The API call
+    # is identical to pgvector / Qdrant / Chroma.
+    # ------------------------------------------------------------------
     await knowledge.ainsert(
         path=_write_temp_doc(
             "alice_salary.txt",
@@ -68,8 +106,14 @@ async def main() -> None:
             "The company is closed on January 1, July 4, and December 25.",
         ),
         name="company_holidays",
+        # No ``user_id`` — this is org-wide / admin-uploaded shared content.
+        # ClickHouse stores the empty string ``''`` in the user_id column;
+        # scoped queries match it via the ``OR user_id = ''`` branch.
     )
 
+    # ------------------------------------------------------------------
+    # Demonstrate the isolation contract DIRECTLY against Knowledge.
+    # ------------------------------------------------------------------
     print("\n=== Direct asearch tests ===\n")
     alice_salary = await knowledge.asearch(
         query="What is Alice's salary?", user_id="alice"
@@ -102,10 +146,16 @@ async def main() -> None:
     for d in admin_view:
         print(f"  - {d.content[:80]}")
 
+    # ------------------------------------------------------------------
+    # End-to-end: an Agent doing RAG-as-Alice never sees Bob's chunks.
+    # The ``user_id`` on the Agent flows into ``run_context.user_id``,
+    # which the knowledge search forwards to ``knowledge.search``. In a
+    # real deployment this comes from ``get_scoped_user_id(request)``.
+    # ------------------------------------------------------------------
     print("\n=== Agent-mediated test ===\n")
     alice_agent = Agent(
         name="Alice's Assistant",
-        model=OpenAIResponses(id="gpt-5.4"),
+        model=OpenAIResponses(id="gpt-5.5"),
         knowledge=knowledge,
         user_id="alice",
         instructions=[

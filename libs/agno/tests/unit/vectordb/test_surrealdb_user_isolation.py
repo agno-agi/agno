@@ -1,43 +1,46 @@
-import os
+"""SurrealDB per-user RAG isolation contract (pure unit test, no server).
+
+Inserts stamp ``user_id`` as a first-class field (NONE/NULL == the SHARED
+bucket). Scoped searches return the caller's own chunks OR shared chunks, but
+never another owner's. Unscoped (``user_id=None``) searches are the admin view
+and see everything. The upsert path folds the owner into the bound record id so
+two owners' identical content lands on distinct records. ``delete_by_content_id``
+is owner-scoped so one user can't wipe another's chunks by guessing a content_id.
+
+The SurrealDb adapter takes its client via dependency injection (``client=`` /
+``async_client=``) rather than constructing a ``Surreal`` internally, so we
+inject a fake connection that captures every ``query``/``create`` call — the SQL
+text, the bound variables, and the written record body. No ``Surreal(...)`` is
+ever constructed, so the test cannot open a real connection even though a server
+happens to be running locally. Because the isolation logic lives in the SQL text
+and the bound variables, those captured values ARE the contract we assert on —
+the same approach the base ``test_pineconedb_user_isolation`` /
+``test_upstashdb_user_isolation`` suites take against their mocked clients.
+"""
+
 import uuid
 
 import pytest
 
+# Skip cleanly if the optional dependency isn't installed. Kept as the ONLY
+# skip gate — there is no server probe.
 pytest.importorskip("surrealdb")
-
-from surrealdb import AsyncSurreal, Surreal  # noqa: E402
 
 from agno.knowledge.document import Document  # noqa: E402
 from agno.vectordb.surrealdb import SurrealDb  # noqa: E402
+from agno.vectordb.surrealdb.surrealdb import SurrealDb as _SurrealDbModuleClass  # noqa: E402
 
-SURREALDB_URL = os.environ.get("SURREALDB_TEST_URL", "ws://localhost:8001/rpc")
-SURREALDB_USER = os.environ.get("SURREALDB_TEST_USER", "root")
-SURREALDB_PASSWORD = os.environ.get("SURREALDB_TEST_PASSWORD", "root")
-SURREALDB_NAMESPACE = "isolation_test_ns"
-SURREALDB_DATABASE = "isolation_test_db"
-
-
-def _server_reachable() -> bool:
-    """Probe the configured SurrealDB so the whole module skips when it's down."""
-    try:
-        client = Surreal(SURREALDB_URL)
-        client.signin({"username": SURREALDB_USER, "password": SURREALDB_PASSWORD})
-        client.use(SURREALDB_NAMESPACE, SURREALDB_DATABASE)
-        client.query("RETURN 1;")
-        return True
-    except Exception:
-        return False
-
-
-pytestmark = pytest.mark.skipif(not _server_reachable(), reason="SurrealDB server not reachable")
+# The shared-bucket marker as it lands in SurrealDB: the adapter writes the raw
+# Python ``user_id`` into the record body, so a shared row carries ``None`` (which
+# SurrealDB persists as NONE/NULL). Confirmed from the adapter: no sentinel string.
+SHARED_MARKER = None
 
 
 class _DeterministicEmbedder:
-    """A tiny embedder that needs no network or API key.
-
-    The content steers the vector so distinct documents land in distinct
-    buckets — that's all the isolation tests need, and it gives us a real async
-    surface too."""
+    """A tiny embedder that needs no network or API key. Content steers the
+    vector deterministically; it exposes both the sync and async surfaces the
+    adapter calls (``get_embedding`` on search, ``get_embedding_and_usage`` via
+    ``Document.embed``)."""
 
     dimensions = 8
     enable_batch = False
@@ -63,359 +66,321 @@ class _DeterministicEmbedder:
         pass
 
 
-def _unique_collection() -> str:
-    return "iso_" + uuid.uuid4().hex[:10]
+class FakeSurreal:
+    """A fake blocking SurrealDB connection that records every call instead of
+    talking to a server. ``queries`` holds (sql, bound_vars) tuples; ``creates``
+    holds (table, record_body) tuples."""
+
+    def __init__(self):
+        self.queries = []  # list[tuple[str, dict | None]]
+        self.creates = []  # list[tuple[str, dict]]
+        self.query_return = []  # what query() hands back (iterated as rows on search)
+
+    def query(self, sql, vars=None):
+        self.queries.append((sql, vars))
+        return self.query_return
+
+    def create(self, table, data):
+        self.creates.append((table, data))
+        return data
+
+
+class FakeAsyncSurreal:
+    """Async twin of :class:`FakeSurreal` — its ``query``/``create`` are awaitable
+    so the adapter's ``await self.async_client...`` paths run unchanged."""
+
+    def __init__(self):
+        self.queries = []
+        self.creates = []
+        self.query_return = []
+
+    async def query(self, sql, vars=None):
+        self.queries.append((sql, vars))
+        return self.query_return
+
+    async def create(self, table, data):
+        self.creates.append((table, data))
+        return data
+
+
+COLLECTION = "iso_" + uuid.uuid4().hex[:10]
 
 
 @pytest.fixture
-def surreal_db():
-    """A fresh sync SurrealDb on a per-test table, dropped on teardown."""
-    client = Surreal(SURREALDB_URL)
-    client.signin({"username": SURREALDB_USER, "password": SURREALDB_PASSWORD})
-    client.use(SURREALDB_NAMESPACE, SURREALDB_DATABASE)
-    collection = _unique_collection()
-    db = SurrealDb(client=client, collection=collection, embedder=_DeterministicEmbedder())
-    db.create()
-    yield db
-    try:
-        db.drop()
-    except Exception:
-        pass
+def fake_client():
+    return FakeSurreal()
 
 
 @pytest.fixture
-async def async_surreal_db():
-    """A fresh async SurrealDb on a per-test table, dropped on teardown."""
-    client = AsyncSurreal(SURREALDB_URL)
-    await client.signin({"username": SURREALDB_USER, "password": SURREALDB_PASSWORD})
-    await client.use(SURREALDB_NAMESPACE, SURREALDB_DATABASE)
-    collection = _unique_collection()
-    db = SurrealDb(async_client=client, collection=collection, embedder=_DeterministicEmbedder())
-    await db.async_create()
-    yield db
-    try:
-        await db.async_drop()
-    except Exception:
-        pass
+def surreal_db(fake_client):
+    """A SurrealDb wired to the fake blocking client — no real connection."""
+    return SurrealDb(client=fake_client, collection=COLLECTION, embedder=_DeterministicEmbedder())
+
+
+@pytest.fixture
+def fake_async_client():
+    return FakeAsyncSurreal()
+
+
+@pytest.fixture
+def async_surreal_db(fake_async_client):
+    """A SurrealDb wired to the fake async client — no real connection."""
+    return SurrealDb(async_client=fake_async_client, collection=COLLECTION, embedder=_DeterministicEmbedder())
 
 
 def _doc(content: str) -> Document:
     return Document(content=content)
 
 
-def _raw_owners(db) -> list:
-    """Read the raw ``user_id`` of every row through the sync client."""
-    rows = db.client.query(f"SELECT user_id FROM {db.collection} ORDER BY user_id;")
-    return sorted((r.get("user_id") for r in rows), key=lambda x: (x is None, x))
+def _doc_with_id(content: str, doc_id: str) -> Document:
+    """A document carrying a reader-assigned UUID id, as Knowledge hands the
+    backend on the upsert path."""
+    doc = Document(content=content)
+    doc.id = doc_id
+    return doc
 
 
-def _count(db) -> int:
-    rows = db.client.query(f"SELECT count() AS n FROM {db.collection} GROUP ALL;")
-    return rows[0]["n"] if rows else 0
+def _last_create_body(client) -> dict:
+    """The record body of the most recent ``client.create`` call."""
+    assert client.creates, "expected a client.create() call"
+    return client.creates[-1][1]
 
 
-async def _async_raw_owners(db) -> list:
-    rows = await db.async_client.query(f"SELECT user_id FROM {db.collection} ORDER BY user_id;")
-    return sorted((r.get("user_id") for r in rows), key=lambda x: (x is None, x))
+def _last_query(client):
+    """The (sql, bound_vars) of the most recent ``client.query`` call."""
+    assert client.queries, "expected a client.query() call"
+    return client.queries[-1]
 
 
-async def _async_count(db) -> int:
-    rows = await db.async_client.query(f"SELECT count() AS n FROM {db.collection} GROUP ALL;")
-    return rows[0]["n"] if rows else 0
-
-
-# ---------------------------------------------------------------------------
-# Pure-function contract (no server needed beyond import)
-# ---------------------------------------------------------------------------
-class TestScopeConditionBuilder:
-    """The scope/id builders are small enough to unit-test directly."""
-
-    def test_none_user_id_yields_no_scope(self):
-        assert SurrealDb._user_scope_condition(None) == ""
-        assert SurrealDb._user_scope_condition("") == ""
-
-    def test_scoped_user_id_is_own_or_shared(self):
-        # OR-ed: caller's own chunks OR the shared (NONE-owned) bucket.
-        cond = SurrealDb._user_scope_condition("alice")
-        assert cond == "AND (user_id = $scope_user_id OR user_id = NONE)"
-        # The value is bound — never interpolated.
-        assert "alice" not in cond
-
-    def test_owner_exact_condition_excludes_shared(self):
-        # Dedupe/delete scope is EXACT — it must not include the NONE bucket.
-        cond = SurrealDb._owner_exact_condition("alice")
-        assert cond == "AND user_id = $user_id"
-        assert "NONE" not in cond
-        assert SurrealDb._owner_exact_condition(None) == ""
-
-    def test_record_id_folds_owner_and_keeps_legacy_shared(self):
-        from hashlib import md5
-
-        legacy = md5(b"base_H").hexdigest()
-        # Shared bucket keeps the legacy two-part id so old rows stay addressable.
-        assert SurrealDb._record_id("base", "H", None) == legacy
-        # Scoped rows fold the owner in, so they differ from the shared id...
-        assert SurrealDb._record_id("base", "H", "alice") != legacy
-        # ...and from each other.
-        assert SurrealDb._record_id("base", "H", "alice") != SurrealDb._record_id("base", "H", "bob")
-
-
-# ---------------------------------------------------------------------------
-# Storage: user_id is a first-class field, not nested in meta_data
-# ---------------------------------------------------------------------------
 class TestUserIdStoredAsField:
-    def test_explicit_user_id_stored_top_level(self, surreal_db):
+    """``user_id`` is a first-class field of the written record, not nested in
+    meta_data; None/omitted persist as the shared (NONE) bucket."""
+
+    def test_explicit_user_id_stored_top_level_on_insert(self, surreal_db, fake_client):
         surreal_db.insert(content_hash="h1", documents=[_doc("alice content")], user_id="alice")
-        rows = surreal_db.client.query(f"SELECT user_id, meta_data FROM {surreal_db.collection};")
-        assert rows[0]["user_id"] == "alice"
+        body = _last_create_body(fake_client)
+        assert body["user_id"] == "alice"
         # Not smuggled into the caller-controlled metadata blob.
-        assert rows[0]["meta_data"].get("user_id") is None
+        assert body["meta_data"].get("user_id") is None
 
-    def test_none_user_id_stored_as_none(self, surreal_db):
+    def test_explicit_user_id_stored_top_level_on_upsert(self, surreal_db, fake_client):
+        surreal_db.upsert(
+            content_hash="h1", documents=[_doc_with_id("alice content", str(uuid.uuid4()))], user_id="alice"
+        )
+        _sql, body = _last_query(fake_client)
+        assert body["user_id"] == "alice"
+        assert body["meta_data"].get("user_id") is None
+
+    def test_none_user_id_stored_as_shared_marker(self, surreal_db, fake_client):
         surreal_db.insert(content_hash="h1", documents=[_doc("shared content")], user_id=None)
-        rows = surreal_db.client.query(f"SELECT user_id FROM {surreal_db.collection};")
-        assert rows[0]["user_id"] is None
+        assert _last_create_body(fake_client)["user_id"] is SHARED_MARKER
 
-    def test_omitted_user_id_defaults_to_shared(self, surreal_db):
+    def test_omitted_user_id_defaults_to_shared(self, surreal_db, fake_client):
         surreal_db.insert(content_hash="h1", documents=[_doc("shared content")])
-        rows = surreal_db.client.query(f"SELECT user_id FROM {surreal_db.collection};")
-        assert rows[0]["user_id"] is None
+        assert _last_create_body(fake_client)["user_id"] is SHARED_MARKER
 
-    def test_empty_string_user_id_normalized_to_shared(self, surreal_db):
-        surreal_db.insert(content_hash="h1", documents=[_doc("shared content")], user_id="")
-        rows = surreal_db.client.query(f"SELECT user_id FROM {surreal_db.collection};")
-        assert rows[0]["user_id"] is None
+    def test_caller_metadata_cannot_spoof_owner(self, surreal_db, fake_client):
+        """A caller stuffing ``user_id`` into a document's meta_data must not
+        override the top-level owner the adapter stamps from the param."""
+        doc = Document(content="c")
+        doc.meta_data = {"user_id": "attacker"}
+        surreal_db.insert(content_hash="h1", documents=[doc], user_id="alice")
+        assert _last_create_body(fake_client)["user_id"] == "alice"
 
 
-# ---------------------------------------------------------------------------
-# The load-bearing isolation contract
-# ---------------------------------------------------------------------------
+class TestIdFolding:
+    """The owner is folded into the bound record id so two owners' identical
+    content lands on DISTINCT records; the shared bucket keeps the base id."""
+
+    def test_two_owners_same_id_get_distinct_record_ids(self, surreal_db, fake_client):
+        shared_id = str(uuid.uuid4())
+        surreal_db.upsert(content_hash="h", documents=[_doc_with_id("Same content", shared_id)], user_id="alice")
+        _sql_a, alice_body = _last_query(fake_client)
+        surreal_db.upsert(content_hash="h", documents=[_doc_with_id("Same content", shared_id)], user_id="bob")
+        _sql_b, bob_body = _last_query(fake_client)
+
+        assert alice_body["record_id"] == f"{shared_id}:alice"
+        assert bob_body["record_id"] == f"{shared_id}:bob"
+        # Distinct record ids => bob's UPSERT targets a different record and can
+        # never overwrite (steal) alice's identical-content row.
+        assert alice_body["record_id"] != bob_body["record_id"]
+
+    def test_shared_upsert_keeps_base_id(self, surreal_db, fake_client):
+        shared_id = str(uuid.uuid4())
+        surreal_db.upsert(content_hash="h", documents=[_doc_with_id("Same content", shared_id)], user_id=None)
+        _sql, body = _last_query(fake_client)
+        assert body["record_id"] == shared_id
+
+    def test_shared_and_owned_ids_do_not_collide(self, surreal_db, fake_client):
+        """A shared re-ingest (base id) and an owner (``id:owner``) land on
+        distinct records, so a shared write never wipes an owned row."""
+        shared_id = str(uuid.uuid4())
+        surreal_db.upsert(content_hash="h", documents=[_doc_with_id("Same content", shared_id)], user_id="alice")
+        _sql_a, alice_body = _last_query(fake_client)
+        surreal_db.upsert(content_hash="h", documents=[_doc_with_id("Same content", shared_id)], user_id=None)
+        _sql_s, shared_body = _last_query(fake_client)
+        assert alice_body["record_id"] == f"{shared_id}:alice"
+        assert shared_body["record_id"] == shared_id
+        assert alice_body["record_id"] != shared_body["record_id"]
+
+
 class TestSearchIsolationContract:
-    @pytest.fixture
-    def populated(self, surreal_db):
-        surreal_db.insert(content_hash="ha", documents=[_doc("Alice salary is 180k")], user_id="alice")
-        surreal_db.insert(content_hash="hb", documents=[_doc("Bob salary is 215k")], user_id="bob")
-        surreal_db.insert(content_hash="hs", documents=[_doc("Office closed Jan 1")], user_id=None)
-        return surreal_db
+    """The load-bearing contract: a scoped search restricts the WHERE clause to
+    the caller's own rows OR the shared (NONE) bucket, and binds the owner as
+    ``$scope_user_id`` — so another owner is excluded by construction. Admin
+    (``None``) applies no scope. With the client captured, the SQL text + bound
+    vars ARE the contract (the adapter delegates the actual row filtering to
+    SurrealDB executing this WHERE clause)."""
 
-    def test_alice_sees_her_own_chunk(self, populated):
-        contents = {d.content for d in populated.search("salary", limit=10, user_id="alice")}
-        assert "Alice salary is 180k" in contents
+    OWN_OR_SHARED = "AND (user_id = $scope_user_id OR user_id = NONE)"
 
-    def test_alice_sees_shared_chunk(self, populated):
-        contents = {d.content for d in populated.search("office", limit=10, user_id="alice")}
-        assert "Office closed Jan 1" in contents
+    def test_scoped_search_restricts_to_own_or_shared(self, surreal_db, fake_client):
+        surreal_db.search("salary", limit=10, user_id="alice")
+        sql, params = _last_query(fake_client)
+        assert self.OWN_OR_SHARED in sql
+        assert params["scope_user_id"] == "alice"
+        # Owner bound as a variable, never spliced into the SQL text.
+        assert "alice" not in sql
 
-    def test_alice_never_sees_bobs_chunk(self, populated):
-        contents = {d.content for d in populated.search("salary", limit=10, user_id="alice")}
-        assert "Bob salary is 215k" not in contents
+    def test_admin_search_has_no_scope(self, surreal_db, fake_client):
+        surreal_db.search("salary", limit=10, user_id=None)
+        sql, params = _last_query(fake_client)
+        assert "$scope_user_id" not in sql
+        assert "scope_user_id" not in params
 
-    def test_bob_never_sees_alices_chunk(self, populated):
-        contents = {d.content for d in populated.search("salary", limit=10, user_id="bob")}
-        assert "Alice salary is 180k" not in contents
+    def test_scoped_search_ands_scope_onto_caller_filter(self, surreal_db, fake_client):
+        surreal_db.search("salary", limit=10, filters={"topic": "hr"}, user_id="alice")
+        sql, params = _last_query(fake_client)
+        # Both the caller's own metadata filter AND the owner scope apply.
+        assert "meta_data.topic = $topic" in sql
+        assert self.OWN_OR_SHARED in sql
+        assert params["scope_user_id"] == "alice"
+        assert params["topic"] == "hr"
 
-    def test_admin_sees_everything(self, populated):
-        contents = {d.content for d in populated.search("salary", limit=10, user_id=None)}
-        assert {"Alice salary is 180k", "Bob salary is 215k", "Office closed Jan 1"} <= contents
-
-    def test_metadata_filter_still_scoped(self, surreal_db):
-        # The user scope and a metadata filter must AND together: a filter must
-        # never widen visibility back to another owner's chunks.
-        surreal_db.insert(content_hash="ha", documents=[_doc("alice tagged")], user_id="alice", filters={"tag": "x"})
-        surreal_db.insert(content_hash="hb", documents=[_doc("bob tagged")], user_id="bob", filters={"tag": "x"})
-        contents = {d.content for d in surreal_db.search("tagged", limit=10, filters={"tag": "x"}, user_id="alice")}
-        assert "alice tagged" in contents
-        assert "bob tagged" not in contents
-
-
-# ---------------------------------------------------------------------------
-# Clobber prevention
-# ---------------------------------------------------------------------------
-class TestRecordIdClobber:
-    def test_two_users_same_content_and_hash_coexist(self, surreal_db):
-        """The clobber regression: identical content under the SAME content_hash
-        for two users must produce TWO records, not one."""
-        surreal_db.insert(content_hash="SAME", documents=[_doc("The secret is 42.")], user_id="alice")
-        surreal_db.insert(content_hash="SAME", documents=[_doc("The secret is 42.")], user_id="bob")
-        assert _raw_owners(surreal_db) == ["alice", "bob"]
-        assert _count(surreal_db) == 2
-
-    def test_clobbered_records_stay_isolated_on_search(self, surreal_db):
-        surreal_db.insert(content_hash="SAME", documents=[_doc("The secret is 42.")], user_id="alice")
-        surreal_db.insert(content_hash="SAME", documents=[_doc("The secret is 42.")], user_id="bob")
-        alice = surreal_db.search("secret", limit=10, user_id="alice")
-        bob = surreal_db.search("secret", limit=10, user_id="bob")
-        # Each sees exactly their own single record; the other's still exists.
-        assert len(alice) == 1
-        assert len(bob) == 1
-        assert _count(surreal_db) == 2
-
-    def test_same_user_reinsert_same_hash_replaces(self, surreal_db):
-        surreal_db.insert(content_hash="H", documents=[_doc("content v1")], user_id="alice")
-        surreal_db.insert(content_hash="H", documents=[_doc("content v1")], user_id="alice")
-        assert _count(surreal_db) == 1
-
-    def test_shared_bucket_keeps_legacy_id(self, surreal_db):
-        # A shared insert lands on the legacy id; a scoped insert of the same
-        # content+hash lands on a different id — so they coexist.
-        surreal_db.insert(content_hash="H", documents=[_doc("doc")], user_id=None)
-        surreal_db.insert(content_hash="H", documents=[_doc("doc")], user_id="alice")
-        assert _raw_owners(surreal_db) == ["alice", None]
+    def test_scope_condition_helper_matches(self):
+        # Guards the exact predicate the two search methods share.
+        assert _SurrealDbModuleClass._user_scope_condition("alice") == self.OWN_OR_SHARED
+        assert _SurrealDbModuleClass._user_scope_condition(None) == ""
 
 
-# ---------------------------------------------------------------------------
-# Upsert dedupe must be owner-scoped
-# ---------------------------------------------------------------------------
-class TestUpsertDedupeIsolation:
-    def test_scoped_dedupe_does_not_touch_other_owner(self, surreal_db):
-        surreal_db.upsert(content_hash="SH", documents=[_doc("alice v1")], user_id="alice")
-        surreal_db.upsert(content_hash="SH", documents=[_doc("bob v1")], user_id="bob")
-        # Alice re-upserts under the shared hash. Bob's chunk must survive.
-        surreal_db.upsert(content_hash="SH", documents=[_doc("alice v2")], user_id="alice")
-        assert _raw_owners(surreal_db) == ["alice", "bob"]
-        assert _count(surreal_db) == 2
-        alice = {d.content for d in surreal_db.search("v", limit=10, user_id="alice")}
-        assert "alice v2" in alice
-        assert "bob v1" not in alice
+class TestScopedDedup:
+    """SurrealDB dedups by record id (no delete-by-hash), and the owner is folded
+    into that id. So an owner's upsert targets ``id:owner`` while another owner /
+    the shared bucket targets a different record — one owner's re-ingest can never
+    clear another owner's identical-content row."""
 
-    def test_same_user_reupsert_replaces(self, surreal_db):
-        surreal_db.upsert(content_hash="H", documents=[_doc("v1")], user_id="alice")
-        surreal_db.upsert(content_hash="H", documents=[_doc("v2")], user_id="alice")
-        assert _count(surreal_db) == 1
-        assert {d.content for d in surreal_db.search("v", limit=10, user_id="alice")} == {"v2"}
+    def test_owner_upsert_targets_only_own_record(self, surreal_db, fake_client):
+        shared_id = str(uuid.uuid4())
+        # Bob re-ingests content whose id alice also used.
+        surreal_db.upsert(content_hash="h", documents=[_doc_with_id("Same content", shared_id)], user_id="bob")
+        _sql, bob_body = _last_query(fake_client)
+        # Bob's UPSERT is keyed on bob's folded id, so it cannot touch
+        # ``{id}:alice`` or the bare shared id.
+        assert bob_body["record_id"] == f"{shared_id}:bob"
+        assert bob_body["record_id"] != f"{shared_id}:alice"
+        assert bob_body["record_id"] != shared_id
 
-    def test_scoped_reupsert_does_not_touch_shared(self, surreal_db):
-        # A scoped re-upsert must never wipe the shared (NONE) bucket even when
-        # they collide on the same content_hash.
-        surreal_db.upsert(content_hash="SH", documents=[_doc("shared doc")], user_id=None)
-        surreal_db.upsert(content_hash="SH", documents=[_doc("alice v1")], user_id="alice")
-        surreal_db.upsert(content_hash="SH", documents=[_doc("alice v2")], user_id="alice")
-        assert _raw_owners(surreal_db) == ["alice", None]
-
-    def test_shared_upsert_does_not_wipe_scoped_owner(self, surreal_db):
-        # A shared/admin re-ingest (``user_id=None``) must dedupe only the shared
-        # bucket. Previously the None dedupe ran UNSCOPED and wiped every scoped
-        # owner's row sharing that content_hash.
-        surreal_db.insert(content_hash="SAME", documents=[_doc("alice owned")], user_id="alice")
-        surreal_db.upsert(content_hash="SAME", documents=[_doc("shared doc")], user_id=None)
-        # Alice's row survives the shared upsert and admin sees both rows.
-        assert _raw_owners(surreal_db) == ["alice", None]
-        alice = {d.content for d in surreal_db.search("doc", limit=10, user_id="alice")}
-        assert "alice owned" in alice
-        admin = {d.content for d in surreal_db.search("doc", limit=10, user_id=None)}
-        assert {"alice owned", "shared doc"} <= admin
+    def test_upsert_binds_record_id_as_param(self, surreal_db, fake_client):
+        # The UPSERT statement targets ``type::record($table, $record_id)`` — the
+        # id is a bound variable, so the dedup key is never string-built into SQL.
+        shared_id = str(uuid.uuid4())
+        surreal_db.upsert(content_hash="h", documents=[_doc_with_id("c", shared_id)], user_id="alice")
+        sql, body = _last_query(fake_client)
+        assert "type::record($table, $record_id)" in sql
+        assert body["table"] == COLLECTION
+        assert body["record_id"] == f"{shared_id}:alice"
 
 
-# ---------------------------------------------------------------------------
-# Delete-by-content-id scoping
-# ---------------------------------------------------------------------------
 class TestDeleteByContentIdIsolation:
-    @pytest.fixture
-    def populated(self, surreal_db):
-        """Two users own chunks under the SAME content_id — the adversarial
-        scenario where Bob could try to wipe Alice's chunks."""
-        alice = _doc("Alice's secret.")
-        alice.content_id = "doc-1"
-        bob = _doc("Bob's secret.")
-        bob.content_id = "doc-1"
-        surreal_db.insert(content_hash="h-alice", documents=[alice], user_id="alice")
-        surreal_db.insert(content_hash="h-bob", documents=[bob], user_id="bob")
-        return surreal_db
+    """``delete_by_content_id(content_id, user_id=...)`` must scope to the
+    caller's chunks — otherwise Bob could guess Alice's content_id and wipe her
+    chunks. Unscoped (``None``) is the legacy wipe-everyone behaviour."""
 
-    def test_scoped_delete_only_removes_callers_chunks(self, populated):
-        assert populated.delete_by_content_id("doc-1", user_id="bob") is True
-        assert _raw_owners(populated) == ["alice"]
+    def test_scoped_delete_binds_owner(self, surreal_db, fake_client):
+        surreal_db.delete_by_content_id("doc-1", user_id="bob")
+        sql, params = _last_query(fake_client)
+        assert "content_id = $content_id" in sql
+        assert "AND user_id = $user_id" in sql
+        assert params == {"content_id": "doc-1", "user_id": "bob"}
 
-    def test_alice_can_delete_her_own(self, populated):
-        assert populated.delete_by_content_id("doc-1", user_id="alice") is True
-        assert _raw_owners(populated) == ["bob"]
-
-    def test_unscoped_delete_wipes_everyone(self, populated):
-        assert populated.delete_by_content_id("doc-1", user_id=None) is True
-        assert _count(populated) == 0
-
-    def test_scoped_delete_misses_when_user_owns_nothing(self, populated):
-        # Carol owns nothing, so her scoped delete deletes nothing and reports False.
-        assert populated.delete_by_content_id("doc-1", user_id="carol") is False
-        assert _count(populated) == 2
-
-    def test_scoped_delete_does_not_touch_shared(self, surreal_db):
-        shared = _doc("shared doc")
-        shared.content_id = "doc-2"
-        owned = _doc("alice doc")
-        owned.content_id = "doc-2"
-        surreal_db.insert(content_hash="hs", documents=[shared], user_id=None)
-        surreal_db.insert(content_hash="ha", documents=[owned], user_id="alice")
-        # Alice deletes doc-2 under her scope — the shared row must remain.
-        assert surreal_db.delete_by_content_id("doc-2", user_id="alice") is True
-        assert _raw_owners(surreal_db) == [None]
+    def test_unscoped_delete_is_content_id_only(self, surreal_db, fake_client):
+        surreal_db.delete_by_content_id("doc-1", user_id=None)
+        sql, params = _last_query(fake_client)
+        assert "content_id = $content_id" in sql
+        assert "user_id" not in sql
+        assert params == {"content_id": "doc-1"}
 
 
-# ---------------------------------------------------------------------------
-# update_metadata must not let a caller reassign the owner
-# ---------------------------------------------------------------------------
-class TestUpdateMetadataOwnershipGuard:
-    @pytest.fixture
-    def owned(self, surreal_db):
-        doc = _doc("metadata content")
-        doc.content_id = "cid-1"
-        surreal_db.insert(content_hash="hm", documents=[doc], user_id="alice")
-        return surreal_db
+class TestKeyInjectionSafety:
+    """A quote/keyword-laden ``user_id`` must be bound as a variable, never
+    string-interpolated into the SQL — so it lands verbatim as the owner and
+    cannot widen the scope. Each assertion below fails LOUDLY if the adapter were
+    ever changed to splice ``user_id`` into the query text: the evil string would
+    then appear in the SQL and ``evil not in sql`` would break."""
 
-    def test_caller_cannot_reassign_owner(self, owned):
-        owned.update_metadata("cid-1", {"user_id": "bob", "tag": "x"})
-        assert _raw_owners(owned) == ["alice"]
+    EVIL = "alice' OR user_id = NONE OR '1'='1"
 
-    def test_legitimate_metadata_still_applied(self, owned):
-        owned.update_metadata("cid-1", {"tag": "x", "user_id": "bob"})
-        rows = owned.client.query(f"SELECT meta_data FROM {owned.collection} WHERE content_id = 'cid-1';")
-        assert rows[0]["meta_data"].get("tag") == "x"
-        # The owner key never leaks into meta_data either.
-        assert rows[0]["meta_data"].get("user_id") is None
+    def test_insert_owner_is_verbatim_literal(self, surreal_db, fake_client):
+        surreal_db.insert(content_hash="h1", documents=[_doc("alice content")], user_id=self.EVIL)
+        assert _last_create_body(fake_client)["user_id"] == self.EVIL
 
-    def test_owner_keeps_access_bob_does_not(self, owned):
-        owned.update_metadata("cid-1", {"user_id": "bob"})
-        alice = {d.content for d in owned.search("metadata", limit=10, user_id="alice")}
-        bob = {d.content for d in owned.search("metadata", limit=10, user_id="bob")}
-        assert "metadata content" in alice
-        assert "metadata content" not in bob
+    def test_search_scope_binds_not_interpolates(self, surreal_db, fake_client):
+        surreal_db.search("content", limit=10, user_id=self.EVIL)
+        sql, params = _last_query(fake_client)
+        assert self.EVIL not in sql  # would appear if interpolated
+        assert params["scope_user_id"] == self.EVIL
+        assert "$scope_user_id" in sql
 
-# ---------------------------------------------------------------------------
-# Async parity — the isolation must hold identically on the async surface
-# ---------------------------------------------------------------------------
+    def test_delete_scope_binds_not_interpolates(self, surreal_db, fake_client):
+        surreal_db.delete_by_content_id("doc-1", user_id=self.EVIL)
+        sql, params = _last_query(fake_client)
+        assert self.EVIL not in sql
+        assert params["user_id"] == self.EVIL
+        assert "$user_id" in sql
+
+    def test_upsert_record_id_binds_not_interpolates(self, surreal_db, fake_client):
+        surreal_db.upsert(content_hash="h1", documents=[_doc_with_id("c", str(uuid.uuid4()))], user_id=self.EVIL)
+        sql, body = _last_query(fake_client)
+        # The evil owner rides inside the bound record_id/user_id, never the SQL.
+        assert self.EVIL not in sql
+        assert body["user_id"] == self.EVIL
+        assert body["record_id"].endswith(f":{self.EVIL}")
+
+
 class TestAsyncIsolation:
-    async def test_async_isolation_contract(self, async_surreal_db):
-        db = async_surreal_db
-        await db.async_insert(content_hash="ha", documents=[_doc("Alice salary is 180k")], user_id="alice")
-        await db.async_insert(content_hash="hb", documents=[_doc("Bob salary is 215k")], user_id="bob")
-        await db.async_insert(content_hash="hs", documents=[_doc("Office closed Jan 1")], user_id=None)
+    """The isolation contract must hold identically on the async surface."""
 
-        alice = {d.content for d in await db.async_search("salary", limit=10, user_id="alice")}
-        bob = {d.content for d in await db.async_search("salary", limit=10, user_id="bob")}
-        admin = {d.content for d in await db.async_search("salary", limit=10, user_id=None)}
+    async def test_async_insert_stamps_owner(self, async_surreal_db, fake_async_client):
+        await async_surreal_db.async_insert(content_hash="ha", documents=[_doc("Alice salary")], user_id="alice")
+        assert fake_async_client.creates[-1][1]["user_id"] == "alice"
 
-        assert "Alice salary is 180k" in alice
-        assert "Office closed Jan 1" in alice
-        assert "Bob salary is 215k" not in alice
-        assert "Alice salary is 180k" not in bob
-        assert {"Alice salary is 180k", "Bob salary is 215k", "Office closed Jan 1"} <= admin
+    async def test_async_insert_none_is_shared(self, async_surreal_db, fake_async_client):
+        await async_surreal_db.async_insert(content_hash="hs", documents=[_doc("Office closed")], user_id=None)
+        assert fake_async_client.creates[-1][1]["user_id"] is SHARED_MARKER
 
-    async def test_async_clobber_coexist(self, async_surreal_db):
-        db = async_surreal_db
-        await db.async_insert(content_hash="SAME", documents=[_doc("The secret is 42.")], user_id="alice")
-        await db.async_insert(content_hash="SAME", documents=[_doc("The secret is 42.")], user_id="bob")
-        assert await _async_raw_owners(db) == ["alice", "bob"]
+    async def test_async_search_scopes_to_own_or_shared(self, async_surreal_db, fake_async_client):
+        await async_surreal_db.async_search("salary", limit=10, user_id="alice")
+        sql, params = fake_async_client.queries[-1]
+        assert "AND (user_id = $scope_user_id OR user_id = NONE)" in sql
+        assert params["scope_user_id"] == "alice"
+        assert "alice" not in sql
 
-    async def test_async_reupsert_replaces_not_accumulates(self, async_surreal_db):
-        db = async_surreal_db
-        await db.async_upsert(content_hash="H", documents=[_doc("v1")], user_id="alice")
-        await db.async_upsert(content_hash="H", documents=[_doc("v2")], user_id="alice")
-        assert await _async_count(db) == 1
+    async def test_async_admin_search_has_no_scope(self, async_surreal_db, fake_async_client):
+        await async_surreal_db.async_search("salary", limit=10, user_id=None)
+        sql, params = fake_async_client.queries[-1]
+        assert "$scope_user_id" not in sql
+        assert "scope_user_id" not in params
 
-    async def test_async_scoped_dedupe_keeps_other_owner(self, async_surreal_db):
-        db = async_surreal_db
-        await db.async_upsert(content_hash="SH", documents=[_doc("alice v1")], user_id="alice")
-        await db.async_upsert(content_hash="SH", documents=[_doc("bob v1")], user_id="bob")
-        await db.async_upsert(content_hash="SH", documents=[_doc("alice v2")], user_id="alice")
-        assert await _async_raw_owners(db) == ["alice", "bob"]
-        assert await _async_count(db) == 2
+    async def test_async_upsert_two_owners_distinct_record_ids(self, async_surreal_db, fake_async_client):
+        shared_id = str(uuid.uuid4())
+        await async_surreal_db.async_upsert(
+            content_hash="h", documents=[_doc_with_id("Same", shared_id)], user_id="alice"
+        )
+        alice_rid = fake_async_client.queries[-1][1]["record_id"]
+        await async_surreal_db.async_upsert(
+            content_hash="h", documents=[_doc_with_id("Same", shared_id)], user_id="bob"
+        )
+        bob_rid = fake_async_client.queries[-1][1]["record_id"]
+        assert alice_rid == f"{shared_id}:alice"
+        assert bob_rid == f"{shared_id}:bob"
+        assert alice_rid != bob_rid

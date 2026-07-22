@@ -1,15 +1,26 @@
-import inspect
-import os
+"""SingleStore per-user RAG isolation contract.
+
+The owner is a first-class ``user_id`` column (NULL = the shared bucket).
+Scoped searches match ``user_id = caller OR user_id IS NULL`` so admin-uploaded
+shared content stays discoverable; unscoped (admin) searches see everything.
+``delete_by_content_id`` scopes to the caller so one user cannot wipe another's
+chunks under a guessed content_id.
+
+This is a true unit test: the SQLAlchemy ``Engine`` is a ``MagicMock`` and the
+``Session`` is a capturing double, so the adapter's SQL is compiled and inspected
+without any running SingleStore. We assert on the isolation-determining values —
+the ``user_id`` bound into writes, the WHERE predicate text of scoped reads, the
+owner-folded row id, and the owner scoping of dedup/deletes.
+"""
+
 from hashlib import md5
 from typing import List
 from unittest.mock import MagicMock, patch
-from urllib.parse import urlsplit
 
 import pytest
 
 sqlalchemy = pytest.importorskip("sqlalchemy")
 
-from sqlalchemy import select  # noqa: E402
 from sqlalchemy.dialects import mysql  # noqa: E402
 from sqlalchemy.engine import Engine  # noqa: E402
 
@@ -20,13 +31,8 @@ TEST_COLLECTION = "iso_test"
 TEST_SCHEMA = "iso_schema"
 
 
-# --------------------------------------------------------------------------- #
-# Deterministic embedder — no network, no API key.
-# --------------------------------------------------------------------------- #
 class _DeterministicEmbedder:
-    """A tiny embedder that needs no network or API key. The content steers
-    the vector so distinct documents land in distinct buckets — all the
-    isolation tests need, and it gives us a real (sync + async) surface."""
+    """Content-steered vectors, no network or API key — sync + async surface."""
 
     dimensions = 8
     enable_batch = False
@@ -54,248 +60,6 @@ class _DeterministicEmbedder:
         document.usage = {"total_tokens": 1}
 
 
-# --------------------------------------------------------------------------- #
-# Mocked-engine fixtures (no DB).
-# --------------------------------------------------------------------------- #
-@pytest.fixture
-def mock_db():
-    """A SingleStore wired to a mocked engine/sessionmaker. Good enough to
-    exercise pure SQL construction and the id-folding helper without a DB."""
-    mock_engine = MagicMock(spec=Engine)
-    with patch("agno.vectordb.singlestore.singlestore.sessionmaker"):
-        db = SingleStore(
-            collection=TEST_COLLECTION,
-            schema=TEST_SCHEMA,
-            db_engine=mock_engine,
-            embedder=_DeterministicEmbedder(),
-        )
-    return db
-
-
-# --------------------------------------------------------------------------- #
-# 1. Signature contract.
-# --------------------------------------------------------------------------- #
-class TestSignatureContract:
-    """``user_id: Optional[str] = None`` must be the LAST parameter on every
-    scoped method (after ``batch_size`` on insert/upsert). The Knowledge
-    wrapper passes ``user_id`` positionally/by-keyword uniformly, so a
-    drifting signature silently TypeErrors or scopes the wrong arg."""
-
-    @pytest.mark.parametrize(
-        "method",
-        [
-            "insert",
-            "async_insert",
-            "upsert",
-            "async_upsert",
-            "search",
-            "async_search",
-            "delete_by_content_id",
-        ],
-    )
-    def test_user_id_is_last_param_with_none_default(self, method):
-        params = list(inspect.signature(getattr(SingleStore, method)).parameters.values())
-        last = params[-1]
-        assert last.name == "user_id", f"{method}: user_id is not the last parameter"
-        assert last.default is None, f"{method}: user_id default is not None"
-
-
-# --------------------------------------------------------------------------- #
-# 2. Scope predicate (compiled SQL, no DB).
-# --------------------------------------------------------------------------- #
-class TestUserScopePredicate:
-    """The scope builder is small enough to unit-test by compiling the SQL.
-    We catch the OR semantics, the shared-NULL pattern, and — critically —
-    that ``user_id`` is a BOUND parameter, never interpolated into the SQL."""
-
-    def test_scoped_predicate_binds_user_id_and_ors_null(self, mock_db):
-        stmt = mock_db._apply_user_scope(select(mock_db.table.c.name), "alice")
-        compiled = stmt.compile(dialect=mysql.dialect())
-        sql = str(compiled)
-        assert "user_id = " in sql
-        assert "IS NULL" in sql
-        # user_id must be a bound param, not interpolated into the SQL text.
-        assert "alice" not in sql, "user_id was string-interpolated into the SQL"
-        assert "alice" in compiled.params.values()
-
-    def test_none_user_id_applies_no_predicate(self, mock_db):
-        stmt = mock_db._apply_user_scope(select(mock_db.table.c.name), None)
-        sql = str(stmt.compile(dialect=mysql.dialect()))
-        assert "WHERE" not in sql
-
-    def test_empty_string_normalizes_to_unscoped(self, mock_db):
-        # normalize_user_id collapses "" to None — same as the admin view.
-        stmt = mock_db._apply_user_scope(select(mock_db.table.c.name), "")
-        sql = str(stmt.compile(dialect=mysql.dialect()))
-        assert "WHERE" not in sql
-
-
-# --------------------------------------------------------------------------- #
-# 3. Row-id folding (clobber prevention).
-# --------------------------------------------------------------------------- #
-class TestRecordIdFolding:
-    """The deterministic row id must fold in the owner so two users uploading
-    the SAME content under the SAME content_hash get distinct ids and coexist
-    instead of clobbering each other. The shared (None) bucket must keep the
-    legacy id so previously persisted shared rows stay addressable."""
-
-    def test_shared_bucket_keeps_legacy_id(self, mock_db):
-        # Shared/unscoped keeps the legacy owner-less id md5(f"{base}_{hash}"),
-        # byte-identical for both None and "" (falsy = unscoped).
-        legacy = md5(b"x_H").hexdigest()
-        assert mock_db._record_id("x", "H", None) == legacy
-        assert mock_db._record_id("x", "H", "") == legacy
-
-    def test_scoped_id_differs_from_shared(self, mock_db):
-        assert mock_db._record_id("x", "H", "alice") != mock_db._record_id("x", "H", None)
-
-    def test_two_users_get_distinct_ids(self, mock_db):
-        assert mock_db._record_id("x", "H", "alice") != mock_db._record_id("x", "H", "bob")
-
-    def test_same_user_same_content_is_stable(self, mock_db):
-        assert mock_db._record_id("x", "H", "alice") == mock_db._record_id("x", "H", "alice")
-
-
-# --------------------------------------------------------------------------- #
-# 4. Schema carries the owner column.
-# --------------------------------------------------------------------------- #
-class TestSchemaHasUserIdColumn:
-    def test_table_has_user_id_column(self, mock_db):
-        assert "user_id" in mock_db.table.c
-
-    def test_user_id_column_is_nullable(self, mock_db):
-        # NULL is the shared bucket — the column must allow it.
-        assert mock_db.table.c.user_id.nullable is True
-
-
-# --------------------------------------------------------------------------- #
-# 5. Insert / upsert stamp the owner into the column (mocked execute).
-# --------------------------------------------------------------------------- #
-class TestWriteStampsOwner:
-    """Without a DB we can still assert the INSERT statement carries the
-    ``user_id`` column with the caller's value — i.e. the owner is stored as a
-    first-class column, not buried inside meta_data."""
-
-    def _captured_insert_params(self, db, executed_stmt):
-        compiled = executed_stmt.compile(dialect=mysql.dialect())
-        return compiled.params
-
-    def test_insert_includes_user_id_value(self, mock_db):
-        captured = []
-
-        class _Sess:
-            def __enter__(self_inner):
-                return self_inner
-
-            def __exit__(self_inner, *a):
-                return False
-
-            def execute(self_inner, stmt):
-                captured.append(stmt)
-
-            def commit(self_inner):
-                pass
-
-        mock_db.Session = MagicMock()
-        mock_db.Session.begin.return_value = _Sess()
-
-        doc = Document(name="d", content="alice content")
-        mock_db.insert(content_hash="h", documents=[doc], user_id="alice")
-
-        assert captured, "no statement executed"
-        params = self._captured_insert_params(mock_db, captured[0])
-        assert params.get("user_id") == "alice"
-
-    def test_insert_none_stores_null_owner(self, mock_db):
-        captured = []
-
-        class _Sess:
-            def __enter__(self_inner):
-                return self_inner
-
-            def __exit__(self_inner, *a):
-                return False
-
-            def execute(self_inner, stmt):
-                captured.append(stmt)
-
-            def commit(self_inner):
-                pass
-
-        mock_db.Session = MagicMock()
-        mock_db.Session.begin.return_value = _Sess()
-
-        doc = Document(name="d", content="shared content")
-        mock_db.insert(content_hash="h", documents=[doc], user_id=None)
-
-        params = self._captured_insert_params(mock_db, captured[0])
-        assert params.get("user_id") is None
-
-
-# --------------------------------------------------------------------------- #
-# Live server section — skipped cleanly when no server is configured.
-# --------------------------------------------------------------------------- #
-_LIVE_URL = os.environ.get("SINGLESTORE_TEST_URL")
-
-
-def _server_reachable(url: str) -> bool:
-    try:
-        eng = sqlalchemy.create_engine(url)
-        with eng.connect() as conn:
-            conn.execute(sqlalchemy.text("SELECT 1"))
-        return True
-    except Exception:
-        return False
-
-
-_LIVE_AVAILABLE = bool(_LIVE_URL) and _server_reachable(_LIVE_URL or "")
-_live = pytest.mark.skipif(
-    not _LIVE_AVAILABLE,
-    reason="No live SingleStore (set SINGLESTORE_TEST_URL to a reachable SQLAlchemy URL to enable).",
-)
-
-# Use the database named in the URL (managed clusters often deny CREATE
-# DATABASE); fall back to a scratch db when the URL points at the server root.
-_URL_DB = urlsplit(_LIVE_URL or "").path.lstrip("/")
-LIVE_DB = _URL_DB or "iso_live_db"
-
-
-def _embedded(name: str, content: str) -> Document:
-    doc = Document(name=name, content=content)
-    doc.embedding = _DeterministicEmbedder().get_embedding(content)
-    return doc
-
-
-@pytest.fixture
-def live_db():
-    """A fresh table against a live SingleStore. Recreated per test so each
-    starts empty; dropped on teardown."""
-    if _URL_DB:
-        url = _LIVE_URL
-    else:
-        base = sqlalchemy.create_engine(_LIVE_URL)
-        with base.connect() as conn:
-            conn.execute(sqlalchemy.text(f"CREATE DATABASE IF NOT EXISTS {LIVE_DB}"))
-            conn.commit()
-        url = (_LIVE_URL.rstrip("/")) + "/" + LIVE_DB
-    db = SingleStore(
-        collection=TEST_COLLECTION,
-        schema=LIVE_DB,
-        db_url=url,
-        embedder=_DeterministicEmbedder(),
-    )
-    try:
-        db.drop()
-    except Exception:
-        pass
-    db.create()
-    yield db
-    try:
-        db.drop()
-    except Exception:
-        pass
-
-
 def _alice_docs() -> List[Document]:
     return [Document(name="alice-salary", content="Alice's salary is 180k.")]
 
@@ -308,106 +72,290 @@ def _shared_docs() -> List[Document]:
     return [Document(name="company-holidays", content="The office is closed Jan 1.")]
 
 
-@_live
-class TestLiveSearchIsolation:
-    """The load-bearing live test: alice's search returns her chunks plus
-    shared chunks, but never bob's."""
-
-    @pytest.fixture
-    def populated(self, live_db):
-        live_db.insert(content_hash="ha", documents=_alice_docs(), user_id="alice")
-        live_db.insert(content_hash="hb", documents=_bob_docs(), user_id="bob")
-        live_db.insert(content_hash="hs", documents=_shared_docs(), user_id=None)
-        return live_db
-
-    def test_alice_sees_own_and_shared(self, populated):
-        names = {d.name for d in populated.search("salary", limit=10, user_id="alice")}
-        assert "alice-salary" in names
-        assert "company-holidays" in names
-
-    def test_alice_never_sees_bob(self, populated):
-        names = {d.name for d in populated.search("salary", limit=10, user_id="alice")}
-        assert "bob-salary" not in names
-
-    def test_bob_never_sees_alice(self, populated):
-        names = {d.name for d in populated.search("salary", limit=10, user_id="bob")}
-        assert "alice-salary" not in names
-
-    def test_admin_sees_everything(self, populated):
-        names = {d.name for d in populated.search("salary", limit=10, user_id=None)}
-        assert {"alice-salary", "bob-salary", "company-holidays"} <= names
-
-
-@_live
-class TestLiveClobberAndDedupe:
-    def test_two_users_same_content_and_hash_coexist(self, live_db):
-        live_db.insert(content_hash="SAME", documents=[_embedded("s", "The secret is 42.")], user_id="alice")
-        live_db.insert(content_hash="SAME", documents=[_embedded("s", "The secret is 42.")], user_id="bob")
-        assert live_db.get_count() == 2
-
-    def test_same_user_reinsert_replaces(self, live_db):
-        live_db.upsert(content_hash="H", documents=[_embedded("d", "v1")], user_id="alice")
-        live_db.upsert(content_hash="H", documents=[_embedded("d", "v2")], user_id="alice")
-        assert live_db.get_count() == 1
-
-    def test_scoped_dedupe_keeps_other_owner(self, live_db):
-        live_db.upsert(content_hash="SH", documents=[_embedded("ad", "alice v1")], user_id="alice")
-        live_db.upsert(content_hash="SH", documents=[_embedded("bd", "bob v1")], user_id="bob")
-        live_db.upsert(content_hash="SH", documents=[_embedded("ad", "alice v2")], user_id="alice")
-        assert live_db.get_count() == 2
-
-    def test_shared_upsert_does_not_wipe_scoped_owners(self, live_db):
-        """A shared/admin re-ingest (``user_id=None``) under a hash that scoped
-        owners already uploaded must scope its dedupe-delete to the shared bucket
-        only — pre-fix it wiped every scoped owner sharing that content_hash."""
-        live_db.upsert(content_hash="SAME", documents=[_embedded("ad", "alice v1")], user_id="alice")
-        live_db.upsert(content_hash="SAME", documents=[_embedded("bd", "bob v1")], user_id="bob")
-        # The wipe trigger: a shared re-ingest of the SAME content_hash.
-        live_db.upsert(content_hash="SAME", documents=[_embedded("sd", "shared v1")], user_id=None)
-        # Alice's and bob's scoped chunks both survive alongside the shared one.
-        assert live_db.get_count() == 3
-        assert "ad" in {d.name for d in live_db.search("alice", limit=10, user_id="alice")}
-        assert "bd" in {d.name for d in live_db.search("bob", limit=10, user_id="bob")}
-
-
-@_live
-class TestLiveDeleteScoping:
-    @pytest.fixture
-    def populated(self, live_db):
-        alice = Document(name="alice-doc", content="Alice's secret.")
-        alice.content_id = "doc-1"
-        bob = Document(name="bob-doc", content="Bob's secret.")
-        bob.content_id = "doc-1"
-        live_db.insert(content_hash="h-alice", documents=[alice], user_id="alice")
-        live_db.insert(content_hash="h-bob", documents=[bob], user_id="bob")
-        return live_db
-
-    def test_scoped_delete_removes_only_callers(self, populated):
-        assert populated.delete_by_content_id("doc-1", user_id="bob") is True
-        assert populated.get_count() == 1
-
-    def test_scoped_delete_misses_when_not_owner(self, populated):
-        assert populated.delete_by_content_id("doc-1", user_id="carol") is False
-        assert populated.get_count() == 2
-
-    def test_unscoped_delete_wipes_all(self, populated):
-        populated.delete_by_content_id("doc-1", user_id=None)
-        assert populated.get_count() == 0
-
-
-@_live
-class TestLiveAsyncIsolation:
-    async def test_async_insert_and_search_isolated(self, live_db):
-        await live_db.async_insert(
-            content_hash="ha", documents=[_embedded("alice-a", "Alice async salary")], user_id="alice"
+# --------------------------------------------------------------------------- #
+# Mocked engine + capturing Session. The adapter's SQL runs against these, so
+# every statement is compiled and inspected with no DB connection.
+# --------------------------------------------------------------------------- #
+@pytest.fixture
+def mock_db():
+    """A SingleStore wired to a mocked engine — enough to compile every stmt."""
+    with patch("agno.vectordb.singlestore.singlestore.sessionmaker"):
+        return SingleStore(
+            collection=TEST_COLLECTION,
+            schema=TEST_SCHEMA,
+            db_engine=MagicMock(spec=Engine),
+            embedder=_DeterministicEmbedder(),
         )
-        await live_db.async_insert(content_hash="hb", documents=[_embedded("bob-a", "Bob async salary")], user_id="bob")
-        names = {d.name for d in await live_db.async_search("salary", limit=10, user_id="alice")}
-        assert "alice-a" in names
-        assert "bob-a" not in names
 
-    async def test_async_upsert_scoped_dedupe(self, live_db):
-        await live_db.async_upsert(content_hash="SH", documents=[_embedded("ad", "alice v1")], user_id="alice")
-        await live_db.async_upsert(content_hash="SH", documents=[_embedded("bd", "bob v1")], user_id="bob")
-        await live_db.async_upsert(content_hash="SH", documents=[_embedded("ad", "alice v2")], user_id="alice")
-        assert live_db.get_count() == 2
+
+class _CapturingSession:
+    """A ``Session.begin()`` context manager double that records every executed
+    statement and returns a configurable result (so ``.fetchall()``/``.first()``/
+    ``.rowcount`` on the adapter side behave)."""
+
+    def __init__(self, first=None, scalar=None, fetchall=None, rowcount=1):
+        self.captured: list = []
+        self._first = first
+        self._scalar = scalar
+        self._fetchall = fetchall if fetchall is not None else []
+        self._rowcount = rowcount
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+    def execute(self, stmt):
+        self.captured.append(stmt)
+        result = MagicMock()
+        result.first.return_value = self._first
+        result.scalar.return_value = self._scalar
+        result.fetchall.return_value = self._fetchall
+        result.rowcount = self._rowcount
+        return result
+
+    def commit(self):
+        pass
+
+
+def _install_session(db, **result_kwargs) -> _CapturingSession:
+    """Route ``db.Session.begin()`` to a fresh capturing session."""
+    sess = _CapturingSession(**result_kwargs)
+    db.Session = MagicMock()
+    db.Session.begin.return_value = sess
+    return sess
+
+
+def _find_stmt(sess: _CapturingSession, keyword: str):
+    """First captured statement whose compiled SQL starts with ``keyword``."""
+    for stmt in sess.captured:
+        if str(stmt).strip().upper().startswith(keyword):
+            return stmt
+    raise AssertionError(f"no {keyword} statement captured; got {[str(s)[:40] for s in sess.captured]}")
+
+
+def _params(stmt) -> dict:
+    """MySQL-compiled bound parameters for a captured statement."""
+    return stmt.compile(dialect=mysql.dialect()).params
+
+
+# --------------------------------------------------------------------------- #
+# 1. Write stamps the owner into the user_id column.
+# --------------------------------------------------------------------------- #
+class TestWriteStampsOwner:
+    """The owner is stored as a first-class ``user_id`` column, not buried in
+    meta_data. ``user_id=None`` persists NULL — the shared bucket."""
+
+    def _insert_params(self, db, user_id):
+        sess = _install_session(db)
+        db.insert(content_hash="h", documents=[Document(name="d", content="c")], user_id=user_id)
+        return _params(_find_stmt(sess, "INSERT"))
+
+    def test_explicit_user_id_stamped(self, mock_db):
+        assert self._insert_params(mock_db, "alice").get("user_id") == "alice"
+
+    def test_none_user_id_stored_as_null(self, mock_db):
+        assert self._insert_params(mock_db, None).get("user_id") is None
+
+
+# --------------------------------------------------------------------------- #
+# 2. Owner-folded row id — identical content, distinct owners, distinct rows.
+# --------------------------------------------------------------------------- #
+class TestOwnerFoldedId:
+    """Two owners uploading the SAME content must get DISTINCT row ids (the
+    owner is folded into the id). A shared (None) write keeps the un-folded
+    base id, so a shared re-ingest round-trips on the same row."""
+
+    SAME = "The merger closes in Q3."
+    HASH = "h"
+
+    def _insert_id(self, db, user_id) -> str:
+        sess = _install_session(db)
+        db.insert(content_hash=self.HASH, documents=[Document(name="c", content=self.SAME)], user_id=user_id)
+        return _params(_find_stmt(sess, "INSERT"))["id"]
+
+    def test_identical_content_two_owners_get_distinct_ids(self, mock_db):
+        alice_id = self._insert_id(mock_db, "alice")
+        bob_id = self._insert_id(mock_db, "bob")
+        assert alice_id != bob_id
+
+    def test_owner_fold_matches_expected_digest(self, mock_db):
+        base = md5(self.SAME.encode()).hexdigest()
+        expected = md5(f"{base}_{self.HASH}_alice".encode()).hexdigest()
+        assert self._insert_id(mock_db, "alice") == expected
+
+    def test_shared_write_keeps_unfolded_base_id(self, mock_db):
+        base = md5(self.SAME.encode()).hexdigest()
+        expected = md5(f"{base}_{self.HASH}".encode()).hexdigest()
+        shared_id = self._insert_id(mock_db, None)
+        assert shared_id == expected
+        # And distinct from an owned write of the same content.
+        assert shared_id != self._insert_id(mock_db, "alice")
+
+
+# --------------------------------------------------------------------------- #
+# 3. Read scope — own-OR-shared for a caller, no predicate for admin.
+# --------------------------------------------------------------------------- #
+class TestSearchScope:
+    """A scoped search's WHERE clause is ``user_id = :uid OR user_id IS NULL``
+    (own OR shared), with the caller bound in. Admin (``user_id=None``) adds no
+    user predicate. The predicate IS the isolation contract — it excludes other
+    owners by construction."""
+
+    def _search_select(self, db, user_id):
+        sess = _install_session(db)
+        db.search("salary", limit=10, user_id=user_id)
+        return _find_stmt(sess, "SELECT")
+
+    def test_scoped_search_is_own_or_shared_with_uid_bound(self, mock_db):
+        stmt = self._search_select(mock_db, "alice")
+        sql = str(stmt)
+        assert "user_id =" in sql
+        assert "user_id IS NULL" in sql
+        assert " OR " in sql
+        # The caller id is a bound parameter (never interpolated).
+        assert "alice" in _params(stmt).values()
+
+    def test_scoped_search_binds_each_caller(self, mock_db):
+        assert "bob" in _params(self._search_select(mock_db, "bob")).values()
+
+    def test_admin_search_has_no_user_predicate(self, mock_db):
+        # user_id is neither selected nor filtered — admin sees everything.
+        assert "user_id" not in str(self._search_select(mock_db, None))
+
+    async def test_async_search_scopes_too(self, mock_db):
+        sess = _install_session(mock_db)
+        await mock_db.async_search("salary", limit=10, user_id="alice")
+        stmt = _find_stmt(sess, "SELECT")
+        assert "user_id IS NULL" in str(stmt)
+        assert "alice" in _params(stmt).values()
+
+
+# --------------------------------------------------------------------------- #
+# 4. Scoped dedup — upsert's pre-delete is scoped to the writing owner.
+# --------------------------------------------------------------------------- #
+class TestUpsertDedupScoping:
+    """The sync upsert dedup path keys on ``content_hash`` scoped by owner: it
+    checks/deletes only the writer's own bucket, so a second owner uploading
+    identical content can't evict the first owner's row."""
+
+    def test_dedup_check_is_scoped_to_writing_owner(self, mock_db):
+        mock_db.content_hash_exists = MagicMock(return_value=False)
+        _install_session(mock_db)
+        mock_db.upsert(content_hash="h1", documents=[Document(name="d", content="c")], user_id="bob")
+        mock_db.content_hash_exists.assert_called_once_with("h1", user_id="bob")
+
+    def test_dedup_delete_is_scoped_to_writing_owner(self, mock_db):
+        # Writer's own chunk already exists -> a pre-delete fires, scoped to bob.
+        mock_db.content_hash_exists = MagicMock(return_value=True)
+        sess = _install_session(mock_db)
+        mock_db.upsert(content_hash="h1", documents=[Document(name="d", content="c")], user_id="bob")
+        delete_stmt = _find_stmt(sess, "DELETE")
+        sql = str(delete_stmt)
+        assert "content_hash =" in sql
+        assert "user_id =" in sql
+        params = _params(delete_stmt)
+        assert params.get("content_hash_1") == "h1"
+        assert "bob" in params.values()
+
+    def test_shared_upsert_dedup_deletes_only_shared_bucket(self, mock_db):
+        # A shared (None) re-ingest scopes its pre-delete to user_id IS NULL,
+        # never touching an owner's identical-content row.
+        mock_db.content_hash_exists = MagicMock(return_value=True)
+        sess = _install_session(mock_db)
+        mock_db.upsert(content_hash="h1", documents=[Document(name="d", content="c")], user_id=None)
+        delete_stmt = _find_stmt(sess, "DELETE")
+        sql = str(delete_stmt)
+        assert "user_id IS NULL" in sql
+        # No owner is bound — the delete does not target any concrete user.
+        assert "user_id =" not in sql
+
+    async def test_async_upsert_has_no_dedup_guard(self, mock_db):
+        """OBSERVATION (not a fix): ``async_upsert`` has NO dedup guard — it
+        never calls ``content_hash_exists`` or ``_delete_by_content_hash`` and
+        goes straight to insert-with-ON-DUPLICATE-KEY-UPDATE. So no scoped
+        pre-delete statement is emitted. This asymmetry with the sync ``upsert``
+        is noted here, not corrected in the adapter."""
+        mock_db.content_hash_exists = MagicMock()
+        mock_db._delete_by_content_hash = MagicMock()
+        sess = _install_session(mock_db)
+        await mock_db.async_upsert(content_hash="h1", documents=[Document(name="d", content="c")], user_id="bob")
+        mock_db.content_hash_exists.assert_not_called()
+        mock_db._delete_by_content_hash.assert_not_called()
+        # Only INSERT-shaped statements are emitted (no DELETE pre-clear).
+        assert all(not str(s).strip().upper().startswith("DELETE") for s in sess.captured)
+
+
+# --------------------------------------------------------------------------- #
+# 5. Scoped delete — delete_by_content_id and _delete_by_content_hash.
+# --------------------------------------------------------------------------- #
+class TestDeleteByContentIdScoping:
+    """``delete_by_content_id(content_id, user_id=...)`` restricts to that owner
+    so Bob guessing Alice's content_id under his own scope can't touch her rows.
+    Admin (``None``) spans all owners (content_id only)."""
+
+    def _delete_stmt(self, db, user_id):
+        sess = _install_session(db, rowcount=1)
+        db.delete_by_content_id("doc-1", user_id=user_id)
+        return _find_stmt(sess, "DELETE")
+
+    def test_scoped_delete_restricts_to_owner(self, mock_db):
+        stmt = self._delete_stmt(mock_db, "bob")
+        sql = str(stmt)
+        assert "content_id =" in sql
+        assert "user_id =" in sql
+        params = _params(stmt)
+        assert params.get("content_id_1") == "doc-1"
+        assert "bob" in params.values()
+
+    def test_scoped_delete_binds_each_caller(self, mock_db):
+        # Carol (a non-owner) is bound in — she can only match her own rows,
+        # so the delete misses Alice's/Bob's by construction.
+        assert "carol" in _params(self._delete_stmt(mock_db, "carol")).values()
+
+    def test_unscoped_delete_spans_all_owners(self, mock_db):
+        # user_id=None -> content_id only, no owner predicate.
+        assert "user_id" not in str(self._delete_stmt(mock_db, None))
+
+
+class TestDeleteByContentHashScoping:
+    """``_delete_by_content_hash`` is the dedup primitive. Scoped to an owner it
+    deletes only that owner's rows; ``None`` scopes to the SHARED bucket
+    (user_id IS NULL), NOT every owner — so a shared re-upsert never wipes a
+    scoped owner's identical-content row."""
+
+    def _delete_stmt(self, db, user_id):
+        sess = _install_session(db, rowcount=1)
+        db._delete_by_content_hash("h", user_id=user_id)
+        return _find_stmt(sess, "DELETE")
+
+    def test_scoped_hash_delete_restricts_to_owner(self, mock_db):
+        stmt = self._delete_stmt(mock_db, "alice")
+        sql = str(stmt)
+        assert "content_hash =" in sql
+        assert "user_id =" in sql
+        assert "alice" in _params(stmt).values()
+
+    def test_none_hash_delete_scopes_to_shared_bucket(self, mock_db):
+        stmt = self._delete_stmt(mock_db, None)
+        sql = str(stmt)
+        assert "content_hash =" in sql
+        # Shared bucket = user_id IS NULL, and NOT a concrete owner match.
+        assert "user_id IS NULL" in sql
+        assert "user_id =" not in sql
+
+
+# --------------------------------------------------------------------------- #
+# Async write stamps the owner too.
+# --------------------------------------------------------------------------- #
+class TestAsyncWriteStampsOwner:
+    async def test_async_insert_stamps_owner(self, mock_db):
+        sess = _install_session(mock_db)
+        await mock_db.async_insert(content_hash="ha", documents=_alice_docs(), user_id="alice")
+        assert _params(_find_stmt(sess, "INSERT")).get("user_id") == "alice"
+
+    async def test_async_insert_none_is_null(self, mock_db):
+        sess = _install_session(mock_db)
+        await mock_db.async_insert(content_hash="hs", documents=_shared_docs(), user_id=None)
+        assert _params(_find_stmt(sess, "INSERT")).get("user_id") is None

@@ -133,7 +133,7 @@ def main() -> None:
     print("\n=== Agent-mediated test ===\n")
     alice_agent = Agent(
         name="Alice's Assistant",
-        model=OpenAIResponses(id="gpt-5.4"),
+        model=OpenAIResponses(id="gpt-5.5"),
         knowledge=knowledge,
         # Pin the agent to Alice's identity for retrieval. In a real
         # deployment this comes from JWT.sub / get_scoped_user_id(request).

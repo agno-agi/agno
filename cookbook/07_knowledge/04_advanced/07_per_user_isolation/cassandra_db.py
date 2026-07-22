@@ -17,6 +17,7 @@ from pathlib import Path
 
 import cassio
 from agno.agent import Agent
+from agno.knowledge.embedder.openai import OpenAIEmbedder
 from agno.knowledge.knowledge import Knowledge
 from agno.models.openai import OpenAIResponses
 from agno.vectordb.cassandra import Cassandra
@@ -48,10 +49,14 @@ async def main() -> None:
     )
     cassio.init(session=session, keyspace=KEYSPACE)
 
+    # The Cassandra backend fixes its vector column at 1024 dimensions, so
+    # the embedder must emit vectors of that exact width. text-embedding-3
+    # models support a ``dimensions`` override, so pin it to 1024.
     vector_db = Cassandra(
         table_name="per_user_isolation_demo",
         keyspace=KEYSPACE,
         session=session,
+        embedder=OpenAIEmbedder(id="text-embedding-3-small", dimensions=1024),
     )
 
     # Drop any pre-existing table so we start with the current schema. A
@@ -156,7 +161,7 @@ async def main() -> None:
 
     alice_agent = Agent(
         name="Alice's Assistant",
-        model=OpenAIResponses(id="gpt-5.4"),
+        model=OpenAIResponses(id="gpt-5.5"),
         knowledge=knowledge,
         # Pin the agent to Alice's identity for retrieval. In a real
         # deployment this comes from JWT.sub / get_scoped_user_id(request).

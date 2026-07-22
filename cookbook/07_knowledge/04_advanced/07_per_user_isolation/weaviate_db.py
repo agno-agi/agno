@@ -1,14 +1,39 @@
-"""
-Per-User Knowledge Isolation with Weaviate
-==========================================
-Give each user a private view of one shared knowledge base. Documents a user
-uploads are visible only to them; documents uploaded with no user are shared
-with everyone, and an admin (no user id) sees all of it.
+"""Per-user knowledge isolation with Weaviate.
 
-Weaviate does this by storing the owner as a text property and filtering on it,
-treating chunks with no owner as shared.
+Same isolation contract as the pgvector / Qdrant / Chroma cookbooks in
+this directory, against a different backend. The
+``Knowledge.asearch(user_id=...)`` API is identical — only the underlying
+primitive changes:
 
-Setup: ./cookbook/scripts/run_weaviate.sh
+  * Weaviate stores the owner as a text property ``user_id`` on each
+    object. Owned chunks carry the uploader's id; shared chunks carry no
+    owner.
+
+  * Scoped reads compile to a Weaviate ``Filter`` of the form
+    ``user_id == caller OR user_id IS NULL`` — the caller's bucket plus
+    the shared bucket. Passing ``user_id=None`` adds no owner predicate,
+    so the admin / debugging path sees everything.
+
+Three uploads, four scoped queries:
+
+  1. Alice and Bob each upload private content.
+  2. An admin uploads org-wide content (``user_id`` left ``None``).
+  3. Alice asks about Alice — sees her chunk plus shared content.
+  4. Alice asks about Bob — sees ZERO bob chunks (assertion below).
+  5. Bob asks about holidays — sees the shared bucket.
+  6. Admin (``user_id=None``) sees everything.
+
+Prerequisites:
+
+  * Weaviate running locally. From the repo root::
+
+      ./cookbook/scripts/run_weaviate.sh
+
+  * ``OPENAI_API_KEY`` set in your environment (or swap the model below).
+
+Run:
+
+    python cookbook/07_knowledge/04_advanced/07_per_user_isolation/weaviate_db.py
 """
 
 import asyncio
@@ -21,6 +46,7 @@ from agno.vectordb.weaviate import Distance, VectorIndex, Weaviate
 
 
 def _write_temp_doc(name: str, body: str) -> str:
+    """Write a tiny text file we can ingest. Returns the absolute path."""
     p = Path(f"/tmp/{name}")
     p.write_text(body)
     return str(p)
@@ -101,7 +127,7 @@ async def main() -> None:
     print("\n=== Agent-mediated test ===\n")
     alice_agent = Agent(
         name="Alice's Assistant",
-        model=OpenAIResponses(id="gpt-5.4"),
+        model=OpenAIResponses(id="gpt-5.5"),
         knowledge=knowledge,
         user_id="alice",
         instructions=[

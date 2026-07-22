@@ -1,6 +1,26 @@
+"""Weaviate per-user RAG isolation contract (pure unit test, no server).
+
+Weaviate stores ``user_id`` as a first-class TEXT property (FIELD tokenization so
+the scope filter matches the owner exactly). Scoped searches filter on
+``user_id == caller OR user_id IS NULL`` so admin-uploaded shared content stays
+discoverable; ``user_id=None`` at search time applies no scope (admin view).
+
+This suite mocks the Weaviate client/collection so it runs with NO server. The
+isolation logic lives in the values the adapter writes and the ``Filter`` it
+builds, so we introspect those directly:
+
+* inserted object properties -> the stamped ``user_id`` and the owner-folded uuid,
+* the ``Filter`` handed to ``query.near_vector`` / ``data.delete_many`` -> flattened
+  to ``(target, operator, value)`` leaves plus the AND/OR combinator.
+
+Caveat (stated honestly): a mocked collection cannot prove Weaviate's engine
+*enforces* the filter — only that the adapter builds the own-OR-shared / owner-scoped
+predicate. The engine's semantics are exercised by the server-backed suites.
+"""
+
 import uuid
 from hashlib import md5
-from typing import List
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -11,519 +31,362 @@ from agno.vectordb.search import SearchType  # noqa: E402
 from agno.vectordb.weaviate import Weaviate  # noqa: E402
 
 TEST_COLLECTION = "IsolationTest"
-
-# Non-default ports so we don't collide with a developer's local Weaviate.
-EMBEDDED_PORT = 8079
-EMBEDDED_GRPC_PORT = 50050
-EMBEDDED_VERSION = "1.27.0"
+USER_ID_KEY = Weaviate.USER_ID_KEY
 
 
-class _DeterministicEmbedder:
-    """A tiny embedder that needs no network or API key.
-
-    The content steers the vector so distinct documents land in distinct
-    buckets — that's all the isolation tests need, and it exposes a real async
-    surface too."""
-
-    dimensions = 8
-    enable_batch = False
-
-    def get_embedding(self, text):
-        vector = [0.0] * self.dimensions
-        vector[abs(hash(text)) % self.dimensions] = 1.0
-        return vector
-
-    def get_embedding_and_usage(self, text):
-        return self.get_embedding(text), {"total_tokens": 1}
-
-    async def async_get_embedding(self, text):
-        return self.get_embedding(text)
-
-    async def async_get_embedding_and_usage(self, text):
-        return self.get_embedding(text), {"total_tokens": 1}
-
-    def embed(self, document, *args, **kwargs):
-        document.embedding = self.get_embedding(document.content)
-        document.usage = {"total_tokens": 1}
-
-    async def async_embed(self, document, *args, **kwargs):
-        document.embedding = self.get_embedding(document.content)
-        document.usage = {"total_tokens": 1}
+# --- Filter introspection -------------------------------------------------
+# weaviate Filter nodes: a leaf ``_FilterValue`` exposes .target/.operator/.value;
+# a boolean ``_FilterAnd`` / ``_FilterOr`` exposes .filters. We flatten to the
+# isolation-determining shape so assertions bite on the real predicate.
 
 
-@pytest.fixture(scope="module")
-def embedded_server():
-    """Start one embedded Weaviate for the module and hold it open.
+def _leaves(f):
+    """Flatten a Filter into ordered (target, operator, value) leaf tuples."""
+    if f is None:
+        return []
+    if hasattr(f, "filters"):
+        out = []
+        for sub in f.filters:
+            out.extend(_leaves(sub))
+        return out
+    return [(f.target, f.operator.value, f.value)]
 
-    The Weaviate class opens/closes its own local clients per operation; if the
-    test owned a single shared client the class's ``close()`` calls would shut
-    the embedded process down. Holding the server here keeps it alive."""
-    try:
-        server = weaviate.connect_to_embedded(
-            version=EMBEDDED_VERSION,
-            port=EMBEDDED_PORT,
-            grpc_port=EMBEDDED_GRPC_PORT,
-            # CI/dev disks can be tight; Weaviate flips a shard read-only at 90%
-            # disk use by default, which fails index builds and vector search.
-            # Raise the thresholds so the isolation tests can write and query.
-            environment_variables={
-                "DISK_USE_WARNING_PERCENTAGE": "99",
-                "DISK_USE_READONLY_PERCENTAGE": "100",
-            },
+
+def _combinator(f):
+    """The top-level node kind: _FilterOr, _FilterAnd or _FilterValue."""
+    return type(f).__name__
+
+
+# --- Fakes ----------------------------------------------------------------
+
+
+def _empty_response():
+    resp = MagicMock()
+    resp.objects = []
+    return resp
+
+
+def _make_collection():
+    collection = MagicMock()
+    collection.query.near_vector.return_value = _empty_response()
+    collection.query.bm25.return_value = _empty_response()
+    collection.query.hybrid.return_value = _empty_response()
+    collection.query.fetch_objects.return_value = _empty_response()
+    delete_result = MagicMock()
+    delete_result.successful = 1
+    collection.data.delete_many.return_value = delete_result
+    return collection
+
+
+def _make_client(collection):
+    client = MagicMock()
+    client.is_connected.return_value = True
+    client.is_ready.return_value = True
+    client.collections.get.return_value = collection
+    client.collections.exists.return_value = True
+    return client
+
+
+def _make_async_collection():
+    collection = MagicMock()
+    collection.query.near_vector = AsyncMock(return_value=_empty_response())
+    collection.query.bm25 = AsyncMock(return_value=_empty_response())
+    collection.query.hybrid = AsyncMock(return_value=_empty_response())
+    collection.data.insert = AsyncMock()
+    return collection
+
+
+def _make_async_client(collection):
+    client = MagicMock()
+    client.is_connected.return_value = True
+    client.is_ready = AsyncMock(return_value=True)
+    client.connect = AsyncMock()
+    client.close = AsyncMock()
+    client.collections.get.return_value = collection
+    client.collections.exists = AsyncMock(return_value=True)
+    return client
+
+
+class _Env:
+    """Bundle of the db under test plus the mocked sync/async collections."""
+
+    def __init__(self, db, sync_collection, async_collection):
+        self.db = db
+        self.sync_collection = sync_collection
+        self.async_collection = async_collection
+
+
+@pytest.fixture
+def mock_embedder():
+    """A tiny embedder needing no network; batch path disabled for determinism."""
+    mock = MagicMock()
+    mock.dimensions = 8
+    mock.enable_batch = False
+    vec = [0.1] * 8
+    mock.get_embedding.return_value = vec
+    mock.get_embedding_and_usage.return_value = (vec, {"total_tokens": 1})
+    mock.async_get_embedding_and_usage = AsyncMock(return_value=(vec, {"total_tokens": 1}))
+    return mock
+
+
+@pytest.fixture
+def env(mock_embedder):
+    """Weaviate wired to mocked clients; a real connection would fail loudly."""
+    sync_collection = _make_collection()
+    sync_client = _make_client(sync_collection)
+    async_collection = _make_async_collection()
+    async_client = _make_async_client(async_collection)
+
+    with (
+        patch.object(weaviate, "connect_to_local", side_effect=AssertionError("must not open a real connection")),
+        patch.object(
+            weaviate, "connect_to_weaviate_cloud", side_effect=AssertionError("must not open a real connection")
+        ),
+        patch.object(weaviate, "use_async_with_local", return_value=async_client),
+    ):
+        db = Weaviate(
+            collection=TEST_COLLECTION,
+            local=True,
+            embedder=mock_embedder,
+            client=sync_client,
+            search_type=SearchType.vector,
         )
-    except Exception as e:  # pragma: no cover - environment dependent
-        pytest.skip(f"Embedded Weaviate unavailable: {e}")
-
-    # Make sure it actually came up before any test runs.
-    try:
-        if not server.is_ready():  # pragma: no cover
-            server.close()
-            pytest.skip("Embedded Weaviate did not become ready")
-    except Exception as e:  # pragma: no cover
-        pytest.skip(f"Embedded Weaviate not ready: {e}")
-
-    yield server
-    try:
-        server.close()
-    except Exception:
-        pass
+        yield _Env(db, sync_collection, async_collection)
 
 
-@pytest.fixture
-def patched_local(monkeypatch, embedded_server):
-    """Point the Weaviate class's local connectors at the embedded server.
-
-    The class calls ``connect_to_local()`` / ``use_async_with_local()`` with no
-    port; we redirect them to the embedded server's non-default ports so its
-    open/close cycle reconnects to the running embedded instance."""
-    real_local = weaviate.connect_to_local
-    real_async_local = weaviate.use_async_with_local
-
-    def _local(*args, **kwargs):
-        kwargs.setdefault("port", EMBEDDED_PORT)
-        kwargs.setdefault("grpc_port", EMBEDDED_GRPC_PORT)
-        return real_local(**kwargs)
-
-    def _async_local(*args, **kwargs):
-        kwargs.setdefault("port", EMBEDDED_PORT)
-        kwargs.setdefault("grpc_port", EMBEDDED_GRPC_PORT)
-        return real_async_local(**kwargs)
-
-    monkeypatch.setattr(weaviate, "connect_to_local", _local)
-    monkeypatch.setattr(weaviate, "use_async_with_local", _async_local)
-    yield
-
-
-def _make_db(patched_local, search_type=SearchType.vector) -> Weaviate:
-    db = Weaviate(
-        collection=TEST_COLLECTION,
-        local=True,
-        embedder=_DeterministicEmbedder(),
-        search_type=search_type,
-    )
-    # Always start from a clean collection so tests don't see each other's rows.
-    try:
-        db.drop()
-    except Exception:
-        pass
-    db.create()
-    return db
-
-
-@pytest.fixture
-def vector_db(patched_local):
-    db = _make_db(patched_local, SearchType.vector)
-    yield db
-    try:
-        db.drop()
-    except Exception:
-        pass
-
-
-@pytest.fixture
-def keyword_db(patched_local):
-    db = _make_db(patched_local, SearchType.keyword)
-    yield db
-    try:
-        db.drop()
-    except Exception:
-        pass
-
-
-@pytest.fixture
-def hybrid_db(patched_local):
-    db = _make_db(patched_local, SearchType.hybrid)
-    yield db
-    try:
-        db.drop()
-    except Exception:
-        pass
-
-
-def _alice_docs() -> List[Document]:
+def _alice_docs():
     return [Document(name="alice-salary", content="Alice salary is 180k secret")]
 
 
-def _bob_docs() -> List[Document]:
+def _bob_docs():
     return [Document(name="bob-salary", content="Bob salary is 215k secret")]
 
 
-def _shared_docs() -> List[Document]:
+def _shared_docs():
     return [Document(name="company-holidays", content="The office salary policy is shared")]
 
 
-def _owners(db) -> List:
-    """Read the raw ``user_id`` property of every stored object via a fresh
-    client, sorted with NULLs last for stable assertions."""
-    client = weaviate.connect_to_local(port=EMBEDDED_PORT, grpc_port=EMBEDDED_GRPC_PORT)
-    try:
-        collection = client.collections.get(TEST_COLLECTION)
-        objs = collection.query.fetch_objects(limit=100).objects
-        return sorted(
-            (o.properties.get(Weaviate.USER_ID_KEY) for o in objs),
-            key=lambda x: (x is None, x),
-        )
-    finally:
-        client.close()
-
-
-def _count(db) -> int:
-    client = weaviate.connect_to_local(port=EMBEDDED_PORT, grpc_port=EMBEDDED_GRPC_PORT)
-    try:
-        collection = client.collections.get(TEST_COLLECTION)
-        return len(collection.query.fetch_objects(limit=1000).objects)
-    finally:
-        client.close()
-
-
-class TestSchema:
-    """The schema must expose ``user_id`` as a first-class property."""
-
-    def test_collection_has_user_id_property(self, vector_db):
-        client = weaviate.connect_to_local(port=EMBEDDED_PORT, grpc_port=EMBEDDED_GRPC_PORT)
-        try:
-            config = client.collections.get(TEST_COLLECTION).config.get()
-            names = {p.name for p in config.properties}
-            assert Weaviate.USER_ID_KEY in names
-        finally:
-            client.close()
-
-    def test_user_id_key_constant(self):
-        # Storage-compatibility marker: changing this orphans previously
-        # written rows from the scope filter.
-        assert Weaviate.USER_ID_KEY == "user_id"
+def _last_insert(collection):
+    return collection.data.insert.call_args
 
 
 class TestWriteStampsOwner:
-    """Inserts must stamp the owner on the top-level ``user_id`` property."""
+    """Inserts stamp the owner on the top-level ``user_id`` property; None (and
+    omitted) land in the shared bucket (property is None)."""
 
-    def test_explicit_user_id_persisted(self, vector_db):
-        vector_db.insert(content_hash="h1", documents=_alice_docs(), user_id="alice")
-        assert _owners(vector_db) == ["alice"]
+    def test_explicit_user_id_persisted(self, env):
+        env.db.insert(content_hash="h1", documents=_alice_docs(), user_id="alice")
+        props = _last_insert(env.sync_collection).kwargs["properties"]
+        assert props[USER_ID_KEY] == "alice"
 
-    def test_none_user_id_persisted_as_null(self, vector_db):
-        vector_db.insert(content_hash="h1", documents=_shared_docs(), user_id=None)
-        assert _owners(vector_db) == [None]
+    def test_none_user_id_persisted_as_null(self, env):
+        env.db.insert(content_hash="h1", documents=_shared_docs(), user_id=None)
+        props = _last_insert(env.sync_collection).kwargs["properties"]
+        assert props[USER_ID_KEY] is None
 
-    def test_user_id_omitted_defaults_to_null(self, vector_db):
-        vector_db.insert(content_hash="h1", documents=_shared_docs())
-        assert _owners(vector_db) == [None]
-
-
-class TestVectorSearchIsolation:
-    """The load-bearing test: alice sees her own + shared, never bob's."""
-
-    @pytest.fixture
-    def populated(self, vector_db):
-        vector_db.insert(content_hash="ha", documents=_alice_docs(), user_id="alice")
-        vector_db.insert(content_hash="hb", documents=_bob_docs(), user_id="bob")
-        vector_db.insert(content_hash="hs", documents=_shared_docs(), user_id=None)
-        return vector_db
-
-    def test_alice_sees_her_own(self, populated):
-        names = {d.name for d in populated.search("salary", limit=10, user_id="alice")}
-        assert "alice-salary" in names
-
-    def test_alice_sees_shared(self, populated):
-        names = {d.name for d in populated.search("salary", limit=10, user_id="alice")}
-        assert "company-holidays" in names
-
-    def test_alice_never_sees_bob(self, populated):
-        results = populated.search("salary", limit=10, user_id="alice")
-        names = {d.name for d in results}
-        assert "bob-salary" not in names
-        for d in results:
-            assert "Bob salary" not in d.content
-
-    def test_bob_never_sees_alice(self, populated):
-        names = {d.name for d in populated.search("salary", limit=10, user_id="bob")}
-        assert "alice-salary" not in names
-
-    def test_admin_sees_everything(self, populated):
-        names = {d.name for d in populated.search("salary", limit=10, user_id=None)}
-        assert {"alice-salary", "bob-salary", "company-holidays"} <= names
+    def test_user_id_omitted_defaults_to_null(self, env):
+        env.db.insert(content_hash="h1", documents=_shared_docs())
+        props = _last_insert(env.sync_collection).kwargs["properties"]
+        assert props[USER_ID_KEY] is None
 
 
-class TestOwnerTokenizationIsolation:
-    """A user_id that tokenizes (e.g. an Auth0 provider|sub) must match its owner
-    exactly. With the default WORD tokenization the scope filter matches any owner
-    whose id shares a token, leaking across users; the user_id property is declared
-    with FIELD tokenization to prevent this."""
+class TestOwnerFoldedId:
+    """Two owners uploading byte-identical content get DISTINCT uuids (the owner
+    is folded into the id), so one insert never clobbers the other. The shared
+    (user_id=None) write keeps the base (owner-free) uuid."""
 
-    @pytest.fixture
-    def populated(self, vector_db):
-        vector_db.insert(content_hash="ha", documents=_alice_docs(), user_id="alice")
-        vector_db.insert(
-            content_hash="hx",
-            documents=[Document(name="impostor-salary", content="Impostor salary is 999k secret")],
-            user_id="auth0|alice",
+    def _insert_uuid(self, env, user_id):
+        env.sync_collection.data.insert.reset_mock()
+        env.db.insert(
+            content_hash="shared_hash",
+            documents=[Document(name="doc", content="identical secret body")],
+            user_id=user_id,
         )
-        return vector_db
+        return _last_insert(env.sync_collection).kwargs["uuid"]
 
-    def test_alice_does_not_see_token_neighbor(self, populated):
-        names = {d.name for d in populated.search("salary", limit=10, user_id="alice")}
-        assert "alice-salary" in names
-        assert "impostor-salary" not in names
+    def test_two_owners_get_distinct_uuids(self, env):
+        alice_uuid = self._insert_uuid(env, "alice")
+        bob_uuid = self._insert_uuid(env, "bob")
+        assert alice_uuid != bob_uuid
 
-    def test_token_neighbor_does_not_see_alice(self, populated):
-        names = {d.name for d in populated.search("salary", limit=10, user_id="auth0|alice")}
-        assert "impostor-salary" in names
-        assert "alice-salary" not in names
+    def test_shared_write_keeps_base_uuid(self, env):
+        shared_uuid = self._insert_uuid(env, None)
+        # Base (owner-free) uuid the adapter derives when user_id is None.
+        content = "identical secret body"
+        base_id = md5(content.encode()).hexdigest()
+        record_id = md5(f"{base_id}_shared_hash".encode()).hexdigest()
+        assert shared_uuid == uuid.UUID(hex=record_id[:32])
 
-
-class TestKeywordSearchIsolation:
-    """The scope filter must be applied to BM25 keyword search too."""
-
-    @pytest.fixture
-    def populated(self, keyword_db):
-        keyword_db.insert(content_hash="ha", documents=_alice_docs(), user_id="alice")
-        keyword_db.insert(content_hash="hb", documents=_bob_docs(), user_id="bob")
-        keyword_db.insert(content_hash="hs", documents=_shared_docs(), user_id=None)
-        return keyword_db
-
-    def test_alice_sees_own_and_shared(self, populated):
-        names = {d.name for d in populated.search("salary", limit=10, user_id="alice")}
-        assert "alice-salary" in names
-        assert "company-holidays" in names
-
-    def test_alice_never_sees_bob(self, populated):
-        names = {d.name for d in populated.search("salary", limit=10, user_id="alice")}
-        assert "bob-salary" not in names
-
-    def test_admin_sees_all(self, populated):
-        names = {d.name for d in populated.search("salary", limit=10, user_id=None)}
-        assert {"alice-salary", "bob-salary", "company-holidays"} <= names
+    def test_owner_uuid_differs_from_shared(self, env):
+        alice_uuid = self._insert_uuid(env, "alice")
+        shared_uuid = self._insert_uuid(env, None)
+        assert alice_uuid != shared_uuid
 
 
-class TestHybridSearchIsolation:
-    """The scope filter must be applied to hybrid search too."""
+class TestSearchScope:
+    """A scoped search filters own-OR-shared (user_id == caller OR IS NULL); an
+    admin search (user_id=None) applies no filter. This IS the read contract."""
 
-    @pytest.fixture
-    def populated(self, hybrid_db):
-        hybrid_db.insert(content_hash="ha", documents=_alice_docs(), user_id="alice")
-        hybrid_db.insert(content_hash="hb", documents=_bob_docs(), user_id="bob")
-        hybrid_db.insert(content_hash="hs", documents=_shared_docs(), user_id=None)
-        return hybrid_db
+    def test_scoped_vector_search_is_own_or_shared(self, env):
+        env.db.search("salary", limit=10, user_id="alice")
+        sent = env.sync_collection.query.near_vector.call_args.kwargs["filters"]
+        assert _combinator(sent) == "_FilterOr"
+        assert _leaves(sent) == [
+            (USER_ID_KEY, "Equal", "alice"),
+            (USER_ID_KEY, "IsNull", True),
+        ]
 
-    def test_alice_sees_own_and_shared(self, populated):
-        names = {d.name for d in populated.search("salary", limit=10, user_id="alice")}
-        assert "alice-salary" in names
-        assert "company-holidays" in names
+    def test_scoped_search_never_names_other_owner(self, env):
+        env.db.search("salary", limit=10, user_id="alice")
+        sent = env.sync_collection.query.near_vector.call_args.kwargs["filters"]
+        assert all(value != "bob" for _, _, value in _leaves(sent))
 
-    def test_alice_never_sees_bob(self, populated):
-        names = {d.name for d in populated.search("salary", limit=10, user_id="alice")}
-        assert "bob-salary" not in names
+    def test_admin_search_has_no_scope(self, env):
+        env.db.search("salary", limit=10, user_id=None)
+        assert env.sync_collection.query.near_vector.call_args.kwargs["filters"] is None
 
-    def test_admin_sees_all(self, populated):
-        names = {d.name for d in populated.search("salary", limit=10, user_id=None)}
-        assert {"alice-salary", "bob-salary", "company-holidays"} <= names
+    def test_keyword_search_scoped(self, env):
+        env.db.search_type = SearchType.keyword
+        env.db.search("salary", limit=10, user_id="alice")
+        sent = env.sync_collection.query.bm25.call_args.kwargs["filters"]
+        assert _combinator(sent) == "_FilterOr"
+        assert _leaves(sent) == [
+            (USER_ID_KEY, "Equal", "alice"),
+            (USER_ID_KEY, "IsNull", True),
+        ]
 
-
-class TestAsyncSearchIsolation:
-    """Async paths must isolate identically across all three search modes.
-
-    Embedded mode is a single real server, so the documents inserted via the
-    sync path here are visible to the async search path."""
-
-    @pytest.fixture
-    def populated(self, vector_db):
-        vector_db.insert(content_hash="ha", documents=_alice_docs(), user_id="alice")
-        vector_db.insert(content_hash="hb", documents=_bob_docs(), user_id="bob")
-        vector_db.insert(content_hash="hs", documents=_shared_docs(), user_id=None)
-        return vector_db
-
-    async def test_async_vector_alice_isolated(self, populated):
-        names = {d.name for d in await populated.async_search("salary", limit=10, user_id="alice")}
-        assert "alice-salary" in names
-        assert "company-holidays" in names
-        assert "bob-salary" not in names
-
-    async def test_async_vector_admin_sees_all(self, populated):
-        names = {d.name for d in await populated.async_search("salary", limit=10, user_id=None)}
-        assert {"alice-salary", "bob-salary", "company-holidays"} <= names
-
-    async def test_async_keyword_alice_isolated(self, keyword_db):
-        keyword_db.insert(content_hash="ha", documents=_alice_docs(), user_id="alice")
-        keyword_db.insert(content_hash="hb", documents=_bob_docs(), user_id="bob")
-        names = {d.name for d in await keyword_db.async_search("salary", limit=10, user_id="alice")}
-        assert "alice-salary" in names
-        assert "bob-salary" not in names
-
-    async def test_async_hybrid_alice_isolated(self, hybrid_db):
-        hybrid_db.insert(content_hash="ha", documents=_alice_docs(), user_id="alice")
-        hybrid_db.insert(content_hash="hb", documents=_bob_docs(), user_id="bob")
-        names = {d.name for d in await hybrid_db.async_search("salary", limit=10, user_id="alice")}
-        assert "alice-salary" in names
-        assert "bob-salary" not in names
-
-    async def test_async_insert_stamps_owner(self, vector_db):
-        await vector_db.async_insert(content_hash="ha", documents=_alice_docs(), user_id="alice")
-        await vector_db.async_insert(content_hash="hs", documents=_shared_docs(), user_id=None)
-        assert _owners(vector_db) == ["alice", None]
+    def test_hybrid_search_scoped(self, env):
+        env.db.search_type = SearchType.hybrid
+        env.db.search("salary", limit=10, user_id="alice")
+        sent = env.sync_collection.query.hybrid.call_args.kwargs["filters"]
+        assert _combinator(sent) == "_FilterOr"
+        assert _leaves(sent) == [
+            (USER_ID_KEY, "Equal", "alice"),
+            (USER_ID_KEY, "IsNull", True),
+        ]
 
 
-class TestDeleteByContentIdIsolation:
-    """``delete_by_content_id(content_id, user_id=...)`` must scope to the owner
-    so a caller can't wipe another user's (or shared) chunks by guessing the id."""
+class TestScopedDedup:
+    """The upsert dedup delete is scoped to the writing owner, so re-ingesting
+    shared content never wipes an owner's identical-content row (and vice versa)."""
 
-    @pytest.fixture
-    def populated(self, vector_db):
-        alice_doc = Document(name="alice-doc", content="Alice secret content")
-        alice_doc.content_id = "doc-1"
-        bob_doc = Document(name="bob-doc", content="Bob secret content")
-        bob_doc.content_id = "doc-1"
-        shared_doc = Document(name="shared-doc", content="Shared content here")
-        shared_doc.content_id = "doc-1"
-        vector_db.insert(content_hash="ha", documents=[alice_doc], user_id="alice")
-        vector_db.insert(content_hash="hb", documents=[bob_doc], user_id="bob")
-        vector_db.insert(content_hash="hs", documents=[shared_doc], user_id=None)
-        return vector_db
+    def test_owner_upsert_dedup_deletes_only_owner(self, env):
+        env.db.content_hash_exists = MagicMock(return_value=True)
+        env.db.upsert(content_hash="h", documents=_alice_docs(), user_id="alice")
+        where = env.sync_collection.data.delete_many.call_args.kwargs["where"]
+        assert _combinator(where) == "_FilterAnd"
+        assert _leaves(where) == [
+            ("content_hash", "Equal", "h"),
+            (USER_ID_KEY, "Equal", "alice"),
+        ]
 
-    def test_scoped_delete_only_removes_callers_chunks(self, populated):
-        populated.delete_by_content_id("doc-1", user_id="bob")
-        # Bob's chunk gone; alice's and the shared chunk survive.
-        assert _owners(populated) == ["alice", None]
+    def test_shared_upsert_dedup_deletes_only_shared_bucket(self, env):
+        env.db.content_hash_exists = MagicMock(return_value=True)
+        env.db.upsert(content_hash="h", documents=_shared_docs(), user_id=None)
+        where = env.sync_collection.data.delete_many.call_args.kwargs["where"]
+        assert _combinator(where) == "_FilterAnd"
+        assert _leaves(where) == [
+            ("content_hash", "Equal", "h"),
+            (USER_ID_KEY, "IsNull", True),
+        ]
 
-    def test_scoped_delete_does_not_touch_shared(self, populated):
-        populated.delete_by_content_id("doc-1", user_id="alice")
-        assert _owners(populated) == ["bob", None]
-
-    def test_unscoped_delete_wipes_everyone(self, populated):
-        populated.delete_by_content_id("doc-1", user_id=None)
-        assert _count(populated) == 0
-
-    def test_scoped_delete_no_owner_deletes_nothing(self, populated):
-        populated.delete_by_content_id("doc-1", user_id="carol")
-        assert _count(populated) == 3
+    def test_upsert_dedup_check_scoped_to_writing_owner(self, env):
+        env.db.content_hash_exists = MagicMock(return_value=False)
+        env.db.upsert(content_hash="h", documents=_bob_docs(), user_id="bob")
+        env.db.content_hash_exists.assert_called_once_with("h", user_id="bob")
 
 
-class TestRecordUuidClobber:
-    """The object UUID must fold in the owner. Weaviate upserts by UUID, so
-    without the owner two users inserting IDENTICAL content under the SAME
-    content_hash collide on one UUID and one silently overwrites the other."""
+class TestDeleteByContentIdScope:
+    """delete_by_content_id restricts to the owner; only None spans all owners."""
 
-    def test_two_users_same_content_and_hash_coexist(self, vector_db):
-        doc1 = Document(name="secret", content="The secret is 42")
-        doc2 = Document(name="secret", content="The secret is 42")
-        vector_db.insert(content_hash="SAME", documents=[doc1], user_id="alice")
-        vector_db.insert(content_hash="SAME", documents=[doc2], user_id="bob")
-        assert _owners(vector_db) == ["alice", "bob"]
+    def test_scoped_delete_matches_owner_only(self, env):
+        env.db.delete_by_content_id("doc-1", user_id="bob")
+        where = env.sync_collection.data.delete_many.call_args.kwargs["where"]
+        # ANDs the owner on: a scoped caller cannot wipe another owner's chunks,
+        # and does NOT OR in the shared bucket.
+        assert _combinator(where) == "_FilterAnd"
+        assert _leaves(where) == [
+            ("content_id", "Equal", "doc-1"),
+            (USER_ID_KEY, "Equal", "bob"),
+        ]
 
-    def test_clobbered_points_stay_isolated_on_search(self, vector_db):
-        doc1 = Document(name="secret", content="The secret is 42")
-        doc2 = Document(name="secret", content="The secret is 42")
-        vector_db.insert(content_hash="SAME", documents=[doc1], user_id="alice")
-        vector_db.insert(content_hash="SAME", documents=[doc2], user_id="bob")
-        alice = {d.name for d in vector_db.search("secret", limit=10, user_id="alice")}
-        bob = {d.name for d in vector_db.search("secret", limit=10, user_id="bob")}
-        assert alice == {"secret"}
-        assert bob == {"secret"}
-        assert _count(vector_db) == 2
-
-    def test_same_user_reupsert_same_hash_replaces(self, vector_db):
-        # Weaviate's data.insert is create-only (a duplicate UUID errors), so
-        # the same-content replace semantic belongs to upsert, which
-        # dedupe-deletes the owner's prior chunks before re-inserting.
-        doc1 = Document(name="d", content="content v1")
-        doc2 = Document(name="d", content="content v1")
-        vector_db.upsert(content_hash="H", documents=[doc1], user_id="alice")
-        vector_db.upsert(content_hash="H", documents=[doc2], user_id="alice")
-        assert _count(vector_db) == 1
-
-    def test_shared_bucket_keeps_legacy_uuid(self, vector_db):
-        legacy = uuid.UUID(hex=md5(b"x_H").hexdigest()[:32])
-        assert vector_db._record_uuid("x", "H", None) == legacy
-        assert vector_db._record_uuid("x", "H", "alice") != legacy
+    def test_unscoped_delete_is_content_id_only(self, env):
+        env.db.delete_by_content_id("doc-1", user_id=None)
+        where = env.sync_collection.data.delete_many.call_args.kwargs["where"]
+        assert _combinator(where) == "_FilterValue"
+        assert _leaves(where) == [("content_id", "Equal", "doc-1")]
 
 
-class TestUpsertDedupeIsolation:
-    """``upsert`` dedupes by deleting prior chunks with the same content_hash
-    before re-inserting. That delete must be SCOPED to the owner — otherwise
-    Alice re-upserting wipes Bob's chunk that shares the same content_hash."""
+class TestDeleteByContentHashScope:
+    """_delete_by_content_hash scoped to an owner clears only that owner; None
+    clears ONLY the shared (null) bucket, never other owners' identical rows."""
 
-    def test_scoped_dedupe_does_not_touch_other_owner(self, vector_db):
-        vector_db.upsert(content_hash="SH", documents=[Document(name="ad", content="alice v1")], user_id="alice")
-        vector_db.upsert(content_hash="SH", documents=[Document(name="bd", content="bob v1")], user_id="bob")
-        vector_db.upsert(content_hash="SH", documents=[Document(name="ad", content="alice v2")], user_id="alice")
-        assert _owners(vector_db) == ["alice", "bob"]
-        assert _count(vector_db) == 2
+    def test_scoped_delete_matches_owner_only(self, env):
+        env.db._delete_by_content_hash("h", user_id="alice")
+        where = env.sync_collection.data.delete_many.call_args.kwargs["where"]
+        assert _combinator(where) == "_FilterAnd"
+        assert _leaves(where) == [
+            ("content_hash", "Equal", "h"),
+            (USER_ID_KEY, "Equal", "alice"),
+        ]
 
-    def test_same_user_reupsert_replaces(self, vector_db):
-        vector_db.upsert(content_hash="H", documents=[Document(name="d", content="v1")], user_id="alice")
-        vector_db.upsert(content_hash="H", documents=[Document(name="d", content="v2")], user_id="alice")
-        assert _count(vector_db) == 1
-
-    def test_shared_upsert_does_not_wipe_scoped_owners(self, vector_db):
-        """A shared/admin re-ingest (``user_id=None``) under a hash that scoped
-        owners already uploaded must scope its dedupe-delete to the shared bucket
-        only — pre-fix it wiped every scoped owner sharing that content_hash."""
-        vector_db.upsert(content_hash="SAME", documents=[Document(name="ad", content="alice v1")], user_id="alice")
-        vector_db.upsert(content_hash="SAME", documents=[Document(name="bd", content="bob v1")], user_id="bob")
-        # The wipe trigger: a shared re-ingest of the SAME content_hash.
-        vector_db.upsert(content_hash="SAME", documents=[Document(name="sd", content="shared v1")], user_id=None)
-        assert _owners(vector_db) == ["alice", "bob", None]
-        assert vector_db.content_hash_exists("SAME", user_id="alice") is True
-        assert vector_db.content_hash_exists("SAME", user_id="bob") is True
-
-    async def test_async_scoped_dedupe_keeps_other_owner(self, vector_db):
-        await vector_db.async_upsert(
-            content_hash="SH", documents=[Document(name="ad", content="alice v1")], user_id="alice"
-        )
-        await vector_db.async_upsert(
-            content_hash="SH", documents=[Document(name="bd", content="bob v1")], user_id="bob"
-        )
-        await vector_db.async_upsert(
-            content_hash="SH", documents=[Document(name="ad", content="alice v2")], user_id="alice"
-        )
-        assert _owners(vector_db) == ["alice", "bob"]
-        assert _count(vector_db) == 2
+    def test_none_delete_matches_shared_bucket_only(self, env):
+        env.db._delete_by_content_hash("h", user_id=None)
+        where = env.sync_collection.data.delete_many.call_args.kwargs["where"]
+        assert _combinator(where) == "_FilterAnd"
+        assert _leaves(where) == [
+            ("content_hash", "Equal", "h"),
+            (USER_ID_KEY, "IsNull", True),
+        ]
 
 
-class TestUpdateMetadataOwnershipGuard:
-    """``update_metadata`` must NOT let metadata={"user_id": ...} reassign a
-    chunk's tenant — that would let a caller steal or leak the chunk."""
+class TestEmptyUserIdRejected:
+    """Empty / whitespace-only user_id folds to the null bucket under FIELD
+    tokenization, leaking the row to every caller. Writes and reads must reject it."""
 
-    @pytest.fixture
-    def owned(self, vector_db):
-        doc = Document(name="md", content="metadata test content")
-        doc.content_id = "cid-1"
-        vector_db.insert(content_hash="hm", documents=[doc], user_id="alice")
-        return vector_db
+    @pytest.mark.parametrize("bad_id", ["", " ", "   ", "\t", "\n"])
+    def test_insert_rejects(self, env, bad_id):
+        with pytest.raises(ValueError):
+            env.db.insert(content_hash="h1", documents=_alice_docs(), user_id=bad_id)
 
-    def test_caller_cannot_reassign_owner(self, owned):
-        owned.update_metadata("cid-1", {"user_id": "bob", "tag": "x"})
-        assert _owners(owned) == ["alice"]
+    @pytest.mark.parametrize("bad_id", ["", " ", "   ", "\t", "\n"])
+    def test_search_rejects(self, env, bad_id):
+        with pytest.raises(ValueError):
+            env.db.search("salary", limit=10, user_id=bad_id)
 
-    def test_owner_unchanged_alice_keeps_access(self, owned):
-        owned.update_metadata("cid-1", {"user_id": "bob"})
-        alice = {d.name for d in owned.search("metadata", limit=10, user_id="alice")}
-        bob = {d.name for d in owned.search("metadata", limit=10, user_id="bob")}
-        assert "md" in alice
-        assert "md" not in bob
+    @pytest.mark.parametrize("bad_id", ["", " ", "\t"])
+    async def test_async_insert_rejects(self, env, bad_id):
+        with pytest.raises(ValueError):
+            await env.db.async_insert(content_hash="h1", documents=_alice_docs(), user_id=bad_id)
+
+    @pytest.mark.parametrize("bad_id", ["", " ", "\t"])
+    async def test_async_search_rejects(self, env, bad_id):
+        with pytest.raises(ValueError):
+            await env.db.async_search("salary", limit=10, user_id=bad_id)
 
 
-def test_port_constants_distinct():
-    """Defensive: the embedded ports must not be the Weaviate defaults so a
-    developer's running instance is never touched."""
-    assert EMBEDDED_PORT != 8080
-    assert EMBEDDED_GRPC_PORT != 50051
+class TestAsyncIsolation:
+    """The async path must stamp the owner and scope reads identically."""
+
+    async def test_async_insert_stamps_owner(self, env):
+        await env.db.async_insert(content_hash="h1", documents=_alice_docs(), user_id="alice")
+        props = env.async_collection.data.insert.call_args.kwargs["properties"]
+        assert props[USER_ID_KEY] == "alice"
+
+    async def test_async_insert_none_is_shared(self, env):
+        await env.db.async_insert(content_hash="h1", documents=_shared_docs(), user_id=None)
+        props = env.async_collection.data.insert.call_args.kwargs["properties"]
+        assert props[USER_ID_KEY] is None
+
+    async def test_async_search_scoped(self, env):
+        await env.db.async_search("salary", limit=10, user_id="alice")
+        sent = env.async_collection.query.near_vector.call_args.kwargs["filters"]
+        assert _combinator(sent) == "_FilterOr"
+        assert _leaves(sent) == [
+            (USER_ID_KEY, "Equal", "alice"),
+            (USER_ID_KEY, "IsNull", True),
+        ]
+
+    async def test_async_admin_search_has_no_scope(self, env):
+        await env.db.async_search("salary", limit=10, user_id=None)
+        assert env.async_collection.query.near_vector.call_args.kwargs["filters"] is None

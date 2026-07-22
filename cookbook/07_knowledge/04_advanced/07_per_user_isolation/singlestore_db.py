@@ -1,14 +1,42 @@
-"""
-Per-User Knowledge Isolation with SingleStore
-=============================================
-Give each user a private view of one shared knowledge base. Documents a user
-uploads are visible only to them; documents uploaded with no user are shared
-with everyone, and an admin (no user id) sees all of it.
+"""Per-user knowledge isolation with SingleStore.
 
-SingleStore does this by storing the owner in a user_id column and filtering on
-it, leaving the column empty for shared chunks.
+Same isolation contract as the pgvector / Qdrant / Chroma cookbooks in this
+directory, against a different backend. The ``Knowledge.asearch(user_id=...)``
+API is identical — only the underlying primitive changes:
 
-Setup: ./cookbook/scripts/run_singlestore.sh
+  * Alice and Bob each upload their own private documents. When an agent runs
+    as Alice, RAG retrieval finds only Alice's chunks (plus shared content).
+    Bob's chunks are invisible to her agent — and vice-versa.
+
+  * An admin uploads "company-wide" content without an owner. That ends up in
+    the SHARED bucket and is visible to BOTH Alice and Bob.
+
+How it works under the hood (SingleStore):
+
+  * The table has a dedicated ``user_id VARCHAR(255)`` column. Owned chunks
+    carry the uploader's id; shared chunks store NULL.
+
+  * Retrieval (``Knowledge.asearch(user_id=...)``) compiles to a server-side
+    predicate: ``WHERE user_id = 'alice' OR user_id IS NULL`` — caller's rows
+    plus shared rows. The value is bound, never interpolated.
+
+  * When you pass ``user_id=None``, no owner predicate is added — the admin /
+    debugging path. Admins see everything.
+
+Prerequisites:
+
+  * SingleStore running (local container or SingleStore Cloud). Locally::
+
+      ./cookbook/scripts/run_singlestore.sh
+
+    Connection details are read from ``SINGLESTORE_HOST`` / ``_PORT`` /
+    ``_USERNAME`` / ``_PASSWORD`` / ``_DATABASE``.
+
+  * ``OPENAI_API_KEY`` set in your environment (or swap the model below).
+
+Run:
+
+    python cookbook/07_knowledge/04_advanced/07_per_user_isolation/singlestore_db.py
 """
 
 import asyncio
@@ -144,7 +172,7 @@ async def main() -> None:
     print("\n=== Agent-mediated test ===\n")
     alice_agent = Agent(
         name="Alice's Assistant",
-        model=OpenAIResponses(id="gpt-5.4"),
+        model=OpenAIResponses(id="gpt-5.5"),
         knowledge=knowledge,
         # Pin the agent to Alice's identity for retrieval. In a real
         # deployment this comes from JWT.sub / get_scoped_user_id(request).

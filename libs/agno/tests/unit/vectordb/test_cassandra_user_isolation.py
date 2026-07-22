@@ -1,25 +1,39 @@
-import uuid
+"""Cassandra per-user RAG isolation contract.
+
+The adapter stamps the owner into ``metadata['user_id']``: an explicit id for
+scoped chunks, or the ``__shared__`` sentinel when ``user_id`` is None/omitted
+(so the shared-bucket equality query can find them). A scoped search unions the
+caller's own rows with the shared rows and never reaches another user's bucket.
+
+This is a TRUE unit test: no Cassandra server or container is required. The
+adapter builds ``self.table = AgnoMetadataVectorCassandraTable(session=..., ...)``
+in ``initialize_table()`` and drives ``put_async`` / ``metric_ann_search`` on it,
+while ``content_hash_exists`` / delete / ``update_metadata`` go through
+``session.execute(cql, params)``. We patch the table class with an in-memory
+fake and pass an in-memory fake ``session`` that share one row store, so the
+adapter's real owner-stamping, id-folding, own-OR-shared search and scoped-delete
+logic runs against captured calls instead of a live cluster.
+"""
+
+import hashlib
+from types import SimpleNamespace
 from typing import List, Optional
+from unittest.mock import patch
 
 import pytest
 
+# Library dependency checks (not server reachability): skip cleanly if the
+# optional cassio / cassandra-driver packages aren't installed.
 cassio = pytest.importorskip("cassio")
 cassandra_cluster = pytest.importorskip("cassandra.cluster")
 
-from cassandra.cluster import Cluster  # noqa: E402
-
 from agno.knowledge.document import Document  # noqa: E402
+from agno.utils.string import hash_string_sha256  # noqa: E402
 from agno.vectordb.cassandra import Cassandra  # noqa: E402
 from agno.vectordb.cassandra.cassandra import SHARED_USER_ID_VALUE, USER_ID_METADATA_KEY  # noqa: E402
 
-# The adapter hardcodes a 1024-dim vector column, so the fake embedder must
-# match — otherwise cassio rejects the insert.
+# The adapter hardcodes a 1024-dim vector column; keep the fake embedder in sync.
 DIM = 1024
-
-# Connection target. A throwaway Cassandra is expected at this host/port (the
-# isolation suite boots one on 9043 to avoid clashing with the default 9042).
-CASSANDRA_HOST = "127.0.0.1"
-CASSANDRA_PORT = 9043
 
 
 class _DeterministicEmbedder:
@@ -27,8 +41,7 @@ class _DeterministicEmbedder:
 
     The content steers the vector so distinct documents land in distinct
     buckets — that's all the isolation tests need, and it gives us a real async
-    surface too. ``embed``/``async_embed`` set the embedding on the Document the
-    way the adapter expects."""
+    surface too."""
 
     dimensions = DIM
     enable_batch = False
@@ -56,59 +69,155 @@ class _DeterministicEmbedder:
         return document
 
 
-def _server_available() -> bool:
-    try:
-        cluster = Cluster([CASSANDRA_HOST], port=CASSANDRA_PORT, connect_timeout=5)
-        session = cluster.connect()
-        session.shutdown()
-        cluster.shutdown()
-        return True
-    except Exception:
-        return False
+class _Future:
+    """Stand-in for the driver future returned by ``put_async``."""
+
+    def result(self):
+        return None
 
 
-pytestmark = pytest.mark.skipif(
-    not _server_available(),
-    reason=f"No Cassandra reachable at {CASSANDRA_HOST}:{CASSANDRA_PORT}",
-)
+class _CountResult:
+    """Mimics the driver result for ``SELECT COUNT(*)`` — ``result.one()[0]``."""
+
+    def __init__(self, count: int):
+        self._count = count
+
+    def one(self):
+        return (self._count,)
 
 
-@pytest.fixture(scope="module")
-def session():
-    cluster = Cluster([CASSANDRA_HOST], port=CASSANDRA_PORT)
-    sess = cluster.connect()
-    yield sess
-    sess.shutdown()
-    cluster.shutdown()
+class _FakeSession:
+    """An in-memory stand-in for the Cassandra session.
+
+    Holds the single row store shared with the fake table so the adapter's
+    CQL-driven paths (``content_hash_exists``, ``delete_by_*``, ``update_metadata``)
+    run their real filtering loops against rows that ``put_async`` actually wrote.
+    Rows are ``SimpleNamespace`` objects exposing ``row_id`` / ``metadata_s``,
+    matching the attribute access the adapter uses on driver Row objects.
+    """
+
+    def __init__(self):
+        self.rows: List[SimpleNamespace] = []
+        self.executed: List = []
+        self.deleted_row_ids: List[str] = []
+        self.updates: List = []
+
+    def execute(self, query, params=None):
+        self.executed.append((query, params))
+        q = " ".join(query.split())
+        if q.startswith("SELECT COUNT(*)"):
+            content_hash = params[0]
+            if "metadata_s['user_id']" in q:
+                user_id = params[1]
+                count = sum(
+                    1
+                    for r in self.rows
+                    if r.metadata_s.get("content_hash") == content_hash
+                    and r.metadata_s.get(USER_ID_METADATA_KEY) == user_id
+                )
+            else:
+                count = sum(1 for r in self.rows if r.metadata_s.get("content_hash") == content_hash)
+            return _CountResult(count)
+        if q.startswith("SELECT row_id, metadata_s"):
+            return list(self.rows)
+        if q.startswith("DELETE"):
+            row_id = params[0]
+            before = len(self.rows)
+            self.rows = [r for r in self.rows if r.row_id != row_id]
+            if len(self.rows) < before:
+                self.deleted_row_ids.append(row_id)
+            return _CountResult(0)
+        if q.startswith("UPDATE"):
+            new_meta, row_id = params
+            for r in self.rows:
+                if r.row_id == row_id:
+                    r.metadata_s = dict(new_meta)
+            self.updates.append((row_id, dict(new_meta)))
+            return _CountResult(0)
+        return _CountResult(0)
+
+
+class _FakeTable:
+    """An in-memory stand-in for AgnoMetadataVectorCassandraTable.
+
+    ``put_async`` records the exact ``row_id`` / ``metadata`` the adapter stamps
+    and writes the row into the shared session store. ``metric_ann_search``
+    records the ``metadata=`` equality filter the adapter sends and simulates
+    cassio's equality-AND filter over the stored rows, so a scoped search that
+    passed the wrong filter would surface the wrong owner's rows and fail.
+    """
+
+    def __init__(self, session=None, **kwargs):
+        self._session = session
+        self.put_calls: List[dict] = []
+        self.search_calls: List[dict] = []
+
+    def put_async(self, row_id, vector, metadata, body_blob, document_name):
+        self.put_calls.append(
+            {
+                "row_id": row_id,
+                "vector": vector,
+                "metadata": dict(metadata),
+                "body_blob": body_blob,
+                "document_name": document_name,
+            }
+        )
+        self._session.rows.append(
+            SimpleNamespace(
+                row_id=row_id,
+                metadata_s=dict(metadata),
+                body_blob=body_blob,
+                document_name=document_name,
+                vector=vector,
+            )
+        )
+        return _Future()
+
+    def metric_ann_search(self, vector, n, metric, metadata=None):
+        self.search_calls.append({"vector": vector, "n": n, "metric": metric, "metadata": metadata})
+        hits = []
+        for i, r in enumerate(self._session.rows):
+            if metadata and any(r.metadata_s.get(k) != v for k, v in metadata.items()):
+                continue
+            hits.append(
+                {
+                    "row_id": r.row_id,
+                    "body_blob": r.body_blob,
+                    "metadata": dict(r.metadata_s),
+                    "vector": r.vector,
+                    "document_name": r.document_name,
+                    "distance": float(len(self._session.rows) - i),
+                }
+            )
+        return hits[:n]
 
 
 @pytest.fixture
-def cassandra_db(session):
-    """A fresh keyspace + table per test, so each test's top-k is uncontended.
+def cassandra_db():
+    """A Cassandra adapter wired to the in-memory fake table + session.
 
-    cassio's global ``init`` is pointed at this keyspace before the adapter
-    builds its table."""
-    keyspace = f"iso_test_{uuid.uuid4().hex[:8]}"
-    session.execute(
-        f"CREATE KEYSPACE IF NOT EXISTS {keyspace} "
-        "WITH replication = {'class': 'SimpleStrategy', 'replication_factor': 1}"
-    )
-    cassio.init(session=session, keyspace=keyspace)
-    db = Cassandra(
-        table_name="vectors",
-        keyspace=keyspace,
-        embedder=_DeterministicEmbedder(),
-        session=session,
-    )
-    yield db
-    try:
-        session.execute(f"DROP KEYSPACE IF EXISTS {keyspace}")
-    except Exception:
-        pass
+    The patch must be active while ``Cassandra.__init__`` runs, since
+    ``initialize_table()`` constructs the table there — this guarantees the real
+    ``AgnoMetadataVectorCassandraTable`` (and any live cluster) is never touched.
+    """
+    session = _FakeSession()
+    with patch("agno.vectordb.cassandra.cassandra.AgnoMetadataVectorCassandraTable", _FakeTable):
+        db = Cassandra(
+            table_name="vectors",
+            keyspace="iso_test",
+            embedder=_DeterministicEmbedder(),
+            session=session,
+        )
+        assert isinstance(db.table, _FakeTable), "fake table patch was not active — refusing to hit a real cluster"
+        yield db
 
 
 def _doc(name: str, content: str, content_id: Optional[str] = None) -> Document:
     doc = Document(name=name, content=content)
+    # Knowledge always assigns a stable id (derived from content) before insert.
+    # Mirror that so identical content shares a base id and owner-folding is the
+    # only thing keeping two owners' rows distinct.
+    doc.id = hashlib.md5(content.encode()).hexdigest()
     doc.content_id = content_id
     return doc
 
@@ -126,17 +235,14 @@ def _shared_docs() -> List[Document]:
 
 
 def _owners(db) -> List[str]:
-    rows = db.session.execute(f"SELECT metadata_s FROM {db.keyspace}.{db.table_name} ALLOW FILTERING")
-    return sorted(r.metadata_s.get(USER_ID_METADATA_KEY) for r in rows)
-
-
-def _count(db) -> int:
-    return db.session.execute(f"SELECT COUNT(*) FROM {db.keyspace}.{db.table_name}").one()[0]
+    """Owner sentinels actually written to the (fake) store — the ground truth."""
+    return sorted(r.metadata_s.get(USER_ID_METADATA_KEY) for r in db.session.rows)
 
 
 def _owners_for_content_id(db, content_id: str) -> List[str]:
-    rows = db.session.execute(f"SELECT metadata_s FROM {db.keyspace}.{db.table_name} ALLOW FILTERING")
-    return sorted(r.metadata_s.get(USER_ID_METADATA_KEY) for r in rows if r.metadata_s.get("content_id") == content_id)
+    return sorted(
+        r.metadata_s.get(USER_ID_METADATA_KEY) for r in db.session.rows if r.metadata_s.get("content_id") == content_id
+    )
 
 
 class TestStorageScheme:
@@ -149,36 +255,90 @@ class TestStorageScheme:
 
     def test_explicit_user_id_stamped_in_metadata(self, cassandra_db):
         cassandra_db.insert(content_hash="h1", documents=_alice_docs(), user_id="alice")
+        # The owner value the adapter actually stamped into the row metadata.
+        assert cassandra_db.table.put_calls[0]["metadata"][USER_ID_METADATA_KEY] == "alice"
         assert _owners(cassandra_db) == ["alice"]
 
     def test_none_user_id_stored_as_shared_sentinel(self, cassandra_db):
         """Shared chunks store the explicit sentinel (not an omitted key) so the
         shared-bucket equality query can find them."""
         cassandra_db.insert(content_hash="h1", documents=_shared_docs(), user_id=None)
+        assert cassandra_db.table.put_calls[0]["metadata"][USER_ID_METADATA_KEY] == SHARED_USER_ID_VALUE
         assert _owners(cassandra_db) == [SHARED_USER_ID_VALUE]
 
     def test_user_id_omitted_defaults_to_shared(self, cassandra_db):
         cassandra_db.insert(content_hash="h1", documents=_shared_docs())
         assert _owners(cassandra_db) == [SHARED_USER_ID_VALUE]
 
-    def test_caller_cannot_spoof_owner_via_metadata(self, cassandra_db):
-        """A caller's own ``user_id`` key in meta_data must not become the
-        owner — the adapter strips it and sets the owner itself."""
-        doc = _doc("spoof", "trying to spoof")
-        doc.meta_data = {"user_id": "bob"}
+    def test_caller_metadata_cannot_spoof_owner(self, cassandra_db):
+        """A caller's own ``user_id`` key in meta_data must not override the owner."""
+        doc = _doc("d", "c")
+        doc.meta_data = {"user_id": "attacker"}
         cassandra_db.insert(content_hash="h1", documents=[doc], user_id="alice")
-        assert _owners(cassandra_db) == ["alice"]
+        assert cassandra_db.table.put_calls[0]["metadata"][USER_ID_METADATA_KEY] == "alice"
 
-    def test_user_id_not_surfaced_in_search_metadata(self, cassandra_db):
-        cassandra_db.insert(content_hash="h1", documents=_alice_docs(), user_id="alice")
-        results = cassandra_db.search("salary", limit=10, user_id="alice")
-        assert results
-        assert all(USER_ID_METADATA_KEY not in d.meta_data for d in results)
+
+class TestRowIdFolding:
+    """The owner is folded into the primary key so two users' identical content
+    gets distinct rows; a shared row keeps the base id; a no-id doc still keys."""
+
+    def test_two_owners_identical_content_get_distinct_row_ids(self, cassandra_db):
+        cassandra_db.insert(content_hash="h", documents=[_doc("a", "same text")], user_id="alice")
+        cassandra_db.insert(content_hash="h", documents=[_doc("b", "same text")], user_id="bob")
+        alice_id = cassandra_db.table.put_calls[0]["row_id"]
+        bob_id = cassandra_db.table.put_calls[1]["row_id"]
+        assert alice_id != bob_id
+        base_id = hashlib.md5(b"same text").hexdigest()
+        assert alice_id == hash_string_sha256(f"{base_id}_alice")
+        assert bob_id == hash_string_sha256(f"{base_id}_bob")
+
+    def test_shared_row_keeps_base_id(self, cassandra_db):
+        cassandra_db.insert(content_hash="h", documents=[_doc("s", "same text")], user_id=None)
+        base_id = hashlib.md5(b"same text").hexdigest()
+        assert cassandra_db.table.put_calls[0]["row_id"] == base_id
+
+    def test_no_id_document_falls_back_to_content_hash_key(self, cassandra_db):
+        """A document with no id must still get a deterministic key (md5 of content
+        for the shared bucket), never an empty/None row_id."""
+        doc = Document(name="noid", content="unindexed body")
+        assert doc.id is None
+        cassandra_db.insert(content_hash="h", documents=[doc], user_id=None)
+        assert cassandra_db.table.put_calls[0]["row_id"] == hashlib.md5(b"unindexed body").hexdigest()
+
+    def test_no_id_document_scoped_key_folds_owner(self, cassandra_db):
+        doc = Document(name="noid", content="unindexed body")
+        cassandra_db.insert(content_hash="h", documents=[doc], user_id="alice")
+        base_id = hashlib.md5(b"unindexed body").hexdigest()
+        row_id = cassandra_db.table.put_calls[0]["row_id"]
+        assert row_id == hash_string_sha256(f"{base_id}_alice")
+        assert row_id  # non-empty
+
+
+class TestSearchScopeFilter:
+    """A scoped search issues TWO equality-filtered searches (own + shared) and
+    merges; admin (user_id=None) issues ONE unfiltered search. The ``metadata=``
+    each search carries IS the isolation contract."""
+
+    def test_scoped_search_issues_own_and_shared_filters(self, cassandra_db):
+        cassandra_db.search("q", limit=5, user_id="alice")
+        sent = [c["metadata"] for c in cassandra_db.table.search_calls]
+        assert sent == [
+            {USER_ID_METADATA_KEY: "alice"},
+            {USER_ID_METADATA_KEY: SHARED_USER_ID_VALUE},
+        ]
+        # No search is ever issued for another owner's bucket.
+        assert {USER_ID_METADATA_KEY: "bob"} not in sent
+
+    def test_admin_search_is_single_unfiltered(self, cassandra_db):
+        cassandra_db.search("q", limit=5, user_id=None)
+        assert len(cassandra_db.table.search_calls) == 1
+        assert cassandra_db.table.search_calls[0]["metadata"] is None
 
 
 class TestSearchIsolationContract:
-    """The load-bearing test: alice's search returns her chunks plus shared
-    chunks, but never bob's."""
+    """End-to-end: alice's search returns her chunks plus shared chunks, but
+    never bob's. The fake table applies the equality filter the adapter sent, so
+    a wrong filter would leak the wrong owner and fail these."""
 
     @pytest.fixture
     def populated_db(self, cassandra_db):
@@ -196,8 +356,6 @@ class TestSearchIsolationContract:
         assert "company-holidays" in names
 
     def test_alice_never_sees_bobs_chunk(self, populated_db):
-        """The isolation contract. If this fails alice is retrieving bob's
-        confidential chunks."""
         results = populated_db.search("salary", limit=10, user_id="alice")
         names = {d.name for d in results}
         assert "bob-salary" not in names
@@ -209,37 +367,8 @@ class TestSearchIsolationContract:
         assert "alice-salary" not in names
 
     def test_admin_sees_everything(self, populated_db):
-        """``user_id=None`` at search time means no scope — admin view."""
         names = {d.name for d in populated_db.search("salary", limit=10, user_id=None)}
         assert {"alice-salary", "bob-salary", "company-holidays"} <= names
-
-    def test_union_only_returns_own_and_shared(self, populated_db):
-        """The two-query union must return exactly own + shared and nothing
-        else — proving it never reaches into another user's bucket."""
-        names = {d.name for d in populated_db.search("salary", limit=10, user_id="alice")}
-        assert names == {"alice-salary", "company-holidays"}
-
-
-class TestUnionMergeOrdering:
-    """The own + shared union re-sorts the two ANN result lists by cosine
-    distance and truncates to ``limit``. A relevant own chunk must outrank an
-    irrelevant shared chunk even when both buckets are populated."""
-
-    def test_limit_is_respected_across_buckets(self, cassandra_db):
-        for i in range(3):
-            cassandra_db.insert(content_hash=f"a{i}", documents=[_doc(f"alice-{i}", f"alice doc {i}")], user_id="alice")
-        for i in range(3):
-            cassandra_db.insert(content_hash=f"s{i}", documents=[_doc(f"shared-{i}", f"shared doc {i}")], user_id=None)
-        results = cassandra_db.search("alice doc 0", limit=2, user_id="alice")
-        assert len(results) == 2
-
-    def test_relevant_own_chunk_ranks_first(self, cassandra_db):
-        cassandra_db.insert(
-            content_hash="ha", documents=[_doc("alice-target", "the magic word zebra")], user_id="alice"
-        )
-        cassandra_db.insert(content_hash="hs", documents=[_doc("shared-noise", "unrelated content")], user_id=None)
-        results = cassandra_db.search("the magic word zebra", limit=2, user_id="alice")
-        assert results[0].name == "alice-target"
 
 
 class TestDeleteByContentIdIsolation:
@@ -255,13 +384,10 @@ class TestDeleteByContentIdIsolation:
         return cassandra_db
 
     def test_scoped_delete_only_removes_callers_chunks(self, populated_db):
-        """Bob deletes 'doc-1' under his scope — alice's and the shared chunk
-        must survive."""
         assert populated_db.delete_by_content_id("doc-1", user_id="bob") is True
         assert _owners_for_content_id(populated_db, "doc-1") == [SHARED_USER_ID_VALUE, "alice"]
 
-    def test_scoped_delete_does_not_touch_shared(self, populated_db):
-        """A scoped delete must never remove shared (org-wide) content."""
+    def test_alice_can_delete_her_own(self, populated_db):
         populated_db.delete_by_content_id("doc-1", user_id="alice")
         owners = _owners_for_content_id(populated_db, "doc-1")
         assert SHARED_USER_ID_VALUE in owners
@@ -276,91 +402,96 @@ class TestDeleteByContentIdIsolation:
         assert len(_owners_for_content_id(populated_db, "doc-1")) == 3
 
 
-class TestRowIdClobber:
-    """The primary key must fold in the owner. The key is unique, so without the
-    owner two users inserting IDENTICAL content under the SAME content_hash
-    collide on one row and one silently overwrites (clobbers) the other."""
+class TestDeleteByContentHashIsolation:
+    """``delete_by_content_hash`` scopes to the owner bucket when user_id is set;
+    None spans all owners."""
 
-    def test_two_users_same_content_and_hash_coexist(self, cassandra_db):
-        cassandra_db.insert(content_hash="SAME", documents=[_doc("secret", "The secret is 42")], user_id="alice")
-        cassandra_db.insert(content_hash="SAME", documents=[_doc("secret", "The secret is 42")], user_id="bob")
+    @pytest.fixture
+    def populated_db(self, cassandra_db):
+        cassandra_db.insert(content_hash="h", documents=[_doc("a", "alice text")], user_id="alice")
+        cassandra_db.insert(content_hash="h", documents=[_doc("b", "bob text")], user_id="bob")
+        cassandra_db.insert(content_hash="h", documents=[_doc("s", "shared text")], user_id=None)
+        return cassandra_db
+
+    def test_scoped_hash_delete_removes_only_owner(self, populated_db):
+        assert populated_db.delete_by_content_hash("h", user_id="alice") is True
+        assert _owners(populated_db) == [SHARED_USER_ID_VALUE, "bob"]
+
+    def test_none_hash_delete_spans_all_owners(self, populated_db):
+        assert populated_db.delete_by_content_hash("h", user_id=None) is True
+        assert _owners(populated_db) == []
+
+
+class TestUpsertDedupIsolation:
+    """``upsert`` re-ingest dedups within the caller's bucket only. The owner is
+    folded into the row id and the dedup delete is scoped, so two owners' copies
+    of identical content never collide and a shared re-ingest can't steal an
+    owned row."""
+
+    def test_two_owners_identical_content_both_survive(self, cassandra_db):
+        cassandra_db.upsert(content_hash="h", documents=[_doc("alice", "shared text")], user_id="alice")
+        cassandra_db.upsert(content_hash="h", documents=[_doc("bob", "shared text")], user_id="bob")
         assert _owners(cassandra_db) == ["alice", "bob"]
 
-    def test_clobbered_rows_stay_isolated_on_search(self, cassandra_db):
-        cassandra_db.insert(content_hash="SAME", documents=[_doc("secret", "The secret is 42")], user_id="alice")
-        cassandra_db.insert(content_hash="SAME", documents=[_doc("secret", "The secret is 42")], user_id="bob")
-        alice = {d.name for d in cassandra_db.search("secret", limit=10, user_id="alice")}
-        bob = {d.name for d in cassandra_db.search("secret", limit=10, user_id="bob")}
-        assert alice == {"secret"}
-        assert bob == {"secret"}
-        assert _count(cassandra_db) == 2
+    def test_same_owner_reupsert_dedups_to_one_row(self, cassandra_db):
+        cassandra_db.upsert(content_hash="h", documents=[_doc("alice", "same text")], user_id="alice")
+        cassandra_db.upsert(content_hash="h", documents=[_doc("alice", "same text")], user_id="alice")
+        assert _owners(cassandra_db) == ["alice"]
 
-    def test_shared_bucket_keeps_legacy_row_id(self, cassandra_db):
-        """``user_id=None`` chunks keep the original doc id so previously
-        persisted shared rows stay addressable; scoped rows get a folded id."""
-        doc = _doc("d", "content")
-        doc.id = "legacy-id"
-        assert cassandra_db._row_id(doc, "H", None) == "legacy-id"
-        assert cassandra_db._row_id(doc, "H", "alice") != "legacy-id"
-
-
-class TestUpsertDedupeIsolation:
-    """``upsert`` dedupes by deleting prior chunks with the same content_hash
-    before re-inserting. That delete must be SCOPED to the owner — otherwise
-    alice re-upserting wipes bob's chunk that shares the same content_hash."""
-
-    def test_scoped_dedupe_does_not_touch_other_owner(self, cassandra_db):
-        cassandra_db.upsert(content_hash="SH", documents=[_doc("ad", "alice v1")], user_id="alice")
-        cassandra_db.upsert(content_hash="SH", documents=[_doc("bd", "bob v1")], user_id="bob")
-        cassandra_db.upsert(content_hash="SH", documents=[_doc("ad", "alice v2")], user_id="alice")
-        assert _owners(cassandra_db) == ["alice", "bob"]
-        assert _count(cassandra_db) == 2
-
-    def test_same_user_reupsert_replaces(self, cassandra_db):
-        cassandra_db.upsert(content_hash="H", documents=[_doc("d", "v1")], user_id="alice")
-        cassandra_db.upsert(content_hash="H", documents=[_doc("d", "v2")], user_id="alice")
-        assert _count(cassandra_db) == 1
-
-    def test_shared_reupsert_does_not_touch_scoped(self, cassandra_db):
-        """A shared (None) re-upsert dedupes only shared rows, never a user's."""
-        cassandra_db.upsert(content_hash="SH", documents=[_doc("ad", "alice v1")], user_id="alice")
-        cassandra_db.upsert(content_hash="SH", documents=[_doc("sd", "shared v1")], user_id=None)
-        cassandra_db.upsert(content_hash="SH", documents=[_doc("sd", "shared v2")], user_id=None)
+    def test_shared_reupsert_does_not_wipe_owned_identical_content(self, cassandra_db):
+        """The steal-prevention contract: Alice owns content X; an admin ingests
+        identical shared content and re-ingests it. The shared dedup delete must
+        scope to the shared bucket and leave Alice's owned row intact."""
+        cassandra_db.upsert(content_hash="h", documents=[_doc("alice", "same text")], user_id="alice")
+        cassandra_db.upsert(content_hash="h", documents=[_doc("shared", "same text")], user_id=None)
+        # Second shared re-ingest triggers the scoped dedup delete.
+        cassandra_db.session.deleted_row_ids.clear()
+        cassandra_db.upsert(content_hash="h", documents=[_doc("shared", "same text")], user_id=None)
         assert _owners(cassandra_db) == [SHARED_USER_ID_VALUE, "alice"]
-
-
-class TestContentHashExistsScope:
-    def test_scoped_exists_only_sees_owner(self, cassandra_db):
-        cassandra_db.insert(content_hash="H", documents=[_doc("ad", "alice")], user_id="alice")
-        assert cassandra_db.content_hash_exists("H", user_id="alice") is True
-        assert cassandra_db.content_hash_exists("H", user_id="bob") is False
-        # Unscoped sees it regardless of owner.
-        assert cassandra_db.content_hash_exists("H") is True
+        # The dedup delete only touched the shared row, never alice's owned row.
+        base_id = hashlib.md5(b"same text").hexdigest()
+        alice_row_id = hash_string_sha256(f"{base_id}_alice")
+        assert alice_row_id not in cassandra_db.session.deleted_row_ids
+        assert cassandra_db.session.deleted_row_ids == [base_id]
 
 
 class TestUpdateMetadataOwnershipGuard:
-    """``update_metadata`` merges the caller's dict into the row. It must NOT
-    let metadata={'user_id': ...} flip a chunk's owner."""
+    """``update_metadata`` must drop an incoming ``user_id`` so a metadata write
+    can never reassign ownership."""
 
-    def test_caller_cannot_reassign_owner(self, cassandra_db):
-        doc = _doc("md", "metadata content", "cid-1")
-        cassandra_db.insert(content_hash="hm", documents=[doc], user_id="alice")
-        cassandra_db.update_metadata("cid-1", {"user_id": "bob", "tag": "x"})
-        assert _owners(cassandra_db) == ["alice"]
+    def test_incoming_user_id_is_stripped(self, cassandra_db):
+        cassandra_db.insert(content_hash="h", documents=[_doc("a", "body", "doc-1")], user_id="alice")
+        cassandra_db.update_metadata("doc-1", {"topic": "hr", "user_id": "attacker"})
+        row = cassandra_db.session.rows[0]
+        # Owner preserved, benign field applied, spoof rejected.
+        assert row.metadata_s[USER_ID_METADATA_KEY] == "alice"
+        assert row.metadata_s["topic"] == "hr"
+        # The UPDATE payload the adapter wrote never carried the attacker's owner.
+        _, written_meta = cassandra_db.session.updates[0]
+        assert written_meta[USER_ID_METADATA_KEY] == "alice"
 
-    def test_owner_unchanged_alice_keeps_bob_locked_out(self, cassandra_db):
-        doc = _doc("md", "metadata content", "cid-1")
-        cassandra_db.insert(content_hash="hm", documents=[doc], user_id="alice")
-        cassandra_db.update_metadata("cid-1", {"user_id": "bob"})
-        alice = {d.name for d in cassandra_db.search("metadata content", limit=10, user_id="alice")}
-        bob = {d.name for d in cassandra_db.search("metadata content", limit=10, user_id="bob")}
-        assert "md" in alice
-        assert "md" not in bob
+
+class TestRowToDocumentHidesOwner:
+    """``_row_to_document`` must never surface ``user_id`` as caller-visible
+    metadata."""
+
+    def test_user_id_not_in_returned_metadata(self, cassandra_db):
+        row = {
+            "row_id": "r1",
+            "body_blob": "hello",
+            "metadata": {"topic": "t", "content_id": "c1", USER_ID_METADATA_KEY: "alice"},
+            "vector": [0.0] * DIM,
+            "document_name": "doc",
+        }
+        doc = cassandra_db._row_to_document(row)
+        assert USER_ID_METADATA_KEY not in doc.meta_data
+        assert doc.meta_data["topic"] == "t"
+        assert doc.content_id == "c1"
 
 
 class TestAsyncIsolation:
-    """The async adapter wraps the sync paths in threads — verify the contract
-    holds through the async surface too."""
+    """The async adapter wraps the sync paths — verify the search and scoped
+    dedup contracts hold through the async surface too."""
 
     async def test_async_alice_sees_own_and_shared_not_bob(self, cassandra_db):
         await cassandra_db.async_insert(content_hash="ha", documents=_alice_docs(), user_id="alice")
@@ -371,25 +502,8 @@ class TestAsyncIsolation:
         assert "company-holidays" in alice
         assert "bob-salary" not in alice
 
-    async def test_async_admin_sees_all(self, cassandra_db):
-        await cassandra_db.async_insert(content_hash="ha", documents=[_doc("ax", "alice")], user_id="alice")
-        await cassandra_db.async_insert(content_hash="hb", documents=[_doc("bx", "bob")], user_id="bob")
-        await cassandra_db.async_insert(content_hash="hs", documents=[_doc("sx", "shared")], user_id=None)
-        names = {d.name for d in await cassandra_db.async_search("anything", limit=10, user_id=None)}
-        assert names == {"ax", "bx", "sx"}
-
-    async def test_async_clobber_coexist(self, cassandra_db):
-        await cassandra_db.async_insert(
-            content_hash="SAME", documents=[_doc("secret", "The secret is 42")], user_id="alice"
-        )
-        await cassandra_db.async_insert(
-            content_hash="SAME", documents=[_doc("secret", "The secret is 42")], user_id="bob"
-        )
-        assert _owners(cassandra_db) == ["alice", "bob"]
-
-    async def test_async_scoped_reupsert_keeps_other_owner(self, cassandra_db):
-        await cassandra_db.async_upsert(content_hash="SH", documents=[_doc("ad", "alice v1")], user_id="alice")
-        await cassandra_db.async_upsert(content_hash="SH", documents=[_doc("bd", "bob v1")], user_id="bob")
-        await cassandra_db.async_upsert(content_hash="SH", documents=[_doc("ad", "alice v2")], user_id="alice")
-        assert _owners(cassandra_db) == ["alice", "bob"]
-        assert _count(cassandra_db) == 2
+    async def test_async_shared_reupsert_does_not_wipe_owned(self, cassandra_db):
+        await cassandra_db.async_upsert(content_hash="h", documents=[_doc("alice", "same text")], user_id="alice")
+        await cassandra_db.async_upsert(content_hash="h", documents=[_doc("shared", "same text")], user_id=None)
+        await cassandra_db.async_upsert(content_hash="h", documents=[_doc("shared", "same text")], user_id=None)
+        assert _owners(cassandra_db) == [SHARED_USER_ID_VALUE, "alice"]

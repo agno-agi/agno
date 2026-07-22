@@ -399,7 +399,7 @@ async def test_async_search(mock_pinecone_db):
         results = await mock_pinecone_db.async_search(query)
 
         assert results == expected_results
-        mock_to_thread.assert_called_once_with(mock_pinecone_db.search, query, 5, None, None, None)
+        mock_to_thread.assert_called_once_with(mock_pinecone_db.search, query, 5, None, None, None, None)
 
 
 @pytest.mark.asyncio

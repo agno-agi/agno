@@ -1,12 +1,45 @@
-"""
-Per-User Knowledge Isolation with Milvus
-========================================
-Give each user a private view of one shared knowledge base. Documents a user
-uploads are visible only to them; documents uploaded with no user are shared
-with everyone, and an admin (no user id) sees all of it.
+"""Per-user knowledge isolation with Milvus.
 
-Milvus does this by storing the owner in a user_id field and filtering each
-search to that user plus the shared (owner-less) chunks.
+Same isolation contract as the pgvector / Qdrant / LanceDB cookbooks in
+this directory, against a different backend. The
+``Knowledge.asearch(user_id=...)`` API is identical — only the underlying
+primitive changes:
+
+  * Milvus stores the owner in a nullable ``user_id`` scalar field. Owned
+    chunks carry the uploader's id; shared chunks leave it null.
+
+  * Scoped reads compile to a boolean expression pushed into the search:
+    ``user_id == "alice" or user_id is null`` — the caller's bucket OR the
+    shared bucket. Passing ``user_id=None`` adds no predicate (admin view,
+    sees everything).
+
+Three uploads, four scoped queries:
+
+  1. Alice and Bob each upload private content.
+  2. An admin uploads org-wide content (``user_id`` left ``None``).
+  3. Alice asks about Alice — sees her chunk plus shared content.
+  4. Alice asks about Bob — Bob's private chunk is filtered out.
+  5. Bob asks about holidays — sees the shared bucket.
+  6. Admin (``user_id=None``) sees everything.
+
+Milvus Lite caveat: with a local-file ``uri`` Milvus runs embedded (no
+server), which is perfect for a demo. But Milvus Lite does NOT return
+dynamic scalar fields for ``output_fields=["*"]`` (the primitive the
+backend uses on read), so retrieved ``Document.content`` / ``meta_data``
+come back empty here. The rows and the isolation filter are stored and
+applied correctly, so we verify the contract by result COUNT: a scoped
+search returns strictly fewer rows than the admin view, with exactly the
+other user's private chunk removed. On a full Milvus server the same code
+also returns populated content.
+
+Prerequisites:
+
+  * ``pip install pymilvus[milvus-lite]`` — embedded, no server.
+  * ``OPENAI_API_KEY`` set in your environment (or swap the model below).
+
+Run:
+
+    python cookbook/07_knowledge/04_advanced/07_per_user_isolation/milvus_db.py
 """
 
 import asyncio
@@ -27,18 +60,19 @@ def _write_temp_doc(name: str, body: str) -> str:
 
 async def main() -> None:
     # ------------------------------------------------------------------
-    # Set up a Knowledge instance backed by Milvus.
+    # A local-file ``uri`` means Milvus Lite (embedded, no server). For a
+    # real deployment, point ``uri`` at a Milvus server, e.g.
+    # "http://localhost:19530".
+    #
+    # We create the collection with the SYNC client: Milvus Lite does not
+    # implement the async index-creation path, so ``async_create()`` is
+    # unavailable here. The rest of the demo (ainsert / asearch) is async.
     # ------------------------------------------------------------------
     vector_db = Milvus(
         collection="per_user_isolation_demo",
-        # A local file path means Milvus Lite (embedded, no server). For a real
-        # deployment, point uri at a Milvus server, e.g. "http://localhost:19530".
         uri="/tmp/milvus_per_user_isolation.db",
     )
-    try:
-        vector_db.drop()
-    except Exception:
-        pass
+    vector_db.drop()
     vector_db.create()
 
     knowledge = Knowledge(
@@ -49,8 +83,9 @@ async def main() -> None:
 
     # ------------------------------------------------------------------
     # Three uploads: Alice (private), Bob (private), Admin (shared).
-    # The ``user_id`` kwarg on ``ainsert`` flows through to every chunk
-    # written to Milvus — it is stamped onto ``meta_data["user_id"]``.
+    # The ``user_id`` kwarg on ``ainsert`` flows through to the Milvus
+    # backend, which stamps it onto the ``user_id`` field. The API call is
+    # identical to pgvector / Qdrant / LanceDB.
     # ------------------------------------------------------------------
     await knowledge.ainsert(
         path=_write_temp_doc(
@@ -60,6 +95,7 @@ async def main() -> None:
         name="alice_salary",
         user_id="alice",
     )
+
     await knowledge.ainsert(
         path=_write_temp_doc(
             "bob_salary.txt",
@@ -68,6 +104,7 @@ async def main() -> None:
         name="bob_salary",
         user_id="bob",
     )
+
     await knowledge.ainsert(
         path=_write_temp_doc(
             "company_holidays.txt",
@@ -75,76 +112,75 @@ async def main() -> None:
         ),
         name="company_holidays",
         # No ``user_id`` — this is org-wide / admin-uploaded shared content.
-        # In Milvus the ``user_id`` field stays null; scoped searches match it
+        # Milvus leaves the ``user_id`` field null; scoped searches match it
         # via the ``user_id is null`` branch of the filter expression.
     )
 
     # ------------------------------------------------------------------
     # Demonstrate the isolation contract DIRECTLY against Knowledge.
+    #
+    # On Milvus Lite the retrieved content is blank (see the caveat in the
+    # module docstring), so we assert on result COUNT. The admin view is
+    # the whole corpus; each scoped view drops exactly the other user's
+    # private chunk.
     # ------------------------------------------------------------------
     print("\n=== Direct asearch tests ===\n")
 
-    # 1. Alice asks about her own salary — she should find HER chunk.
-    alice_salary = await knowledge.asearch(
-        query="What is Alice's salary?", user_id="alice"
-    )
-    print(f"Alice asks about Alice's salary -> {len(alice_salary)} results")
-    for d in alice_salary:
-        print(f"  - {d.content[:80]}  (owner={d.meta_data.get('user_id')!r})")
+    admin_view = await knowledge.asearch(query="salary", user_id=None)
+    print(f"Admin (user_id=None) -> {len(admin_view)} results (whole corpus)")
 
-    # 2. Alice asks about Bob — she should NOT see Bob's chunk. Best she can
-    #    do is the shared holidays doc, which is unrelated.
-    alice_about_bob = await knowledge.asearch(
-        query="What is Bob's salary?", user_id="alice"
-    )
-    print(f"\nAlice asks about Bob's salary -> {len(alice_about_bob)} results")
-    for d in alice_about_bob:
-        print(f"  - {d.content[:80]}  (owner={d.meta_data.get('user_id')!r})")
-    bob_chunks_in_alices_results = [
-        d for d in alice_about_bob if d.meta_data.get("user_id") == "bob"
-    ]
-    assert not bob_chunks_in_alices_results, (
-        "Isolation broken: Alice's retrieval surfaced Bob's chunks"
-    )
-    print("  isolation holds: Bob's chunks are NOT visible to Alice")
+    alice_view = await knowledge.asearch(query="salary", user_id="alice")
+    print(f"Alice (scoped)        -> {len(alice_view)} results (own + shared)")
 
-    # 3. Bob asks about company holidays — he should see the SHARED chunk.
+    bob_view = await knowledge.asearch(query="salary", user_id="bob")
+    print(f"Bob (scoped)          -> {len(bob_view)} results (own + shared)")
+
+    # The canonical isolation assertions: admin sees all three uploads,
+    # while each scoped user sees exactly two (their own chunk plus the
+    # shared holidays doc) — the other user's private chunk is filtered out.
+    assert len(admin_view) == 3, (
+        f"Admin should see the whole corpus, got {len(admin_view)}"
+    )
+    assert len(alice_view) == len(admin_view) - 1, (
+        "Isolation broken: Alice's scoped view should drop exactly Bob's chunk"
+    )
+    assert len(bob_view) == len(admin_view) - 1, (
+        "Isolation broken: Bob's scoped view should drop exactly Alice's chunk"
+    )
+    print("  isolation holds: neither user's scope includes the other's chunk")
+
+    # Bob asking about holidays still reaches the shared bucket.
     bob_holidays = await knowledge.asearch(
         query="When is the company closed?", user_id="bob"
     )
     print(f"\nBob asks about holidays -> {len(bob_holidays)} results")
-    for d in bob_holidays:
-        print(f"  - {d.content[:80]}  (owner={d.meta_data.get('user_id')!r})")
-
-    # 4. Admin / no scope passed — sees everything.
-    admin_view = await knowledge.asearch(query="salary", user_id=None)
-    print(f"\nAdmin asks about salary (user_id=None) -> {len(admin_view)} results")
-    for d in admin_view:
-        print(f"  - {d.content[:80]}  (owner={d.meta_data.get('user_id')!r})")
+    assert bob_holidays, "Bob should still see the shared holidays doc"
 
     # ------------------------------------------------------------------
     # End-to-end: an Agent doing RAG-as-Alice never sees Bob's chunks.
-    # The ``user_id`` is threaded through Knowledge.asearch from whatever
-    # caller (an OS router, a custom tool, your own code) decides the
-    # right owner is. For this demo we pass it explicitly.
+    # The ``user_id`` on the Agent flows into ``run_context.user_id``,
+    # which ``KnowledgeTools.search_knowledge`` reads and forwards to
+    # ``knowledge.search``. In a real deployment this comes from
+    # ``get_scoped_user_id(request)`` (the JWT sub).
     # ------------------------------------------------------------------
     print("\n=== Agent-mediated test ===\n")
+
     alice_agent = Agent(
         name="Alice's Assistant",
-        model=OpenAIResponses(id="gpt-5.4"),
+        model=OpenAIResponses(id="gpt-5.5"),
         knowledge=knowledge,
-        # Pin the agent to Alice's identity for retrieval. In a real
-        # deployment this comes from JWT.sub / get_scoped_user_id(request).
         user_id="alice",
         instructions=[
             "Answer questions using ONLY the knowledge you can retrieve.",
-            "If you don't know, say so — do not invent salary figures.",
+            "If you don't know, say so - do not invent salary figures.",
         ],
         markdown=True,
     )
+
     response = await alice_agent.arun("What is Bob's salary?")
     print("Alice's agent on 'What is Bob's salary?':")
     print(response.content)
+
     print("\nDone.")
 
 

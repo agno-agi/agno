@@ -94,8 +94,6 @@ class SingleStore(VectorDb):
     def create(self) -> None:
         """
         Create the table if it does not exist.
-
-        Existing tables that predate the user_id column are migrated in place.
         """
         if not self.table_exists():
             log_info(f"Creating table: {self.collection}")
@@ -134,14 +132,6 @@ class SingleStore(VectorDb):
             log_error(f"Unexpected error: {str(e)}")
             return False
 
-    def _record_id(self, base_id: str, content_hash: str, user_id: Optional[str]) -> str:
-        """Deterministic primary key. Folds in user_id so two users' copies
-        of the same content_hash get distinct ids; None keeps the legacy id.
-        """
-        if not user_id:
-            return md5(f"{base_id}_{content_hash}".encode()).hexdigest()
-        return md5(f"{base_id}_{content_hash}_{user_id}".encode()).hexdigest()
-
     def _apply_user_scope(self, stmt, user_id: Optional[str]):
         """AND user_id = :uid OR user_id IS NULL into stmt when scoped
         (user_id is bound, never interpolated). Adds no predicate when user_id is None.
@@ -150,15 +140,18 @@ class SingleStore(VectorDb):
             return stmt
         return stmt.where((self.table.c.user_id == user_id) | (self.table.c.user_id.is_(None)))
 
-    def content_hash_exists(self, content_hash: str) -> bool:
+    def content_hash_exists(self, content_hash: str, user_id: Optional[str] = None) -> bool:
         """
         Validating if the document exists or not
 
         Args:
             document (Document): Document to validate
+            user_id (Optional[str]): When set, scope the check to the caller's own rows.
         """
         with self.Session.begin() as sess:
             stmt = select(self.table.c.name).where(self.table.c.content_hash == content_hash)
+            if user_id is not None:
+                stmt = stmt.where(self.table.c.user_id == user_id)
             result = sess.execute(stmt).first()
             return result is not None
 
@@ -208,9 +201,14 @@ class SingleStore(VectorDb):
             for document in documents:
                 document.embed(embedder=self.embedder)
                 cleaned_content = document.content.replace("\x00", "\ufffd")
-                # Include content_hash AND user_id in ID. See _record_id.
+                # Include content_hash in ID to ensure uniqueness across different content hashes
                 base_id = document.id or md5(cleaned_content.encode()).hexdigest()
-                _id = self._record_id(base_id, content_hash, user_id)
+                # Fold the owner into the id so two users uploading the same content get distinct rows.
+                id_source = (
+                    f"{base_id}_{content_hash}_{user_id}" if user_id is not None else f"{base_id}_{content_hash}"
+                )
+                record_id = md5(id_source.encode()).hexdigest()
+                _id = record_id
 
                 meta_data_json = json.dumps(document.meta_data)
                 usage_json = json.dumps(document.usage)
@@ -248,13 +246,7 @@ class SingleStore(VectorDb):
         batch_size: int = 20,
         user_id: Optional[str] = None,
     ) -> None:
-        """
-        Upsert documents by content hash.
-
-        user_id is the explicit owner; None means shared. The dedupe
-        delete is scoped to the owner.
-        """
-        if self.content_hash_exists(content_hash):
+        if self.content_hash_exists(content_hash, user_id=user_id):
             self._delete_by_content_hash(content_hash, user_id=user_id)
         self._upsert(
             content_hash=content_hash, documents=documents, filters=filters, batch_size=batch_size, user_id=user_id
@@ -282,9 +274,14 @@ class SingleStore(VectorDb):
             for document in documents:
                 document.embed(embedder=self.embedder)
                 cleaned_content = document.content.replace("\x00", "\ufffd")
-                # Include content_hash AND user_id in ID. See _record_id.
+                # Include content_hash in ID to ensure uniqueness across different content hashes
                 base_id = document.id or md5(cleaned_content.encode()).hexdigest()
-                _id = self._record_id(base_id, content_hash, user_id)
+                # Fold the owner into the id so two users uploading the same content get distinct rows.
+                id_source = (
+                    f"{base_id}_{content_hash}_{user_id}" if user_id is not None else f"{base_id}_{content_hash}"
+                )
+                record_id = md5(id_source.encode()).hexdigest()
+                _id = record_id
 
                 meta_data_json = json.dumps(document.meta_data)
                 usage_json = json.dumps(document.usage)
@@ -312,7 +309,6 @@ class SingleStore(VectorDb):
                         usage=usage_json,
                         content_hash=content_hash,
                         content_id=document.content_id,
-                        # Refresh user_id on conflict.
                         user_id=user_id,
                     )
                 )
@@ -361,7 +357,12 @@ class SingleStore(VectorDb):
 
         stmt = select(*columns)
 
-        # Apply per-user isolation before the vector ordering / limit.
+        # if filters is not None:
+        #     for key, value in filters.items():
+        #         if hasattr(self.table.c, key):
+        #             stmt = stmt.where(getattr(self.table.c, key) == value)
+
+        # Scope to the caller's rows plus shared rows.
         stmt = self._apply_user_scope(stmt, user_id)
 
         if self.distance == Distance.l2:
@@ -490,12 +491,7 @@ class SingleStore(VectorDb):
 
     def delete_by_content_id(self, content_id: str, user_id: Optional[str] = None) -> bool:
         """
-        Delete content by content ID, scoped to user_id when set.
-
-        With user_id: DELETE WHERE content_id = ? AND user_id = ?.
-        Without user_id: deletes across all owners (legacy / admin).
-
-        Returns True only when at least one row was deleted.
+        Delete a document by its content ID, scoped to user_id when set.
         """
         from sqlalchemy import delete
 
@@ -555,14 +551,8 @@ class SingleStore(VectorDb):
         content_hash: str,
         documents: List[Document],
         filters: Optional[Dict[str, Any]] = None,
-        batch_size: int = 10,
         user_id: Optional[str] = None,
     ) -> None:
-        """Insert documents asynchronously.
-
-        user_id is the explicit owner of these chunks for per-user RAG
-        isolation; None means shared / unscoped. See insert.
-        """
         if self.embedder.enable_batch and hasattr(self.embedder, "async_get_embeddings_batch_and_usage"):
             # Use batch embedding when enabled and supported
             try:
@@ -606,9 +596,14 @@ class SingleStore(VectorDb):
             counter = 0
             for document in documents:
                 cleaned_content = document.content.replace("\x00", "\ufffd")
-                # Include content_hash AND user_id in ID. See _record_id.
+                # Include content_hash in ID to ensure uniqueness across different content hashes
                 base_id = document.id or md5(cleaned_content.encode()).hexdigest()
-                _id = self._record_id(base_id, content_hash, user_id)
+                # Fold the owner into the id so two users uploading the same content get distinct rows.
+                id_source = (
+                    f"{base_id}_{content_hash}_{user_id}" if user_id is not None else f"{base_id}_{content_hash}"
+                )
+                record_id = md5(id_source.encode()).hexdigest()
+                _id = record_id
 
                 meta_data_json = json.dumps(document.meta_data)
                 usage_json = json.dumps(document.usage)
@@ -639,7 +634,6 @@ class SingleStore(VectorDb):
         content_hash: str,
         documents: List[Document],
         filters: Optional[Dict[str, Any]] = None,
-        batch_size: int = 20,
         user_id: Optional[str] = None,
     ) -> None:
         """
@@ -648,12 +642,8 @@ class SingleStore(VectorDb):
         Args:
             documents (List[Document]): List of documents to upsert.
             filters (Optional[Dict[str, Any]]): Optional filters for the upsert.
-            batch_size (int): Number of documents to upsert in each batch.
-            user_id (Optional[str]): Explicit owner; None means shared. The
-                dedupe delete is scoped to the owner. See upsert.
+            user_id (Optional[str]): Explicit owner for per-user RAG isolation.
         """
-        if self.content_hash_exists(content_hash):
-            self._delete_by_content_hash(content_hash, user_id=user_id)
         if self.embedder.enable_batch and hasattr(self.embedder, "async_get_embeddings_batch_and_usage"):
             # Use batch embedding when enabled and supported
             try:
@@ -697,9 +687,14 @@ class SingleStore(VectorDb):
             counter = 0
             for document in documents:
                 cleaned_content = document.content.replace("\x00", "\ufffd")
-                # Include content_hash AND user_id in ID. See _record_id.
+                # Include content_hash in ID to ensure uniqueness across different content hashes
                 base_id = document.id or md5(cleaned_content.encode()).hexdigest()
-                _id = self._record_id(base_id, content_hash, user_id)
+                # Fold the owner into the id so two users uploading the same content get distinct rows.
+                id_source = (
+                    f"{base_id}_{content_hash}_{user_id}" if user_id is not None else f"{base_id}_{content_hash}"
+                )
+                record_id = md5(id_source.encode()).hexdigest()
+                _id = record_id
 
                 meta_data_json = json.dumps(document.meta_data)
                 usage_json = json.dumps(document.usage)
@@ -727,7 +722,6 @@ class SingleStore(VectorDb):
                         usage=usage_json,
                         content_hash=content_hash,
                         content_id=document.content_id,
-                        # Refresh user_id on conflict.
                         user_id=user_id,
                     )
                 )
@@ -760,13 +754,11 @@ class SingleStore(VectorDb):
         """
         Delete documents by their content hash, scoped to user_id when set.
 
-        With user_id: DELETE WHERE content_hash = ? AND user_id = ? (upsert
-        dedupe path). Without user_id: scopes to the shared (NULL) bucket so a
-        shared re-upsert never wipes a scoped owner.
-
         Args:
             content_hash (str): The content hash to delete.
-            user_id (Optional[str]): Owner to scope the delete to.
+            user_id (Optional[str]): When set, delete only the caller's own rows.
+                None scopes to the shared bucket (user_id IS NULL) so a shared
+                re-upsert never wipes a scoped owner's identical-content row.
 
         Returns:
             bool: True if documents were deleted, False otherwise.
