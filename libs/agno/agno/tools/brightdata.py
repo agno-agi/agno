@@ -62,7 +62,6 @@ class BrightDataTools(Toolkit):
         }
         self.web_unlocker_zone = getenv("BRIGHT_DATA_WEB_UNLOCKER_ZONE", web_unlocker_zone)
         self.serp_zone = getenv("BRIGHT_DATA_SERP_ZONE", serp_zone)
-        self.timeout = timeout
 
         tools: List[Any] = []
         if all or enable_scrape_markdown:
@@ -74,7 +73,7 @@ class BrightDataTools(Toolkit):
         if all or enable_web_data_feed:
             tools.append(self.web_data_feed)
 
-        super().__init__(name="brightdata_tools", tools=tools, **kwargs)
+        super().__init__(name="brightdata_tools", tools=tools, timeout=timeout, **kwargs)
 
     def _make_request(self, payload: Dict) -> str:
         """Make a request to Bright Data API."""
@@ -82,7 +81,9 @@ class BrightDataTools(Toolkit):
             if self.verbose:
                 log_info(f"[Bright Data] Request: {payload['url']}")
 
-            response = requests.post(self.endpoint, headers=self.headers, data=json.dumps(payload))
+            response = requests.post(
+                self.endpoint, headers=self.headers, data=json.dumps(payload), timeout=self.timeout
+            )
 
             if response.status_code != 200:
                 raise Exception(f"Failed to scrape: {response.status_code} - {response.text}")
@@ -147,7 +148,9 @@ class BrightDataTools(Toolkit):
                 "data_format": "screenshot",
             }
 
-            response = requests.post(self.endpoint, headers=self.headers, data=json.dumps(payload))
+            response = requests.post(
+                self.endpoint, headers=self.headers, data=json.dumps(payload), timeout=self.timeout
+            )
 
             if response.status_code != 200:
                 raise Exception(f"Error {response.status_code}: {response.text}")
@@ -327,6 +330,7 @@ class BrightDataTools(Toolkit):
                 params={"dataset_id": dataset_id, "include_errors": "true"},
                 headers=self.headers,
                 json=[request_data],
+                timeout=self.timeout,
             )
 
             trigger_data = trigger_response.json()
@@ -346,6 +350,8 @@ class BrightDataTools(Toolkit):
                         f"https://api.brightdata.com/datasets/v3/snapshot/{snapshot_id}",
                         params={"format": "json"},
                         headers=self.headers,
+                        # Per-poll cap; self.timeout (via max_attempts) controls the total polling budget.
+                        timeout=30,
                     )
 
                     snapshot_data = snapshot_response.json()

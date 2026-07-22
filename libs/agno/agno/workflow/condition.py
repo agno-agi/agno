@@ -28,6 +28,7 @@ from agno.workflow.types import (
     StepOutput,
     StepRequirement,
     StepType,
+    warn_session_state_param_deprecated,
 )
 
 # Constants for condition branch identifiers
@@ -339,7 +340,12 @@ class Condition:
             audio=current_audio + all_audio,
         )
 
-    def _evaluate_condition(self, step_input: StepInput, session_state: Optional[Dict[str, Any]] = None) -> bool:
+    def _evaluate_condition(
+        self,
+        step_input: StepInput,
+        session_state: Optional[Dict[str, Any]] = None,
+        run_context: Optional[RunContext] = None,
+    ) -> bool:
         """Evaluate the condition and return boolean result.
 
         Supports:
@@ -362,10 +368,15 @@ class Condition:
                 return False
 
         if callable(self.evaluator):
+            # Build kwargs based on what parameters the evaluator accepts
+            kwargs: Dict[str, Any] = {}
+            if run_context is not None and self._evaluator_has_run_context_param():
+                kwargs["run_context"] = run_context
             if session_state is not None and self._evaluator_has_session_state_param():
-                result = self.evaluator(step_input, session_state=session_state)  # type: ignore[call-arg]
-            else:
-                result = self.evaluator(step_input)
+                kwargs["session_state"] = session_state
+                warn_session_state_param_deprecated(self.evaluator, "Condition evaluator functions")
+
+            result = self.evaluator(step_input, **kwargs)  # type: ignore[call-arg]
 
             if isinstance(result, bool):
                 return result
@@ -375,7 +386,12 @@ class Condition:
 
         return False
 
-    async def _aevaluate_condition(self, step_input: StepInput, session_state: Optional[Dict[str, Any]] = None) -> bool:
+    async def _aevaluate_condition(
+        self,
+        step_input: StepInput,
+        session_state: Optional[Dict[str, Any]] = None,
+        run_context: Optional[RunContext] = None,
+    ) -> bool:
         """Async version of condition evaluation.
 
         Supports:
@@ -398,18 +414,18 @@ class Condition:
                 return False
 
         if callable(self.evaluator):
-            has_session_state = session_state is not None and self._evaluator_has_session_state_param()
+            # Build kwargs based on what parameters the evaluator accepts
+            kwargs: Dict[str, Any] = {}
+            if run_context is not None and self._evaluator_has_run_context_param():
+                kwargs["run_context"] = run_context
+            if session_state is not None and self._evaluator_has_session_state_param():
+                kwargs["session_state"] = session_state
+                warn_session_state_param_deprecated(self.evaluator, "Condition evaluator functions")
 
             if inspect.iscoroutinefunction(self.evaluator):
-                if has_session_state:
-                    result = await self.evaluator(step_input, session_state=session_state)  # type: ignore[call-arg]
-                else:
-                    result = await self.evaluator(step_input)
+                result = await self.evaluator(step_input, **kwargs)  # type: ignore[call-arg]
             else:
-                if has_session_state:
-                    result = self.evaluator(step_input, session_state=session_state)  # type: ignore[call-arg]
-                else:
-                    result = self.evaluator(step_input)
+                result = self.evaluator(step_input, **kwargs)  # type: ignore[call-arg]
 
             if isinstance(result, bool):
                 return result
@@ -427,6 +443,17 @@ class Condition:
         try:
             sig = inspect.signature(self.evaluator)
             return "session_state" in sig.parameters
+        except Exception:
+            return False
+
+    def _evaluator_has_run_context_param(self) -> bool:
+        """Check if the evaluator function has a run_context parameter"""
+        if not callable(self.evaluator):
+            return False
+
+        try:
+            sig = inspect.signature(self.evaluator)
+            return "run_context" in sig.parameters
         except Exception:
             return False
 
@@ -488,9 +515,13 @@ class Condition:
         else:
             # Evaluate the condition
             if run_context is not None and run_context.session_state is not None:
-                condition_result = self._evaluate_condition(step_input, session_state=run_context.session_state)
+                condition_result = self._evaluate_condition(
+                    step_input, session_state=run_context.session_state, run_context=run_context
+                )
             else:
-                condition_result = self._evaluate_condition(step_input, session_state=session_state)
+                condition_result = self._evaluate_condition(
+                    step_input, session_state=session_state, run_context=run_context
+                )
 
             log_debug(f"Condition {self.name} evaluated to: {condition_result}")
 
@@ -691,9 +722,13 @@ class Condition:
         else:
             # Evaluate the condition
             if run_context is not None and run_context.session_state is not None:
-                condition_result = self._evaluate_condition(step_input, session_state=run_context.session_state)
+                condition_result = self._evaluate_condition(
+                    step_input, session_state=run_context.session_state, run_context=run_context
+                )
             else:
-                condition_result = self._evaluate_condition(step_input, session_state=session_state)
+                condition_result = self._evaluate_condition(
+                    step_input, session_state=session_state, run_context=run_context
+                )
             log_debug(f"Condition {self.name} evaluated to: {condition_result}")
 
             if stream_events and workflow_run_response:
@@ -923,9 +958,13 @@ class Condition:
         else:
             # Evaluate the condition
             if run_context is not None and run_context.session_state is not None:
-                condition_result = await self._aevaluate_condition(step_input, session_state=run_context.session_state)
+                condition_result = await self._aevaluate_condition(
+                    step_input, session_state=run_context.session_state, run_context=run_context
+                )
             else:
-                condition_result = await self._aevaluate_condition(step_input, session_state=session_state)
+                condition_result = await self._aevaluate_condition(
+                    step_input, session_state=session_state, run_context=run_context
+                )
             log_debug(f"Condition {self.name} evaluated to: {condition_result}")
 
             # Determine which steps to execute
@@ -1124,9 +1163,13 @@ class Condition:
         else:
             # Evaluate the condition
             if run_context is not None and run_context.session_state is not None:
-                condition_result = await self._aevaluate_condition(step_input, session_state=run_context.session_state)
+                condition_result = await self._aevaluate_condition(
+                    step_input, session_state=run_context.session_state, run_context=run_context
+                )
             else:
-                condition_result = await self._aevaluate_condition(step_input, session_state=session_state)
+                condition_result = await self._aevaluate_condition(
+                    step_input, session_state=session_state, run_context=run_context
+                )
             log_debug(f"Condition {self.name} evaluated to: {condition_result}")
 
             if stream_events and workflow_run_response:

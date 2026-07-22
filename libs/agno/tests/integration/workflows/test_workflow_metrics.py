@@ -227,6 +227,10 @@ def test_workflow_duration_streaming_with_agent(shared_db, test_agent):
     last_run = session.runs[-1]
 
     assert last_run.metrics is not None
+    completed_event = completed_events[0]
+    assert completed_event.metrics is not None
+    assert completed_event.to_dict()["metrics"] == last_run.metrics.to_dict()
+
     assert isinstance(last_run.metrics, WorkflowMetrics)
     assert last_run.metrics.duration is not None
     assert last_run.metrics.duration > 0
@@ -284,6 +288,10 @@ async def test_workflow_duration_async_streaming(shared_db, test_agent):
     last_run = session.runs[-1]
 
     assert last_run.metrics is not None
+    completed_event = completed_events[0]
+    assert completed_event.metrics is not None
+    assert completed_event.to_dict()["metrics"] == last_run.metrics.to_dict()
+
     assert isinstance(last_run.metrics, WorkflowMetrics)
     assert last_run.metrics.duration is not None
     assert last_run.metrics.duration > 0
