@@ -314,8 +314,10 @@ class AgentOS:
             background_max_concurrency: Max background runs (background=True) executing concurrently, shared
                 across agents, teams and workflows. Enforced per event loop — process-wide in the standard
                 one-loop-per-process deployment. Runs beyond the cap wait in line as PENDING and can still be
-                cancelled while waiting. None keeps the AGNO_BACKGROUND_MAX_CONCURRENCY env var or the default
-                (32); 0 or below disables limiting.
+                cancelled while waiting. The setting is process-global: last setter wins if multiple AgentOS
+                instances configure it, and None leaves the current process-wide setting untouched (falling
+                back to the AGNO_BACKGROUND_MAX_CONCURRENCY env var or the default of 32 if never set); 0 or
+                below disables limiting.
             telemetry: Whether to enable telemetry
             registry: Optional registry to use for the AgentOS
             scheduler: Whether to enable the cron scheduler

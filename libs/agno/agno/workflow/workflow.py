@@ -4205,7 +4205,7 @@ class Workflow:
                         self.save_session(session=workflow_session)
 
                     if self.agent is not None:
-                        self._aexecute_workflow_agent(
+                        await self._aexecute_workflow_agent(
                             user_input=input,  # type: ignore
                             execution_input=inputs,
                             run_context=run_context,

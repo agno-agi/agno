@@ -35,7 +35,7 @@ db = PostgresDb(
 
 agent = Agent(
     name="BoundedBackgroundAgent",
-    model=OpenAIResponses(id="gpt-5-mini"),
+    model=OpenAIResponses(id="gpt-5.5"),
     description="An agent whose background runs execute under a concurrency cap",
     db=db,
 )

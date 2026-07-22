@@ -102,6 +102,10 @@ async def background_run_slot(
 
     from agno.run.cancel import ais_cancelled
 
+    # Note: each queued run polls ais_cancelled every cancellation_poll_interval
+    # while waiting. This hits whatever cancellation manager is configured — free
+    # for the in-memory default, but with a remote backend (e.g. Redis) a large
+    # PENDING backlog means O(backlog) backend checks per interval.
     if await ais_cancelled(run_id):
         raise RunCancelledException(run_id)
 
