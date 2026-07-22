@@ -79,6 +79,7 @@ from agno.os.utils import (
 from agno.registry import Registry
 from agno.remote.base import RemoteDb, RemoteKnowledge
 from agno.run.concurrency import set_background_max_concurrency
+from agno.run.queue import RunQueueConfig
 from agno.team import RemoteTeam, Team, TeamFactory
 from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.utils.string import generate_id, generate_id_from_name
@@ -255,7 +256,7 @@ class AgentOS:
         tracing: bool = False,
         auto_provision_dbs: bool = True,
         run_hooks_in_background: bool = False,
-        background_max_concurrency: Optional[int] = None,
+        run_queue: Optional[RunQueueConfig] = None,
         telemetry: bool = True,
         registry: Optional[Registry] = None,
         scheduler: bool = False,
@@ -311,13 +312,14 @@ class AgentOS:
             cors_allowed_origins: List of allowed CORS origins (will be merged with default Agno domains)
             tracing: If True, enables OpenTelemetry tracing for all agents and teams in the OS
             run_hooks_in_background: If True, run agent/team pre/post hooks as FastAPI background tasks (non-blocking)
-            background_max_concurrency: Max background runs (background=True) executing concurrently, shared
-                across agents, teams and workflows. Enforced per event loop — process-wide in the standard
-                one-loop-per-process deployment. Runs beyond the cap wait in line as PENDING and can still be
-                cancelled while waiting. The setting is process-global: last setter wins if multiple AgentOS
-                instances configure it, and None leaves the current process-wide setting untouched (falling
-                back to the AGNO_BACKGROUND_MAX_CONCURRENCY env var or the default of 32 if never set); 0 or
-                below disables limiting.
+            run_queue: Configuration for the background run queue (RunQueueConfig).
+                background=True runs are accepted immediately as PENDING and execute under
+                run_queue.max_concurrency per replica (shared across agents, teams and workflows;
+                enforced per event loop, so process-wide in the standard deployment). Runs beyond
+                the cap wait in line and can still be cancelled while waiting. 0 or below disables
+                capping. The setting is process-global: last setter wins if multiple AgentOS
+                instances configure it, and None leaves the current process setting untouched
+                (falling back to the AGNO_BACKGROUND_MAX_CONCURRENCY env var or the default of 32).
             telemetry: Whether to enable telemetry
             registry: Optional registry to use for the AgentOS
             scheduler: Whether to enable the cron scheduler
@@ -421,12 +423,11 @@ class AgentOS:
         # If True, run agent/team hooks as FastAPI background tasks
         self.run_hooks_in_background = run_hooks_in_background
 
-        # Cap on concurrently executing background runs (background=True) in this
-        # process. None keeps the AGNO_BACKGROUND_MAX_CONCURRENCY env var or the
-        # library default; 0 or below disables limiting.
-        self.background_max_concurrency = background_max_concurrency
-        if background_max_concurrency is not None:
-            set_background_max_concurrency(background_max_concurrency)
+        # Run queue configuration. None keeps the process defaults (env var or
+        # library default for the concurrency cap).
+        self.run_queue = run_queue
+        if run_queue is not None:
+            set_background_max_concurrency(run_queue.max_concurrency)
 
         # Scheduler configuration
         self._scheduler_enabled = scheduler
