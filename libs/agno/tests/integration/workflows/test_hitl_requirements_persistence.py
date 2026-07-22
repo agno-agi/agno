@@ -469,7 +469,12 @@ class TestErrorPauseWithHistory:
             db=shared_db,
             steps=[
                 Step(name="s1", executor=step_a, human_review=HumanReview(requires_confirmation=True)),
-                Step(name="risky", executor=fail_once, on_error=OnError.pause, max_retries=0),
+                Step(
+                    name="risky",
+                    executor=fail_once,
+                    human_review=HumanReview(on_error=OnError.pause),
+                    max_retries=0,
+                ),
                 Step(name="final", executor=step_c),
             ],
         )

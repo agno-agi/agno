@@ -679,7 +679,7 @@ class TestErrorHandlingHITL:
                 Step(
                     name="failing",
                     executor=failing_step,
-                    on_error="pause",
+                    human_review=HumanReview(on_error="pause"),
                 ),
                 Step(name="save", executor=save_data),
             ],
@@ -703,7 +703,7 @@ class TestErrorHandlingHITL:
                 Step(
                     name="failing",
                     executor=failing_step,
-                    on_error="pause",
+                    human_review=HumanReview(on_error="pause"),
                 ),
                 Step(name="save", executor=save_data),
             ],
@@ -734,7 +734,7 @@ class TestErrorHandlingHITL:
                 Step(
                     name="failing",
                     executor=failing_step,
-                    on_error="skip",
+                    human_review=HumanReview(on_error="skip"),
                 ),
                 Step(name="save", executor=save_data),
             ],
@@ -756,7 +756,7 @@ class TestErrorHandlingHITL:
                 Step(
                     name="failing",
                     executor=failing_step,
-                    on_error="fail",
+                    human_review=HumanReview(on_error="fail"),
                 ),
                 Step(name="save", executor=save_data),
             ],
@@ -776,7 +776,7 @@ class TestErrorHandlingHITL:
                 Step(
                     name="failing",
                     executor=failing_step,
-                    on_error="pause",
+                    human_review=HumanReview(on_error="pause"),
                 ),
                 Step(name="save", executor=save_data),
             ],
@@ -807,7 +807,7 @@ class TestErrorHandlingHITL:
                 Step(
                     name="failing",
                     executor=failing_step,
-                    on_error="pause",
+                    human_review=HumanReview(on_error="pause"),
                 ),
                 Step(name="save", executor=save_data),
             ],
