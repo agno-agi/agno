@@ -4200,7 +4200,9 @@ class Workflow:
                 # Re-read the session so this save does not clobber concurrent
                 # background runs on the same session with the stale
                 # submit-time snapshot.
-                fresh_session, _ = await self._aload_or_create_session(session_id=session_id, user_id=user_id)
+                fresh_session, _ = await self._aload_or_create_session(
+                    session_id=session_id, user_id=user_id, session_state=session_state
+                )
                 fresh_session.upsert_run(run=workflow_run_response)
                 if self._has_async_db():
                     await self.asave_session(session=fresh_session)
