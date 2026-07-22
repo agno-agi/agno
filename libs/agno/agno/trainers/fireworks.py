@@ -166,8 +166,10 @@ class FireworksTrainer:
         epochs: int = 1,
         sampling_temperature: float = 0.7,
         sampling_max_tokens: int = 2000,
+        sampling_reasoning_effort: Optional[str] = None,
         account_id: Optional[str] = None,
         deployment_id: Optional[str] = None,
+        accelerator_type: str = "NVIDIA_H100_80GB",
         poll_interval_seconds: float = 10.0,
         ready_timeout_seconds: float = 1800.0,
         train_timeout_seconds: Optional[float] = None,
@@ -178,6 +180,8 @@ class FireworksTrainer:
         # created billable resources.
         if not isinstance(base_model, str) or not base_model.strip():
             raise ValueError(f"base_model must be a non-blank model name, got {base_model!r}")
+        if not isinstance(accelerator_type, str) or not accelerator_type.strip():
+            raise ValueError(f"accelerator_type must be a non-blank accelerator name, got {accelerator_type!r}")
         if isinstance(epochs, bool) or not isinstance(epochs, int) or epochs < 1:
             raise ValueError(f"epochs must be an int >= 1, got {epochs!r}")
         if isinstance(rank, bool) or not isinstance(rank, int) or rank < 1:
@@ -227,8 +231,10 @@ class FireworksTrainer:
         self.epochs = epochs
         self.sampling_temperature = sampling_temperature
         self.sampling_max_tokens = sampling_max_tokens
+        self.sampling_reasoning_effort = sampling_reasoning_effort
         self.account_id = account_id
         self.deployment_id = deployment_id
+        self.accelerator_type = accelerator_type
         self.poll_interval_seconds = poll_interval_seconds
         self.ready_timeout_seconds = ready_timeout_seconds
         self.train_timeout_seconds = train_timeout_seconds
@@ -466,6 +472,16 @@ class FireworksTrainer:
                 base_model=self.base_model,
                 deployment_id=deployment_id,
                 display_name=f"agno improvement loop {deployment_id}",
+                # The control plane requires an explicit accelerator for non-embeddings
+                # engines. An H100 80GB is the default: it holds the small tunable bases
+                # in BF16 with addons, and fresh accounts carry quota for it (the A100
+                # pool can be zero-quota'd, which 429s the create).
+                accelerator_type=self.accelerator_type,
+                # Some bases carry a default speculative-decoding draft model whose
+                # precision (FP8_MM) the cheaper accelerators reject; speculation is a
+                # latency optimization, not a correctness one, and this deployment
+                # exists to measure a before/after, so it is off.
+                disable_speculative_decoding=True,
                 # BF16 because FP8/FP4 deployment shapes reject PEFT addons; addons are
                 # how the tuned LoRA is served next to its base on the same hardware.
                 enable_addons=True,
@@ -502,10 +518,20 @@ class FireworksTrainer:
         # system_prompt/instructions stay None so base and tuned share one env
         # fingerprint; the id is the only policy difference (scorer/_model.py
         # excludes credentials and clients from the identity payload).
+        extra: Dict[str, Any] = {}
+        if self.sampling_reasoning_effort is not None:
+            # Fireworks routes reasoning to a separate response field, and its parser
+            # can classify an ENTIRE completion as reasoning on some serving templates
+            # (observed live: qwen3-4b-instruct-2507, a non-thinking instruct model,
+            # returned every token in `reasoning` and none in `content`, so no attempt
+            # could ever be scored). "none" turns the reasoning channel off. Both sides
+            # of the before/after get the same value, so the comparison holds.
+            extra["reasoning_effort"] = self.sampling_reasoning_effort
         return Fireworks(
             id=model_id,
             temperature=self.sampling_temperature,
             max_tokens=self.sampling_max_tokens,
+            **extra,
         )
 
     def as_model(self, checkpoint: Checkpoint) -> Model:
@@ -533,16 +559,25 @@ class FireworksTrainer:
         else:
             deployed_name = getattr(deployed, "name", None) or ""
             deployed_id = deployed_name.rsplit("/", 1)[-1]
-            if deployed_id:
-                self._loaded_addon_ids.append(deployed_id)
-                self._wait_until_ready(
-                    f"LoRA {checkpoint.ref} on {deployment_name}",
-                    lambda: client.lora.get(deployed_id),
-                    lambda resource: getattr(resource, "state", None) == "DEPLOYED",
-                    lambda resource: (
-                        self._status_message(resource) if getattr(resource, "state", None) == "UNDEPLOYING" else None
-                    ),
+            if not deployed_id:
+                # Without a name there is nothing to poll, and returning unwaited
+                # would hand the caller an address the gateway still 404s while the
+                # addon is DEPLOYING (observed live: a full rollout of instant
+                # model-not-found errors against a checkpoint that was fine).
+                raise RuntimeError(
+                    f"Fireworks did not return a deployed-model name for LoRA {checkpoint.ref} on "
+                    f"{deployment_name}; cannot wait for it to reach DEPLOYED, so serving it now would "
+                    "race the load and fail with model-not-found"
                 )
+            self._loaded_addon_ids.append(deployed_id)
+            self._wait_until_ready(
+                f"LoRA {checkpoint.ref} on {deployment_name}",
+                lambda: client.lora.get(deployed_id),
+                lambda resource: getattr(resource, "state", None) == "DEPLOYED",
+                lambda resource: (
+                    self._status_message(resource) if getattr(resource, "state", None) == "UNDEPLOYING" else None
+                ),
+            )
         return self._serve(f"{checkpoint.ref}#{deployment_name}")
 
     async def aas_model(self, checkpoint: Checkpoint) -> Model:
@@ -582,7 +617,10 @@ class FireworksTrainer:
         self._loaded_addon_ids = []
         if self._created_deployment_id is not None:
             try:
-                client.deployments.delete(self._created_deployment_id)
+                # ignore_checks: the control plane refuses to delete a deployment that
+                # served inference in the last hour, and this deployment just measured
+                # a rollout -- without the override every teardown would orphan it.
+                client.deployments.delete(self._created_deployment_id, ignore_checks=True)
                 log_info(f"FireworksTrainer: deleted deployment {self._created_deployment_id}")
             except Exception as exc:
                 log_warning(

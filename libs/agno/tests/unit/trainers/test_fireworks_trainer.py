@@ -117,8 +117,11 @@ class FakeDeploymentsResource:
         state = self._states.pop(0) if len(self._states) > 1 else self._states[0]
         return SimpleNamespace(state=state, status=None, enable_addons=self._enable_addons)
 
-    def delete(self, deployment_id):
+    def delete(self, deployment_id, **kwargs):
+        # The real API refuses to delete a deployment that served inference in the
+        # last hour unless ignore_checks is passed; record it so the contract is pinned.
         self.delete_calls.append(deployment_id)
+        self.delete_kwargs = kwargs
 
 
 class FakeLoraResource:
@@ -564,6 +567,9 @@ def test_fireworks_trainer_teardown_deletes_created_deployment():
 
     created_id = client.deployments.create_calls[0]["deployment_id"]
     assert client.deployments.delete_calls == [created_id]
+    # Without ignore_checks the control plane 400s on any deployment that served
+    # inference in the last hour -- which is every deployment this trainer measures on.
+    assert client.deployments.delete_kwargs == {"ignore_checks": True}
     assert client.lora.unload_calls == ["dm-1"]
 
 
