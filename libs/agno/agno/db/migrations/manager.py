@@ -66,13 +66,14 @@ class MigrationManager:
         # Handle migrations for each table separately (extend in future if needed):
         for table_type, table_name in tables:
             if isinstance(self.db, AsyncBaseDb):
-                current_version = packaging_version.parse(await self.db.get_latest_schema_version(table_name))
+                raw_version = await self.db.get_latest_schema_version(table_name)
             else:
-                current_version = packaging_version.parse(self.db.get_latest_schema_version(table_name))
+                raw_version = self.db.get_latest_schema_version(table_name)
 
-            if current_version is None:
+            if raw_version is None:
                 log_info(f"Skipping migration: No version found for table {table_name}.")
                 continue
+            current_version = packaging_version.parse(raw_version)
 
             # If the target version is less or equal to the current version, no migrations needed
             if _target_version <= current_version and not force:
@@ -158,9 +159,14 @@ class MigrationManager:
 
         for table_type, table_name in tables:
             if isinstance(self.db, AsyncBaseDb):
-                current_version = packaging_version.parse(await self.db.get_latest_schema_version(table_name))
+                raw_version = await self.db.get_latest_schema_version(table_name)
             else:
-                current_version = packaging_version.parse(self.db.get_latest_schema_version(table_name))
+                raw_version = self.db.get_latest_schema_version(table_name)
+
+            if raw_version is None:
+                log_info(f"Skipping down migration: No version found for table {table_name}.")
+                continue
+            current_version = packaging_version.parse(raw_version)
 
             if _target_version >= current_version and not force:
                 log_warning(

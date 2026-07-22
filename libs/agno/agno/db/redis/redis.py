@@ -286,12 +286,18 @@ class RedisDb(BaseDb):
             log_error(f"Error getting all records for {table_type}: {str(e)}")
             return []
 
-    def get_latest_schema_version(self):
-        """Get the latest version of the database schema."""
-        pass
+    def get_latest_schema_version(self, table_name: str = "") -> Optional[str]:
+        """Get the latest version of the database schema.
 
-    def upsert_schema_version(self, version: str) -> None:
-        """Upsert the schema version into the database."""
+        ``table_name`` is accepted for parity with the SQL adapters and the
+        ``BaseDb`` contract; Redis has no per-table versioning here so it is
+        ignored.
+        """
+        return None
+
+    def upsert_schema_version(self, table_name: str = "", version: str = "") -> None:
+        """Upsert the schema version. ``table_name`` is ignored — see
+        ``get_latest_schema_version``."""
         pass
 
     # -- Run methods --
