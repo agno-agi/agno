@@ -7,6 +7,7 @@ The full end-to-end behaviour is covered by the cookbooks.
 
 from __future__ import annotations
 
+import asyncio
 import json
 from pathlib import Path
 
@@ -1106,6 +1107,29 @@ async def test_mcp_aclose_noop_when_never_connected():
     p = MCPContextProvider("srv", transport="streamable-http", url="https://example.com/mcp")
     # Must not raise even though asetup was never called.
     await p.aclose()
+
+
+@pytest.mark.asyncio
+async def test_mcp_ensure_session_resets_on_cancelled_connect():
+    """A query_timeout deadline cancels _connect mid-handshake (CancelledError).
+    _ensure_session must clear the partial toolkit so the next query reconnects
+    fresh, instead of caching a half-connected MCPTools that wedges the provider."""
+    p = MCPContextProvider("srv", transport="streamable-http", url="https://example.com/mcp")
+
+    class _PartialTools:
+        initialized = False
+
+        async def _connect(self):
+            raise asyncio.CancelledError()
+
+    p._tools = _PartialTools()  # type: ignore[assignment]
+    p._tool_descriptions = [("stale", "d", "a")]
+
+    with pytest.raises(asyncio.CancelledError):
+        await p._ensure_session()
+
+    assert p._tools is None
+    assert p._tool_descriptions == []
 
 
 # ---------------------------------------------------------------------------

@@ -37,7 +37,14 @@ class WebContextProvider(ContextProvider):
         query_timeout: float | None = None,
         stream_sub_agent_events: bool = True,
     ) -> None:
-        super().__init__(id=id, name=name, mode=mode, model=model, stream_sub_agent_events=stream_sub_agent_events, query_timeout=query_timeout)
+        super().__init__(
+            id=id,
+            name=name,
+            mode=mode,
+            model=model,
+            stream_sub_agent_events=stream_sub_agent_events,
+            query_timeout=query_timeout,
+        )
         self.backend = backend
         self.instructions_text = instructions if instructions is not None else DEFAULT_WEB_INSTRUCTIONS
         self._agent: Agent | None = None

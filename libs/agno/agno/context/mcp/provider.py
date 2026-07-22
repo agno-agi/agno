@@ -260,9 +260,11 @@ class MCPContextProvider(ContextProvider):
             self._tools = self._build_tools_instance()
         try:
             await self._tools._connect()
-        except Exception:
-            # Reset so the next attempt gets a fresh toolkit — a failed
-            # connect can leave MCPTools in a partially-initialized state.
+        except BaseException:
+            # Reset so the next attempt gets a fresh toolkit — a failed OR
+            # cancelled connect (e.g. a query_timeout deadline firing mid-
+            # handshake) can leave MCPTools in a partially-initialized state.
+            # Catch BaseException so CancelledError triggers the reset too.
             self._tools = None
             self._tool_descriptions = []
             raise

@@ -6852,8 +6852,9 @@ class PostgresDb(BaseDb):
                 # Calculate offset from page
                 offset = (page - 1) * limit
 
-                # Get paginated results
-                stmt = base_query.order_by(table.c.created_at.desc()).limit(limit).offset(offset)
+                # Get paginated results (id is a unique tiebreaker so offset pages do not overlap
+                # or skip rows when many schedules share a created_at second)
+                stmt = base_query.order_by(table.c.created_at.desc(), table.c.id.desc()).limit(limit).offset(offset)
                 results = sess.execute(stmt).fetchall()
                 return [dict(row._mapping) for row in results], total_count
         except Exception as e:

@@ -291,9 +291,12 @@ async def open_chat_stream(
 
 
 def slack_delivery_kwargs(unfurl_links: bool, unfurl_media: bool, mrkdwn: bool) -> Dict[str, Any]:
-    # mrkdwn=False means plaintext delivery: parse="none" stops Slack from linkifying
-    # bare URLs and link_names=False stops @name expansion, so pre-encoded mention
-    # control sequences in untrusted content stay inert.
+    # mrkdwn=False means plaintext delivery: parse="none" stops Slack from
+    # linkifying bare URLs and link_names=False stops bare @name expansion. Note
+    # this does NOT neutralize control sequences already encoded as `<!channel>`
+    # / `<@U123>` — only parse="full" escapes those. Card bodies inert those
+    # characters directly (see builders.inert_code_span_text); the plain message
+    # path relies on the model not emitting pre-encoded sequences.
     kwargs: Dict[str, Any] = {"unfurl_links": unfurl_links, "unfurl_media": unfurl_media, "mrkdwn": mrkdwn}
     if not mrkdwn:
         kwargs["parse"] = "none"

@@ -492,13 +492,18 @@ def _load_session_state(team: "Team", session: TeamSession, session_state: Dict[
 def _update_metadata(team: "Team", session: TeamSession):
     """Merge the team's metadata into the session's metadata.
 
+    Team metadata provides defaults; the session's own stored values win on
+    conflict, matching resolve_run_options (team < session), so a value set on
+    the session is not overwritten by a team default and persists across runs.
     Only the session is updated; the shared Team instance is never mutated.
     """
-    if session.metadata is not None:
-        # If metadata is set in the team, update the database metadata with the team's metadata
-        if team.metadata is not None:
-            # Updates the session metadata in place
-            merge_dictionaries(session.metadata, team.metadata)
+    if session.metadata is not None and team.metadata is not None:
+        from copy import deepcopy
+
+        merged = deepcopy(team.metadata)
+        merge_dictionaries(merged, session.metadata)
+        session.metadata.clear()
+        session.metadata.update(merged)
 
 
 def to_dict(team: "Team") -> Dict[str, Any]:

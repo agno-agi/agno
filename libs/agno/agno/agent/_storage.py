@@ -579,13 +579,18 @@ def load_session_state(agent: Agent, session: AgentSession, session_state: Dict[
 def update_metadata(agent: Agent, session: AgentSession):
     """Merge the agent's metadata into the session's metadata.
 
+    Agent metadata provides defaults; the session's own stored values win on
+    conflict, matching resolve_run_options (agent < session), so a value set on
+    the session is not overwritten by an agent default and persists across runs.
     Only the session is updated; the shared Agent instance is never mutated.
     """
-    if session.metadata is not None:
-        # If metadata is set in the agent, update the database metadata with the agent's metadata
-        if agent.metadata is not None:
-            # Updates the session metadata in place
-            merge_dictionaries(session.metadata, agent.metadata)
+    if session.metadata is not None and agent.metadata is not None:
+        from copy import deepcopy
+
+        merged = deepcopy(agent.metadata)
+        merge_dictionaries(merged, session.metadata)
+        session.metadata.clear()
+        session.metadata.update(merged)
 
 
 def get_session_metrics_internal(agent: Agent, session: AgentSession) -> SessionMetrics:
