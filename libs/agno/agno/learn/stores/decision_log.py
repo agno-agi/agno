@@ -86,6 +86,7 @@ class DecisionLogStore(LearningStore):
         self,
         agent_id: Optional[str] = None,
         session_id: Optional[str] = None,
+        team_id: Optional[str] = None,
         decision_type: Optional[str] = None,
         limit: int = 10,
         days: Optional[int] = None,
@@ -96,6 +97,7 @@ class DecisionLogStore(LearningStore):
         Args:
             agent_id: Filter by agent (optional).
             session_id: Filter by session (optional).
+            team_id: Filter by team (optional).
             decision_type: Filter by decision type (optional).
             limit: Maximum number of decisions to return.
             days: Only return decisions from last N days.
@@ -107,6 +109,7 @@ class DecisionLogStore(LearningStore):
         return self.search(
             agent_id=agent_id,
             session_id=session_id,
+            team_id=team_id,
             decision_type=decision_type,
             limit=limit,
             days=days,
@@ -116,6 +119,7 @@ class DecisionLogStore(LearningStore):
         self,
         agent_id: Optional[str] = None,
         session_id: Optional[str] = None,
+        team_id: Optional[str] = None,
         decision_type: Optional[str] = None,
         limit: int = 10,
         days: Optional[int] = None,
@@ -125,6 +129,7 @@ class DecisionLogStore(LearningStore):
         return await self.asearch(
             agent_id=agent_id,
             session_id=session_id,
+            team_id=team_id,
             decision_type=decision_type,
             limit=limit,
             days=days,
@@ -704,6 +709,7 @@ class DecisionLogStore(LearningStore):
         query: Optional[str] = None,
         agent_id: Optional[str] = None,
         session_id: Optional[str] = None,
+        team_id: Optional[str] = None,
         decision_type: Optional[str] = None,
         days: Optional[int] = None,
         limit: int = 10,
@@ -714,6 +720,7 @@ class DecisionLogStore(LearningStore):
             query: Text to search for.
             agent_id: Filter by agent.
             session_id: Filter by session.
+            team_id: Filter by team.
             decision_type: Filter by type.
             days: Only last N days.
             limit: Maximum results.
@@ -729,11 +736,13 @@ class DecisionLogStore(LearningStore):
             return []
 
         try:
-            # Get all matching records
+            # Get matching records with DB-level filtering
             results = self.db.get_learnings(
                 learning_type=self.learning_type,
                 agent_id=agent_id,
-                limit=limit * 3,  # Over-fetch for filtering
+                session_id=session_id,
+                team_id=team_id,
+                limit=limit * 3,  # Over-fetch for client-side text/date filtering
             )
 
             if not results:
@@ -790,6 +799,7 @@ class DecisionLogStore(LearningStore):
         query: Optional[str] = None,
         agent_id: Optional[str] = None,
         session_id: Optional[str] = None,
+        team_id: Optional[str] = None,
         decision_type: Optional[str] = None,
         days: Optional[int] = None,
         limit: int = 10,
@@ -803,12 +813,16 @@ class DecisionLogStore(LearningStore):
                 results = await self.db.get_learnings(
                     learning_type=self.learning_type,
                     agent_id=agent_id,
+                    session_id=session_id,
+                    team_id=team_id,
                     limit=limit * 3,
                 )
             else:
                 results = self.db.get_learnings(
                     learning_type=self.learning_type,
                     agent_id=agent_id,
+                    session_id=session_id,
+                    team_id=team_id,
                     limit=limit * 3,
                 )
 
@@ -870,19 +884,11 @@ class DecisionLogStore(LearningStore):
             return None
 
         try:
-            # Get learnings and filter by decision_id in content
-            results = self.db.get_learnings(
-                learning_type=self.learning_type,
-                limit=100,
-            )
+            # Direct lookup by primary key
+            result = self.db.get_learning_by_id(id=decision_id)
 
-            if not results:
-                return None
-
-            for record in results:
-                content = record.get("content") if isinstance(record, dict) else None
-                if content and content.get("id") == decision_id:
-                    return from_dict_safe(DecisionLog, content)
+            if result and result.get("content"):
+                return from_dict_safe(DecisionLog, result["content"])
 
             return None
 
@@ -896,25 +902,14 @@ class DecisionLogStore(LearningStore):
             return None
 
         try:
-            # Get learnings and filter by decision_id in content
+            # Direct lookup by primary key
             if isinstance(self.db, AsyncBaseDb):
-                results = await self.db.get_learnings(
-                    learning_type=self.learning_type,
-                    limit=100,
-                )
+                result = await self.db.get_learning_by_id(id=decision_id)
             else:
-                results = self.db.get_learnings(
-                    learning_type=self.learning_type,
-                    limit=100,
-                )
+                result = self.db.get_learning_by_id(id=decision_id)
 
-            if not results:
-                return None
-
-            for record in results:
-                content = record.get("content") if isinstance(record, dict) else None
-                if content and content.get("id") == decision_id:
-                    return from_dict_safe(DecisionLog, content)
+            if result and result.get("content"):
+                return from_dict_safe(DecisionLog, result["content"])
 
             return None
 
