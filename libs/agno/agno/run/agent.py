@@ -682,7 +682,8 @@ class RunOutput:
     # parentage).
     forked_from_run_id: Optional[str] = None
     forked_from_message_index: Optional[int] = None
-    # Executed tool count at fork time (after truncation) — forks get fresh tool_call_limit
+    # Snapshot of executed tools at fork time. Subtracted from total in executed_tool_count
+    # so forked runs start with a fresh tool_call_limit budget.
     tool_count_at_fork: int = 0
 
     # Branching lineage: the source session_id this run was originally created in
