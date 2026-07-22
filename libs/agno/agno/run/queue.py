@@ -73,3 +73,29 @@ class RunQueueConfig:
 
     max_concurrency: int = _DEFAULT_MAX_CONCURRENCY
     redis: Optional[Union[str, RedisCoordination]] = None
+
+    # -- Durability -------------------------------------------------------
+    # durable=True makes acceptance a committed row in the queue table:
+    # accepted runs survive crashes and deploys, reclaimed or terminally
+    # failed (visibly) by whichever replica's worker claims them.
+    durable: bool = False
+    # Queue store override. None = the AgentOS db (zero extra infrastructure).
+    # A dedicated store (e.g. a separate Postgres or RedisDb) isolates queue
+    # polling load from the system of record.
+    db: Optional[Any] = None
+    # Global bound on accepted-but-unstarted jobs; beyond it submissions get 429.
+    max_queue_depth: int = 1000
+    # At most this many executions ever, under any failure mode (reclaim
+    # included). 1 = a crashed run is failed visibly, never silently re-run.
+    max_attempts: int = 1
+    retry_delay_seconds: int = 30
+    # Per-run execution timeout enforced by the worker; None disables.
+    timeout_seconds: Optional[int] = 3600
+    # Stale-lock grace before a crashed worker's jobs are reclaimed. The
+    # worker heartbeat refreshes locks, so this can stay small.
+    lock_grace_seconds: int = 60
+    poll_interval: float = 1.0
+
+    def __post_init__(self) -> None:
+        if self.db is not None and not self.durable:
+            raise ValueError("RunQueueConfig.db requires durable=True (a queue store implies a durable queue)")
