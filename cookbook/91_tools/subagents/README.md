@@ -19,6 +19,11 @@ the same pipeline as the AgentOS "Run in background" toggle — so a page refres
 kills them. The main agent's run is controlled by the toggle itself: turn it on so
 the orchestrator also survives refreshes and can collect the subagent results.
 
+Subagent events are also streamed back into the main agent's run tagged with
+`parent_run_id`, so each `run_task` call renders as nested sub-agent activity inside
+the main chat in the AgentOS UI (the same treatment as team member delegation and
+context-provider sub-agents) — in addition to the separate per-task session.
+
 ## Cookbooks
 
 | File | Description |
