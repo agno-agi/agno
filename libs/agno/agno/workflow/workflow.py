@@ -732,19 +732,16 @@ class Workflow:
             resolved_dependencies = self.dependencies.copy()
 
         # metadata: layered merge, self wins (call-site < session < self).
-        # The base layer is deep-copied because merge_dictionaries recurses in place;
-        # a shallow copy would let session/self values bleed into the caller's nested dicts.
+        # Each layer is deep-copied before it is merged, so no nested dict in the
+        # result aliases a source dict — in particular self.metadata, whose nested
+        # dicts must never be mutated by an in-run write to run_context.metadata
+        # (merge_dictionaries recurses in place).
         resolved_metadata: Optional[Dict[str, Any]] = None
-        if metadata is not None:
-            resolved_metadata = deepcopy(metadata)
-        if session_metadata is not None:
-            if resolved_metadata is None:
-                resolved_metadata = {}
-            merge_dictionaries(resolved_metadata, session_metadata)
-        if self.metadata is not None:
-            if resolved_metadata is None:
-                resolved_metadata = {}
-            merge_dictionaries(resolved_metadata, self.metadata)
+        for layer in (metadata, session_metadata, self.metadata):
+            if layer is not None:
+                if resolved_metadata is None:
+                    resolved_metadata = {}
+                merge_dictionaries(resolved_metadata, deepcopy(layer))
 
         return {
             "dependencies": resolved_dependencies,
@@ -1523,10 +1520,10 @@ class Workflow:
         if workflow_session is None:
             # Creating new session if none found
             log_debug(f"Creating new WorkflowSession: {session_id}")
+            from copy import deepcopy
+
             session_data = {}
             if self.session_state is not None:
-                from copy import deepcopy
-
                 session_data["session_state"] = deepcopy(self.session_state)
             workflow_session = WorkflowSession(
                 session_id=session_id,
@@ -1534,7 +1531,8 @@ class Workflow:
                 user_id=user_id,
                 workflow_data=self._get_workflow_data(),
                 session_data=session_data,
-                metadata=self.metadata,
+                # Copy so the session record never aliases the shared Workflow's dict
+                metadata=deepcopy(self.metadata),
                 created_at=int(time()),
             )
 
@@ -1569,10 +1567,10 @@ class Workflow:
         if workflow_session is None:
             # Creating new session if none found
             log_debug(f"Creating new WorkflowSession: {session_id}")
+            from copy import deepcopy
+
             session_data = {}
             if self.session_state is not None:
-                from copy import deepcopy
-
                 session_data["session_state"] = deepcopy(self.session_state)
             workflow_session = WorkflowSession(
                 session_id=session_id,
@@ -1580,7 +1578,8 @@ class Workflow:
                 user_id=user_id,
                 workflow_data=self._get_workflow_data(),
                 session_data=session_data,
-                metadata=self.metadata,
+                # Copy so the session record never aliases the shared Workflow's dict
+                metadata=deepcopy(self.metadata),
                 created_at=int(time()),
             )
 
@@ -1976,15 +1975,17 @@ class Workflow:
     def _update_metadata(self, session: WorkflowSession):
         """Merge the workflow's metadata into the session's metadata.
 
-        Only the session is updated; the shared Workflow instance is never mutated.
+        Workflow values win on conflict, matching _resolve_run_params
+        (session < self). The workflow layer is deep-copied so the session record
+        never aliases the shared Workflow instance's nested dicts. Only the
+        session is updated; the shared Workflow instance is never mutated.
         """
+        from copy import deepcopy
+
         from agno.utils.merge_dict import merge_dictionaries
 
-        if session.metadata is not None:
-            # If metadata is set in the workflow, update the database metadata with the workflow's metadata
-            if self.metadata is not None:
-                # Updates the session metadata in place
-                merge_dictionaries(session.metadata, self.metadata)
+        if session.metadata is not None and self.metadata is not None:
+            merge_dictionaries(session.metadata, deepcopy(self.metadata))
 
     def _load_session_state(self, session: WorkflowSession, session_state: Dict[str, Any]):
         """Load and return the stored session_state from the database, optionally merging it with the given one"""

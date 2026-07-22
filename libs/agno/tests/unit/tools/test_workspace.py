@@ -970,18 +970,51 @@ def test_enforce_excludes_off_case_variants_not_blocked():
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="fnmatch normcases pattern matching on Windows")
-def test_list_files_matching_stays_case_sensitive():
-    """The casefold guard is enforcement-only: list_files keeps case-sensitive
-    matching, so a case-variant directory name is not pruned from listings."""
+def test_list_files_matching_stays_case_sensitive_by_default():
+    """With the flag off, list_files keeps case-sensitive matching, so a
+    case-variant directory name is not pruned from listings."""
     with tempfile.TemporaryDirectory() as tmp_dir:
         base = Path(tmp_dir)
         (base / "keep.txt").write_text("keep")
         (base / ".VENV").mkdir()
         (base / "node_modules").mkdir()
-        ws = Workspace(tmp_dir, enforce_excludes=True)
+        ws = Workspace(tmp_dir)
 
         result = json.loads(ws.list_files())
         paths = [e["path"] for e in result["files"]]
         assert "keep.txt" in paths
         assert ".VENV" in paths
         assert "node_modules" not in paths
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="fnmatch normcases pattern matching on Windows")
+def test_list_files_matching_casefolds_under_enforce_excludes():
+    """enforce_excludes tightens the read surface too: a case-variant of an
+    excluded name is pruned from listings so it can't be discovered by casing."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        base = Path(tmp_dir)
+        (base / "keep.txt").write_text("keep")
+        (base / ".VENV").mkdir()
+        ws = Workspace(tmp_dir, enforce_excludes=True)
+
+        paths = [e["path"] for e in json.loads(ws.list_files())["files"]]
+        assert "keep.txt" in paths
+        assert ".VENV" not in paths
+
+
+def test_search_content_does_not_leak_case_variant_excluded_content():
+    """The exfiltration path fix-1 closes for read_file must also hold for
+    search_content: with enforce_excludes, the content of a case-variant of an
+    excluded file must not be surfaced (the direct read is already blocked)."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        base = Path(tmp_dir)
+        (base / "Secret.txt").write_text("password: TOPSECRET")
+        ws = Workspace(tmp_dir, exclude_patterns=["secret.txt"], enforce_excludes=True)
+
+        assert ws.read_file("Secret.txt") == EXCLUDED_ERROR
+        result = json.loads(ws.search_content("TOPSECRET"))
+        assert result["matches_found"] == 0
+
+        # Control: with the flag off, search is case-sensitive and does surface it.
+        ws_off = Workspace(tmp_dir, exclude_patterns=["secret.txt"])
+        assert json.loads(ws_off.search_content("TOPSECRET"))["matches_found"] == 1

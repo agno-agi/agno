@@ -242,6 +242,12 @@ class TestManagerListAll:
         result = mgr.list_all()
 
         assert len(result) == 3
+
+    def test_list_all_tolerates_none_rows_result(self, mgr, mock_db):
+        # A (None, 0) result must be treated as an empty page, not crash on len(None);
+        # list() tolerates the same shape, so list_all(raise_on_error=False) must too.
+        mock_db.get_schedules = MagicMock(return_value=(None, 0))
+        assert mgr.list_all(raise_on_error=False) == []
         assert mock_db.get_schedules.call_count == 1
 
 
@@ -399,6 +405,29 @@ class TestAsyncListAll:
 
         assert len(result) == 3
         assert mock_async_db.get_schedules.call_count == 1
+
+    @pytest.mark.asyncio
+    async def test_alist_all_exact_page_multiple(self, async_mgr, mock_async_db):
+        schedules = [_make_schedule(id=f"sched-{i}", name=f"schedule-{i}") for i in range(200)]
+        mock_async_db.get_schedules = AsyncMock(side_effect=_make_paged_get_schedules(schedules))
+
+        result = await async_mgr.alist_all()
+
+        assert len(result) == 200
+        # A trailing empty page marks the end of the sweep
+        assert mock_async_db.get_schedules.call_count == 3
+
+    @pytest.mark.asyncio
+    async def test_alist_all_forwards_flags(self, async_mgr, mock_async_db):
+        mock_async_db.get_schedules = AsyncMock(return_value=([], 0))
+        await async_mgr.alist_all(enabled=True, raise_on_error=False)
+        mock_async_db.get_schedules.assert_called_once_with(enabled=True, limit=100, page=1, raise_on_error=False)
+
+    @pytest.mark.asyncio
+    async def test_alist_all_tolerates_none_rows_result(self, async_mgr, mock_async_db):
+        # A (None, 0) result must be treated as an empty page, not crash on len(None)
+        mock_async_db.get_schedules = AsyncMock(return_value=(None, 0))
+        assert await async_mgr.alist_all(raise_on_error=False) == []
 
 
 class TestAsyncGet:

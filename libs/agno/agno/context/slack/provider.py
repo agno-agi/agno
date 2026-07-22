@@ -42,8 +42,10 @@ class SlackContextProvider(ContextProvider):
     """Read + write access to a Slack workspace via two tools.
 
     ``write_tools`` swaps the write sub-agent's toolset (default: a
-    posting-scoped ``SlackTools``). ``mode=ContextMode.tools`` is a
-    read-only surface and deliberately ignores ``write_tools``.
+    posting-scoped ``SlackTools``). The default ``write_instructions``
+    name the default tools, so a custom ``write_tools`` usually needs a
+    matching ``write_instructions`` override. ``mode=ContextMode.tools``
+    is a read-only surface and deliberately ignores ``write_tools``.
     """
 
     def __init__(

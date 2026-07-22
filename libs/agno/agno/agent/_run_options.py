@@ -159,20 +159,15 @@ def resolve_run_options(
         resolved_filters = get_effective_filters(agent, knowledge_filters=knowledge_filters)
 
     # metadata: layered merge, call-site wins (agent < session < call-site),
-    # matching how dependencies resolve. The agent layer is deep-copied because
-    # merge_dictionaries mutates nested dicts of its first argument in place;
-    # a shallow copy would let session/call-site values bleed into agent.metadata.
+    # matching how dependencies resolve. Each layer is deep-copied before it is
+    # merged, so no nested dict in the result aliases a source dict
+    # (merge_dictionaries recurses in place).
     resolved_metadata: Optional[Dict[str, Any]] = None
-    if agent.metadata is not None:
-        resolved_metadata = deepcopy(agent.metadata)
-    if session_metadata is not None:
-        if resolved_metadata is None:
-            resolved_metadata = {}
-        merge_dictionaries(resolved_metadata, session_metadata)
-    if metadata is not None:
-        if resolved_metadata is None:
-            resolved_metadata = {}
-        merge_dictionaries(resolved_metadata, metadata)
+    for layer in (agent.metadata, session_metadata, metadata):
+        if layer is not None:
+            if resolved_metadata is None:
+                resolved_metadata = {}
+            merge_dictionaries(resolved_metadata, deepcopy(layer))
 
     # output_schema: call-site > agent.output_schema
     resolved_output_schema = output_schema if output_schema is not None else agent.output_schema
