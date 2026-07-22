@@ -228,6 +228,12 @@ def test_provider_both_flags_false_raises(tmp_path: Path):
         WikiContextProvider(backend=FileSystemBackend(path=tmp_path), read=False, write=False)
 
 
+def test_provider_query_timeout_plumbs_to_base(tmp_path: Path):
+    p = WikiContextProvider(backend=FileSystemBackend(path=tmp_path), query_timeout=2.5)
+    assert p.query_timeout == 2.5
+    assert WikiContextProvider(backend=FileSystemBackend(path=tmp_path)).query_timeout is None
+
+
 def test_provider_instructions_omit_update_when_write_false(tmp_path: Path):
     p = WikiContextProvider(backend=FileSystemBackend(path=tmp_path), id="voice", write=False)
     text = p.instructions()

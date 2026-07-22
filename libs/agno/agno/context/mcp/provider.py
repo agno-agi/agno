@@ -69,9 +69,10 @@ class MCPContextProvider(ContextProvider):
         base_instructions: str | None = None,
         mode: ContextMode = ContextMode.default,
         model: Model | None = None,
+        query_timeout: float | None = None,
     ) -> None:
         resolved_id = id or f"mcp_{_sanitize_id(server_name)}"
-        super().__init__(id=resolved_id, name=name or server_name, mode=mode, model=model)
+        super().__init__(id=resolved_id, name=name or server_name, mode=mode, model=model, query_timeout=query_timeout)
         self.server_name = server_name
         self.transport: Transport = transport
         self.command = command

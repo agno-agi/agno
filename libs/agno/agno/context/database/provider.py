@@ -54,10 +54,11 @@ class DatabaseContextProvider(ContextProvider):
         write_tools: list | None = None,
         mode: ContextMode = ContextMode.default,
         model: Model | None = None,
+        query_timeout: float | None = None,
         read: bool = True,
         write: bool = True,
     ) -> None:
-        super().__init__(id=id, name=name, mode=mode, model=model, read=read, write=write)
+        super().__init__(id=id, name=name, mode=mode, model=model, query_timeout=query_timeout, read=read, write=write)
         self.sql_engine = sql_engine
         self.readonly_engine = readonly_engine
         self.schema = schema

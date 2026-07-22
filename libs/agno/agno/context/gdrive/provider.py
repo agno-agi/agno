@@ -72,8 +72,9 @@ class GoogleDriveContextProvider(ContextProvider):
         instructions: str | None = None,
         mode: ContextMode = ContextMode.default,
         model: Model | None = None,
+        query_timeout: float | None = None,
     ) -> None:
-        super().__init__(id=id, name=name, mode=mode, model=model)
+        super().__init__(id=id, name=name, mode=mode, model=model, query_timeout=query_timeout)
 
         # Store params — toolkit handles actual auth
         self._sa_path = service_account_path or getenv("GOOGLE_SERVICE_ACCOUNT_FILE")

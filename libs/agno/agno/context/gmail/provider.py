@@ -105,10 +105,11 @@ class GmailContextProvider(ContextProvider):
         write_tools: list | None = None,
         mode: ContextMode = ContextMode.default,
         model: Model | None = None,
+        query_timeout: float | None = None,
         read: bool = True,
         write: bool = False,
     ) -> None:
-        super().__init__(id=id, name=name, mode=mode, model=model, read=read, write=write)
+        super().__init__(id=id, name=name, mode=mode, model=model, query_timeout=query_timeout, read=read, write=write)
 
         # Store auth config for toolkit creation
         self._auth = auth

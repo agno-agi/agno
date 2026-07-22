@@ -37,12 +37,13 @@ class WorkspaceContextProvider(ContextProvider):
         instructions: str | None = None,
         mode: ContextMode = ContextMode.default,
         model: Model | None = None,
+        query_timeout: float | None = None,
         exclude_patterns: list[str] | None = None,
         enforce_excludes: bool = False,
         max_file_lines: int = 100_000,
         max_file_length: int = 10_000_000,
     ) -> None:
-        super().__init__(id=id, name=name, mode=mode, model=model)
+        super().__init__(id=id, name=name, mode=mode, model=model, query_timeout=query_timeout)
         self.root = Path(root).expanduser().resolve() if root is not None else Path.cwd().resolve()
         self.instructions_text = instructions if instructions is not None else DEFAULT_WORKSPACE_INSTRUCTIONS
         self.exclude_patterns = exclude_patterns if exclude_patterns is not None else list(DEFAULT_EXCLUDE_PATTERNS)
