@@ -385,7 +385,12 @@ async def test_base_asetup_is_idempotent():
 
 @pytest.mark.asyncio
 async def test_query_tool_yields_events_from_sub_agent():
-    """Events from the sub-agent must be yielded, not just the final answer."""
+    """Events from the sub-agent are yielded; no final JSON (content is in events).
+
+    This matches the Team pattern where delegate_task_to_member yields only
+    events when streaming — models/base.py accumulates content from
+    RunContentEvent deltas, so yielding a final JSON would duplicate content.
+    """
     from agno.run.agent import RunOutput, ToolCallStartedEvent
 
     class _StreamingProvider(_EchoProvider):
@@ -407,18 +412,18 @@ async def test_query_tool_yields_events_from_sub_agent():
     gen = await query_tool.entrypoint(question="test")
 
     events = []
-    final_json = None
+    strings = []
     async for chunk in gen:
         if isinstance(chunk, str):
-            final_json = chunk
+            strings.append(chunk)
         else:
             events.append(chunk)
 
     assert len(events) == 2, f"Expected 2 events, got {len(events)}"
     assert events[0].tool_call_id == "call_1"
     assert events[1].tool_call_id == "call_2"
-    assert final_json is not None
-    assert "final answer" in final_json
+    # No final JSON — content is captured from RunContentEvent by models/base.py
+    assert len(strings) == 0, "Streaming mode should not yield final JSON"
 
 
 @pytest.mark.asyncio
@@ -583,7 +588,10 @@ async def test_stream_sub_agent_events_can_be_disabled():
 
 @pytest.mark.asyncio
 async def test_update_tool_yields_events_from_sub_agent():
-    """Events from the write sub-agent must be yielded, not just the final answer."""
+    """Events from the write sub-agent are yielded; no final JSON (content is in events).
+
+    Same as query tool — matches Team pattern where streaming yields only events.
+    """
     from agno.run.agent import RunOutput, ToolCallStartedEvent
 
     class _StreamingWriteProvider(_EchoProvider):
@@ -605,18 +613,18 @@ async def test_update_tool_yields_events_from_sub_agent():
     gen = await update_tool.entrypoint(instruction="add page")
 
     events = []
-    final_json = None
+    strings = []
     async for chunk in gen:
         if isinstance(chunk, str):
-            final_json = chunk
+            strings.append(chunk)
         else:
             events.append(chunk)
 
     assert len(events) == 2, f"Expected 2 events, got {len(events)}"
     assert events[0].tool_call_id == "write_call_1"
     assert events[1].tool_call_id == "write_call_2"
-    assert final_json is not None
-    assert "wrote successfully" in final_json
+    # No final JSON — content is captured from RunContentEvent by models/base.py
+    assert len(strings) == 0, "Streaming mode should not yield final JSON"
 
 
 @pytest.mark.asyncio
@@ -657,3 +665,81 @@ async def test_update_tool_falls_back_to_aupdate_without_streaming_agent():
     out = await _collect_update_output(update_tool, instruction="hello")
     payload = json.loads(out)
     assert payload["text"] == "u:hello"
+
+
+# ---------------------------------------------------------------------------
+# Content duplication tests — verify Team-parity streaming pattern
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_streaming_does_not_duplicate_content():
+    """Verify no content duplication when streaming (Team pattern compliance).
+
+    This test simulates what models/base.py does: accumulate content from
+    RunContentEvent deltas. The bug was that providers also yielded a final
+    JSON answer, causing the content to appear twice in function_call_output.
+
+    Team's delegate_task_to_member avoids this by gating the final yield
+    behind ``if not stream:`` (team/_default_tools.py:736).
+    """
+    from agno.run.agent import RunContentEvent, RunOutput
+
+    class _ContentStreamingProvider(_EchoProvider):
+        async def _aget_query_agent(self, run_context):
+            class _FakeAgent:
+                async def arun(self, message, **kwargs):
+                    # Simulate streaming content deltas
+                    e1 = RunContentEvent(content="Hello ")
+                    e2 = RunContentEvent(content="world")
+                    yield e1
+                    yield e2
+                    yield RunOutput(content="Hello world")
+
+            return _FakeAgent()
+
+    p = _ContentStreamingProvider(id="s")
+    query_tool = p._query_tool()
+    gen = await query_tool.entrypoint(question="test")
+
+    # Simulate models/base.py accumulation logic (base.py:2737-2767)
+    function_call_output = ""
+    async for chunk in gen:
+        if isinstance(chunk, RunContentEvent):
+            function_call_output += chunk.content or ""
+        elif isinstance(chunk, str):
+            # This would be the final JSON — should NOT happen in streaming
+            function_call_output += chunk
+
+    # Content should appear exactly ONCE, not twice
+    assert function_call_output == "Hello world", (
+        f"Expected 'Hello world' once, got '{function_call_output}'. "
+        'If you see \'Hello world{"text": "Hello world"}\', the bug is back.'
+    )
+
+
+@pytest.mark.asyncio
+async def test_non_streaming_yields_json_answer():
+    """With stream_sub_agent_events=False, provider yields JSON (no events)."""
+    from agno.run.agent import RunOutput
+
+    class _NonStreamingProvider(_EchoProvider):
+        async def _aget_query_agent(self, run_context):
+            class _FakeAgent:
+                async def arun(self, message, **kwargs):
+                    return RunOutput(content="The answer")
+
+            return _FakeAgent()
+
+    p = _NonStreamingProvider(id="s", stream_sub_agent_events=False)
+    query_tool = p._query_tool()
+    gen = await query_tool.entrypoint(question="test")
+
+    outputs = []
+    async for chunk in gen:
+        outputs.append(chunk)
+
+    assert len(outputs) == 1, "Non-streaming should yield exactly one item"
+    assert isinstance(outputs[0], str), "Non-streaming should yield JSON string"
+    payload = json.loads(outputs[0])
+    assert payload == {"text": "The answer"}

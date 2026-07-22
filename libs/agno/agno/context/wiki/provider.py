@@ -218,18 +218,19 @@ class WikiContextProvider(ContextProvider):
             try:
                 await provider.asetup()
 
-                answer: Answer | None = None
                 async with provider._git_lock:
                     await provider.backend.sync()
 
                     agent = provider._ensure_write_agent()
                     if provider.stream_sub_agent_events:
+                        # Stream mode: yield events only. Content is captured by
+                        # models/base.py from RunContentEvent deltas. We only
+                        # yield the commit note at the end (not the full answer).
                         async for chunk in provider._arun_sub_agent_stream(agent, instruction, run_context):
-                            if isinstance(chunk, Answer):
-                                answer = chunk
-                            else:
-                                yield chunk
+                            yield chunk
+                        answer = None  # Content already in events
                     else:
+                        # Non-stream mode: get Answer for final JSON
                         answer = await provider._arun_sub_agent(agent, instruction, run_context)
 
                     commit = await provider.backend.commit_after_write(model=provider.model)
@@ -240,13 +241,19 @@ class WikiContextProvider(ContextProvider):
                         f"({commit.files_changed} file(s)): {commit.message}"
                     )
                     note = f"\n\nCommitted {commit.sha[:8]} ({commit.files_changed} file(s)): {commit.message}"
-                    if answer is not None:
+                    if provider.stream_sub_agent_events:
+                        # Streaming: content already in events, just append commit note
+                        yield note
+                    elif answer is not None:
+                        # Non-streaming: include note in the Answer JSON
                         answer = Answer(results=answer.results, text=(answer.text or "") + note)
 
-                if answer is not None:
-                    yield json.dumps(serialize_answer(answer))
-                else:
-                    yield json.dumps({})
+                if not provider.stream_sub_agent_events:
+                    # Non-streaming: yield final JSON
+                    if answer is not None:
+                        yield json.dumps(serialize_answer(answer))
+                    else:
+                        yield json.dumps({})
 
             except Exception as exc:
                 yield json.dumps({"error": f"{type(exc).__name__}: {exc}"})

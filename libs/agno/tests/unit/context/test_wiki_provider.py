@@ -630,15 +630,16 @@ async def test_git_run_sets_terminal_prompt_zero(monkeypatch, tmp_path: Path):
 
 
 @pytest.mark.asyncio
-async def test_provider_query_tool_serialises_answer(tmp_path: Path):
+async def test_provider_query_tool_serialises_answer_non_streaming(tmp_path: Path):
+    """With stream_sub_agent_events=False, query tool yields final JSON answer."""
     from agno.run.agent import RunOutput
 
-    p = WikiContextProvider(backend=FileSystemBackend(path=tmp_path))
+    p = WikiContextProvider(backend=FileSystemBackend(path=tmp_path), stream_sub_agent_events=False)
 
     class _StubAgent:
         async def arun(self, message: str, **kwargs):  # noqa: ANN001
-            # When stream=True, arun is an async generator function
-            yield RunOutput(content="hello")
+            # When stream=False, arun returns RunOutput directly
+            return RunOutput(content="hello")
 
     p._read_agent = _StubAgent()
     tool = next(t for t in p.get_tools() if t.name == "query_wiki")
@@ -651,6 +652,42 @@ async def test_provider_query_tool_serialises_answer(tmp_path: Path):
             out = chunk
     payload = json.loads(out)
     assert payload == {"text": "hello"}
+
+
+@pytest.mark.asyncio
+async def test_provider_query_tool_streams_events_not_json(tmp_path: Path):
+    """With stream_sub_agent_events=True (default), query yields events only.
+
+    The content is captured by models/base.py from RunContentEvent deltas,
+    so no final JSON is yielded — matching the Team streaming pattern.
+    """
+    from agno.run.agent import RunOutput, ToolCallStartedEvent
+
+    p = WikiContextProvider(backend=FileSystemBackend(path=tmp_path))
+    # Default: stream_sub_agent_events=True
+
+    class _StubAgent:
+        async def arun(self, message: str, **kwargs):  # noqa: ANN001
+            event = ToolCallStartedEvent()
+            event.tool_call_id = "test_call"
+            yield event
+            yield RunOutput(content="hello")
+
+    p._read_agent = _StubAgent()
+    tool = next(t for t in p.get_tools() if t.name == "query_wiki")
+
+    gen = await tool.entrypoint(question="anything")
+    events = []
+    strings = []
+    async for chunk in gen:
+        if isinstance(chunk, str):
+            strings.append(chunk)
+        else:
+            events.append(chunk)
+
+    assert len(events) == 1, "Should yield the event"
+    assert events[0].tool_call_id == "test_call"
+    assert len(strings) == 0, "Should not yield final JSON in streaming mode"
 
 
 @pytest.mark.asyncio

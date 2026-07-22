@@ -236,12 +236,18 @@ class ContextProvider(ABC):
         message: str,
         run_context: RunContext | None,
     ):
-        """Stream events from a sub-agent, yield events + final Answer."""
-        from agno.context._utils import answer_from_run
+        """Stream events from a sub-agent, yield events only.
 
+        Unlike Team's delegate_task_to_member which yields a final string
+        when not streaming (gated by ``if not stream:``), we never yield
+        a final Answer here. The content is already captured by
+        models/base.py from RunContentEvent deltas — yielding the Answer
+        again would duplicate content in the tool result.
+
+        See: team/_default_tools.py:736 for the Team pattern.
+        """
         kwargs = self._run_kwargs_for_sub_agent(run_context)
         run_id = run_context.run_id if run_context else None
-        final_output: RunOutput | None = None
 
         async for event in agent.arun(
             message,
@@ -251,13 +257,10 @@ class ContextProvider(ABC):
             **kwargs,
         ):
             if isinstance(event, RunOutput):
-                final_output = event
+                # Capture but don't yield — matches Team pattern (line 652-654)
                 continue
             event.parent_run_id = getattr(event, "parent_run_id", None) or run_id
             yield event
-
-        if final_output is not None:
-            yield answer_from_run(final_output)
 
     def _read_write_tools(self) -> list:
         """Helper for subclasses with both query + update tools.
@@ -296,12 +299,14 @@ class ContextProvider(ABC):
 
             try:
                 if provider.stream_sub_agent_events:
+                    # Stream mode: yield events only. Content is accumulated by
+                    # models/base.py from RunContentEvent deltas — no final JSON
+                    # needed. Matches Team pattern (delegate_task_to_member line 736
+                    # gates final yield behind ``if not stream:``).
                     async for chunk in provider._arun_sub_agent_stream(agent, question, run_context):
-                        if isinstance(chunk, Answer):
-                            yield json.dumps(serialize_answer(chunk))
-                        else:
-                            yield chunk
+                        yield chunk
                 else:
+                    # Non-stream mode: single JSON answer
                     answer = await provider._arun_sub_agent(agent, question, run_context)
                     yield json.dumps(serialize_answer(answer))
             except Exception as exc:
@@ -337,12 +342,11 @@ class ContextProvider(ABC):
 
             try:
                 if provider.stream_sub_agent_events:
+                    # Stream mode: yield events only (same as _query_tool)
                     async for chunk in provider._arun_sub_agent_stream(agent, instruction, run_context):
-                        if isinstance(chunk, Answer):
-                            yield json.dumps(serialize_answer(chunk))
-                        else:
-                            yield chunk
+                        yield chunk
                 else:
+                    # Non-stream mode: single JSON answer
                     answer = await provider._arun_sub_agent(agent, instruction, run_context)
                     yield json.dumps(serialize_answer(answer))
             except Exception as exc:
