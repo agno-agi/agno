@@ -3624,11 +3624,9 @@ def _continue_run(
 
     agent.model = cast(Model, agent.model)
 
-    # 1. Execute pre-hooks only if ANY requirement explicitly opts in (execute_pre_hooks=True)
-    requirements = run_response.requirements or []
-    should_run_pre_hooks = any(getattr(req, "execute_pre_hooks", False) for req in requirements)
+    # 1. Execute pre-hooks (only hooks with @hook(run_on_continue=True) will run)
     run_input = cast(RunInput, run_response.input)
-    if agent.pre_hooks is not None and should_run_pre_hooks:
+    if agent.pre_hooks is not None:
         try:
             pre_hook_iterator = execute_pre_hooks(
                 agent,
@@ -3892,11 +3890,9 @@ def _continue_run_stream(
                         store_events=agent.store_events,
                     )
 
-                # 2. Execute pre-hooks only if ANY requirement explicitly opts in (execute_pre_hooks=True)
-                requirements = run_response.requirements or []
-                should_run_pre_hooks = any(getattr(req, "execute_pre_hooks", False) for req in requirements)
+                # 2. Execute pre-hooks (only hooks with @hook(run_on_continue=True) will run)
                 run_input = cast(RunInput, run_response.input)
-                if agent.pre_hooks is not None and should_run_pre_hooks:
+                if agent.pre_hooks is not None:
                     pre_hook_iterator = execute_pre_hooks(
                         agent,
                         hooks=agent.pre_hooks,  # type: ignore
@@ -4782,11 +4778,9 @@ async def _acontinue_run(
                 # Register run for cancellation tracking
                 await aregister_run(run_response.run_id)  # type: ignore
 
-                # 7. Execute pre-hooks only if ANY requirement explicitly opts in (execute_pre_hooks=True)
-                requirements = run_response.requirements or []
-                should_run_pre_hooks = any(getattr(req, "execute_pre_hooks", False) for req in requirements)
+                # 7. Execute pre-hooks (only hooks with @hook(run_on_continue=True) will run)
                 run_input = cast(RunInput, run_response.input)
-                if agent.pre_hooks is not None and should_run_pre_hooks:
+                if agent.pre_hooks is not None:
                     pre_hook_iterator = aexecute_pre_hooks(
                         agent,
                         hooks=agent.pre_hooks,  # type: ignore
@@ -5305,11 +5299,9 @@ async def _acontinue_run_stream(
                         store_events=agent.store_events,
                     )
 
-                # 7. Execute pre-hooks only if ANY requirement explicitly opts in (execute_pre_hooks=True)
-                requirements = run_response.requirements or []
-                should_run_pre_hooks = any(getattr(req, "execute_pre_hooks", False) for req in requirements)
+                # 7. Execute pre-hooks (only hooks with @hook(run_on_continue=True) will run)
                 run_input = cast(RunInput, run_response.input)
-                if agent.pre_hooks is not None and should_run_pre_hooks:
+                if agent.pre_hooks is not None:
                     pre_hook_iterator = aexecute_pre_hooks(
                         agent,
                         hooks=agent.pre_hooks,  # type: ignore
