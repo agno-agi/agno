@@ -57,6 +57,7 @@ from agno.os.routers.learnings import get_learnings_router
 from agno.os.routers.memory import get_memory_router
 from agno.os.routers.metrics import get_metrics_router
 from agno.os.routers.registry import get_registry_router
+from agno.os.routers.run_queue import get_run_queue_router
 from agno.os.routers.schedules import get_schedule_router
 from agno.os.routers.service_accounts import get_service_accounts_router
 from agno.os.routers.session import get_session_router
@@ -674,6 +675,11 @@ class AgentOS:
         self._add_router(app, get_team_router(self, settings=self.settings, registry=self.registry))
         self._add_router(app, get_workflow_router(self, settings=self.settings))
         self._add_router(app, get_websocket_router(self, settings=self.settings))
+
+        # Run queue operations surface (DLQ, requeue, stats) - only meaningful
+        # when the durable queue is enabled
+        if self.run_queue is not None and self.run_queue.durable:
+            self._add_router(app, get_run_queue_router(self, settings=self.settings))
 
         # Add A2A interface if relevant
         has_a2a_interface = False

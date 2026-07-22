@@ -67,3 +67,12 @@
 
 ---
 
+### durable_run_queue.py
+
+**Status:** NOT RUN (compile-checked)
+**Tier:** untagged
+**Description:** AgentOS with RunQueueConfig(durable=True): background runs accepted as committed queue rows, executed by per-replica workers, crash recovery via stale-lock reclaim/sweep, ops endpoints (/run-queue/stats, /run-queue/jobs, requeue), Idempotency-Key dedup, and a RedisRunQueueStore variant documented for dedicated-store deployments. Requires Postgres (Docker unavailable during testing). Underlying semantics covered by 39 unit tests (store contracts for in-memory and Redis via fakeredis, worker crash-recovery suite).
+**Result:** Compile check passed; full run requires Postgres.
+
+---
+

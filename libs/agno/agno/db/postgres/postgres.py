@@ -5358,6 +5358,87 @@ class PostgresDb(BaseDb):
             log_debug(f"Error counting queued run jobs: {e}")
             return 0
 
+    def list_run_jobs(self, status: Optional[str] = None, limit: int = 50) -> List[Dict[str, Any]]:
+        try:
+            table = self._get_table(table_type="run_queue")
+            if table is None:
+                return []
+            stmt = select(table)
+            if status is not None:
+                stmt = stmt.where(table.c.status == status)
+            stmt = stmt.order_by(table.c.created_at.desc()).limit(limit)
+            with self.Session() as sess:
+                result = sess.execute(stmt)
+                return [dict(row._mapping) for row in result.fetchall()]
+        except Exception as e:
+            log_debug(f"Error listing run jobs: {e}")
+            return []
+
+    def requeue_run_job(self, job_id: str) -> bool:
+        """Operator requeue for a terminally failed/cancelled job: grants
+        exactly one more execution by raising max_attempts to attempt + 1."""
+        try:
+            table = self._get_table(table_type="run_queue")
+            if table is None:
+                return False
+            now = int(time.time())
+            with self.Session() as sess, sess.begin():
+                result = sess.execute(
+                    update(table)
+                    .where(table.c.id == job_id, table.c.status.in_(["failed", "cancelled"]))
+                    .values(
+                        status="queued",
+                        max_attempts=table.c.attempt + 1,
+                        available_at=now,
+                        locked_by=None,
+                        locked_at=None,
+                        completed_at=None,
+                        updated_at=now,
+                    )
+                )
+                return (result.rowcount or 0) > 0
+        except Exception as e:
+            log_debug(f"Error requeueing run job: {e}")
+            return False
+
+    def run_queue_stats(self) -> Dict[str, Any]:
+        try:
+            table = self._get_table(table_type="run_queue")
+            if table is None:
+                return {"counts": {}, "oldest_queued_age_seconds": None}
+            now = int(time.time())
+            with self.Session() as sess:
+                counts_result = sess.execute(select(table.c.status, func.count()).group_by(table.c.status))
+                counts = {row[0]: row[1] for row in counts_result.fetchall()}
+                oldest_result = sess.execute(select(func.min(table.c.created_at)).where(table.c.status == "queued"))
+                oldest_created = oldest_result.scalar()
+                oldest_age = (now - oldest_created) if oldest_created is not None else None
+                return {"counts": counts, "oldest_queued_age_seconds": oldest_age}
+        except Exception as e:
+            log_debug(f"Error getting run queue stats: {e}")
+            return {"counts": {}, "oldest_queued_age_seconds": None}
+
+    def cleanup_run_jobs(self, older_than_seconds: int = 86400) -> int:
+        """Delete terminal jobs whose completed_at is older than the retention
+        window. Returns the number of rows removed."""
+        try:
+            table = self._get_table(table_type="run_queue")
+            if table is None:
+                return 0
+            cutoff = int(time.time()) - older_than_seconds
+            with self.Session() as sess, sess.begin():
+                result = sess.execute(
+                    table.delete().where(
+                        table.c.status.in_(["completed", "failed", "cancelled"]),
+                        table.c.completed_at.is_not(None),
+                        table.c.completed_at <= cutoff,
+                    )
+                )
+                return result.rowcount or 0
+        except Exception as e:
+            log_debug(f"Error cleaning up run jobs: {e}")
+            return 0
+
     # -- Approval methods --
 
     def create_approval(self, approval_data: Dict[str, Any]) -> Dict[str, Any]:

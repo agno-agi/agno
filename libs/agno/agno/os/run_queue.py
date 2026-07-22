@@ -94,6 +94,18 @@ def resolve_run_queue_store(config: RunQueueConfig, default_db: Any) -> Any:
     store = config.db if config.db is not None else default_db
     if store is not None and callable(getattr(store, "claim_run_job", None)):
         return store
+    # A RedisDb passed as the queue store: build the Redis queue store from its
+    # connection (RedisDb itself is the sync session-storage adapter).
+    if store is not None and type(store).__name__ == "RedisDb" and getattr(store, "db_url", None):
+        try:
+            from redis.asyncio import Redis as AsyncRedis
+
+            from agno.run.redis_queue_store import RedisRunQueueStore
+
+            log_info("Run queue: using RedisRunQueueStore built from the provided RedisDb connection")
+            return RedisRunQueueStore(AsyncRedis.from_url(store.db_url))
+        except ImportError:
+            pass
     log_warning(
         "Durable run queue requested but the configured db does not implement the run "
         "queue contract; falling back to an in-memory queue (NOT durable). Use a "
@@ -170,10 +182,19 @@ class RunQueueWorker:
         log_info("Run queue worker stopped")
 
     async def _poll_loop(self) -> None:
+        import time as _time
+
+        last_cleanup = _time.time()
         while self._running:
             try:
                 await self._sweep_exhausted()
                 await self._claim_burst()
+                # Retention: delete old terminal jobs about once an hour
+                if _time.time() - last_cleanup > 3600 and callable(getattr(self.store, "cleanup_run_jobs", None)):
+                    removed = await self.store.cleanup_run_jobs(self.config.retention_seconds)
+                    if removed:
+                        log_info(f"Run queue retention: removed {removed} old terminal jobs")
+                    last_cleanup = _time.time()
                 await asyncio.sleep(self.config.poll_interval)
             except asyncio.CancelledError:
                 break

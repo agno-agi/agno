@@ -18,6 +18,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
 
 from agno.db.base import BaseDb
+from agno.db.schemas.run_queue import RunQueueJob
 from agno.exceptions import InputCheckError, OutputCheckError
 from agno.factory import FactoryContextRequired
 from agno.os.auth import (
@@ -37,6 +38,7 @@ from agno.os.middleware.user_scope import (
     verify_run_in_session_via_db,
 )
 from agno.os.routers.workflows.schema import WorkflowResponse
+from agno.os.run_queue import aprepare_queued_run
 from agno.os.schema import (
     BadRequestResponse,
     InternalServerErrorResponse,
@@ -1252,6 +1254,54 @@ def get_workflow_router(
                 raise HTTPException(
                     status_code=400,
                     detail="Background execution requires a database to be configured on the workflow",
+                )
+
+            # Durable queue path: acceptance is a committed row; whichever
+            # replica's worker claims the job executes it, surviving crashes
+            # and deploys. Client contract identical: 202 + poll.
+            queue_worker = getattr(request.app.state, "run_queue_worker", None)
+            if queue_worker is not None and not isinstance(workflow, RemoteWorkflow):
+                queued_run_id = str(uuid4())
+                queued_session_id = session_id or str(uuid4())
+                job = RunQueueJob(
+                    id=queued_run_id,
+                    component_type="workflow",
+                    component_id=getattr(workflow, "id", None) or workflow_id,
+                    session_id=queued_session_id,
+                    user_id=user_id,
+                    payload={"input": message, "kwargs": kwargs},
+                    max_attempts=queue_worker.config.max_attempts,
+                    idempotency_key=request.headers.get("idempotency-key"),
+                ).to_dict()
+
+                await aprepare_queued_run(
+                    workflow,
+                    "workflow",
+                    run_id=queued_run_id,
+                    session_id=queued_session_id,
+                    user_id=user_id,
+                    input=message,
+                )
+                enqueue_result = await queue_worker.store.enqueue_run_job(
+                    job, max_depth=queue_worker.config.max_queue_depth
+                )
+                if enqueue_result["reason"] == "queue_full":
+                    raise HTTPException(status_code=429, detail="Run queue is full")
+                if enqueue_result["reason"] == "duplicate" and enqueue_result["job"] is not None:
+                    existing = enqueue_result["job"]
+                    return JSONResponse(
+                        status_code=202,
+                        content={
+                            "run_id": existing["id"],
+                            "session_id": existing["session_id"],
+                            "status": "PENDING"
+                            if existing["status"] in ("queued", "running")
+                            else existing["status"].upper(),
+                        },
+                    )
+                return JSONResponse(
+                    status_code=202,
+                    content={"run_id": queued_run_id, "session_id": queued_session_id, "status": "PENDING"},
                 )
 
             run_response = await workflow.arun(

@@ -160,3 +160,58 @@ class InMemoryRunQueueStore:
     async def count_queued_run_jobs(self) -> int:
         async with self._lock:
             return sum(1 for j in self._jobs.values() if j["status"] == "queued")
+
+    # -- Operations surface (DLQ, requeue, stats, retention) ---------------
+
+    async def list_run_jobs(self, status: Optional[str] = None, limit: int = 50) -> List[Dict[str, Any]]:
+        async with self._lock:
+            jobs = [dict(j) for j in self._jobs.values() if status is None or j["status"] == status]
+            jobs.sort(key=lambda j: j["created_at"], reverse=True)
+            return jobs[:limit]
+
+    async def requeue_run_job(self, job_id: str) -> bool:
+        """Operator requeue for a terminally failed/cancelled job: grants
+        exactly one more execution by raising max_attempts to attempt + 1."""
+        async with self._lock:
+            job = self._jobs.get(job_id)
+            if job is None or job["status"] not in ("failed", "cancelled"):
+                return False
+            now = int(time.time())
+            job.update(
+                status="queued",
+                max_attempts=job["attempt"] + 1,
+                available_at=now,
+                locked_by=None,
+                locked_at=None,
+                completed_at=None,
+                updated_at=now,
+            )
+            return True
+
+    async def run_queue_stats(self) -> Dict[str, Any]:
+        async with self._lock:
+            now = int(time.time())
+            counts: Dict[str, int] = {}
+            oldest_queued: Optional[int] = None
+            for job in self._jobs.values():
+                counts[job["status"]] = counts.get(job["status"], 0) + 1
+                if job["status"] == "queued":
+                    age = now - job["created_at"]
+                    oldest_queued = age if oldest_queued is None else max(oldest_queued, age)
+            return {"counts": counts, "oldest_queued_age_seconds": oldest_queued}
+
+    async def cleanup_run_jobs(self, older_than_seconds: int = 86400) -> int:
+        """Delete terminal jobs whose completed_at is older than the retention
+        window. Returns the number of rows removed."""
+        async with self._lock:
+            cutoff = int(time.time()) - older_than_seconds
+            to_delete = [
+                jid
+                for jid, j in self._jobs.items()
+                if j["status"] in ("completed", "failed", "cancelled")
+                and j.get("completed_at") is not None
+                and j["completed_at"] <= cutoff
+            ]
+            for jid in to_delete:
+                del self._jobs[jid]
+            return len(to_delete)

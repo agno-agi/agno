@@ -95,6 +95,9 @@ class RunQueueConfig:
     # worker heartbeat refreshes locks, so this can stay small.
     lock_grace_seconds: int = 60
     poll_interval: float = 1.0
+    # Terminal jobs older than this are deleted by the worker's retention
+    # sweep; the queue table must not grow unboundedly.
+    retention_seconds: int = 86400
 
     def __post_init__(self) -> None:
         if self.db is not None and not self.durable:
