@@ -203,8 +203,7 @@ class TestDeleteRun:
 
     def test_delete_updates_session_updated_at(self, db_with_two_sessions):
         stored = next(s for s in db_with_two_sessions._sessions if s["session_id"] == "s1")
-        before = stored.get("updated_at", 0)
-        # Small sleep-free trick: set updated_at to a low value so we can detect the bump
+        # Set updated_at to a sentinel low value so we can detect the bump without sleeping.
         stored["updated_at"] = 1
         db_with_two_sessions.delete_run("r1")
         assert stored["updated_at"] > 1
