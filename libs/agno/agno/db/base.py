@@ -730,7 +730,7 @@ class BaseDb(ABC):
             Tuple of (component dict, config dict).
 
         Raises:
-            ValueError: If component already exists, invalid stage, or link missing child_version.
+            ValueError: If component ID is already taken, invalid stage, or link missing child_version.
         """
         raise NotImplementedError
 

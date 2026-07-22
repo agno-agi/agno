@@ -32,6 +32,7 @@ from agno.os.middleware.user_scope import (
     WORKFLOW_ID_REQUIRED_RECONNECT,
     assert_session_matches_component,
     get_scoped_user_id,
+    get_scoped_user_id_for_ws,
     run_matches_component,
     verify_run_in_session,
     verify_run_in_session_via_db,
@@ -100,10 +101,11 @@ async def handle_workflow_via_websocket(
 
         # Owner scope for DB-backed workflow components: a non-admin caller may
         # only resolve workflows they own, and only when isolation is enabled.
-        scoped_user_id = (
-            user_id
-            if (ws_auth and ws_auth.jwt_enabled and ws_auth.user_isolation_enabled and not ws_auth.is_admin and user_id)
-            else None
+        scoped_user_id = get_scoped_user_id_for_ws(
+            user_id,
+            jwt_enabled=bool(ws_auth and ws_auth.jwt_enabled),
+            is_admin=bool(ws_auth and ws_auth.is_admin),
+            user_isolation_enabled=bool(ws_auth and ws_auth.user_isolation_enabled),
         )
 
         if not workflow_id:
@@ -140,6 +142,7 @@ async def handle_workflow_via_websocket(
                     registry=os.registry,
                     create_fresh=True,
                     ctx=ctx,
+                    user_id=scoped_user_id,
                 )
             except Exception as e:
                 await websocket.send_text(json.dumps({"event": "error", "error": f"Factory error: {e}"}))
@@ -255,7 +258,9 @@ async def handle_workflow_subscription(
         is_admin = ctx.is_admin
         user_isolation_enabled = ctx.user_isolation_enabled
         # Owner scope for DB-backed workflow components on reconnect.
-        scoped_user_id = user_id if (jwt_enabled and user_isolation_enabled and not is_admin and user_id) else None
+        scoped_user_id = get_scoped_user_id_for_ws(
+            user_id, jwt_enabled=jwt_enabled, is_admin=is_admin, user_isolation_enabled=user_isolation_enabled
+        )
 
         if not run_id:
             await websocket.send_text(json.dumps({"event": "error", "error": "run_id is required for subscription"}))
@@ -267,7 +272,7 @@ async def handle_workflow_subscription(
         # isolation is on) a caller with workflows:run could read another user's
         # run events by guessing the run_id. With isolation off, RBAC alone
         # governs reconnect access.
-        if jwt_enabled and user_isolation_enabled and not is_admin and user_id:
+        if scoped_user_id is not None:
             if not session_id:
                 await websocket.send_text(
                     json.dumps(
@@ -299,7 +304,7 @@ async def handle_workflow_subscription(
                     os.db,
                     session_id,
                     run_id,
-                    user_id,
+                    scoped_user_id,
                     component_type="workflows",
                     component_id=workflow_id,
                 )
@@ -477,10 +482,11 @@ async def handle_workflow_continue_via_websocket(
         user_id = message.get("user_id")
         step_requirements_data = message.get("step_requirements")
         # Owner scope for DB-backed workflow components on continue.
-        scoped_user_id = (
-            user_id
-            if (ws_auth and ws_auth.jwt_enabled and ws_auth.user_isolation_enabled and not ws_auth.is_admin and user_id)
-            else None
+        scoped_user_id = get_scoped_user_id_for_ws(
+            user_id,
+            jwt_enabled=bool(ws_auth and ws_auth.jwt_enabled),
+            is_admin=bool(ws_auth and ws_auth.is_admin),
+            user_isolation_enabled=bool(ws_auth and ws_auth.user_isolation_enabled),
         )
 
         if not workflow_id:
@@ -493,7 +499,7 @@ async def handle_workflow_continue_via_websocket(
         # Enforce ownership for non-admin callers when user isolation is enabled.
         # Mirrors the HTTP cancel/resume routes: a non-admin caller must own
         # both the session and the run before we even fetch the paused state.
-        if ws_auth and ws_auth.jwt_enabled and ws_auth.user_isolation_enabled and not ws_auth.is_admin and user_id:
+        if scoped_user_id is not None:
             if not session_id:
                 await websocket.send_text(json.dumps({"event": "error", "error": SESSION_ID_REQUIRED}))
                 return
@@ -507,7 +513,7 @@ async def handle_workflow_continue_via_websocket(
                     check_db,
                     session_id,
                     run_id,
-                    user_id,
+                    scoped_user_id,
                     component_type="workflows",
                     component_id=workflow_id,
                 )

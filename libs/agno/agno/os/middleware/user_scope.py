@@ -132,6 +132,33 @@ def get_scoped_user_id(request: Request) -> Optional[str]:
     return user_id
 
 
+def get_scoped_user_id_for_ws(
+    user_id: Optional[str],
+    *,
+    jwt_enabled: bool,
+    is_admin: bool,
+    user_isolation_enabled: bool,
+) -> Optional[str]:
+    """WebSocket counterpart of :func:`get_scoped_user_id`.
+
+    The workflow WebSocket handlers have no ``Request`` to read
+    ``request.state`` from, so they pass the auth flags explicitly. The
+    precedence mirrors :func:`get_scoped_user_id`: admins are unscoped, service
+    accounts self-scope regardless of the isolation flag, and human/JWT callers
+    scope only when isolation is enabled.
+    """
+    if is_admin:
+        return None
+
+    if isinstance(user_id, str) and user_id.startswith(SERVICE_ACCOUNT_PRINCIPAL_PREFIX):
+        return user_id
+
+    if not (jwt_enabled and user_isolation_enabled):
+        return None
+
+    return user_id or None
+
+
 def resolve_run_user_id(request: Request, client_user_id: Optional[str] = None) -> Optional[str]:
     """Resolve the ``user_id`` a run should be attributed to, pinning authenticated callers.
 

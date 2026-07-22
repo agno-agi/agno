@@ -1249,7 +1249,12 @@ def get_agent_router(
 
         try:
             agent = get_agent_by_id(
-                agent_id=agent_id, agents=os.agents, db=os.db, registry=os.registry, create_fresh=True
+                agent_id=agent_id,
+                agents=os.agents,
+                db=os.db,
+                registry=os.registry,
+                create_fresh=True,
+                user_id=get_scoped_user_id(request),
             )
         except Exception as e:
             log_error(f"Error resolving agent '{agent_id}': {e}")
@@ -1561,7 +1566,12 @@ def get_agent_router(
         else:
             try:
                 agent = get_agent_by_id(
-                    agent_id=agent_id, agents=os.agents, db=os.db, registry=os.registry, create_fresh=True
+                    agent_id=agent_id,
+                    agents=os.agents,
+                    db=os.db,
+                    registry=os.registry,
+                    create_fresh=True,
+                    user_id=get_scoped_user_id(request),
                 )  # type: ignore[assignment]
             except Exception as e:
                 log_error(f"Error resolving agent '{agent_id}': {e}")
@@ -1622,7 +1632,12 @@ def get_agent_router(
         else:
             try:
                 agent = get_agent_by_id(
-                    agent_id=agent_id, agents=os.agents, db=os.db, registry=os.registry, create_fresh=True
+                    agent_id=agent_id,
+                    agents=os.agents,
+                    db=os.db,
+                    registry=os.registry,
+                    create_fresh=True,
+                    user_id=get_scoped_user_id(request),
                 )  # type: ignore[assignment]
             except Exception as e:
                 log_error(f"Error resolving agent '{agent_id}': {e}")

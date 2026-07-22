@@ -766,7 +766,7 @@ class TestTeamLoad:
         registry = Registry(agents=[member_agent])
 
         # DB lookup only resolves the graph-backed member; registry resolves the other
-        def fake_get_agent(id, db, registry):  # noqa: A002
+        def fake_get_agent(id, db, registry, user_id=None):  # noqa: A002
             if id == "db-agent":
                 agent = Agent(id="db-agent", name="DB Agent")
                 return agent
