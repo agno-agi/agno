@@ -279,7 +279,7 @@ class FileTools(Toolkit):
             if safe:
                 return json.dumps(
                     [
-                        str(file_path.relative_to(self.base_dir))
+                        file_path.relative_to(self.base_dir).as_posix()
                         for file_path in d.iterdir()
                         if not self._is_excluded(file_path)
                     ],
@@ -313,7 +313,7 @@ class FileTools(Toolkit):
                     "files": file_paths,
                 }
             else:
-                file_paths = [str(file_path.relative_to(self.base_dir)) for file_path in matching_files]
+                file_paths = [file_path.relative_to(self.base_dir).as_posix() for file_path in matching_files]
 
                 result = {
                     "pattern": pattern,
@@ -384,7 +384,7 @@ class FileTools(Toolkit):
                         continue
 
                     if lower_query in content.lower():
-                        rel_path = str(file_path.relative_to(self.base_dir))
+                        rel_path = file_path.relative_to(self.base_dir).as_posix()
                         snippet = _extract_snippet(content, query)
                         matches.append(
                             {

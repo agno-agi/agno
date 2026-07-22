@@ -16,6 +16,12 @@ try:
 except ImportError as e:
     raise ImportError("Slack dependencies not installed. Please install using `pip install 'agno[slack]'`") from e
 
+from agno.os.interfaces.slack.ids import (
+    ACTION_CHECK_STATUS,
+    ACTION_ROW_APPROVE,
+    ACTION_ROW_REJECT,
+    ACTION_SUBMIT,
+)
 from agno.os.interfaces.slack.security import verify_slack_signature
 from agno.team import RemoteTeam, Team
 from agno.tools.slack import SlackTools
@@ -51,6 +57,7 @@ def attach_routes(
     workflow: Optional[Union[Workflow, RemoteWorkflow]] = None,
     reply_to_mentions_only: bool = True,
     token: Optional[str] = None,
+    user_token: Optional[str] = None,
     signing_secret: Optional[str] = None,
     streaming: bool = True,
     loading_messages: Optional[List[str]] = None,
@@ -78,7 +85,7 @@ def attach_routes(
     op_suffix = entity_name.lower().replace(" ", "_")
     entity_id = getattr(entity, "id", None) or entity_name
 
-    slack_tools = SlackTools(token=token, ssl=ssl, max_file_size=max_file_size)
+    slack_tools = SlackTools(token=token, user_token=user_token, ssl=ssl, max_file_size=max_file_size)
     bot_name_resolver = BotNameResolver()
     if entity is None:
         raise ValueError("attach_routes requires agent, team, or workflow")
@@ -217,11 +224,13 @@ def attach_routes(
             return SlackEventResponse(status="ok")
         action_id = actions[0].get("action_id", "")
 
-        if action_id == "row_approve":
+        if action_id == ACTION_ROW_APPROVE:
             background_tasks.add_task(hitl.handle_row_approve, payload)
-        elif action_id == "row_reject":
+        elif action_id == ACTION_ROW_REJECT:
             background_tasks.add_task(hitl.handle_row_reject, payload)
-        elif action_id == "submit_pause":
+        elif action_id == ACTION_CHECK_STATUS:
+            background_tasks.add_task(hitl.handle_check_status, payload)
+        elif action_id == ACTION_SUBMIT:
             background_tasks.add_task(hitl.handle_submit, payload)
         # Silently ignore unknown action_ids — a non-HITL Slack app sharing
         # the same endpoint might also post interactions here.

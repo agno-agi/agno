@@ -682,7 +682,7 @@ class CodingTools(Toolkit):
                 try:
                     rel_path = match.relative_to(self.base_dir)
                     suffix = "/" if match.is_dir() else ""
-                    matches.append(str(rel_path) + suffix)
+                    matches.append(rel_path.as_posix() + suffix)
                 except ValueError:
                     continue  # Skip paths outside base_dir
 

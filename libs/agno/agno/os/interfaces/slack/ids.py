@@ -14,6 +14,7 @@ PAUSE_BLOCK_PREFIX = "pause"
 ACTION_SUBMIT = "submit_pause"
 ACTION_ROW_APPROVE = "row_approve"
 ACTION_ROW_REJECT = "row_reject"
+ACTION_CHECK_STATUS = "check_status"
 ACTION_REJECT_REASON = "reject_reason"
 ACTION_FEEDBACK_SELECT = "feedback_select"
 ACTION_EXTERNAL_RESULT = "external_result"
@@ -108,3 +109,20 @@ def decode_submit_button_value(value: str) -> Tuple[str, Optional[str]]:
     if len(parts) == 1:
         return parts[0], None
     return parts[0], parts[1] or None
+
+
+# --- Admin approval button value (4 fields: approval_id, req_id, run_id, awaiting_ts) ---
+
+
+def encode_admin_approval_button_value(approval_id: str, req_id: str, run_id: str, awaiting_ts: Optional[str]) -> str:
+    return f"{approval_id}|{req_id}|{run_id}|{awaiting_ts or ''}"
+
+
+def decode_admin_approval_button_value(value: str) -> Tuple[str, str, str, Optional[str]]:
+    # 4 fields: approval_id, req_id, run_id, awaiting_ts
+    parts = value.split("|", 3)
+    if len(parts) < 3:
+        return "", "", "", None
+    approval_id, req_id, run_id = parts[0], parts[1], parts[2]
+    awaiting_ts = parts[3] if len(parts) > 3 and parts[3] else None
+    return approval_id, req_id, run_id, awaiting_ts
