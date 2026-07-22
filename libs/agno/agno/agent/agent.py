@@ -59,6 +59,7 @@ from agno.run.requirement import RunRequirement
 from agno.session import AgentSession, SessionSummaryManager, TeamSession, WorkflowSession
 from agno.session.summary import SessionSummary
 from agno.skills import Skills
+from agno.subagent import SubagentsConfig
 from agno.tools import Toolkit
 from agno.tools.function import Function
 from agno.utils.log import log_warning
@@ -185,6 +186,13 @@ class Agent:
 
     # A function that acts as middleware and is called around tool calls.
     tool_hooks: Optional[List[Callable]] = None
+
+    # --- Subagents ---
+    # Let the model spawn subagents (restricted copies of this agent) via a spawn_agent
+    # tool, picking the subagent's model and tools from the allowed options in the config.
+    subagents_config: Optional["SubagentsConfig"] = None
+    # Enable subagents with a default config (subagents inherit this agent's model and tools).
+    enable_subagents: bool = False
 
     # --- Agent Hooks ---
     # Functions called right after agent-session is loaded, before processing starts
@@ -435,6 +443,8 @@ class Agent:
         tool_call_limit: Optional[int] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         tool_hooks: Optional[List[Callable]] = None,
+        subagents_config: Optional[SubagentsConfig] = None,
+        enable_subagents: bool = False,
         pre_hooks: Optional[List[Union[Callable[..., Any], BaseGuardrail, BaseEval]]] = None,
         post_hooks: Optional[List[Union[Callable[..., Any], BaseGuardrail, BaseEval]]] = None,
         reasoning: bool = False,
@@ -604,6 +614,10 @@ class Agent:
         self.tool_call_limit = tool_call_limit
         self.tool_choice = tool_choice
         self.tool_hooks = tool_hooks
+        self.enable_subagents = enable_subagents
+        self.subagents_config = subagents_config
+        if self.subagents_config is None and self.enable_subagents:
+            self.subagents_config = SubagentsConfig()
 
         self.pre_hooks = pre_hooks
         self.post_hooks = post_hooks
