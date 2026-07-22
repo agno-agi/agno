@@ -890,7 +890,7 @@ def test_resolve_creds_interactive_true_control_reaches_flow():
 
 
 def test_resolve_creds_interactive_false_valid_file_token_ok():
-    # Steps 1-5 are untouched: a valid file token resolves without the flow
+    # interactive=False only gates step 6: a valid file token resolves without the flow
     auth = AuthConfig(interactive=False)
     auth.service_account_path = None
     toolkit = _make_toolkit(auth=auth, scopes=["scope1"])

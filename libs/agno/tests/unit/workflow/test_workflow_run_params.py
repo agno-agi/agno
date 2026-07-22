@@ -210,6 +210,15 @@ class TestResolveRunParamsSessionMetadata:
         )
         assert workflow_with_metadata.metadata == original
 
+    def test_resolved_metadata_does_not_alias_workflow_nested_dicts(self):
+        # self.metadata is merged as a layer; a shallow merge would alias its
+        # nested dicts, so an in-run write to run_context.metadata would mutate
+        # the shared Workflow and bleed into the next session's run.
+        wf = Workflow(id="wf", name="WF", metadata={"tags": {"env": "prod"}})
+        resolved = wf._resolve_run_params()
+        resolved["metadata"]["tags"]["owner"] = "x"
+        assert wf.metadata == {"tags": {"env": "prod"}}
+
 
 # =============================================================================
 # _resolve_run_params() — Boolean Flags

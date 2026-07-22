@@ -90,7 +90,7 @@ def path_matches_exclude(path: Path, root: Path, exclude_patterns: Sequence[str]
     match their NFC patterns. Meant for enforcement guards: case-insensitive
     filesystems (macOS, Windows) would otherwise let case variants reach an
     excluded file. On case-sensitive filesystems this over-blocks case-variant
-    names by design — predictable beats bypassable.
+    names by design.
     """
     if not exclude_patterns:
         return False

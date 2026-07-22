@@ -101,6 +101,9 @@ def attach_routes(
         entity_type=entity_type,
         task_display_mode=task_display_mode,
         buffer_size=buffer_size,
+        unfurl_links=unfurl_links,
+        unfurl_media=unfurl_media,
+        markdown=markdown,
     )
     event_handler = SlackEventHandler(
         slack_tools=slack_tools,

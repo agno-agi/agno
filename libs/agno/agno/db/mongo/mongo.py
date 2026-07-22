@@ -2752,7 +2752,9 @@ class MongoDb(BaseDb):
             total_count = collection.count_documents(query)
 
             offset = (page - 1) * limit
-            cursor = collection.find(query).sort([("created_at", -1)]).skip(offset).limit(limit)
+            # id is a unique tiebreaker so skip/limit pages do not overlap or skip
+            # rows when many schedules share a created_at second.
+            cursor = collection.find(query).sort([("created_at", -1), ("id", -1)]).skip(offset).limit(limit)
             schedules = list(cursor)
             for schedule in schedules:
                 schedule.pop("_id", None)

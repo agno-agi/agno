@@ -441,18 +441,29 @@ class GitBackend(WikiBackend):
         - entry 1 installs the inline helper that emits the
           ``x-access-token`` username plus the PAT from the private env var;
         - entry 2 sets ``credential.useHttpPath`` so lookups are scoped
-          to the full repo path.
+          to the full repo path;
+        - entries 3-4 pin ``repo_url`` to itself via an identity
+          ``url.<repo_url>.insteadOf`` / ``pushInsteadOf``. Git applies the
+          longest-matching rewrite, so this full-URL identity rule outranks
+          any caller ``url.<prefix>.insteadOf`` (e.g. the common
+          ``url."git@github.com:".insteadOf = https://github.com/``) whose
+          prefix would otherwise reroute the operation to a different
+          transport/identity and skip the injected credential helper.
 
         Masks any caller-set ``GIT_CONFIG_*`` entries for these calls.
         """
         env = os.environ.copy()
-        env["GIT_CONFIG_COUNT"] = "3"
+        env["GIT_CONFIG_COUNT"] = "5"
         env["GIT_CONFIG_KEY_0"] = "credential.helper"
         env["GIT_CONFIG_VALUE_0"] = ""
         env["GIT_CONFIG_KEY_1"] = "credential.helper"
         env["GIT_CONFIG_VALUE_1"] = _GIT_CREDENTIAL_HELPER
         env["GIT_CONFIG_KEY_2"] = "credential.useHttpPath"
         env["GIT_CONFIG_VALUE_2"] = "true"
+        env["GIT_CONFIG_KEY_3"] = f"url.{self.repo_url}.insteadOf"
+        env["GIT_CONFIG_VALUE_3"] = self.repo_url
+        env["GIT_CONFIG_KEY_4"] = f"url.{self.repo_url}.pushInsteadOf"
+        env["GIT_CONFIG_VALUE_4"] = self.repo_url
         env[_GIT_TOKEN_ENV_VAR] = self.github_token
         env["GIT_TERMINAL_PROMPT"] = "0"
         return env
@@ -490,9 +501,12 @@ class GitBackend(WikiBackend):
         Returns True if the path was wiped (so the caller should re-clone),
         False if the clone passed validation and was kept in place.
         """
+        # Read the raw configured URL, not `remote get-url` (which applies any
+        # caller url.<base>.insteadOf rewrite): validation must compare what is
+        # actually stored in .git/config against repo_url.
         existing_remote = (
             await git_run(
-                ["remote", "get-url", "origin"],
+                ["config", "--get", "remote.origin.url"],
                 cwd=self.path,
                 scrubber=self._scrubber,
                 check=False,

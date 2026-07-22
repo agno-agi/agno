@@ -176,3 +176,23 @@ def test_manager_list_all_over_sqlite(sqlite_db):
     result = mgr.list_all()
 
     assert {s.name for s in result} == {"schedule-0", "schedule-1", "schedule-2"}
+
+
+def test_manager_list_all_paginates_tied_created_at_without_loss(sqlite_db):
+    # Every schedule shares the same created_at second, so pagination must rely on
+    # the unique (created_at, id) sort to page across 250 rows with no dup or gap.
+    pytest.importorskip("croniter", reason="croniter not installed")
+    pytest.importorskip("pytz", reason="pytz not installed")
+    from agno.scheduler.manager import ScheduleManager
+
+    same_second = int(time.time())
+    expected_ids = set()
+    for i in range(250):
+        created = sqlite_db.create_schedule(_schedule_data(name=f"schedule-{i}", created_at=same_second))
+        expected_ids.add(created["id"])
+
+    ids = [s.id for s in ScheduleManager(sqlite_db).list_all()]
+
+    assert len(ids) == 250
+    assert len(set(ids)) == 250
+    assert set(ids) == expected_ids

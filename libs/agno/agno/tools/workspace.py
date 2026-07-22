@@ -227,16 +227,18 @@ class Workspace(Toolkit):
     Listing results from ``list_files`` and ``search_content`` skip common noise directories
     (``.venv``, ``.venvs``, ``.context``, ``.git``, ``__pycache__``,
     ``node_modules``, etc.) by default. Pass ``exclude_patterns=[]`` to disable,
-    or ``exclude_patterns=[...]`` to override. By default exclusion is a
-    listing/search filter only — direct-path tools still accept excluded paths.
-    Pass ``enforce_excludes=True`` to make excluded paths fully off-limits to
-    ``read_file`` / ``write_file`` / ``edit_file`` / ``move_file`` (source and
-    destination) / ``delete_file``; excluded paths return the same error whether
-    or not they exist. Enforcement matches casefolded and unicode-normalized
-    names (``.ENV`` is blocked by the ``.env*`` pattern), so case-insensitive
-    filesystems cannot be used to reach an excluded file; on case-sensitive
-    filesystems this over-blocks case-variant names by design. ``run_command``
-    is not bounded by the flag — a shell command can still touch excluded files.
+    or ``exclude_patterns=[...]`` to override. By default (case-sensitive
+    matching) exclusion is a listing/search filter only — direct-path tools still
+    accept excluded paths. Pass ``enforce_excludes=True`` to make excluded paths
+    fully off-limits to ``read_file`` / ``write_file`` / ``edit_file`` /
+    ``move_file`` (source and destination) / ``delete_file``; excluded paths
+    return the same error whether or not they exist. Under the flag, matching
+    everywhere — the direct-path guards and the ``list_files`` / ``search_content``
+    filters — is casefolded and unicode-normalized (``.ENV`` is blocked by the
+    ``.env*`` pattern), so a case-insensitive filesystem cannot be used to reach
+    an excluded file's path or surface its content; on case-sensitive filesystems
+    this over-blocks case-variant names by design. ``run_command`` is not bounded
+    by the flag — a shell command can still touch excluded files.
 
     Optional ``require_read_before_write=True`` blocks ``write_file`` / ``edit_file`` /
     ``move_file`` / ``delete_file`` on existing files until the agent has read them in
@@ -392,10 +394,22 @@ class Workspace(Toolkit):
         Case-insensitive filesystems (macOS, Windows) resolve ``.ENV`` to ``.env``,
         so the enforcement guard must match case and unicode-normalization variants
         of excluded names. On case-sensitive filesystems this over-blocks
-        case-variant names by design — predictable beats bypassable. Listing and
-        search filters keep case-sensitive matching via ``_is_excluded``.
+        case-variant names by design.
         """
         return path_matches_exclude(path, self.root, self.exclude_patterns, casefold=True)
+
+    def _is_excluded_for_listing(self, path: Path) -> bool:
+        """Exclusion check for ``list_files`` / ``search_content``.
+
+        When ``enforce_excludes`` is set, the read surface matches the direct-path
+        guard (casefolded), so a case-variant of an excluded file cannot have its
+        name listed or — more importantly — its content surfaced by
+        ``search_content`` on a case-insensitive filesystem. Otherwise matching
+        stays case-sensitive, a pure listing filter.
+        """
+        if self.enforce_excludes:
+            return self._is_excluded_enforced(path)
+        return self._is_excluded(path)
 
     def _check_read_before_write(self, file_path: Path, op: str) -> Optional[str]:
         """If require_read_before_write is on, verify the file was read this session.
@@ -525,10 +539,14 @@ class Workspace(Toolkit):
                     rel_depth = len(Path(dirpath).parts) - base_depth
                     if rel_depth >= max_depth:
                         # Stop recursion but keep dir names for enumeration below.
-                        visible_dirs = [name for name in dirnames if not self._is_excluded(Path(dirpath) / name)]
+                        visible_dirs = [
+                            name for name in dirnames if not self._is_excluded_for_listing(Path(dirpath) / name)
+                        ]
                         dirnames[:] = []
                     else:
-                        dirnames[:] = [name for name in dirnames if not self._is_excluded(Path(dirpath) / name)]
+                        dirnames[:] = [
+                            name for name in dirnames if not self._is_excluded_for_listing(Path(dirpath) / name)
+                        ]
                         visible_dirs = list(dirnames)
                     for name in filenames + visible_dirs:
                         full = Path(dirpath) / name
@@ -536,7 +554,7 @@ class Workspace(Toolkit):
                             safe_join_relative_path(self.root, full.relative_to(self.root).as_posix())
                         except PathSecurityError:
                             continue
-                        if self._is_excluded(full):
+                        if self._is_excluded_for_listing(full):
                             continue
                         if pattern and not fnmatch(name, pattern):
                             continue
@@ -548,7 +566,7 @@ class Workspace(Toolkit):
                         safe_join_relative_path(self.root, p.relative_to(self.root).as_posix())
                     except PathSecurityError:
                         continue
-                    if not self._is_excluded(p):
+                    if not self._is_excluded_for_listing(p):
                         entries.append(p)
             else:
                 entries = []
@@ -557,7 +575,7 @@ class Workspace(Toolkit):
                         safe_join_relative_path(self.root, p.relative_to(self.root).as_posix())
                     except PathSecurityError:
                         continue
-                    if not self._is_excluded(p):
+                    if not self._is_excluded_for_listing(p):
                         entries.append(p)
 
             files = []
@@ -618,7 +636,7 @@ class Workspace(Toolkit):
             for dirpath, dirnames, filenames in os.walk(search_dir):
                 if walk_done:
                     break
-                dirnames[:] = [name for name in dirnames if not self._is_excluded(Path(dirpath) / name)]
+                dirnames[:] = [name for name in dirnames if not self._is_excluded_for_listing(Path(dirpath) / name)]
                 for filename in filenames:
                     if len(matches) >= limit:
                         walk_done = True
@@ -628,7 +646,7 @@ class Workspace(Toolkit):
                         safe_join_relative_path(self.root, file_path.relative_to(self.root).as_posix())
                     except PathSecurityError:
                         continue
-                    if self._is_excluded(file_path):
+                    if self._is_excluded_for_listing(file_path):
                         continue
                     if file_path.suffix.lower() not in TEXT_EXTENSIONS:
                         continue

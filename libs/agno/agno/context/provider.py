@@ -88,9 +88,8 @@ class ContextProvider(ABC):
     instead of hanging the calling agent's run. It bounds the tool
     surface only: programmatic ``query()`` / ``aquery()`` calls and the
     raw backend tools exposed by ``mode=ContextMode.tools`` stay
-    unbounded. There is deliberately no ``update_timeout`` — cancelling
-    a write can lose the receipt of a mutation that already completed.
-    Requires Python 3.11+ when set.
+    unbounded. The write surface (``update_<id>``) is never bounded.
+    Requires Python 3.11+ and a positive value when set.
     """
 
     def __init__(
@@ -112,14 +111,19 @@ class ContextProvider(ABC):
                 f"{type(self).__name__}: at least one of `read` or `write` must be True "
                 "(a provider that exposes neither tool is meaningless)"
             )
-        if query_timeout is not None and sys.version_info < (3, 11):
-            raise RuntimeError(f"{type(self).__name__}: query_timeout requires Python 3.11+ (uses asyncio.timeout_at)")
+        if query_timeout is not None:
+            if sys.version_info < (3, 11):
+                raise RuntimeError(
+                    f"{type(self).__name__}: query_timeout requires Python 3.11+ (uses asyncio.timeout_at)"
+                )
+            if query_timeout <= 0:
+                raise ValueError(f"{type(self).__name__}: query_timeout must be positive (got {query_timeout})")
         self.id = id
         self.name = name or id
         self.mode = mode
         self.model = model
         # Wall-clock budget (seconds) for each query-tool call; see the
-        # class docstring for scope. None = unbounded (today's behavior).
+        # class docstring for scope. None = unbounded.
         self.query_timeout = query_timeout
         # Per-direction toggles for the default surface. `read=False`
         # drops `query_<id>`; `write=False` drops `update_<id>`. Lets

@@ -76,7 +76,7 @@ def test_git_env_contents(tmp_path: Path):
         local_path=tmp_path / "clone",
     )
     env = b._git_env()
-    assert env["GIT_CONFIG_COUNT"] == "3"
+    assert env["GIT_CONFIG_COUNT"] == "5"
     # Entry 0 resets any system/global helper so a stored identity
     # (e.g. osxkeychain) cannot answer instead of the injected token.
     assert env["GIT_CONFIG_KEY_0"] == "credential.helper"
@@ -89,6 +89,12 @@ def test_git_env_contents(tmp_path: Path):
     assert TOKEN not in helper
     assert env["GIT_CONFIG_KEY_2"] == "credential.useHttpPath"
     assert env["GIT_CONFIG_VALUE_2"] == "true"
+    # Entries 3-4 pin repo_url to itself so a caller url.<prefix>.insteadOf
+    # cannot reroute the operation off the credential-injected transport.
+    assert env["GIT_CONFIG_KEY_3"] == "url.https://github.com/owner/repo.git.insteadOf"
+    assert env["GIT_CONFIG_VALUE_3"] == "https://github.com/owner/repo.git"
+    assert env["GIT_CONFIG_KEY_4"] == "url.https://github.com/owner/repo.git.pushInsteadOf"
+    assert env["GIT_CONFIG_VALUE_4"] == "https://github.com/owner/repo.git"
     assert env["AGNO_GIT_TOKEN"] == TOKEN
     assert env["GIT_TERMINAL_PROMPT"] == "0"
 
@@ -171,7 +177,7 @@ async def test_remote_git_calls_inject_env_and_bare_url(monkeypatch, tmp_path: P
     for args, env in remote_calls:
         assert env is not None, f"remote op {args} missing credential env"
         assert env["AGNO_GIT_TOKEN"] == TOKEN
-        assert env["GIT_CONFIG_COUNT"] == "3"
+        assert env["GIT_CONFIG_COUNT"] == "5"
 
     clone_args = next(args for args, _ in calls if args[0] == "clone")
     assert "https://github.com/owner/repo.git" in clone_args
@@ -230,7 +236,7 @@ async def test_staged_commit_pull_and_push_inject_env_and_bare_origin(monkeypatc
     for args, env in pull_calls + push_calls:
         assert env is not None, f"remote op {args} missing credential env"
         assert env["AGNO_GIT_TOKEN"] == TOKEN
-        assert env["GIT_CONFIG_COUNT"] == "3"
+        assert env["GIT_CONFIG_COUNT"] == "5"
         assert env["GIT_CONFIG_VALUE_1"] == _GIT_CREDENTIAL_HELPER
 
     first_args = [args[0] for args, _ in calls]
@@ -305,3 +311,31 @@ async def test_setup_migrates_token_bearing_origin(bare_remote: Path, tmp_path: 
     assert "x-access-token" not in config_text
     origin = _git(["remote", "get-url", "origin"], b.path).stdout.strip()
     assert origin == b.repo_url
+
+
+@requires_git
+@pytest.mark.asyncio
+async def test_setup_defeats_hostile_insteadof_rewrite(bare_remote: Path, tmp_path: Path, monkeypatch):
+    # A caller `url.<base>.insteadOf` whose prefix matches the bare repo_url
+    # (e.g. the common `url."git@github.com:".insteadOf = https://github.com/`)
+    # would reroute clone/pull/push off the credential-injected transport. The
+    # identity pin in _git_env is a longer prefix match, so remote ops stay on
+    # repo_url. Without the pin, this rewrite sends the clone to a dead decoy.
+    hostile = tmp_path / "hostile_gitconfig"
+    hostile.write_text('[url "file:///nonexistent-decoy/"]\n\tinsteadOf = file://\n')
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(hostile))
+
+    b = GitBackend(
+        repo_url=bare_remote.as_uri(),
+        github_token=TOKEN,
+        local_path=tmp_path / "clone",
+    )
+    await b.setup()
+    assert (b.path / "readme.md").exists()
+
+    # A second setup() must revalidate cleanly: `remote get-url` would return the
+    # rewritten decoy URL, but _validate_existing_clone reads the raw config value.
+    await b.setup()
+    assert "nonexistent-decoy" not in (b.path / ".git" / "config").read_text()
+    raw_origin = _git(["config", "--get", "remote.origin.url"], b.path).stdout.strip()
+    assert raw_origin == b.repo_url

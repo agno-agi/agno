@@ -107,6 +107,13 @@ class GoogleCalendarContextProvider(ContextProvider):
         # Store auth config for toolkit creation
         self._auth = auth
         self.write_tools = write_tools
+        if write_tools is not None and not write:
+            from agno.utils.log import log_warning
+
+            log_warning(
+                f"{type(self).__name__}: write_tools was provided but write=False, so the update tool is not "
+                "exposed and the injected toolset is never used. Pass write=True to enable it."
+            )
 
         self._sa_path = service_account_path or getenv("GOOGLE_SERVICE_ACCOUNT_FILE")
         self._credentials_path = credentials_path

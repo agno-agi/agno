@@ -63,9 +63,19 @@ def _patch_team_dispatch_dependencies(team: Team, monkeypatch: pytest.MonkeyPatc
             knowledge_filters=({"team_filter": "default", **(kwargs.get("knowledge_filters") or {})})
             if (team.knowledge_filters or kwargs.get("knowledge_filters"))
             else None,
-            metadata=({**(kwargs.get("metadata") or {}), **(team.metadata or {})})
-            if (kwargs.get("metadata") is not None or team.metadata is not None)
-            else None,
+            metadata=(
+                {
+                    **(team.metadata or {}),
+                    **(kwargs.get("session_metadata") or {}),
+                    **(kwargs.get("metadata") or {}),
+                }
+                if (
+                    kwargs.get("metadata") is not None
+                    or kwargs.get("session_metadata") is not None
+                    or team.metadata is not None
+                )
+                else None
+            ),
             output_schema=kwargs.get("output_schema")
             if kwargs.get("output_schema") is not None
             else team.output_schema,
