@@ -269,6 +269,18 @@ def format_sse_event_with_index(
         return f"event: message\ndata: {clean_json}\n\n"
 
 
+def replayed_payload_to_sse(payload: Any, event_index: int, run_id: str) -> str:
+    """Convert an event-stream replay payload to an SSE string.
+
+    In-memory replay returns structured event objects; distributed backends
+    (e.g. Redis) return SSE-formatted strings directly. Consumers of
+    ``BaseEventStream.replay()`` use this to handle both.
+    """
+    if isinstance(payload, str):
+        return payload
+    return format_sse_event_with_index(payload, event_index=event_index, run_id=run_id)
+
+
 async def get_db(
     dbs: dict[str, list[Union[BaseDb, AsyncBaseDb, RemoteDb]]], db_id: Optional[str] = None, table: Optional[str] = None
 ) -> Union[BaseDb, AsyncBaseDb, RemoteDb]:

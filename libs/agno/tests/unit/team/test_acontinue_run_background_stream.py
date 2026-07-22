@@ -77,6 +77,16 @@ class TestAcontinueRunBackgroundDispatchRouting:
             )
 
 
+def make_mock_event_stream() -> MagicMock:
+    """Mock BaseEventStream: async methods, add_event assigns index 0."""
+    stream = MagicMock()
+    stream.register_run = AsyncMock()
+    stream.set_run_status = AsyncMock()
+    stream.add_event = AsyncMock(return_value=0)
+    stream.complete_run = AsyncMock()
+    return stream
+
+
 class TestAcontinueRunBackgroundStream:
     """The helper itself must yield SSE-formatted strings (issue #8134 regression)."""
 
@@ -111,14 +121,9 @@ class TestAcontinueRunBackgroundStream:
             ),
             patch("agno.team._storage._update_metadata"),
             patch("agno.team._session.asave_session", new_callable=AsyncMock),
-            patch("agno.os.managers.event_buffer") as mock_eb,
-            patch("agno.os.managers.sse_subscriber_manager") as mock_ssm,
+            patch("agno.os.event_streams.get_event_stream", return_value=make_mock_event_stream()),
             patch("agno.os.utils.format_sse_event_with_index", side_effect=fake_format_sse),
         ):
-            mock_eb.add_event.return_value = 0
-            mock_ssm.publish = AsyncMock()
-            mock_ssm.complete = AsyncMock()
-
             collected = []
             async for chunk in _acontinue_run_background_stream(
                 team,
@@ -164,14 +169,9 @@ class TestAcontinueRunBackgroundStream:
             ),
             patch("agno.team._storage._update_metadata"),
             patch("agno.team._session.asave_session", new_callable=AsyncMock) as mock_save,
-            patch("agno.os.managers.event_buffer") as mock_eb,
-            patch("agno.os.managers.sse_subscriber_manager") as mock_ssm,
+            patch("agno.os.event_streams.get_event_stream", return_value=(mock_stream := make_mock_event_stream())),
             patch("agno.os.utils.format_sse_event_with_index", return_value="data: x\n\n"),
         ):
-            mock_eb.add_event.return_value = 0
-            mock_ssm.publish = AsyncMock()
-            mock_ssm.complete = AsyncMock()
-
             collected = []
             async for chunk in _acontinue_run_background_stream(
                 team,
@@ -185,6 +185,6 @@ class TestAcontinueRunBackgroundStream:
         assert run_response.status == RunStatus.error, "background helper must persist RunStatus.error on failure"
         # asave_session is called at least twice: once for RUNNING, once for ERROR
         assert mock_save.await_count >= 2
-        # SSE subscribers must be signaled even on failure (call_count covers either
-        # direct await or asyncio.shield-wrapped await)
-        assert mock_ssm.complete.call_count >= 1
+        # The event stream must be marked terminal even on failure (call_count
+        # covers either direct await or asyncio.shield-wrapped await)
+        assert mock_stream.complete_run.call_count >= 1

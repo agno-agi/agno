@@ -3474,13 +3474,13 @@ async def _arun_background_stream(
 
     1. Persists RUNNING status in DB
     2. Spawns a detached asyncio.Task that runs _arun_stream
-    3. Buffers events (via event_buffer) and publishes to SSE subscribers
+    3. Buffers events and publishes to live tails (via the event stream)
     4. Yields SSE-formatted strings via an asyncio.Queue
 
     The detached task keeps running even if the client disconnects.
     The caller (router) just yields the SSE strings to the client.
     """
-    from agno.os.managers import event_buffer as _event_buffer
+    from agno.os.event_streams import get_event_stream
     from agno.team._session import asave_session
     from agno.team._storage import _aread_or_create_session, _update_metadata
 
@@ -3499,7 +3499,7 @@ async def _arun_background_stream(
 
     # Pre-register with the event buffer so reconnecting clients can attach and
     # wait while the run is still queued (no events buffered yet).
-    _event_buffer.register_run(run_id, RunStatus.pending)
+    await get_event_stream().register_run(run_id, RunStatus.pending)
 
     log_info(f"Background stream run {run_id} persisted with PENDING status")
 
@@ -3510,7 +3510,7 @@ async def _arun_background_stream(
     # (background_run_slot); the run stays PENDING while waiting in line and
     # can be cancelled without consuming a slot.
     async def _background_producer() -> None:
-        from agno.os.managers import event_buffer, sse_subscriber_manager
+        event_stream = get_event_stream()
         from agno.os.utils import format_sse_event_with_index
 
         slot_cm = background_run_slot(run_id=run_id)
@@ -3523,7 +3523,7 @@ async def _arun_background_stream(
             run_response.status = RunStatus.running
             team_session.upsert_run(run_response=run_response)
             await asave_session(team, session=team_session)
-            event_buffer.set_run_status(run_id, RunStatus.running)
+            await event_stream.set_run_status(run_id, RunStatus.running)
 
             async for event in _arun_stream(
                 team,
@@ -3544,29 +3544,19 @@ async def _arun_background_stream(
                 if isinstance(event, TeamRunOutput):
                     continue
 
-                # Buffer event for reconnection support
+                # Buffer + publish to live tails (the event stream owns the index)
                 event_index: Optional[int] = None
                 try:
-                    event_index = event_buffer.add_event(run_id, event)
+                    event_index = await event_stream.add_event(run_id, event)
                 except Exception:
                     log_warning(f"Failed to buffer event for run {run_id}")
 
-                # Format as SSE
+                # Format as SSE for the primary queue (original client)
                 sse_data = format_sse_event_with_index(event, event_index=event_index, run_id=run_id)
-
-                # Push to primary queue (original client)
                 try:
                     await sse_queue.put(sse_data)
                 except Exception:
                     log_warning(f"Failed to push SSE data to queue for run {run_id}")
-
-                # Publish to SSE subscribers (resumed clients)
-                try:
-                    await sse_subscriber_manager.publish(
-                        run_id, event_index if event_index is not None else -1, sse_data
-                    )
-                except Exception:
-                    log_warning(f"Failed to publish SSE data to subscribers for run {run_id}")
 
         except RunCancelledException:
             # Cancelled while waiting for a slot — execution never started, so
@@ -3600,17 +3590,12 @@ async def _arun_background_stream(
             except Exception:
                 log_warning(f"Failed to signal primary queue for run {run_id} completion")
 
-            # Mark run completed in event buffer (status is set by _arun_stream/acleanup_and_store)
+            # Mark run terminal in the event stream and wake all tails
+            # (shielded to survive task cancellation)
             try:
-                event_buffer.set_run_completed(run_id, run_response.status or RunStatus.completed)
-            except Exception:
-                log_warning(f"Failed to mark run {run_id} as completed in event buffer")
-
-            # Signal SSE subscribers that run is done (shielded to survive task cancellation)
-            try:
-                await asyncio.shield(sse_subscriber_manager.complete(run_id))
+                await asyncio.shield(event_stream.complete_run(run_id, run_response.status or RunStatus.completed))
             except (Exception, asyncio.CancelledError):
-                log_warning(f"Failed to signal SSE subscribers for run {run_id} completion")
+                log_warning(f"Failed to mark run {run_id} as completed in event stream")
 
     task = asyncio.create_task(_background_producer())
     _background_tasks.add(task)
@@ -7632,7 +7617,7 @@ async def _acontinue_run_background_stream(
 
     1. Persists RUNNING status in DB
     2. Spawns a detached asyncio.Task that runs _acontinue_run_stream
-    3. Buffers events (via event_buffer) and publishes to SSE subscribers
+    3. Buffers events and publishes to live tails (via the event stream)
     4. Yields SSE-formatted strings via an asyncio.Queue
     """
     from agno.team._session import asave_session
@@ -7642,7 +7627,7 @@ async def _acontinue_run_background_stream(
     if not _run_id:
         raise ValueError("run_id is required for background streaming continue-run")
 
-    from agno.os.managers import event_buffer as _event_buffer
+    from agno.os.event_streams import get_event_stream
 
     # 1. Persist PENDING status so the run is visible in the DB immediately.
     # Execution (and the RUNNING transition) waits for a concurrency slot.
@@ -7656,7 +7641,7 @@ async def _acontinue_run_background_stream(
 
     # Pre-register with the event buffer so reconnecting clients can attach and
     # wait while the continue-run is still queued (no events buffered yet).
-    _event_buffer.register_run(_run_id, RunStatus.pending)
+    await get_event_stream().register_run(_run_id, RunStatus.pending)
 
     log_info(f"Background continue-run stream {_run_id} persisted with PENDING status")
 
@@ -7667,7 +7652,7 @@ async def _acontinue_run_background_stream(
     # (background_run_slot); the run stays PENDING while waiting in line and
     # can be cancelled without consuming a slot.
     async def _background_producer() -> None:
-        from agno.os.managers import event_buffer, sse_subscriber_manager
+        event_stream = get_event_stream()
         from agno.os.utils import format_sse_event_with_index
 
         slot_cm = background_run_slot(run_id=_run_id)
@@ -7681,7 +7666,7 @@ async def _acontinue_run_background_stream(
                 run_response.status = RunStatus.running
                 team_session.upsert_run(run_response=run_response)
                 await asave_session(team, session=team_session)
-            event_buffer.set_run_status(_run_id, RunStatus.running)
+            await event_stream.set_run_status(_run_id, RunStatus.running)
 
             async for event in _acontinue_run_stream(
                 team,
@@ -7707,29 +7692,19 @@ async def _acontinue_run_background_stream(
                 if isinstance(event, TeamRunOutput):
                     continue
 
-                # Buffer event for reconnection support
+                # Buffer + publish to live tails (the event stream owns the index)
                 event_index: Optional[int] = None
                 try:
-                    event_index = event_buffer.add_event(_run_id, event)
+                    event_index = await event_stream.add_event(_run_id, event)
                 except Exception:
                     log_warning(f"Failed to buffer event for continue-run {_run_id}")
 
-                # Format as SSE
+                # Format as SSE for the primary queue (original client)
                 sse_data = format_sse_event_with_index(event, event_index=event_index, run_id=_run_id)
-
-                # Push to primary queue (original client)
                 try:
                     await sse_queue.put(sse_data)
                 except Exception:
                     log_warning(f"Failed to push SSE data to queue for continue-run {_run_id}")
-
-                # Publish to SSE subscribers (resumed clients)
-                try:
-                    await sse_subscriber_manager.publish(
-                        _run_id, event_index if event_index is not None else -1, sse_data
-                    )
-                except Exception:
-                    log_warning(f"Failed to publish SSE data to subscribers for continue-run {_run_id}")
 
         except RunCancelledException:
             # Cancelled while waiting for a slot — execution never started, so
@@ -7770,18 +7745,13 @@ async def _acontinue_run_background_stream(
             except Exception:
                 log_warning(f"Failed to signal primary queue for continue-run {_run_id} completion")
 
-            # Mark run completed in event buffer
+            # Mark run terminal in the event stream and wake all tails
+            # (shielded to survive task cancellation)
             try:
                 final_status = (run_response.status if run_response else None) or RunStatus.completed
-                event_buffer.set_run_completed(_run_id, final_status)
-            except Exception:
-                log_warning(f"Failed to mark continue-run {_run_id} as completed in event buffer")
-
-            # Signal SSE subscribers that run is done (shielded to survive task cancellation)
-            try:
-                await asyncio.shield(sse_subscriber_manager.complete(_run_id))
+                await asyncio.shield(event_stream.complete_run(_run_id, final_status))
             except (Exception, asyncio.CancelledError):
-                log_warning(f"Failed to signal SSE subscribers for continue-run {_run_id} completion")
+                log_warning(f"Failed to mark continue-run {_run_id} as completed in event stream")
 
     task = asyncio.create_task(_background_producer())
     _background_tasks.add(task)

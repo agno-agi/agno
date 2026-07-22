@@ -10,6 +10,7 @@ from typing import Optional
 
 from agno.os.event_streams.base import BaseEventStream
 from agno.os.event_streams.in_memory import InMemoryEventStream
+from agno.os.event_streams.redis import RedisEventStream
 
 _event_stream: Optional[BaseEventStream] = None
 

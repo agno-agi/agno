@@ -74,24 +74,34 @@ class BaseEventStream(ABC):
     # ------------------------------------------------------------------
 
     @abstractmethod
-    async def add_event(self, run_id: str, event: Any, sse_data: str) -> int:
-        """Append an event and publish it to live tails.
+    async def add_event(self, run_id: str, event: Any) -> int:
+        """Append an event, assign its index, and publish it to live tails.
+
+        The implementation owns index assignment (the SSE payload embeds the
+        index, so it can only be formatted once the index exists) and formats
+        the SSE string via ``agno.os.utils.format_sse_event_with_index``.
 
         Args:
             run_id: The run the event belongs to.
-            event: The structured event object (kept for replay-from-buffer).
-            sse_data: The SSE-formatted string delivered to live consumers.
+            event: The structured event object.
 
         Returns:
-            The monotonic event index assigned to this event.
+            The monotonic event index assigned to this event. Callers that also
+            deliver the event on a local channel (e.g. the primary SSE queue)
+            format their own copy with this index — the formatter is
+            deterministic, so both copies are identical.
         """
 
     @abstractmethod
     async def replay(self, run_id: str, last_event_index: Optional[int] = None) -> List[Tuple[int, Any]]:
-        """Return buffered (event_index, event) pairs after ``last_event_index``.
+        """Return buffered (event_index, payload) pairs after ``last_event_index``.
 
         ``None`` means replay everything still buffered. Implementations may
-        have trimmed old events; they return what they still hold.
+        have trimmed old events; they return what they still hold. The payload
+        is the structured event for in-memory implementations; distributed
+        implementations may return the SSE-formatted string instead — consumers
+        that need wire format should prefer ``tail()``, which always yields
+        SSE strings.
         """
 
     @abstractmethod

@@ -1,4 +1,5 @@
 import asyncio
+import contextlib
 import json
 from typing import TYPE_CHECKING, Any, AsyncGenerator, List, Literal, Optional, Union
 from uuid import uuid4
@@ -27,7 +28,7 @@ from agno.os.auth import (
     require_resource_access,
 )
 from agno.os.checkpoints import build_run_checkpoint_snapshot, list_run_checkpoints
-from agno.os.managers import event_buffer, sse_subscriber_manager
+from agno.os.event_streams import get_event_stream
 from agno.os.middleware.user_scope import (
     SESSION_ID_REQUIRED,
     assert_session_matches_component,
@@ -55,6 +56,7 @@ from agno.os.utils import (
     process_document,
     process_image,
     process_video,
+    replayed_payload_to_sse,
     resolve_team,
 )
 from agno.registry import Registry
@@ -229,7 +231,8 @@ async def _resume_stream_generator(
     2. Run completed (in buffer): replay all events since last_event_index
     3. Not in buffer: fall back to database replay
     """
-    buffer_status = event_buffer.get_run_status(run_id)
+    event_stream = get_event_stream()
+    buffer_status = await event_stream.get_run_status(run_id)
 
     if buffer_status is None:
         # PATH 3: Not in buffer -- fall back to database
@@ -275,9 +278,9 @@ async def _resume_stream_generator(
         return
 
     if buffer_status in (RunStatus.completed, RunStatus.error, RunStatus.cancelled, RunStatus.paused):
-        # PATH 2: Run finished -- replay missed events from buffer
-        total_buffered = event_buffer.get_event_count(run_id)
-        missed_events = event_buffer.get_events(run_id, last_event_index=last_event_index)
+        # PATH 2: Run finished -- replay missed events from the event stream
+        total_buffered = await event_stream.get_event_count(run_id)
+        missed_events = await event_stream.replay(run_id, last_event_index=last_event_index)
         log_debug(
             f"Resume PATH 2: run_id={run_id}, status={buffer_status.value}, "
             f"last_event_index={last_event_index}, total_buffered={total_buffered}, "
@@ -295,108 +298,76 @@ async def _resume_stream_generator(
         }
         yield f"event: replay\ndata: {json.dumps(meta)}\n\n"
 
-        for ev_index, buffered_event in missed_events:
-            event_dict = buffered_event.to_dict()
-            event_dict["event_index"] = ev_index
-            if "run_id" not in event_dict:
-                event_dict["run_id"] = run_id
-            event_type = event_dict.get("event", "message")
-            yield f"event: {event_type}\ndata: {json.dumps(event_dict, separators=(',', ':'), default=json_serializer, ensure_ascii=False)}\n\n"
+        for ev_index, payload in missed_events:
+            yield replayed_payload_to_sse(payload, ev_index, run_id)
         return
 
-    # PATH 1: Run still active -- subscribe FIRST (to avoid race condition), then replay missed events
-    queue = sse_subscriber_manager.subscribe(run_id)
+    # PATH 1: Run still active (RUNNING, or PENDING while queued for a
+    # concurrency slot) -- replay missed events, then tail live events. The
+    # event stream's tail() owns the replay/subscribe race, dedup by
+    # event_index, and terminal detection (including a producer that died
+    # without writing a sentinel).
+    missed_events = await event_stream.replay(run_id, last_event_index=last_event_index)
+    current_count = await event_stream.get_event_count(run_id)
 
-    try:
-        missed_events = event_buffer.get_events(run_id, last_event_index)
-        current_count = event_buffer.get_event_count(run_id)
+    last_replayed_index = last_event_index if last_event_index is not None else -1
 
-        # Track the highest replayed event_index for dedup against queue events
-        last_replayed_index = last_event_index if last_event_index is not None else -1
-
-        if missed_events:
-            meta = {
-                "event": "catch_up",
-                "run_id": run_id,
-                "status": "running",
-                "missed_events": len(missed_events),
-                "current_event_count": current_count,
-                "message": f"Catching up on {len(missed_events)} missed events.",
-            }
-            yield f"event: catch_up\ndata: {json.dumps(meta)}\n\n"
-
-            for ev_index, buffered_event in missed_events:
-                event_dict = buffered_event.to_dict()
-                event_dict["event_index"] = ev_index
-                if "run_id" not in event_dict:
-                    event_dict["run_id"] = run_id
-                event_type = event_dict.get("event", "message")
-                yield f"event: {event_type}\ndata: {json.dumps(event_dict, separators=(',', ':'), default=json_serializer, ensure_ascii=False)}\n\n"
-                last_replayed_index = ev_index
-
-        # Re-check buffer status after subscribing: the run may have completed
-        # between our initial status check and now. If so, replay remaining events
-        # from buffer instead of waiting on the queue (the sentinel was already pushed
-        # before our subscription existed).
-        updated_status = event_buffer.get_run_status(run_id)
-        if updated_status is not None and updated_status not in (RunStatus.running, RunStatus.pending):
-            # Run completed while we were catching up -- replay remaining from buffer
-            remaining = event_buffer.get_events(run_id, last_event_index=last_replayed_index)
-            if remaining:
-                for ev_index, buffered_event in remaining:
-                    event_dict = buffered_event.to_dict()
-                    event_dict["event_index"] = ev_index
-                    if "run_id" not in event_dict:
-                        event_dict["run_id"] = run_id
-                    event_type = event_dict.get("event", "message")
-                    yield f"event: {event_type}\ndata: {json.dumps(event_dict, separators=(',', ':'), default=json_serializer, ensure_ascii=False)}\n\n"
-            return
-
-        # Confirm subscription for live events
-        subscribed = {
-            "event": "subscribed",
+    if missed_events:
+        meta = {
+            "event": "catch_up",
             "run_id": run_id,
             "status": "running",
+            "missed_events": len(missed_events),
             "current_event_count": current_count,
-            "message": "Subscribed to team run. Receiving live events.",
+            "message": f"Catching up on {len(missed_events)} missed events.",
         }
-        yield f"event: subscribed\ndata: {json.dumps(subscribed)}\n\n"
+        yield f"event: catch_up\ndata: {json.dumps(meta)}\n\n"
 
-        log_debug(f"SSE client subscribed to team run {run_id} (last_event_index: {last_event_index})")
+        for ev_index, payload in missed_events:
+            yield replayed_payload_to_sse(payload, ev_index, run_id)
+            last_replayed_index = max(last_replayed_index, ev_index)
 
-        # Read from queue, dedup events already replayed by event_index
+    # Confirm subscription for live events
+    subscribed = {
+        "event": "subscribed",
+        "run_id": run_id,
+        "status": "running",
+        "current_event_count": current_count,
+        "message": "Subscribed to team run. Receiving live events.",
+    }
+    yield f"event: subscribed\ndata: {json.dumps(subscribed)}\n\n"
+
+    log_debug(f"SSE client subscribed to team run {run_id} (last_event_index: {last_event_index})")
+
+    # Pump the tail through a queue so we can heartbeat on idle without
+    # cancelling the tail generator (cancelling its __anext__ would kill it).
+    tail_queue: asyncio.Queue = asyncio.Queue()
+
+    async def _pump_tail() -> None:
+        try:
+            async for tail_item in event_stream.tail(run_id, last_event_index=last_replayed_index):
+                await tail_queue.put(tail_item)
+        finally:
+            await tail_queue.put(None)
+
+    pump_task = asyncio.create_task(_pump_tail())
+    try:
         while True:
             try:
-                item = await asyncio.wait_for(queue.get(), timeout=30.0)
+                item = await asyncio.wait_for(tail_queue.get(), timeout=30.0)
             except asyncio.TimeoutError:
-                # Check if run ended without sending sentinel
-                status = event_buffer.get_run_status(run_id)
-                if status is None or status != RunStatus.running:
-                    # Run ended - replay any remaining events from buffer
-                    remaining = event_buffer.get_events(run_id, last_event_index=last_replayed_index)
-                    for ev_index, buffered_event in remaining:
-                        event_dict = buffered_event.to_dict()
-                        event_dict["event_index"] = ev_index
-                        if "run_id" not in event_dict:
-                            event_dict["run_id"] = run_id
-                        event_type = event_dict.get("event", "message")
-                        yield f"event: {event_type}\ndata: {json.dumps(event_dict, separators=(',', ':'), default=json_serializer, ensure_ascii=False)}\n\n"
-                    break
-                # Still running - send heartbeat to keep connection alive
+                # Tail is idle (queued or silent run) - keep the connection alive
                 yield ": heartbeat\n\n"
                 continue
             if item is None:
-                # Sentinel: run completed
+                # Tail finished: run reached a terminal state
                 break
-            ev_idx, sse_data = item
-            # Dedup: skip events already replayed during catch-up
-            if ev_idx >= 0 and ev_idx <= last_replayed_index:
-                continue
-            if ev_idx >= 0:
-                last_replayed_index = ev_idx
+            _ev_index, sse_data = item
             yield sse_data
     finally:
-        sse_subscriber_manager.unsubscribe(run_id, queue)
+        pump_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await pump_task
 
 
 async def team_continue_response_streamer(

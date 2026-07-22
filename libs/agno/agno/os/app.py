@@ -42,6 +42,7 @@ from agno.os.config import (
     TracesConfig,
     TracesDomainConfig,
 )
+from agno.os.event_streams import BaseEventStream, set_event_stream
 from agno.os.interfaces.base import BaseInterface
 from agno.os.router import get_base_router, get_info_router, get_websocket_router
 from agno.os.routers.agents import get_agent_router
@@ -256,6 +257,7 @@ class AgentOS:
         auto_provision_dbs: bool = True,
         run_hooks_in_background: bool = False,
         background_max_concurrency: Optional[int] = None,
+        event_stream: Optional[BaseEventStream] = None,
         telemetry: bool = True,
         registry: Optional[Registry] = None,
         scheduler: bool = False,
@@ -318,6 +320,11 @@ class AgentOS:
                 instances configure it, and None leaves the current process-wide setting untouched (falling
                 back to the AGNO_BACKGROUND_MAX_CONCURRENCY env var or the default of 32 if never set); 0 or
                 below disables limiting.
+            event_stream: Event stream for background run events (buffering, live tails, resume).
+                Defaults to the in-memory stream (single-process). Pass a RedisEventStream for
+                multi-container deployments so clients can resume streams from any replica --
+                configure it with the same Redis clients as RedisRunCancellationManager. Process-global,
+                like background_max_concurrency: last setter wins.
             telemetry: Whether to enable telemetry
             registry: Optional registry to use for the AgentOS
             scheduler: Whether to enable the cron scheduler
@@ -427,6 +434,11 @@ class AgentOS:
         self.background_max_concurrency = background_max_concurrency
         if background_max_concurrency is not None:
             set_background_max_concurrency(background_max_concurrency)
+
+        # Event stream for background run events. None keeps the in-memory
+        # default (or whatever an earlier set_event_stream() call configured).
+        if event_stream is not None:
+            set_event_stream(event_stream)
 
         # Scheduler configuration
         self._scheduler_enabled = scheduler

@@ -194,6 +194,15 @@
 
 ---
 
+### background_streaming_resume.py
+
+**Status:** PASS
+**Tier:** untagged
+**Description:** Demonstrates background streaming (background=True, stream=True) with disconnect and resume via the pluggable event stream (get_event_stream). Run live with real OpenAI calls: consumed 3 SSE events, disconnected, run continued in background; replay() returned the 8 missed events and tail() streamed to the terminal state (index 10), with final status COMPLETED and the full poem retrievable via aget_run_output. Also documents RedisEventStream configuration for multi-container resume.
+**Result:** Live run PASS end to end (replay, live tail, terminal detection, final output).
+
+---
+
 ### background_execution_concurrency.py
 
 **Status:** PASS (behavior verified live; Postgres variant pending)
