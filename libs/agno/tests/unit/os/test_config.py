@@ -45,13 +45,11 @@ class TestManifest:
         with pytest.raises(ValidationError):
             Manifest(labels=123)
 
-    def test_quick_prompts_cap_enforced(self):
-        with pytest.raises(ValidationError, match="Too many quick prompts"):
-            Manifest(quick_prompts=["a", "b", "c", "d"])
-
-    def test_quick_prompts_at_cap_allowed(self):
-        m = Manifest(quick_prompts=["a", "b", "c"])
-        assert len(m.quick_prompts) == 3
+    def test_quick_prompts_not_capped(self):
+        # No backend cap - the API returns all prompts; truncation (if any) is a
+        # rendering concern for the frontend, not a validation error here.
+        m = Manifest(quick_prompts=["a", "b", "c", "d", "e"])
+        assert m.quick_prompts == ["a", "b", "c", "d", "e"]
 
     def test_quick_prompts_empty_allowed(self):
         # An explicit empty list is fine - means "no prompts configured."
@@ -101,7 +99,7 @@ class TestAgentOSConfigManifestField:
         assert m.quick_prompts == ["What can you do?", "Latest post?"]
         assert cfg.manifest["support-team"].labels == ["prod", "support"]
 
-    def test_manifest_quick_prompts_cap_via_yaml(self):
+    def test_manifest_quick_prompts_not_capped_via_yaml(self):
         raw = yaml.safe_load(
             """
             manifest:
@@ -109,8 +107,8 @@ class TestAgentOSConfigManifestField:
                 quick_prompts: ["1", "2", "3", "4"]
             """
         )
-        with pytest.raises(ValidationError, match="Too many quick prompts"):
-            AgentOSConfig(**raw)
+        cfg = AgentOSConfig(**raw)
+        assert cfg.manifest["marketing-agent"].quick_prompts == ["1", "2", "3", "4"]
 
 
 class TestBackwardCompat:
@@ -119,9 +117,10 @@ class TestBackwardCompat:
         chat = ChatConfig(quick_prompts={"marketing-agent": ["a", "b"]})
         assert chat.quick_prompts == {"marketing-agent": ["a", "b"]}
 
-    def test_chat_config_cap_still_enforced(self):
-        with pytest.raises(ValidationError, match="Too many quick prompts"):
-            ChatConfig(quick_prompts={"marketing-agent": ["a", "b", "c", "d"]})
+    def test_chat_config_not_capped(self):
+        # ChatConfig accepts any number of quick prompts (no backend cap).
+        chat = ChatConfig(quick_prompts={"marketing-agent": ["a", "b", "c", "d"]})
+        assert chat.quick_prompts == {"marketing-agent": ["a", "b", "c", "d"]}
 
     def test_legacy_yaml_still_loads(self):
         raw = yaml.safe_load(

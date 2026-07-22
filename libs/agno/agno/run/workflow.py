@@ -1062,6 +1062,7 @@ class WorkflowRunOutput:
         elif isinstance(self.content, BaseModel):
             return self.content.model_dump_json(exclude_none=True, **kwargs)
         else:
+            kwargs.setdefault("ensure_ascii", False)
             return json.dumps(self.content, **kwargs)
 
     def has_completed(self) -> bool:

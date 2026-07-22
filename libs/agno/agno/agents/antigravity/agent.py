@@ -267,13 +267,13 @@ class AntigravityAgent(BaseExternalAgent):
         if workspace.is_dir():
             for f in workspace.rglob("*"):
                 if f.is_file():
-                    add(f, "/" + str(f.relative_to(workspace)))
+                    add(f, "/" + f.relative_to(workspace).as_posix())
 
         skills = path / "skills"
         if skills.is_dir():
             for f in skills.rglob("*"):
                 if f.is_file():
-                    add(f, "/.agents/skills/" + str(f.relative_to(skills)))
+                    add(f, "/.agents/skills/" + f.relative_to(skills).as_posix())
 
         return sources
 

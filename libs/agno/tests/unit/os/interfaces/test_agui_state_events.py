@@ -232,7 +232,7 @@ class TestAgentStateDelta:
                 agent,
                 "arun",
             ) as mock_arun,
-            patch("agno.os.interfaces.agui.router.validate_agui_state", side_effect=mock_validate),
+            patch("agno.os.interfaces.agui.router.validate_state", side_effect=mock_validate),
         ):
             mock_arun.return_value = mock_stream()
             response = client.post("/agui", json=make_request_body("Increment", state={"counter": 0}))
@@ -283,7 +283,7 @@ class TestAgentStateDelta:
                 agent,
                 "arun",
             ) as mock_arun,
-            patch("agno.os.interfaces.agui.router.validate_agui_state", side_effect=mock_validate),
+            patch("agno.os.interfaces.agui.router.validate_state", side_effect=mock_validate),
         ):
             mock_arun.return_value = mock_stream()
             response = client.post("/agui", json=make_request_body("Noop", state={"counter": 0}))
@@ -355,7 +355,7 @@ class TestAgentStateEdgeCases:
                 agent,
                 "arun",
             ) as mock_arun,
-            patch("agno.os.interfaces.agui.router.validate_agui_state", side_effect=mock_validate),
+            patch("agno.os.interfaces.agui.router.validate_state", side_effect=mock_validate),
         ):
             mock_arun.return_value = mock_stream()
             response = client.post(

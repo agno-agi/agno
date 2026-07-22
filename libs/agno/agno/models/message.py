@@ -117,6 +117,11 @@ class Message(BaseModel):
     created_at: int = Field(default_factory=lambda: int(time()))
     # When True, the message will be sent to the Model but not persisted afterwards.
     temporary: bool = False
+    # Status of the run when this message was the persisted checkpoint boundary.
+    # Used by checkpoint="tool-batch" so clients can show resumable message boundaries
+    # without a separate checkpoint table.
+    checkpoint_status: Optional[str] = None
+    checkpoint_created_at: Optional[int] = None
 
     model_config = ConfigDict(extra="allow", populate_by_name=True, arbitrary_types_allowed=True)
 
@@ -128,7 +133,7 @@ class Message(BaseModel):
             if len(self.content) > 0 and isinstance(self.content[0], dict) and "text" in self.content[0]:
                 return self.content[0].get("text", "")
             else:
-                return json.dumps(self.content)
+                return json.dumps(self.content, ensure_ascii=False)
         return ""
 
     def get_content(self, use_compressed_content: bool = False) -> Optional[Union[List[Any], str]]:
@@ -299,6 +304,8 @@ class Message(BaseModel):
             "tool_calls": self.tool_calls,
             "redacted_reasoning_content": self.redacted_reasoning_content,
             "provider_data": self.provider_data,
+            "checkpoint_status": self.checkpoint_status,
+            "checkpoint_created_at": self.checkpoint_created_at,
         }
         # Filter out None and empty collections
         message_dict = {
@@ -378,7 +385,7 @@ class Message(BaseModel):
                 if isinstance(self.content, str) or isinstance(self.content, list):
                     _logger(self.content)
                 elif isinstance(self.content, dict):
-                    _logger(json.dumps(self.content, indent=2))
+                    _logger(json.dumps(self.content, indent=2, ensure_ascii=False))
         if self.tool_calls:
             tool_calls_list = ["Tool Calls:"]
             for tool_call in self.tool_calls:

@@ -30,7 +30,6 @@ from agno.utils.log import log_debug, log_error, log_warning, logger
 from agno.utils.string import hash_string_sha256
 from agno.vectordb.base import VectorDb
 from agno.vectordb.search import SearchType
-
 # Per-user RAG isolation. Owner is stored as a top-level metadata field
 # user_id and reads/deletes are scoped with a metadata filter.
 # * Upserts with user_id stamp the field; user_id=None omits it (shared bucket).

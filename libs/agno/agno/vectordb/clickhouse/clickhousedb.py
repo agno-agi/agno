@@ -18,7 +18,6 @@ from agno.utils.log import log_debug, log_error, log_info, log_warning, logger
 from agno.vectordb.base import VectorDb
 from agno.vectordb.distance import Distance
 from agno.vectordb.search import SearchType
-
 # Empty string marks a shared/unowned chunk in the user_id String column.
 SHARED_OWNER = ""
 
