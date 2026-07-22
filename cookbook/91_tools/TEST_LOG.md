@@ -1,5 +1,15 @@
 # Test Log
 
+### file_generation_tools.py (generate_code_file)
+
+**Status:** PASS
+
+**Description:** Added `generate_code_file` to `FileGenerationTools` so agents can emit source code as downloadable file artifacts for any language (Python, JS, TS, Go, Rust, Java, etc.). The tool maps a `language` (or the filename extension) to a file extension and a valid MIME type, falling back to `text/plain` for languages without a dedicated allowlisted MIME type. Added `example_code_generation()` to the cookbook (Python + TypeScript) and wired it into `__main__`.
+
+**Result:** Unit tests pass (`pytest libs/agno/tests/unit/tools/test_file_generation.py` — 45 passed, 2 skipped) covering Python (`.py`, `text/x-python`), TypeScript fallback (`.ts`, `text/plain`), unknown-language default (`.txt`), extension inference from filename, alias resolution (`py`/`c++`/`c#`/`bash`/`golang`), and the `enable_code_generation` toggle. Standalone check confirmed `File` artifacts construct without raising (MIME type stays within `File.valid_mime_types()`) and content round-trips for python/typescript/go/rust. Live agent run not executed (no OpenAI credentials / demo venv in this environment).
+
+---
+
 ### file_tools.py (Examples 6-8: exclude_patterns)
 
 **Status:** PASS
@@ -7,6 +17,16 @@
 **Description:** Added three new examples (6-8) to the existing FileTools cookbook demonstrating the `exclude_patterns` parameter from PR #7618. Example 6 uses the default exclusion list (hides `.venv`, `.git`, `__pycache__`, etc.); Example 7 subtracts `.venv` from `DEFAULT_EXCLUDE_PATTERNS` so the agent can inspect installed packages while still filtering noise; Example 8 uses `exclude_patterns=[]` for full visibility. A `setup_exclusion_sandbox()` helper creates a deterministic fixture (real source + stub `.venv/lib/python3.12/site-packages/requests/` + `.git/HEAD`) so Examples 6-8 are reproducible. New examples use `model=OpenAIResponses(id="gpt-5.4")` per project convention.
 
 **Result:** Ran the three new agents end-to-end with `PYTHONPATH=/Users/coolm/Developer/agno-pr-7618/libs/agno timeout 120 .venvs/demo/bin/python cookbook/91_tools/file_tools.py` (PYTHONPATH needed because the demo venv's editable install resolves to main, but the PR's new `DEFAULT_EXCLUDE_PATTERNS` export lives on the PR branch). Default agent returned only `README.md` and `main.py`; the `.venv`-allowed agent read `__version__ = '2.31.0'` from `.venv/lib/python3.12/site-packages/requests/__init__.py`; the no-exclusions agent listed `.git/HEAD` and every `.venv` file. Module import also verified under importlib — all three agents wire up with the expected `exclude_patterns` lengths (47, 46, 0).
+
+---
+
+### file_tools.py (Example 9: directory-scoped list_files)
+
+**Status:** PASS
+
+**Description:** Added Example 9 demonstrating the optional `directory` argument on `list_files`, backed by a `setup_subdir_sandbox()` fixture (`root_notes.txt` plus a `reports/` subdir with `q1.csv`, `q2.csv`, `summary.md`). Example 1's prompt was made concrete ("List three leading LLM providers and save the list to 'llm_providers.txt'") so the agent saves a file and creates the shared `tmp/file` base_dir that the read-only Example 2 then lists. `list_files` now falls back to `base_dir` when `directory` is empty, matching the `if directory:` guard `search_content` uses. New example uses `model=OpenAIResponses(id="gpt-5.4")` to match Examples 6-8. `ruff format` also reflowed `file_generation_tools.py` and `cookbook/scripts/cookbook_runner.py`.
+
+**Result:** All nine examples run clean end-to-end; the directory-scoped agent calls `list_files(directory="reports")` and returns only the `reports/` files. 24 filetools unit tests pass; `ruff format`, `ruff check`, and mypy clean.
 
 ---
 
