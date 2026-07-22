@@ -87,6 +87,9 @@ aws-bedrock = ["boto3", "aioboto3"]
 azure = ["azure-ai-inference", "aiohttp"]
 cerebras = ["cerebras-cloud-sdk"]
 cohere = ["cohere"]
+# The control-plane SDK for FireworksTrainer (datasets + fine-tuning jobs). Serving a
+# tuned model needs only the OpenAI-compatible inference path (`agno[openai]`).
+fireworks = ["fireworks-ai", "openai"]
 google = ["google-genai>=1.52.0", "pydantic>=2.12.5"]
 groq = ["groq"]
 ibm = ["ibm-watsonx-ai"]
@@ -643,6 +646,7 @@ module = [
   "celpy.*",
   "glide_sync.*",
   "tinker.*",
-  "tinker_cookbook.*"
+  "tinker_cookbook.*",
+  "fireworks.*"
 ]
 ignore_missing_imports = true

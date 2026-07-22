@@ -6,13 +6,22 @@ Close the loop. The environment generates a dataset from what the base model
 already gets right, a trainer fine-tunes on it, and the tuned checkpoint is run
 back through the same environment so the gain is measured, not assumed.
 
-This runs offline by default against a stub trainer defined below, so the shape
-of the loop is visible without a GPU or an API key. The live path spends real
-training compute, so it requires an explicit opt-in on top of the key: set
-AGNO_RUN_TINKER_FINE_TUNE=1 (and TINKER_API_KEY) to run a real Tinker fine-tune.
+The trainer is swappable -- that is the demo. The same ImprovementLoop runs
+against three backends, selected by AGNO_TRAINER:
+
+    stub       (default) the offline stand-in below; no GPU, no key, no spend
+    tinker     TinkerTrainer -- agno drives the training loop step by step
+    fireworks  FireworksTrainer -- a managed fine-tuning job plus an
+               on-demand deployment for serving
+
+The live paths spend real training compute, so they require an explicit opt-in
+on top of the key: set AGNO_RUN_FINE_TUNE=1 as well as the provider's API key.
 A key alone never triggers spend -- a key is capability, not consent.
+(AGNO_RUN_TINKER_FINE_TUNE=1, the original Tinker-only spelling, still works
+and implies AGNO_TRAINER=tinker.)
 """
 
+import hashlib
 import os
 from itertools import cycle
 from pathlib import Path
@@ -25,7 +34,8 @@ from agno.models.response import ModelResponse
 from agno.scorer import CodeScorer
 from agno.trainers import Checkpoint, TrainOn, TrainResult, TrainStatus
 
-BASE_MODEL = "Qwen/Qwen3.6-35B-A3B"
+BASE_MODEL = "Qwen/Qwen3.6-35B-A3B"  # the stub's checkpoint identity, and Tinker's base
+FIREWORKS_BASE_MODEL = "accounts/fireworks/models/qwen3-4b-instruct-2507"
 
 
 def is_three_lines(run, expected):
@@ -40,8 +50,9 @@ def is_three_lines(run, expected):
 
 # --- the offline stand-ins ---------------------------------------------------
 # A real trainer serves a real model. These two exist so this file runs with no
-# GPU and no network; the live branch at the bottom swaps in TinkerTrainer, whose
-# checkpoints are served as TinkerModel. Nothing here ships in agno.
+# GPU and no network; the live branches at the bottom swap in TinkerTrainer
+# (served as TinkerModel) or FireworksTrainer (served from an on-demand Fireworks
+# deployment). Nothing here ships in agno.
 
 
 class ScriptedModel(Model):
@@ -93,14 +104,17 @@ class StubTrainer:
     def fit(
         self, dataset, *, train_on: TrainOn = TrainOn.LAST_ASSISTANT
     ) -> TrainResult:
-        rows = Path(dataset).read_text(encoding="utf-8").strip().split("\n")
+        data = Path(dataset).read_bytes()
+        rows = data.decode("utf-8").strip().split("\n")
         self._round += 1
         print(f"  stub fit: round {self._round} trained on {len(rows)} conversations")
         return TrainResult(
             checkpoint=Checkpoint(
                 ref=f"stub://round-{self._round}",
                 base_model=BASE_MODEL,
-                dataset_digest="offline",
+                # The real digest of the real bytes: the loop refuses to serve a
+                # checkpoint whose provenance does not match the file it trained on.
+                dataset_digest=hashlib.sha256(data).hexdigest(),
                 hyperparams={
                     "rank": 16,
                     "learning_rate": 2e-4,
@@ -164,43 +178,120 @@ env = Environment(
 
 
 def build_trainer():
-    """The paid trainer only on explicit opt-in. A key is capability, not consent:
-    TINKER_API_KEY alone selects the stub, so an environment where the key is
-    always loaded (direnv) cannot spend a fine-tune by accident."""
+    """A paid trainer only on explicit opt-in. A key is capability, not consent:
+    an API key alone selects the stub, so an environment where keys are always
+    loaded (direnv) cannot spend a fine-tune by accident. AGNO_TRAINER picks the
+    backend; AGNO_RUN_FINE_TUNE=1 is the consent to spend."""
+    explicit = os.environ.get("AGNO_TRAINER")
+    choice = (explicit or "stub").strip().lower() or "stub"
+    consented = os.environ.get("AGNO_RUN_FINE_TUNE") == "1"
     if os.environ.get("AGNO_RUN_TINKER_FINE_TUNE") == "1":
-        if not os.environ.get("TINKER_API_KEY"):
+        # The legacy flag implies tinker-with-consent, but an explicit different
+        # AGNO_TRAINER must not be silently overridden into a paid Tinker run
+        # (a stale export of the legacy flag would otherwise beat AGNO_TRAINER=stub).
+        if explicit and choice != "tinker":
             raise RuntimeError(
-                "AGNO_RUN_TINKER_FINE_TUNE=1 but TINKER_API_KEY is not set; "
-                "the live fine-tune needs both."
+                "AGNO_RUN_TINKER_FINE_TUNE=1 (legacy, implies tinker) conflicts with "
+                f"AGNO_TRAINER={choice!r}; unset one, or use AGNO_TRAINER=tinker "
+                "AGNO_RUN_FINE_TUNE=1."
             )
+        choice, consented = "tinker", True
+
+    if choice == "tinker":
+        if not consented:
+            raise RuntimeError(
+                "AGNO_TRAINER=tinker selected but AGNO_RUN_FINE_TUNE=1 is not set; "
+                "the live fine-tune needs the explicit consent flag."
+            )
+        if not os.environ.get("TINKER_API_KEY"):
+            raise RuntimeError("The Tinker fine-tune needs TINKER_API_KEY.")
         from agno.trainers.tinker import TinkerTrainer
 
-        print(f"AGNO_RUN_TINKER_FINE_TUNE=1: fine-tuning {BASE_MODEL} for real.")
+        print(f"Trainer: Tinker. Fine-tuning {BASE_MODEL} for real.")
         return TinkerTrainer(base_model=BASE_MODEL, epochs=1)
-    if os.environ.get("TINKER_API_KEY"):
+
+    if choice == "fireworks":
+        if not consented:
+            raise RuntimeError(
+                "AGNO_TRAINER=fireworks selected but AGNO_RUN_FINE_TUNE=1 is not set; "
+                "the live fine-tune needs the explicit consent flag."
+            )
+        if not os.environ.get("FIREWORKS_API_KEY"):
+            raise RuntimeError("The Fireworks fine-tune needs FIREWORKS_API_KEY.")
+        if not os.environ.get("FIREWORKS_ACCOUNT_ID"):
+            print(
+                "FIREWORKS_ACCOUNT_ID is not set; FireworksTrainer will refuse before "
+                "any spend unless account_id is passed another way."
+            )
+        from agno.trainers.fireworks import FireworksTrainer
+
+        print(f"Trainer: Fireworks. Fine-tuning {FIREWORKS_BASE_MODEL} for real.")
         print(
-            "TINKER_API_KEY found but AGNO_RUN_TINKER_FINE_TUNE is not set: "
-            "using the offline stub. Set AGNO_RUN_TINKER_FINE_TUNE=1 to spend a real fine-tune."
+            "Serving both sides of the before/after uses one on-demand deployment; "
+            "GPU time bills while it serves, and it is deleted at the end of the run."
+        )
+        # reasoning_effort="none" keeps this instruct model's answer in `content`;
+        # otherwise Fireworks' reasoning parser routes the whole completion into the
+        # reasoning channel and every attempt reads as empty.
+        return FireworksTrainer(
+            base_model=FIREWORKS_BASE_MODEL, epochs=1, sampling_reasoning_effort="none"
+        )
+
+    if choice != "stub":
+        raise RuntimeError(
+            f"Unknown AGNO_TRAINER {choice!r}: expected stub, tinker or fireworks."
+        )
+
+    keys_present = [
+        name for name in ("TINKER_API_KEY", "FIREWORKS_API_KEY") if os.environ.get(name)
+    ]
+    if keys_present:
+        print(
+            f"{' and '.join(keys_present)} found but no live trainer was opted into: "
+            "using the offline stub. Set AGNO_TRAINER=tinker or fireworks plus "
+            "AGNO_RUN_FINE_TUNE=1 to spend a real fine-tune."
         )
     else:
-        print("No TINKER_API_KEY: running the loop against the offline stub trainer.")
+        print("No trainer API key: running the loop against the offline stub trainer.")
     return StubTrainer(offline_base, [offline_tuned])
 
 
 if __name__ == "__main__":
-    loop = ImprovementLoop(env, trainer=build_trainer(), k=4)
+    trainer = build_trainer()
+    loop = ImprovementLoop(env, trainer=trainer, k=4)
 
-    report = loop.step()
+    try:
+        report = loop.step()
+    finally:
+        # FireworksTrainer serves through an on-demand deployment that bills GPU
+        # time; releasing it is part of the run. The other trainers have no
+        # serving infrastructure to release.
+        teardown = getattr(trainer, "teardown", None)
+        if teardown is not None:
+            teardown()
 
     if report.converged:
         print(f"nothing to train on: {report.converged_reason}")
         print(f"export counters: {report.export_report}")
+    elif report.unmeasured_reason is not None:
+        # A live-path shape: the baseline produced no scored attempts, or the
+        # tuned side could not be measured. With a checkpoint present, the
+        # fine-tune was paid for and is preserved on the report.
+        print(f"round measured nothing: {report.unmeasured_reason}")
+        print(f"baseline pass rate: {report.baseline_pass_rate}")
+        if report.checkpoint is not None:
+            print(
+                f"checkpoint paid for but unmeasured, preserved: {report.checkpoint.ref}"
+            )
+            print(
+                "re-measure it with run_rollouts(env, model=trainer.as_model(report.checkpoint))"
+            )
     else:
         print(f"baseline pass rate: {report.baseline_pass_rate}")
         print(f"tuned pass rate:    {report.tuned_pass_rate}")
         print(report.diff)
         print(f"trained on: {report.dataset_path}")
-        print(f"loss curve: {report.train_result.step_metrics}")
+        print(f"training metrics: {report.train_result.step_metrics}")
         print("Same environment, same agent design, different weights.")
         print(
             "At 3 tasks the numbers are noisy; measure held-out tasks before claiming a gain."
