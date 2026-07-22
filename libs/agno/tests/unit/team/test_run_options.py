@@ -1,9 +1,17 @@
 """Tests for centralized team run option resolution and renamed run functions."""
 
 import dataclasses
+import time
+from typing import Any, AsyncIterator, Dict, Iterator
 
 import pytest
 
+from agno.agent import Agent
+from agno.db.in_memory import InMemoryDb
+from agno.models.base import Model
+from agno.models.message import MessageMetrics
+from agno.models.response import ModelResponse
+from agno.session import TeamSession
 from agno.team._run_options import ResolvedRunOptions, resolve_run_options
 from agno.team.team import Team
 
@@ -11,6 +19,60 @@ from agno.team.team import Team
 def _make_team(**kwargs) -> Team:
     """Create a minimal Team instance for testing."""
     return Team(members=[], **kwargs)
+
+
+class MockModel(Model):
+    """Minimal offline model: returns a canned text response without any network call."""
+
+    def __init__(self):
+        super().__init__(id="test-model", name="test-model", provider="test")
+        self.instructions = None
+        self._mock_response = ModelResponse(
+            content="ok",
+            role="assistant",
+            response_usage=MessageMetrics(),
+        )
+
+    def get_instructions_for_model(self, *args, **kwargs):
+        return None
+
+    def get_system_message_for_model(self, *args, **kwargs):
+        return None
+
+    async def aget_instructions_for_model(self, *args, **kwargs):
+        return None
+
+    async def aget_system_message_for_model(self, *args, **kwargs):
+        return None
+
+    def parse_args(self, *args, **kwargs):
+        return {}
+
+    def invoke(self, *args, **kwargs) -> ModelResponse:
+        return self._mock_response
+
+    async def ainvoke(self, *args, **kwargs) -> ModelResponse:
+        return self._mock_response
+
+    def invoke_stream(self, *args, **kwargs) -> Iterator[ModelResponse]:
+        yield self._mock_response
+
+    async def ainvoke_stream(self, *args, **kwargs) -> AsyncIterator[ModelResponse]:
+        yield self._mock_response
+        return
+
+    def _parse_provider_response(self, response: Any, **kwargs) -> ModelResponse:
+        return self._mock_response
+
+    def _parse_provider_response_delta(self, response: Any) -> ModelResponse:
+        return self._mock_response
+
+
+def _seed_team_session(db: InMemoryDb, session_id: str, team_id: str, metadata: Dict[str, Any]) -> None:
+    """Insert a session record with the given metadata, as if written by an earlier deployment."""
+    db.upsert_session(
+        TeamSession(session_id=session_id, team_id=team_id, metadata=metadata, created_at=int(time.time()))
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -558,3 +620,41 @@ class TestTeamSingletonIsolation:
         session = await _aread_or_create_session(team, session_id="fresh")
         assert session.metadata == {"env": "test"}
         assert session.metadata is not team.metadata
+
+
+# ---------------------------------------------------------------------------
+# Session metadata precedence on the full run() path
+# ---------------------------------------------------------------------------
+
+
+class TestTeamRunSessionMetadataPrecedence:
+    """Run-level twin of the agent's TestRunSessionMetadataPrecedence."""
+
+    def _make_run_team(self, db: InMemoryDb, **kwargs) -> Team:
+        member = Agent(name="member", model=MockModel(), telemetry=False)
+        return Team(id="team-1", members=[member], model=MockModel(), db=db, telemetry=False, **kwargs)
+
+    def test_session_beats_team_on_run(self):
+        db = InMemoryDb()
+        _seed_team_session(db, "s1", "team-1", {"shared": "session_value", "session_only": "s"})
+        team = self._make_run_team(db, metadata={"shared": "team_value", "team_only": "t"})
+        out = team.run(input="hi", session_id="s1")
+        assert out.metadata["shared"] == "session_value"
+        assert out.metadata["team_only"] == "t"
+        assert out.metadata["session_only"] == "s"
+
+    def test_callsite_beats_session_and_team_on_run(self):
+        db = InMemoryDb()
+        _seed_team_session(db, "s1", "team-1", {"shared": "session_value"})
+        team = self._make_run_team(db, metadata={"shared": "team_value"})
+        out = team.run(input="hi", session_id="s1", metadata={"shared": "call_value", "run_only": "r"})
+        assert out.metadata["shared"] == "call_value"
+        assert out.metadata["run_only"] == "r"
+
+    def test_run_does_not_mutate_team_metadata(self):
+        db = InMemoryDb()
+        _seed_team_session(db, "s1", "team-1", {"leak": "from_session"})
+        team = self._make_run_team(db, metadata={"env": "test"})
+        out = team.run(input="hi", session_id="s1")
+        assert out.metadata["leak"] == "from_session"
+        assert team.metadata == {"env": "test"}

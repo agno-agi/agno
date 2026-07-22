@@ -1044,11 +1044,17 @@ async def test_query_timeout_trips_on_inter_chunk_stall():
     events = []
     final = None
     started = time.monotonic()
-    async for chunk in gen:
-        if isinstance(chunk, str):
-            final = chunk
-        else:
-            events.append(chunk)
+
+    async def _drain():
+        nonlocal final
+        async for chunk in gen:
+            if isinstance(chunk, str):
+                final = chunk
+            else:
+                events.append(chunk)
+
+    # Bounded so a per-chunk idle-timeout regression fails instead of hanging.
+    await asyncio.wait_for(_drain(), timeout=5)
     assert time.monotonic() - started < 1.0
     assert len(events) == 1
     assert json.loads(final) == {"error": "s timed out after 0.2s"}
@@ -1073,11 +1079,18 @@ async def test_query_timeout_is_wall_clock_not_inter_chunk_idle():
     events = []
     final = None
     started = time.monotonic()
-    async for chunk in gen:
-        if isinstance(chunk, str):
-            final = chunk
-        else:
-            events.append(chunk)
+
+    async def _drain():
+        nonlocal final
+        async for chunk in gen:
+            if isinstance(chunk, str):
+                final = chunk
+            else:
+                events.append(chunk)
+
+    # Bounded so a per-chunk idle-timeout regression fails instead of hanging:
+    # the stream yields forever and only a wall-clock deadline can end it.
+    await asyncio.wait_for(_drain(), timeout=5)
     # Chunks land every 0.02s, so a per-chunk idle timeout of 0.2s would
     # never trip — only a total wall-clock deadline ends this stream.
     assert time.monotonic() - started < 1.0
