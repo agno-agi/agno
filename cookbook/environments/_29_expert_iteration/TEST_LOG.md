@@ -23,6 +23,14 @@ without `AGNO_RUN_FINE_TUNE=1` raises before any client is built; (3)
 raises naming the missing key. No network call is reachable on any offline
 path.
 
+Re-run after the adversarial-review fold (same day): still PASS, identical
+numbers. Two review findings changed this file's behavior and were re-verified:
+an unmeasured round (e.g. a live baseline where every attempt times out) now
+prints a legible "round measured nothing" report instead of crashing on a None
+train_result, and a stale AGNO_RUN_TINKER_FINE_TUNE=1 export now conflicts
+loudly with an explicit different AGNO_TRAINER instead of silently selecting a
+paid Tinker run.
+
 ---
 
 ### basic.py — offline path
