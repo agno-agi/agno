@@ -3400,10 +3400,7 @@ def continue_run_dispatch(
             run_response.regenerated_from = original_run_id_for_lineage
             if replace_original is not False and run_response.forked_from_run_id:
                 # Mark the original run as REGENERATED so history builders skip it.
-                for r in agent_session.runs or []:
-                    if r.run_id == original_run_id_for_lineage:
-                        r.status = RunStatus.regenerated
-                        break
+                _mark_run_regenerated(agent, agent_session, original_run_id_for_lineage)
         input_messages = run_response.messages or []
     elif run_id is not None:
         # The run is continued from a run_id.
@@ -3454,10 +3451,7 @@ def continue_run_dispatch(
         if regenerate and original_run_id_for_lineage:
             run_response.regenerated_from = original_run_id_for_lineage
             if replace_original is not False and run_response.forked_from_run_id:
-                for r in agent_session.runs or []:
-                    if r.run_id == original_run_id_for_lineage:
-                        r.status = RunStatus.regenerated
-                        break
+                _mark_run_regenerated(agent, agent_session, original_run_id_for_lineage)
 
         input_messages = run_response.messages or []
 
@@ -4594,10 +4588,7 @@ async def _acontinue_run(
                     if regenerate and original_run_id_for_lineage:
                         run_response.regenerated_from = original_run_id_for_lineage
                         if replace_original is not False and run_response.forked_from_run_id:
-                            for r in agent_session.runs or []:
-                                if r.run_id == original_run_id_for_lineage:
-                                    r.status = RunStatus.regenerated
-                                    break
+                            await _amark_run_regenerated(agent, agent_session, original_run_id_for_lineage)
                     input_messages = run_response.messages or []
                 elif run_id is not None:
                     # The run is continued from a run_id.
@@ -4641,10 +4632,7 @@ async def _acontinue_run(
                     if regenerate and original_run_id_for_lineage:
                         run_response.regenerated_from = original_run_id_for_lineage
                         if replace_original is not False and run_response.forked_from_run_id:
-                            for r in agent_session.runs or []:
-                                if r.run_id == original_run_id_for_lineage:
-                                    r.status = RunStatus.regenerated
-                                    break
+                            await _amark_run_regenerated(agent, agent_session, original_run_id_for_lineage)
 
                     input_messages = run_response.messages or []
 
@@ -5084,10 +5072,7 @@ async def _acontinue_run_stream(
                     if regenerate and original_run_id_for_lineage:
                         run_response.regenerated_from = original_run_id_for_lineage
                         if replace_original is not False and run_response.forked_from_run_id:
-                            for r in agent_session.runs or []:
-                                if r.run_id == original_run_id_for_lineage:
-                                    r.status = RunStatus.regenerated
-                                    break
+                            await _amark_run_regenerated(agent, agent_session, original_run_id_for_lineage)
                     input_messages = run_response.messages or []
 
                 elif run_id is not None:
@@ -5132,10 +5117,7 @@ async def _acontinue_run_stream(
                     if regenerate and original_run_id_for_lineage:
                         run_response.regenerated_from = original_run_id_for_lineage
                         if replace_original is not False and run_response.forked_from_run_id:
-                            for r in agent_session.runs or []:
-                                if r.run_id == original_run_id_for_lineage:
-                                    r.status = RunStatus.regenerated
-                                    break
+                            await _amark_run_regenerated(agent, agent_session, original_run_id_for_lineage)
 
                     input_messages = run_response.messages or []
 
@@ -6010,6 +5992,53 @@ def _mark_checkpoint_message(run_response: RunOutput) -> None:
     message.checkpoint_created_at = int(unix_time())
 
 
+def _mark_run_regenerated(
+    agent: Agent,
+    session: AgentSession,
+    original_run_id: str,
+) -> None:
+    """Flip the parent run's status to ``REGENERATED`` and persist that single
+    row. Under v3 storage, mutating ``session.runs[i].status`` in memory is not
+    enough: ``save_session`` writes only the session row, so without an
+    explicit ``save_run`` here the DB row keeps its old (COMPLETED) status and
+    history builders still surface the parent — producing duplicate content in
+    conversation history after regenerate."""
+    from agno.agent._session import save_run
+
+    for r in session.runs or []:
+        if r.run_id == original_run_id:
+            r.status = RunStatus.regenerated
+            save_run(
+                agent,
+                run=cast(RunOutput, r),
+                session_id=session.session_id,
+                user_id=session.user_id,
+                run_index=resolve_run_index(session, r),
+            )
+            return
+
+
+async def _amark_run_regenerated(
+    agent: Agent,
+    session: AgentSession,
+    original_run_id: str,
+) -> None:
+    """Async variant of :func:`_mark_run_regenerated`."""
+    from agno.agent._session import asave_run
+
+    for r in session.runs or []:
+        if r.run_id == original_run_id:
+            r.status = RunStatus.regenerated
+            await asave_run(
+                agent,
+                run=cast(RunOutput, r),
+                session_id=session.session_id,
+                user_id=session.user_id,
+                run_index=resolve_run_index(session, r),
+            )
+            return
+
+
 def checkpoint_run(
     agent: Agent,
     run_response: RunOutput,
@@ -6188,12 +6217,14 @@ def fork_session_dispatch(
 
     # Under v3 storage, save_session no longer writes runs — persist each
     # forked run individually so the new session isn't observably empty.
+    # AgentSession.runs is typed as Union[RunOutput, TeamRunOutput] for legacy
+    # reasons; an agent's own session only ever holds RunOutput.
     from agno.agent._session import save_run
 
     for idx, run in enumerate(new_session.runs or []):
         save_run(
             agent,
-            run=run,
+            run=cast(RunOutput, run),
             session_id=new_session.session_id,
             user_id=new_session.user_id,
             run_index=idx,
@@ -6235,13 +6266,16 @@ async def afork_session_dispatch(
 
     # Under v3 storage, [a]save_session no longer writes runs — persist each
     # forked run individually so the new session isn't observably empty.
+    # AgentSession.runs is typed as Union[RunOutput, TeamRunOutput] for legacy
+    # reasons; an agent's own session only ever holds RunOutput.
     from agno.agent._session import asave_run, save_run
 
     for idx, run in enumerate(new_session.runs or []):
+        run_out = cast(RunOutput, run)
         if has_async_db(agent):
             await asave_run(
                 agent,
-                run=run,
+                run=run_out,
                 session_id=new_session.session_id,
                 user_id=new_session.user_id,
                 run_index=idx,
@@ -6249,7 +6283,7 @@ async def afork_session_dispatch(
         else:
             save_run(
                 agent,
-                run=run,
+                run=run_out,
                 session_id=new_session.session_id,
                 user_id=new_session.user_id,
                 run_index=idx,

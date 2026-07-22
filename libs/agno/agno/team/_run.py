@@ -6341,6 +6341,53 @@ def _build_forked_team_session(source_session: TeamSession, new_user_id: Optiona
     )
 
 
+def _mark_team_run_regenerated(
+    team: "Team",
+    session: TeamSession,
+    original_run_id: str,
+) -> None:
+    """Flip the parent team run's status to ``REGENERATED`` and persist that
+    single row. Under v3 storage, mutating ``session.runs[i].status`` in memory
+    is not enough: ``save_session`` writes only the session row, so without an
+    explicit ``save_run`` here the DB row keeps its old status and history
+    builders still surface the parent — producing duplicate content after
+    regenerate."""
+    from agno.team._session import save_run
+
+    for r in session.runs or []:
+        if r.run_id == original_run_id:
+            r.status = RunStatus.regenerated
+            save_run(
+                team,
+                run=r,
+                session_id=session.session_id,
+                user_id=session.user_id,
+                run_index=resolve_run_index(session, r),
+            )
+            return
+
+
+async def _amark_team_run_regenerated(
+    team: "Team",
+    session: TeamSession,
+    original_run_id: str,
+) -> None:
+    """Async variant of :func:`_mark_team_run_regenerated`."""
+    from agno.team._session import asave_run
+
+    for r in session.runs or []:
+        if r.run_id == original_run_id:
+            r.status = RunStatus.regenerated
+            await asave_run(
+                team,
+                run=r,
+                session_id=session.session_id,
+                user_id=session.user_id,
+                run_index=resolve_run_index(session, r),
+            )
+            return
+
+
 def fork_session_dispatch(
     team: "Team",
     *,
@@ -6591,10 +6638,7 @@ def continue_run_dispatch(
         run_response.regenerated_from = original_run_id_for_lineage
         if replace_original is not False and run_response.forked_from_run_id:
             # Mark the original run REGENERATED so history builders skip it.
-            for r in team_session.runs or []:
-                if r.run_id == original_run_id_for_lineage:
-                    r.status = RunStatus.regenerated
-                    break
+            _mark_team_run_regenerated(team, team_session, original_run_id_for_lineage)
 
     # Append the new user-message (from input / additional_instructions) so
     # the model loop picks it up.
@@ -8044,10 +8088,7 @@ async def _acontinue_run(
                 if regenerate and original_run_id_for_lineage:
                     run_response.regenerated_from = original_run_id_for_lineage
                     if replace_original is not False and run_response.forked_from_run_id:
-                        for r in team_session.runs or []:
-                            if r.run_id == original_run_id_for_lineage:
-                                r.status = RunStatus.regenerated
-                                break
+                        await _amark_team_run_regenerated(team, team_session, original_run_id_for_lineage)
 
                 # Append input/additional_instructions as a user message.
                 if input:
@@ -8481,10 +8522,7 @@ async def _acontinue_run_stream(
                 if regenerate and original_run_id_for_lineage:
                     run_response.regenerated_from = original_run_id_for_lineage
                     if replace_original is not False and run_response.forked_from_run_id:
-                        for r in team_session.runs or []:
-                            if r.run_id == original_run_id_for_lineage:
-                                r.status = RunStatus.regenerated
-                                break
+                        await _amark_team_run_regenerated(team, team_session, original_run_id_for_lineage)
 
                 # Append input/additional_instructions as a user message.
                 if input:
