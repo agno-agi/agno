@@ -8,6 +8,7 @@ on:
       - "*release*" # Run on release-* format
       - "release/*" # Run on release/1.2.3 branch format
       - "feat/environments"
+      - "fix/get-team-history-nested-teams"
   workflow_dispatch: # Allows manual triggering
     inputs:
       branch:
