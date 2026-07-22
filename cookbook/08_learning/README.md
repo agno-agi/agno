@@ -204,6 +204,34 @@ agent = Agent(
 )
 ```
 
+### Extraction Limits
+
+Each learning store has a `max_updates_per_run` setting (default: 10) that caps how many
+memory updates can happen per extraction. This prevents runaway loops when models keep
+requesting tool calls.
+
+```python
+from agno.learn import LearningMachine, EntityMemoryConfig
+
+# Option 1: Set a global limit for all stores
+learning = LearningMachine(
+    max_updates_per_run=25,  # Applied to all stores
+    user_profile=True,
+    user_memory=True,
+)
+
+# Option 2: Override per-store (takes precedence over global)
+learning = LearningMachine(
+    max_updates_per_run=15,  # Global default
+    entity_memory=EntityMemoryConfig(
+        max_updates_per_run=30,  # Entity memory needs more for dense info
+    ),
+)
+```
+
+When the limit is reached, the model receives an error message and stops updating.
+Debug logs show when updates are skipped: `Tool call limit (10) reached. Skipping: add_memory`.
+
 ### Learning Modes
 
 Each Learning Store can be configured to run in different modes:
