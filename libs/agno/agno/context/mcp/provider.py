@@ -69,9 +69,10 @@ class MCPContextProvider(ContextProvider):
         base_instructions: str | None = None,
         mode: ContextMode = ContextMode.default,
         model: Model | None = None,
+        query_timeout: float | None = None,
     ) -> None:
         resolved_id = id or f"mcp_{_sanitize_id(server_name)}"
-        super().__init__(id=resolved_id, name=name or server_name, mode=mode, model=model)
+        super().__init__(id=resolved_id, name=name or server_name, mode=mode, model=model, query_timeout=query_timeout)
         self.server_name = server_name
         self.transport: Transport = transport
         self.command = command
@@ -251,9 +252,11 @@ class MCPContextProvider(ContextProvider):
             self._tools = self._build_tools_instance()
         try:
             await self._tools._connect()
-        except Exception:
-            # Reset so the next attempt gets a fresh toolkit — a failed
-            # connect can leave MCPTools in a partially-initialized state.
+        except BaseException:
+            # Reset so the next attempt gets a fresh toolkit — a failed OR
+            # cancelled connect (e.g. a query_timeout deadline firing mid-
+            # handshake) can leave MCPTools in a partially-initialized state.
+            # Catch BaseException so CancelledError triggers the reset too.
             self._tools = None
             self._tool_descriptions = []
             raise

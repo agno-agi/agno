@@ -2736,10 +2736,13 @@ class MongoDb(BaseDb):
         enabled: Optional[bool] = None,
         limit: int = 100,
         page: int = 1,
+        raise_on_error: bool = False,
     ) -> Tuple[List[Dict[str, Any]], int]:
         try:
             collection = self._get_collection(table_type="schedules")
             if collection is None:
+                if raise_on_error:
+                    raise RuntimeError("schedules table unavailable (database error or table never created)")
                 return [], 0
 
             query: Dict[str, Any] = {}
@@ -2749,13 +2752,17 @@ class MongoDb(BaseDb):
             total_count = collection.count_documents(query)
 
             offset = (page - 1) * limit
-            cursor = collection.find(query).sort([("created_at", -1)]).skip(offset).limit(limit)
+            # id is a unique tiebreaker so skip/limit pages do not overlap or skip
+            # rows when many schedules share a created_at second.
+            cursor = collection.find(query).sort([("created_at", -1), ("id", -1)]).skip(offset).limit(limit)
             schedules = list(cursor)
             for schedule in schedules:
                 schedule.pop("_id", None)
             return schedules, total_count
         except Exception as e:
             log_debug(f"Error listing schedules: {e}")
+            if raise_on_error:
+                raise
             return [], 0
 
     def create_schedule(self, schedule_data: Dict[str, Any]) -> Dict[str, Any]:

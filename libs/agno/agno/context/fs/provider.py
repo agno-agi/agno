@@ -35,9 +35,10 @@ class FilesystemContextProvider(ContextProvider):
         instructions: str | None = None,
         mode: ContextMode = ContextMode.default,
         model: Model | None = None,
+        query_timeout: float | None = None,
         exclude_patterns: list[str] | None = None,
     ) -> None:
-        super().__init__(id=id, name=name, mode=mode, model=model)
+        super().__init__(id=id, name=name, mode=mode, model=model, query_timeout=query_timeout)
         self.root = Path(root).expanduser().resolve()
         self.instructions_text = instructions if instructions is not None else DEFAULT_FS_INSTRUCTIONS
         self.exclude_patterns = exclude_patterns

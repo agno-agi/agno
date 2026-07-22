@@ -39,7 +39,14 @@ if TYPE_CHECKING:
 
 
 class SlackContextProvider(ContextProvider):
-    """Read + write access to a Slack workspace via two tools."""
+    """Read + write access to a Slack workspace via two tools.
+
+    ``write_tools`` swaps the write sub-agent's toolset (default: a
+    posting-scoped ``SlackTools``). The default ``write_instructions``
+    name the default tools, so a custom ``write_tools`` usually needs a
+    matching ``write_instructions`` override. ``mode=ContextMode.tools``
+    is a read-only surface and deliberately ignores ``write_tools``.
+    """
 
     def __init__(
         self,
@@ -50,9 +57,11 @@ class SlackContextProvider(ContextProvider):
         name: str = "Slack",
         read_instructions: str | None = None,
         write_instructions: str | None = None,
+        write_tools: list | None = None,
         enable_media_tools: bool = False,
         mode: ContextMode = ContextMode.default,
         model: Model | None = None,
+        query_timeout: float | None = None,
         read: bool = True,
         write: bool = True,
         stream_sub_agent_events: bool = True,
@@ -62,6 +71,7 @@ class SlackContextProvider(ContextProvider):
             name=name,
             mode=mode,
             model=model,
+            query_timeout=query_timeout,
             read=read,
             write=write,
             stream_sub_agent_events=stream_sub_agent_events,
@@ -81,6 +91,9 @@ class SlackContextProvider(ContextProvider):
         self.write_instructions_text = (
             write_instructions if write_instructions is not None else DEFAULT_SLACK_WRITE_INSTRUCTIONS
         )
+        # Injected write toolset (distinct from _write_tools, the lazy
+        # SlackTools cache the default path builds).
+        self.write_tools = write_tools
         self.enable_media_tools = enable_media_tools
         self._bot_read_tools: SlackTools | None = None
         self._assisted_read_tools: SlackTools | None = None
@@ -282,12 +295,13 @@ class SlackContextProvider(ContextProvider):
 
     def _ensure_write_agent(self) -> Agent:
         if self._write_agent is None:
+            tools = self.write_tools if self.write_tools is not None else [self._ensure_write_tools()]
             self._write_agent = Agent(
                 id=f"{self.id}-write",
                 name=f"{self.name} Write",
                 model=self.model,
                 instructions=self.write_instructions_text,
-                tools=[self._ensure_write_tools()],
+                tools=tools,
                 markdown=True,
             )
         return self._write_agent
