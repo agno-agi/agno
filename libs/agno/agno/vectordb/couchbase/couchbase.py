@@ -1281,7 +1281,176 @@ class CouchbaseSearch(VectorDb):
             where_conditions = []
             named_parameters: Dict[str, Any] = {}
 
+            import re
             for key, value in metadata.items():
+                if not re.match(r'^[a-zA-Z_][a-zA-Z0-9_]*
+                    # For array values, use ARRAY_CONTAINS
+                    where_conditions.append(
+                        f"(ARRAY_CONTAINS(filters.{key}, $value_{key}) OR ARRAY_CONTAINS(recipes.filters.{key}, $value_{key}))"
+                    )
+                    named_parameters[f"value_{key}"] = value
+                elif isinstance(value, str):
+                    where_conditions.append(f"(filters.{key} = $value_{key} OR recipes.filters.{key} = $value_{key})")
+                    named_parameters[f"value_{key}"] = value
+                elif isinstance(value, bool):
+                    where_conditions.append(f"(filters.{key} = $value_{key} OR recipes.filters.{key} = $value_{key})")
+                    named_parameters[f"value_{key}"] = value
+                elif isinstance(value, (int, float)):
+                    where_conditions.append(f"(filters.{key} = $value_{key} OR recipes.filters.{key} = $value_{key})")
+                    named_parameters[f"value_{key}"] = value
+                elif value is None:
+                    where_conditions.append(f"(filters.{key} IS NULL OR recipes.filters.{key} IS NULL)")
+                else:
+                    # For other types, convert to string
+                    where_conditions.append(f"(filters.{key} = $value_{key} OR recipes.filters.{key} = $value_{key})")
+                    named_parameters[f"value_{key}"] = str(value)
+
+            if not where_conditions:
+                log_info("No valid metadata conditions for deletion")
+                return False
+
+            where_clause = " AND ".join(where_conditions)
+            query = f"SELECT META().id as doc_id, * FROM {self.bucket_name}.{self.scope_name}.{self.collection_name} WHERE {where_clause}"
+
+            result = self.scope.query(
+                query,
+                QueryOptions(named_parameters=named_parameters, scan_consistency=QueryScanConsistency.REQUEST_PLUS),
+            )
+            rows = list(result.rows())  # Collect once
+
+            for row in rows:
+                self.collection.remove(row.get("doc_id"))
+            log_info(f"Deleted {len(rows)} documents with metadata {metadata}")
+            return True
+
+        except Exception as e:
+            log_info(f"Error deleting documents with metadata {metadata}: {e}")
+            return False
+
+    def delete_by_content_id(self, content_id: str) -> bool:
+        """
+        Delete documents by content ID.
+
+        Args:
+            content_id (str): The content ID to delete
+
+        Returns:
+            bool: True if documents were deleted, False otherwise
+        """
+        try:
+            log_debug(f"Couchbase VectorDB : Deleting documents with content_id {content_id}")
+
+            query = f"SELECT META().id as doc_id, * FROM {self.bucket_name}.{self.scope_name}.{self.collection_name} WHERE content_id = $content_id OR recipes.content_id = $content_id"
+            result = self.scope.query(
+                query,
+                QueryOptions(
+                    named_parameters={"content_id": content_id}, scan_consistency=QueryScanConsistency.REQUEST_PLUS
+                ),
+            )
+            rows = list(result.rows())  # Collect once
+
+            for row in rows:
+                self.collection.remove(row.get("doc_id"))
+            log_info(f"Deleted {len(rows)} documents with content_id {content_id}")
+            return True
+
+        except Exception as e:
+            log_info(f"Error deleting documents with content_id {content_id}: {e}")
+            return False
+
+    def _delete_by_content_hash(self, content_hash: str) -> bool:
+        """
+        Delete documents by content hash.
+
+        Args:
+            content_hash (str): The content hash to delete
+
+        Returns:
+            bool: True if documents were deleted, False otherwise
+        """
+        try:
+            log_debug(f"Couchbase VectorDB : Deleting documents with content_hash {content_hash}")
+
+            query = f"SELECT META().id as doc_id, * FROM {self.bucket_name}.{self.scope_name}.{self.collection_name} WHERE content_hash = $content_hash"
+            result = self.scope.query(
+                query,
+                QueryOptions(
+                    named_parameters={"content_hash": content_hash}, scan_consistency=QueryScanConsistency.REQUEST_PLUS
+                ),
+            )
+            rows = list(result.rows())  # Collect once
+
+            for row in rows:
+                self.collection.remove(row.get("doc_id"))
+            log_info(f"Deleted {len(rows)} documents with content_hash {content_hash}")
+            return True
+
+        except Exception as e:
+            log_info(f"Error deleting documents with content_hash {content_hash}: {e}")
+            return False
+
+    def update_metadata(self, content_id: str, metadata: Dict[str, Any]) -> None:
+        """
+        Update the metadata for documents with the given content_id.
+
+        Args:
+            content_id (str): The content ID to update
+            metadata (Dict[str, Any]): The metadata to update
+        """
+        try:
+            # Query for documents with the given content_id
+            query = f"SELECT META().id as doc_id, meta_data, filters FROM `{self.bucket_name}` WHERE content_id = $content_id"
+            result = self.cluster.query(query, content_id=content_id)
+
+            updated_count = 0
+            for row in result:
+                doc_id = row.get("doc_id")
+                current_metadata = row.get("meta_data", {})
+                current_filters = row.get("filters", {})
+
+                # Merge existing metadata with new metadata
+                if isinstance(current_metadata, dict):
+                    updated_metadata = current_metadata.copy()
+                    updated_metadata.update(metadata)
+                else:
+                    updated_metadata = metadata
+
+                # Merge existing filters with new metadata
+                if isinstance(current_filters, dict):
+                    updated_filters = current_filters.copy()
+                    updated_filters.update(metadata)
+                else:
+                    updated_filters = metadata
+
+                # Update the document
+                try:
+                    doc = self.collection.get(doc_id)
+                    doc_content = doc.content_as[dict]
+                    doc_content["meta_data"] = updated_metadata
+                    doc_content["filters"] = updated_filters
+
+                    self.collection.upsert(doc_id, doc_content)
+                    updated_count += 1
+                except Exception as e:
+                    log_warning(f"Failed to update document {doc_id}: {str(e)}")
+
+            if updated_count == 0:
+                logger.debug(f"No documents found with content_id: {content_id}")
+            else:
+                logger.debug(f"Updated metadata for {updated_count} documents with content_id: {content_id}")
+
+        except Exception:
+            logger.exception(f"Error updating metadata for content_id '{content_id}'")
+            raise
+
+    def get_supported_search_types(self) -> List[str]:
+        """Get the supported search types for this vector database."""
+        return []  # CouchbaseSearch doesn't use SearchType enum
+, key):
+                    raise ValueError(
+                        f"Invalid metadata filter key: {key!r}. "
+                        "Keys must contain only alphanumeric characters and underscores."
+                    )
                 if isinstance(value, (list, tuple)):
                     # For array values, use ARRAY_CONTAINS
                     where_conditions.append(
