@@ -6365,6 +6365,19 @@ def fork_session_dispatch(
 
     new_session = _build_forked_team_session(source_session, new_user_id=user_id)
     team.save_session(session=new_session)
+
+    # Under v3 storage, save_session no longer writes runs — persist each
+    # forked run individually so the new session isn't observably empty.
+    from agno.team._session import save_run
+
+    for idx, run in enumerate(new_session.runs or []):
+        save_run(
+            team,
+            run=run,
+            session_id=new_session.session_id,
+            user_id=new_session.user_id,
+            run_index=idx,
+        )
     return new_session.session_id
 
 
@@ -6397,6 +6410,28 @@ async def afork_session_dispatch(
         await team.asave_session(session=new_session)
     else:
         team.save_session(session=new_session)
+
+    # Under v3 storage, [a]save_session no longer writes runs — persist each
+    # forked run individually so the new session isn't observably empty.
+    from agno.team._session import asave_run, save_run
+
+    for idx, run in enumerate(new_session.runs or []):
+        if _has_async_db(team):
+            await asave_run(
+                team,
+                run=run,
+                session_id=new_session.session_id,
+                user_id=new_session.user_id,
+                run_index=idx,
+            )
+        else:
+            save_run(
+                team,
+                run=run,
+                session_id=new_session.session_id,
+                user_id=new_session.user_id,
+                run_index=idx,
+            )
     return new_session.session_id
 
 

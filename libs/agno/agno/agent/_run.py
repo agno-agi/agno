@@ -6185,6 +6185,19 @@ def fork_session_dispatch(
 
     new_session = _build_forked_session(source_session, new_user_id=user_id)
     save_session(agent, session=new_session)
+
+    # Under v3 storage, save_session no longer writes runs — persist each
+    # forked run individually so the new session isn't observably empty.
+    from agno.agent._session import save_run
+
+    for idx, run in enumerate(new_session.runs or []):
+        save_run(
+            agent,
+            run=run,
+            session_id=new_session.session_id,
+            user_id=new_session.user_id,
+            run_index=idx,
+        )
     return new_session.session_id
 
 
@@ -6219,6 +6232,28 @@ async def afork_session_dispatch(
         await asave_session(agent, session=new_session)
     else:
         save_session(agent, session=new_session)
+
+    # Under v3 storage, [a]save_session no longer writes runs — persist each
+    # forked run individually so the new session isn't observably empty.
+    from agno.agent._session import asave_run, save_run
+
+    for idx, run in enumerate(new_session.runs or []):
+        if has_async_db(agent):
+            await asave_run(
+                agent,
+                run=run,
+                session_id=new_session.session_id,
+                user_id=new_session.user_id,
+                run_index=idx,
+            )
+        else:
+            save_run(
+                agent,
+                run=run,
+                session_id=new_session.session_id,
+                user_id=new_session.user_id,
+                run_index=idx,
+            )
 
     return new_session.session_id
 
