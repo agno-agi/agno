@@ -44,7 +44,7 @@ async def test_default_drops_all_bot_events():
 
 
 @pytest.mark.asyncio
-async def test_opt_in_allows_peer_bot_messages():
+async def test_opt_in_allows_peer_agent_messages():
     agent_mock = make_agent_mock()
     mock_slack = make_slack_mock(token="xoxb-test")
     mock_slack.client.auth_test.return_value = {"bot_id": "B_SELF", "user_id": "U_SELF_BOT"}
@@ -54,7 +54,7 @@ async def test_opt_in_allows_peer_bot_messages():
         patch("agno.os.interfaces.slack.router.SlackTools", return_value=mock_slack),
         patch("agno.os.interfaces.slack.event_handler.AsyncWebClient", return_value=make_async_client_mock()),
     ):
-        app = build_app(agent_mock, reply_to_mentions_only=False, respond_to_bot_messages=True)
+        app = build_app(agent_mock, reply_to_mentions_only=False, respond_to_other_agents=True)
         from fastapi.testclient import TestClient
 
         client = TestClient(app)
@@ -89,7 +89,7 @@ async def test_opt_in_drops_own_messages_by_bot_id():
         patch("agno.os.interfaces.slack.router.SlackTools", return_value=mock_slack),
         patch("agno.os.interfaces.slack.event_handler.AsyncWebClient", return_value=make_async_client_mock()),
     ):
-        app = build_app(agent_mock, reply_to_mentions_only=False, respond_to_bot_messages=True)
+        app = build_app(agent_mock, reply_to_mentions_only=False, respond_to_other_agents=True)
         from fastapi.testclient import TestClient
 
         client = TestClient(app)
@@ -124,7 +124,7 @@ async def test_opt_in_drops_own_messages_by_bot_user_id():
         patch("agno.os.interfaces.slack.router.SlackTools", return_value=mock_slack),
         patch("agno.os.interfaces.slack.event_handler.AsyncWebClient", return_value=make_async_client_mock()),
     ):
-        app = build_app(agent_mock, reply_to_mentions_only=False, respond_to_bot_messages=True)
+        app = build_app(agent_mock, reply_to_mentions_only=False, respond_to_other_agents=True)
         from fastapi.testclient import TestClient
 
         client = TestClient(app)
@@ -157,7 +157,7 @@ async def test_opt_in_allows_peer_webhook_bot_with_only_bot_id():
         patch("agno.os.interfaces.slack.router.SlackTools", return_value=mock_slack),
         patch("agno.os.interfaces.slack.event_handler.AsyncWebClient", return_value=make_async_client_mock()),
     ):
-        app = build_app(agent_mock, reply_to_mentions_only=False, respond_to_bot_messages=True)
+        app = build_app(agent_mock, reply_to_mentions_only=False, respond_to_other_agents=True)
         from fastapi.testclient import TestClient
 
         client = TestClient(app)
@@ -193,7 +193,7 @@ async def test_opt_in_allows_peer_by_user_id_mismatch():
         patch("agno.os.interfaces.slack.router.SlackTools", return_value=mock_slack),
         patch("agno.os.interfaces.slack.event_handler.AsyncWebClient", return_value=make_async_client_mock()),
     ):
-        app = build_app(agent_mock, reply_to_mentions_only=False, respond_to_bot_messages=True)
+        app = build_app(agent_mock, reply_to_mentions_only=False, respond_to_other_agents=True)
         from fastapi.testclient import TestClient
 
         client = TestClient(app)
@@ -225,7 +225,7 @@ async def test_lifecycle_subtypes_still_dropped_with_opt_in():
         patch("agno.os.interfaces.slack.router.SlackTools", return_value=mock_slack),
         patch("agno.os.interfaces.slack.event_handler.AsyncWebClient", return_value=make_async_client_mock()),
     ):
-        app = build_app(agent_mock, reply_to_mentions_only=False, respond_to_bot_messages=True)
+        app = build_app(agent_mock, reply_to_mentions_only=False, respond_to_other_agents=True)
         from fastapi.testclient import TestClient
 
         client = TestClient(app)

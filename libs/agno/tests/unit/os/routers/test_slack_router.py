@@ -49,7 +49,7 @@ def _make_event_handler(**overrides: Any) -> SlackEventHandler:
         "bot_name_resolver": BotNameResolver(),
         "reply_to_mentions_only": False,
         "resolve_user_identity": False,
-        "respond_to_bot_messages": False,
+        "respond_to_other_agents": False,
         "own_bot_id": None,
         "own_bot_user_id": None,
         "loading_text": "Thinking...",
