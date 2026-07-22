@@ -551,7 +551,7 @@ async def test_stream_sub_agent_events_flag_is_passed_to_sub_agent():
 
 @pytest.mark.asyncio
 async def test_stream_sub_agent_events_can_be_disabled():
-    """stream_sub_agent_events=False should disable event streaming."""
+    """stream_sub_agent_events=False should run non-streaming (no content deltas)."""
     captured_kwargs = {}
 
     class _StreamingProvider(_EchoProvider):
@@ -561,7 +561,8 @@ async def test_stream_sub_agent_events_can_be_disabled():
                     captured_kwargs.update(kwargs)
                     from agno.run.agent import RunOutput
 
-                    yield RunOutput(content="done")
+                    # When stream=False, arun returns a coroutine not a generator
+                    return RunOutput(content="done")
 
             return _FakeAgent()
 
@@ -571,7 +572,8 @@ async def test_stream_sub_agent_events_can_be_disabled():
     async for _ in gen:
         pass
 
-    assert captured_kwargs.get("stream_events") is False
+    # With stream_sub_agent_events=False, we call arun with stream=False
+    assert captured_kwargs.get("stream") is False
 
 
 # ---------------------------------------------------------------------------

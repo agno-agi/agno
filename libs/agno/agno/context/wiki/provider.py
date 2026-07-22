@@ -223,11 +223,14 @@ class WikiContextProvider(ContextProvider):
                     await provider.backend.sync()
 
                     agent = provider._ensure_write_agent()
-                    async for chunk in provider._stream_from_agent(agent, instruction, run_context):
-                        if isinstance(chunk, Answer):
-                            answer = chunk
-                        else:
-                            yield chunk
+                    if provider.stream_sub_agent_events:
+                        async for chunk in provider._arun_sub_agent_stream(agent, instruction, run_context):
+                            if isinstance(chunk, Answer):
+                                answer = chunk
+                            else:
+                                yield chunk
+                    else:
+                        answer = await provider._arun_sub_agent(agent, instruction, run_context)
 
                     commit = await provider.backend.commit_after_write(model=provider.model)
 
