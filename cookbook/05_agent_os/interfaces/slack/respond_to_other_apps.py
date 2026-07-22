@@ -7,7 +7,7 @@ Two AI coworkers that can @mention each other in Slack.
 - Dash: Research specialist
 
 When Slack Agent @mentions Dash, Dash receives the agent message
-(thanks to respond_to_other_agents=True) and responds.
+(thanks to respond_to_other_apps=True) and responds.
 
 Setup:
   1. Two Slack apps installed to the same workspace
@@ -19,13 +19,13 @@ Setup:
        SLACK_DASH_BOT_TOKEN, SLACK_DASH_SIGNING_SECRET
   4. ngrok: ngrok start slack-agent slack-dash
 
-Key flag: respond_to_other_agents=True
-  - Default (False): Messages from other agents are dropped
-  - True: Peer agent messages are processed (own messages still dropped)
+Key flag: respond_to_other_apps=True
+  - Default (False): Messages from other Slack apps/bots are dropped
+  - True: Peer app messages are processed (own messages still dropped)
 
 Loop safety:
-  - Slack Agent keeps respond_to_other_agents=False (only hears humans)
-  - Dash sets respond_to_other_agents=True (hears Slack Agent)
+  - Slack Agent keeps respond_to_other_apps=False (only hears humans)
+  - Dash sets respond_to_other_apps=True (hears Slack Agent)
   - This asymmetry prevents infinite ping-pong loops
 """
 
@@ -88,7 +88,7 @@ agent_os = AgentOS(
             token=getenv("SLACK_DASH_BOT_TOKEN"),
             signing_secret=getenv("SLACK_DASH_SIGNING_SECRET"),
             reply_to_mentions_only=True,
-            respond_to_other_agents=True,  # Dash can hear Slack Agent's @mentions
+            respond_to_other_apps=True,  # Dash can hear Slack Agent's @mentions
         ),
     ],
 )
@@ -99,4 +99,4 @@ app = agent_os.get_app()
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
-    agent_os.serve(app="respond_to_other_agents:app")
+    agent_os.serve(app="respond_to_other_apps:app")

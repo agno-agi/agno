@@ -78,7 +78,7 @@ class SlackEventHandler:
     bot_name_resolver: BotNameResolver
     reply_to_mentions_only: bool
     resolve_user_identity: bool
-    respond_to_other_agents: bool
+    respond_to_other_apps: bool
     own_bot_id: Optional[str]
     own_bot_user_id: Optional[str]
     loading_text: str
@@ -106,7 +106,7 @@ class SlackEventHandler:
             return False
 
         # Skip bot messages unless opted in
-        if is_bot and not self.respond_to_other_agents:
+        if is_bot and not self.respond_to_other_apps:
             return False
 
         return True
