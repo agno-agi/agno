@@ -1,16 +1,14 @@
 # Test Log - _06_image_classification
 
-Tested 2026-05-22 against `gemini-3.5-flash`, agno 2.6.9.
+Tested 2026-07-18 against `gemini-3.5-flash`, agno 2.7.4.
 
 ### basic.py
 
 **Status:** PASS
 
-**Description:** Single-label scene-type classification (wildlife / landscape / sports / architecture / other) over four photos.
+**Description:** Single-label scene-type classification with a Literal output schema (wildlife / landscape / sports / architecture / other) over four image URLs: a Google generative-AI wildlife sample, two gstatic webp gallery photos, and the agno-public Krakow basilica photo.
 
-**Result:** All four classified into the expected scene type.
-
-**Note:** Test inputs moved off Wikimedia (Gemini can't fetch those URLs) to agno-public S3, gstatic gallery, and a Google generative-AI sample. Label set switched from animal types to scene types so the available images classify cleanly.
+**Result:** All four images classified as expected: elephants/giraffes/zebras sunset -> `wildlife`, gstatic gallery/1.jpg -> `landscape`, gstatic gallery/2.jpg -> `sports`, krakow_mariacki.jpg -> `architecture`. Each run returned a validated `Classification` object; per-image latency 1.2-3.2s.
 
 ---
 
@@ -18,8 +16,8 @@ Tested 2026-05-22 against `gemini-3.5-flash`, agno 2.6.9.
 
 **Status:** PASS
 
-**Description:** Multi-label tagging of scene attributes (outdoor, daytime, people, nature, architecture, etc.) over a Krakow basilica photo and a Google generative-AI wildlife sample.
+**Description:** Multi-label scene tagging with a List[Literal] output schema over eight possible tags (outdoor, indoor, daytime, nighttime, people, vehicle, nature, architecture) on the Krakow basilica photo and the Google generative-AI wildlife sample.
 
-**Result:** Tag sets are coherent with each image's content.
+**Result:** krakow_mariacki.jpg -> `['outdoor', 'nighttime', 'architecture']`; elephants/giraffes/zebras sunset -> `['outdoor', 'daytime', 'nature']`. Both tag sets coherent with image content; each run returned a validated `Tagging` object; per-image latency 2.8-5.6s.
 
 ---

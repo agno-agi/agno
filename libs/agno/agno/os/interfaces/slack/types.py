@@ -45,7 +45,6 @@ class SubmitContext:
     channel: str
     msg_ts: str
     thread_ts: str
-    session_id: str
     awaiting_ts: Optional[str]
     user_id: str
     team_id: Optional[str]

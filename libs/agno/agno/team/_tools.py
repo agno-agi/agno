@@ -97,14 +97,10 @@ async def _check_and_refresh_mcp_tools(team: "Team") -> None:
                         is_alive = await tool.is_alive()  # type: ignore
                         if not is_alive:
                             await tool.connect(force=True)  # type: ignore
-                    except (RuntimeError, BaseException) as e:
-                        log_warning(f"Failed to check if MCP tool is alive: {str(e)}")
-                        continue
-
-                    try:
-                        await tool.build_tools()  # type: ignore
-                    except (RuntimeError, BaseException) as e:
-                        log_warning(f"Failed to build tools for {tool}: {str(e)}")
+                        else:
+                            await tool.build_tools()  # type: ignore
+                    except Exception as e:
+                        log_warning(f"Failed to refresh MCP tool {tool}: {str(e)}")
                         continue
 
 
@@ -163,6 +159,10 @@ def _determine_tools_for_model(
     resolved_tools = get_resolved_tools(team, run_context)
     resolved_knowledge = get_resolved_knowledge(team, run_context)
     resolved_members = get_resolved_members(team, run_context)
+
+    # Append client_tools (e.g., AG-UI frontend tools) if present
+    if run_context.client_tools:
+        resolved_tools = list(resolved_tools or []) + list(run_context.client_tools)
 
     _connect_connectable_tools(
         team,

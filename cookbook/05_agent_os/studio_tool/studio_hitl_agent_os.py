@@ -1,4 +1,4 @@
-"""StudioTool + human-in-the-loop served through AgentOS.
+"""StudioTools + human-in-the-loop served through AgentOS.
 
 Same HITL studio agent as studio_hitl_agent.py, but running behind AgentOS:
 the run pauses surface through the AgentOS API and chat UI instead of the
@@ -29,7 +29,7 @@ from agno.registry import Registry
 from agno.tools.calculator import CalculatorTools
 from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.hackernews import HackerNewsTools
-from agno.tools.studio import StudioTool
+from agno.tools.studio import StudioTools
 from agno.tools.user_control_flow import UserControlFlowTools
 from agno.tools.user_feedback import UserFeedbackTools
 
@@ -53,7 +53,7 @@ studio_agent = Agent(
     name="Studio HITL",
     model=OpenAIResponses(id="gpt-5.5"),
     tools=[
-        StudioTool(
+        StudioTools(
             registry=registry,
             db=db,
             default_model_id="gpt-5.5",

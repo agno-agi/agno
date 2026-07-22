@@ -201,14 +201,33 @@ async def test_list_tools(mcp_client: MCPTestClient):
     expected_tools = [
         "get_agentos_config",
         "run_agent",
+        "run_team",
+        "run_workflow",
+        "continue_run",
+        "cancel_run",
         "get_sessions",
-        "get_session",
-        "create_session",
-        "create_memory",
-        "get_memories",
+        "get_session_runs",
     ]
     for tool_name in expected_tools:
         assert tool_name in tools, f"Missing expected tool: {tool_name}"
+
+    # The v2.7 surface is deliberately trimmed: session writes and memory CRUD are gone.
+    removed_tools = [
+        "get_session",
+        "create_session",
+        "update_session",
+        "rename_session",
+        "delete_session",
+        "delete_sessions",
+        "create_memory",
+        "get_memory",
+        "get_memories",
+        "update_memory",
+        "delete_memory",
+        "delete_memories",
+    ]
+    for tool_name in removed_tools:
+        assert tool_name not in tools, f"Removed tool still present: {tool_name}"
 
 
 # =============================================================================
@@ -221,13 +240,16 @@ async def test_get_agentos_config(mcp_client: MCPTestClient):
     """Test the get_agentos_config tool."""
     result = await mcp_client.call_tool("get_agentos_config", {})
 
+    # The v2.7 config tool is a compact discovery payload: ids/summaries + db ids only.
     assert "os_id" in result
     assert result["os_id"] == "gateway-os"
     assert "agents" in result
     assert "teams" in result
     assert "workflows" in result
-    assert "interfaces" in result
     assert "databases" in result
+    # Heavy per-domain config sections are intentionally not in the MCP payload (REST /config only).
+    for heavy_key in ("interfaces", "learning", "memory", "knowledge", "evals", "metrics", "traces"):
+        assert heavy_key not in result, f"Compact config must not include '{heavy_key}'"
 
     # Verify both local and remote agents are present
     agent_ids = [agent["id"] for agent in result["agents"]]
@@ -243,7 +265,6 @@ async def test_get_agentos_config(mcp_client: MCPTestClient):
     workflow_ids = [workflow["id"] for workflow in result["workflows"]]
     assert "gateway-workflow" in workflow_ids, "Local workflow 'gateway-workflow' should be present"
     assert "qa-workflow" in workflow_ids, "Remote workflow 'qa-workflow' should be present"
-    assert "learning" in result
 
 
 @pytest.mark.asyncio
@@ -259,8 +280,9 @@ async def test_run_agent(mcp_client: MCPTestClient):
 
     # Check the result has expected fields
     assert result is not None
-    # The result should be a RunOutput with content
-    assert "content" in result or isinstance(result, str)
+    # Trimmed result: the text block is the answer itself (a plain string unless the
+    # answer happens to be JSON); structured ids live in structuredContent.
+    assert isinstance(result, str) or (isinstance(result, dict) and ("content" in result or "run_id" in result))
 
 
 @pytest.mark.asyncio
@@ -276,8 +298,9 @@ async def test_run_remote_agent(mcp_client: MCPTestClient):
 
     # Check the result has expected fields
     assert result is not None
-    # The result should be a RunOutput with content
-    assert "content" in result or isinstance(result, str)
+    # Trimmed result: the text block is the answer itself (a plain string unless the
+    # answer happens to be JSON); structured ids live in structuredContent.
+    assert isinstance(result, str) or (isinstance(result, dict) and ("content" in result or "run_id" in result))
 
 
 @pytest.mark.asyncio
@@ -293,8 +316,9 @@ async def test_run_remote_team(mcp_client: MCPTestClient):
 
     # Check the result has expected fields
     assert result is not None
-    # The result should be a TeamRunOutput with content
-    assert "content" in result or isinstance(result, str)
+    # Trimmed result: the text block is the answer itself (a plain string unless the
+    # answer happens to be JSON); structured ids live in structuredContent.
+    assert isinstance(result, str) or (isinstance(result, dict) and ("content" in result or "run_id" in result))
 
 
 @pytest.mark.asyncio
@@ -310,8 +334,9 @@ async def test_run_local_workflow(mcp_client: MCPTestClient):
 
     # Check the result has expected fields
     assert result is not None
-    # The result should be a WorkflowRunOutput with content
-    assert "content" in result or isinstance(result, str)
+    # Trimmed result: the text block is the answer itself (a plain string unless the
+    # answer happens to be JSON); structured ids live in structuredContent.
+    assert isinstance(result, str) or (isinstance(result, dict) and ("content" in result or "run_id" in result))
 
 
 @pytest.mark.asyncio
@@ -327,126 +352,14 @@ async def test_run_remote_workflow(mcp_client: MCPTestClient):
 
     # Check the result has expected fields
     assert result is not None
-    # The result should be a WorkflowRunOutput with content
-    assert "content" in result or isinstance(result, str)
+    # Trimmed result: the text block is the answer itself (a plain string unless the
+    # answer happens to be JSON); structured ids live in structuredContent.
+    assert isinstance(result, str) or (isinstance(result, dict) and ("content" in result or "run_id" in result))
 
 
 # =============================================================================
 # Session Management Tests
 # =============================================================================
-
-
-@pytest.mark.asyncio
-async def test_create_session(mcp_client: MCPTestClient, db_id: str, test_session_id: str, test_user_id: str):
-    """Test creating a new session with a local agent via MCP."""
-    result = await mcp_client.call_tool(
-        "create_session",
-        {
-            "db_id": db_id,
-            "session_type": "agent",
-            "session_id": test_session_id,
-            "session_name": "MCP Test Session",
-            "user_id": test_user_id,
-            "agent_id": "gateway-agent",
-            "session_state": {"test_key": "test_value"},
-        },
-    )
-
-    assert result is not None
-    assert result.get("session_id") == test_session_id
-    assert result.get("session_name") == "MCP Test Session"
-
-
-@pytest.mark.asyncio
-async def test_create_session_remote_agent(mcp_client: MCPTestClient, db_id: str, test_user_id: str):
-    """Test creating a new session with a remote agent via MCP."""
-    remote_session_id = str(uuid4())
-    result = await mcp_client.call_tool(
-        "create_session",
-        {
-            "db_id": db_id,
-            "session_type": "agent",
-            "session_id": remote_session_id,
-            "session_name": "MCP Remote Agent Test Session",
-            "user_id": test_user_id,
-            "agent_id": "assistant-agent",
-            "session_state": {"remote_test": True},
-        },
-    )
-
-    assert result is not None
-    assert result.get("session_id") == remote_session_id
-    assert result.get("session_name") == "MCP Remote Agent Test Session"
-    assert result.get("agent_id") == "assistant-agent"
-
-
-@pytest.mark.asyncio
-async def test_create_session_remote_team(mcp_client: MCPTestClient, db_id: str, test_user_id: str):
-    """Test creating a new session with a remote team via MCP."""
-    team_session_id = str(uuid4())
-    result = await mcp_client.call_tool(
-        "create_session",
-        {
-            "db_id": db_id,
-            "session_type": "team",
-            "session_id": team_session_id,
-            "session_name": "MCP Team Test Session",
-            "user_id": test_user_id,
-            "team_id": "research-team",
-            "session_state": {"team_test": True},
-        },
-    )
-
-    assert result is not None
-    assert result.get("session_id") == team_session_id
-    assert result.get("session_name") == "MCP Team Test Session"
-    assert result.get("team_id") == "research-team"
-
-
-@pytest.mark.asyncio
-async def test_create_session_local_workflow(mcp_client: MCPTestClient, db_id: str, test_user_id: str):
-    """Test creating a new session with a local workflow via MCP."""
-    workflow_session_id = str(uuid4())
-    result = await mcp_client.call_tool(
-        "create_session",
-        {
-            "db_id": db_id,
-            "session_type": "workflow",
-            "session_id": workflow_session_id,
-            "session_name": "MCP Local Workflow Test Session",
-            "user_id": test_user_id,
-            "workflow_id": "gateway-workflow",
-            "session_state": {"workflow_test": True},
-        },
-    )
-
-    assert result is not None
-    assert result.get("session_id") == workflow_session_id
-    assert result.get("session_name") == "MCP Local Workflow Test Session"
-    assert result.get("workflow_id") == "gateway-workflow"
-
-
-@pytest.mark.asyncio
-async def test_create_session_remote_workflow(mcp_client: MCPTestClient, db_id: str, test_user_id: str):
-    """Test creating a new session with a remote workflow via MCP."""
-    workflow_session_id = str(uuid4())
-    result = await mcp_client.call_tool(
-        "create_session",
-        {
-            "db_id": db_id,
-            "session_type": "workflow",
-            "session_id": workflow_session_id,
-            "session_name": "MCP Remote Workflow Test Session",
-            "user_id": test_user_id,
-            "workflow_id": "qa-workflow",
-            "session_state": {"remote_workflow_test": True},
-        },
-    )
-
-    assert result is not None
-    assert result.get("session_id") == workflow_session_id
-    assert result.get("session_name") == "MCP Remote Workflow Test Session"
-    assert result.get("workflow_id") == "qa-workflow"
 
 
 @pytest.mark.asyncio
@@ -472,286 +385,36 @@ async def test_get_sessions(mcp_client: MCPTestClient, db_id: str, test_user_id:
 
 
 @pytest.mark.asyncio
-async def test_get_session(mcp_client: MCPTestClient, db_id: str, test_user_id: str):
-    """Test getting a specific session via MCP."""
-    # First create a session
+async def test_get_session_runs_after_run(mcp_client: MCPTestClient, db_id: str, test_user_id: str):
+    """Run an agent into a fresh session, then read the conversation back.
+
+    Exercises the v2.7 read-only session path: run tools create sessions implicitly
+    and get_session_runs auto-detects the session type (no session_type passed).
+    The gateway registers a second (remote) database, so db_id is passed the way
+    an operator would after discovering it via get_agentos_config.
+    """
     session_id = str(uuid4())
     await mcp_client.call_tool(
-        "create_session",
+        "run_agent",
         {
-            "db_id": db_id,
-            "session_type": "agent",
-            "session_id": session_id,
-            "session_name": "Get Session Test",
-            "user_id": test_user_id,
             "agent_id": "gateway-agent",
-        },
-    )
-
-    # Then get it
-    result = await mcp_client.call_tool(
-        "get_session",
-        {
+            "message": "Say hello in exactly 3 words",
             "session_id": session_id,
-            "db_id": db_id,
-            "session_type": "agent",
-        },
-    )
-
-    assert result is not None
-    assert result.get("session_id") == session_id
-
-
-@pytest.mark.asyncio
-async def test_rename_session(mcp_client: MCPTestClient, db_id: str, test_user_id: str):
-    """Test renaming a session via MCP."""
-    # First create a session
-    session_id = str(uuid4())
-    await mcp_client.call_tool(
-        "create_session",
-        {
-            "db_id": db_id,
-            "session_type": "agent",
-            "session_id": session_id,
-            "session_name": "Original Name",
-            "user_id": test_user_id,
-            "agent_id": "gateway-agent",
-        },
-    )
-
-    # Then rename it
-    new_name = "Renamed MCP Test Session"
-    result = await mcp_client.call_tool(
-        "rename_session",
-        {
-            "session_id": session_id,
-            "session_name": new_name,
-            "db_id": db_id,
-            "session_type": "agent",
-        },
-    )
-
-    assert result is not None
-    assert result.get("session_name") == new_name
-
-
-@pytest.mark.asyncio
-async def test_update_session(mcp_client: MCPTestClient, db_id: str, test_user_id: str):
-    """Test updating a session via MCP."""
-    # First create a session
-    session_id = str(uuid4())
-    await mcp_client.call_tool(
-        "create_session",
-        {
-            "db_id": db_id,
-            "session_type": "agent",
-            "session_id": session_id,
-            "session_name": "Update Test Session",
-            "user_id": test_user_id,
-            "agent_id": "gateway-agent",
-        },
-    )
-
-    # Then update it
-    result = await mcp_client.call_tool(
-        "update_session",
-        {
-            "session_id": session_id,
-            "db_id": db_id,
-            "session_type": "agent",
-            "session_state": {"updated_key": "updated_value"},
-            "metadata": {"meta_key": "meta_value"},
-        },
-    )
-
-    assert result is not None
-    assert result.get("session_state", {}).get("updated_key") == "updated_value"
-
-
-# =============================================================================
-# Memory Management Tests
-# =============================================================================
-
-
-@pytest.fixture
-def test_memory_id() -> str:
-    """Generate a unique memory ID for testing."""
-    return str(uuid.uuid4())
-
-
-@pytest.mark.asyncio
-async def test_create_memory(mcp_client: MCPTestClient, db_id: str, test_user_id: str):
-    """Test creating a memory via MCP."""
-    result = await mcp_client.call_tool(
-        "create_memory",
-        {
-            "db_id": db_id,
-            "memory": "This is a test memory created via MCP",
-            "user_id": test_user_id,
-            "topics": ["test", "mcp"],
-        },
-    )
-
-    assert result is not None
-    assert "memory_id" in result
-    assert result.get("memory") == "This is a test memory created via MCP"
-    assert result.get("user_id") == test_user_id
-
-    # Store memory_id for later tests
-    return result.get("memory_id")
-
-
-@pytest.mark.asyncio
-async def test_get_memories(mcp_client: MCPTestClient, db_id: str, test_user_id: str):
-    """Test getting memories via MCP."""
-    result = await mcp_client.call_tool(
-        "get_memories",
-        {
-            "db_id": db_id,
-            "user_id": test_user_id,
-            "limit": 10,
-            "page": 1,
-        },
-    )
-
-    assert "data" in result
-    assert "meta" in result
-    assert isinstance(result["data"], list)
-
-
-@pytest.mark.asyncio
-async def test_update_memory(mcp_client: MCPTestClient, db_id: str, test_user_id: str):
-    """Test updating a memory via MCP."""
-    # First create a memory
-    create_result = await mcp_client.call_tool(
-        "create_memory",
-        {
-            "db_id": db_id,
-            "memory": "Original memory content",
-            "user_id": test_user_id,
-            "topics": ["original"],
-        },
-    )
-    memory_id = create_result.get("memory_id")
-
-    # Then update it
-    result = await mcp_client.call_tool(
-        "update_memory",
-        {
-            "db_id": db_id,
-            "memory_id": memory_id,
-            "memory": "Updated memory content",
-            "user_id": test_user_id,
-            "topics": ["updated"],
-        },
-    )
-
-    assert result is not None
-    assert result.get("memory") == "Updated memory content"
-
-
-@pytest.mark.asyncio
-async def test_get_memory(mcp_client: MCPTestClient, db_id: str, test_user_id: str):
-    """Test getting a specific memory via MCP."""
-    # First create a memory
-    create_result = await mcp_client.call_tool(
-        "create_memory",
-        {
-            "db_id": db_id,
-            "memory": "Memory to retrieve",
             "user_id": test_user_id,
         },
     )
-    memory_id = create_result.get("memory_id")
 
-    # Then get it
-    result = await mcp_client.call_tool(
-        "get_memory",
-        {
-            "memory_id": memory_id,
-            "db_id": db_id,
-        },
-    )
-
-    assert result is not None
-    assert result.get("memory_id") == memory_id
-    assert result.get("memory") == "Memory to retrieve"
+    result = await mcp_client.call_tool("get_session_runs", {"session_id": session_id, "db_id": db_id})
+    runs = result if isinstance(result, list) else [result]
+    assert len(runs) >= 1
 
 
 @pytest.mark.asyncio
-async def test_delete_memory(mcp_client: MCPTestClient, db_id: str, test_user_id: str):
-    """Test deleting a memory via MCP."""
-    # First create a memory
-    create_result = await mcp_client.call_tool(
-        "create_memory",
-        {
-            "db_id": db_id,
-            "memory": "Memory to delete",
-            "user_id": test_user_id,
-        },
-    )
-    memory_id = create_result.get("memory_id")
-
-    # Delete it
-    result = await mcp_client.call_tool(
-        "delete_memory",
-        {
-            "db_id": db_id,
-            "memory_id": memory_id,
-        },
-    )
-
-    # Result should indicate successful deletion
-    assert result is not None
-    assert "deleted successfully" in result.lower() or result in ["", "null", None]
-
-
-@pytest.mark.asyncio
-async def test_delete_memories_bulk(mcp_client: MCPTestClient, db_id: str, test_user_id: str):
-    """Test bulk deleting memories via MCP."""
-    # Create multiple memories
-    memory_ids = []
-    for i in range(3):
-        create_result = await mcp_client.call_tool(
-            "create_memory",
-            {
-                "db_id": db_id,
-                "memory": f"Bulk delete memory {i}",
-                "user_id": test_user_id,
-            },
-        )
-        memory_ids.append(create_result.get("memory_id"))
-
-    # Delete them in bulk
-    result = await mcp_client.call_tool(
-        "delete_memories",
-        {
-            "memory_ids": memory_ids,
-            "db_id": db_id,
-        },
-    )
-
-    # Result should indicate successful deletion
-    assert result is not None
-    assert "deleted successfully" in result.lower() or result in ["", "null", None]
-
-
-@pytest.mark.skip(reason="get_user_memory_stats tool not yet implemented in MCP server")
-@pytest.mark.asyncio
-async def test_get_user_memory_stats(mcp_client: MCPTestClient, db_id: str):
-    """Test getting user memory statistics via MCP."""
-    result = await mcp_client.call_tool(
-        "get_user_memory_stats",
-        {
-            "db_id": db_id,
-            "limit": 10,
-            "page": 1,
-        },
-    )
-
-    assert "data" in result
-    assert "meta" in result
-    assert isinstance(result["data"], list)
+async def test_get_session_runs_not_found(mcp_client: MCPTestClient, db_id: str):
+    """Reading history of a non-existent session returns a tool error."""
+    with pytest.raises(Exception) as exc_info:
+        await mcp_client.call_tool("get_session_runs", {"session_id": "non-existent-session", "db_id": db_id})
+    assert "not found" in str(exc_info.value).lower()
 
 
 # =============================================================================
@@ -858,54 +521,9 @@ async def test_refresh_metrics(mcp_client: MCPTestClient, db_id: str):
 # =============================================================================
 
 
-@pytest.mark.asyncio
-async def test_cleanup_delete_session(mcp_client: MCPTestClient, db_id: str, test_user_id: str):
-    """Clean up: delete the test session."""
-    # Create a session to delete
-    session_id = str(uuid4())
-    await mcp_client.call_tool(
-        "create_session",
-        {
-            "db_id": db_id,
-            "session_type": "agent",
-            "session_id": session_id,
-            "user_id": test_user_id,
-            "agent_id": "gateway-agent",
-        },
-    )
-
-    # Delete it
-    result = await mcp_client.call_tool(
-        "delete_session",
-        {
-            "session_id": session_id,
-            "db_id": db_id,
-        },
-    )
-
-    # Result should indicate successful deletion
-    assert result is not None
-    assert "deleted successfully" in result.lower() or result in ["", "null", None]
-
-
 # =============================================================================
 # Error Handling Tests
 # =============================================================================
-
-
-@pytest.mark.asyncio
-async def test_get_session_not_found(mcp_client: MCPTestClient, db_id: str):
-    """Test getting a non-existent session returns appropriate error."""
-    with pytest.raises(Exception) as exc_info:
-        await mcp_client.call_tool(
-            "get_session",
-            {
-                "session_id": "non-existent-session-id",
-                "db_id": db_id,
-                "session_type": "agent",
-            },
-        )
-    assert "not found" in str(exc_info.value).lower()
 
 
 @pytest.mark.asyncio
@@ -917,20 +535,6 @@ async def test_run_agent_not_found(mcp_client: MCPTestClient):
             {
                 "agent_id": "non-existent-agent",
                 "message": "Hello",
-            },
-        )
-    assert "not found" in str(exc_info.value).lower()
-
-
-@pytest.mark.asyncio
-async def test_get_memory_not_found(mcp_client: MCPTestClient, db_id: str):
-    """Test getting a non-existent memory returns appropriate error."""
-    with pytest.raises(Exception) as exc_info:
-        await mcp_client.call_tool(
-            "get_memory",
-            {
-                "memory_id": "non-existent-memory-id",
-                "db_id": db_id,
             },
         )
     assert "not found" in str(exc_info.value).lower()
