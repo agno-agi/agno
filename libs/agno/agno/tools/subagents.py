@@ -1,23 +1,33 @@
+import json
 from textwrap import dedent
-from typing import Any, List, Optional, Union
+from typing import Any, AsyncIterator, List, Optional, Union
 from uuid import uuid4
 
 from agno.agent import Agent
 from agno.db.base import AsyncBaseDb, BaseDb
 from agno.models.base import Model
+from agno.run.agent import RunContentEvent, RunOutputEvent, run_output_event_from_dict
 from agno.run.base import RunContext
 from agno.tools.toolkit import Toolkit
 from agno.utils.log import log_debug, log_error
 
 
-def _os_streaming_available() -> bool:
-    """Whether the AgentOS event buffer is importable (requires the `os` extra)."""
-    try:
-        import agno.os.managers  # noqa: F401
+def _event_from_sse(sse_data: Any) -> Optional[Any]:
+    """Parse an SSE-formatted string from a background stream back into a run event.
 
-        return True
-    except ImportError:
-        return False
+    Background streaming runs yield "event: <type>\\ndata: <json>\\n\\n" strings
+    (their static type says events, but the background path serializes). Returns
+    None for chunks that cannot be parsed; the caller skips them.
+    """
+    if not isinstance(sse_data, str):
+        return None
+    try:
+        for line in sse_data.split("\n"):
+            if line.startswith("data: "):
+                return run_output_event_from_dict(json.loads(line[len("data: ") :]))
+    except Exception:
+        log_debug("Could not parse SSE event from subagent background stream")
+    return None
 
 
 DEFAULT_INSTRUCTIONS = dedent("""\
@@ -46,9 +56,13 @@ class SubAgent(Toolkit):
 
     When a db is set, subagent runs execute as detached background runs on the server
     (the same pipeline as AgentOS "Run in background"), so they survive client
-    disconnects and page refreshes. Note the parent run is controlled separately: to
-    keep the whole tree alive across a refresh, start the parent run in background
-    mode too (the "Run in background" toggle in the AgentOS UI).
+    disconnects and page refreshes. Their events are also re-emitted into the parent
+    run's stream tagged with parent_run_id, so each run_task call renders as nested
+    sub-agent activity inside the parent's chat in the AgentOS UI (same as team member
+    delegation) while still persisting as its own session. Note the parent run is
+    controlled separately: to keep the whole tree alive across a refresh, start the
+    parent run in background mode too (the "Run in background" toggle in the AgentOS
+    UI).
 
     Args:
         model: Model for subagents. Defaults to the parent agent's model.
@@ -124,7 +138,9 @@ class SubAgent(Toolkit):
             log_error(f"Subagent task failed: {e}")
             return f"Subagent task failed: {str(e)}"
 
-    async def arun_task(self, agent: Agent, run_context: RunContext, task: str) -> str:
+    async def arun_task(
+        self, agent: Agent, run_context: RunContext, task: str
+    ) -> AsyncIterator[Union[RunOutputEvent, str]]:
         """Delegate a task to a subagent and return its result. Call run_task multiple
         times in the same response to run subagents in parallel.
 
@@ -140,13 +156,20 @@ class SubAgent(Toolkit):
             session_id = self._session_id(agent)
             user_id = run_context.user_id or agent.id
             log_debug(f"Running subagent task in session {session_id}")
-            if subagent.db is not None and _os_streaming_available():
+            if subagent.db is not None:
                 # Background streaming run: the RUNNING run is persisted to the db
                 # immediately and every event is pushed to the AgentOS event buffer,
                 # so the subagent session can be watched live in the UI exactly like
                 # a main agent run. The stream ends when the run completes.
+                # Each SSE chunk is also parsed back into a run event, tagged with
+                # the parent run's id and yielded upward, so the subagent renders
+                # nested inside the parent run in the AgentOS UI (same mechanism as
+                # team member delegation). Content events are accumulated into the
+                # tool result by the model layer, so no final string is yielded
+                # unless nothing was streamed.
                 run_id = str(uuid4())
-                async for _ in subagent.arun(
+                streamed_content = False
+                async for sse_data in subagent.arun(
                     task,
                     user_id=user_id,
                     session_id=session_id,
@@ -155,13 +178,35 @@ class SubAgent(Toolkit):
                     stream=True,
                     stream_events=True,
                 ):
-                    pass
+                    event = _event_from_sse(sse_data)
+                    if event is None:
+                        continue
+                    event.parent_run_id = getattr(event, "parent_run_id", None) or run_context.run_id
+                    # Re-emitted copies must belong to the session the client is
+                    # watching (same as team members and context-provider
+                    # sub-agents), otherwise the UI drops them. The subagent's own
+                    # run still persists under its separate session.
+                    if run_context.session_id:
+                        event.session_id = run_context.session_id
+                    if isinstance(event, RunContentEvent) and event.content:
+                        streamed_content = True
+                    yield event
                 result = await subagent.aget_run_output(run_id=run_id, session_id=session_id, user_id=user_id)
                 if result is None:
-                    return "Subagent task finished but no output was stored."
-                return result.get_content_as_string()
+                    if not streamed_content:
+                        yield "Subagent task finished but no output was stored."
+                    return
+                status = getattr(result, "status", None)
+                if (getattr(status, "value", status)) == "ERROR":
+                    yield f"Subagent task failed: {result.get_content_as_string() or 'run ended with status ERROR'}"
+                    return
+                if not streamed_content:
+                    # No content events made it through the stream; fall back to the
+                    # persisted output so the tool result is never empty.
+                    yield result.get_content_as_string()
+                return
             result = await subagent.arun(task, user_id=user_id, session_id=session_id)
-            return result.get_content_as_string()
+            yield result.get_content_as_string()
         except Exception as e:
             log_error(f"Subagent task failed: {e}")
-            return f"Subagent task failed: {str(e)}"
+            yield f"Subagent task failed: {str(e)}"
