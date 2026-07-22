@@ -43,6 +43,8 @@ class AgnoAPISettings(BaseSettings):
         valid_cors.extend(
             [
                 "http://localhost:3000",
+                "http://localhost:8000",
+                "http://127.0.0.1:8000",
                 "https://agno.com",
                 "https://www.agno.com",
                 "https://app.agno.com",
