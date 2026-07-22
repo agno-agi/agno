@@ -743,3 +743,161 @@ async def test_non_streaming_yields_json_answer():
     assert isinstance(outputs[0], str), "Non-streaming should yield JSON string"
     payload = json.loads(outputs[0])
     assert payload == {"text": "The answer"}
+
+
+@pytest.mark.asyncio
+async def test_streaming_multiple_event_types():
+    """Streaming correctly handles multiple event types from sub-agent."""
+    from agno.run.agent import (
+        RunCompletedEvent,
+        RunContentEvent,
+        RunOutput,
+        ToolCallCompletedEvent,
+        ToolCallStartedEvent,
+    )
+
+    class _MultiEventProvider(_EchoProvider):
+        async def _aget_query_agent(self, run_context):
+            class _FakeAgent:
+                async def arun(self, message, **kwargs):
+                    # Simulate a realistic sub-agent run with multiple event types
+                    tc_start = ToolCallStartedEvent()
+                    tc_start.tool_call_id = "call_1"
+                    yield tc_start
+
+                    yield RunContentEvent(content="Searching...")
+
+                    tc_end = ToolCallCompletedEvent()
+                    tc_end.tool_call_id = "call_1"
+                    yield tc_end
+
+                    yield RunContentEvent(content=" Found result.")
+
+                    completed = RunCompletedEvent()
+                    completed.content = "Searching... Found result."
+                    yield completed
+
+                    yield RunOutput(content="Searching... Found result.")
+
+            return _FakeAgent()
+
+    p = _MultiEventProvider(id="m")
+    query_tool = p._query_tool()
+    gen = await query_tool.entrypoint(question="search")
+
+    events = []
+    strings = []
+    async for chunk in gen:
+        if isinstance(chunk, str):
+            strings.append(chunk)
+        else:
+            events.append(chunk)
+
+    # Should yield all event types except RunOutput
+    event_types = [type(e).__name__ for e in events]
+    assert "ToolCallStartedEvent" in event_types
+    assert "ToolCallCompletedEvent" in event_types
+    assert "RunContentEvent" in event_types
+    assert "RunCompletedEvent" in event_types
+    assert len(strings) == 0, "No final JSON in streaming mode"
+
+    # Simulate models/base.py: only RunContentEvent contributes to output
+    content_events = [e for e in events if isinstance(e, RunContentEvent)]
+    accumulated = "".join(e.content or "" for e in content_events)
+    assert accumulated == "Searching... Found result."
+
+
+@pytest.mark.asyncio
+async def test_streaming_empty_content():
+    """Streaming handles sub-agent that returns empty content."""
+    from agno.run.agent import RunContentEvent, RunOutput
+
+    class _EmptyContentProvider(_EchoProvider):
+        async def _aget_query_agent(self, run_context):
+            class _FakeAgent:
+                async def arun(self, message, **kwargs):
+                    yield RunContentEvent(content="")
+                    yield RunOutput(content="")
+
+            return _FakeAgent()
+
+    p = _EmptyContentProvider(id="e")
+    query_tool = p._query_tool()
+    gen = await query_tool.entrypoint(question="test")
+
+    events = []
+    strings = []
+    async for chunk in gen:
+        if isinstance(chunk, str):
+            strings.append(chunk)
+        else:
+            events.append(chunk)
+
+    assert len(events) == 1  # The RunContentEvent
+    assert len(strings) == 0  # No final JSON
+
+
+@pytest.mark.asyncio
+async def test_streaming_preserves_event_attributes():
+    """Events yielded from streaming preserve all their attributes."""
+    from agno.run.agent import RunContentEvent, RunOutput
+
+    class _AttributeProvider(_EchoProvider):
+        async def _aget_query_agent(self, run_context):
+            class _FakeAgent:
+                async def arun(self, message, **kwargs):
+                    event = RunContentEvent(content="test")
+                    event.run_id = "sub-agent-run-123"
+                    event.agent_id = "sub-agent-id"
+                    yield event
+                    yield RunOutput(content="test")
+
+            return _FakeAgent()
+
+    p = _AttributeProvider(id="a")
+    query_tool = p._query_tool()
+    rc = RunContext(run_id="parent-run-456", user_id="u", session_id="s")
+    gen = await query_tool.entrypoint(question="test", run_context=rc)
+
+    events = []
+    async for chunk in gen:
+        if not isinstance(chunk, str):
+            events.append(chunk)
+
+    assert len(events) == 1
+    event = events[0]
+    # Original attributes preserved
+    assert event.run_id == "sub-agent-run-123"
+    assert event.agent_id == "sub-agent-id"
+    # parent_run_id set by provider
+    assert event.parent_run_id == "parent-run-456"
+
+
+@pytest.mark.asyncio
+async def test_update_streaming_does_not_duplicate():
+    """Update tool streaming also doesn't duplicate content."""
+    from agno.run.agent import RunContentEvent, RunOutput
+
+    class _StreamingUpdateProvider(_EchoProvider):
+        async def _aget_update_agent(self, run_context):
+            class _FakeAgent:
+                async def arun(self, message, **kwargs):
+                    yield RunContentEvent(content="Created ")
+                    yield RunContentEvent(content="new file")
+                    yield RunOutput(content="Created new file")
+
+            return _FakeAgent()
+
+    p = _StreamingUpdateProvider(id="su")
+    update_tool = p._update_tool()
+    gen = await update_tool.entrypoint(instruction="create file")
+
+    # Simulate models/base.py accumulation
+    function_call_output = ""
+    async for chunk in gen:
+        if isinstance(chunk, RunContentEvent):
+            function_call_output += chunk.content or ""
+        elif isinstance(chunk, str):
+            function_call_output += chunk
+
+    assert function_call_output == "Created new file", f"Expected 'Created new file' once, got '{function_call_output}'"
