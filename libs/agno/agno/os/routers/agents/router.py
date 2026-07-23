@@ -738,6 +738,7 @@ def get_agent_router(
                     )
                 )
                 if stream_queueable:
+                    assert queue_worker is not None  # narrowed by stream_queueable
                     from agno.os.event_streams import get_event_stream as _ges
                     from agno.run.base import RunStatus as _RS
 

@@ -723,6 +723,7 @@ def get_team_router(
                     )
                 )
                 if stream_queueable:
+                    assert queue_worker is not None  # narrowed by stream_queueable
                     queued_run_id = str(uuid4())
                     queued_session_id = session_id or str(uuid4())
                     job = RunQueueJob(
