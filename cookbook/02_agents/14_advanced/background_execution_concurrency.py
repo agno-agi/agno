@@ -59,7 +59,9 @@ async def main():
         # One session per run: concurrent background runs sharing one session
         # can clobber each other's status updates (fixed in the durable run
         # queue PR chain; distinct sessions are also the realistic shape).
-        run_output = await agent.arun(question, background=True, session_id=f"bg-concurrency-{i}")
+        run_output = await agent.arun(
+            question, background=True, session_id=f"bg-concurrency-{i}"
+        )
         print(f"Accepted run {run_output.run_id} with status {run_output.status}")
         outputs.append(run_output)
 

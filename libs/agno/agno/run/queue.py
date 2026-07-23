@@ -14,10 +14,7 @@ The config grows with the queue's capabilities:
 """
 
 from dataclasses import dataclass
-
-# Default mirrors agno.run.concurrency.DEFAULT_BACKGROUND_MAX_CONCURRENCY;
-# duplicated as a literal so this module stays a pure-data import.
-_DEFAULT_MAX_CONCURRENCY = 32
+from typing import Optional
 
 
 @dataclass
@@ -29,7 +26,11 @@ class RunQueueConfig:
             shared across agents, teams and workflows. Enforced per event loop
             (process-wide in the standard one-loop-per-process deployment).
             Runs beyond the cap wait in line as PENDING and can be cancelled
-            while waiting. 0 or below disables capping.
+            while waiting. 0 or below disables capping. None (the default)
+            leaves the current process setting untouched - the
+            AGNO_BACKGROUND_MAX_CONCURRENCY env var or the library default of
+            32 - so constructing a config to set OTHER fields never silently
+            overrides an env-var cap.
     """
 
-    max_concurrency: int = _DEFAULT_MAX_CONCURRENCY
+    max_concurrency: Optional[int] = None

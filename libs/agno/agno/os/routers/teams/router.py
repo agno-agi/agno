@@ -371,7 +371,8 @@ async def _resume_stream_generator(
             except asyncio.TimeoutError:
                 # Check if run ended without sending sentinel
                 status = event_buffer.get_run_status(run_id)
-                if status is None or status != RunStatus.running:
+                # PENDING = queued for a concurrency slot: still active, keep waiting
+                if status is None or status not in (RunStatus.running, RunStatus.pending):
                     # Run ended - replay any remaining events from buffer
                     remaining = event_buffer.get_events(run_id, last_event_index=last_replayed_index)
                     for ev_index, buffered_event in remaining:

@@ -426,7 +426,7 @@ class AgentOS:
         # Run queue configuration. None keeps the process defaults (env var or
         # library default for the concurrency cap).
         self.run_queue = run_queue
-        if run_queue is not None:
+        if run_queue is not None and run_queue.max_concurrency is not None:
             set_background_max_concurrency(run_queue.max_concurrency)
 
         # Scheduler configuration
