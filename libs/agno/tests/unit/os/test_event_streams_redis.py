@@ -6,15 +6,19 @@ import pytest
 
 fakeredis = pytest.importorskip("fakeredis", reason="fakeredis not installed")
 
+import pytest_asyncio  # noqa: E402
+
 from agno.os.event_streams.redis import RedisEventStream  # noqa: E402
 from agno.run.agent import RunContentEvent  # noqa: E402
 from agno.run.base import RunStatus  # noqa: E402
 
 
-@pytest.fixture()
-def stream() -> RedisEventStream:
+@pytest_asyncio.fixture()
+async def stream():
     # Short block_ms keeps idle-recheck loops fast in tests
-    return RedisEventStream(fakeredis.FakeAsyncRedis(), block_ms=100)
+    s = RedisEventStream(fakeredis.FakeAsyncRedis(), block_ms=100)
+    yield s
+    await s.aclose()
 
 
 def make_event(run_id: str, content: str) -> RunContentEvent:
@@ -207,3 +211,33 @@ class TestTtlRefresh:
         await stream.add_event("r1", make_event("r1", "a"))
         await stream.cleanup_run("r1")
         assert "r1" not in stream._last_ttl_refresh
+
+
+class TestQuietRunRefresher:
+    @pytest.mark.asyncio
+    async def test_quiet_active_run_keys_stay_alive(self):
+        """A run producing NO events (long tool call) must keep its keys alive:
+        the periodic refresher covers silence, not just slow event gaps."""
+        s = RedisEventStream(fakeredis.FakeAsyncRedis(), ttl_seconds=2, block_ms=100)
+        try:
+            await s.register_run("r1")
+            await s.add_event("r1", make_event("r1", "a"))
+            # Sit silent past a full refresh interval (ttl/3 clamped to 1s min)
+            await asyncio.sleep(1.3)
+            assert await s._redis.ttl(s._status_key("r1")) > 0
+            assert await s._redis.ttl(s._stream_key("r1")) > 0
+            assert await s._redis.ttl(s._counter_key("r1")) > 0
+        finally:
+            await s.aclose()
+
+    @pytest.mark.asyncio
+    async def test_refresher_exits_when_no_active_runs(self):
+        s = RedisEventStream(fakeredis.FakeAsyncRedis(), ttl_seconds=2, block_ms=100)
+        try:
+            await s.register_run("r1")
+            assert s._refresher_task is not None and not s._refresher_task.done()
+            await s.complete_run("r1", RunStatus.completed)
+            await asyncio.sleep(1.3)  # one tick with an empty active set
+            assert s._refresher_task.done()
+        finally:
+            await s.aclose()
