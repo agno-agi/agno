@@ -701,10 +701,20 @@ def get_team_router(
             # replica's worker claims the job executes it, surviving crashes
             # and deploys. Client contract identical: 202 + poll.
             queue_worker = getattr(request.app.state, "run_queue_worker", None)
-            component_is_factory_backed = any(
-                isinstance(candidate, TeamFactory) and candidate.id == team_id for candidate in (os.teams or [])
+            # Queueable only if this is a plain registry instance: the worker
+            # resolves from the registry, so factory-backed or off-registry
+            # (db-resolved / version-pinned) components would be accepted here
+            # and then fail or run differently in the worker.
+            component_is_queueable = any(
+                getattr(candidate, "id", None) == team_id and not isinstance(candidate, TeamFactory)
+                for candidate in (os.teams or [])
             )
-            if queue_worker is not None and not isinstance(team, RemoteTeam) and not component_is_factory_backed:
+            if (
+                queue_worker is not None
+                and not isinstance(team, RemoteTeam)
+                and component_is_queueable
+                and version is None  # version-pinned resolution differs from the worker's registry instance
+            ):
                 if base64_images or base64_audios or base64_videos or document_files:
                     raise HTTPException(
                         status_code=400,
