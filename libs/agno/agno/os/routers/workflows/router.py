@@ -1308,6 +1308,14 @@ def get_workflow_router(
                             else existing["status"].upper(),
                         },
                     )
+                if enqueue_result["reason"] == "duplicate":
+                    # Duplicate but the original row could not be retrieved:
+                    # NEVER fall through to a 202 for a run that was not
+                    # enqueued - that acceptance would be a lie
+                    raise HTTPException(
+                        status_code=409,
+                        detail="Idempotency-Key was already used but the original run could not be retrieved",
+                    )
                 # Accepted: persist the PENDING run row so pollers find it.
                 # Idempotent - a worker that already claimed the job wins.
                 await aprepare_queued_run(

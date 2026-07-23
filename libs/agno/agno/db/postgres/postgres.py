@@ -5078,6 +5078,14 @@ class PostgresDb(BaseDb):
             raise RuntimeError("Failed to get or create run queue table")
         try:
             with self.Session() as sess, sess.begin():
+                # Idempotency FIRST: resubmitting an already-accepted job
+                # must return the existing run even when the queue is full
+                if job.get("idempotency_key"):
+                    row = sess.execute(
+                        select(table).where(table.c.idempotency_key == job["idempotency_key"])
+                    ).fetchone()
+                    if row is not None:
+                        return {"accepted": False, "reason": "duplicate", "job": dict(row._mapping)}
                 if max_depth and max_depth > 0:
                     count_stmt = select(func.count()).select_from(table).where(table.c.status == "queued")
                     queued = sess.execute(count_stmt).scalar() or 0
@@ -5086,14 +5094,17 @@ class PostgresDb(BaseDb):
                 sess.execute(table.insert().values(**job))
             return {"accepted": True, "reason": None, "job": job}
         except IntegrityError:
-            existing = None
-            if job.get("idempotency_key"):
-                with self.Session() as sess:
-                    row = sess.execute(
-                        select(table).where(table.c.idempotency_key == job["idempotency_key"])
-                    ).fetchone()
-                    existing = dict(row._mapping) if row is not None else None
-            return {"accepted": False, "reason": "duplicate", "job": existing}
+            # Without an idempotency key this is a primary-key collision - a
+            # programming error, never a client dedup. Swallowing it as
+            # "duplicate" would 202 a run that was never enqueued.
+            if not job.get("idempotency_key"):
+                raise
+            # Race on the partial-unique idempotency index: return the winner
+            with self.Session() as sess:
+                row = sess.execute(select(table).where(table.c.idempotency_key == job["idempotency_key"])).fetchone()
+                if row is not None:
+                    return {"accepted": False, "reason": "duplicate", "job": dict(row._mapping)}
+            raise
 
     def claim_run_job(self, worker_id: str, lock_grace_seconds: int = 60) -> Optional[Dict[str, Any]]:
         """Atomically claim the oldest executable job for this worker.

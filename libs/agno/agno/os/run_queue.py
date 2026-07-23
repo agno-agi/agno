@@ -133,8 +133,6 @@ def resolve_run_queue_store(config: RunQueueConfig, default_db: Any) -> Any:
     """
     import inspect
 
-    from agno.run.queue_store import InMemoryRunQueueStore
-
     store = config.db if config.db is not None else default_db
     claim = getattr(store, "claim_run_job", None) if store is not None else None
     if callable(claim):
@@ -154,12 +152,13 @@ def resolve_run_queue_store(config: RunQueueConfig, default_db: Any) -> Any:
             return RedisRunQueueStore(AsyncRedis.from_url(store.db_url))
         except ImportError:
             pass
-    log_warning(
-        "Durable run queue requested but the configured db does not implement the run "
-        "queue contract; falling back to an in-memory queue (NOT durable). Use a "
-        "Postgres db for durable acceptance."
+    raise ValueError(
+        "RunQueueConfig(durable=True) requires a queue store implementing the run queue "
+        f"contract (claim_run_job etc.); got {type(store).__name__ if store is not None else None}. "
+        "Use a Postgres db, a RedisRunQueueStore, or pass a conforming store via run_queue.db. "
+        "Silently degrading a durability promise is not an option; for a non-durable queue "
+        "set durable=False (or use InMemoryRunQueueStore explicitly in tests)."
     )
-    return InMemoryRunQueueStore()
 
 
 class RunQueueWorker:
@@ -191,6 +190,12 @@ class RunQueueWorker:
         self.config = config
         self.worker_id = worker_id or f"worker-{uuid4().hex[:8]}"
         self.stop_timeout = stop_timeout
+        if stop_timeout >= config.lock_grace_seconds:
+            log_warning(
+                f"RunQueueWorker stop_timeout ({stop_timeout}s) >= lock_grace_seconds "
+                f"({config.lock_grace_seconds}s): a draining run can be reclaimed by another "
+                "replica mid-drain. Keep stop_timeout below lock_grace_seconds."
+            )
         self._running = False
         self._task: Optional[asyncio.Task] = None
         self._heartbeat_task: Optional[asyncio.Task] = None
@@ -388,10 +393,17 @@ class RunQueueWorker:
                 await self.store.complete_run_job(job_id, self.worker_id, attempt, "completed")
         except asyncio.CancelledError:
             # Shutdown drain: the run was interrupted, not failed by its own
-            # doing — requeue if budget remains, else fail visibly.
-            await self.store.retry_or_fail_run_job(
-                job_id, self.worker_id, attempt, "interrupted by worker shutdown", self.config.retry_delay_seconds
+            # doing — requeue if budget remains, else fail visibly. If it lands
+            # failed, best-effort persist the run-row error too (shielded: we
+            # are being cancelled) so queue and session state do not diverge.
+            outcome = await asyncio.shield(
+                self.store.retry_or_fail_run_job(
+                    job_id, self.worker_id, attempt, "interrupted by worker shutdown", self.config.retry_delay_seconds
+                )
             )
+            if outcome == "failed":
+                with contextlib.suppress(Exception, asyncio.CancelledError):
+                    await asyncio.shield(self._persist_run_error(job, "interrupted by worker shutdown"))
             raise
         except asyncio.TimeoutError:
             error = f"Run exceeded timeout_seconds={self.config.timeout_seconds}"
