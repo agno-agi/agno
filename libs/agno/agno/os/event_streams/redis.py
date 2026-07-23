@@ -256,8 +256,17 @@ class RedisEventStream(BaseEventStream):
         return int(value) - 1 if value is not None else -1
 
     async def get_event_count(self, run_id: str) -> int:
-        count = await self._redis.xlen(self._stream_key(run_id))
-        return int(count)
+        count = int(await self._redis.xlen(self._stream_key(run_id)))
+        if count == 0:
+            return 0
+        # The terminal sentinel is a stream entry but not a client-facing
+        # event: exclude it so counts match the in-memory implementation
+        last = await self._redis.xrevrange(self._stream_key(run_id), count=1)
+        if last:
+            _entry_id, fields = last[0]
+            if fields is not None and fields.get(b"terminal", fields.get("terminal")) is not None:
+                return count - 1
+        return count
 
     # ------------------------------------------------------------------
     # Live tail
