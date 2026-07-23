@@ -1261,14 +1261,19 @@ def get_workflow_router(
             # replica's worker claims the job executes it, surviving crashes
             # and deploys. Client contract identical: 202 + poll.
             queue_worker = getattr(request.app.state, "run_queue_worker", None)
-            component_is_factory_backed = any(
-                isinstance(candidate, WorkflowFactory) and candidate.id == workflow_id
+            # Queueable only if this is a plain registry instance: the worker
+            # resolves from the registry, so factory-backed or off-registry
+            # (db-resolved / version-pinned) components would be accepted here
+            # and then fail or run differently in the worker.
+            component_is_queueable = any(
+                getattr(candidate, "id", None) == workflow_id and not isinstance(candidate, WorkflowFactory)
                 for candidate in (os.workflows or [])
             )
             if (
                 queue_worker is not None
                 and not isinstance(workflow, RemoteWorkflow)
-                and not component_is_factory_backed
+                and component_is_queueable
+                and version is None  # version-pinned resolution differs from the worker's registry instance
             ):
                 queued_run_id = str(uuid4())
                 queued_session_id = session_id or str(uuid4())
