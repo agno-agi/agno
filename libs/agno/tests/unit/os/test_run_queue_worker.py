@@ -366,3 +366,43 @@ class TestStreamingExecution:
             assert await stream.get_run_status("sr1") == RunStatus.completed
         finally:
             es_mod._event_stream = original
+
+
+class TestStreamViewTermination:
+    @pytest.mark.asyncio
+    async def test_swept_streaming_job_terminates_live_tails(self):
+        """Worker dies mid-stream, sweep fails the job: connected tails must
+        end immediately via the event stream, not hang until TTL expiry."""
+        import agno.os.event_streams as es_mod
+        from agno.os.event_streams import InMemoryEventStream, set_event_stream
+        from agno.os.managers import EventsBuffer, SSESubscriberManager
+        from agno.os.run_queue import RunQueueWorker
+        from agno.run.base import RunStatus
+        from agno.run.queue import RunQueueConfig
+        from agno.run.queue_store import InMemoryRunQueueStore
+
+        original = es_mod._event_stream
+        stream = InMemoryEventStream(events_buffer=EventsBuffer(), subscriber_manager=SSESubscriberManager())
+        set_event_stream(stream)
+        try:
+            # A streaming run mid-flight when its worker died
+            await stream.register_run("sr1", RunStatus.running)
+
+            worker = RunQueueWorker(
+                store=InMemoryRunQueueStore(),
+                resolve_component=lambda t, i: None,
+                config=RunQueueConfig(durable=True),
+            )
+            job = {"id": "sr1", "session_id": "s1", "payload": {"stream": True}}
+            await worker._terminate_stream_view(job)
+
+            assert await stream.get_run_status("sr1") == RunStatus.error
+            received = [idx async for idx, _sse in stream.tail("sr1")]
+            assert received == []  # tail ends immediately, no hang
+
+            # Non-streaming jobs never touch the event stream
+            await stream.register_run("ns1", RunStatus.running)
+            await worker._terminate_stream_view({"id": "ns1", "session_id": "s1", "payload": {}})
+            assert await stream.get_run_status("ns1") == RunStatus.running
+        finally:
+            es_mod._event_stream = original

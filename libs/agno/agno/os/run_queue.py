@@ -307,6 +307,7 @@ class RunQueueWorker:
             error = "Worker lost and attempt budget exhausted; run was not re-executed"
             with contextlib.suppress(Exception):
                 await self._persist_run_error(job, error)
+            await self._terminate_stream_view(job)
             await self.store.fail_swept_run_job(job["id"], self.config.lock_grace_seconds, error)
             log_warning(f"Run queue: swept job {job['id']} to failed ({error})")
 
@@ -354,6 +355,19 @@ class RunQueueWorker:
             with contextlib.suppress(Exception):
                 await asyncio.shield(event_stream.complete_run(job_id, status))
         return final_output
+
+    async def _terminate_stream_view(self, job: Dict[str, Any]) -> None:
+        """For STREAMING jobs failed outside their own execution (sweep, drain,
+        timeout): write the terminal status into the event stream so connected
+        tails end immediately - a dead producer wrote no sentinel, and without
+        this, live viewers hang on keepalives until the Redis TTL expires."""
+        if not (job.get("payload") or {}).get("stream"):
+            return
+        from agno.os.event_streams import get_event_stream
+        from agno.run.base import RunStatus
+
+        with contextlib.suppress(Exception):
+            await asyncio.shield(get_event_stream().complete_run(job["id"], RunStatus.error))
 
     async def _persist_run_error(self, job: Dict[str, Any], error: str) -> None:
         """Persist a terminal ERROR on the run row so pollers see it, never a
@@ -467,11 +481,14 @@ class RunQueueWorker:
             if outcome == "failed":
                 with contextlib.suppress(Exception, asyncio.CancelledError):
                     await asyncio.shield(self._persist_run_error(job, "interrupted by worker shutdown"))
+                with contextlib.suppress(Exception, asyncio.CancelledError):
+                    await asyncio.shield(self._terminate_stream_view(job))
             raise
         except asyncio.TimeoutError:
             error = f"Run exceeded timeout_seconds={self.config.timeout_seconds}"
             with contextlib.suppress(Exception):
                 await self._persist_run_error(job, error)
+            await self._terminate_stream_view(job)
             await self.store.retry_or_fail_run_job(
                 job_id, self.worker_id, attempt, error, self.config.retry_delay_seconds
             )
