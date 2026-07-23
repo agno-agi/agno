@@ -174,3 +174,36 @@ class TestTail:
         r1, r2 = await asyncio.wait_for(asyncio.gather(t1, t2), timeout=5)
         assert r1 == [0, 1]
         assert r2 == [0, 1]
+
+
+class TestTtlRefresh:
+    @pytest.mark.asyncio
+    async def test_ttl_refreshed_on_time_basis_not_index(self, stream: RedisEventStream):
+        """A slow producer (long gaps, index never hits a modulo boundary)
+        must still get TTL refreshes: the refresh is time-based."""
+        await stream.register_run("r1")
+        await stream.add_event("r1", make_event("r1", "a"))  # first event: refresh due
+
+        # Age the bookkeeping so the next event is past the refresh window
+        stream._last_ttl_refresh["r1"] -= stream._ttl
+        await stream.add_event("r1", make_event("r1", "b"))  # index 1: would NOT hit %20
+
+        ttl = await stream._redis.ttl(stream._stream_key("r1"))
+        assert ttl > 0, "stream key must carry a TTL refreshed by the second event"
+        counter_ttl = await stream._redis.ttl(stream._counter_key("r1"))
+        assert counter_ttl > 0
+
+    @pytest.mark.asyncio
+    async def test_no_refresh_inside_window(self, stream: RedisEventStream):
+        await stream.register_run("r1")
+        await stream.add_event("r1", make_event("r1", "a"))
+        before = stream._last_ttl_refresh["r1"]
+        await stream.add_event("r1", make_event("r1", "b"))  # inside window: no refresh
+        assert stream._last_ttl_refresh["r1"] == before
+
+    @pytest.mark.asyncio
+    async def test_cleanup_drops_refresh_bookkeeping(self, stream: RedisEventStream):
+        await stream.register_run("r1")
+        await stream.add_event("r1", make_event("r1", "a"))
+        await stream.cleanup_run("r1")
+        assert "r1" not in stream._last_ttl_refresh

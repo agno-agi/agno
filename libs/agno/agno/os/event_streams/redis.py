@@ -21,7 +21,7 @@ cancellation carries client intent in, the event stream carries events out.
 """
 
 import asyncio
-from typing import TYPE_CHECKING, Any, AsyncIterator, List, Optional, Tuple, Union
+from typing import TYPE_CHECKING, Any, AsyncIterator, Dict, List, Optional, Tuple, Union
 
 from agno.os.event_streams.base import BaseEventStream
 from agno.run.base import RunStatus
@@ -44,9 +44,11 @@ except ImportError:
 
 _TERMINAL_STATUSES = (RunStatus.completed, RunStatus.error, RunStatus.cancelled, RunStatus.paused)
 
-# Refresh key TTLs at most once per this many events (a lone EXPIRE per XADD
-# would double command traffic for no benefit).
-_TTL_REFRESH_EVERY = 20
+# Refresh key TTLs when at least this fraction of ttl_seconds has elapsed
+# since the last refresh (time-based, so slow producers with long gaps between
+# events cannot have live keys expire mid-run; a lone EXPIRE per XADD would
+# double command traffic for no benefit).
+_TTL_REFRESH_FRACTION = 3
 
 
 def _to_str(value: Union[str, bytes, None]) -> Optional[str]:
@@ -84,6 +86,9 @@ class RedisEventStream(BaseEventStream):
         self._ttl = ttl_seconds
         self._maxlen = maxlen
         self._block_ms = block_ms
+        # Per-run monotonic timestamp of the last TTL refresh (process-local;
+        # a missed refresh from another process only causes an extra EXPIRE)
+        self._last_ttl_refresh: Dict[str, float] = {}
 
     # ------------------------------------------------------------------
     # Keys — per-attempt stream keys; attempt is 1 until checkpoint resume lands
@@ -133,6 +138,7 @@ class RedisEventStream(BaseEventStream):
         await pipe.execute()
 
     async def cleanup_run(self, run_id: str) -> None:
+        self._last_ttl_refresh.pop(run_id, None)
         await self._redis.delete(
             self._stream_key(run_id),
             self._status_key(run_id),
@@ -159,12 +165,22 @@ class RedisEventStream(BaseEventStream):
             maxlen=self._maxlen,
             approximate=True,
         )
-        if event_index % _TTL_REFRESH_EVERY == 0:
+        if self._ttl_refresh_due(run_id):
             pipe.expire(self._stream_key(run_id), self._ttl)
             pipe.expire(self._status_key(run_id), self._ttl)
             pipe.expire(self._counter_key(run_id), self._ttl)
         await pipe.execute()
         return event_index
+
+    def _ttl_refresh_due(self, run_id: str) -> bool:
+        import time as _time
+
+        now = _time.monotonic()
+        last = self._last_ttl_refresh.get(run_id)
+        if last is None or (now - last) >= self._ttl / _TTL_REFRESH_FRACTION:
+            self._last_ttl_refresh[run_id] = now
+            return True
+        return False
 
     async def replay(self, run_id: str, last_event_index: Optional[int] = None) -> List[Tuple[int, Any]]:
         """Replay from the stream. Payloads are SSE-formatted strings.

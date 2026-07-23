@@ -4354,6 +4354,15 @@ class Workflow:
             Execution waits for a concurrency slot (background_run_slot); the run
             stays PENDING while waiting in line and can be cancelled without
             consuming a slot."""
+            from agno.os.event_streams import InMemoryEventStream, get_event_stream
+
+            if not isinstance(get_event_stream(), InMemoryEventStream):
+                log_warning(
+                    "A distributed event stream is configured, but workflow background "
+                    "streams still buffer events in-process: cross-replica resume will "
+                    "fall back to the database for this run. Workflow producer support "
+                    "for distributed event streams is planned."
+                )
             slot_cm = background_run_slot(run_id=run_context.run_id)
             slot_held = False
             try:
@@ -4576,8 +4585,17 @@ class Workflow:
 
         # Spawn detached background task
         async def _background_producer() -> None:
+            from agno.os.event_streams import InMemoryEventStream, get_event_stream
             from agno.os.managers import event_buffer, sse_subscriber_manager
             from agno.os.utils import format_sse_event_with_index
+
+            if not isinstance(get_event_stream(), InMemoryEventStream):
+                log_warning(
+                    "A distributed event stream is configured, but workflow background "
+                    "streams still buffer events in-process: cross-replica resume will "
+                    "fall back to the database for this run. Workflow producer support "
+                    "for distributed event streams is planned."
+                )
 
             # _handle_event (called inside _aexecute_stream) already adds events to
             # event_buffer.  We must NOT add them again here to avoid duplication.
