@@ -36,7 +36,12 @@ class _FakeBlob:
 
     def download_as_bytes(self) -> bytes:
         if self.name not in self._bucket._objects:
-            raise Exception("404 Not Found")
+            # GcsJsonDb catches the typed google.cloud.exceptions.NotFound to
+            # detect a missing blob. Raise the real typed error so
+            # this fake stays aligned with production behaviour.
+            from google.cloud.exceptions import NotFound  # type: ignore[import-untyped]
+
+            raise NotFound(self.name)
         return self._bucket._objects[self.name].encode("utf-8")
 
     def upload_from_string(self, data: str, content_type: str = "application/json") -> None:
