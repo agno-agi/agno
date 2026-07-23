@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import time
 from collections import deque
 from time import time as unix_time
@@ -3438,6 +3439,16 @@ async def _arun_background(
             except Exception as e:
                 log_error(f"Failed to persist cancelled state for background run {run_response.run_id}: {str(e)}")
             await acleanup_run(run_context.run_id)
+        except asyncio.CancelledError:
+            # Task-level shutdown (event loop stopping), not run-cancellation:
+            # best-effort persist so pollers are not left with a run stuck at
+            # PENDING/RUNNING forever. The durable queue's drain handles this
+            # properly; this is the non-durable path's honest fallback.
+            with contextlib.suppress(Exception):
+                run_response.status = RunStatus.cancelled
+                team_session.upsert_run(run_response=run_response)
+                await asave_session(team, session=team_session)
+            raise
         except Exception as e:
             log_error(f"Background run {run_response.run_id} failed: {str(e)}")
             # Persist ERROR status
