@@ -228,7 +228,15 @@ class RunQueueWorker:
         """Claim until the concurrency cap is reached or the queue is drained."""
         while self._running:
             self._prune_in_flight()
-            if self.config.max_concurrency > 0 and len(self._in_flight) >= self.config.max_concurrency:
+            # None = not explicitly configured: fall back to the process
+            # setting (env var or library default), same semantics as the
+            # in-process limiter
+            effective_max = self.config.max_concurrency
+            if effective_max is None:
+                from agno.run.concurrency import get_background_max_concurrency
+
+                effective_max = get_background_max_concurrency()
+            if effective_max > 0 and len(self._in_flight) >= effective_max:
                 break
             job = await self.store.claim_run_job(self.worker_id, self.config.lock_grace_seconds)
             if job is None:
