@@ -1,0 +1,199 @@
+"""Integration tests for the run queue store contract on real Postgres.
+
+Runs the same contract matrix as the in-memory and Redis (fakeredis) unit
+tests, but against the actual SKIP LOCKED claim SQL, fenced UPDATEs, and the
+depth-gated insert - the parts a fake cannot prove.
+
+Requires: PostgreSQL at postgresql+psycopg://ai:ai@localhost:5532/ai
+(./cookbook/scripts/run_pgvector.sh). Skipped when unreachable.
+"""
+
+import asyncio
+import uuid
+
+import pytest
+
+from agno.db.postgres import AsyncPostgresDb
+from agno.db.schemas.run_queue import RunQueueJob
+
+DB_URL = "postgresql+psycopg://ai:ai@localhost:5532/ai"
+
+
+def _pg_available() -> bool:
+    import socket
+
+    try:
+        with socket.create_connection(("localhost", 5532), timeout=2):
+            return True
+    except OSError:
+        return False
+
+
+pytestmark = pytest.mark.skipif(not _pg_available(), reason="Postgres not available on localhost:5532")
+
+
+@pytest.fixture()
+def db() -> AsyncPostgresDb:
+    # Unique table per test run keeps tests independent and re-runnable
+    return AsyncPostgresDb(db_url=DB_URL, run_queue_table=f"test_run_queue_{uuid.uuid4().hex[:8]}")
+
+
+@pytest.fixture(autouse=True)
+def cleanup_table(db):
+    yield
+    import sqlalchemy
+
+    engine = sqlalchemy.create_engine(DB_URL)  # psycopg3 serves sync engines too
+    with engine.begin() as conn:
+        conn.execute(sqlalchemy.text(f'DROP TABLE IF EXISTS agno."{db.run_queue_table_name}"'))
+    engine.dispose()
+
+
+def make_job(job_id: str = "r1", max_attempts: int = 1, **kwargs) -> dict:
+    return RunQueueJob(
+        id=job_id,
+        component_type="agent",
+        component_id="a1",
+        session_id="s1",
+        payload={"input": "hello"},
+        max_attempts=max_attempts,
+        **kwargs,
+    ).to_dict()
+
+
+async def make_stale(db: AsyncPostgresDb, job_id: str, by_seconds: int = 1000) -> None:
+    """Age a running job's lock (simulates a dead worker)."""
+    table = await db._get_table(table_type="run_queue")
+    from sqlalchemy import update
+
+    async with db.async_session_factory() as sess:
+        async with sess.begin():
+            await sess.execute(
+                update(table).where(table.c.id == job_id).values(locked_at=table.c.locked_at - by_seconds)
+            )
+
+
+class TestPostgresRunQueueContract:
+    @pytest.mark.asyncio
+    async def test_enqueue_claim_complete_roundtrip(self, db):
+        result = await db.enqueue_run_job(make_job())
+        assert result["accepted"] is True
+
+        claimed = await db.claim_run_job("w1")
+        assert claimed is not None
+        assert claimed["id"] == "r1"
+        assert claimed["status"] == "running"
+        assert claimed["attempt"] == 1
+
+        assert await db.complete_run_job("r1", "w1", 1, "completed")
+        assert (await db.get_run_job("r1"))["status"] == "completed"
+        assert await db.count_queued_run_jobs() == 0
+
+    @pytest.mark.asyncio
+    async def test_depth_gate_and_idempotency(self, db):
+        assert (await db.enqueue_run_job(make_job("r1"), max_depth=1))["accepted"]
+        full = await db.enqueue_run_job(make_job("r2"), max_depth=1)
+        assert full["reason"] == "queue_full"
+
+        await db.enqueue_run_job(make_job("r3", idempotency_key="k1"))
+        dup = await db.enqueue_run_job(make_job("r4", idempotency_key="k1"))
+        assert dup["reason"] == "duplicate"
+        assert dup["job"]["id"] == "r3"
+
+    @pytest.mark.asyncio
+    async def test_concurrent_claims_are_exclusive(self, db):
+        """The SKIP LOCKED claim: N concurrent claimers, one job, one winner."""
+        await db.enqueue_run_job(make_job("r1"))
+        results = await asyncio.gather(*[db.claim_run_job(f"w{i}") for i in range(8)])
+        winners = [r for r in results if r is not None]
+        assert len(winners) == 1
+
+    @pytest.mark.asyncio
+    async def test_reclaim_gated_on_attempt_budget(self, db):
+        await db.enqueue_run_job(make_job("r1", max_attempts=2))
+        await db.claim_run_job("w1")
+        await make_stale(db, "r1")
+
+        reclaimed = await db.claim_run_job("w2", lock_grace_seconds=60)
+        assert reclaimed is not None
+        assert reclaimed["attempt"] == 2
+
+        await make_stale(db, "r1")
+        assert await db.claim_run_job("w3", lock_grace_seconds=60) is None
+
+    @pytest.mark.asyncio
+    async def test_fenced_zombie_write_discarded(self, db):
+        await db.enqueue_run_job(make_job("r1", max_attempts=2))
+        first = await db.claim_run_job("w1")
+        await make_stale(db, "r1")
+        second = await db.claim_run_job("w2")
+
+        assert not await db.complete_run_job("r1", "w1", first["attempt"], "completed")
+        assert await db.complete_run_job("r1", "w2", second["attempt"], "completed")
+
+    @pytest.mark.asyncio
+    async def test_retry_backoff_then_fail(self, db):
+        await db.enqueue_run_job(make_job("r1", max_attempts=2))
+        claimed = await db.claim_run_job("w1")
+        assert await db.retry_or_fail_run_job("r1", "w1", claimed["attempt"], "boom", 60) == "queued"
+        assert await db.claim_run_job("w1") is None  # backoff
+
+        table = await db._get_table(table_type="run_queue")
+        from sqlalchemy import update
+
+        async with db.async_session_factory() as sess:
+            async with sess.begin():
+                await sess.execute(
+                    update(table).where(table.c.id == "r1").values(available_at=table.c.available_at - 120)
+                )
+
+        claimed = await db.claim_run_job("w1")
+        assert await db.retry_or_fail_run_job("r1", "w1", claimed["attempt"], "boom") == "failed"
+
+    @pytest.mark.asyncio
+    async def test_sweep_heartbeat_race(self, db):
+        await db.enqueue_run_job(make_job("r1"))
+        await db.claim_run_job("w1")
+        await make_stale(db, "r1")
+
+        swept = await db.sweep_exhausted_run_jobs(lock_grace_seconds=60)
+        assert [j["id"] for j in swept] == ["r1"]
+
+        # A heartbeat between sweep and write must win
+        assert await db.heartbeat_run_jobs("w1", ["r1"]) == 1
+        assert not await db.fail_swept_run_job("r1", lock_grace_seconds=60)
+
+        await make_stale(db, "r1")
+        assert await db.fail_swept_run_job("r1", lock_grace_seconds=60, error="worker lost")
+        assert (await db.get_run_job("r1"))["status"] == "failed"
+
+    @pytest.mark.asyncio
+    async def test_cancel_requeue_stats_cleanup(self, db):
+        # cancel tombstones queued only
+        await db.enqueue_run_job(make_job("r1"))
+        assert await db.cancel_run_job("r1")
+        assert not await db.cancel_run_job("r1")
+
+        # requeue grants one more attempt
+        assert await db.requeue_run_job("r1")
+        job = await db.get_run_job("r1")
+        assert job["status"] == "queued"
+        assert job["max_attempts"] == job["attempt"] + 1
+
+        # stats
+        stats = await db.run_queue_stats()
+        assert stats["counts"]["queued"] == 1
+
+        # cleanup removes old terminal jobs only
+        claimed = await db.claim_run_job("w1")
+        await db.complete_run_job("r1", "w1", claimed["attempt"], "completed")
+        table = await db._get_table(table_type="run_queue")
+        from sqlalchemy import update
+
+        async with db.async_session_factory() as sess:
+            async with sess.begin():
+                await sess.execute(
+                    update(table).where(table.c.id == "r1").values(completed_at=table.c.completed_at - 100000)
+                )
+        assert await db.cleanup_run_jobs(older_than_seconds=86400) == 1
+        assert await db.get_run_job("r1") is None
