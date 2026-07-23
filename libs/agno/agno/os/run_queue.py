@@ -346,13 +346,18 @@ class RunQueueWorker:
 async def aprepare_queued_agent_run(
     agent: Any, run_id: str, session_id: str, user_id: Optional[str], input: Any
 ) -> None:
-    """Persist the PENDING run row at accept time so pollers find the run
-    immediately, before any worker claims the job."""
+    """Persist the PENDING run row after a successful enqueue so pollers find
+    the run immediately. Idempotent: if a worker already started (and possibly
+    finished) this run between enqueue and this write, the existing row wins -
+    it is never overwritten with PENDING."""
     from agno.agent._session import asave_session
     from agno.agent._storage import aread_or_create_session, update_metadata
     from agno.run.agent import RunOutput
     from agno.run.base import RunStatus
 
+    session = await aread_or_create_session(agent, session_id=session_id, user_id=user_id)
+    if session.get_run(run_id) is not None:
+        return
     run_response = RunOutput(
         run_id=run_id,
         session_id=session_id,
@@ -362,7 +367,6 @@ async def aprepare_queued_agent_run(
         input=input,
         status=RunStatus.pending,
     )
-    session = await aread_or_create_session(agent, session_id=session_id, user_id=user_id)
     update_metadata(agent, session=session)
     session.upsert_run(run=run_response)
     await asave_session(agent, session=session)
