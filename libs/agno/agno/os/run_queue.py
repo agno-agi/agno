@@ -79,7 +79,19 @@ def _apply_coordination(redis: Union[str, RedisCoordination]) -> None:
     else:
         log_debug("Run queue coordination: keeping explicitly configured event stream")
 
-<<<<<<< HEAD
+    # The premise of run_queue.redis is that BOTH transports ride the same
+    # Redis. Wiring only one (the other was custom-configured) can split them
+    # across different instances - cancellation-in on one Redis, events-out on
+    # another. Legitimate for advanced setups, but loud so it is never an
+    # accident.
+    if cancellation_wired != event_stream_wired:
+        skipped = "cancellation manager" if not cancellation_wired else "event stream"
+        log_warning(
+            f"run_queue.redis wired only one transport: the {skipped} keeps its explicitly "
+            "configured backend. If that backend targets a different Redis, cancellation and "
+            "event streaming will operate on different instances - make sure this is intended."
+        )
+
 
 # ---------------------------------------------------------------------------
 # Durable queue: worker
@@ -514,17 +526,3 @@ async def run_queue_lifespan(app: Any, agent_os: Any):
     yield
 
     await worker.stop()
-=======
-    # The premise of run_queue.redis is that BOTH transports ride the same
-    # Redis. Wiring only one (the other was custom-configured) can split them
-    # across different instances - cancellation-in on one Redis, events-out on
-    # another. Legitimate for advanced setups, but loud so it is never an
-    # accident.
-    if cancellation_wired != event_stream_wired:
-        skipped = "cancellation manager" if not cancellation_wired else "event stream"
-        log_warning(
-            f"run_queue.redis wired only one transport: the {skipped} keeps its explicitly "
-            "configured backend. If that backend targets a different Redis, cancellation and "
-            "event streaming will operate on different instances - make sure this is intended."
-        )
->>>>>>> claude/agentos-event-stream
