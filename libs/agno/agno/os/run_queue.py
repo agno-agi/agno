@@ -8,7 +8,7 @@ acceptance, claim/lease, crash recovery) will live here as well.
 from typing import Union
 
 from agno.run.queue import RedisCoordination, RunQueueConfig
-from agno.utils.log import log_debug
+from agno.utils.log import log_debug, log_warning
 
 
 def apply_run_queue_config(config: RunQueueConfig) -> None:
@@ -56,8 +56,10 @@ def _apply_coordination(redis: Union[str, RedisCoordination]) -> None:
     from agno.run.cancellation_management.in_memory_cancellation_manager import InMemoryRunCancellationManager
     from agno.run.cancellation_management.redis_cancellation_manager import RedisRunCancellationManager
 
+    cancellation_wired = False
     if isinstance(get_cancellation_manager(), InMemoryRunCancellationManager):
         set_cancellation_manager(RedisRunCancellationManager(redis_client=sync_client, async_redis_client=async_client))
+        cancellation_wired = True
         log_debug("Run queue coordination: Redis cancellation manager configured")
     else:
         log_debug("Run queue coordination: keeping explicitly configured cancellation manager")
@@ -67,8 +69,23 @@ def _apply_coordination(redis: Union[str, RedisCoordination]) -> None:
     # wins by ordering.
     from agno.os.event_streams import InMemoryEventStream, RedisEventStream, get_event_stream, set_event_stream
 
+    event_stream_wired = False
     if isinstance(get_event_stream(), InMemoryEventStream):
         set_event_stream(RedisEventStream(async_client))
+        event_stream_wired = True
         log_debug("Run queue coordination: Redis event stream configured")
     else:
         log_debug("Run queue coordination: keeping explicitly configured event stream")
+
+    # The premise of run_queue.redis is that BOTH transports ride the same
+    # Redis. Wiring only one (the other was custom-configured) can split them
+    # across different instances - cancellation-in on one Redis, events-out on
+    # another. Legitimate for advanced setups, but loud so it is never an
+    # accident.
+    if cancellation_wired != event_stream_wired:
+        skipped = "cancellation manager" if not cancellation_wired else "event stream"
+        log_warning(
+            f"run_queue.redis wired only one transport: the {skipped} keeps its explicitly "
+            "configured backend. If that backend targets a different Redis, cancellation and "
+            "event streaming will operate on different instances - make sure this is intended."
+        )

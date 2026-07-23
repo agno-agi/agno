@@ -12,9 +12,12 @@ Follows the same pluggable pattern as run cancellation management
 ``set_event_stream()`` to replace the global instance.
 
 Contract notes for implementations:
-- ``event_index`` is the client-facing monotonic per-run index. Clients resume
-  with ``last_event_index``; any backend-internal ids (e.g. Redis stream ids)
-  must stay internal.
+- ``event_index`` is the client-facing per-run index: strictly increasing, but
+  NOT guaranteed gapless - a producer crashing between index assignment and
+  event publication may leave a permanent gap. Clients resume with
+  ``last_event_index`` and must tolerate gaps; termination is signalled by run
+  status, never by reaching a particular index. Backend-internal ids (e.g.
+  Redis stream ids) must stay internal.
 - ``tail()`` owns the subscribe/replay race: it must not miss events that
   arrive between the caller's replay and the start of tailing, and must not
   require callers to coordinate locks.
