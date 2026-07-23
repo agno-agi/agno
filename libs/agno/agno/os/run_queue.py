@@ -310,6 +310,51 @@ class RunQueueWorker:
             await self.store.fail_swept_run_job(job["id"], self.config.lock_grace_seconds, error)
             log_warning(f"Run queue: swept job {job['id']} to failed ({error})")
 
+    async def _execute_streaming(self, component: Any, job: Dict[str, Any]) -> Any:
+        """Execute a queued STREAMING run: iterate the component's stream and
+        publish every event to the event stream (buffer + live tails on any
+        replica). Returns the final RunOutput like the non-stream path.
+
+        On a retry attempt (attempt > 1), the previous attempt's events are
+        cleaned up first - a re-execution is a fresh stream, never an append
+        onto a contradicted history.
+        """
+        from agno.os.event_streams import get_event_stream
+        from agno.run.base import RunStatus
+
+        event_stream = get_event_stream()
+        job_id = job["id"]
+        payload = job.get("payload") or {}
+
+        if job.get("attempt", 1) > 1:
+            with contextlib.suppress(Exception):
+                await event_stream.cleanup_run(job_id)
+        await event_stream.register_run(job_id, RunStatus.pending)
+        await event_stream.set_run_status(job_id, RunStatus.running)
+
+        final_output: Any = None
+        try:
+            async for event in component.arun(
+                input=payload.get("input"),
+                session_id=job["session_id"],
+                user_id=job.get("user_id"),
+                run_id=job_id,
+                stream=True,
+                stream_events=payload.get("stream_events", True),
+                yield_run_output=True,
+                **(payload.get("kwargs") or {}),
+            ):
+                if hasattr(event, "status") and hasattr(event, "run_id") and not hasattr(event, "event"):
+                    final_output = event  # the terminal RunOutput
+                    continue
+                with contextlib.suppress(Exception):
+                    await event_stream.add_event(job_id, event)
+        finally:
+            status = getattr(final_output, "status", None) or RunStatus.error
+            with contextlib.suppress(Exception):
+                await asyncio.shield(event_stream.complete_run(job_id, status))
+        return final_output
+
     async def _persist_run_error(self, job: Dict[str, Any], error: str) -> None:
         """Persist a terminal ERROR on the run row so pollers see it, never a
         stuck RUNNING/PENDING. Atomic-first with attempt fencing: a later
@@ -381,19 +426,23 @@ class RunQueueWorker:
             return
 
         payload = job.get("payload") or {}
+        is_stream = bool(payload.get("stream"))
         try:
-            coro = component.arun(
-                input=payload.get("input"),
-                session_id=job["session_id"],
-                user_id=job.get("user_id"),
-                run_id=job_id,
-                stream=False,
-                **(payload.get("kwargs") or {}),
-            )
-            if self.config.timeout_seconds:
-                result = await asyncio.wait_for(coro, timeout=self.config.timeout_seconds)
+            if is_stream:
+                execution = self._execute_streaming(component, job)
             else:
-                result = await coro
+                execution = component.arun(
+                    input=payload.get("input"),
+                    session_id=job["session_id"],
+                    user_id=job.get("user_id"),
+                    run_id=job_id,
+                    stream=False,
+                    **(payload.get("kwargs") or {}),
+                )
+            if self.config.timeout_seconds:
+                result = await asyncio.wait_for(execution, timeout=self.config.timeout_seconds)
+            else:
+                result = await execution
 
             status = getattr(result, "status", None)
             if status == RunStatus.cancelled:

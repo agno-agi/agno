@@ -20,6 +20,12 @@ Try it:
    POST /run-queue/jobs/{id}/requeue     - grant a failed job one more attempt
 5. Resubmit safely with an Idempotency-Key header: duplicate submissions
    return the existing run instead of enqueueing twice.
+6. STREAMING through the queue: add -F "stream=true" to the submission and the
+   response becomes an SSE stream tailing the run's events - while the run
+   itself executes durably on whichever replica's worker claims the job.
+   Disconnect any time: the run completes regardless and the full output is
+   guaranteed via polling; reconnecting replays missed events. Durability
+   attaches to the RUN; the stream is the best-effort live view.
 
 The queue store defaults to the AgentOS db (the Postgres below - zero extra
 infrastructure). To isolate queue load on a dedicated Redis instead:
