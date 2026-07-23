@@ -89,6 +89,12 @@ class RedisEventStream(BaseEventStream):
         # Per-run monotonic timestamp of the last TTL refresh (process-local;
         # a missed refresh from another process only causes an extra EXPIRE)
         self._last_ttl_refresh: Dict[str, float] = {}
+        # Runs registered in this process whose keys must stay alive even when
+        # the producer is silent (long tool calls produce no events). A single
+        # background task refreshes their TTLs periodically and exits when no
+        # runs remain active.
+        self._active_runs: set = set()
+        self._refresher_task: Optional["asyncio.Task"] = None
 
     # ------------------------------------------------------------------
     # Keys — per-attempt stream keys; attempt is 1 until checkpoint resume lands
@@ -110,6 +116,8 @@ class RedisEventStream(BaseEventStream):
     async def register_run(self, run_id: str, status: RunStatus = RunStatus.pending) -> None:
         # NX keeps registration idempotent: a reconnect must not reset state
         await self._redis.set(self._status_key(run_id), status.value, nx=True, ex=self._ttl)
+        self._active_runs.add(run_id)
+        self._ensure_refresher()
 
     async def set_run_status(self, run_id: str, status: RunStatus) -> None:
         await self._redis.set(self._status_key(run_id), status.value, ex=self._ttl)
@@ -123,7 +131,45 @@ class RedisEventStream(BaseEventStream):
         except ValueError:
             return None
 
+    def _ensure_refresher(self) -> None:
+        if self._refresher_task is None or self._refresher_task.done():
+            self._refresher_task = asyncio.get_running_loop().create_task(self._refresh_active_runs())
+
+    async def _refresh_active_runs(self) -> None:
+        """Keep keys of active runs alive independent of write activity.
+
+        A quiet run (a long tool call producing no events for longer than the
+        TTL) would otherwise lose its status/stream/counter keys mid-run,
+        breaking /resume and resetting the counter. Exits when no runs remain
+        active in this process; a crashed process stops refreshing and the
+        keys expire per TTL, which is the intended cleanup.
+        """
+        interval = max(1.0, self._ttl / _TTL_REFRESH_FRACTION)
+        while self._active_runs:
+            await asyncio.sleep(interval)
+            for run_id in list(self._active_runs):
+                try:
+                    pipe = self._redis.pipeline()
+                    pipe.expire(self._stream_key(run_id), self._ttl)
+                    pipe.expire(self._status_key(run_id), self._ttl)
+                    pipe.expire(self._counter_key(run_id), self._ttl)
+                    await pipe.execute()
+                except Exception:
+                    pass
+
+    async def aclose(self) -> None:
+        """Stop the refresher task (tests / graceful shutdown)."""
+        self._active_runs.clear()
+        if self._refresher_task is not None:
+            self._refresher_task.cancel()
+            try:
+                await self._refresher_task
+            except (asyncio.CancelledError, Exception):
+                pass
+            self._refresher_task = None
+
     async def complete_run(self, run_id: str, status: RunStatus) -> None:
+        self._active_runs.discard(run_id)
         # Status first, then the sentinel: a tail woken by the sentinel must
         # observe the terminal status.
         pipe = self._redis.pipeline()
@@ -139,6 +185,7 @@ class RedisEventStream(BaseEventStream):
 
     async def cleanup_run(self, run_id: str) -> None:
         self._last_ttl_refresh.pop(run_id, None)
+        self._active_runs.discard(run_id)
         await self._redis.delete(
             self._stream_key(run_id),
             self._status_key(run_id),
