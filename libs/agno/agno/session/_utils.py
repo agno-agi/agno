@@ -38,9 +38,7 @@ def resolve_run_index(
         return None
 
     for idx, existing in enumerate(runs):
-        existing_id = (
-            existing.get("run_id") if isinstance(existing, dict) else getattr(existing, "run_id", None)
-        )
+        existing_id = existing.get("run_id") if isinstance(existing, dict) else getattr(existing, "run_id", None)
         if existing_id == target_id:
             return idx
     return None

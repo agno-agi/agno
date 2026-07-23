@@ -14,7 +14,7 @@ These tests use mocks so we don't need a real GCS bucket.
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -104,6 +104,7 @@ class TestReadJsonFileGenericErrorPropagates:
         blob.download_as_bytes.return_value = b"not valid json {"
 
         import json as _json
+
         with pytest.raises(_json.JSONDecodeError):
             db._read_json_file("sessions", create_table_if_not_found=False)
 

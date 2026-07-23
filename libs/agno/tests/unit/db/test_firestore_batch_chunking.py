@@ -16,16 +16,13 @@ from unittest.mock import MagicMock
 
 import pytest
 
-
 try:
     from agno.db.firestore.firestore import FIRESTORE_BATCH_LIMIT, FirestoreDb
 except ImportError:
     FirestoreDb = None  # type: ignore[misc,assignment]
 
 
-pytestmark = pytest.mark.skipif(
-    FirestoreDb is None, reason="google-cloud-firestore not installed"
-)
+pytestmark = pytest.mark.skipif(FirestoreDb is None, reason="google-cloud-firestore not installed")
 
 
 def _make_db_with_mock_client():
@@ -40,8 +37,7 @@ def _make_db_with_mock_client():
 class TestConstantExists:
     def test_firestore_batch_limit_is_500(self):
         assert FIRESTORE_BATCH_LIMIT == 500, (
-            "Firestore's hard limit per batch commit is 500 ops; that "
-            "constant must not drift"
+            "Firestore's hard limit per batch commit is 500 ops; that constant must not drift"
         )
 
 

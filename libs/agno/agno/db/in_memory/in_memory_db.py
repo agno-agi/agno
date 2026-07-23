@@ -393,9 +393,7 @@ class InMemoryDb(BaseDb):
                     pairs.append((session, run))
         return pairs
 
-    def get_run(
-        self, run_id: str, deserialize: Optional[bool] = True
-    ) -> Optional[Union[Any, Dict[str, Any]]]:
+    def get_run(self, run_id: str, deserialize: Optional[bool] = True) -> Optional[Union[Any, Dict[str, Any]]]:
         """Read a single run from an in-memory session."""
         from agno.db.utils import deserialize_run, get_run_type
 
@@ -427,9 +425,8 @@ class InMemoryDb(BaseDb):
         deserialize: Optional[bool] = True,
     ) -> Union[List[Any], Tuple[List[Dict[str, Any]], int]]:
         """Read runs across in-memory sessions with the same filters as SQL adapters."""
-        from agno.run.base import RunStatus
-
         from agno.db.utils import deserialize_run, get_run_type
+        from agno.run.base import RunStatus
 
         try:
             rows: List[Dict[str, Any]] = []

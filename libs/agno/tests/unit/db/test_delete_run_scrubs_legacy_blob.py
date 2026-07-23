@@ -92,9 +92,7 @@ class TestJsonDbDeleteRunScrubsLegacyBlob:
 
         sess = db.get_session(session_id="s1", deserialize=False)
         run_ids = [r["run_id"] for r in sess.get("runs") or []]
-        assert "r1" not in run_ids, (
-            f"deleted r1 resurrected via legacy blob on read: got {run_ids}"
-        )
+        assert "r1" not in run_ids, f"deleted r1 resurrected via legacy blob on read: got {run_ids}"
         assert run_ids == ["r0", "r2"]
 
     def test_delete_runs_bulk_removes_from_both_surfaces(self, json_db_partially_migrated):

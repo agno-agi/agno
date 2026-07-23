@@ -54,6 +54,7 @@ def batch_write_with_retry(
                 "Data loss will occur if we don't propagate this."
             )
 
+
 # -- Serialization utils --
 
 

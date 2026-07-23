@@ -25,19 +25,20 @@ from agno.db.schemas.culture import CulturalKnowledge
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
 from agno.db.schemas.memory import UserMemory
+from agno.db.schemas.service_accounts import (
+    resolve_service_account_sort_column,
+    validate_service_account_update,
+)
 from agno.db.utils import (
     build_single_run_row,
     deserialize_run,
     deserialize_session,
     deserialize_sessions,
     json_serializer,
-    merge_runs_table_with_legacy_blob,    validate_pagination,
+    merge_runs_table_with_legacy_blob,
+    validate_pagination,
 )
 from agno.run.agent import RunOutput
-from agno.db.schemas.service_accounts import (
-    resolve_service_account_sort_column,
-    validate_service_account_update,
-)
 from agno.run.base import RunStatus
 from agno.run.team import TeamRunOutput
 from agno.run.workflow import WorkflowRunOutput

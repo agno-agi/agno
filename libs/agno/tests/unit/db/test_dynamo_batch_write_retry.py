@@ -17,16 +17,13 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-
 try:
     from agno.db.dynamo.utils import batch_write_with_retry
 except ImportError:
     batch_write_with_retry = None  # type: ignore[assignment]
 
 
-pytestmark = pytest.mark.skipif(
-    batch_write_with_retry is None, reason="boto3 not installed"
-)
+pytestmark = pytest.mark.skipif(batch_write_with_retry is None, reason="boto3 not installed")
 
 
 class TestBatchWriteWithRetry:
@@ -34,9 +31,7 @@ class TestBatchWriteWithRetry:
         client = MagicMock()
         client.batch_write_item.return_value = {}  # no UnprocessedItems key
 
-        batch_write_with_retry(
-            client, {"table_x": [{"PutRequest": {"Item": {"a": 1}}}]}, max_retries=3
-        )
+        batch_write_with_retry(client, {"table_x": [{"PutRequest": {"Item": {"a": 1}}}]}, max_retries=3)
         assert client.batch_write_item.call_count == 1
 
     def test_empty_unprocessed_items_is_success(self):
@@ -73,9 +68,7 @@ class TestBatchWriteWithRetry:
         """Every retry still returns UnprocessedItems → helper must raise
         rather than silently return."""
         client = MagicMock()
-        client.batch_write_item.return_value = {
-            "UnprocessedItems": {"table_x": [{"PutRequest": {"Item": {"a": 1}}}]}
-        }
+        client.batch_write_item.return_value = {"UnprocessedItems": {"table_x": [{"PutRequest": {"Item": {"a": 1}}}]}}
 
         with patch("agno.db.dynamo.utils.time.sleep"):
             with pytest.raises(RuntimeError, match="UnprocessedItems"):
@@ -94,9 +87,7 @@ class TestBatchWriteWithRetry:
         double up to a 5s cap."""
         client = MagicMock()
         # Always returns unprocessed
-        client.batch_write_item.return_value = {
-            "UnprocessedItems": {"t": [{"PutRequest": {"Item": {"a": 1}}}]}
-        }
+        client.batch_write_item.return_value = {"UnprocessedItems": {"t": [{"PutRequest": {"Item": {"a": 1}}}]}}
 
         with patch("agno.db.dynamo.utils.time.sleep") as sleep_mock:
             with pytest.raises(RuntimeError):

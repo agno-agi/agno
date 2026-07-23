@@ -1214,9 +1214,7 @@ class JsonDb(BaseDb):
 
             # Attach lightweight run info (model + provider) from the runs file.
             if filtered_sessions:
-                session_ids: List[str] = [
-                    str(s["session_id"]) for s in filtered_sessions if s.get("session_id")
-                ]
+                session_ids: List[str] = [str(s["session_id"]) for s in filtered_sessions if s.get("session_id")]
                 runs_by_session = self._get_sessions_runs_data(session_ids)
                 for s in filtered_sessions:
                     sid = s.get("session_id")

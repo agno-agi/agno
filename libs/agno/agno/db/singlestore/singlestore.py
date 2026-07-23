@@ -32,7 +32,8 @@ from agno.db.utils import (
     deserialize_session,
     deserialize_sessions,
     json_serializer,
-    merge_runs_table_with_legacy_blob,    validate_pagination,
+    merge_runs_table_with_legacy_blob,
+    validate_pagination,
 )
 from agno.run.agent import RunOutput
 from agno.run.base import RunStatus

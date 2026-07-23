@@ -30,7 +30,6 @@ import pytest
 from agno.db.base import AsyncBaseDb, BaseDb
 from agno.db.migrations.manager import MigrationManager
 
-
 # ---------------------------------------------------------------------------
 # Static signature checks — no DB drivers required for these
 # ---------------------------------------------------------------------------
@@ -152,11 +151,8 @@ class TestBaseDbContractSatisfied:
     @pytest.mark.parametrize("module_path,class_name,_mode", _ADAPTER_IMPORTS)
     def test_is_concrete_subclass(self, module_path: str, class_name: str, _mode: str):
         cls = _try_import_class(module_path, class_name)
-        assert issubclass(cls, (BaseDb, AsyncBaseDb)), (
-            f"{class_name} must subclass BaseDb or AsyncBaseDb"
-        )
+        assert issubclass(cls, (BaseDb, AsyncBaseDb)), f"{class_name} must subclass BaseDb or AsyncBaseDb"
         # Not abstract: no unimplemented abstract methods
         assert not getattr(cls, "__abstractmethods__", frozenset()), (
-            f"{class_name} still has unimplemented abstract methods: "
-            f"{cls.__abstractmethods__}"
+            f"{class_name} still has unimplemented abstract methods: {cls.__abstractmethods__}"
         )

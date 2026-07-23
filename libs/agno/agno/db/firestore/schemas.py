@@ -80,17 +80,32 @@ RUNS_COLLECTION_SCHEMA = [
     # Firestore requires a composite index for every filter+order combo — without
     # these, queries fail at runtime with FAILED_PRECONDITION or fall back to
     # unindexed scans that scale linearly with collection size.
-    {"key": [("session_id", "ASCENDING"), ("status", "ASCENDING"), ("run_index", "ASCENDING")], "collection_group": False},
-    {"key": [("session_id", "ASCENDING"), ("agent_id", "ASCENDING"), ("run_index", "ASCENDING")], "collection_group": False},
-    {"key": [("session_id", "ASCENDING"), ("team_id", "ASCENDING"), ("run_index", "ASCENDING")], "collection_group": False},
-    {"key": [("session_id", "ASCENDING"), ("workflow_id", "ASCENDING"), ("run_index", "ASCENDING")], "collection_group": False},
+    {
+        "key": [("session_id", "ASCENDING"), ("status", "ASCENDING"), ("run_index", "ASCENDING")],
+        "collection_group": False,
+    },
+    {
+        "key": [("session_id", "ASCENDING"), ("agent_id", "ASCENDING"), ("run_index", "ASCENDING")],
+        "collection_group": False,
+    },
+    {
+        "key": [("session_id", "ASCENDING"), ("team_id", "ASCENDING"), ("run_index", "ASCENDING")],
+        "collection_group": False,
+    },
+    {
+        "key": [("session_id", "ASCENDING"), ("workflow_id", "ASCENDING"), ("run_index", "ASCENDING")],
+        "collection_group": False,
+    },
     {"key": [("user_id", "ASCENDING"), ("created_at", "DESCENDING")], "collection_group": False},
     {"key": [("agent_id", "ASCENDING"), ("created_at", "DESCENDING")], "collection_group": False},
     {"key": [("team_id", "ASCENDING"), ("created_at", "DESCENDING")], "collection_group": False},
     {"key": [("workflow_id", "ASCENDING"), ("created_at", "DESCENDING")], "collection_group": False},
     {"key": [("status", "ASCENDING"), ("created_at", "DESCENDING")], "collection_group": False},
     # Common HITL / background polling: find PENDING/RUNNING runs per user.
-    {"key": [("user_id", "ASCENDING"), ("status", "ASCENDING"), ("created_at", "DESCENDING")], "collection_group": False},
+    {
+        "key": [("user_id", "ASCENDING"), ("status", "ASCENDING"), ("created_at", "DESCENDING")],
+        "collection_group": False,
+    },
 ]
 
 USER_MEMORY_COLLECTION_SCHEMA = [

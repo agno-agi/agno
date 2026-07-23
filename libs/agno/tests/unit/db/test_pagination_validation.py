@@ -160,9 +160,7 @@ class TestSqlAdaptersRejectPageWithoutLimit:
             ("agno.db.singlestore.singlestore", "SingleStoreDb", "get_sessions"),
         ],
     )
-    def test_method_contains_validate_pagination_call(
-        self, module_path: str, class_name: str, method_name: str
-    ):
+    def test_method_contains_validate_pagination_call(self, module_path: str, class_name: str, method_name: str):
         """Structural check: the method source contains the guard. Runs
         without any DB or native drivers — just a source inspection."""
         try:
@@ -170,6 +168,7 @@ class TestSqlAdaptersRejectPageWithoutLimit:
         except ImportError as e:
             pytest.skip(f"driver missing for {class_name}: {e}")
         import inspect
+
         cls = getattr(module, class_name)
         method = getattr(cls, method_name)
         source = inspect.getsource(method)
@@ -187,6 +186,7 @@ class TestPostgresGetRunsPageWithoutLimitRaises:
     def test_raises_against_real_postgres(self):
         try:
             from sqlalchemy import create_engine, text
+
             from agno.db.postgres.postgres import PostgresDb
         except ImportError:
             pytest.skip("psycopg not installed")
@@ -204,8 +204,13 @@ class TestPostgresGetRunsPageWithoutLimitRaises:
             c.commit()
 
         db = PostgresDb(
-            db_engine=engine, db_schema="pagination_test", session_table="sess",
-            memory_table="mem", metrics_table="mtx", eval_table="ev", knowledge_table="kn",
+            db_engine=engine,
+            db_schema="pagination_test",
+            session_table="sess",
+            memory_table="mem",
+            metrics_table="mtx",
+            eval_table="ev",
+            knowledge_table="kn",
         )
         db._get_table("sessions", create_table_if_not_found=True)
         db._get_table("runs", create_table_if_not_found=True)

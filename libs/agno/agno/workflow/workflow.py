@@ -3297,7 +3297,9 @@ class Workflow:
                             )
                             workflow_session.upsert_run(run=workflow_run_response)
                             if self._has_async_db():
-                                await self._apersist_session_and_run(session=workflow_session, run=workflow_run_response)
+                                await self._apersist_session_and_run(
+                                    session=workflow_session, run=workflow_run_response
+                                )
                             else:
                                 self._persist_session_and_run(session=workflow_session, run=workflow_run_response)
 
@@ -3857,7 +3859,9 @@ class Workflow:
                             )
                             workflow_session.upsert_run(run=workflow_run_response)
                             if self._has_async_db():
-                                await self._apersist_session_and_run(session=workflow_session, run=workflow_run_response)
+                                await self._apersist_session_and_run(
+                                    session=workflow_session, run=workflow_run_response
+                                )
                             else:
                                 self._persist_session_and_run(session=workflow_session, run=workflow_run_response)
 
@@ -5037,8 +5041,10 @@ class Workflow:
                     agent_response.parent_run_id = last_run.run_id
                     agent_response.workflow_id = last_run.workflow_id
 
-                # Save the reloaded session (which has the updated run)
-                self.save_session(session=reloaded_session)
+                # v3: save_session only writes the session row; the mutated run
+                # must be re-persisted to the runs table for workflow_agent_run
+                # to survive a reload.
+                self._persist_session_and_run(session=reloaded_session, run=last_run)
 
             else:
                 log_warning("Could not reload session or no runs found after workflow execution")
@@ -5141,8 +5147,10 @@ class Workflow:
                     agent_response.parent_run_id = last_run.run_id
                     agent_response.workflow_id = last_run.workflow_id
 
-                # Save the reloaded session (which has the updated run)
-                self.save_session(session=reloaded_session)
+                # v3: save_session only writes the session row; the mutated run
+                # must be re-persisted to the runs table for workflow_agent_run
+                # to survive a reload.
+                self._persist_session_and_run(session=reloaded_session, run=last_run)
 
                 # Return the last run directly (WRO2 from inner workflow)
                 return last_run
@@ -5442,11 +5450,13 @@ class Workflow:
                     agent_response.parent_run_id = last_run.run_id
                     agent_response.workflow_id = last_run.workflow_id
 
-                # Save the reloaded session (which has the updated run)
+                # v3: save_session only writes the session row; the mutated run
+                # must be re-persisted to the runs table for workflow_agent_run
+                # to survive a reload.
                 if self._has_async_db():
-                    await self.asave_session(session=reloaded_session)
+                    await self._apersist_session_and_run(session=reloaded_session, run=last_run)
                 else:
-                    self.save_session(session=reloaded_session)
+                    self._persist_session_and_run(session=reloaded_session, run=last_run)
 
             else:
                 log_warning("Could not reload session or no runs found after workflow execution")
@@ -5560,11 +5570,13 @@ class Workflow:
                     agent_response.parent_run_id = last_run.run_id
                     agent_response.workflow_id = last_run.workflow_id
 
-                # Save the reloaded session (which has the updated run)
+                # v3: save_session only writes the session row; the mutated run
+                # must be re-persisted to the runs table for workflow_agent_run
+                # to survive a reload.
                 if self._has_async_db():
-                    await self.asave_session(session=reloaded_session)
+                    await self._apersist_session_and_run(session=reloaded_session, run=last_run)
                 else:
-                    self.save_session(session=reloaded_session)
+                    self._persist_session_and_run(session=reloaded_session, run=last_run)
 
                 log_debug(f"Agent decision: workflow_executed={workflow_executed}")
 

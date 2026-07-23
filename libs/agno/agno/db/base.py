@@ -313,8 +313,7 @@ class BaseDb(ABC):
         instead, or simply let the NotImplementedError bubble up.
         """
         raise NotImplementedError(
-            f"{type(self).__name__} does not implement upsert_run yet. "
-            "Use upsert_session() to persist runs inline."
+            f"{type(self).__name__} does not implement upsert_run yet. Use upsert_session() to persist runs inline."
         )
 
     def delete_run(self, run_id: str) -> bool:
@@ -1640,8 +1639,7 @@ class AsyncBaseDb(ABC):
     ) -> None:
         """Async upsert of a single run. Adapters ported to v3 storage override this."""
         raise NotImplementedError(
-            f"{type(self).__name__} does not implement upsert_run yet. "
-            "Use upsert_session() to persist runs inline."
+            f"{type(self).__name__} does not implement upsert_run yet. Use upsert_session() to persist runs inline."
         )
 
     async def delete_run(self, run_id: str) -> bool:

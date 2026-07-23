@@ -30,11 +30,7 @@ RUNS_COLLECTION_SCHEMA = _mod.RUNS_COLLECTION_SCHEMA
 def _composite_keys() -> list[list[tuple[str, str]]]:
     """Return every composite (multi-field) index in the runs schema as a
     list of (field, direction) tuples."""
-    return [
-        idx["key"]
-        for idx in RUNS_COLLECTION_SCHEMA
-        if isinstance(idx.get("key"), list)
-    ]
+    return [idx["key"] for idx in RUNS_COLLECTION_SCHEMA if isinstance(idx.get("key"), list)]
 
 
 def _has_index(composites: list[list[tuple[str, str]]], required: list[tuple[str, str]]) -> bool:
@@ -51,9 +47,7 @@ class TestRunsCompositeIndexes:
         """``get_runs(session_id=..., <scoped>=...)`` needs a 3-field composite."""
         composites = _composite_keys()
         required = [("session_id", "ASCENDING"), (scoped, "ASCENDING"), ("run_index", "ASCENDING")]
-        assert _has_index(composites, required), (
-            f"missing composite index for session_id + {scoped} + run_index"
-        )
+        assert _has_index(composites, required), f"missing composite index for session_id + {scoped} + run_index"
 
     @pytest.mark.parametrize("owner", ["user_id", "agent_id", "team_id", "workflow_id"])
     def test_ownership_created_at_index_present(self, owner: str):

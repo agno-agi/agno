@@ -149,7 +149,9 @@ def test_create_runs_table(postgres_db, mock_session):
     # The runs table declares a FK to sessions — pre-register a dummy sessions
     # Table so _create_table("runs", ...) doesn't try to bootstrap it (which
     # would trigger a chain of mocked-session calls the test isn't set up for).
-    from sqlalchemy import Column as _Col, String as _Str
+    from sqlalchemy import Column as _Col
+    from sqlalchemy import String as _Str
+
     Table(
         postgres_db.session_table_name,
         postgres_db.metadata,

@@ -44,9 +44,7 @@ class TestHappyPath:
         assert resolve_run_index(session_with_two_runs, _run("r0")) == 0
         assert resolve_run_index(session_with_two_runs, _run("r1")) == 1
 
-    def test_returns_index_after_upsert_updates_in_place(
-        self, session_with_two_runs: AgentSession
-    ):
+    def test_returns_index_after_upsert_updates_in_place(self, session_with_two_runs: AgentSession):
         """``upsert_run`` on an existing run_id keeps the same slot — the
         resolved index must still match."""
         updated_r0 = _run("r0")
@@ -62,9 +60,7 @@ class TestReviewerComment3Regressions:
     """The two scenarios that produced silent data corruption under the old
     ``len(runs) - 1`` fallback."""
 
-    def test_none_run_id_returns_none_not_tail_index(
-        self, session_with_two_runs: AgentSession
-    ):
+    def test_none_run_id_returns_none_not_tail_index(self, session_with_two_runs: AgentSession):
         """OLD behavior: ``run_id=None`` skipped the search and returned
         ``len(runs) - 1`` (== 1), the index of a real neighbouring run.
         NEW behavior: returns ``None`` so ``save_run`` writes NULL rather
@@ -75,9 +71,7 @@ class TestReviewerComment3Regressions:
             "which under the old code returned the position of an UNRELATED run."
         )
 
-    def test_orphan_run_id_returns_none_not_tail_index(
-        self, session_with_two_runs: AgentSession
-    ):
+    def test_orphan_run_id_returns_none_not_tail_index(self, session_with_two_runs: AgentSession):
         """OLD behavior: an unknown run_id fell through the loop and
         returned ``len(runs) - 1`` — the position of the last real run.
         NEW behavior: returns ``None`` so the caller bug surfaces cleanly."""

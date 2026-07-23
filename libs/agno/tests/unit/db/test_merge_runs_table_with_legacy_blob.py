@@ -195,6 +195,4 @@ class TestNoDuplicates:
             [_run(rid) for rid in legacy_ids],
         )
         result_ids = [r["run_id"] for r in merged]
-        assert len(result_ids) == len(set(result_ids)), (
-            f"duplicate run_id detected: {result_ids}"
-        )
+        assert len(result_ids) == len(set(result_ids)), f"duplicate run_id detected: {result_ids}"

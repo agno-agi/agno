@@ -27,6 +27,7 @@ SESSION_TABLE_SCHEMA = {
     "updated_at": {"type": BigInteger, "nullable": True},
 }
 
+
 # DESIGN NOTES (PR #8350):
 #
 # * ``session_id`` is a FOREIGN KEY into the sessions table, with ON DELETE
@@ -71,7 +72,6 @@ def _get_run_table_schema(session_table_name: str = "agno_sessions") -> dict[str
         "created_at": {"type": BigInteger, "nullable": False, "index": True},
         "updated_at": {"type": BigInteger, "nullable": True},
     }
-
 
 
 MEMORY_TABLE_SCHEMA = {

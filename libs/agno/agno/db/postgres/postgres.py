@@ -34,6 +34,10 @@ from agno.db.schemas.mcp_oauth import (
     MCP_OAUTH_TRANSACTIONS,
 )
 from agno.db.schemas.memory import UserMemory
+from agno.db.schemas.service_accounts import (
+    resolve_service_account_sort_column,
+    validate_service_account_update,
+)
 from agno.db.utils import (
     build_single_run_row,
     deserialize_run,
@@ -44,10 +48,6 @@ from agno.db.utils import (
     validate_pagination,
 )
 from agno.run.agent import RunOutput
-from agno.db.schemas.service_accounts import (
-    resolve_service_account_sort_column,
-    validate_service_account_update,
-)
 from agno.run.base import RunStatus
 from agno.run.team import TeamRunOutput
 from agno.run.workflow import WorkflowRunOutput

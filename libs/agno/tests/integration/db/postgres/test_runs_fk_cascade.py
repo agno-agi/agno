@@ -22,7 +22,6 @@ from agno.run.agent import RunOutput
 from agno.run.base import RunStatus
 from agno.session.agent import AgentSession
 
-
 TEST_SCHEMA = "fk_cascade_test"
 
 
@@ -90,8 +89,11 @@ class TestCascadeDeleteAtDbLayer:
         now = int(time.time())
         db.upsert_session(
             AgentSession(
-                session_id=session_id, agent_id="a1", user_id="u1",
-                created_at=now, updated_at=now,
+                session_id=session_id,
+                agent_id="a1",
+                user_id="u1",
+                created_at=now,
+                updated_at=now,
             )
         )
         for i in range(n_runs):

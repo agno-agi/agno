@@ -198,9 +198,7 @@ class TestTeamForkSessionPersistsRuns:
         team.initialize_team()
         new_sid = team_fork(team, source_session_id="src", user_id="u1")
 
-        assert _agno_runs_count(db, new_sid) == 3, (
-            "team fork must persist each inherited run to the runs table"
-        )
+        assert _agno_runs_count(db, new_sid) == 3, "team fork must persist each inherited run to the runs table"
         forked = db.get_session(session_id=new_sid, deserialize=False)
         assert forked is not None
         assert len(forked.get("runs") or []) == 3

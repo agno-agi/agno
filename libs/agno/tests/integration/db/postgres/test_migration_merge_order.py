@@ -33,7 +33,6 @@ from agno.db.migrations.versions import v3_0_0
 from agno.db.postgres.postgres import PostgresDb
 from agno.db.utils import merge_runs_table_with_legacy_blob
 
-
 SESSION_ID = "merge-order-e2e"
 USER_ID = "e2e-user"
 AGENT_ID = "e2e-agent"
@@ -93,12 +92,7 @@ def _seed_v2_session(postgres_db_real: PostgresDb, run_ids: List[str]) -> None:
     # The current schema is v3 (no `runs` column). Re-add it so we can seed a
     # v2.x-shaped row, exactly as an unmigrated production DB would look.
     with postgres_db_real.Session() as sess:
-        sess.execute(
-            text(
-                "ALTER TABLE test_schema.test_sessions "
-                "ADD COLUMN IF NOT EXISTS runs jsonb"
-            )
-        )
+        sess.execute(text("ALTER TABLE test_schema.test_sessions ADD COLUMN IF NOT EXISTS runs jsonb"))
         sess.commit()
 
     now = int(time.time())
@@ -139,10 +133,7 @@ def _delete_runs_from_table(postgres_db_real: PostgresDb, run_ids: List[str]) ->
 def _get_runs_table_ids(postgres_db_real: PostgresDb) -> List[str]:
     with postgres_db_real.Session() as sess:
         rows = sess.execute(
-            text(
-                "SELECT run_id FROM test_schema.agno_runs "
-                "WHERE session_id = :sid ORDER BY run_index"
-            ),
+            text("SELECT run_id FROM test_schema.agno_runs WHERE session_id = :sid ORDER BY run_index"),
             {"sid": SESSION_ID},
         ).fetchall()
     return [r[0] for r in rows]
@@ -167,10 +158,7 @@ def _read_merged_runs(postgres_db_real: PostgresDb) -> List[dict]:
     on the ORM schema surfacing the (legacy) ``runs`` column."""
     with postgres_db_real.Session() as sess:
         table_rows = sess.execute(
-            text(
-                "SELECT run_data FROM test_schema.agno_runs "
-                "WHERE session_id = :sid ORDER BY run_index"
-            ),
+            text("SELECT run_data FROM test_schema.agno_runs WHERE session_id = :sid ORDER BY run_index"),
             {"sid": SESSION_ID},
         ).fetchall()
         table_runs = [r[0] for r in table_rows]
@@ -187,9 +175,7 @@ def _read_merged_runs(postgres_db_real: PostgresDb) -> List[dict]:
 class TestPartialMigrationMergeOrder:
     """Reviewer comment #2 — merge must preserve chronological insertion order."""
 
-    def test_split_odd_migrated_returns_full_chronological_order(
-        self, postgres_db_real: PostgresDb
-    ):
+    def test_split_odd_migrated_returns_full_chronological_order(self, postgres_db_real: PostgresDb):
         """r0 and r2 remain in the runs table; r1 and r3 exist only in the
         legacy blob. get_session() must return [r0, r1, r2, r3]."""
         _seed_v2_session(postgres_db_real, ["r0", "r1", "r2", "r3"])
@@ -231,9 +217,7 @@ class TestPartialMigrationMergeOrder:
         run_ids = [r["run_id"] for r in merged]
         assert run_ids == ["r0", "r1", "r2", "r3"]
 
-    def test_fresh_run_added_post_migration_appears_at_tail(
-        self, postgres_db_real: PostgresDb
-    ):
+    def test_fresh_run_added_post_migration_appears_at_tail(self, postgres_db_real: PostgresDb):
         """A run written directly to the runs table AFTER migration (with no
         counterpart in the legacy blob) is by definition newer than everything
         the blob knew about — it should appear at the tail."""
@@ -264,9 +248,7 @@ class TestPartialMigrationMergeOrder:
         run_ids = [r["run_id"] for r in merged]
         assert run_ids == ["r0", "r1", "r2"]
 
-    def test_conflict_between_table_and_blob_uses_table_at_legacy_position(
-        self, postgres_db_real: PostgresDb
-    ):
+    def test_conflict_between_table_and_blob_uses_table_at_legacy_position(self, postgres_db_real: PostgresDb):
         """When the same run_id exists in both surfaces, the table wins on
         *content* but the legacy blob's position wins on *order*."""
         _seed_v2_session(postgres_db_real, ["r0", "r1", "r2"])

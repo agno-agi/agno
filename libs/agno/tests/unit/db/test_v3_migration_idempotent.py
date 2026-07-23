@@ -84,6 +84,7 @@ class TestJsonDbMigrationIdempotent:
         # follow-up migration where new data arrived from an older client).
         # We do this by editing the sessions file directly.
         import os
+
         sessions_file = os.path.join(db.db_path, "agno_sessions.json")
         with open(sessions_file) as f:
             sessions = json.load(f)

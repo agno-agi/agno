@@ -24,6 +24,7 @@ SESSION_TABLE_SCHEMA = {
     "updated_at": {"type": BigInteger, "nullable": True},
 }
 
+
 # NOTE: SingleStore parses FK syntax but does not enforce constraints at
 # runtime. We declare the FK for schema documentation / introspection parity
 # with the other SQL adapters; runtime referential integrity is application-
@@ -51,7 +52,6 @@ def _get_run_table_schema(session_table_name: str = "agno_sessions") -> dict[str
         "created_at": {"type": BigInteger, "nullable": False, "index": True},
         "updated_at": {"type": BigInteger, "nullable": True},
     }
-
 
 
 USER_MEMORY_TABLE_SCHEMA = {

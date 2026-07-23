@@ -15,11 +15,26 @@ from agno.session.team import TeamSession
 
 
 def create_session_with_runs(shared_db, session_id: str, runs: list[TeamRunOutput | RunOutput]) -> TeamSession:
-    """Helper function to create and store a session with runs in the database"""
+    """Helper function to create and store a session with runs in the database.
+
+    Under v3 storage, ``upsert_session`` writes only the session row and runs
+    are persisted independently via ``upsert_run``. This helper does both so
+    tests exercising the full session + runs shape can rely on the returned
+    session being fully populated.
+    """
     team_session = TeamSession(session_id=session_id, team_id="test_team", runs=runs, created_at=int(time()))
 
-    # Store the session in the database
+    # Store the session row in the database
     shared_db.upsert_session(session=team_session)
+
+    # Persist each run individually (v3 contract)
+    for idx, run in enumerate(runs):
+        shared_db.upsert_run(
+            run=run,
+            session_id=session_id,
+            user_id=team_session.user_id,
+            run_index=idx,
+        )
 
     # Retrieve it back to ensure it's properly persisted
     return shared_db.get_session(session_id=session_id, session_type=SessionType.TEAM)

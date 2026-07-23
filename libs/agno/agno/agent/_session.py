@@ -213,9 +213,7 @@ async def aget_session(
     return None
 
 
-def save_session(
-    agent: Agent, session: Union[AgentSession, TeamSession, WorkflowSession]
-) -> None:
+def save_session(agent: Agent, session: Union[AgentSession, TeamSession, WorkflowSession]) -> None:
     """
     Save the session row to storage.
 
@@ -246,9 +244,7 @@ def save_session(
         log_debug(f"Created or updated AgentSession record: {session.session_id}")
 
 
-async def asave_session(
-    agent: Agent, session: Union[AgentSession, TeamSession, WorkflowSession]
-) -> None:
+async def asave_session(agent: Agent, session: Union[AgentSession, TeamSession, WorkflowSession]) -> None:
     """
     Save the session row to storage.
 

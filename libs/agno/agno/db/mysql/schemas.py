@@ -24,6 +24,7 @@ SESSION_TABLE_SCHEMA = {
     "updated_at": {"type": BigInteger, "nullable": True},
 }
 
+
 # See postgres schemas.py for design notes (FK cascade, member runs).
 def _get_run_table_schema(session_table_name: str = "agno_sessions") -> dict[str, Any]:
     """Runs table schema with ``session_id`` FK → sessions ON DELETE CASCADE."""
@@ -48,7 +49,6 @@ def _get_run_table_schema(session_table_name: str = "agno_sessions") -> dict[str
         "created_at": {"type": BigInteger, "nullable": False, "index": True},
         "updated_at": {"type": BigInteger, "nullable": True},
     }
-
 
 
 USER_MEMORY_TABLE_SCHEMA = {
