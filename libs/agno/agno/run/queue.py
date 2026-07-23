@@ -92,7 +92,11 @@ class RunQueueConfig:
     # Per-run execution timeout enforced by the worker; None disables.
     timeout_seconds: Optional[int] = 3600
     # Stale-lock grace before a crashed worker's jobs are reclaimed. The
-    # worker heartbeat refreshes locks, so this can stay small.
+    # worker heartbeat refreshes locks, so this can stay small. Caveat: the
+    # heartbeat runs on the event loop - a run doing SYNC blocking work (sync
+    # model client / sync tool) that starves the loop past this grace will be
+    # swept as dead and its eventual completion fenced out (reported failed
+    # despite finishing). Keep blocking work in threads, or raise this grace.
     lock_grace_seconds: int = 60
     poll_interval: float = 1.0
 

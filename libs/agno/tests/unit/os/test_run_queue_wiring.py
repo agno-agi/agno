@@ -121,3 +121,16 @@ class TestSyncStoreAdapter:
 
         native = InMemoryRunQueueStore()
         assert resolve_run_queue_store(RunQueueConfig(durable=True), native) is native
+
+    @pytest.mark.asyncio
+    async def test_durable_with_nonconforming_store_hard_fails(self):
+        """durable=True is a durability promise: a db that cannot honor it must
+        raise at startup, never silently degrade to an in-memory queue."""
+        from agno.os.run_queue import resolve_run_queue_store
+        from agno.run.queue import RunQueueConfig
+
+        class NotAQueueStore:
+            pass
+
+        with pytest.raises(ValueError, match="durable"):
+            resolve_run_queue_store(RunQueueConfig(durable=True), NotAQueueStore())
