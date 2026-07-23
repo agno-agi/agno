@@ -271,3 +271,19 @@ class PathSecurityError(AgnoError):
         super().__init__(message, status_code=400)
         self.type = "path_security_error"
         self.error_id = "path_security_error"
+
+
+class RunNotFoundError(RuntimeError):
+    """Raised when a run_id cannot be found in the session.
+
+    Subclasses ``RuntimeError`` so existing SDK callers that catch ``RuntimeError``
+    keep working; the OS layer maps it to HTTP 404.
+    """
+
+
+class RunNotContinuableError(ValueError):
+    """Raised when a run cannot be continued from its current state (e.g. cancelled).
+
+    Subclasses ``ValueError`` so existing SDK callers that catch ``ValueError``
+    keep working; the OS layer maps it to HTTP 409.
+    """

@@ -19,6 +19,7 @@ from agno.models.fallback import (
     call_model_with_fallback,
     get_fallback_models,
 )
+from agno.models.message import Message
 from agno.models.openai.chat import OpenAIChat
 from agno.models.response import ModelResponse, ModelResponseEvent
 
@@ -234,6 +235,46 @@ class TestCallModelWithFallback:
                     result = call_model_with_fallback(primary, config, messages=[])
                     assert result.content == "second-ok"
 
+    def test_fallback_response_synced_to_messages(self):
+        """The assistant message the fallback appends lands in the caller's messages list."""
+        primary = _make_model("primary")
+        fallback = _make_model("fallback")
+        config = FallbackConfig(on_error=[fallback])
+        messages = [Message(role="user", content="hi")]
+
+        def _fallback_response(messages, **kwargs):
+            messages.append(Message(role="assistant", content="fallback-reply"))
+            return ModelResponse(content="fallback-reply")
+
+        with patch.object(primary, "response", side_effect=ModelProviderError("fail", status_code=500)):
+            with patch.object(fallback, "response", side_effect=_fallback_response):
+                call_model_with_fallback(primary, config, messages=messages)
+
+        assert [m.content for m in messages if m.role == "assistant"] == ["fallback-reply"]
+
+    def test_fallback_strips_temporary_and_does_not_duplicate(self):
+        """Fallback does not see temporary messages, and its reply syncs back exactly once."""
+        primary = _make_model("primary")
+        fallback = _make_model("fallback")
+        config = FallbackConfig(on_error=[fallback])
+        temporary = Message(role="user", content="guidance")
+        temporary.temporary = True
+        messages = [Message(role="user", content="hi"), temporary]
+        seen_by_fallback = {}
+
+        def _fallback_response(messages, **kwargs):
+            seen_by_fallback["count"] = len(messages)
+            messages.append(Message(role="assistant", content="fallback-reply"))
+            return ModelResponse(content="fallback-reply")
+
+        with patch.object(primary, "response", side_effect=ModelProviderError("fail", status_code=500)):
+            with patch.object(fallback, "response", side_effect=_fallback_response):
+                call_model_with_fallback(primary, config, messages=messages)
+
+        assert seen_by_fallback["count"] == 1  # temporary message stripped from what the fallback sees
+        assert sum(1 for m in messages if m.content == "fallback-reply") == 1
+        assert any(getattr(m, "temporary", False) for m in messages)  # temporary preserved in caller's list
+
     def test_fallback_receives_same_kwargs(self):
         """Verify fallback model gets the same messages/tools/etc as the primary."""
         primary = _make_model("primary")
@@ -301,6 +342,26 @@ class TestAsyncCallModelWithFallback:
                 with pytest.raises(ModelProviderError, match="primary fail"):
                     await acall_model_with_fallback(primary, config, messages=[])
 
+    @pytest.mark.asyncio
+    async def test_async_fallback_response_synced_to_messages(self):
+        """Async: the assistant message the fallback appends lands in the caller's messages list."""
+        primary = _make_model("primary")
+        fallback = _make_model("fallback")
+        config = FallbackConfig(on_error=[fallback])
+        messages = [Message(role="user", content="hi")]
+
+        async def _fallback_aresponse(messages, **kwargs):
+            messages.append(Message(role="assistant", content="fallback-reply"))
+            return ModelResponse(content="fallback-reply")
+
+        with patch.object(
+            primary, "aresponse", new_callable=AsyncMock, side_effect=ModelProviderError("fail", status_code=500)
+        ):
+            with patch.object(fallback, "aresponse", side_effect=_fallback_aresponse):
+                await acall_model_with_fallback(primary, config, messages=messages)
+
+        assert [m.content for m in messages if m.role == "assistant"] == ["fallback-reply"]
+
 
 # =============================================================================
 # Group 5: call_model_stream_with_fallback() (sync streaming)
@@ -334,6 +395,23 @@ class TestCallModelStreamWithFallback:
                 assert len(result) == 2
                 assert result[0].event == ModelResponseEvent.fallback_model_activated.value
                 assert result[1].content == "fb-chunk"
+
+    def test_stream_fallback_response_synced_to_messages(self):
+        """Streaming: the assistant message the fallback appends lands in the caller's messages list."""
+        primary = _make_model("primary")
+        fallback = _make_model("fallback")
+        config = FallbackConfig(on_error=[fallback])
+        messages = [Message(role="user", content="hi")]
+
+        def _fallback_stream(messages, **kwargs):
+            yield ModelResponse(content="fb-chunk")
+            messages.append(Message(role="assistant", content="fallback-reply"))
+
+        with patch.object(primary, "response_stream", side_effect=ModelProviderError("fail", status_code=500)):
+            with patch.object(fallback, "response_stream", side_effect=_fallback_stream):
+                list(call_model_stream_with_fallback(primary, config, messages=messages))
+
+        assert [m.content for m in messages if m.role == "assistant"] == ["fallback-reply"]
 
 
 # =============================================================================
@@ -383,6 +461,29 @@ class TestAsyncCallModelStreamWithFallback:
                 assert len(result) == 2
                 assert result[0].event == ModelResponseEvent.fallback_model_activated.value
                 assert result[1].content == "fb-chunk"
+
+    @pytest.mark.asyncio
+    async def test_async_stream_fallback_response_synced_to_messages(self):
+        """Async streaming: the assistant message the fallback appends lands in the caller's messages list."""
+        primary = _make_model("primary")
+        fallback = _make_model("fallback")
+        config = FallbackConfig(on_error=[fallback])
+        messages = [Message(role="user", content="hi")]
+
+        async def mock_primary_stream(**kwargs):
+            raise ModelProviderError("fail", status_code=500)
+            yield  # make it an async generator
+
+        async def mock_fallback_stream(messages, **kwargs):
+            yield ModelResponse(content="fb-chunk")
+            messages.append(Message(role="assistant", content="fallback-reply"))
+
+        with patch.object(primary, "aresponse_stream", side_effect=mock_primary_stream):
+            with patch.object(fallback, "aresponse_stream", side_effect=mock_fallback_stream):
+                async for _ in acall_model_stream_with_fallback(primary, config, messages=messages):
+                    pass
+
+        assert [m.content for m in messages if m.role == "assistant"] == ["fallback-reply"]
 
 
 # =============================================================================
