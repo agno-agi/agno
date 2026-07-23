@@ -312,11 +312,25 @@ class RunQueueWorker:
 
     async def _persist_run_error(self, job: Dict[str, Any], error: str) -> None:
         """Persist a terminal ERROR on the run row so pollers see it, never a
-        stuck RUNNING/PENDING."""
+        stuck RUNNING/PENDING. Atomic-first with attempt fencing: a later
+        attempt's write owns the row; this (possibly stale) writer is fenced
+        out by the stored queue_attempt."""
         component = self.resolve_component(job["component_type"], job["component_id"])
         if component is None:
             return
         from agno.run.base import RunStatus
+        from agno.run.status_persist import apersist_run_status
+
+        if await apersist_run_status(
+            component,
+            job["component_type"],
+            session_id=job["session_id"],
+            run_id=job["id"],
+            fields={"status": RunStatus.error.value},
+            user_id=job.get("user_id"),
+            expected_attempt=job.get("attempt"),
+        ):
+            return
 
         component_type = job["component_type"]
         if component_type == "agent":

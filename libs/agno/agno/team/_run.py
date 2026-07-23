@@ -74,6 +74,7 @@ from agno.run.cancel import (
 )
 from agno.run.concurrency import SSE_KEEPALIVE_INTERVAL_SECONDS, background_run_slot
 from agno.run.messages import RunMessages
+from agno.run.status_persist import apersist_run_transition
 from agno.run.team import (
     RunCancelledEvent as TeamRunCancelledEvent,
 )
@@ -3403,13 +3404,10 @@ async def _arun_background(
     async def _background_task() -> None:
         try:
             async with background_run_slot(run_id=run_response.run_id):
-                # Transition to RUNNING. Re-read the session so this save
-                # does not clobber concurrent background runs on the same
-                # session with the stale submit-time snapshot.
+                # Transition to RUNNING via the atomic helper (row-locked
+                # patch when the DB supports it, fresh-read + save otherwise).
                 run_response.status = RunStatus.running
-                fresh_session = await _aread_or_create_session(team, session_id=session_id, user_id=user_id)
-                fresh_session.upsert_run(run_response=run_response)
-                await asave_session(team, session=fresh_session)
+                await apersist_run_transition(team, "team", session_id, run_response, user_id=user_id)
 
                 # Execute the actual run — _arun handles everything including
                 # session persistence and cleanup
@@ -3433,9 +3431,7 @@ async def _arun_background(
             log_info(f"Background run {run_response.run_id} cancelled while waiting for a slot")
             try:
                 run_response.status = RunStatus.cancelled
-                fresh_session = await _aread_or_create_session(team, session_id=session_id, user_id=user_id)
-                fresh_session.upsert_run(run_response=run_response)
-                await asave_session(team, session=fresh_session)
+                await apersist_run_transition(team, "team", session_id, run_response, user_id=user_id)
             except Exception as e:
                 log_error(f"Failed to persist cancelled state for background run {run_response.run_id}: {str(e)}")
             await acleanup_run(run_context.run_id)
@@ -3446,9 +3442,7 @@ async def _arun_background(
             # properly; this is the non-durable path's honest fallback.
             with contextlib.suppress(Exception):
                 run_response.status = RunStatus.cancelled
-                fresh_session = await _aread_or_create_session(team, session_id=session_id, user_id=user_id)
-                fresh_session.upsert_run(run_response=run_response)
-                await asave_session(team, session=fresh_session)
+                await apersist_run_transition(team, "team", session_id, run_response, user_id=user_id)
             raise
         except Exception as e:
             log_error(f"Background run {run_response.run_id} failed: {str(e)}")
@@ -3456,9 +3450,7 @@ async def _arun_background(
             try:
                 run_response.status = RunStatus.error
                 flush_in_flight_messages_on_error_team(run_response, locals().get("run_messages"))
-                fresh_session = await _aread_or_create_session(team, session_id=session_id, user_id=user_id)
-                fresh_session.upsert_run(run_response=run_response)
-                await asave_session(team, session=fresh_session)
+                await apersist_run_transition(team, "team", session_id, run_response, user_id=user_id)
             except Exception as e:
                 log_error(f"Failed to persist error state for background run {run_response.run_id}: {str(e)}")
             # Note: acleanup_run is already called by _arun's finally block
@@ -3536,11 +3528,9 @@ async def _arun_background_stream(
             await slot_cm.__aenter__()
             slot_held = True
 
-            # Transition to RUNNING now that a slot is held
+            # Transition to RUNNING now that a slot is held (atomic helper)
             run_response.status = RunStatus.running
-            fresh_session = await _aread_or_create_session(team, session_id=session_id, user_id=user_id)
-            fresh_session.upsert_run(run_response=run_response)
-            await asave_session(team, session=fresh_session)
+            await apersist_run_transition(team, "team", session_id, run_response, user_id=user_id)
             await event_stream.set_run_status(run_id, RunStatus.running)
 
             async for event in _arun_stream(
@@ -3582,9 +3572,7 @@ async def _arun_background_stream(
             log_info(f"Background stream run {run_id} cancelled while waiting for a slot")
             try:
                 run_response.status = RunStatus.cancelled
-                fresh_session = await _aread_or_create_session(team, session_id=session_id, user_id=user_id)
-                fresh_session.upsert_run(run_response=run_response)
-                await asave_session(team, session=fresh_session)
+                await apersist_run_transition(team, "team", session_id, run_response, user_id=user_id)
             except Exception:
                 log_error(f"Failed to persist cancelled state for background stream run {run_id}", exc_info=True)
             await acleanup_run(run_id)
@@ -3594,9 +3582,7 @@ async def _arun_background_stream(
             try:
                 run_response.status = RunStatus.error
                 flush_in_flight_messages_on_error_team(run_response, locals().get("run_messages"))
-                fresh_session = await _aread_or_create_session(team, session_id=session_id, user_id=user_id)
-                fresh_session.upsert_run(run_response=run_response)
-                await asave_session(team, session=fresh_session)
+                await apersist_run_transition(team, "team", session_id, run_response, user_id=user_id)
             except Exception:
                 log_error(f"Failed to persist error state for background stream run {run_id}", exc_info=True)
 
@@ -7681,12 +7667,10 @@ async def _acontinue_run_background_stream(
             await slot_cm.__aenter__()
             slot_held = True
 
-            # Transition to RUNNING now that a slot is held
+            # Transition to RUNNING now that a slot is held (atomic helper)
             if run_response is not None:
                 run_response.status = RunStatus.running
-                fresh_session = await _aread_or_create_session(team, session_id=session_id, user_id=user_id)
-                fresh_session.upsert_run(run_response=run_response)
-                await asave_session(team, session=fresh_session)
+                await apersist_run_transition(team, "team", session_id, run_response, user_id=user_id)
             await event_stream.set_run_status(_run_id, RunStatus.running)
 
             async for event in _acontinue_run_stream(
@@ -7734,9 +7718,7 @@ async def _acontinue_run_background_stream(
             try:
                 if run_response is not None:
                     run_response.status = RunStatus.cancelled
-                    fresh_session = await _aread_or_create_session(team, session_id=session_id, user_id=user_id)
-                    fresh_session.upsert_run(run_response=run_response)
-                    await asave_session(team, session=fresh_session)
+                    await apersist_run_transition(team, "team", session_id, run_response, user_id=user_id)
             except Exception:
                 log_error(
                     f"Failed to persist cancelled state for background continue-run stream {_run_id}",
@@ -7749,9 +7731,7 @@ async def _acontinue_run_background_stream(
             try:
                 if run_response is not None:
                     run_response.status = RunStatus.error
-                    fresh_session = await _aread_or_create_session(team, session_id=session_id, user_id=user_id)
-                    fresh_session.upsert_run(run_response=run_response)
-                    await asave_session(team, session=fresh_session)
+                    await apersist_run_transition(team, "team", session_id, run_response, user_id=user_id)
             except Exception:
                 log_error(
                     f"Failed to persist error state for background continue-run stream {_run_id}",

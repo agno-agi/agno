@@ -70,6 +70,7 @@ from agno.run.cancel import (
     cancel_run as cancel_run_global,
 )
 from agno.run.concurrency import SSE_KEEPALIVE_INTERVAL_SECONDS, background_run_slot
+from agno.run.status_persist import apersist_run_transition
 from agno.run.team import (
     RunCancelledEvent as TeamRunCancelledEvent,
 )
@@ -4197,24 +4198,12 @@ class Workflow:
             the run stays PENDING while waiting in line and can be cancelled without
             consuming a slot."""
 
-            async def _persist_status_fresh() -> None:
-                # Re-read the session so this save does not clobber concurrent
-                # background runs on the same session with the stale
-                # submit-time snapshot.
-                fresh_session, _ = await self._aload_or_create_session(
-                    session_id=session_id, user_id=user_id, session_state=session_state
-                )
-                fresh_session.upsert_run(run=workflow_run_response)
-                if self._has_async_db():
-                    await self.asave_session(session=fresh_session)
-                else:
-                    self.save_session(session=fresh_session)
-
             try:
                 async with background_run_slot(run_id=workflow_run_response.run_id):
-                    # Update status to RUNNING and save
+                    # Update status to RUNNING and save (atomic helper: row-locked
+                    # patch when the DB supports it, fresh-read + save otherwise)
                     workflow_run_response.status = RunStatus.running
-                    await _persist_status_fresh()
+                    await apersist_run_transition(self, "workflow", session_id, workflow_run_response, user_id=user_id)
 
                     if self.agent is not None:
                         await self._aexecute_workflow_agent(
@@ -4244,24 +4233,27 @@ class Workflow:
                 # so persist CANCELLED and deregister the run here.
                 log_info(f"Background run {workflow_run_response.run_id} cancelled while waiting for a slot")
                 workflow_run_response.status = RunStatus.cancelled
-                await _persist_status_fresh()
+                await apersist_run_transition(self, "workflow", session_id, workflow_run_response, user_id=user_id)
                 await acleanup_run(run_id)
             except asyncio.CancelledError:
                 # Task-level shutdown, not run-cancellation: best-effort persist
                 # so pollers are not left with a stuck PENDING/RUNNING run
                 with contextlib.suppress(Exception):
                     workflow_run_response.status = RunStatus.cancelled
-                    workflow_session.upsert_run(run=workflow_run_response)
-                    if self._has_async_db():
-                        await self.asave_session(session=workflow_session)
-                    else:
-                        self.save_session(session=workflow_session)
+                    await apersist_run_transition(self, "workflow", session_id, workflow_run_response, user_id=user_id)
                 raise
             except Exception as e:
                 logger.exception("Background workflow execution failed")
                 workflow_run_response.status = RunStatus.error
                 workflow_run_response.content = f"Background execution failed: {str(e)}"
-                await _persist_status_fresh()
+                await apersist_run_transition(
+                    self,
+                    "workflow",
+                    session_id,
+                    workflow_run_response,
+                    user_id=user_id,
+                    extra_fields={"content": workflow_run_response.content},
+                )
 
         # Create and start asyncio task
         loop = asyncio.get_running_loop()
@@ -4392,11 +4384,7 @@ class Workflow:
                 # branches, so pollers never see an executing run as PENDING
                 # (which now specifically means "queued for a slot")
                 workflow_run_response.status = RunStatus.running
-                workflow_session.upsert_run(run=workflow_run_response)
-                if self._has_async_db():
-                    await self.asave_session(session=workflow_session)
-                else:
-                    self.save_session(session=workflow_session)
+                await apersist_run_transition(self, "workflow", session_id, workflow_run_response, user_id=user_id)
 
                 if self.agent is not None:
                     result = self._aexecute_workflow_agent(
@@ -4472,20 +4460,20 @@ class Workflow:
                 # persist CANCELLED and deregister the run here.
                 log_info(f"Background stream run {run_context.run_id} cancelled while waiting for a slot")
                 workflow_run_response.status = RunStatus.cancelled
-                workflow_session.upsert_run(run=workflow_run_response)
-                if self._has_async_db():
-                    await self.asave_session(session=workflow_session)
-                else:
-                    self.save_session(session=workflow_session)
+                await apersist_run_transition(self, "workflow", session_id, workflow_run_response, user_id=user_id)
                 await acleanup_run(run_context.run_id)
             except Exception as e:
                 logger.exception("Background streaming workflow execution failed")
                 workflow_run_response.status = RunStatus.error
                 workflow_run_response.content = f"Background streaming execution failed: {str(e)}"
-                if self._has_async_db():
-                    await self.asave_session(session=workflow_session)
-                else:
-                    self.save_session(session=workflow_session)
+                await apersist_run_transition(
+                    self,
+                    "workflow",
+                    session_id,
+                    workflow_run_response,
+                    user_id=user_id,
+                    extra_fields={"content": workflow_run_response.content},
+                )
             finally:
                 if slot_held:
                     await slot_cm.__aexit__(None, None, None)
@@ -4629,13 +4617,9 @@ class Workflow:
                 await slot_cm.__aenter__()
                 slot_held = True
 
-                # Transition to RUNNING now that a slot is held
+                # Transition to RUNNING now that a slot is held (atomic helper)
                 workflow_run_response.status = RunStatus.running
-                workflow_session.upsert_run(run=workflow_run_response)
-                if self._has_async_db():
-                    await self.asave_session(session=workflow_session)
-                else:
-                    self.save_session(session=workflow_session)
+                await apersist_run_transition(self, "workflow", session_id, workflow_run_response, user_id=user_id)
                 event_buffer.set_run_status(run_id, RunStatus.running)
 
                 if self.agent is not None:
@@ -4713,11 +4697,7 @@ class Workflow:
                 log_info(f"Background stream workflow run {run_id} cancelled while waiting for a slot")
                 try:
                     workflow_run_response.status = RunStatus.cancelled
-                    workflow_session.upsert_run(run=workflow_run_response)
-                    if self._has_async_db():
-                        await self.asave_session(session=workflow_session)
-                    else:
-                        self.save_session(session=workflow_session)
+                    await apersist_run_transition(self, "workflow", session_id, workflow_run_response, user_id=user_id)
                 except Exception:
                     log_error(
                         f"Failed to persist cancelled state for background stream workflow run {run_id}", exc_info=True
@@ -4728,11 +4708,7 @@ class Workflow:
                 # Persist ERROR status
                 try:
                     workflow_run_response.status = RunStatus.error
-                    workflow_session.upsert_run(run=workflow_run_response)
-                    if self._has_async_db():
-                        await self.asave_session(session=workflow_session)
-                    else:
-                        self.save_session(session=workflow_session)
+                    await apersist_run_transition(self, "workflow", session_id, workflow_run_response, user_id=user_id)
                 except Exception:
                     log_error(
                         f"Failed to persist error state for background stream workflow run {run_id}", exc_info=True

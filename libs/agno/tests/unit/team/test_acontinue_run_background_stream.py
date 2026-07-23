@@ -149,6 +149,9 @@ class TestAcontinueRunBackgroundStream:
         from agno.team._run import _acontinue_run_background_stream
 
         team = MagicMock()
+        # No DB on the mock: apersist_run_transition takes its fallback path
+        # (fresh-read + asave_session), which this test asserts on.
+        team.db = None
         run_context = MagicMock()
         run_response = MagicMock()
         run_response.run_id = "r-1"
