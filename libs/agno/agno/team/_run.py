@@ -4428,6 +4428,59 @@ def _build_team_cancel_terminal_events(
 # ---------------------------------------------------------------------------
 
 
+def _iter_member_runs_for_team_run(session: TeamSession, team_run_id: Optional[str]):
+    """Yield entries in session.runs that belong to the given team run.
+
+    Pre-3.0 stored member runs flat in the runs blob alongside the team run;
+    v3's runs table preserves that shape by writing each member run as its
+    own row. Delegation tools push member RunOutputs into ``session.runs``
+    with ``parent_run_id`` set to the parent team run (see
+    ``_default_tools.py``), so we identify them by parent link.
+
+    Yields (index_in_session_runs, member_run).
+    """
+    if not team_run_id or not session.runs:
+        return
+    for idx, entry in enumerate(session.runs):
+        parent_id = getattr(entry, "parent_run_id", None)
+        if parent_id == team_run_id:
+            yield idx, entry
+
+
+def _persist_member_runs_for_team_run(team: "Team", session: TeamSession, team_run_id: Optional[str]) -> None:
+    from agno.team._session import save_run
+
+    for idx, member_run in _iter_member_runs_for_team_run(session, team_run_id):
+        try:
+            save_run(
+                team,
+                run=member_run,
+                session_id=session.session_id,
+                user_id=session.user_id,
+                run_index=idx,
+            )
+        except Exception as e:
+            log_debug(f"Failed to persist member run {getattr(member_run, 'run_id', None)}: {e}")
+
+
+async def _apersist_member_runs_for_team_run(
+    team: "Team", session: TeamSession, team_run_id: Optional[str]
+) -> None:
+    from agno.team._session import asave_run
+
+    for idx, member_run in _iter_member_runs_for_team_run(session, team_run_id):
+        try:
+            await asave_run(
+                team,
+                run=member_run,
+                session_id=session.session_id,
+                user_id=session.user_id,
+                run_index=idx,
+            )
+        except Exception as e:
+            log_debug(f"Failed to persist member run {getattr(member_run, 'run_id', None)}: {e}")
+
+
 def _cleanup_and_store(
     team: "Team",
     run_response: TeamRunOutput,
@@ -4446,6 +4499,13 @@ def _cleanup_and_store(
     # mutated so the caller always sees generated media regardless of store_media.
     storage_copy = copy.copy(run_response)
     scrub_run_output_for_storage(team, storage_copy)
+
+    # v3: when store_member_responses is False (default), never embed nested
+    # member data in the team row. save_session scrubs this later, but save_run
+    # writes storage_copy directly, so gate it here to guarantee both writes
+    # honour the flag regardless of ordering.
+    if not team.store_member_responses:
+        storage_copy.member_responses = []
 
     # Stop the timer for the Run duration
     if run_response.metrics:
@@ -4474,6 +4534,11 @@ def _cleanup_and_store(
     from agno.team._session import save_run
 
     team.save_session(session=session)
+    # v3: member runs are always persisted as separate rows in the runs table
+    # (source of truth for member history after reload). The store_member_responses
+    # flag only controls whether the team row ALSO carries an embedded nested
+    # copy in run_data.member_responses.
+    _persist_member_runs_for_team_run(team=team, session=session, team_run_id=storage_copy.run_id)
     save_run(
         team,
         run=storage_copy,
@@ -4506,6 +4571,13 @@ async def _acleanup_and_store(
     storage_copy = copy.copy(run_response)
     scrub_run_output_for_storage(team, storage_copy)
 
+    # v3: when store_member_responses is False (default), never embed nested
+    # member data in the team row. save_session scrubs this later, but save_run
+    # writes storage_copy directly, so gate it here to guarantee both writes
+    # honour the flag regardless of ordering.
+    if not team.store_member_responses:
+        storage_copy.member_responses = []
+
     # Stop the timer for the Run duration
     if run_response.metrics:
         run_response.metrics.stop_timer()
@@ -4533,6 +4605,11 @@ async def _acleanup_and_store(
     from agno.team._session import asave_run
 
     await team.asave_session(session=session)
+    # v3: member runs are always persisted as separate rows in the runs table
+    # (source of truth for member history after reload). The store_member_responses
+    # flag only controls whether the team row ALSO carries an embedded nested
+    # copy in run_data.member_responses.
+    await _apersist_member_runs_for_team_run(team=team, session=session, team_run_id=storage_copy.run_id)
     await asave_run(
         team,
         run=storage_copy,
@@ -4634,6 +4711,10 @@ def _persist_team_run_in_session(
         storage_copy.member_responses = copy.deepcopy(storage_copy.member_responses)
     scrub_run_output_for_storage(team, storage_copy)
 
+    # Respect store_member_responses on the flat runs-table write path.
+    if not team.store_member_responses:
+        storage_copy.member_responses = []
+
     if run_context is not None and run_context.session_state is not None:
         run_response.session_state = run_context.session_state
         storage_copy.session_state = run_context.session_state
@@ -4652,6 +4733,7 @@ def _persist_team_run_in_session(
     from agno.team._session import save_run
 
     team.save_session(session=session)
+    _persist_member_runs_for_team_run(team=team, session=session, team_run_id=storage_copy.run_id)
     save_run(
         team,
         run=storage_copy,
@@ -4685,6 +4767,10 @@ async def _apersist_team_run_in_session(
         storage_copy.member_responses = copy.deepcopy(storage_copy.member_responses)
     scrub_run_output_for_storage(team, storage_copy)
 
+    # Respect store_member_responses on the flat runs-table write path.
+    if not team.store_member_responses:
+        storage_copy.member_responses = []
+
     if run_context is not None and run_context.session_state is not None:
         run_response.session_state = run_context.session_state
         storage_copy.session_state = run_context.session_state
@@ -4703,6 +4789,7 @@ async def _apersist_team_run_in_session(
     from agno.team._session import asave_run
 
     await team.asave_session(session=session)
+    await _apersist_member_runs_for_team_run(team=team, session=session, team_run_id=storage_copy.run_id)
     await asave_run(
         team,
         run=storage_copy,

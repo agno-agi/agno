@@ -420,19 +420,28 @@ def read_or_create_session(
             created_at=int(time()),
         )
         if agent.introduction is not None:
-            agent_session.upsert_run(
-                RunOutput(
-                    run_id=str(uuid4()),
-                    session_id=session_id,
-                    agent_id=agent.id,
-                    agent_name=agent.name,
-                    user_id=user_id,
-                    content=agent.introduction,
-                    messages=[
-                        Message(role=agent.model.assistant_message_role, content=agent.introduction)  # type: ignore
-                    ],
-                )
+            introduction_run = RunOutput(
+                run_id=str(uuid4()),
+                session_id=session_id,
+                agent_id=agent.id,
+                agent_name=agent.name,
+                user_id=user_id,
+                content=agent.introduction,
+                messages=[
+                    Message(role=agent.model.assistant_message_role, content=agent.introduction)  # type: ignore
+                ],
             )
+            agent_session.upsert_run(introduction_run)
+
+            # v3: session.runs is in-memory; persist the intro to the runs table
+            # so a session reload picks it up (pre-3.0's save_session wrote the
+            # entire runs blob, so this happened for free).
+            if agent.db is not None and agent.team_id is None and agent.workflow_id is None:
+                from agno.agent._session import save_session
+                from agno.agent._storage import upsert_run
+
+                save_session(agent, session=agent_session)
+                upsert_run(agent, run=introduction_run, session_id=session_id, user_id=user_id, run_index=0)
 
     if agent.cache_session:
         agent._cached_session = agent_session
@@ -485,19 +494,34 @@ async def aread_or_create_session(
             created_at=int(time()),
         )
         if agent.introduction is not None:
-            agent_session.upsert_run(
-                RunOutput(
-                    run_id=str(uuid4()),
-                    session_id=session_id,
-                    agent_id=agent.id,
-                    agent_name=agent.name,
-                    user_id=user_id,
-                    content=agent.introduction,
-                    messages=[
-                        Message(role=agent.model.assistant_message_role, content=agent.introduction)  # type: ignore
-                    ],
-                )
+            introduction_run = RunOutput(
+                run_id=str(uuid4()),
+                session_id=session_id,
+                agent_id=agent.id,
+                agent_name=agent.name,
+                user_id=user_id,
+                content=agent.introduction,
+                messages=[
+                    Message(role=agent.model.assistant_message_role, content=agent.introduction)  # type: ignore
+                ],
             )
+            agent_session.upsert_run(introduction_run)
+
+            # v3: session.runs is in-memory; persist the intro to the runs table
+            # so a session reload picks it up (pre-3.0's save_session wrote the
+            # entire runs blob, so this happened for free).
+            if agent.db is not None and agent.team_id is None and agent.workflow_id is None:
+                from agno.agent._session import asave_session, save_session
+                from agno.agent._storage import aupsert_run, upsert_run
+
+                if _init.has_async_db(agent):
+                    await asave_session(agent, session=agent_session)
+                    await aupsert_run(
+                        agent, run=introduction_run, session_id=session_id, user_id=user_id, run_index=0
+                    )
+                else:
+                    save_session(agent, session=agent_session)
+                    upsert_run(agent, run=introduction_run, session_id=session_id, user_id=user_id, run_index=0)
 
     if agent.cache_session:
         agent._cached_session = agent_session

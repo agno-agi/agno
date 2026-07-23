@@ -190,12 +190,7 @@ async def test_run_session_summary(team, shared_db):
 
 @pytest.mark.asyncio
 async def test_member_run_history_persistence(team_with_members, shared_db):
-    """Test that all runs within a team session are persisted in db.
-
-    v3 storage model: session.runs contains one entry per top-level team run.
-    Member runs are nested inside each team run's ``member_responses`` field
-    rather than being stored as separate top-level rows.
-    """
+    """Test that all runs within a member's session are persisted in db."""
     user_id = "john@example.com"
     session_id = "session_123"
 
@@ -208,8 +203,7 @@ async def test_member_run_history_persistence(team_with_members, shared_db):
     )
 
     session = team_with_members.get_session(session_id=session_id)
-    assert len(session.runs) >= 1, "At least one team leader run should be persisted"
-    assert len(session.runs[-1].member_responses) >= 1, "Team run should include at least one member response"
+    assert len(session.runs) >= 2, "Team leader run and atleast 1 member run"
     assert len(session.runs[-1].messages) >= 4
 
     first_user_message_content = session.runs[-1].messages[1].content
@@ -221,8 +215,7 @@ async def test_member_run_history_persistence(team_with_members, shared_db):
     )
 
     session = team_with_members.get_session(session_id=session_id)
-    assert len(session.runs) >= 2, "Two team leader runs should be persisted"
-    assert sum(len(r.member_responses) for r in session.runs) >= 2, "At least two member responses across team runs"
+    assert len(session.runs) >= 4, "2 team leader runs and atleast 2 member runs"
 
     # Third request (to the member directly)
     await team_with_members.members[0].arun(
@@ -232,8 +225,7 @@ async def test_member_run_history_persistence(team_with_members, shared_db):
     )
 
     session = team_with_members.get_session(session_id=session_id)
-    # Two team runs + one direct-to-member agent run = 3 top-level runs
-    assert len(session.runs) >= 3, "Two team runs plus a direct member run should be persisted"
+    assert len(session.runs) >= 4, "3 team leader runs and atleast a member run"
 
 
 @pytest.mark.asyncio
