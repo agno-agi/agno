@@ -1,5 +1,15 @@
 # Test Log
 
+### warp_tools.py
+
+**Status:** PASS
+
+**Description:** New WarpTools toolkit (`libs/agno/agno/tools/warp.py`) for controlling the Warp terminal via the `warp://` URI scheme and generated launch configurations: `open_window`, `open_tab`, `run_commands` (opens a new Warp window running startup commands via a generated launch-config YAML), `open_launch_config`, `open_tab_config`, and an optional `run_agent` backed by the `oz` CLI (disabled by default). The cookbook gates `run_commands` behind `requires_confirmation_tools` following the shell_tools example.
+
+**Result:** Unit tests pass (`pytest libs/agno/tests/unit/tools/test_warp.py` — 32 passed, 1 skipped Windows-only) covering tool registration and `enable_*`/`all` toggles, platform-specific default config dirs, `_open_uri` success/failure/exception paths, URI construction and URL-encoding for windows/tabs/tab configs, launch-config YAML schema (name/windows/tabs/layout/cwd/commands.exec), name resolution and missing-config errors, and `run_agent` (missing `oz`, arg construction, tail truncation, stderr and timeout errors). Live verification on macOS with Warp installed: `run_commands(["echo 'Agno WarpTools works'"], path="~")` opened a real Warp window and executed the command; `ruff check`, `ruff format --check`, and `mypy` (no warp.py errors) pass. Full agent-loop cookbook run not performed because it requires model credentials and interactive confirmation input.
+
+---
+
 ### file_generation_tools.py (generate_code_file)
 
 **Status:** PASS
