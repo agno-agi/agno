@@ -54,7 +54,9 @@ def _get_run_table_schema(session_table_name: str = "agno_sessions") -> dict[str
             "type": String,
             "nullable": False,
             "index": True,
-            "foreign_key": f"sessions.session_id",
+            # Use the concrete table name so the FK reference works uniformly
+            # across adapters (some have a logical-name resolver, some don't).
+            "foreign_key": f"{session_table_name}.session_id",
             "ondelete": "CASCADE",
         },
         "run_type": {"type": String, "nullable": False, "index": True},

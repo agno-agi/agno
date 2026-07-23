@@ -41,7 +41,8 @@ def _get_run_table_schema(session_table_name: str = "agno_sessions") -> dict[str
             "type": String,
             "nullable": False,
             "index": True,
-            "foreign_key": f"sessions.session_id",
+            # Concrete table name (see postgres schemas.py for rationale).
+            "foreign_key": f"{session_table_name}.session_id",
             "ondelete": "CASCADE",
         },
         "run_type": {"type": String, "nullable": False, "index": True},
