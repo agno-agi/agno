@@ -183,6 +183,24 @@ class BaseDb(ABC):
         raise NotImplementedError
 
     # --- Sessions ---
+    #
+    # Referential-integrity contract for ``session_id`` → runs:
+    #
+    # SQL adapters (Postgres, MySQL, SQLite) enforce this at the DB layer
+    # via ``ON DELETE CASCADE`` on ``agno_runs.session_id`` — deleting a
+    # session automatically deletes its runs, atomically and race-free.
+    # SQLite additionally requires ``PRAGMA foreign_keys = ON`` which the
+    # adapter sets on every connection.
+    #
+    # SingleStore parses FK syntax but does NOT enforce it at runtime — the
+    # constraint is emitted for schema documentation only; ``delete_session``
+    # performs an application-level cascade.
+    #
+    # NoSQL adapters (Mongo, Firestore, Redis, DynamoDB, GCS-JSON, SurrealDB)
+    # have no FK primitive; each ``delete_session`` implementation deletes
+    # the session's runs explicitly before/after removing the session doc.
+    # Best-effort — a crash between the two writes can leave orphan runs;
+    # partial-migration cleanup and admin tooling should tolerate this.
     @abstractmethod
     def delete_session(self, session_id: str, user_id: Optional[str] = None) -> bool:
         raise NotImplementedError

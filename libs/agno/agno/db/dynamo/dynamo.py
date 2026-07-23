@@ -12,6 +12,7 @@ from agno.db.dynamo.schemas import get_table_schema_definition
 from agno.db.dynamo.utils import (
     apply_pagination,
     apply_sorting,
+    batch_write_with_retry,
     build_query_filter_expression,
     build_topic_filter_expression,
     calculate_date_metrics,
@@ -337,7 +338,7 @@ class DynamoDb(BaseDb):
         for i in range(0, len(run_ids), DYNAMO_BATCH_SIZE_LIMIT):
             batch = run_ids[i : i + DYNAMO_BATCH_SIZE_LIMIT]
             delete_requests = [{"DeleteRequest": {"Key": {"run_id": {"S": rid}}}} for rid in batch]
-            self.client.batch_write_item(RequestItems={table_name: delete_requests})
+            batch_write_with_retry(self.client, {table_name: delete_requests})
         return len(run_ids)
 
     def cleanup_legacy_runs_field(self, force: bool = False) -> bool:
@@ -491,14 +492,52 @@ class DynamoDb(BaseDb):
             log_error(f"Error reading runs: {str(e)}")
             raise e
 
+    def _scrub_run_ids_from_session_legacy_blob(self, session_id: str, run_ids: set) -> None:
+        """Remove ``run_ids`` from the given session's legacy ``runs`` field.
+
+        Partial-migration hygiene: v3 copied runs into their own table but
+        preserved the session item's ``runs`` attribute as backup. Deleting
+        the run item alone leaves that attribute intact, and the read path's
+        ``merge_runs_table_with_legacy_blob`` resurrects the ghost.
+        """
+        if not run_ids or not session_id:
+            return
+        try:
+            sessions_table = self._get_table("sessions", create_table_if_not_found=False)
+            resp = self.client.get_item(TableName=sessions_table, Key={"session_id": {"S": session_id}})
+            item = resp.get("Item")
+            if not item:
+                return
+            session = deserialize_from_dynamodb_item(item)
+            legacy = session.get("runs")
+            if not isinstance(legacy, list):
+                return
+            kept = [r for r in legacy if not (isinstance(r, dict) and r.get("run_id") in run_ids)]
+            if len(kept) == len(legacy):
+                return
+            session["runs"] = kept
+            self.client.put_item(TableName=sessions_table, Item=serialize_to_dynamo_item(session))
+        except Exception:
+            log_debug("legacy-runs scrub failed; primary delete still succeeded", exc_info=True)
+
     def delete_run(self, run_id: str) -> bool:
         try:
             table_name = self._get_table("runs", create_table_if_not_found=False)
+            # Fetch session_id before deletion so we can scrub the legacy blob.
+            sid: Optional[str] = None
+            try:
+                snap = self.client.get_item(TableName=table_name, Key={"run_id": {"S": run_id}})
+                if snap.get("Item"):
+                    sid = deserialize_from_dynamodb_item(snap["Item"]).get("session_id")
+            except Exception:
+                pass
             self.client.delete_item(
                 TableName=table_name,
                 Key={"run_id": {"S": run_id}},
                 ConditionExpression="attribute_exists(run_id)",
             )
+            if sid:
+                self._scrub_run_ids_from_session_legacy_blob(sid, {run_id})
             return True
         except self.client.exceptions.ConditionalCheckFailedException:
             return False
@@ -513,10 +552,25 @@ class DynamoDb(BaseDb):
             return
         try:
             table_name = self._get_table("runs", create_table_if_not_found=False)
+            # Pre-fetch session_id → run_ids mapping for legacy-blob scrub.
+            runs_by_session: Dict[str, set] = {}
+            for rid in run_ids:
+                try:
+                    snap = self.client.get_item(TableName=table_name, Key={"run_id": {"S": rid}})
+                    if snap.get("Item"):
+                        sid = deserialize_from_dynamodb_item(snap["Item"]).get("session_id")
+                        if sid:
+                            runs_by_session.setdefault(sid, set()).add(rid)
+                except Exception:
+                    pass
+
             for i in range(0, len(run_ids), DYNAMO_BATCH_SIZE_LIMIT):
                 batch = run_ids[i : i + DYNAMO_BATCH_SIZE_LIMIT]
                 delete_requests = [{"DeleteRequest": {"Key": {"run_id": {"S": rid}}}} for rid in batch]
-                self.client.batch_write_item(RequestItems={table_name: delete_requests})
+                batch_write_with_retry(self.client, {table_name: delete_requests})
+
+            for sid, rids in runs_by_session.items():
+                self._scrub_run_ids_from_session_legacy_blob(sid, rids)
         except self.client.exceptions.ResourceNotFoundException:
             return
         except Exception as e:
@@ -598,7 +652,7 @@ class DynamoDb(BaseDb):
                         delete_requests.append({"DeleteRequest": {"Key": {"session_id": {"S": session_id}}}})
 
                     if delete_requests:
-                        self.client.batch_write_item(RequestItems={self.session_table_name: delete_requests})
+                        batch_write_with_retry(self.client, {self.session_table_name: delete_requests})
 
             # Cascade-delete runs for each session
             for session_id in session_ids:
@@ -1128,7 +1182,7 @@ class DynamoDb(BaseDb):
                 for memory_id in batch:
                     delete_requests.append({"DeleteRequest": {"Key": {"memory_id": {"S": memory_id}}}})
 
-                self.client.batch_write_item(RequestItems={self.memory_table_name: delete_requests})
+                batch_write_with_retry(self.client, {self.memory_table_name: delete_requests})
 
         except Exception as e:
             log_error(f"Failed to delete user memories: {str(e)}")
@@ -1541,7 +1595,7 @@ class DynamoDb(BaseDb):
                         delete_requests.append({"DeleteRequest": {"Key": {"memory_id": {"S": memory_id}}}})
 
                 if delete_requests:
-                    self.client.batch_write_item(RequestItems={table_name: delete_requests})
+                    batch_write_with_retry(self.client, {table_name: delete_requests})
 
         except Exception as e:
             from agno.utils.log import log_warning
@@ -2241,7 +2295,7 @@ class DynamoDb(BaseDb):
                 for eval_run_id in batch:
                     delete_requests.append({"DeleteRequest": {"Key": {"run_id": {"S": eval_run_id}}}})
 
-                self.client.batch_write_item(RequestItems={self.eval_table_name: delete_requests})
+                batch_write_with_retry(self.client, {self.eval_table_name: delete_requests})
 
         except Exception as e:
             log_error(f"Failed to delete eval runs: {str(e)}")
@@ -3119,7 +3173,7 @@ class DynamoDb(BaseDb):
                     put_requests.append({"PutRequest": {"Item": item}})
 
                 if put_requests:
-                    self.client.batch_write_item(RequestItems={table_name: put_requests})
+                    batch_write_with_retry(self.client, {table_name: put_requests})
 
             # Update trace with total_spans and error_count using ADD (atomic increment)
             trace_id = spans[0].trace_id

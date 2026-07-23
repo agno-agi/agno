@@ -31,7 +31,8 @@ from agno.db.utils import (
     deserialize_run,
     deserialize_session,
     deserialize_sessions,
-    merge_runs_table_with_legacy_blob,
+    json_serializer,
+    merge_runs_table_with_legacy_blob,    validate_pagination,
 )
 from agno.run.agent import RunOutput
 from agno.run.base import RunStatus
@@ -122,6 +123,10 @@ class SingleStoreDb(BaseDb):
         if _engine is None and db_url is not None:
             _engine = create_engine(
                 db_url,
+                # Match the sibling MySQL/Postgres adapters: use the shared
+                # ``json_serializer`` so datetime/Decimal/etc in JSON columns
+                # don't blow up on insert (default json.dumps chokes on them).
+                json_serializer=json_serializer,
                 connect_args={
                     "charset": "utf8mb4",
                     "ssl": {"ssl_disabled": False, "ssl_ca": None, "ssl_check_hostname": False},
@@ -167,7 +172,10 @@ class SingleStoreDb(BaseDb):
         try:
             # Pass traces_table_name and db_schema for spans table foreign key resolution
             table_schema = get_table_schema_definition(
-                table_type, traces_table_name=self.trace_table_name, db_schema=self.db_schema or "agno"
+                table_type,
+                traces_table_name=self.trace_table_name,
+                db_schema=self.db_schema or "agno",
+                session_table_name=self.session_table_name,
             )
 
             columns: List[Column] = []
@@ -222,11 +230,24 @@ class SingleStoreDb(BaseDb):
         Returns:
             Table: SQLAlchemy Table object
         """
+        # Ensure sessions Table is registered on metadata so the runs FK can resolve.
+        # (SingleStore parses but does not enforce FKs.)
+        if table_type == "runs":
+            fq_sessions = f"{self.db_schema}.{self.session_table_name}" if self.db_schema else self.session_table_name
+            if fq_sessions not in self.metadata.tables:
+                self._get_or_create_table(
+                    table_name=self.session_table_name,
+                    table_type="sessions",
+                    create_table_if_not_found=True,
+                )
         table_ref = f"{self.db_schema}.{table_name}" if self.db_schema else table_name
         try:
             # Pass traces_table_name and db_schema for spans table foreign key resolution
             table_schema = get_table_schema_definition(
-                table_type, traces_table_name=self.trace_table_name, db_schema=self.db_schema or "agno"
+                table_type,
+                traces_table_name=self.trace_table_name,
+                db_schema=self.db_schema or "agno",
+                session_table_name=self.session_table_name,
             ).copy()
 
             columns: List[Column] = []
@@ -248,9 +269,16 @@ class SingleStoreDb(BaseDb):
                     column_kwargs["unique"] = True
                     unique_constraints.append(col_name)
 
-                # Handle foreign key constraint
+                # Handle foreign key constraint. Note: SingleStore parses FK
+                # syntax but does NOT enforce it at runtime — this is
+                # documented adapter behavior. We still emit the constraint
+                # for schema documentation and for any downstream tooling that
+                # introspects the schema.
                 if "foreign_key" in col_config:
-                    column_args.append(ForeignKey(col_config["foreign_key"]))
+                    fk_kwargs: Dict[str, Any] = {}
+                    if "ondelete" in col_config:
+                        fk_kwargs["ondelete"] = col_config["ondelete"]
+                    column_args.append(ForeignKey(col_config["foreign_key"], **fk_kwargs))
 
                 columns.append(Column(*column_args, **column_kwargs))
 
@@ -672,6 +700,7 @@ class SingleStoreDb(BaseDb):
         sort_order: Optional[str] = None,
         deserialize: Optional[bool] = True,
     ) -> Union[List[Union[RunOutput, TeamRunOutput, WorkflowRunOutput]], Tuple[List[Dict[str, Any]], int]]:
+        validate_pagination(limit, page)
         try:
             table = self._get_table(table_type="runs")
             if table is None:
@@ -907,6 +936,7 @@ class SingleStoreDb(BaseDb):
         Raises:
             Exception: If an error occurs during retrieval.
         """
+        validate_pagination(limit, page)
         try:
             table = self._get_table(table_type="sessions")
             if table is None:
@@ -1536,6 +1566,7 @@ class SingleStoreDb(BaseDb):
         Raises:
             Exception: If an error occurs during retrieval.
         """
+        validate_pagination(limit, page)
         try:
             table = self._get_table(table_type="memories")
             if table is None:
@@ -1609,6 +1640,7 @@ class SingleStoreDb(BaseDb):
             total_count: 1,
         )
         """
+        validate_pagination(limit, page)
         try:
             table = self._get_table(table_type="memories")
             if table is None:
@@ -2112,6 +2144,7 @@ class SingleStoreDb(BaseDb):
         if table is None:
             return [], 0
 
+        validate_pagination(limit, page)
         try:
             with self.Session() as sess, sess.begin():
                 stmt = select(table)
@@ -2345,6 +2378,7 @@ class SingleStoreDb(BaseDb):
         Raises:
             Exception: If an error occurs during retrieval.
         """
+        validate_pagination(limit, page)
         try:
             table = self._get_table(table_type="evals")
             if table is None:
@@ -2556,6 +2590,7 @@ class SingleStoreDb(BaseDb):
         Raises:
             Exception: If an error occurs during retrieval.
         """
+        validate_pagination(limit, page)
         try:
             table = self._get_table(table_type="culture")
             if table is None:

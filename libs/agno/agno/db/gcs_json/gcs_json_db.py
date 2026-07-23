@@ -124,25 +124,34 @@ class GcsJsonDb(BaseDb):
             List[Dict[str, Any]]: The data from the JSON file.
 
         Raises:
-            json.JSONDecodeError: If the JSON file is not valid.
+            google.cloud.exceptions.GoogleCloudError: On any GCS read failure
+                other than "file not found" (permission denied, quota, network).
+                Do not silently swallow — a swallowed read returns [] and the
+                caller believes the table is empty when it isn't.
         """
+        from google.cloud.exceptions import NotFound  # type: ignore[import-untyped]
+
         blob_name = self._get_blob_name(filename)
         blob = self.bucket.blob(blob_name)
 
         try:
             data_str = blob.download_as_bytes().decode("utf-8")
-            return json.loads(data_str)
-
+        except NotFound:
+            if create_table_if_not_found:
+                log_debug(f"Creating new GCS JSON file: {blob_name}")
+                blob.upload_from_string("[]", content_type="application/json")
+            return []
         except Exception as e:
-            # Check if it's a 404 (file not found) error
-            if "404" in str(e) or "Not Found" in str(e):
-                if create_table_if_not_found:
-                    log_debug(f"Creating new GCS JSON file: {blob_name}")
-                    blob.upload_from_string("[]", content_type="application/json")
-                return []
-            else:
-                log_error(f"Error reading the {blob_name} JSON file from GCS: {str(e)}")
-                raise json.JSONDecodeError(f"Error reading {blob_name}", "", 0)
+            # Any other GCS error (auth, network, quota) must propagate — a
+            # silent empty-list return corrupts the caller's view of state.
+            log_error(f"Error reading the {blob_name} JSON file from GCS: {str(e)}")
+            raise
+
+        try:
+            return json.loads(data_str)
+        except json.JSONDecodeError:
+            log_error(f"Malformed JSON in GCS blob {blob_name}")
+            raise
 
     def _write_json_file(self, filename: str, data: List[Dict[str, Any]]) -> None:
         """Write data to a JSON file in GCS.
@@ -162,8 +171,11 @@ class GcsJsonDb(BaseDb):
             blob.upload_from_string(json_data, content_type="application/json")
 
         except Exception as e:
+            # Do NOT swallow: silent write failures make the caller believe
+            # the data landed when it didn't (misconfigured credentials, GCS
+            # outage, quota exhausted, etc). Log then propagate.
             log_error(f"Error writing to the {blob_name} JSON file in GCS: {str(e)}")
-            return
+            raise
 
     def get_latest_schema_version(self, table_name: str = "") -> Optional[str]:
         """Get the latest version of the database schema.
@@ -356,14 +368,36 @@ class GcsJsonDb(BaseDb):
             log_error(f"Exception reading runs: {str(e)}")
             raise e
 
+    def _scrub_run_ids_from_legacy_blob(self, run_ids: set) -> None:
+        """Remove ``run_ids`` from every session's legacy ``runs`` field —
+        see ``JsonDb`` for the rationale."""
+        if not run_ids:
+            return
+        try:
+            sessions = self._read_json_file(self.session_table_name, create_table_if_not_found=False)
+        except Exception:
+            return
+        mutated = False
+        for s in sessions:
+            legacy = s.get("runs")
+            if not isinstance(legacy, list):
+                continue
+            kept = [r for r in legacy if not (isinstance(r, dict) and r.get("run_id") in run_ids)]
+            if len(kept) != len(legacy):
+                s["runs"] = kept
+                mutated = True
+        if mutated:
+            self._write_json_file(self.session_table_name, sessions)
+
     def delete_run(self, run_id: str) -> bool:
         try:
             rows = self._read_runs_file(create_table_if_not_found=False)
             kept = [r for r in rows if r.get("run_id") != run_id]
-            if len(kept) == len(rows):
-                return False
-            self._write_runs_file(kept)
-            return True
+            deleted = len(kept) != len(rows)
+            if deleted:
+                self._write_runs_file(kept)
+            self._scrub_run_ids_from_legacy_blob({run_id})
+            return deleted
         except Exception as e:
             log_error(f"Error deleting run: {str(e)}")
             raise e
@@ -375,6 +409,7 @@ class GcsJsonDb(BaseDb):
             kept = [r for r in rows if r.get("run_id") not in to_drop]
             if len(kept) != len(rows):
                 self._write_runs_file(kept)
+            self._scrub_run_ids_from_legacy_blob(to_drop)
         except Exception as e:
             log_error(f"Error deleting runs: {str(e)}")
             raise e

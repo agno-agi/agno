@@ -27,21 +27,50 @@ SESSION_TABLE_SCHEMA = {
     "updated_at": {"type": BigInteger, "nullable": True},
 }
 
-RUN_TABLE_SCHEMA = {
-    "run_id": {"type": String, "primary_key": True, "nullable": False},
-    "session_id": {"type": String, "nullable": False, "index": True},
-    "run_type": {"type": String, "nullable": False, "index": True},
-    "agent_id": {"type": String, "nullable": True, "index": True},
-    "team_id": {"type": String, "nullable": True, "index": True},
-    "workflow_id": {"type": String, "nullable": True, "index": True},
-    "user_id": {"type": String, "nullable": True, "index": True},
-    "parent_run_id": {"type": String, "nullable": True},
-    "status": {"type": String, "nullable": True, "index": True},
-    "run_index": {"type": BigInteger, "nullable": True},
-    "run_data": {"type": JSONB, "nullable": False},
-    "created_at": {"type": BigInteger, "nullable": False, "index": True},
-    "updated_at": {"type": BigInteger, "nullable": True},
-}
+# DESIGN NOTES (PR #8350):
+#
+# * ``session_id`` is a FOREIGN KEY into the sessions table, with ON DELETE
+#   CASCADE. Delete a session → its runs go with it, atomic and race-free at
+#   the DB layer (no application-level cascade needed). The v3 migration is
+#   FK-safe because ``_migrate_postgres`` runs in a single transaction and
+#   only inserts run rows whose ``session_id`` was just read from the
+#   existing sessions row — the constraint is always satisfied at commit.
+#
+# * Member team runs are NOT written as separate rows here. When
+#   ``store_member_responses=True``, member outputs live inside the team run's
+#   ``member_responses`` array in ``run_data``. Preserves the
+#   1-team-run-per-model-loop invariant and keeps ``run_index`` clean.
+def _get_run_table_schema(session_table_name: str = "agno_sessions") -> dict[str, Any]:
+    """Runs table schema; ``session_id`` foreign-keyed to sessions with
+    ON DELETE CASCADE.
+
+    Factory (not module-level dict) so the FK reference binds to the
+    caller-configured ``session_table`` name at build time. Matches the
+    pattern used by ``_get_schedule_runs_table_schema``.
+    """
+    return {
+        "run_id": {"type": String, "primary_key": True, "nullable": False},
+        "session_id": {
+            "type": String,
+            "nullable": False,
+            "index": True,
+            "foreign_key": f"sessions.session_id",
+            "ondelete": "CASCADE",
+        },
+        "run_type": {"type": String, "nullable": False, "index": True},
+        "agent_id": {"type": String, "nullable": True, "index": True},
+        "team_id": {"type": String, "nullable": True, "index": True},
+        "workflow_id": {"type": String, "nullable": True, "index": True},
+        "user_id": {"type": String, "nullable": True, "index": True},
+        "parent_run_id": {"type": String, "nullable": True},
+        "status": {"type": String, "nullable": True, "index": True},
+        "run_index": {"type": BigInteger, "nullable": True},
+        "run_data": {"type": JSONB, "nullable": False},
+        "created_at": {"type": BigInteger, "nullable": False, "index": True},
+        "updated_at": {"type": BigInteger, "nullable": True},
+    }
+
+
 
 MEMORY_TABLE_SCHEMA = {
     "memory_id": {"type": String, "primary_key": True, "nullable": False},
@@ -364,6 +393,7 @@ def get_table_schema_definition(
     traces_table_name: str = "agno_traces",
     db_schema: str = "agno",
     schedules_table_name: str = "agno_schedules",
+    session_table_name: str = "agno_sessions",
 ) -> dict[str, Any]:
     """
     Get the expected schema definition for the given table.
@@ -372,6 +402,8 @@ def get_table_schema_definition(
         table_type (str): The type of table to get the schema for.
         traces_table_name (str): The name of the traces table (used for spans foreign key).
         db_schema (str): The database schema name (used for spans foreign key).
+        session_table_name (str): The name of the sessions table (used for the
+            runs table's ``session_id`` foreign key).
 
     Returns:
         Dict[str, Any]: Dictionary containing column definitions for the table
@@ -381,10 +413,12 @@ def get_table_schema_definition(
         return _get_span_table_schema(traces_table_name, db_schema)
     if table_type == "schedule_runs":
         return _get_schedule_runs_table_schema(schedules_table_name, db_schema)
+    if table_type == "runs":
+        return _get_run_table_schema(session_table_name)
 
     schemas = {
         "sessions": SESSION_TABLE_SCHEMA,
-        "runs": RUN_TABLE_SCHEMA,
+        # "runs" is handled by _get_run_table_schema above (needs session_table_name)
         "evals": EVAL_TABLE_SCHEMA,
         "metrics": METRICS_TABLE_SCHEMA,
         "memories": MEMORY_TABLE_SCHEMA,

@@ -216,15 +216,19 @@ def build_single_run_row(
 ) -> Dict[str, Any]:
     """Build a single run-table row for the given run.
 
-    This is used by upsert_run() for O(1) single-run persistence, avoiding
-    the need to iterate over all session runs.
+    Used by ``upsert_run()`` for O(1) single-run persistence.
 
     Args:
         run: The run object (RunOutput, TeamRunOutput, WorkflowRunOutput) or dict.
         session_id: The session ID this run belongs to.
         user_id: Optional user ID to associate with the run.
-        run_index: Optional run index. If not provided, will be read from run_data
-            or left as None (for updates to existing runs where index is preserved).
+        run_index: Explicit index within the session. Callers **must** supply
+            this for INSERTS (any first-time save of a ``run_id``). For UPDATES
+            to an existing row it may be ``None``; every adapter's
+            ``on_conflict_do_update`` deliberately excludes ``run_index`` from
+            the update set to preserve ordering. Omitting ``run_index`` on an
+            INSERT silently writes NULL, which corrupts ``ORDER BY run_index``
+            reads.
 
     Returns:
         Row dict matching the runs table schema.
@@ -373,6 +377,30 @@ async def resolve_session_type(
     detected = detect_session_type(raw if isinstance(raw, dict) else {})
     resolved = SessionType(detected)
     return resolved, raw
+
+
+def validate_pagination(limit: Optional[int], page: Optional[int]) -> None:
+    """Validate a ``(limit, page)`` pair coming from a public read API.
+
+    ``page`` is meaningless without ``limit`` — every adapter's pagination
+    block is guarded by ``if limit is not None: if page is not None: ...``,
+    so a caller who passes ``page=5`` and forgets ``limit`` gets **all rows**
+    back instead of page 5 of some default size, silently. That's a bug
+    with real fallout (wrong data surfaced, excess memory/bandwidth); raise
+    at the boundary rather than paper over it.
+
+    Passing neither is fine (no pagination). Passing ``limit`` without
+    ``page`` is fine (first-N behavior). Passing ``page < 1`` is a caller
+    bug (pages are 1-indexed).
+    """
+    if page is not None and limit is None:
+        raise ValueError(
+            "`page` was provided without `limit`. Pass both to paginate, "
+            "or neither to fetch all rows. Silently returning everything on "
+            "a paginated call hides caller bugs and surfaces wrong data."
+        )
+    if page is not None and page < 1:
+        raise ValueError(f"`page` must be >= 1 (pages are 1-indexed); got {page}.")
 
 
 def get_sort_value(record: Dict[str, Any], sort_by: str) -> Any:

@@ -123,6 +123,14 @@ def apply_sorting(
 def apply_pagination(
     records: List[Dict[str, Any]], limit: Optional[int] = None, page: Optional[int] = None
 ) -> List[Dict[str, Any]]:
+    """Apply pagination.
+
+    Raises ``ValueError`` when ``page`` is provided without ``limit`` — see
+    ``agno.db.utils.validate_pagination``.
+    """
+    from agno.db.utils import validate_pagination
+
+    validate_pagination(limit, page)
     if limit is None:
         return records
 

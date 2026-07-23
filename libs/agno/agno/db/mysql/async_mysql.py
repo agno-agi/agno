@@ -31,7 +31,7 @@ from agno.db.utils import (
     deserialize_session,
     deserialize_sessions,
     json_serializer,
-    merge_runs_table_with_legacy_blob,
+    merge_runs_table_with_legacy_blob,    validate_pagination,
 )
 from agno.run.agent import RunOutput
 from agno.run.base import RunStatus
@@ -172,10 +172,22 @@ class AsyncMySQLDb(AsyncBaseDb):
         Returns:
             Table: SQLAlchemy Table object
         """
+        # Ensure sessions Table is registered on metadata so the runs FK can resolve.
+        if table_type == "runs":
+            fq_sessions = f"{self.db_schema}.{self.session_table_name}" if self.db_schema else self.session_table_name
+            if fq_sessions not in self.metadata.tables:
+                await self._get_or_create_table(
+                    table_name=self.session_table_name,
+                    table_type="sessions",
+                    create_table_if_not_found=True,
+                )
         try:
             # Pass traces_table_name and db_schema for spans table foreign key resolution
             table_schema = get_table_schema_definition(
-                table_type, traces_table_name=self.trace_table_name, db_schema=self.db_schema
+                table_type,
+                traces_table_name=self.trace_table_name,
+                db_schema=self.db_schema,
+                session_table_name=self.session_table_name,
             ).copy()
 
             log_debug(f"Creating table {self.db_schema}.{table_name} with schema: {table_schema}")
@@ -201,7 +213,10 @@ class AsyncMySQLDb(AsyncBaseDb):
 
                 # Handle foreign key constraint
                 if "foreign_key" in col_config:
-                    column_args.append(ForeignKey(col_config["foreign_key"]))
+                    fk_kwargs: Dict[str, Any] = {}
+                    if "ondelete" in col_config:
+                        fk_kwargs["ondelete"] = col_config["ondelete"]
+                    column_args.append(ForeignKey(col_config["foreign_key"], **fk_kwargs))
 
                 columns.append(Column(*column_args, **column_kwargs))  # type: ignore
 
@@ -616,6 +631,7 @@ class AsyncMySQLDb(AsyncBaseDb):
         deserialize: Optional[bool] = True,
     ) -> Union[List[Union[RunOutput, TeamRunOutput, WorkflowRunOutput]], Tuple[List[Dict[str, Any]], int]]:
         """Get all runs matching the given filters."""
+        validate_pagination(limit, page)
         try:
             table = await self._get_table(table_type="runs")
             if table is None:
@@ -847,6 +863,7 @@ class AsyncMySQLDb(AsyncBaseDb):
         Raises:
             Exception: If an error occurs during retrieval.
         """
+        validate_pagination(limit, page)
         try:
             table = await self._get_table(table_type="sessions")
             runs_table = await self._get_table(table_type="runs")
@@ -1483,6 +1500,7 @@ class AsyncMySQLDb(AsyncBaseDb):
         Raises:
             Exception: If an error occurs during retrieval.
         """
+        validate_pagination(limit, page)
         try:
             table = await self._get_table(table_type="memories")
 
@@ -1651,6 +1669,7 @@ class AsyncMySQLDb(AsyncBaseDb):
         Raises:
             Exception: If an error occurs during retrieval.
         """
+        validate_pagination(limit, page)
         try:
             table = await self._get_table(table_type="culture")
 
@@ -1791,6 +1810,7 @@ class AsyncMySQLDb(AsyncBaseDb):
             total_count: 1,
         )
         """
+        validate_pagination(limit, page)
         try:
             table = await self._get_table(table_type="memories")
 
@@ -2282,6 +2302,7 @@ class AsyncMySQLDb(AsyncBaseDb):
         """
         table = await self._get_table(table_type="knowledge")
 
+        validate_pagination(limit, page)
         try:
             async with self.async_session_factory() as sess, sess.begin():
                 stmt = select(table)
@@ -2532,6 +2553,7 @@ class AsyncMySQLDb(AsyncBaseDb):
         Raises:
             Exception: If an error occurs during retrieval.
         """
+        validate_pagination(limit, page)
         try:
             table = await self._get_table(table_type="evals")
 

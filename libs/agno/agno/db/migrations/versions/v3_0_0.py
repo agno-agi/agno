@@ -1274,7 +1274,12 @@ def _revert_redis(db: BaseDb, table_name: str) -> bool:
 
 
 def _migrate_jsondb(db: BaseDb, table_name: str) -> bool:
-    """Copy runs from the legacy `runs` field on each session record into the runs file."""
+    """Copy runs from the legacy `runs` field on each session record into the runs file.
+
+    Idempotent: reruns don't clobber fresh post-migration writes. Any run_id
+    already present in the runs table wins — the legacy blob is only used
+    to backfill run_ids that aren't there yet.
+    """
     sessions = db._read_json_file(db.session_table_name, create_table_if_not_found=False)  # type: ignore
     if not sessions:
         log_info(f"Sessions file {table_name}.json is empty or missing, skipping migration")
@@ -1290,6 +1295,10 @@ def _migrate_jsondb(db: BaseDb, table_name: str) -> bool:
             continue
         rows = _build_run_rows(legacy, session.get("session_id"), session.get("user_id"), run_data_as_string=False)
         for row in rows:
+            # Runs table wins on conflict: never overwrite a post-migration
+            # update with the stale blob copy on a rerun.
+            if row["run_id"] in by_id:
+                continue
             by_id[row["run_id"]] = row
             migrated += 1
 
@@ -1329,7 +1338,11 @@ def _revert_jsondb(db: BaseDb, table_name: str) -> bool:
 
 
 def _migrate_gcsjsondb(db: BaseDb, table_name: str) -> bool:
-    """Same shape as :func:`_migrate_jsondb` — both store sessions as a JSON list (file vs object)."""
+    """Same shape as :func:`_migrate_jsondb` — both store sessions as a JSON list (file vs object).
+
+    Idempotent: reruns don't clobber fresh post-migration writes. Any run_id
+    already present in the runs table wins.
+    """
     sessions = db._read_json_file(db.session_table_name, create_table_if_not_found=False)  # type: ignore
     if not sessions:
         log_info(f"Sessions object {table_name}.json is empty or missing, skipping migration")
@@ -1345,6 +1358,8 @@ def _migrate_gcsjsondb(db: BaseDb, table_name: str) -> bool:
             continue
         rows = _build_run_rows(legacy, session.get("session_id"), session.get("user_id"), run_data_as_string=False)
         for row in rows:
+            if row["run_id"] in by_id:
+                continue
             by_id[row["run_id"]] = row
             migrated += 1
 

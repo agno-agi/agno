@@ -441,12 +441,34 @@ class SurrealDb(BaseDb):
             return list(rows), total_count
         return [deserialize_run(r.get("run_type"), r["run_data"]) for r in rows]
 
+    def _scrub_run_ids_from_legacy_blob(self, run_ids: List[str]) -> None:
+        """Remove ``run_ids`` from every session record's legacy ``runs`` array.
+
+        Partial-migration hygiene: SurrealDB v3 keeps the pre-migration ``runs``
+        array on the session record as backup. Deleting from the runs table
+        alone leaves that array intact, and the read path's
+        ``merge_runs_table_with_legacy_blob`` resurrects the ghost.
+        """
+        if not run_ids:
+            return
+        try:
+            sessions_table = self._get_table("sessions", create_table_if_not_found=False)
+            self.client.query(
+                f"UPDATE {sessions_table} SET runs = array::filter(runs, |$r| $r.run_id NOT IN $rids) "
+                f"WHERE runs IS NOT NONE AND array::any(runs, |$r| $r.run_id IN $rids)",
+                {"rids": list(run_ids)},
+            )
+        except Exception:
+            # Best-effort; the primary delete already succeeded.
+            pass
+
     def delete_run(self, run_id: str) -> bool:
         try:
             runs_table = self._get_table("runs", create_table_if_not_found=False)
         except Exception:
             return False
         res = self.client.delete(RecordID(runs_table, run_id))
+        self._scrub_run_ids_from_legacy_blob([run_id])
         return bool(res)
 
     def delete_runs(self, run_ids: List[str]) -> None:
@@ -462,6 +484,7 @@ class SurrealDb(BaseDb):
             f"DELETE FROM {runs_table} WHERE id IN $records",
             params,
         )
+        self._scrub_run_ids_from_legacy_blob(run_ids)
 
     # --- Sessions ---
     def clear_sessions(self) -> None:

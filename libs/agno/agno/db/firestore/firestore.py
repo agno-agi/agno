@@ -49,6 +49,10 @@ except ImportError:
     )
 
 
+# Firestore batched writes have a hard 500-operation limit per commit.
+FIRESTORE_BATCH_LIMIT = 500
+
+
 class FirestoreDb(BaseDb):
     def __init__(
         self,
@@ -293,14 +297,22 @@ class FirestoreDb(BaseDb):
                 )
 
         log_info(f"Unsetting legacy runs field from {self.session_table_name} documents")
+        # Firestore's 500-op-per-batch hard limit — chunk to avoid
+        # INVALID_ARGUMENT on installs with many sessions.
         batch = self.db_client.batch()
         touched = 0
+        in_batch = 0
         for doc in collection_ref.stream():
             data = doc.to_dict() or {}
             if "runs" in data:
                 batch.update(doc.reference, {"runs": DELETE_FIELD})
                 touched += 1
-        if touched:
+                in_batch += 1
+                if in_batch >= FIRESTORE_BATCH_LIMIT:
+                    batch.commit()
+                    batch = self.db_client.batch()
+                    in_batch = 0
+        if in_batch > 0:
             batch.commit()
         log_info(f"Unset runs on {touched} session document(s)")
         return touched > 0
@@ -471,6 +483,34 @@ class FirestoreDb(BaseDb):
             log_error(f"Exception reading from runs collection: {str(e)}")
             raise e
 
+    def _scrub_run_ids_from_session_legacy_blob(self, session_id: str, run_ids: set) -> None:
+        """Remove ``run_ids`` from the given session's legacy ``runs`` array.
+
+        Partial-migration hygiene: v3 copied runs into their own collection but
+        preserved the embedded ``runs`` array on the session doc as a backup.
+        Deleting run docs alone leaves that array intact and the read path's
+        ``merge_runs_table_with_legacy_blob`` resurrects the ghost.
+        """
+        if not run_ids or not session_id:
+            return
+        try:
+            sessions_ref = self._get_collection(table_type="sessions")
+            if sessions_ref is None:
+                return
+            session_ref = sessions_ref.document(session_id)
+            snapshot = session_ref.get()
+            if not snapshot.exists:
+                return
+            data = snapshot.to_dict() or {}
+            legacy = data.get("runs")
+            if not isinstance(legacy, list):
+                return
+            kept = [r for r in legacy if not (isinstance(r, dict) and r.get("run_id") in run_ids)]
+            if len(kept) != len(legacy):
+                session_ref.update({"runs": kept})
+        except Exception:
+            log_debug("legacy-runs scrub failed; primary delete still succeeded", exc_info=True)
+
     def delete_run(self, run_id: str) -> bool:
         """Delete a single run from the runs collection."""
         try:
@@ -481,7 +521,10 @@ class FirestoreDb(BaseDb):
             snapshot = doc_ref.get()
             if not snapshot.exists:
                 return False
+            sid = (snapshot.to_dict() or {}).get("session_id")
             doc_ref.delete()
+            if sid:
+                self._scrub_run_ids_from_session_legacy_blob(sid, {run_id})
             return True
         except Exception as e:
             log_error(f"Error deleting run: {str(e)}")
@@ -493,13 +536,31 @@ class FirestoreDb(BaseDb):
             collection_ref = self._get_collection(table_type="runs")
             if collection_ref is None:
                 return
-            batch = self.db_client.batch()
-            deleted = 0
+            # Collect session_id → run_ids before deleting so we can scrub the
+            # legacy blob on each affected session.
+            runs_by_session: Dict[str, set] = {}
             for rid in run_ids:
-                batch.delete(collection_ref.document(rid))
-                deleted += 1
-            if deleted:
+                snap = collection_ref.document(rid).get()
+                if not snap.exists:
+                    continue
+                sid = (snap.to_dict() or {}).get("session_id")
+                if sid:
+                    runs_by_session.setdefault(sid, set()).add(rid)
+
+            # Firestore batched writes have a hard 500-op limit — chunk to
+            # avoid ``INVALID_ARGUMENT`` on bulk deletes.
+            deleted = 0
+            for start in range(0, len(run_ids), FIRESTORE_BATCH_LIMIT):
+                chunk = run_ids[start : start + FIRESTORE_BATCH_LIMIT]
+                batch = self.db_client.batch()
+                for rid in chunk:
+                    batch.delete(collection_ref.document(rid))
                 batch.commit()
+                deleted += len(chunk)
+
+            for sid, rids in runs_by_session.items():
+                self._scrub_run_ids_from_session_legacy_blob(sid, rids)
+
             log_debug(f"Successfully deleted {deleted} runs")
         except Exception as e:
             log_error(f"Error deleting runs: {str(e)}")
@@ -573,27 +634,42 @@ class FirestoreDb(BaseDb):
         try:
             collection_ref = self._get_collection(table_type="sessions")
             runs_collection_ref = self._get_collection(table_type="runs", create_collection_if_not_found=False)
+            # Firestore's 500-op-per-batch limit — chunk to survive cascade
+            # deletes of sessions with many runs.
             batch = self.db_client.batch()
-
+            in_batch = 0
             deleted_count = 0
+
+            def _flush():
+                nonlocal batch, in_batch
+                if in_batch > 0:
+                    batch.commit()
+                    batch = self.db_client.batch()
+                    in_batch = 0
+
+            def _stage_delete(ref):
+                nonlocal batch, in_batch
+                batch.delete(ref)
+                in_batch += 1
+                if in_batch >= FIRESTORE_BATCH_LIMIT:
+                    _flush()
+
             for session_id in session_ids:
                 query = collection_ref.where(filter=FieldFilter("session_id", "==", session_id))
                 if user_id is not None:
                     query = query.where(filter=FieldFilter("user_id", "==", user_id))
-                docs = query.stream()
-                for doc in docs:
-                    batch.delete(doc.reference)
+                for doc in query.stream():
+                    _stage_delete(doc.reference)
                     deleted_count += 1
 
-                # Cascade-delete runs for this session
                 if runs_collection_ref is not None:
                     runs_query = runs_collection_ref.where(filter=FieldFilter("session_id", "==", session_id))
                     if user_id is not None:
                         runs_query = runs_query.where(filter=FieldFilter("user_id", "==", user_id))
                     for run_doc in runs_query.stream():
-                        batch.delete(run_doc.reference)
+                        _stage_delete(run_doc.reference)
 
-            batch.commit()
+            _flush()
 
             log_debug(f"Successfully deleted {deleted_count} sessions")
 
@@ -1085,26 +1161,36 @@ class FirestoreDb(BaseDb):
         """
         try:
             collection_ref = self._get_collection(table_type="memories")
+            # Chunk to the Firestore 500-op-per-batch limit.
             batch = self.db_client.batch()
+            in_batch = 0
             deleted_count = 0
 
-            # If user_id is provided, filter memory_ids to only those belonging to the user
+            def _stage(ref):
+                nonlocal batch, in_batch, deleted_count
+                batch.delete(ref)
+                in_batch += 1
+                deleted_count += 1
+                if in_batch >= FIRESTORE_BATCH_LIMIT:
+                    batch.commit()
+                    batch = self.db_client.batch()
+                    in_batch = 0
+
             if user_id is not None:
                 for memory_id in memory_ids:
                     docs = collection_ref.where(filter=FieldFilter("memory_id", "==", memory_id)).stream()
                     for doc in docs:
                         data = doc.to_dict()
                         if data.get("user_id") == user_id:
-                            batch.delete(doc.reference)
-                            deleted_count += 1
+                            _stage(doc.reference)
             else:
                 for memory_id in memory_ids:
                     docs = collection_ref.where(filter=FieldFilter("memory_id", "==", memory_id)).stream()
                     for doc in docs:
-                        batch.delete(doc.reference)
-                        deleted_count += 1
+                        _stage(doc.reference)
 
-            batch.commit()
+            if in_batch > 0:
+                batch.commit()
 
             if deleted_count == 0:
                 log_info(f"No memories found with ids: {memory_ids}")

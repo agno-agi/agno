@@ -41,6 +41,7 @@ from agno.db.utils import (
     deserialize_sessions,
     json_serializer,
     merge_runs_table_with_legacy_blob,
+    validate_pagination,
 )
 from agno.run.agent import RunOutput
 from agno.db.schemas.service_accounts import (
@@ -303,6 +304,17 @@ class PostgresDb(BaseDb):
         - __foreign_keys__: [{"columns":[...], "ref_table":"...", "ref_columns":[...]}]
         - column-level foreign_key: "logical_table.column" (resolved via _resolve_* helpers)
         """
+        # The runs table declares a FK to sessions — ensure the sessions
+        # Table is registered in ``self.metadata`` first so SQLAlchemy can
+        # resolve the FK reference at ``Table(...)`` construction.
+        if table_type == "runs":
+            fq_sessions = f"{self.db_schema}.{self.session_table_name}" if self.db_schema else self.session_table_name
+            if fq_sessions not in self.metadata.tables:
+                self._get_or_create_table(
+                    table_name=self.session_table_name,
+                    table_type="sessions",
+                    create_table_if_not_found=True,
+                )
         try:
             # Pass table names and db_schema for foreign key resolution
             table_schema = get_table_schema_definition(
@@ -310,6 +322,7 @@ class PostgresDb(BaseDb):
                 traces_table_name=self.trace_table_name,
                 db_schema=self.db_schema,
                 schedules_table_name=self.schedules_table_name,
+                session_table_name=self.session_table_name,
             ).copy()
 
             columns: List[Column] = []
@@ -955,6 +968,7 @@ class PostgresDb(BaseDb):
             - When deserialize=True: List of run output objects
             - When deserialize=False: Tuple of (run row dictionaries, total count)
         """
+        validate_pagination(limit, page)
         try:
             table = self._get_table(table_type="runs")
             if table is None:
@@ -1217,6 +1231,7 @@ class PostgresDb(BaseDb):
         Raises:
             Exception: If an error occurs during retrieval.
         """
+        validate_pagination(limit, page)
         try:
             table = self._get_table(table_type="sessions")
             if table is None:
@@ -1905,6 +1920,7 @@ class PostgresDb(BaseDb):
         Raises:
             Exception: If an error occurs during retrieval.
         """
+        validate_pagination(limit, page)
         try:
             table = self._get_table(table_type="memories")
             if table is None:
@@ -1995,6 +2011,7 @@ class PostgresDb(BaseDb):
             total_count: 1,
         )
         """
+        validate_pagination(limit, page)
         try:
             table = self._get_table(table_type="memories")
             if table is None:
@@ -2489,6 +2506,7 @@ class PostgresDb(BaseDb):
         Raises:
             Exception: If an error occurs during retrieval.
         """
+        validate_pagination(limit, page)
         try:
             table = self._get_table(table_type="knowledge")
             if table is None:
@@ -2779,6 +2797,7 @@ class PostgresDb(BaseDb):
         Raises:
             Exception: If an error occurs during retrieval.
         """
+        validate_pagination(limit, page)
         try:
             table = self._get_table(table_type="evals")
             if table is None:
@@ -2991,6 +3010,7 @@ class PostgresDb(BaseDb):
         Raises:
             Exception: If an error occurs during retrieval.
         """
+        validate_pagination(limit, page)
         try:
             table = self._get_table(table_type="culture")
             if table is None:
@@ -5115,6 +5135,7 @@ class PostgresDb(BaseDb):
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
     ) -> Tuple[List[Dict[str, Any]], int]:
+        validate_pagination(limit, page)
         try:
             table = self._get_table(table_type="learnings")
             if table is None:

@@ -539,6 +539,28 @@ class RedisDb(BaseDb):
             log_error(f"Exception reading runs: {str(e)}")
             raise e
 
+    def _scrub_run_ids_from_session_legacy_blob(self, session_id: str, run_ids: set) -> None:
+        """Remove ``run_ids`` from the given session's legacy ``runs`` field.
+
+        Partial-migration state: v3 migration copied runs into per-run keys but
+        preserved the legacy embedded blob as a backup. Deleting a run row
+        alone leaves the blob intact and ``merge_runs_table_with_legacy_blob``
+        resurrects it on the next read.
+        """
+        if not run_ids:
+            return
+        session = self._get_record("sessions", session_id)
+        if session is None:
+            return
+        legacy = session.get("runs")
+        if not isinstance(legacy, list):
+            return
+        kept = [r for r in legacy if not (isinstance(r, dict) and r.get("run_id") in run_ids)]
+        if len(kept) == len(legacy):
+            return
+        session["runs"] = kept
+        self._store_record("sessions", session_id, session)
+
     def delete_run(self, run_id: str) -> bool:
         """Delete a single run from Redis (and its entry in the session's run index)."""
         try:
@@ -556,6 +578,7 @@ class RedisDb(BaseDb):
                     self.redis_client.zrem(self._runs_by_session_index_key(sid), run_id)
                 except Exception:
                     pass
+                self._scrub_run_ids_from_session_legacy_blob(sid, {run_id})
             return ok
         except Exception as e:
             log_error(f"Error deleting run: {str(e)}")

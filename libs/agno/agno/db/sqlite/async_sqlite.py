@@ -40,7 +40,7 @@ from agno.db.utils import (
     deserialize_session_json_fields,
     deserialize_sessions,
     merge_runs_table_with_legacy_blob,
-    serialize_session_json_fields,
+    serialize_session_json_fields,    validate_pagination,
 )
 from agno.run.agent import RunOutput
 from agno.run.base import RunStatus
@@ -159,6 +159,20 @@ class AsyncSqliteDb(AsyncBaseDb):
         self.db_file: Optional[str] = db_file
         self.metadata: MetaData = MetaData()
 
+        # SQLite ignores FOREIGN KEY constraints by default — enable them on
+        # every new connection so agno_runs.session_id CASCADE actually fires.
+        # For async engines the hook is on the sync sub-engine.
+        from sqlalchemy import event as _sa_event
+
+        @_sa_event.listens_for(self.db_engine.sync_engine, "connect")
+        def _enable_sqlite_fk_pragma(dbapi_connection, connection_record):  # type: ignore[no-redef]
+            try:
+                cursor = dbapi_connection.cursor()
+                cursor.execute("PRAGMA foreign_keys = ON")
+                cursor.close()
+            except Exception:
+                pass
+
         # Initialize database session factory
         self.async_session_factory = async_sessionmaker(bind=self.db_engine, expire_on_commit=False)
 
@@ -217,12 +231,20 @@ class AsyncSqliteDb(AsyncBaseDb):
         Returns:
             Table: SQLAlchemy Table object
         """
+        # Ensure sessions Table is registered on metadata so the runs FK can resolve.
+        if table_type == "runs" and self.session_table_name not in self.metadata.tables:
+            await self._get_or_create_table(
+                table_name=self.session_table_name,
+                table_type="sessions",
+                create_table_if_not_found=True,
+            )
         try:
             # Pass table names for foreign key resolution
             table_schema = get_table_schema_definition(
                 table_type,
                 traces_table_name=self.trace_table_name,
                 schedules_table_name=self.schedules_table_name,
+                session_table_name=self.session_table_name,
             ).copy()
 
             columns: List[Column] = []
@@ -750,6 +772,7 @@ class AsyncSqliteDb(AsyncBaseDb):
             - When deserialize=True: List of run output objects
             - When deserialize=False: Tuple of (run row dictionaries, total count)
         """
+        validate_pagination(limit, page)
         try:
             table = await self._get_table(table_type="runs")
             if table is None:
@@ -1019,6 +1042,7 @@ class AsyncSqliteDb(AsyncBaseDb):
         Raises:
             Exception: If an error occurs during retrieval.
         """
+        validate_pagination(limit, page)
         try:
             table = await self._get_table(table_type="sessions")
             if table is None:
@@ -1647,6 +1671,7 @@ class AsyncSqliteDb(AsyncBaseDb):
         Raises:
             Exception: If an error occurs during retrieval.
         """
+        validate_pagination(limit, page)
         try:
             table = await self._get_table(table_type="memories")
             if table is None:
@@ -1723,6 +1748,7 @@ class AsyncSqliteDb(AsyncBaseDb):
             total_count: 1,
         )
         """
+        validate_pagination(limit, page)
         try:
             table = await self._get_table(table_type="memories")
             if table is None:
@@ -2266,6 +2292,7 @@ class AsyncSqliteDb(AsyncBaseDb):
         if table is None:
             return [], 0
 
+        validate_pagination(limit, page)
         try:
             async with self.async_session_factory() as sess, sess.begin():
                 stmt = select(table)
@@ -2503,6 +2530,7 @@ class AsyncSqliteDb(AsyncBaseDb):
         Raises:
             Exception: If an error occurs during retrieval.
         """
+        validate_pagination(limit, page)
         try:
             table = await self._get_table(table_type="evals")
             if table is None:
@@ -2772,6 +2800,7 @@ class AsyncSqliteDb(AsyncBaseDb):
         Raises:
             Exception: If an error occurs during retrieval.
         """
+        validate_pagination(limit, page)
         try:
             table = await self._get_table(table_type="culture")
             if table is None:
@@ -3767,6 +3796,7 @@ class AsyncSqliteDb(AsyncBaseDb):
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
     ) -> Tuple[List[Dict[str, Any]], int]:
+        validate_pagination(limit, page)
         try:
             table = await self._get_table(table_type="learnings")
             if table is None:

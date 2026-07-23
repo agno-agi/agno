@@ -317,6 +317,9 @@ class JsonDb(BaseDb):
         sort_order: Optional[str] = None,
         deserialize: Optional[bool] = True,
     ) -> Union[List[Union[RunOutput, TeamRunOutput, WorkflowRunOutput]], Tuple[List[Dict[str, Any]], int]]:
+        from agno.db.utils import validate_pagination
+
+        validate_pagination(limit, page)
         try:
             rows = self._read_runs_file(create_table_if_not_found=False)
             if session_id is not None:
@@ -353,14 +356,44 @@ class JsonDb(BaseDb):
             log_error(f"Exception reading runs: {str(e)}")
             raise e
 
+    def _scrub_run_ids_from_legacy_blob(self, run_ids: set) -> None:
+        """Remove ``run_ids`` from every session's legacy ``runs`` field.
+
+        During partial-migration state (v3 in progress, ``cleanup_legacy_runs_field``
+        not yet run), each session document still carries the pre-migration
+        ``runs`` blob as a backup. Deleting from the runs table alone leaves
+        the blob intact, and the read path's ``merge_runs_table_with_legacy_blob``
+        resurrects the ghost. This scrub keeps the two surfaces in sync.
+        """
+        if not run_ids:
+            return
+        try:
+            sessions = self._read_json_file(self.session_table_name, create_table_if_not_found=False)
+        except Exception:
+            return
+        mutated = False
+        for s in sessions:
+            legacy = s.get("runs")
+            if not isinstance(legacy, list):
+                continue
+            kept = [r for r in legacy if not (isinstance(r, dict) and r.get("run_id") in run_ids)]
+            if len(kept) != len(legacy):
+                s["runs"] = kept
+                mutated = True
+        if mutated:
+            self._write_json_file(self.session_table_name, sessions)
+
     def delete_run(self, run_id: str) -> bool:
         try:
             rows = self._read_runs_file(create_table_if_not_found=False)
             kept = [r for r in rows if r.get("run_id") != run_id]
-            if len(kept) == len(rows):
-                return False
-            self._write_runs_file(kept)
-            return True
+            deleted = len(kept) != len(rows)
+            if deleted:
+                self._write_runs_file(kept)
+            # Also scrub the legacy blob so the merge helper doesn't resurrect
+            # the run on the next read (partial-migration state).
+            self._scrub_run_ids_from_legacy_blob({run_id})
+            return deleted
         except Exception as e:
             log_error(f"Error deleting run: {str(e)}")
             raise e
@@ -372,6 +405,7 @@ class JsonDb(BaseDb):
             kept = [r for r in rows if r.get("run_id") not in to_drop]
             if len(kept) != len(rows):
                 self._write_runs_file(kept)
+            self._scrub_run_ids_from_legacy_blob(to_drop)
         except Exception as e:
             log_error(f"Error deleting runs: {str(e)}")
             raise e

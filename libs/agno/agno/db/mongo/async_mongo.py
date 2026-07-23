@@ -758,12 +758,29 @@ class AsyncMongoDb(AsyncBaseDb):
             log_error(f"Exception reading from runs collection: {str(e)}")
             raise e
 
+    async def _ascrub_run_ids_from_legacy_blob(self, run_ids: List[str]) -> None:
+        """Remove ``run_ids`` from every session document's legacy ``runs``
+        array (partial-migration hygiene — see ``MongoDb`` for rationale)."""
+        if not run_ids:
+            return
+        try:
+            sessions = await self._get_collection(table_type="sessions")
+            if sessions is None:
+                return
+            await sessions.update_many(
+                {"runs.run_id": {"$in": list(run_ids)}},
+                {"$pull": {"runs": {"run_id": {"$in": list(run_ids)}}}},
+            )
+        except Exception:
+            log_debug("legacy-runs scrub failed; the primary delete still succeeded", exc_info=True)
+
     async def delete_run(self, run_id: str) -> bool:
         try:
             collection = await self._get_collection(table_type="runs")
             if collection is None:
                 return False
             result = await collection.delete_one({"run_id": run_id})
+            await self._ascrub_run_ids_from_legacy_blob([run_id])
             return result.deleted_count > 0
         except Exception as e:
             log_error(f"Error deleting run: {str(e)}")
@@ -775,6 +792,7 @@ class AsyncMongoDb(AsyncBaseDb):
             if collection is None:
                 return
             result = await collection.delete_many({"run_id": {"$in": run_ids}})
+            await self._ascrub_run_ids_from_legacy_blob(run_ids)
             log_debug(f"Successfully deleted {result.deleted_count} runs")
         except Exception as e:
             log_error(f"Error deleting runs: {str(e)}")

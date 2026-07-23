@@ -10,7 +10,49 @@ from agno.db.schemas.evals import EvalRunRecord
 from agno.db.schemas.knowledge import KnowledgeRow
 from agno.db.utils import get_sort_value
 from agno.session import Session
-from agno.utils.log import log_debug, log_error, log_info
+from agno.utils.log import log_debug, log_error, log_info, log_warning
+
+
+def batch_write_with_retry(
+    client,
+    request_items: Dict[Any, List[Dict[str, Any]]],
+    max_retries: int = 5,
+    initial_backoff_seconds: float = 0.1,
+) -> None:
+    """Wrap ``client.batch_write_item`` with exponential-backoff retries for
+    ``UnprocessedItems``.
+
+    ``batch_write_item`` returns partial success — DynamoDB may reject some
+    writes due to throttling, provisioned-throughput exceeded, or other
+    transient conditions, and return them in ``UnprocessedItems``. Silently
+    ignoring that response causes data loss. This helper retries the
+    unprocessed subset with exponential backoff and raises if some items
+    are still unprocessed after ``max_retries``.
+    """
+    remaining = request_items
+    backoff = initial_backoff_seconds
+    for attempt in range(max_retries + 1):
+        response = client.batch_write_item(RequestItems=remaining)
+        unprocessed = response.get("UnprocessedItems") or {}
+        if not unprocessed:
+            return
+        # Some items were rejected — retry with just those.
+        remaining_counts = {t: len(v) for t, v in unprocessed.items()}
+        if attempt < max_retries:
+            log_warning(
+                f"Dynamo batch_write_item returned UnprocessedItems "
+                f"{remaining_counts}; retry {attempt + 1}/{max_retries} "
+                f"after {backoff:.2f}s"
+            )
+            time.sleep(backoff)
+            backoff = min(backoff * 2, 5.0)
+            remaining = unprocessed
+        else:
+            raise RuntimeError(
+                f"DynamoDB batch_write_item still had UnprocessedItems "
+                f"after {max_retries} retries: {remaining_counts}. "
+                "Data loss will occur if we don't propagate this."
+            )
 
 # -- Serialization utils --
 
@@ -161,7 +203,14 @@ def create_table_if_not_exists(dynamodb_client, table_name: str, schema: Dict[st
 def apply_pagination(
     items: List[Dict[str, Any]], limit: Optional[int] = None, page: Optional[int] = None
 ) -> List[Dict[str, Any]]:
-    """Apply pagination to a list of items."""
+    """Apply pagination to a list of items.
+
+    Raises ``ValueError`` when ``page`` is provided without ``limit`` — see
+    ``agno.db.utils.validate_pagination``.
+    """
+    from agno.db.utils import validate_pagination
+
+    validate_pagination(limit, page)
     if limit is None:
         return items
 

@@ -47,7 +47,7 @@ from agno.db.utils import (
     deserialize_session_json_fields,
     deserialize_sessions,
     merge_runs_table_with_legacy_blob,
-    serialize_session_json_fields,
+    serialize_session_json_fields,    validate_pagination,
 )
 from agno.run.agent import RunOutput
 from agno.run.base import RunStatus
@@ -191,6 +191,21 @@ class SqliteDb(BaseDb):
         self.db_file: Optional[str] = db_file
         self.metadata: MetaData = MetaData()
 
+        # SQLite ignores FOREIGN KEY constraints by default — enable them on
+        # every new connection so agno_runs.session_id → sessions.session_id
+        # CASCADE actually fires. No-op on non-SQLite dialects.
+        from sqlalchemy import event as _sa_event
+
+        @_sa_event.listens_for(self.db_engine, "connect")
+        def _enable_sqlite_fk_pragma(dbapi_connection, connection_record):  # type: ignore[no-redef]
+            try:
+                cursor = dbapi_connection.cursor()
+                cursor.execute("PRAGMA foreign_keys = ON")
+                cursor.close()
+            except Exception:
+                # Not SQLite (someone passed a different db_engine) — ignore.
+                pass
+
         # Initialize database session
         self.Session: scoped_session = scoped_session(sessionmaker(bind=self.db_engine))
 
@@ -294,6 +309,15 @@ class SqliteDb(BaseDb):
         Returns:
             Table: SQLAlchemy Table object
         """
+        # The runs table declares a FK to sessions — ensure the real sessions
+        # Table object is registered in ``self.metadata`` first so SQLAlchemy
+        # can resolve the FK reference at ``Table(...)`` construction.
+        if table_type == "runs" and self.session_table_name not in self.metadata.tables:
+            self._get_or_create_table(
+                table_name=self.session_table_name,
+                table_type="sessions",
+                create_table_if_not_found=True,
+            )
         try:
             from sqlalchemy.schema import ForeignKeyConstraint, PrimaryKeyConstraint
 
@@ -302,6 +326,7 @@ class SqliteDb(BaseDb):
                 table_type,
                 traces_table_name=self.trace_table_name,
                 schedules_table_name=self.schedules_table_name,
+                session_table_name=self.session_table_name,
             ).copy()
 
             columns: List[Column] = []
@@ -946,6 +971,7 @@ class SqliteDb(BaseDb):
             - When deserialize=True: List of run output objects
             - When deserialize=False: Tuple of (run row dictionaries, total count)
         """
+        validate_pagination(limit, page)
         try:
             table = self._get_table(table_type="runs")
             if table is None:
@@ -1211,6 +1237,7 @@ class SqliteDb(BaseDb):
         Raises:
             Exception: If an error occurs during retrieval.
         """
+        validate_pagination(limit, page)
         try:
             table = self._get_table(table_type="sessions")
             if table is None:
@@ -1838,6 +1865,7 @@ class SqliteDb(BaseDb):
         Raises:
             Exception: If an error occurs during retrieval.
         """
+        validate_pagination(limit, page)
         try:
             table = self._get_table(table_type="memories")
             if table is None:
@@ -1914,6 +1942,7 @@ class SqliteDb(BaseDb):
             total_count: 1,
         )
         """
+        validate_pagination(limit, page)
         try:
             table = self._get_table(table_type="memories")
             if table is None:
@@ -2454,6 +2483,7 @@ class SqliteDb(BaseDb):
         if table is None:
             return [], 0
 
+        validate_pagination(limit, page)
         try:
             with self.Session() as sess, sess.begin():
                 stmt = select(table)
@@ -2692,6 +2722,7 @@ class SqliteDb(BaseDb):
         Raises:
             Exception: If an error occurs during retrieval.
         """
+        validate_pagination(limit, page)
         try:
             table = self._get_table(table_type="evals")
             if table is None:
@@ -3502,6 +3533,7 @@ class SqliteDb(BaseDb):
         Raises:
             Exception: If an error occurs during retrieval.
         """
+        validate_pagination(limit, page)
         try:
             table = self._get_table(table_type="culture")
             if table is None:
@@ -4956,6 +4988,7 @@ class SqliteDb(BaseDb):
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
     ) -> Tuple[List[Dict[str, Any]], int]:
+        validate_pagination(limit, page)
         try:
             table = self._get_table(table_type="learnings")
             if table is None:
