@@ -241,3 +241,15 @@ class TestQuietRunRefresher:
             assert s._refresher_task.done()
         finally:
             await s.aclose()
+
+
+class TestEventCountParity:
+    @pytest.mark.asyncio
+    async def test_completed_run_count_excludes_sentinel(self, stream):
+        """Redis XLEN counts the terminal sentinel entry; the client-facing
+        count must not (parity with the in-memory implementation)."""
+        await stream.add_event("r1", make_event("r1", "a"))
+        await stream.add_event("r1", make_event("r1", "b"))
+        assert await stream.get_event_count("r1") == 2
+        await stream.complete_run("r1", RunStatus.completed)
+        assert await stream.get_event_count("r1") == 2
