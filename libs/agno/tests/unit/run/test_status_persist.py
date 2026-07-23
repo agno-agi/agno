@@ -82,3 +82,44 @@ class TestApersistRunTransition:
             component, "workflow", "s1", run_response, extra_fields={"content": "failed: boom"}
         )
         assert component.db.calls[0]["fields"] == {"status": "ERROR", "content": "failed: boom"}
+
+
+class TestWorkflowCheckpoint:
+    class _Step:
+        def __init__(self, name):
+            self.name = name
+
+        def to_dict(self):
+            return {"step_name": self.name, "content": "done"}
+
+    @pytest.mark.asyncio
+    async def test_checkpoint_patches_step_results(self):
+        from agno.run.status_persist import apersist_workflow_checkpoint
+
+        workflow = MagicMock()
+        workflow.db = FakeAsyncDb()
+        await apersist_workflow_checkpoint(workflow, "s1", "r1", [self._Step("a"), self._Step("b")])
+        fields = workflow.db.calls[0]["fields"]
+        assert fields["status"] == "RUNNING"
+        assert [s["step_name"] for s in fields["step_results"]] == ["a", "b"]
+
+    @pytest.mark.asyncio
+    async def test_checkpoint_skips_without_primitive(self):
+        from agno.run.status_persist import apersist_workflow_checkpoint
+
+        workflow = MagicMock()
+        workflow.db = object()
+        await apersist_workflow_checkpoint(workflow, "s1", "r1", [self._Step("a")])  # no raise
+
+    def test_sync_checkpoint_uses_sync_adapter_only(self):
+        from agno.run.status_persist import persist_workflow_checkpoint
+
+        workflow = MagicMock()
+        workflow.db = FakeSyncDb()
+        persist_workflow_checkpoint(workflow, "s1", "r1", [self._Step("a")])
+        assert workflow.db.calls[0]["fields"]["status"] == "RUNNING"
+
+        workflow_async = MagicMock()
+        workflow_async.db = FakeAsyncDb()
+        persist_workflow_checkpoint(workflow_async, "s1", "r1", [self._Step("a")])
+        assert workflow_async.db.calls == []  # cannot await from sync loop: skip

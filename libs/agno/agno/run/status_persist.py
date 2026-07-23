@@ -111,3 +111,42 @@ async def apersist_run_transition(
             await component.asave_session(session=workflow_session)
         else:
             component.save_session(session=workflow_session)
+
+
+def _serialize_step_results(step_results: Any) -> Any:
+    return [step.to_dict() if hasattr(step, "to_dict") else step for step in (step_results or [])]
+
+
+async def apersist_workflow_checkpoint(workflow: Any, session_id: str, run_id: str, step_results: Any) -> None:
+    """Best-effort per-step checkpoint: atomically patch the run row's
+    step_results after a step completes, so a crashed run's row shows exactly
+    which steps finished (and, later, where resume can pick up).
+
+    Atomic-primitive-only by design: adapters without update_run_in_session
+    skip silently - no fallback whole-session save on the hot path."""
+    try:
+        await apersist_run_status(
+            workflow,
+            "workflow",
+            session_id=session_id,
+            run_id=run_id,
+            fields={"step_results": _serialize_step_results(step_results), "status": "RUNNING"},
+        )
+    except Exception as e:
+        log_debug(f"Workflow checkpoint persist skipped: {e}")
+
+
+def persist_workflow_checkpoint(workflow: Any, session_id: str, run_id: str, step_results: Any) -> None:
+    """Sync twin of apersist_workflow_checkpoint for the sync execute loop."""
+    db = _get_db(workflow)
+    method = getattr(db, "update_run_in_session", None) if db is not None else None
+    if not callable(method) or inspect.iscoroutinefunction(method):
+        return  # sync loop cannot await an async adapter; skip silently
+    try:
+        method(
+            session_id=session_id,
+            run_id=run_id,
+            fields={"step_results": _serialize_step_results(step_results), "status": "RUNNING"},
+        )
+    except Exception as e:
+        log_debug(f"Workflow checkpoint persist skipped: {e}")

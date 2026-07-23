@@ -70,7 +70,11 @@ from agno.run.cancel import (
     cancel_run as cancel_run_global,
 )
 from agno.run.concurrency import SSE_KEEPALIVE_INTERVAL_SECONDS, background_run_slot
-from agno.run.status_persist import apersist_run_transition
+from agno.run.status_persist import (
+    apersist_run_transition,
+    apersist_workflow_checkpoint,
+    persist_workflow_checkpoint,
+)
 from agno.run.team import (
     RunCancelledEvent as TeamRunCancelledEvent,
 )
@@ -2272,6 +2276,12 @@ class Workflow:
                     # Update the workflow-level previous_step_outputs dictionary
                     previous_step_outputs[step_name] = step_output
                     collected_step_outputs.append(step_output)
+                    # Per-step checkpoint (best-effort, atomic-only): a crashed run's
+                    # row shows exactly which steps completed - and gives future
+                    # resume-from-checkpoint a place to pick up
+                    persist_workflow_checkpoint(
+                        self, session.session_id, workflow_run_response.run_id, collected_step_outputs
+                    )
 
                     # Update shared media for next step
                     shared_images.extend(step_output.images or [])
@@ -3302,6 +3312,12 @@ class Workflow:
                     # Update the workflow-level previous_step_outputs dictionary
                     previous_step_outputs[step_name] = step_output
                     collected_step_outputs.append(step_output)
+                    # Per-step checkpoint (best-effort, atomic-only): a crashed run's
+                    # row shows exactly which steps completed - and gives future
+                    # resume-from-checkpoint a place to pick up
+                    await apersist_workflow_checkpoint(
+                        self, session.session_id, workflow_run_response.run_id, collected_step_outputs
+                    )
 
                     # Update shared media for next step
                     shared_images.extend(step_output.images or [])
