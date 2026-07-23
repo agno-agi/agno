@@ -93,3 +93,31 @@ class TestApplyRunQueueConfig:
         set_event_stream(custom)
         apply_run_queue_config(RunQueueConfig(redis=make_coordination()))
         assert get_event_stream() is custom
+
+
+class TestSyncStoreAdapter:
+    @pytest.mark.asyncio
+    async def test_sync_store_methods_become_awaitable(self):
+        from agno.os.run_queue import resolve_run_queue_store
+        from agno.run.queue import RunQueueConfig
+
+        class SyncStore:
+            def claim_run_job(self, worker_id, lock_grace_seconds=60):
+                return {"id": "r1", "worker": worker_id}
+
+            def count_queued_run_jobs(self):
+                return 3
+
+        store = resolve_run_queue_store(RunQueueConfig(durable=True), SyncStore())
+        claimed = await store.claim_run_job("w1")
+        assert claimed == {"id": "r1", "worker": "w1"}
+        assert await store.count_queued_run_jobs() == 3
+
+    @pytest.mark.asyncio
+    async def test_async_store_passes_through_unwrapped(self):
+        from agno.os.run_queue import resolve_run_queue_store
+        from agno.run.queue import RunQueueConfig
+        from agno.run.queue_store import InMemoryRunQueueStore
+
+        native = InMemoryRunQueueStore()
+        assert resolve_run_queue_store(RunQueueConfig(durable=True), native) is native

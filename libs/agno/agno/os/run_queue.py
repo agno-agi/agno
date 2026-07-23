@@ -81,6 +81,26 @@ def _apply_coordination(redis: Union[str, RedisCoordination]) -> None:
 _DEFAULT_STOP_TIMEOUT = 30
 
 
+class _SyncStoreAdapter:
+    """Awaitable facade over a sync queue store (e.g. the sync PostgresDb).
+
+    The worker and router always await the contract methods; sync stores run
+    their calls in a thread so the event loop stays free."""
+
+    def __init__(self, store: Any):
+        self._store = store
+
+    def __getattr__(self, name: str) -> Any:
+        attr = getattr(self._store, name)
+        if not callable(attr):
+            return attr
+
+        async def _call(*args: Any, **kwargs: Any) -> Any:
+            return await asyncio.to_thread(attr, *args, **kwargs)
+
+        return _call
+
+
 def resolve_run_queue_store(config: RunQueueConfig, default_db: Any) -> Any:
     """Resolve the queue store for a durable RunQueueConfig.
 
@@ -88,12 +108,19 @@ def resolve_run_queue_store(config: RunQueueConfig, default_db: Any) -> Any:
     infrastructure). The store must implement the run-queue contract
     (claim_run_job etc. — the Postgres adapters do; see
     agno.run.queue_store.InMemoryRunQueueStore for the contract reference).
+    Sync stores (e.g. the sync PostgresDb) are wrapped so their contract
+    methods can be awaited; calls run in a thread.
     """
+    import inspect
+
     from agno.run.queue_store import InMemoryRunQueueStore
 
     store = config.db if config.db is not None else default_db
-    if store is not None and callable(getattr(store, "claim_run_job", None)):
-        return store
+    claim = getattr(store, "claim_run_job", None) if store is not None else None
+    if callable(claim):
+        if inspect.iscoroutinefunction(claim):
+            return store
+        return _SyncStoreAdapter(store)
     log_warning(
         "Durable run queue requested but the configured db does not implement the run "
         "queue contract; falling back to an in-memory queue (NOT durable). Use a "
