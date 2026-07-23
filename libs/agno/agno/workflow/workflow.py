@@ -122,6 +122,7 @@ from agno.workflow.router import Router
 from agno.workflow.step import Step
 from agno.workflow.steps import Steps
 from agno.workflow.types import (
+    OnError,
     StepInput,
     StepMetrics,
     StepOutput,
@@ -200,6 +201,17 @@ def _normalize_workflow_cancellation_reason(
     if isinstance(error, RunCancelledException):
         return str(error) or f"Workflow run {workflow_run_response.run_id} was cancelled"
     return "Operation cancelled by user"
+
+
+def _step_on_error(step: Union[Step, Condition]) -> Union[OnError, str]:
+    """Read on_error from a Step or Condition's human_review.
+
+    Falls back to "fail" when human_review is missing (e.g. mid-construction).
+    """
+    hr = getattr(step, "human_review", None)
+    if hr is None:
+        return "fail"
+    return hr.on_error
 
 
 def _find_inner_step_by_executor(
@@ -840,10 +852,16 @@ class Workflow:
         if self.db is None:
             return
         # -*- Delete session
-        await self.db.delete_session(session_id=session_id, user_id=user_id)  # type: ignore
+        if self._has_async_db():
+            await self.db.delete_session(session_id=session_id, user_id=user_id)  # type: ignore
+        else:
+            self.db.delete_session(session_id=session_id, user_id=user_id)
 
     def delete_session(self, session_id: str, user_id: Optional[str] = None):
         """Delete the current session and save to storage"""
+        if self._has_async_db():
+            raise ValueError("Cannot use sync delete_session() with an async database. Use adelete_session() instead.")
+
         if self.db is None:
             return
         # -*- Delete session
@@ -1269,6 +1287,11 @@ class Workflow:
         ):
             return self._workflow_session
 
+        if self._has_async_db():
+            raise ValueError(
+                "Cannot use sync read_or_create_session() with an async database. Use aread_or_create_session() instead."
+            )
+
         # Try to load from database
         workflow_session = None
         if self.db is not None:
@@ -1391,6 +1414,9 @@ class Workflow:
 
         session_id_to_load = session_id or self.session_id
 
+        if self._has_async_db():
+            raise ValueError("Cannot use sync get_session() with an async database. Use aget_session() instead.")
+
         # Try to load from database
         if self.db is not None and session_id_to_load is not None:
             workflow_session = cast(WorkflowSession, self._read_session(session_id=session_id_to_load, user_id=user_id))
@@ -1433,6 +1459,9 @@ class Workflow:
         Returns:
             Optional[WorkflowSession]: The saved WorkflowSession or None if not saved.
         """
+        if self._has_async_db():
+            raise ValueError("Cannot use sync save_session() with an async database. Use asave_session() instead.")
+
         if self.db is not None and session.session_data is not None:
             if session.session_data.get("session_state") is not None:
                 session.session_data["session_state"].pop("current_session_id", None)
@@ -1544,6 +1573,9 @@ class Workflow:
 
     def _read_session(self, session_id: str, user_id: Optional[str] = None) -> Optional[WorkflowSession]:
         """Get a Session from the database."""
+        if self._has_async_db():
+            raise ValueError("Cannot use sync _read_session() with an async database. Use _aread_session() instead.")
+
         try:
             if not self.db:
                 raise ValueError("Db not initialized")
@@ -1566,6 +1598,11 @@ class Workflow:
 
     def _upsert_session(self, session: WorkflowSession) -> Optional[WorkflowSession]:
         """Upsert a Session into the database."""
+        if self._has_async_db():
+            raise ValueError(
+                "Cannot use sync _upsert_session() with an async database. Use _aupsert_session() instead."
+            )
+
         try:
             if not self.db:
                 raise ValueError("Db not initialized")
@@ -1681,6 +1718,9 @@ class Workflow:
 
         if isinstance(event, (RunOutput, TeamRunOutput)):
             return event
+
+        if isinstance(event, WorkflowCompletedEvent) and event.metrics is None:
+            event.metrics = workflow_run_response.metrics
 
         if self.store_events:
             # Check if this event type should be skipped
@@ -2146,9 +2186,7 @@ class Workflow:
                         raise
                     except Exception as step_error:
                         # Handle step execution error based on on_error policy
-                        step_on_error = (
-                            getattr(step, "on_error", "fail") if isinstance(step, (Step, Condition)) else "fail"
-                        )
+                        step_on_error = _step_on_error(step) if isinstance(step, (Step, Condition)) else "fail"
 
                         if step_on_error == "pause":
                             # Pause workflow and let user decide to retry or skip
@@ -2639,9 +2677,7 @@ class Workflow:
 
                     # Handle step execution error based on on_error policy
                     if step_error_occurred and step_error_exception is not None:
-                        step_on_error = (
-                            getattr(step, "on_error", "fail") if isinstance(step, (Step, Condition)) else "fail"
-                        )
+                        step_on_error = _step_on_error(step) if isinstance(step, (Step, Condition)) else "fail"
 
                         if step_on_error == "pause":
                             # Pause workflow and let user decide to retry or skip
@@ -3173,9 +3209,7 @@ class Workflow:
                         raise
                     except Exception as step_error:
                         # Handle step execution error based on on_error policy
-                        step_on_error = (
-                            getattr(step, "on_error", "fail") if isinstance(step, (Step, Condition)) else "fail"
-                        )
+                        step_on_error = _step_on_error(step) if isinstance(step, (Step, Condition)) else "fail"
 
                         if step_on_error == "pause":
                             # Pause workflow and let user decide to retry or skip
@@ -3718,9 +3752,7 @@ class Workflow:
 
                     # Handle step execution error based on on_error policy
                     if step_error_occurred and step_error_exception is not None:
-                        step_on_error = (
-                            getattr(step, "on_error", "fail") if isinstance(step, (Step, Condition)) else "fail"
-                        )
+                        step_on_error = _step_on_error(step) if isinstance(step, (Step, Condition)) else "fail"
 
                         if step_on_error == "pause":
                             # Pause workflow and let user decide to retry or skip
@@ -4627,7 +4659,10 @@ class Workflow:
         _session_id = session_id if session_id is not None else self.session_id
 
         if self.db is not None and _session_id is not None:
-            session = await self.db.aget_session(session_id=_session_id, session_type=SessionType.WORKFLOW)  # type: ignore
+            if self._has_async_db():
+                session = await self.db.get_session(session_id=_session_id, session_type=SessionType.WORKFLOW)  # type: ignore
+            else:
+                session = self.db.get_session(session_id=_session_id, session_type=SessionType.WORKFLOW)
             if session and isinstance(session, WorkflowSession) and session.runs:
                 # Find the run by ID
                 for run in session.runs:
@@ -4638,6 +4673,9 @@ class Workflow:
 
     def get_run(self, run_id: str, session_id: Optional[str] = None) -> Optional[WorkflowRunOutput]:
         """Get the status and details of a background workflow run - SIMPLIFIED"""
+        if self._has_async_db():
+            raise ValueError("Cannot use sync get_run() with an async database. Use aget_run() instead.")
+
         # Use provided session_id or fall back to self.session_id
         _session_id = session_id if session_id is not None else self.session_id
 
@@ -5492,6 +5530,22 @@ class Workflow:
             await team_acancel_run(executor_run_id)
         return result
 
+    def _restore_paused_step_ids(self, run_response: WorkflowRunOutput) -> None:
+        """Re-apply the original run's step_ids onto this freshly copied workflow.
+
+        The OS re-copies the workflow per request, and each copy mints fresh step_ids. A
+        continued run is the same logical run, so restore the persisted ids onto the steps
+        being resumed - clients correlate a step's pause/continue lifecycle by step_id.
+        """
+        steps: List[Any] = self.steps if isinstance(self.steps, list) else []
+        for step_req in run_response.step_requirements or []:
+            index = step_req.step_index
+            if step_req.step_id is None or not isinstance(index, int) or not (0 <= index < len(steps)):
+                continue
+            resumed_step = steps[index]
+            if hasattr(resumed_step, "step_id"):
+                resumed_step.step_id = step_req.step_id
+
     @overload
     def continue_run(
         self,
@@ -5741,6 +5795,9 @@ class Workflow:
         if paused_step_index is None:
             raise ValueError("Cannot continue run - no paused step index found")
 
+        # Keep step identity stable across the run's pause/continue boundary
+        self._restore_paused_step_ids(run_response)
+
         # Extract user input and router selection from active (last) requirement only.
         # With accumulated requirements, old resolved ones must NOT be picked up.
         user_input_data: Optional[Dict[str, Any]] = None
@@ -5766,8 +5823,8 @@ class Workflow:
 
         # Track that this step's HITL has been resolved for this run
         # We pass this info via kwargs so _continue_execute knows to skip the HITL check
-        # Note: We do NOT modify step.requires_confirmation directly as that would
-        # mutate the workflow definition and affect future runs
+        # Note: We do NOT modify step.human_review.requires_confirmation directly as that
+        # would mutate the workflow definition and affect future runs
         kwargs["hitl_resolved_for_step"] = paused_step_index
 
         # Pass executor requirement through for routing back to the paused agent/team
@@ -6268,7 +6325,7 @@ class Workflow:
                     raise
                 except Exception as step_error:
                     # Handle step execution error based on on_error policy
-                    step_on_error = getattr(step, "on_error", "fail") if isinstance(step, Step) else "fail"
+                    step_on_error = _step_on_error(step) if isinstance(step, Step) else "fail"
 
                     if step_on_error == "pause":
                         # Pause workflow and let user decide to retry or skip
@@ -7299,7 +7356,7 @@ class Workflow:
 
                 # Handle step execution error based on on_error policy
                 if step_error_occurred and step_error_exception is not None:
-                    step_on_error = getattr(step, "on_error", "fail") if isinstance(step, Step) else "fail"
+                    step_on_error = _step_on_error(step) if isinstance(step, Step) else "fail"
 
                     if step_on_error == "pause":
                         log_debug(f"Step '{step_name}' failed with on_error='pause' - pausing workflow")
@@ -7728,6 +7785,9 @@ class Workflow:
         if paused_step_index is None:
             raise ValueError("Cannot continue run - no paused step index found")
 
+        # Keep step identity stable across the run's pause/continue boundary
+        self._restore_paused_step_ids(run_response)
+
         # Extract user input and router selection from active (last) requirement only.
         # With accumulated requirements, old resolved ones must NOT be picked up.
         user_input_data: Optional[Dict[str, Any]] = None
@@ -7753,8 +7813,8 @@ class Workflow:
 
         # Track that this step's HITL has been resolved for this run
         # We pass this info via kwargs so _acontinue_execute knows to skip the HITL check
-        # Note: We do NOT modify step.requires_confirmation directly as that would
-        # mutate the workflow definition and affect future runs
+        # Note: We do NOT modify step.human_review.requires_confirmation directly as that
+        # would mutate the workflow definition and affect future runs
         kwargs["hitl_resolved_for_step"] = paused_step_index
 
         # Pass executor requirement through for routing back to the paused agent/team
@@ -8278,7 +8338,7 @@ class Workflow:
                     raise
                 except Exception as step_error:
                     # Handle step execution error based on on_error policy
-                    step_on_error = getattr(step, "on_error", "fail") if isinstance(step, Step) else "fail"
+                    step_on_error = _step_on_error(step) if isinstance(step, Step) else "fail"
 
                     if step_on_error == "pause":
                         log_debug(f"Step '{step_name}' failed with on_error='pause' - pausing workflow")
@@ -9045,7 +9105,7 @@ class Workflow:
 
                 # Handle step execution error based on on_error policy
                 if step_error_occurred and step_error_exception is not None:
-                    step_on_error = getattr(step, "on_error", "fail") if isinstance(step, Step) else "fail"
+                    step_on_error = _step_on_error(step) if isinstance(step, Step) else "fail"
 
                     if step_on_error == "pause":
                         log_debug(f"Step '{step_name}' failed with on_error='pause' - pausing workflow")
@@ -10565,24 +10625,17 @@ class Workflow:
                 step_kwargs["workflow"] = (
                     step.workflow.deep_copy() if hasattr(step.workflow, "deep_copy") else step.workflow
                 )
-            # Copy Step configuration attributes
+            # Copy Step configuration attributes.
+            # NOTE: step_id is intentionally omitted so each copy gets a fresh uuid. Workflows are
+            # deep-copied per request for isolation, and reusing a step_id across copies would make
+            # concurrent runs collide on step identity in events/telemetry.
             for attr in [
-                "step_id",
                 "max_retries",
                 "timeout_seconds",
                 "skip_on_failure",
                 "strict_input_validation",
                 "add_workflow_history",
                 "num_history_runs",
-                "requires_confirmation",
-                "confirmation_message",
-                "on_reject",
-                "requires_user_input",
-                "user_input_message",
-                "user_input_schema",
-                "on_error",
-                "requires_output_review",
-                "output_review_message",
                 "human_review",
             ]:
                 if hasattr(step, attr):
@@ -10612,19 +10665,14 @@ class Workflow:
         # Handle Loop steps
         if isinstance(step, Loop):
             copied_loop_steps = [self._deep_copy_single_step(s) for s in step.steps] if step.steps else []
-            loop_kwargs: Dict[str, Any] = dict(
+            return Loop(
                 steps=copied_loop_steps,
                 name=step.name,
                 description=step.description,
                 max_iterations=step.max_iterations,
                 end_condition=step.end_condition,
-                requires_confirmation=step.requires_confirmation,
-                confirmation_message=step.confirmation_message,
-                on_reject=step.on_reject,
+                human_review=step.human_review,
             )
-            if getattr(step, "human_review", None) is not None:
-                loop_kwargs["human_review"] = step.human_review
-            return Loop(**loop_kwargs)
 
         # Handle Condition steps
         if isinstance(step, Condition):
@@ -10636,9 +10684,7 @@ class Workflow:
                 name=step.name,
                 description=step.description,
                 else_steps=copied_else_steps,
-                requires_confirmation=step.requires_confirmation,
-                confirmation_message=step.confirmation_message,
-                on_reject=step.on_reject,
+                human_review=step.human_review,
             )
 
         # Handle Router steps
@@ -10649,15 +10695,8 @@ class Workflow:
                 name=step.name,
                 description=step.description,
                 selector=step.selector,
-                requires_confirmation=step.requires_confirmation,
-                confirmation_message=step.confirmation_message,
-                on_reject=step.on_reject,
-                requires_user_input=step.requires_user_input,
-                user_input_message=step.user_input_message,
                 allow_multiple_selections=step.allow_multiple_selections,
-                requires_output_review=step.requires_output_review,
-                output_review_message=step.output_review_message,
-                hitl_max_retries=step.hitl_max_retries,
+                human_review=step.human_review,
             )
 
         # Handle Steps container
@@ -10667,9 +10706,7 @@ class Workflow:
                 name=step.name,
                 description=step.description,
                 steps=copied_steps,
-                requires_confirmation=step.requires_confirmation,
-                confirmation_message=step.confirmation_message,
-                on_reject=step.on_reject,
+                human_review=step.human_review,
             )
 
         # For other types, attempt deep copy
