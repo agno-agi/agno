@@ -50,10 +50,10 @@ class TeamRunInput:
         elif isinstance(self.input_content, BaseModel):
             return self.input_content.model_dump_json(exclude_none=True)
         elif isinstance(self.input_content, Message):
-            return json.dumps(self.input_content.to_dict())
+            return json.dumps(self.input_content.to_dict(), ensure_ascii=False)
         elif isinstance(self.input_content, list):
             try:
-                return json.dumps(self.to_dict().get("input_content"))
+                return json.dumps(self.to_dict().get("input_content"), ensure_ascii=False)
             except Exception:
                 return str(self.input_content)
         else:
@@ -637,6 +637,8 @@ TeamRunOutputEvent = Union[
     RunContinuedEvent,
     PreHookStartedEvent,
     PreHookCompletedEvent,
+    PostHookStartedEvent,
+    PostHookCompletedEvent,
     ReasoningStartedEvent,
     ReasoningStepEvent,
     ReasoningContentDeltaEvent,
@@ -775,6 +777,23 @@ class TeamRunOutput:
 
     # User control flow (HITL) requirements to continue a run when paused, in order of arrival
     requirements: Optional[list[RunRequirement]] = None
+
+    # Checkpoint coordinate: index into messages at the most recent checkpoint write.
+    # Set when checkpoint="tool-batch" (or any future non-default level) persists mid-run state.
+    last_checkpoint_at_message_index: Optional[int] = None
+
+    # Fork lineage. Distinct from parent_run_id (which carries workflow-step parentage
+    # for team-as-workflow-member); see the corresponding fields on RunOutput.
+    forked_from_run_id: Optional[str] = None
+    forked_from_message_index: Optional[int] = None
+
+    # Branching lineage: the source session_id this team run was originally
+    # created in (set when a session is forked; preserved across nested forks).
+    forked_from_session_id: Optional[str] = None
+
+    # Regeneration lineage: the run_id of the immediate predecessor this team
+    # run was regenerated from.
+    regenerated_from: Optional[str] = None
 
     # === FOREIGN KEY RELATIONSHIPS ===
     # These fields establish relationships to parent workflow/step structures
@@ -1016,6 +1035,7 @@ class TeamRunOutput:
         elif isinstance(self.content, BaseModel):
             return self.content.model_dump_json(exclude_none=True, **kwargs)
         else:
+            kwargs.setdefault("ensure_ascii", False)
             return json.dumps(self.content, **kwargs)
 
     def add_member_run(self, run_response: Union["TeamRunOutput", RunOutput]) -> None:
