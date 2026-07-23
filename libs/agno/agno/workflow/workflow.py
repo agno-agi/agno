@@ -4365,6 +4365,16 @@ class Workflow:
                 await slot_cm.__aenter__()
                 slot_held = True
 
+                # Transition to RUNNING now that a slot is held - in BOTH
+                # branches, so pollers never see an executing run as PENDING
+                # (which now specifically means "queued for a slot")
+                workflow_run_response.status = RunStatus.running
+                workflow_session.upsert_run(run=workflow_run_response)
+                if self._has_async_db():
+                    await self.asave_session(session=workflow_session)
+                else:
+                    self.save_session(session=workflow_session)
+
                 if self.agent is not None:
                     result = self._aexecute_workflow_agent(
                         user_input=input,  # type: ignore
@@ -4383,15 +4393,6 @@ class Workflow:
                         f"Background streaming execution (workflow agent) completed with status: {workflow_run_response.status}"
                     )
                 else:
-                    # Update status to RUNNING and save
-                    workflow_run_response.status = RunStatus.running
-
-                    workflow_session.upsert_run(run=workflow_run_response)
-                    if self._has_async_db():
-                        await self.asave_session(session=workflow_session)
-                    else:
-                        self.save_session(session=workflow_session)
-
                     # Execute with streaming - consume all events (they're auto-broadcast via _handle_event)
                     async for event in self._aexecute_stream(
                         session_id=session_id,
