@@ -1,29 +1,30 @@
 """
 Example showing how to use an AgentOS instance as a gateway to remote agents, teams and workflows.
 
-This gateway demonstrates combining multiple remote agent sources:
-1. AgentOS protocol agents (from server.py on port 7778)
-2. Agno A2A protocol agents (from agno_a2a_server.py on port 7779)
-3. Google ADK A2A protocol agents (from adk_server.py on port 7780)
-4. Local agents and workflows
+The gateway combines entities from a remote AgentOS (consumed through its
+RemoteAccess interface) with local agents and workflows, all served on a single API.
 
 Prerequisites:
-- Start server.py on port 7778
-- Start agno_a2a_server.py on port 7779
-- Start adk_server.py on port 7780 (requires GOOGLE_API_KEY)
+1. Start the backing server:
+   python cookbook/05_agent_os/remote/server.py
 
-# Note:
-- Remote Workflows via Websocket are not yet supported
-- If authorization is enabled on remote servers and all endpoints are protected, not all of the functions work correctly on the gateway. Specifically /config, /workflows, /workflows/{workflow_id}, /agents, /teams, /agent/{agent_id}, /team/{team_id} need to be unprotected for the gateway to work correctly.
+   The server will run on http://localhost:7778
+
+2. Set your OPENAI_API_KEY environment variable
+
+Notes:
+- Workflows are not remotely executable, so the gateway only serves its local workflow.
+- The RemoteAccess interface serves execution and entity metadata. Session, memory, and
+  knowledge proxies still use the remote server's main API, so those routes must be
+  reachable for the gateway db features to work.
 """
 
 from agno.agent import Agent, RemoteAgent
-from agno.db.postgres import PostgresDb
-from agno.models.openai import OpenAIChat
+from agno.db.sqlite import SqliteDb
+from agno.models.openai import OpenAIResponses
 from agno.os import AgentOS
 from agno.team import RemoteTeam
-from agno.workflow import RemoteWorkflow, Workflow
-from agno.workflow.agent import WorkflowAgent
+from agno.workflow import Workflow
 from agno.workflow.condition import Condition
 from agno.workflow.step import Step
 from agno.workflow.types import StepInput
@@ -33,24 +34,24 @@ from agno.workflow.types import StepInput
 # ---------------------------------------------------------------------------
 
 # Setup the database
-db = PostgresDb(id="basic-db", db_url="postgresql+psycopg://ai:ai@localhost:5532/ai")
+db = SqliteDb(id="gateway-db", db_file="tmp/remote_gateway.db")
 
-# === SETUP ADVANCED WORKFLOW ===
+# === SETUP LOCAL WORKFLOW ===
 story_writer = Agent(
     name="Story Writer",
-    model=OpenAIChat(id="gpt-5.2"),
+    model=OpenAIResponses(id="gpt-5.5"),
     instructions="You are tasked with writing a 100 word story based on a given topic",
 )
 
 story_editor = Agent(
     name="Story Editor",
-    model=OpenAIChat(id="gpt-5.2"),
+    model=OpenAIResponses(id="gpt-5.5"),
     instructions="Review and improve the story's grammar, flow, and clarity",
 )
 
 story_formatter = Agent(
     name="Story Formatter",
-    model=OpenAIChat(id="gpt-5.2"),
+    model=OpenAIResponses(id="gpt-5.5"),
     instructions="Break down the story into prologue, body, and epilogue sections",
 )
 
@@ -92,13 +93,9 @@ format_step = Step(
     agent=story_formatter,
 )
 
-# Create a WorkflowAgent that will decide when to run the workflow
-workflow_agent = WorkflowAgent(model=OpenAIChat(id="gpt-5.2"), num_history_runs=4)
-
-advanced_workflow = Workflow(
+story_workflow = Workflow(
     name="Story Generation with Conditional Editing",
     description="A workflow that generates stories, conditionally edits them, formats them, and adds references",
-    agent=workflow_agent,
     steps=[
         write_step,
         Condition(
@@ -115,41 +112,18 @@ advanced_workflow = Workflow(
 
 # Setup our AgentOS app
 agent_os = AgentOS(
-    description="Gateway combining AgentOS, Agno A2A, and Google ADK agents",
+    description="Gateway combining remote and local agents, teams, and workflows",
     agents=[
-        # AgentOS protocol agents (from server.py on port 7778)
+        # Remote agents consumed through the RemoteAccess interface of server.py
         RemoteAgent(base_url="http://localhost:7778", agent_id="assistant-agent"),
         RemoteAgent(base_url="http://localhost:7778", agent_id="researcher-agent"),
-        # Agno A2A protocol agents (from agno_a2a_server.py on port 7779)
-        RemoteAgent(
-            base_url="http://localhost:7779/a2a/agents/assistant-agent-2",
-            agent_id="assistant-agent-2",
-            protocol="a2a",
-            a2a_protocol="rest",
-        ),
-        RemoteAgent(
-            base_url="http://localhost:7779/a2a/agents/researcher-agent-2",
-            agent_id="researcher-agent-2",
-            protocol="a2a",
-            a2a_protocol="rest",
-        ),
-        # Google ADK A2A protocol agent (from adk_server.py on port 7780)
-        RemoteAgent(
-            base_url="http://localhost:7780",
-            agent_id="facts_agent",
-            protocol="a2a",
-            a2a_protocol="json-rpc",
-        ),
         # Local agents
         story_writer,
         story_editor,
         story_formatter,
     ],
     teams=[RemoteTeam(base_url="http://localhost:7778", team_id="research-team")],
-    workflows=[
-        RemoteWorkflow(base_url="http://localhost:7778", workflow_id="qa-workflow"),
-        advanced_workflow,
-    ],
+    workflows=[story_workflow],
 )
 app = agent_os.get_app()
 
@@ -161,13 +135,11 @@ app = agent_os.get_app()
 if __name__ == "__main__":
     """
     Run your AgentOS gateway.
-    
+
     This gateway combines:
-    - Remote AgentOS agents (port 7778)
-    - Remote Agno A2A agents (port 7779)
-    - Remote Google ADK agents (port 7780)
-    - Local agents and workflows
-    
+    - Remote agents and a remote team (from port 7778)
+    - Local agents and a local workflow
+
     All accessible via a single API on port 7777.
     """
-    agent_os.serve(app="05_agent_os_gateway:app", reload=True, port=7777)
+    agent_os.serve(app="04_agent_os_gateway:app", reload=True, port=7777)

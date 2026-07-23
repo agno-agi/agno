@@ -31,7 +31,7 @@ from agno.run.approval import aresolve_approval
 from agno.team import RemoteTeam, Team
 from agno.tools.slack import SlackTools
 from agno.utils.log import log_error, log_info
-from agno.workflow import RemoteWorkflow, Workflow
+from agno.workflow import Workflow
 
 _STREAM_CHAR_LIMIT = 3900
 
@@ -40,7 +40,7 @@ _STREAM_CHAR_LIMIT = 3900
 class HITLHandler:
     slack_tools: SlackTools
     ssl: Optional[SSLContext]
-    entity: Union[Agent, RemoteAgent, Team, RemoteTeam, Workflow, RemoteWorkflow]
+    entity: Union[Agent, RemoteAgent, Team, RemoteTeam, Workflow]
     entity_id: str
     entity_name: str
     entity_type: Literal["agent", "team", "workflow"]

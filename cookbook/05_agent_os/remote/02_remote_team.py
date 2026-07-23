@@ -1,70 +1,44 @@
 """
-Examples demonstrating AgentOSRunner for remote execution.
+Serve a team from another AgentOS through your own AgentOS.
 
-Run `agent_os_setup.py` to start the remote AgentOS instance.
+RemoteTeam is a proxy to a team hosted on a remote AgentOS. The remote AgentOS
+must mount the RemoteAccess interface and pass the team to it.
+
+Prerequisites:
+1. Start the backing server:
+   python cookbook/05_agent_os/remote/server.py
+
+   The server will run on http://localhost:7778
+
+2. Set your OPENAI_API_KEY environment variable
+
+Then run this app and talk to the remote team on http://localhost:7777:
+   curl -X POST -F "message=Calculate 15 * 23" -F "stream=false" http://localhost:7777/teams/research-team/runs
 """
 
-import asyncio
-
+from agno.os import AgentOS
 from agno.team import RemoteTeam
 
 # ---------------------------------------------------------------------------
 # Create Example
 # ---------------------------------------------------------------------------
 
+remote_research_team = RemoteTeam(
+    base_url="http://localhost:7778",
+    team_id="research-team",
+)
 
-async def remote_agent_example():
-    """Call a remote agent hosted on another AgentOS instance."""
-    # Create a runner that points to a remote agent
-    team = RemoteTeam(
-        base_url="http://localhost:7778",
-        team_id="research-team",
-    )
+agent_os = AgentOS(
+    id="remote-team-client",
+    description="AgentOS serving a team that lives on a remote AgentOS",
+    teams=[remote_research_team],
+)
 
-    response = await team.arun(
-        "What is the capital of France?",
-        user_id="user-123",
-        session_id="session-456",
-    )
-    print(response.content)
-
-
-async def remote_streaming_example():
-    """Stream responses from a remote agent."""
-    team = RemoteTeam(
-        base_url="http://localhost:7778",
-        team_id="research-team",
-    )
-
-    async for chunk in team.arun(
-        "Tell me a 2 sentence horror story",
-        session_id="session-456",
-        user_id="user-123",
-        stream=True,
-    ):
-        if hasattr(chunk, "content") and chunk.content:
-            print(chunk.content, end="", flush=True)
-
-
-async def main():
-    """Run all examples in a single event loop."""
-    print("=" * 60)
-    print("RemoteTeam Examples")
-    print("=" * 60)
-
-    # Run examples
-    # Note: Remote examples require a running AgentOS instance
-
-    print("\n1. Remote Team Example:")
-    await remote_agent_example()
-
-    print("\n2. Remote Streaming Example:")
-    await remote_streaming_example()
-
+app = agent_os.get_app()
 
 # ---------------------------------------------------------------------------
 # Run Example
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    agent_os.serve(app="02_remote_team:app", port=7777)

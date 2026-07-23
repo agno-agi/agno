@@ -1,71 +1,51 @@
 """
-Examples demonstrating AgentOSRunner for remote execution.
+Serve agents from another AgentOS through your own AgentOS.
 
-Run `agent_os_setup.py` to start the remote AgentOS instance.
+RemoteAgent is a proxy to an agent hosted on a remote AgentOS. The remote AgentOS
+must mount the RemoteAccess interface and pass the agent to it; RemoteAgent then calls
+the /remote endpoints of that server.
+
+Prerequisites:
+1. Start the backing server:
+   python cookbook/05_agent_os/remote/server.py
+
+   The server will run on http://localhost:7778
+
+2. Set your OPENAI_API_KEY environment variable
+
+Then run this app and talk to the remote agents on http://localhost:7777:
+   curl -X POST -F "message=What is 15 * 23?" -F "stream=false" http://localhost:7777/agents/assistant-agent/runs
 """
 
-import asyncio
-
 from agno.agent import RemoteAgent
+from agno.os import AgentOS
 
 # ---------------------------------------------------------------------------
 # Create Example
 # ---------------------------------------------------------------------------
 
+# Proxies to agents hosted on the remote AgentOS
+remote_assistant = RemoteAgent(
+    base_url="http://localhost:7778",
+    agent_id="assistant-agent",
+)
 
-async def remote_agent_example():
-    """Call a remote agent hosted on another AgentOS instance."""
-    # Create a runner that points to a remote agent
-    agent = RemoteAgent(
-        base_url="http://localhost:7778",
-        agent_id="assistant-agent",
-    )
+remote_researcher = RemoteAgent(
+    base_url="http://localhost:7778",
+    agent_id="researcher-agent",
+)
 
-    response = await agent.arun(
-        "What is the capital of France?",
-        user_id="user-123",
-        session_id="session-456",
-    )
-    print(response.content)
+agent_os = AgentOS(
+    id="remote-agent-client",
+    description="AgentOS serving agents that live on a remote AgentOS",
+    agents=[remote_assistant, remote_researcher],
+)
 
-
-async def remote_streaming_example():
-    """Stream responses from a remote agent."""
-    runner = RemoteAgent(
-        base_url="http://localhost:7778",
-        agent_id="researcher-agent",
-    )
-
-    async for chunk in runner.arun(
-        "Tell me a 2 sentence horror story",
-        session_id="session-456",
-        user_id="user-123",
-        stream=True,
-        stream_events=True,
-    ):
-        if hasattr(chunk, "content") and chunk.content:
-            print(chunk.content, end="", flush=True)
-
-
-async def main():
-    """Run all examples in a single event loop."""
-    print("=" * 60)
-    print("RemoteAgent Examples")
-    print("=" * 60)
-
-    # Run examples
-    # Note: Remote examples require a running AgentOS instance
-
-    print("\n1. Remote Agent Example:")
-    await remote_agent_example()
-
-    print("\n2. Remote Streaming Example:")
-    await remote_streaming_example()
-
+app = agent_os.get_app()
 
 # ---------------------------------------------------------------------------
 # Run Example
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    agent_os.serve(app="01_remote_agent:app", port=7777)

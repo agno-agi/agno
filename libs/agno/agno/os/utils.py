@@ -31,7 +31,7 @@ from agno.run.workflow import WorkflowRunOutputEvent
 from agno.team import RemoteTeam, Team, TeamFactory
 from agno.tools import Function, Toolkit
 from agno.utils.log import log_debug, log_warning, logger
-from agno.workflow import RemoteWorkflow, Workflow, WorkflowFactory
+from agno.workflow import Workflow, WorkflowFactory
 
 
 def to_utc_datetime(value: Optional[Union[str, int, float, datetime]]) -> Optional[datetime]:
@@ -1045,13 +1045,13 @@ async def get_team_by_id_async(
 
 def get_workflow_by_id(
     workflow_id: str,
-    workflows: Optional[Sequence[Union[Workflow, RemoteWorkflow, WorkflowFactory]]] = None,
+    workflows: Optional[Sequence[Union[Workflow, WorkflowFactory]]] = None,
     create_fresh: bool = False,
     db: Optional[Union[BaseDb, AsyncBaseDb]] = None,
     version: Optional[int] = None,
     registry: Optional[Registry] = None,
     ctx: Optional[RequestContext] = None,
-) -> Optional[Union[Workflow, RemoteWorkflow]]:
+) -> Optional[Workflow]:
     """Get a workflow by ID, optionally creating a fresh instance for request isolation.
 
     When create_fresh=True, creates a new workflow instance using deep_copy() to prevent
@@ -1106,13 +1106,13 @@ def get_workflow_by_id(
 
 async def get_workflow_by_id_async(
     workflow_id: str,
-    workflows: Optional[Sequence[Union[Workflow, RemoteWorkflow, WorkflowFactory]]] = None,
+    workflows: Optional[Sequence[Union[Workflow, WorkflowFactory]]] = None,
     create_fresh: bool = False,
     db: Optional[Union[BaseDb, AsyncBaseDb]] = None,
     version: Optional[int] = None,
     registry: Optional[Registry] = None,
     ctx: Optional[RequestContext] = None,
-) -> Optional[Union[Workflow, RemoteWorkflow]]:
+) -> Optional[Workflow]:
     """Async variant of get_workflow_by_id that supports async factories."""
     if workflow_id is None:
         return None
@@ -2058,7 +2058,7 @@ async def resolve_team(
 
 async def resolve_workflow(
     workflow_id: str,
-    workflows: Optional[Sequence[Union[Workflow, RemoteWorkflow, WorkflowFactory]]],
+    workflows: Optional[Sequence[Union[Workflow, WorkflowFactory]]],
     db: Optional[Union[BaseDb, AsyncBaseDb]] = None,
     registry: Optional[Registry] = None,
     version: Optional[int] = None,
@@ -2066,7 +2066,7 @@ async def resolve_workflow(
     user_id: Optional[str] = None,
     session_id: Optional[str] = None,
     factory_input: Optional[str] = None,
-) -> Union[Workflow, RemoteWorkflow]:
+) -> Workflow:
     """Resolve a workflow by ID with proper error handling for both factory and non-factory paths."""
     is_factory = workflows and any(isinstance(w, WorkflowFactory) and w.id == workflow_id for w in workflows)
     if is_factory:

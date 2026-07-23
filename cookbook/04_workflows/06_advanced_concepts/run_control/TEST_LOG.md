@@ -52,16 +52,6 @@ Generated: 2026-02-08 16:39:09
 
 ---
 
-### remote_workflow.py
-
-**Status:** PASS
-
-**Description:** Executed with `.venvs/demo/bin/python` (mode: normal, timeout: 35s).
-
-**Result:** Executed successfully. Error: Failed to connect to remote server at http://localhost:7777
-
----
-
 ### workflow_cli.py
 
 **Status:** FAIL

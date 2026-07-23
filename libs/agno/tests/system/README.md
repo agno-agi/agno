@@ -21,8 +21,7 @@ The test system consists of three containers:
 │  - Local Workflow (gateway-workflow)                             │
 │  - RemoteAgent(assistant-agent)  ──────┐                         │
 │  - RemoteAgent(researcher-agent) ──────┼──► Remote Server        │
-│  - RemoteTeam(research-team)     ──────┤                         │
-│  - RemoteWorkflow(qa-workflow)   ──────┘                         │
+│  - RemoteTeam(research-team)     ──────┘                         │
 └─────────────────────────────────────────────────────────────────┘
                               │
                               ▼ Internal network
@@ -35,6 +34,7 @@ The test system consists of three containers:
 │  - Team: research-team                                           │
 │  - Workflow: qa-workflow                                         │
 │  - Knowledge: PgVector-based                                     │
+│  - RemoteAccess interface mounted at /remote                     │
 └─────────────────────────────────────────────────────────────────┘
                               │
                               ▼
@@ -47,6 +47,8 @@ The test system consists of three containers:
 │  - Traces and Evals                                              │
 └─────────────────────────────────────────────────────────────────┘
 ```
+
+The remote server mounts the RemoteAccess interface at `/remote`. The gateway's `RemoteAgent` and `RemoteTeam` instances consume the `/remote/...` endpoints of the remote server.
 
 ## Prerequisites
 

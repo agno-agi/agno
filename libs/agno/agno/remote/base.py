@@ -2,7 +2,7 @@ import time
 from abc import abstractmethod
 from dataclasses import dataclass, field
 from datetime import date
-from typing import TYPE_CHECKING, Any, AsyncIterator, Dict, List, Literal, Optional, Sequence, Tuple, Union
+from typing import TYPE_CHECKING, Any, AsyncIterator, Dict, List, Optional, Sequence, Tuple, Union
 
 from pydantic import BaseModel
 
@@ -18,8 +18,6 @@ if TYPE_CHECKING:
     from fastapi import UploadFile
 
     from agno.client import AgentOSClient
-    from agno.client.a2a import A2AClient
-    from agno.client.a2a.schemas import AgentCard
     from agno.os.routers.evals.schemas import EvalSchema
     from agno.os.routers.knowledge.schemas import (
         ConfigResponseSchema,
@@ -371,56 +369,47 @@ class RemoteKnowledge:
 class BaseRemote:
     # Private cache for OS config with TTL: (config, timestamp)
     _cached_config: Optional[Tuple["ConfigResponse", float]] = field(default=None, init=False, repr=False)
-    # Private cache for agent card with TTL: (agent_card, timestamp)
-    _cached_agent_card: Optional[Tuple[Optional["AgentCard"], float]] = field(default=None, init=False, repr=False)
 
     def __init__(
         self,
         base_url: str,
         timeout: float = 60.0,
-        protocol: Literal["agentos", "a2a"] = "agentos",
-        a2a_protocol: Literal["json-rpc", "rest"] = "rest",
         config_ttl: float = 300.0,
+        api_prefix: str = "/remote",
     ):
         """Initialize BaseRemote for remote execution.
 
-        Supports two protocols:
-        - "agentos": Agno's proprietary AgentOS REST API (default)
-        - "a2a": A2A (Agent-to-Agent) protocol for cross-framework communication
+        Executes entities on a remote AgentOS instance through its RemoteAccess interface.
+        The target AgentOS must mount the RemoteAccess interface (agno.os.interfaces.remote_access.RemoteAccess)
+        and explicitly opt the entity in; entities not exposed through the interface are not
+        remotely callable.
 
-        For local execution, provide agent/team/workflow instances.
-        For remote execution, provide base_url.
+        Note: the db and knowledge proxies (RemoteDb, RemoteKnowledge) still use the main
+        AgentOS API (e.g. /sessions, /memories, /knowledge) and require those routes to be
+        reachable on the remote instance.
 
         Args:
             base_url: Base URL for remote instance (e.g., "http://localhost:7777")
             timeout: Request timeout in seconds (default: 60)
-            protocol: Communication protocol - "agentos" (default) or "a2a"
-            a2a_protocol: For A2A protocol only - Whether to use JSON-RPC or REST protocol.
             config_ttl: Time-to-live for cached config in seconds (default: 300)
+            api_prefix: Path prefix where the RemoteAccess interface is mounted on the target
+                AgentOS (default: "/remote"). Only change this if the interface is mounted
+                at a custom prefix.
         """
         self.base_url = base_url.rstrip("/")
         self.timeout: float = timeout
-        self.protocol = protocol
-        self.a2a_protocol = a2a_protocol
         self.config_ttl: float = config_ttl
+        self.api_prefix = "/" + api_prefix.strip("/") if api_prefix.strip("/") else ""
         self._cached_config = None
-        self._cached_agent_card = None
 
-        self.agentos_client = None
-        self.a2a_client = None
-
-        if protocol == "agentos":
-            self.agentos_client = self.get_os_client()
-        elif protocol == "a2a":
-            self.a2a_client = self.get_a2a_client()
-        else:
-            raise ValueError(f"Invalid protocol: {protocol}")
+        self.agentos_client = self.get_os_client()
 
     def get_os_client(self) -> "AgentOSClient":
-        """Get an AgentOSClient for fetching remote configuration.
+        """Get an AgentOSClient for the remote instance's main API.
 
-        This is used internally by AgentOS to fetch configuration from remote
-        AgentOS instances when this runner represents a remote resource.
+        This client is only used by the db and knowledge proxies (RemoteDb,
+        RemoteKnowledge); remote execution goes through the Remote interface
+        endpoints instead.
 
         Returns:
             AgentOSClient: Client configured for this remote resource's base URL
@@ -432,49 +421,35 @@ class BaseRemote:
             timeout=self.timeout,
         )
 
-    def get_a2a_client(self) -> "A2AClient":
-        """Get an A2AClient for A2A protocol communication.
-
-        Returns cached client if available, otherwise creates a new one.
-        This method provides lazy initialization of the A2A client.
-
-        Returns:
-            A2AClient: Client configured for A2A protocol communication
-        """
-        from agno.client.a2a import A2AClient
-
-        return A2AClient(
-            base_url=self.base_url,
-            timeout=int(self.timeout),
-            protocol=self.a2a_protocol,
-        )
-
     @property
     def _config(self) -> Optional["ConfigResponse"]:
-        """Get the OS config from remote, cached with TTL."""
+        """Get the OS config from the RemoteAccess interface, cached with TTL."""
         from agno.os.schema import ConfigResponse
-
-        if self.protocol == "a2a":
-            return None
+        from agno.remote.http import get_json
 
         current_time = time.time()
 
         # Check if cache is valid
         if self._cached_config is not None:
-            config, cached_at = self._cached_config
+            cached_config, cached_at = self._cached_config
             if current_time - cached_at < self.config_ttl:
-                return config
+                return cached_config
 
         # Fetch fresh config
-        config: ConfigResponse = self.agentos_client.get_config()  # type: ignore
+        config: ConfigResponse = ConfigResponse.model_validate(
+            get_json(self.base_url, f"{self.api_prefix}/config", timeout=self.timeout)
+        )
         self._cached_config = (config, current_time)
         return config
 
     async def refresh_os_config(self) -> "ConfigResponse":
         """Force refresh the cached OS config."""
         from agno.os.schema import ConfigResponse
+        from agno.remote.http import aget_json
 
-        config: ConfigResponse = await self.agentos_client.aget_config()  # type: ignore
+        config: ConfigResponse = ConfigResponse.model_validate(
+            await aget_json(self.base_url, f"{self.api_prefix}/config", timeout=self.timeout)
+        )
         self._cached_config = (config, time.time())
         return config
 
@@ -504,60 +479,6 @@ class BaseRemote:
         if auth_token:
             return {"Authorization": f"Bearer {auth_token}"}
         return None
-
-    def get_agent_card(self) -> Optional["AgentCard"]:
-        """Get agent card for A2A protocol agents, cached with TTL.
-
-        Fetches the agent card from the standard /.well-known/agent.json endpoint
-        to populate agent metadata (name, description, etc.) for A2A agents.
-
-        Returns None for non-A2A protocols or if the server doesn't support agent cards.
-        """
-        if self.protocol != "a2a":
-            return None
-
-        current_time = time.time()
-
-        # Check if cache is valid
-        if self._cached_agent_card is not None:
-            agent_card, cached_at = self._cached_agent_card
-            if current_time - cached_at < self.config_ttl:
-                return agent_card
-
-        try:
-            agent_card = self.a2a_client.get_agent_card()  # type: ignore
-            self._cached_agent_card = (agent_card, current_time)
-            return agent_card
-        except Exception:
-            self._cached_agent_card = (None, current_time)
-            return None
-
-    async def aget_agent_card(self) -> Optional["AgentCard"]:
-        """Get agent card for A2A protocol agents, cached with TTL.
-
-        Fetches the agent card from the standard /.well-known/agent.json endpoint
-        to populate agent metadata (name, description, etc.) for A2A agents.
-
-        Returns None for non-A2A protocols or if the server doesn't support agent cards.
-        """
-        if self.protocol != "a2a":
-            return None
-
-        current_time = time.time()
-
-        # Check if cache is valid
-        if self._cached_agent_card is not None:
-            agent_card, cached_at = self._cached_agent_card
-            if current_time - cached_at < self.config_ttl:
-                return agent_card
-
-        try:
-            agent_card = await self.a2a_client.aget_agent_card()  # type: ignore
-            self._cached_agent_card = (agent_card, current_time)
-            return agent_card
-        except Exception:
-            self._cached_agent_card = (None, current_time)
-            return None
 
     @abstractmethod
     def arun(  # type: ignore

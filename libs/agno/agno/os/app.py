@@ -81,7 +81,7 @@ from agno.remote.base import RemoteDb, RemoteKnowledge
 from agno.team import RemoteTeam, Team, TeamFactory
 from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.utils.string import generate_id, generate_id_from_name
-from agno.workflow import RemoteWorkflow, Workflow, WorkflowFactory
+from agno.workflow import Workflow, WorkflowFactory
 
 if TYPE_CHECKING:
     # Typed for static checkers only -- fastmcp is an optional extra, so importing it at
@@ -237,7 +237,7 @@ class AgentOS:
         checkpoint: Optional[Literal["runs", "tool-batch", "tools"]] = None,
         agents: Optional[List[Union[Agent, RemoteAgent, AgentProtocol, AgentFactory]]] = None,
         teams: Optional[List[Union[Team, RemoteTeam, TeamFactory]]] = None,
-        workflows: Optional[List[Union[Workflow, RemoteWorkflow, WorkflowFactory]]] = None,
+        workflows: Optional[List[Union[Workflow, WorkflowFactory]]] = None,
         knowledge: Optional[List[Knowledge]] = None,
         interfaces: Optional[List[BaseInterface]] = None,
         a2a_interface: bool = False,
@@ -328,7 +328,7 @@ class AgentOS:
 
         self.agents: Optional[List[Union[Agent, RemoteAgent, AgentProtocol, AgentFactory]]] = agents
         self.teams: Optional[List[Union[Team, RemoteTeam, TeamFactory]]] = teams
-        self.workflows: Optional[List[Union[Workflow, RemoteWorkflow, WorkflowFactory]]] = workflows
+        self.workflows: Optional[List[Union[Workflow, WorkflowFactory]]] = workflows
         self.a2a_interface = a2a_interface
         self.knowledge = knowledge
         self.settings: AgnoAPISettings = settings or AgnoAPISettings()
@@ -697,7 +697,7 @@ class AgentOS:
 
     @property
     def _workflows(self) -> List[Workflow]:
-        """Local workflows only — excludes RemoteWorkflow and WorkflowFactory."""
+        """Local workflows only — excludes WorkflowFactory."""
         return [w for w in (self.workflows or []) if isinstance(w, Workflow)]
 
     def _make_app(self, lifespan: Optional[Any] = None) -> FastAPI:
@@ -1594,6 +1594,11 @@ class AgentOS:
                 team_contents_db = getattr(team_entry.knowledge, "contents_db", None) if team_entry.knowledge else None
                 if team_contents_db:
                     self._register_db_with_validation(knowledge_dbs, team_contents_db)
+            else:
+                # Remote teams (RemoteTeam)
+                team_db = getattr(team_entry, "db", None)
+                if team_db:
+                    self._register_db_with_validation(dbs, team_db)
 
         for wf_entry in self.workflows or []:
             if isinstance(wf_entry, WorkflowFactory):

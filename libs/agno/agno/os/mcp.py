@@ -868,8 +868,6 @@ def build_mcp_server(
         user_id: Optional[str] = None,
         session_id: Optional[str] = None,
     ) -> ToolResult:
-        from agno.workflow.remote import RemoteWorkflow
-
         _require_tool_scopes("POST", f"/workflows/{workflow_id}/runs")
         user_id = _resolve_user_id(user_id)
         workflow = await _resolve_run_component(os, "workflows", workflow_id, user_id=user_id, session_id=session_id)
@@ -877,9 +875,6 @@ def build_mcp_server(
         session_id = _session_id_or_new(session_id)
         # Detach from FastMCP's tool-call span so the workflow run is its own root trace.
         with _detached_trace_context():
-            if isinstance(workflow, RemoteWorkflow):
-                run_output = await workflow.arun(message, user_id=user_id, session_id=session_id)
-                return build_run_tool_result(run_output, result_mode)
             steps = getattr(workflow, "steps", None)
             total_steps = float(len(steps)) if isinstance(steps, (list, tuple)) and steps else None
             stream = workflow.arun(

@@ -77,6 +77,11 @@ def _require_capability(agent: Any, method: str, feature: str) -> None:
         raise HTTPException(status_code=501, detail=f"This agent does not support {feature}")
 
 
+def _is_run_output_accumulator(chunk: Any) -> bool:
+    """Return True for accumulated run outputs (yield_run_output=True) that are not SSE events."""
+    return isinstance(chunk, RunOutput)
+
+
 async def agent_response_streamer(
     agent: Union[Agent, RemoteAgent, AgentProtocol],
     message: str,
@@ -116,6 +121,8 @@ async def agent_response_streamer(
             **kwargs,
         )
         async for run_response_chunk in run_response:  # type: ignore[union-attr]
+            if _is_run_output_accumulator(run_response_chunk):
+                continue
             yield format_sse_event(run_response_chunk)  # type: ignore
     except (InputCheckError, OutputCheckError) as e:
         error_response = RunErrorEvent(
@@ -248,6 +255,8 @@ async def agent_continue_response_streamer(
             **kwargs,
         )
         async for run_response_chunk in continue_response:
+            if _is_run_output_accumulator(run_response_chunk):
+                continue
             yield format_sse_event(run_response_chunk)  # type: ignore
     except (InputCheckError, OutputCheckError) as e:
         error_response = RunErrorEvent(

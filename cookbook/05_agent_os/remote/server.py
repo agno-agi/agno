@@ -1,17 +1,26 @@
 """
-AgentOS Server for Cookbook Client Examples
+AgentOS Server for Remote Cookbook Examples.
+
+This server hosts the agents and team that the other examples in this folder
+consume through RemoteAgent and RemoteTeam.
+
+Remote execution is opt-in: only the entities passed to the RemoteAccess interface
+are remotely callable. The internal agent below is registered on the AgentOS but
+NOT passed to the RemoteAccess interface, so it is served on the default API but
+cannot be executed remotely. Workflows are not remotely executable: the QA workflow
+is served on this AgentOS via the standard workflow API only.
+
+Run with: python cookbook/05_agent_os/remote/server.py
 """
 
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
-from agno.knowledge.embedder.openai import OpenAIEmbedder
-from agno.knowledge.knowledge import Knowledge
-from agno.models.openai import OpenAIChat
+from agno.models.openai import OpenAIResponses
 from agno.os import AgentOS
+from agno.os.interfaces.remote_access import RemoteAccess
 from agno.team.team import Team
 from agno.tools.calculator import CalculatorTools
 from agno.tools.websearch import WebSearchTools
-from agno.vectordb.chroma import ChromaDb
 from agno.workflow.step import Step
 from agno.workflow.workflow import Workflow
 
@@ -23,50 +32,33 @@ from agno.workflow.workflow import Workflow
 # Database Configuration
 # =============================================================================
 
-# SQLite database for sessions, memory, and content metadata
-db = SqliteDb(id="cookbook-client-db", db_file="tmp/cookbook_client.db")
-
-# =============================================================================
-# Knowledge Base Configuration
-# =============================================================================
-
-knowledge = Knowledge(
-    vector_db=ChromaDb(
-        path="tmp/cookbook_chromadb",
-        collection="cookbook_knowledge",
-        embedder=OpenAIEmbedder(id="text-embedding-3-small"),
-    ),
-    contents_db=db,  # Required for content upload/management endpoints
-)
+db = SqliteDb(id="remote-cookbook-db", db_file="tmp/remote_cookbook.db")
 
 # =============================================================================
 # Agent Configuration
 # =============================================================================
 
-# Agent 1: Assistant with calculator tools and memory
+# Agent 1: Assistant with calculator tools (exposed for remote execution)
 assistant = Agent(
     name="Assistant",
     id="assistant-agent",
-    description="You are a helpful AI assistant.",
-    model=OpenAIChat(id="gpt-5.2"),
+    description="A helpful AI assistant with calculator capabilities.",
+    model=OpenAIResponses(id="gpt-5.5"),
     db=db,
     instructions=[
         "You are a helpful AI assistant.",
         "Use the calculator tool for any math operations.",
-        "You have access to a knowledge base - search it when asked about documents.",
     ],
     markdown=True,
-    update_memory_on_run=True,  # Required for 03_memory_operations
     tools=[CalculatorTools()],
-    knowledge=knowledge,
-    search_knowledge=True,
 )
 
-# Agent 2: Researcher with web search capabilities
+# Agent 2: Researcher with web search capabilities (exposed for remote execution)
 researcher = Agent(
     name="Researcher",
     id="researcher-agent",
-    model=OpenAIChat(id="gpt-5"),
+    description="A research assistant with web search capabilities.",
+    model=OpenAIResponses(id="gpt-5.5"),
     db=db,
     instructions=[
         "You are a research assistant.",
@@ -77,6 +69,17 @@ researcher = Agent(
     tools=[WebSearchTools()],
 )
 
+# Agent 3: Internal agent (NOT exposed for remote execution)
+internal_agent = Agent(
+    name="Internal Agent",
+    id="internal-agent",
+    description="An internal agent that is not remotely callable.",
+    model=OpenAIResponses(id="gpt-5.5"),
+    db=db,
+    instructions=["You are an internal assistant for local use only."],
+    markdown=True,
+)
+
 # =============================================================================
 # Team Configuration
 # =============================================================================
@@ -84,7 +87,7 @@ researcher = Agent(
 research_team = Team(
     name="Research Team",
     id="research-team",
-    model=OpenAIChat(id="gpt-5.2"),
+    model=OpenAIResponses(id="gpt-5.5"),
     members=[assistant, researcher],
     instructions=[
         "You are a research team that coordinates multiple specialists.",
@@ -118,24 +121,27 @@ qa_workflow = Workflow(
 # =============================================================================
 
 agent_os = AgentOS(
-    id="cookbook-client-server",
-    description="AgentOS server for running cookbook client examples",
-    agents=[assistant, researcher],
+    id="remote-cookbook-server",
+    description="AgentOS server exposing entities for the remote cookbook examples",
+    agents=[assistant, researcher, internal_agent],
     teams=[research_team],
     workflows=[qa_workflow],
-    knowledge=[knowledge],
+    interfaces=[
+        # Opt-in remote execution: internal_agent is deliberately left out, so it is
+        # not reachable via /remote even though it is served on the default API.
+        RemoteAccess(
+            agents=[assistant, researcher],
+            teams=[research_team],
+        ),
+    ],
 )
 
 # FastAPI app instance (for uvicorn)
 app = agent_os.get_app()
-
-# =============================================================================
-# Main Entry Point
-# =============================================================================
 
 # ---------------------------------------------------------------------------
 # Run Example
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
-    agent_os.serve(app="server:app", reload=True, access_log=True, port=7778)
+    agent_os.serve(app="server:app", access_log=True, port=7778)
