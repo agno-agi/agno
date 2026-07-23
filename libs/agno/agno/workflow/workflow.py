@@ -1,4 +1,5 @@
 import asyncio
+import contextlib
 from dataclasses import dataclass
 from datetime import datetime
 from os import getenv
@@ -4245,6 +4246,17 @@ class Workflow:
                 workflow_run_response.status = RunStatus.cancelled
                 await _persist_status_fresh()
                 await acleanup_run(run_id)
+            except asyncio.CancelledError:
+                # Task-level shutdown, not run-cancellation: best-effort persist
+                # so pollers are not left with a stuck PENDING/RUNNING run
+                with contextlib.suppress(Exception):
+                    workflow_run_response.status = RunStatus.cancelled
+                    workflow_session.upsert_run(run=workflow_run_response)
+                    if self._has_async_db():
+                        await self.asave_session(session=workflow_session)
+                    else:
+                        self.save_session(session=workflow_session)
+                raise
             except Exception as e:
                 logger.exception("Background workflow execution failed")
                 workflow_run_response.status = RunStatus.error
@@ -4253,10 +4265,12 @@ class Workflow:
 
         # Create and start asyncio task
         loop = asyncio.get_running_loop()
-        loop.create_task(
+        task = loop.create_task(
             execute_workflow_background(),
             name=f"workflow-background-{workflow_run_response.run_id}",
         )
+        _workflow_background_tasks.add(task)
+        task.add_done_callback(_workflow_background_tasks.discard)
 
         # Return SAME object that will be updated by background execution
         return workflow_run_response
@@ -4478,10 +4492,12 @@ class Workflow:
 
         # Create and start asyncio task for background streaming execution
         loop = asyncio.get_running_loop()
-        loop.create_task(
+        task = loop.create_task(
             execute_workflow_background_stream(),
             name=f"workflow-background-stream-ws-{workflow_run_response.run_id}",
         )
+        _workflow_background_tasks.add(task)
+        task.add_done_callback(_workflow_background_tasks.discard)
 
         # Return SAME object that will be updated by background execution
         return workflow_run_response
@@ -9509,10 +9525,12 @@ class Workflow:
                         log_debug(f"Failed to update event buffer status: {e}")
 
         loop = asyncio.get_running_loop()
-        loop.create_task(
+        task = loop.create_task(
             _execute_continue_background(),
             name=f"workflow-continue-{workflow_run_response.run_id}",
         )
+        _workflow_background_tasks.add(task)
+        task.add_done_callback(_workflow_background_tasks.discard)
 
         # Return SAME object that will be updated by background execution
         return workflow_run_response
