@@ -399,6 +399,15 @@ async def run_queue_lifespan(app: Any, agent_os: Any):
         if component_type == "agent":
             for candidate in agent_os.agents or []:
                 if getattr(candidate, "id", None) == component_id:
+                    # Fresh copy per execution, mirroring the HTTP path: queued
+                    # runs must not share mutable state with concurrent runs on
+                    # the registry instance. (Factory-backed and off-registry
+                    # components are rejected at submit time.)
+                    if callable(getattr(candidate, "deep_copy", None)):
+                        try:
+                            return candidate.deep_copy()
+                        except Exception:
+                            return candidate
                     return candidate
         # Teams and workflows join the queue with their router seams (3b)
         return None
