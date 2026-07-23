@@ -55,8 +55,11 @@ async def main():
         "What is the capital of Canada? One sentence.",
     ]
     outputs = []
-    for question in questions:
-        run_output = await agent.arun(question, background=True)
+    for i, question in enumerate(questions):
+        # One session per run: concurrent background runs sharing one session
+        # can clobber each other's status updates (fixed in the durable run
+        # queue PR chain; distinct sessions are also the realistic shape).
+        run_output = await agent.arun(question, background=True, session_id=f"bg-concurrency-{i}")
         print(f"Accepted run {run_output.run_id} with status {run_output.status}")
         outputs.append(run_output)
 
@@ -64,7 +67,7 @@ async def main():
     # the rest wait as PENDING until a slot frees up.
     print("\nPolling until all runs complete...")
     pending = {output.run_id: output.session_id for output in outputs}
-    for second in range(60):
+    for second in range(120):
         await asyncio.sleep(1)
         statuses = []
         for run_id, session_id in list(pending.items()):
@@ -82,7 +85,10 @@ async def main():
         if not pending:
             break
 
-    print("\nAll runs completed!")
+    if pending:
+        print(f"\nTimed out waiting for {len(pending)} run(s): {sorted(pending)}")
+    else:
+        print("\nAll runs completed!")
 
 
 if __name__ == "__main__":

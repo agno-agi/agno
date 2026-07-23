@@ -196,10 +196,10 @@
 
 ### background_execution_concurrency.py
 
-**Status:** PASS (behavior verified live; Postgres variant pending)
+**Status:** PASS (live, real Postgres)
 **Tier:** untagged
-**Description:** Demonstrates the process-wide concurrency limit for background runs (set_background_max_concurrency): 5 runs submitted, at most 2 execute at once, the rest wait as PENDING. Behavior verified live with real OpenAI calls through the actual _arun_background path using InMemoryDb (one session per run): max RUNNING observed at any sample was exactly 2, all 5 runs completed, no errors. The cookbook file itself (PostgresDb variant) was compile-checked only because the pgvector Docker container was unresponsive during testing. The limiter is also covered by unit tests in libs/agno/tests/unit/run/test_background_concurrency.py and libs/agno/tests/unit/agent/test_background_execution.py.
-**Result:** Live concurrency behavior PASS (cap held at 2, 5/5 completed); rerun the file against Postgres once the container is healthy.
-**Observation:** Testing surfaced a pre-existing issue unrelated to the limiter: multiple concurrent background runs sharing ONE session clobber each other's status updates (each background task saves its own session snapshot; last writer wins), leaving other runs' statuses stale (e.g. PENDING forever) when polled. Runs on distinct sessions are unaffected.
+**Description:** Demonstrates the process-wide concurrency limit for background runs: 5 runs submitted (one session each), at most 2 execute at once, the rest wait as PENDING. Run live against pgvector Postgres with real OpenAI calls: all 5 completed in 14s, cap held. Also covered by unit tests in libs/agno/tests/unit/run/test_background_concurrency.py and libs/agno/tests/unit/agent/test_background_execution.py.
+**Result:** PASS end to end.
+**Observation:** Running the earlier version of this cookbook (all runs sharing the agent's default session) reproduced the known shared-session status-clobbering bug on cue - runs stuck at PENDING forever with free slots (different victims each run: 1 then 2). The transition-site fix ships in the durable run queue PR chain; the cookbook now uses one session per run, which is also the realistic shape.
 
 ---
