@@ -1,0 +1,61 @@
+"""
+Warp Tools
+=============================
+
+Demonstrates controlling the Warp terminal (https://www.warp.dev).
+
+WarpTools can open Warp windows and tabs, open saved launch and tab configs,
+and run shell commands in a new Warp window via a generated launch
+configuration. Opening terminals is fire-and-forget: Warp does not expose an
+API to read output back from GUI sessions. The optional ``run_agent`` tool
+(backed by the ``oz`` CLI) runs a Warp agent and does capture output.
+
+``run_commands`` executes arbitrary commands on the host OS. Under prompt
+injection that makes the agent an RCE sink, so this example gates the tool
+behind human-in-the-loop confirmation using ``requires_confirmation_tools``.
+
+Requires the Warp desktop app to be installed.
+"""
+
+from agno.agent import Agent
+from agno.models.openai import OpenAIResponses
+from agno.tools.warp import WarpTools
+
+# ---------------------------------------------------------------------------
+# Create Agent
+#
+# requires_confirmation_tools marks run_commands as needing human approval,
+# so the run pauses before any command reaches a Warp terminal.
+# ---------------------------------------------------------------------------
+agent = Agent(
+    model=OpenAIResponses(id="gpt-5.5"),
+    tools=[WarpTools(requires_confirmation_tools=["run_commands"])],
+)
+
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+if __name__ == "__main__":
+    run_response = agent.run(
+        "Open a new Warp terminal in my home directory and run 'ls -la' in it"
+    )
+
+    # run_commands is gated, so the run pauses for confirmation.
+    if run_response.active_requirements:
+        for requirement in run_response.active_requirements:
+            if requirement.needs_confirmation:
+                tool = requirement.tool_execution
+                print(
+                    f"Confirmation required for '{tool.tool_name}' with args: {tool.tool_args}"
+                )
+                answer = input("Approve? [y/N]: ").strip().lower()
+                if answer == "y":
+                    requirement.confirm()
+                else:
+                    requirement.reject()
+
+        run_response = agent.continue_run(
+            run_response, requirements=run_response.requirements
+        )
+
+    print(run_response.content)
