@@ -133,7 +133,6 @@ def resolve_run_queue_store(config: RunQueueConfig, default_db: Any) -> Any:
     """
     import inspect
 
-    from agno.run.queue_store import InMemoryRunQueueStore
 
     store = config.db if config.db is not None else default_db
     claim = getattr(store, "claim_run_job", None) if store is not None else None
