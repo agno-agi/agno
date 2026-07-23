@@ -22,7 +22,10 @@ def apply_run_queue_config(config: RunQueueConfig) -> None:
     """
     from agno.run.concurrency import set_background_max_concurrency
 
-    set_background_max_concurrency(config.max_concurrency)
+    # None = not explicitly configured: leave the process setting alone
+    # (AGNO_BACKGROUND_MAX_CONCURRENCY env var or the library default)
+    if config.max_concurrency is not None:
+        set_background_max_concurrency(config.max_concurrency)
 
     if config.redis is not None:
         _apply_coordination(config.redis)
