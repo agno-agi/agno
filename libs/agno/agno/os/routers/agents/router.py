@@ -716,10 +716,20 @@ def get_agent_router(
             # replica's worker claims the job executes it, surviving crashes
             # and deploys. Client contract identical: 202 + poll.
             queue_worker = getattr(request.app.state, "run_queue_worker", None)
-            agent_is_factory_backed = any(
-                isinstance(candidate, AgentFactory) and candidate.id == agent_id for candidate in (os.agents or [])
+            # Queueable only if the agent is a plain registry instance: the
+            # worker resolves from the registry, so factory-backed or
+            # off-registry (db-resolved / version-pinned) components would be
+            # accepted here and then fail or run differently in the worker.
+            agent_is_queueable = any(
+                getattr(candidate, "id", None) == agent_id and not isinstance(candidate, AgentFactory)
+                for candidate in (os.agents or [])
             )
-            if queue_worker is not None and not isinstance(agent, RemoteAgent) and not agent_is_factory_backed:
+            if (
+                queue_worker is not None
+                and not isinstance(agent, RemoteAgent)
+                and agent_is_queueable
+                and version is None  # version-pinned resolution differs from the worker's registry instance
+            ):
                 if base64_images or base64_audios or base64_videos or input_files:
                     raise HTTPException(
                         status_code=400,
