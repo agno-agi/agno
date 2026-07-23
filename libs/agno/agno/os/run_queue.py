@@ -394,8 +394,10 @@ class RunQueueWorker:
 async def aprepare_queued_run(
     component: Any, component_type: str, run_id: str, session_id: str, user_id: Optional[str], input: Any
 ) -> None:
-    """Persist the PENDING run row at accept time so pollers find the run
-    immediately, before any worker claims the job."""
+    """Persist the PENDING run row after a successful enqueue so pollers find
+    the run immediately. Idempotent: if a worker already started (and possibly
+    finished) this run between enqueue and this write, the existing row wins -
+    it is never overwritten with PENDING."""
     from agno.run.base import RunStatus
 
     if component_type == "agent":
@@ -403,6 +405,9 @@ async def aprepare_queued_run(
         from agno.agent._storage import aread_or_create_session, update_metadata
         from agno.run.agent import RunOutput
 
+        session = await aread_or_create_session(component, session_id=session_id, user_id=user_id)
+        if session.get_run(run_id) is not None:
+            return
         run_response = RunOutput(
             run_id=run_id,
             session_id=session_id,
@@ -412,7 +417,6 @@ async def aprepare_queued_run(
             input=input,
             status=RunStatus.pending,
         )
-        session = await aread_or_create_session(component, session_id=session_id, user_id=user_id)
         update_metadata(component, session=session)
         session.upsert_run(run=run_response)
         await asave_session(component, session=session)
@@ -421,6 +425,9 @@ async def aprepare_queued_run(
         from agno.team._session import asave_session as team_asave_session
         from agno.team._storage import _aread_or_create_session, _update_metadata
 
+        team_session = await _aread_or_create_session(component, session_id=session_id, user_id=user_id)
+        if team_session.get_run(run_id) is not None:
+            return
         team_run = TeamRunOutput(
             run_id=run_id,
             session_id=session_id,
@@ -430,7 +437,6 @@ async def aprepare_queued_run(
             input=input,
             status=RunStatus.pending,
         )
-        team_session = await _aread_or_create_session(component, session_id=session_id, user_id=user_id)
         _update_metadata(component, session=team_session)
         team_session.upsert_run(run_response=team_run)
         await team_asave_session(component, session=team_session)
@@ -439,6 +445,11 @@ async def aprepare_queued_run(
 
         from agno.run.workflow import WorkflowRunOutput
 
+        workflow_session, _ = await component._aload_or_create_session(
+            session_id=session_id, user_id=user_id, session_state=None
+        )
+        if workflow_session.get_run(run_id) is not None:
+            return
         workflow_run = WorkflowRunOutput(
             run_id=run_id,
             input=input,
@@ -448,9 +459,6 @@ async def aprepare_queued_run(
             workflow_name=getattr(component, "name", None),
             created_at=int(datetime.now().timestamp()),
             status=RunStatus.pending,
-        )
-        workflow_session, _ = await component._aload_or_create_session(
-            session_id=session_id, user_id=user_id, session_state=None
         )
         workflow_session.upsert_run(run=workflow_run)
         if component._has_async_db():
@@ -482,6 +490,15 @@ async def run_queue_lifespan(app: Any, agent_os: Any):
         }.get(component_type)
         for candidate in registry or []:
             if getattr(candidate, "id", None) == component_id:
+                # Fresh copy per execution, mirroring the HTTP path: queued
+                # runs must not share mutable state with concurrent runs on
+                # the registry instance. (Factory-backed components are
+                # rejected at submit time - they need request context.)
+                if callable(getattr(candidate, "deep_copy", None)):
+                    try:
+                        return candidate.deep_copy()
+                    except Exception:
+                        return candidate
                 return candidate
         return None
 

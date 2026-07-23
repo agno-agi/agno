@@ -1261,7 +1261,15 @@ def get_workflow_router(
             # replica's worker claims the job executes it, surviving crashes
             # and deploys. Client contract identical: 202 + poll.
             queue_worker = getattr(request.app.state, "run_queue_worker", None)
-            if queue_worker is not None and not isinstance(workflow, RemoteWorkflow):
+            component_is_factory_backed = any(
+                isinstance(candidate, WorkflowFactory) and candidate.id == workflow_id
+                for candidate in (os.workflows or [])
+            )
+            if (
+                queue_worker is not None
+                and not isinstance(workflow, RemoteWorkflow)
+                and not component_is_factory_backed
+            ):
                 queued_run_id = str(uuid4())
                 queued_session_id = session_id or str(uuid4())
                 job = RunQueueJob(
@@ -1275,14 +1283,9 @@ def get_workflow_router(
                     idempotency_key=request.headers.get("idempotency-key"),
                 ).to_dict()
 
-                await aprepare_queued_run(
-                    workflow,
-                    "workflow",
-                    run_id=queued_run_id,
-                    session_id=queued_session_id,
-                    user_id=user_id,
-                    input=message,
-                )
+                # Enqueue FIRST: the committed queue row is the acceptance.
+                # Rejected or duplicate submissions must leave no phantom
+                # PENDING run behind in the session.
                 enqueue_result = await queue_worker.store.enqueue_run_job(
                     job, max_depth=queue_worker.config.max_queue_depth
                 )
@@ -1300,6 +1303,16 @@ def get_workflow_router(
                             else existing["status"].upper(),
                         },
                     )
+                # Accepted: persist the PENDING run row so pollers find it.
+                # Idempotent - a worker that already claimed the job wins.
+                await aprepare_queued_run(
+                    workflow,
+                    "workflow",
+                    run_id=queued_run_id,
+                    session_id=queued_session_id,
+                    user_id=user_id,
+                    input=message,
+                )
                 return JSONResponse(
                     status_code=202,
                     content={"run_id": queued_run_id, "session_id": queued_session_id, "status": "PENDING"},
