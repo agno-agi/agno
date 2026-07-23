@@ -69,10 +69,10 @@
 
 ### durable_run_queue.py
 
-**Status:** NOT RUN (compile-checked)
+**Status:** PASS (live end-to-end, real Postgres)
 **Tier:** untagged
-**Description:** AgentOS with RunQueueConfig(durable=True): background runs accepted as committed queue rows, executed by per-replica workers, crash recovery via stale-lock reclaim/sweep, ops endpoints (/run-queue/stats, /run-queue/jobs, requeue), Idempotency-Key dedup, and a RedisRunQueueStore variant documented for dedicated-store deployments. Requires Postgres (Docker unavailable during testing). Underlying semantics covered by 39 unit tests (store contracts for in-memory and Redis via fakeredis, worker crash-recovery suite).
-**Result:** Compile check passed; full run requires Postgres.
+**Description:** AgentOS with RunQueueConfig(durable=True) smoke-tested over HTTP against pgvector Postgres with real OpenAI calls: submit (202 with PENDING, row committed), duplicate submit with the same Idempotency-Key returned the SAME run_id, poll reached COMPLETED with content, /run-queue/stats and /run-queue/jobs/{id} returned correct counts and job state (attempt 1, key recorded). Incidental durability proof: two jobs accepted by an earlier server process (which then died) were recovered and executed by the next server's worker - accepted-then-crashed runs completed after restart.
+**Result:** PASS end to end. Also caught and fixed a real bug during testing: the sync PostgresDb queue methods were awaited directly (resolve_run_queue_store now wraps sync stores in an awaitable thread adapter).
 
 ---
 
