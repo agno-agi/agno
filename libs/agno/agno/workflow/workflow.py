@@ -3316,7 +3316,7 @@ class Workflow:
                     # row shows exactly which steps completed - and gives future
                     # resume-from-checkpoint a place to pick up
                     await apersist_workflow_checkpoint(
-                        self, session.session_id, workflow_run_response.run_id, collected_step_outputs
+                        self, session_id, workflow_run_response.run_id, collected_step_outputs
                     )
 
                     # Update shared media for next step
