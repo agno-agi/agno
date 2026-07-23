@@ -121,8 +121,7 @@ async def test_streaming_no_duplication_simple():
     result = _simulate_base_py_accumulation(chunks)
 
     assert result == "Hello world", (
-        f"Content duplicated! Got: '{result}'\n"
-        f"If you see 'Hello world{{\"text\": \"Hello world\"}}', the bug is back."
+        f"Content duplicated! Got: '{result}'\nIf you see 'Hello world{{\"text\": \"Hello world\"}}', the bug is back."
     )
 
 
@@ -156,10 +155,7 @@ async def test_streaming_no_json_in_output():
 
     # Check no JSON strings were yielded
     json_strings = [c for c in chunks if isinstance(c, str)]
-    assert len(json_strings) == 0, (
-        f"Streaming mode should not yield JSON strings!\n"
-        f"Found: {json_strings}"
-    )
+    assert len(json_strings) == 0, f"Streaming mode should not yield JSON strings!\nFound: {json_strings}"
 
 
 @pytest.mark.asyncio
@@ -175,10 +171,7 @@ async def test_streaming_no_answer_object():
 
     # Check no Answer objects were yielded
     answers = [c for c in chunks if isinstance(c, Answer)]
-    assert len(answers) == 0, (
-        f"Streaming mode should not yield Answer objects!\n"
-        f"Found: {answers}"
-    )
+    assert len(answers) == 0, f"Streaming mode should not yield Answer objects!\nFound: {answers}"
 
 
 @pytest.mark.asyncio
@@ -252,8 +245,7 @@ async def test_detects_duplication_pattern():
 
     # The fix should NOT have JSON in the output
     assert '{"text":' not in result, (
-        f"DUPLICATION BUG DETECTED!\n"
-        f"Output contains JSON that shouldn't be there: '{result}'"
+        f"DUPLICATION BUG DETECTED!\nOutput contains JSON that shouldn't be there: '{result}'"
     )
 
 
