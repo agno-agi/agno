@@ -240,12 +240,15 @@ class TestCancellationWhileWaiting:
 
 
 class TestRunQueueConfig:
-    def test_default_matches_limiter_default(self):
-        """RunQueueConfig duplicates the default as a literal (pure-data module);
-        this guards against the two drifting apart."""
+    def test_default_is_none_not_a_number(self):
+        """None means "leave the process setting (env var or library default)
+        untouched" - a config constructed to set other fields must never
+        silently reset the cap. The effective fallback remains
+        DEFAULT_BACKGROUND_MAX_CONCURRENCY via the limiter itself."""
         from agno.run.queue import RunQueueConfig
 
-        assert RunQueueConfig().max_concurrency == DEFAULT_BACKGROUND_MAX_CONCURRENCY
+        assert RunQueueConfig().max_concurrency is None
+        assert get_background_max_concurrency() == DEFAULT_BACKGROUND_MAX_CONCURRENCY
 
     def test_config_value_applies_via_setter(self):
         from agno.run.queue import RunQueueConfig
