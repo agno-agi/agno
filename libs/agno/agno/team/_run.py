@@ -3446,8 +3446,9 @@ async def _arun_background(
             # properly; this is the non-durable path's honest fallback.
             with contextlib.suppress(Exception):
                 run_response.status = RunStatus.cancelled
-                team_session.upsert_run(run_response=run_response)
-                await asave_session(team, session=team_session)
+                fresh_session = await _aread_or_create_session(team, session_id=session_id, user_id=user_id)
+                fresh_session.upsert_run(run_response=run_response)
+                await asave_session(team, session=fresh_session)
             raise
         except Exception as e:
             log_error(f"Background run {run_response.run_id} failed: {str(e)}")
