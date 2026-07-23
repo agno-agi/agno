@@ -901,3 +901,59 @@ async def test_update_streaming_does_not_duplicate():
             function_call_output += chunk
 
     assert function_call_output == "Created new file", f"Expected 'Created new file' once, got '{function_call_output}'"
+
+
+@pytest.mark.asyncio
+async def test_streaming_special_characters():
+    """Content with special characters handled correctly."""
+    from agno.run.agent import RunContentEvent, RunOutput
+
+    content = 'Line 1\nLine 2\n"quoted"\n{not json}'
+
+    class _SpecialProvider(_EchoProvider):
+        async def _aget_query_agent(self, run_context):
+            class _FakeAgent:
+                async def arun(self, message, **kwargs):
+                    yield RunContentEvent(content=content)
+                    yield RunOutput(content=content)
+
+            return _FakeAgent()
+
+    p = _SpecialProvider(id="sp")
+    query_tool = p._query_tool()
+    gen = await query_tool.entrypoint(question="test")
+
+    result = ""
+    async for chunk in gen:
+        if isinstance(chunk, RunContentEvent):
+            result += chunk.content or ""
+
+    assert result == content
+
+
+@pytest.mark.asyncio
+async def test_streaming_unicode():
+    """Unicode content handled correctly."""
+    from agno.run.agent import RunContentEvent, RunOutput
+
+    content = "Hello 世界 🌍 مرحبا"
+
+    class _UnicodeProvider(_EchoProvider):
+        async def _aget_query_agent(self, run_context):
+            class _FakeAgent:
+                async def arun(self, message, **kwargs):
+                    yield RunContentEvent(content=content)
+                    yield RunOutput(content=content)
+
+            return _FakeAgent()
+
+    p = _UnicodeProvider(id="up")
+    query_tool = p._query_tool()
+    gen = await query_tool.entrypoint(question="test")
+
+    result = ""
+    async for chunk in gen:
+        if isinstance(chunk, RunContentEvent):
+            result += chunk.content or ""
+
+    assert result == content
