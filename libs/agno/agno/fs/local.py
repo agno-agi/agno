@@ -1,10 +1,8 @@
-"""LocalFileSystem — real-disk backend for FileSystem.
+"""LocalFileSystem: the real-disk backend for FileSystem.
 
 Dev/tests backend, and proof that the storage seam is real. Layout is
 ``root/<namespace>/<path>``; parents are created on demand.
 """
-
-from __future__ import annotations
 
 import os
 import tempfile
@@ -25,7 +23,7 @@ class LocalFileSystem(BaseFS):
     directory component (namespace ``"research/decisions"`` -> ``research%2Fdecisions``).
     Encoding keeps a child namespace from nesting inside a name-prefix parent on disk.
 
-    Single-process by contract: ``append`` is a tail-check plus ``open("a")`` —
+    Single-process by contract: ``append`` is a tail-check plus ``open("a")``, and
     the check and the append are not one operation, so it races across threads
     as well as processes (async tool calls run sibling operations in threads).
     ``write(overwrite=False)`` and ``move(overwrite=False)`` are check-then-act
@@ -48,7 +46,7 @@ class LocalFileSystem(BaseFS):
     def _encode_namespace(namespace: str) -> str:
         # Fold the namespace into ONE on-disk directory component by percent-encoding
         # its slashes. Without this, namespace "radar/alice" nests inside namespace
-        # "radar" on disk, so a walk of "radar" leaks "radar/alice"'s files — the
+        # "radar" on disk, so a walk of "radar" leaks "radar/alice"'s files. The
         # namespace and path columns are separate in DbFileSystem but flatten to the
         # same tree here. Encode "%" first so the mapping is unambiguous.
         return namespace.replace("%", "%25").replace("/", "%2F")
@@ -58,15 +56,15 @@ class LocalFileSystem(BaseFS):
         itself. ``safe_join_relative_path`` NFKC-folds and rstrips ". " per segment, a
         map that is both non-injective and stronger than the D6 grammar: it silently
         collapses distinct legal names (``a.`` and ``a``, ``ﬀ`` and ``ff``) onto one
-        directory, and folds NFC-stable fullwidth dots (``．．``) into ``..`` — a
-        cross-namespace traversal escape reachable through model-supplied paths. D5
+        directory, and folds NFC-stable fullwidth dots (``．．``) into ``..``, which is
+        a cross-namespace traversal escape reachable through model-supplied paths. D5
         promises LocalFileSystem's legal set is a strict subset of D6, so enforce that:
         anything the on-disk map would alter is rejected here, not silently remapped.
         """
         try:
             resolved = safe_join_relative_path(self.root, rel)
         except PathSecurityError:
-            # Never surface the host root in the error — that leaks the absolute path.
+            # Never surface the host root in the error, since that leaks the absolute path.
             raise InvalidPathError(
                 f"invalid path {shown!r}: not representable on this backend. Use relative paths like notes/topic.md."
             ) from None

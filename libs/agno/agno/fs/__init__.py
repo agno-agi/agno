@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 from agno.fs.base import BaseFS
 from agno.fs.errors import (
     FileSystemError,

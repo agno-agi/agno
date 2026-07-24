@@ -1,11 +1,9 @@
 """Path, namespace-name, directory and line normalization for FileSystem.
 
-Pure string logic — no disk, no database. One grammar covers file paths,
+Pure string logic, with no disk and no database. One grammar covers file paths,
 namespace names and directory parameters; one line transform covers both
 appended content and ``check_lines`` inputs so exact-line dedupe cannot drift.
 """
-
-from __future__ import annotations
 
 import re
 import unicodedata
@@ -65,8 +63,8 @@ def normalize_path(path: str) -> str:
 def parse_namespace_template(name: str) -> Tuple[str, ...]:
     """Return the template placeholders embedded in a namespace name, in order.
 
-    Raises ``InvalidPathError`` on unknown placeholders or stray braces — braces
-    are reserved in namespace names (they remain legal in file paths).
+    Raises ``InvalidPathError`` on unknown placeholders or stray braces, which are
+    reserved in namespace names (they remain legal in file paths).
     """
     placeholders = tuple(_PLACEHOLDER_RE.findall(name))
     for placeholder in placeholders:
@@ -130,7 +128,7 @@ def normalize_directory(directory: str) -> str:
 
 
 def normalize_line(line: str) -> str:
-    """Strip trailing line terminators only — never leading or interior whitespace.
+    """Strip trailing line terminators only, never leading or interior whitespace.
 
     Returns ``""`` for a line that is empty after the strip (callers drop those).
     Raises ``InvalidPathError`` for a line with an interior newline, so a record
@@ -147,7 +145,7 @@ def normalize_line(line: str) -> str:
 def normalize_check_lines(lines: Sequence[str]) -> List[str]:
     """Normalize a ``check_lines`` input batch: cap 200, strip terminators, drop empties."""
     # A bare str is a Sequence[str] of single characters, so an unguarded call would
-    # iterate it per character and report every char missing — a silent wrong answer
+    # iterate it per character and report every char missing, a silent wrong answer
     # from the dedupe primitive. Reject any non list/tuple; the type checker cannot
     # catch this because str satisfies Sequence[str].
     if not isinstance(lines, (list, tuple)):
@@ -180,7 +178,7 @@ def build_chunk(content: str) -> str:
 
 
 def path_in_directory(path: str, directory: str) -> bool:
-    """Real directory semantics at segment boundaries — never plain string-prefix.
+    """Real directory semantics at segment boundaries, never plain string-prefix.
 
     ``directory=""`` means the namespace root and matches everything;
     ``directory="seen"`` matches ``seen`` and ``seen/...`` but not ``seen-old/...``.

@@ -1,14 +1,12 @@
-"""DbFileSystem — the database backend for FileSystem (Postgres + SQLite).
+"""DbFileSystem: the database backend for FileSystem (Postgres + SQLite).
 
 Standalone storage component in the VectorDb family: takes an existing agno
 ``db`` (``SqliteDb``/``PostgresDb``) or a raw ``db_url``/``db_engine``, owns its
 ``Table``, creates it lazily on first use. Deliberately
-not on the ``BaseDb`` contract — FileSystem is a pure tool component, not platform
+not on the ``BaseDb`` contract, because FileSystem is a pure tool component, not platform
 state. Natively full: every operation is implemented, append and move are
 atomic, and rows are versioned.
 """
-
-from __future__ import annotations
 
 import threading
 import time
@@ -55,7 +53,7 @@ DEFAULT_DB_SCHEMA = "fs"
 """Postgres schema for the agent's files, separate from agno's platform schema.
 
 The filesystem is a tool component, not platform state that AgentOS reads back
-(§D4) — so it gets its own schema rather than sharing `ai` with sessions, memory
+(§D4), so it gets its own schema rather than sharing `ai` with sessions, memory
 and evals. That keeps the boundary visible in the database, lets you inspect,
 back up or drop the agent's files on their own, and keeps this table out of any
 future rename of the platform schema. Passing an agno `db` still means one
@@ -67,7 +65,7 @@ with `db_schema=` (SQLite ignores schemas entirely).
 class DbFileSystem(BaseFS):
     """Database-backed file storage: one row per ``(namespace_id, path)``.
 
-    Safe for multi-worker deployments — all coordination happens in the
+    Safe for multi-worker deployments, since all coordination happens in the
     database: writes are atomic upserts (last-writer-wins, or CAS via
     ``expected_version``), appends serialize on the row lock behind a guarded
     upsert that enforces the per-file cap in the same statement, and moves are
@@ -76,7 +74,7 @@ class DbFileSystem(BaseFS):
 
     def __init__(
         self,
-        db: Optional[BaseDb] = None,
+        db: Optional["BaseDb"] = None,
         db_url: Optional[str] = None,
         db_engine: Optional[Engine] = None,
         *,
@@ -89,7 +87,7 @@ class DbFileSystem(BaseFS):
         if db is not None:
             # Reuse the engine of an agno db the caller already configured, so the
             # agent's files live beside its sessions and memory with one connection
-            # setup. Only the engine is borrowed — the files get their own schema
+            # setup. Only the engine is borrowed; the files get their own schema
             # (DEFAULT_DB_SCHEMA); nothing is added to the BaseDb contract. Not every
             # agno db is SQL-backed (Mongo, Redis, DynamoDb, ... have no engine), so
             # fail with a clear message rather than an AttributeError.
@@ -110,7 +108,7 @@ class DbFileSystem(BaseFS):
                     f"DbFileSystem supports dialects {SUPPORTED_DIALECTS}, got {backend_name!r}. "
                     "Use a postgresql or sqlite db_url/db_engine."
                 )
-            # Create the parent directory for a sqlite file path — sqlite will not
+            # Create the parent directory for a sqlite file path, since sqlite will not
             # create it and errors on connect. Matches SqliteDb (db/sqlite/sqlite.py),
             # so a `sqlite:///tmp/x.db` url just works without the caller pre-making tmp/.
             if backend_name == "sqlite" and url.database and url.database != ":memory:":
@@ -126,7 +124,7 @@ class DbFileSystem(BaseFS):
             import sqlite3
 
             # The guarded append and CAS write detect outcomes via RETURNING,
-            # which SQLite added in 3.35.0 — fail with a clear message instead
+            # which SQLite added in 3.35.0. Fail with a clear message instead
             # of an opaque CompileError on first write.
             if sqlite3.sqlite_version_info < (3, 35, 0):
                 raise ValueError(
@@ -161,7 +159,7 @@ class DbFileSystem(BaseFS):
                 return
             # CREATE SCHEMA IF NOT EXISTS and checkfirst are both check-then-create,
             # so instances in other threads, workers, or processes can race them on
-            # first use. Losing the race is fine — verify the table exists and move on.
+            # first use. Losing the race is fine: verify the table exists and move on.
             try:
                 if self.db_schema is not None:
                     with self.db_engine.begin() as conn:
@@ -188,7 +186,7 @@ class DbFileSystem(BaseFS):
             return true()
         # Segment-boundary matching by exact prefix comparison, NOT LIKE: SQLite's LIKE
         # case-folds ASCII while Postgres's does not, so a LIKE predicate would scope
-        # differently on the two backends for the same data — and in the harmful
+        # differently on the two backends for the same data, and in the harmful
         # direction (dev silently treating a genuinely-new item as already-seen). substr
         # equality is case-sensitive and byte-exact on both, matching the == arm.
         prefix = directory + "/"
@@ -296,7 +294,7 @@ class DbFileSystem(BaseFS):
         """Guarded atomic append: one upsert enforces the per-file cap and appends.
 
         Concurrent appends serialize on the row lock; all land; none lost. The
-        guard is detected via ``RETURNING`` — never ``result.rowcount``, which is
+        guard is detected via ``RETURNING``, never ``result.rowcount``, which is
         ``-1`` on psycopg3 for a guarded upsert whether it blocked or not.
         """
         self._ensure_table()
@@ -308,7 +306,7 @@ class DbFileSystem(BaseFS):
             return FileMeta(path=path, size_bytes=0, version=None, updated_at=None)
         chunk_bytes = len(chunk.encode("utf-8"))
         # New-file inserts take the VALUES arm, which the WHERE guard does not
-        # cover — pre-check the chunk alone client-side (exact: content is fully
+        # cover, so pre-check the chunk alone client-side (exact: content is fully
         # known). When the row already exists, fall through instead: the guarded
         # statement blocks and its error path reports the size the file would
         # actually have reached.

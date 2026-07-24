@@ -1,12 +1,10 @@
-"""BaseFS — the storage backend seam under FileSystem.
+"""BaseFS: the storage backend under FileSystem.
 
 Backends store text files by ``(namespace, path)``. Paths and namespace names
 arrive already normalized by ``FileSystem``; backends never normalize. Four core
 operations are required; the rest have base emulations that a backend overrides
 when it can do better (atomically, or in fewer round trips).
 """
-
-from __future__ import annotations
 
 import asyncio
 from abc import ABC, abstractmethod
@@ -73,7 +71,7 @@ class BaseFS(ABC):
     def append(self, namespace: str, path: str, content: str, *, max_file_bytes: Optional[int] = None) -> FileMeta:
         """Append line-oriented content, creating the file if missing.
 
-        Base emulation: read + concat + write — NOT atomic. The ``max_file_bytes``
+        Base emulation: read + concat + write, which is NOT atomic. The ``max_file_bytes``
         cap is checked against the content just read, so concurrent appenders can
         each pass the check and overshoot by up to one chunk.
         """
@@ -102,7 +100,7 @@ class BaseFS(ABC):
         return self.write(namespace, path, new_content)
 
     def move(self, namespace: str, src: str, dst: str, *, overwrite: bool = False) -> FileMeta:
-        """Move or rename a file. Base emulation: read + write + delete — NOT atomic."""
+        """Move or rename a file. Base emulation: read + write + delete, which is NOT atomic."""
         content = self.read(namespace, src)
         if content is None:
             raise FileNotFoundError(f"file not found: {src}")

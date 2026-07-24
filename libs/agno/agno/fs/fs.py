@@ -1,11 +1,12 @@
-"""FileSystem — a durable, private filesystem for agents.
+"""FileSystem: a durable, private filesystem for agents.
 
 To the agent it looks exactly like a normal filesystem toolkit; underneath it is
 a pluggable ``BaseFS`` backend, database by default. Use it for the agent's
 own working state: records of items already processed, decisions, progress
-checkpoints — the fourth kind of state (not memory, not session, not knowledge).
+checkpoints. This is the fourth kind of state, and it is not memory, session or
+knowledge.
 
-Attach with one line — the toolkit carries its own instructions:
+Attach with one line, and the toolkit carries its own instructions:
 
     from agno.agent import Agent
     from agno.db.sqlite import SqliteDb
@@ -22,8 +23,6 @@ namespace only when you need more than one store: ``namespace="radar"``.
 FileSystem is also a complete durable-filesystem API without any Agent:
 ``fs.read(...)``, ``fs.append(...)``, ``fs.contains(...)`` from plain Python.
 """
-
-from __future__ import annotations
 
 import asyncio
 from typing import TYPE_CHECKING, Any, List, Optional, Sequence, Tuple
@@ -140,7 +139,7 @@ class FileSystem:
 
     ``namespace`` may embed the template placeholders ``{user_id}``,
     ``{agent_id}`` and ``{team_id}`` (e.g. ``"radar/{user_id}"``), resolved per
-    tool call from framework-injected context only — never from model-supplied
+    tool call from framework-injected context only, never from model-supplied
     arguments. A placeholder whose value is missing at call time fails closed.
     Programmatic use of a templated instance goes through ``resolve()``.
 
@@ -213,7 +212,7 @@ class FileSystem:
 
         ``{user_id}`` reads ``run_context.user_id``; ``{agent_id}`` reads the
         injected agent's ``id``; ``{team_id}`` reads the injected team's ``id``.
-        A missing value raises ``InvalidPathError`` — anonymous runs never
+        A missing value raises ``InvalidPathError``, so anonymous runs never
         silently collapse into a shared namespace.
         """
         if not self._placeholders:
@@ -291,7 +290,7 @@ class FileSystem:
             return FileMeta(path=normalized, size_bytes=0, version=None, updated_at=None)
         chunk_bytes = len(chunk.encode("utf-8"))
         current_usage = self.backend.usage(namespace)
-        # The separator is unknown client-side, so estimate it at 1 byte — over, never under.
+        # The separator is unknown client-side, so estimate it at 1 byte: over, never under.
         if current_usage.total_bytes + chunk_bytes + 1 > self.max_namespace_bytes:
             raise QuotaExceededError(
                 f"storage is full ({current_usage.total_bytes} of {self.max_namespace_bytes} bytes)",
@@ -403,14 +402,14 @@ class FileSystem:
     # ------------------------------------------------------------------
 
     def tools(self, *, read_only: bool = False, **kwargs) -> "Toolkit":
-        """Build the toolkit for this file store — ``Agent(tools=[fs.tools()])`` is the whole attach.
+        """Build the toolkit for this file store. ``Agent(tools=[fs.tools()])`` is the whole attach.
 
         The toolkit carries its own instructions, so do not also pass the same
         instance through the developer-instruction path (the block would render
         twice). ``read_only=True`` registers only ``read_file``, ``list_files``,
-        ``search_content`` and ``check_lines`` — the surface for a consumer agent
-        that consults another agent's namespace by shared name — and selects the
-        read-only instructions variant. ``**kwargs`` forwards to ``Toolkit``
+        ``search_content`` and ``check_lines``, and selects the read-only
+        instructions variant. That is the surface for a consumer agent that
+        consults another agent's namespace by shared name. ``**kwargs`` forwards to ``Toolkit``
         (e.g. ``include_tools``, ``requires_confirmation_tools``).
         """
         from agno.fs.toolkit import FileSystemTools

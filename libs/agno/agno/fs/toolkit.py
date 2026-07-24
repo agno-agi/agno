@@ -1,11 +1,11 @@
-"""FileSystemTools — the tool surface over FileSystem, built by ``FileSystem.tools()``.
+"""FileSystemTools: the tool surface over FileSystem, built by ``FileSystem.tools()``.
 
 To the agent this is just a filesystem: six tools share their names, shapes and
 output formats with ``agno.tools.workspace.Workspace`` (``read_file``,
 ``write_file``, ``list_files``, ``search_content``, ``move_file``,
 ``delete_file``), plus two additions the durability use cases need:
 ``append_file`` (line-oriented) and ``check_lines`` (batch exact-line
-membership — the dedupe primitive).
+membership, the dedupe primitive).
 
 These names deliberately collide with the rest of the file-toolkit family
 (Workspace, FileTools, PythonTools, CodingTools, ...). Agno's tool resolver
@@ -14,15 +14,13 @@ warning, so attach at most one file-like toolkit per agent; when an agent
 genuinely needs both FileSystem and a local workspace, wrap one in a sub-agent.
 """
 
-from __future__ import annotations
-
 import asyncio
 import json
 from fnmatch import fnmatch
 from typing import Dict, List, Optional, Union
 
 # Real module-level imports, never TYPE_CHECKING-only: with postponed annotations a
-# deferred import does not fail loudly — get_type_hints raises during schema
+# deferred import does not fail loudly. get_type_hints raises during schema
 # building, the warning is downgraded, and the tool ships an empty JSON schema.
 from agno.agent.agent import Agent
 from agno.fs._paths import build_chunk, normalize_directory, path_sort_key
@@ -66,8 +64,8 @@ class FileSystemTools(Toolkit):
     agent's namespace by shared name). Ships the matching FileSystem instructions
     unless ``instructions`` is overridden. Tool errors are returned as
     ``"Error: ..."`` strings, never raised. Writes are last-writer-wins by
-    design; there is no confirmation surface — this is the agent's own private,
-    quota-capped store (pass ``requires_confirmation_tools`` to opt in).
+    design, and there is no confirmation surface, because this is the agent's own
+    private, quota-capped store (pass ``requires_confirmation_tools`` to opt in).
 
     The six shared tool names (``read_file``, ``write_file``, ``list_files``,
     ``search_content``, ``move_file``, ``delete_file``) deliberately collide with
@@ -147,8 +145,8 @@ class FileSystemTools(Toolkit):
             )
         return (
             f"Error: storage is full ({e.current} of {e.limit} bytes). "
-            "Delete only files you are certain are obsolete (see list_files) — e.g. an old date "
-            "partition — then retry. Do not overwrite or delete records you might still need to "
+            "Delete only files you are certain are obsolete (see list_files), such as an old date "
+            "partition, then retry. Do not overwrite or delete records you might still need to "
             "make room; if nothing is safely disposable, stop and report that storage is full."
         )
 
@@ -169,7 +167,7 @@ class FileSystemTools(Toolkit):
         """Read a file from your files, returning ``cat -n`` style line-numbered output.
 
         Each line is prefixed with its 1-indexed line number. Line numbers reflect the
-        actual line in the file — reading lines 50-60 numbers the first line 50. The
+        actual line in the file, so reading lines 50-60 numbers the first line 50. The
         numbers are display only: never include them in content you pass to write_file
         or append_file.
 
@@ -223,7 +221,7 @@ class FileSystemTools(Toolkit):
     ) -> str:
         """List your files.
 
-        Entries are ``{"path", "type", "size"}`` — ``type`` is "file" or "dir", ``size``
+        Entries are ``{"path", "type", "size"}``, where ``type`` is "file" or "dir" and ``size`` is
         human-readable for files, null for dirs. The result also reports total usage
         against your storage limit.
 
@@ -249,7 +247,7 @@ class FileSystemTools(Toolkit):
                 segments = meta.path.split("/")
                 rel = segments[prefix_len:]
                 if len(rel) <= depth_cap:
-                    # An empty pattern means no filter — Workspace truthiness, not `is None`
+                    # An empty pattern means no filter: Workspace truthiness, not `is None`
                     # (models do pass pattern="").
                     if not pattern or fnmatch(segments[-1], pattern):
                         file_entries.append({"path": meta.path, "type": "file", "size": _format_size(meta.size_bytes)})
@@ -305,7 +303,7 @@ class FileSystemTools(Toolkit):
         """Search your files for text (case-insensitive substring match).
 
         Finds where text appears. To check whether exact records are already stored,
-        use check_lines instead — substring matches can mislead there.
+        use check_lines instead, since substring matches can mislead there.
 
         :param query: Substring to search for.
         :param directory: Directory to scope the search (default "." = everything).
@@ -345,7 +343,7 @@ class FileSystemTools(Toolkit):
         work, then record the new ones with append_file (one per line).
 
         :param lines: The records to check, e.g. a list of URLs or IDs. Max 200. Pass
-            each record in exactly the form you will store it — matching is literal,
+            each record in exactly the form you will store it. Matching is literal,
             so "example.com/a" and "https://example.com/a/" are different records.
         :param directory: Directory to scope the check (default "." = everything),
             e.g. "seen".
@@ -376,7 +374,7 @@ class FileSystemTools(Toolkit):
         team: Optional[Team] = None,
     ) -> str:
         """Create or overwrite a file. For adding records to a log-style file, use
-        append_file instead — it cannot clobber existing lines.
+        append_file instead, since it cannot clobber existing lines.
 
         :param path: File path, e.g. "state/last-run.md". Parent folders are implicit.
         :param content: The complete new file content.

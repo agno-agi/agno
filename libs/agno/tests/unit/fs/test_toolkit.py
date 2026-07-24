@@ -236,7 +236,7 @@ class TestErrorStringsVerbatim:
         result = toolkit.write_file("b.md", "78901")
         assert result == (
             "Error: storage is full (6 of 10 bytes). Delete only files you are certain are obsolete "
-            "(see list_files) — e.g. an old date partition — then retry. Do not overwrite or delete "
+            "(see list_files), such as an old date partition, then retry. Do not overwrite or delete "
             "records you might still need to make room; if nothing is safely disposable, stop and "
             "report that storage is full."
         )
