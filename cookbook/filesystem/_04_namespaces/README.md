@@ -4,7 +4,7 @@ A namespace names the file store an agent uses. You do not need one to start: ev
 
 Namespaces are lowercase and URL-safe, so `BANK`, `bank` and `BaNk` are one store. Same backend plus same name means the same files; a different name means full isolation. Sharing is explicit, by name.
 
-The main reason to reach for one is per-user (and per-team) file stores from a single static agent. Put a `user_id` on the run and users get completely isolated files, with no factories, no per-user agent objects, and no way for a prompt to redirect the namespace. Identity enters only where you write it into the name.
+The main reason to reach for one is per-user (and per-team) file stores from a single static agent. Put a `user_id` on the run and users get isolated files, with no factories, no per-user agent objects, and no way for a prompt to redirect the namespace. Isolation is per normalized name: since namespaces are lowercased, user ids that differ only by case (`Alice` and `alice`) land in the same store, so normalize ids upstream if your identity system treats those as two people. Identity enters only where you write it into the name.
 
 ## Files
 

@@ -267,3 +267,23 @@ class TestAppendCapRace:
         with pytest.raises(QuotaExceededError):
             db_fs.append(NS, "fresh.md", "x" * 2000, max_file_bytes=1000)
         assert db_fs.read(NS, "fresh.md") is None
+
+
+class TestAsyncDbRejected:
+    def test_async_agno_db_rejected_at_construction(self):
+        """An async agno db HAS a db_engine, so a bare hasattr check accepts it and
+        the first operation dies inside a sync `with engine.begin()` (PR review).
+        Stands in for AsyncPostgresDb without needing the asyncpg driver."""
+        from sqlalchemy.ext.asyncio import create_async_engine
+
+        class FakeAsyncDb:
+            db_engine = create_async_engine("sqlite+aiosqlite://")
+
+        with pytest.raises(ValueError) as exc:
+            DbFileSystem(db=FakeAsyncDb())
+        assert "async" in str(exc.value).lower()
+
+    def test_self_move_is_a_noop(self, db_fs):
+        db_fs.write(NS, "a.md", "x")
+        db_fs.move(NS, "a.md", "a.md")
+        assert db_fs.read(NS, "a.md") == "x"

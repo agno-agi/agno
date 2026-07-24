@@ -10,6 +10,7 @@ The caps are set very small here so the numbers stay readable. No model, no
 API keys.
 """
 
+from datetime import date, timedelta
 from uuid import uuid4
 
 from agno.db.sqlite import SqliteDb
@@ -62,10 +63,32 @@ if __name__ == "__main__":
         print("  typed error:", e.scope, e.current, "of", e.limit)
     print("  " + toolkit.append_file("seen/2026-07-24.md", "https://example.com/more"))
 
-    print("recovery 2, delete the oldest partition, then retry:")
+    # Age alone is not proof a record is obsolete. Deleting the oldest partition
+    # just because it is oldest is how an agent silently drops history and starts
+    # re-reporting items it already handled. Deletion needs a retention boundary
+    # that says those records can never be needed again. Here the job declares one.
+    RETENTION_DAYS = 1
+    cutoff = date(2026, 7, 24) - timedelta(days=RETENTION_DAYS)
+    print(
+        f"recovery 2, delete only partitions older than the {RETENTION_DAYS}-day retention window:"
+    )
     usage = fs.usage()
     print("  before:", usage.file_count, "files,", usage.total_bytes, "bytes")
-    fs.delete("seen/2026-07-22.md")
+    disposable = [
+        meta.path
+        for meta in fs.list("seen")
+        if date.fromisoformat(meta.path.removeprefix("seen/").removesuffix(".md"))
+        < cutoff
+    ]
+    if not disposable:
+        # The honest ending when the policy clears nothing. Reaching it is a correct
+        # outcome, not a failure: the caller is told storage is full and the records
+        # survive. Widen the retention window only if the task really allows it.
+        print("  nothing is provably obsolete: stop and report, do not evict history")
+        raise SystemExit(0)
+    print("  disposable under the policy:", ", ".join(disposable))
+    for path in disposable:
+        fs.delete(path)
     fs.append("seen/2026-07-24.md", "https://example.com/more")
     usage = fs.usage()
     print(

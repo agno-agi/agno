@@ -56,9 +56,13 @@ agent = Agent(
 )
 
 
-def run_monitor(readings: Dict[str, str]) -> None:
+def run_monitor(readings: Dict[str, str], session_id: str) -> None:
+    # A distinct session per run, like a scheduled monitor gets. Nothing carries in
+    # session state, so the comparison can only come from the stored baseline.
     lines = [name + ": " + value for name, value in readings.items()]
-    agent.print_response("Current readings:\n" + "\n".join(lines))
+    agent.print_response(
+        "Current readings:\n" + "\n".join(lines), session_id=session_id
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -66,10 +70,10 @@ def run_monitor(readings: Dict[str, str]) -> None:
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
     print("run 1: no baseline yet")
-    run_monitor(READINGS_MONDAY)
+    run_monitor(READINGS_MONDAY, session_id="monitor-monday")
 
     print("run 2: checkout-api latency jumped, so only that should be flagged")
-    run_monitor(READINGS_TUESDAY)
+    run_monitor(READINGS_TUESDAY, session_id="monitor-tuesday")
 
     print("stored baseline is now:")
     print(fs.read("state/last-run.md"))

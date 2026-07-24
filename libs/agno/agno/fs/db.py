@@ -9,7 +9,7 @@ from agno.fs._paths import build_chunk, path_sort_key
 from agno.fs.base import BaseFS, _extract_snippet
 from agno.fs.errors import QuotaExceededError, VersionConflictError
 from agno.fs.types import FileMeta, NamespaceUsage, SearchMatch
-from agno.utils.log import log_debug
+from agno.utils.log import log_debug, log_warning
 
 try:
     from sqlalchemy import (
@@ -84,9 +84,13 @@ class DbFileSystem(BaseFS):
             # agno db is SQL-backed (Mongo, Redis, DynamoDb, ... have no engine), so
             # fail with a clear message rather than an AttributeError.
             borrowed = getattr(db, "db_engine", None)
-            if borrowed is None:
+            if not isinstance(borrowed, Engine):
+                # An async agno db (AsyncPostgresDb) HAS a db_engine, so a bare
+                # hasattr check accepts it and the first operation dies inside
+                # `with self.db_engine.begin()`. Name the problem here instead.
+                detail = "an async engine; DbFileSystem is sync" if borrowed is not None else "no db_engine"
                 raise ValueError(
-                    f"DbFileSystem needs a SQL-backed agno db, got {type(db).__name__} which has no db_engine. "
+                    f"DbFileSystem needs a SQL-backed sync agno db, got {type(db).__name__} ({detail}). "
                     "Use SqliteDb or PostgresDb, or pass db_url/db_engine directly."
                 )
             self.db_engine: Engine = borrowed
@@ -153,9 +157,19 @@ class DbFileSystem(BaseFS):
             # so instances in other threads, workers, or processes can race them on
             # first use. Losing the race is fine: verify the table exists and move on.
             try:
-                if self.db_schema is not None:
-                    with self.db_engine.begin() as conn:
-                        conn.execute(sql_text(f'CREATE SCHEMA IF NOT EXISTS "{self.db_schema}"'))
+                # Only attempt CREATE SCHEMA when the schema is actually missing, and
+                # never let it be fatal. Postgres checks CREATE-on-database privilege
+                # before the IF NOT EXISTS check, so a least-privilege role that can
+                # create tables inside an existing schema but lacks database-wide
+                # CREATE would fail here with "permission denied for database", which
+                # points at the wrong thing. Warn and let create_all decide, which is
+                # what PostgresDb does (db/postgres/utils.py:71-75).
+                if self.db_schema is not None and not sa_inspect(self.db_engine).has_schema(self.db_schema):
+                    try:
+                        with self.db_engine.begin() as conn:
+                            conn.execute(sql_text(f'CREATE SCHEMA IF NOT EXISTS "{self.db_schema}"'))
+                    except Exception as e:
+                        log_warning(f"Could not create schema {self.db_schema}: {e}")
                 self.metadata.create_all(self.db_engine, tables=[self.table], checkfirst=True)
             except (IntegrityError, ProgrammingError, OperationalError):
                 if not sa_inspect(self.db_engine).has_table(self.table_name, schema=self.db_schema):

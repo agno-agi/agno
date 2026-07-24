@@ -3,8 +3,7 @@
 To the agent it looks exactly like a normal filesystem toolkit; underneath it is
 a pluggable ``BaseFS`` backend, database by default. Use it for the agent's
 own working state: records of items already processed, decisions, progress
-checkpoints. This is the fourth kind of state, and it is not memory, session or
-knowledge.
+checkpoints.
 
 Attach with one line, and the toolkit carries its own instructions:
 
@@ -14,14 +13,6 @@ Attach with one line, and the toolkit carries its own instructions:
 
     fs = FileSystem(SqliteDb(db_file="agent.db"))
     agent = Agent(tools=[fs.tools()], instructions="my instructions")
-
-Hand it the db you already use and the files land in it, no backend import
-needed. Reach for a backend directly when you want one: ``LocalFileSystem`` for
-real files on disk, or ``DbFileSystem(...)`` for table/schema options. Name a
-namespace only when you need more than one store: ``namespace="radar"``.
-
-FileSystem is also a complete durable-filesystem API without any Agent:
-``fs.read(...)``, ``fs.append(...)``, ``fs.contains(...)`` from plain Python.
 """
 
 import asyncio
@@ -135,7 +126,10 @@ class FileSystem:
     (an agno ``SqliteDb``/``PostgresDb``, wrapped for you); ``namespace`` names this agent's file
     store within it, defaulting to ``"default"`` when you do not need more than
     one. Same ``backend`` + same ``namespace`` = same files; different
-    ``namespace`` = full isolation. Sharing is explicit, by name.
+    ``namespace`` = full isolation. Sharing is explicit, by name. Isolation is per
+    NORMALIZED name: namespaces are lowercased and URL-safe, so ``BANK`` and ``bank``
+    address one store. If your identity system treats ``Alice`` and ``alice`` as two
+    users, normalize the id before it reaches a templated namespace.
 
     ``namespace`` may embed the template placeholders ``{user_id}``,
     ``{agent_id}`` and ``{team_id}`` (e.g. ``"radar/{user_id}"``), resolved per

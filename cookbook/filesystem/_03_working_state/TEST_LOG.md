@@ -1,6 +1,6 @@
 # Test Log - _03_working_state
 
-Tested 2026-07-24 against `gpt-5.5` (OpenAIResponses), agno 2.8.0 (source tree, branch feat/agent-fs).
+Tested 2026-07-24 against `gpt-5.5` (OpenAIResponses), agno 2.8.1 (source tree, branch feat/agent-fs at 937e1e973).
 Re-run fresh at the final sweep (same date): every file in this folder PASS.
 
 ### basic.py

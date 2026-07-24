@@ -1,6 +1,6 @@
 # Test Log - _04_namespaces
 
-Tested 2026-07-24 against `gpt-5.5` (OpenAIResponses), agno 2.8.0 (source tree, branch feat/agent-fs).
+Tested 2026-07-24 against `gpt-5.5` (OpenAIResponses), agno 2.8.1 (source tree, branch feat/agent-fs at 937e1e973).
 Re-run fresh at the final sweep (same date): every file in this folder PASS.
 
 ### basic.py
@@ -9,7 +9,7 @@ Re-run fresh at the final sweep (same date): every file in this folder PASS.
 
 **Description:** One static agent with namespace="assistant/{user_id}": alice and bob each get an isolated work-log of what the agent did for them, alice's recall returns only her log, and an anonymous run (no user_id) fails closed.
 
-**Result:** Alice's recall returned only her own work log (bob's untouched). The anonymous run failed closed (the file tool was unavailable with no `user_id`). Backend proof printed both isolated namespaces: assistant/alice -> 'Resolved a duplicate-charge refund on the checkout service.\n', assistant/bob -> 'Investigated a failed invoice on the billing service.\n'.
+**Result:** Alice's recall returned only her own work log (bob's untouched). The anonymous run failed closed: the tool was called and returned the fail-closed error string, since the namespace could not resolve without a `user_id` (the tool is registered, it refuses to resolve). Backend proof printed both isolated namespaces: assistant/alice -> 'Resolved a duplicate-charge refund on the checkout service.\n', assistant/bob -> 'Investigated a failed invoice on the billing service.\n'.
 
 ---
 

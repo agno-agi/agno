@@ -30,8 +30,8 @@ cookbook/filesystem/
 │   └── TEST_LOG.md
 ├── _02_durable_records/        # the dedupe pattern: check_lines -> act -> append_file
 ├── _03_working_state/          # checkpoints and monitors that survive across runs
-├── _04_namespaces/            # naming a store: per-user isolation and explicit sharing
-└── _05_operations/            # quota recovery and inspecting files (no basic.py)
+├── _04_namespaces/             # naming a store: per-user isolation and explicit sharing
+└── _05_operations/             # quota recovery and inspecting files (no basic.py)
 ````
 
 ## Workflows

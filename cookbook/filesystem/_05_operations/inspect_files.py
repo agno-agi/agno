@@ -1,6 +1,6 @@
 """
 Operations - Inspect and Seed Files
-==================================
+===================================
 An agent's files are reachable from any script. Point FileSystem at the same
 backend and you hold the same files the agent holds, so you can inspect, read
 and seed them with no Agent, model or server. (If the agent names a namespace,

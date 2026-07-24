@@ -181,7 +181,11 @@ class LocalFileSystem(BaseFS):
                     limit=max_file_bytes,
                 )
             target.parent.mkdir(parents=True, exist_ok=True)
-            with target.open("a", encoding="utf-8", newline="") as f:
+            # Create at 0600, the mode write() gets from mkstemp, so a file's
+            # permissions do not depend on which tool created it. The mode applies
+            # only to creation; appending to an existing file leaves its mode alone.
+            fd = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
+            with os.fdopen(fd, "w", encoding="utf-8", newline="") as f:
                 f.write(chunk)
         return self._meta(path, target)
 
@@ -190,6 +194,12 @@ class LocalFileSystem(BaseFS):
         dst_target = self._target(namespace, dst)
         if not src_target.is_file():
             raise FileNotFoundError(f"file not found: {src}")
+        if src_target == dst_target:
+            # A self-move is a no-op, not a collision with itself. Without this the
+            # dst-exists check below rejects move(a, a) here while DbFileSystem and
+            # the base emulation both succeed, so the two v1 backends would answer
+            # the same model-reachable call differently.
+            return self._meta(dst, dst_target)
         if dst_target.exists() and not overwrite:
             raise FileExistsError(f"file exists: {dst}")
         dst_target.parent.mkdir(parents=True, exist_ok=True)

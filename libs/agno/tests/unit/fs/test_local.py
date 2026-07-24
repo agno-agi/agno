@@ -1,5 +1,8 @@
 """Unit tests for LocalFileSystem (spec D5) including the separator matrix (spec D9)."""
 
+import os
+import stat
+
 import pytest
 
 from agno.fs.errors import InvalidPathError, QuotaExceededError, UnsupportedOperationError
@@ -88,6 +91,27 @@ class TestLocalWrite:
     def test_version_is_none(self, local_fs):
         meta = local_fs.write(NS, "a.md", "x")
         assert meta.version is None
+
+
+class TestLocalFileMode:
+    """A file's permissions must not depend on which operation created it."""
+
+    @staticmethod
+    def _mode(tmp_path, name: str) -> int:
+        return stat.S_IMODE((tmp_path / NS / name).stat().st_mode)
+
+    def test_write_and_append_create_the_same_mode(self, local_fs, tmp_path):
+        local_fs.write(NS, "written.md", "x")
+        local_fs.append(NS, "appended.md", "y")
+        assert self._mode(tmp_path, "written.md") == 0o600
+        assert self._mode(tmp_path, "appended.md") == 0o600
+
+    def test_append_leaves_an_existing_files_mode_alone(self, local_fs, tmp_path):
+        local_fs.write(NS, "a.md", "x")
+        os.chmod(tmp_path / NS / "a.md", 0o644)
+        local_fs.append(NS, "a.md", "y")
+        assert self._mode(tmp_path, "a.md") == 0o644
+        assert local_fs.read(NS, "a.md") == "x\ny\n"
 
 
 class TestLocalPathCollapse:
@@ -209,3 +233,14 @@ class TestLocalListAndIsolation:
         assert local_fs.read("radar", "alice/secret.md") is None
         assert local_fs.delete("radar", "alice/secret.md") is False
         assert local_fs.read("radar/alice", "secret.md") == "private"
+
+
+class TestSelfMoveParity:
+    def test_self_move_is_a_noop_not_a_collision(self, local_fs):
+        # DbFileSystem and the base emulation both succeed on move(a, a); Local used
+        # to raise FileExistsError from its dst-exists check, so the two v1 backends
+        # answered the same model-reachable call differently (PR review).
+        local_fs.write(NS, "notes/a.md", "x")
+        meta = local_fs.move(NS, "notes/a.md", "notes/a.md")
+        assert meta.path == "notes/a.md"
+        assert local_fs.read(NS, "notes/a.md") == "x"
