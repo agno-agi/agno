@@ -24,12 +24,11 @@ Try it:
 The queue store defaults to the AgentOS db (the Postgres below - zero extra
 infrastructure). To isolate queue load on a dedicated Redis instead:
 
-    from redis.asyncio import Redis as AsyncRedis
-    from agno.run.redis_queue_store import RedisRunQueueStore
+    from agno.db.redis import RedisDb
 
     run_queue = RunQueueConfig(
         durable=True,
-        db=RedisRunQueueStore(AsyncRedis.from_url("redis://localhost:6379")),
+        db=RedisDb(db_url="redis://localhost:6379"),
     )
 
 (Redis acceptance durability depends on persistence config: use AOF

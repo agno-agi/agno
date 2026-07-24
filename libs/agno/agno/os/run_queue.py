@@ -139,23 +139,10 @@ def resolve_run_queue_store(config: RunQueueConfig, default_db: Any) -> Any:
         if inspect.iscoroutinefunction(claim):
             return store
         return _SyncStoreAdapter(store)
-    # A RedisDb passed as the queue store: build the Redis queue store from its
-    # connection (RedisDb itself is the sync session-storage adapter and does
-    # not implement the queue contract).
-    if store is not None and type(store).__name__ == "RedisDb" and getattr(store, "db_url", None):
-        try:
-            from redis.asyncio import Redis as AsyncRedis
-
-            from agno.run.redis_queue_store import RedisRunQueueStore
-
-            log_info("Run queue: using RedisRunQueueStore built from the provided RedisDb connection")
-            return RedisRunQueueStore(AsyncRedis.from_url(store.db_url))
-        except ImportError:
-            pass
     raise ValueError(
         "RunQueueConfig(durable=True) requires a queue store implementing the run queue "
         f"contract (claim_run_job etc.); got {type(store).__name__ if store is not None else None}. "
-        "Use a Postgres db, a RedisRunQueueStore, or pass a conforming store via run_queue.db. "
+        "Use a Postgres or Redis db, or pass a conforming store via run_queue.db. "
         "Silently degrading a durability promise is not an option; for a non-durable queue "
         "set durable=False (or use InMemoryRunQueueStore explicitly in tests)."
     )
