@@ -407,13 +407,50 @@ class TestNamespaceSanitization:
         assert templated.resolve(user_id="Alice").namespace == "radar/alice"
         assert templated.resolve(user_id="alice").namespace == "radar/alice"
 
-    @pytest.mark.parametrize("bad", ["münchen", "my namespace", "a%b", "a\tb"])
-    def test_non_url_safe_rejected(self, local_backend, bad):
-        with pytest.raises(InvalidPathError):
-            FileSystem(local_backend, namespace=bad)
+    @pytest.mark.parametrize(
+        "raw,encoded",
+        [("münchen", "m%c3%bcnchen"), ("my namespace", "my%20namespace"), ("a%b", "a%25b")],
+    )
+    def test_unsafe_characters_are_encoded_not_rejected(self, local_backend, raw, encoded):
+        # Any id must be expressible: rejecting would break the documented
+        # namespace="radar/{user_id}" idiom for emails and non-ASCII names.
+        fs = FileSystem(local_backend, namespace=raw)
+        assert fs.namespace == encoded
+        fs.write("a.md", "x")
+        assert fs.read("a.md") == "x"
+
+    def test_encoding_is_injective(self, local_backend):
+        # The reason to encode rather than slugify: a slug maps "a b" and "a-b"
+        # onto one namespace, so two tenants would silently share files.
+        names = ["a b", "a-b", "a_b", "a%20b", "a+b"]
+        resolved = {FileSystem(local_backend, namespace=n).namespace for n in names}
+        assert len(resolved) == len(names)
 
     def test_file_paths_stay_case_sensitive(self, local_backend):
         # Only the namespace is an identifier; paths keep the D6 grammar.
         fs = FileSystem(local_backend, namespace="n")
         fs.write("Notes/README.md", "x")
         assert [m.path for m in fs.list()] == ["Notes/README.md"]
+
+
+class TestNamespaceCharset:
+    def test_email_ids_resolve(self, local_backend):
+        # Ids are commonly emails; rejecting them would break the documented
+        # namespace="radar/{user_id}" idiom on day one.
+        fs = FileSystem(local_backend, namespace="radar/{user_id}")
+        assert fs.resolve(user_id="Alice+Tag@X.com").namespace == "radar/alice+tag@x.com"
+
+    @pytest.mark.parametrize(
+        "raw,encoded", [("Ünal", "radar/%c3%bcnal"), ("a b", "radar/a%20b"), ("100%", "radar/100%25")]
+    )
+    def test_template_values_are_encoded_not_rejected(self, local_backend, raw, encoded):
+        fs = FileSystem(local_backend, namespace="radar/{user_id}")
+        assert fs.resolve(user_id=raw).namespace == encoded
+
+    def test_adjacent_placeholders_rejected(self, local_backend):
+        # (a, bc) and (ab, c) would both resolve to "abc" and share one store.
+        with pytest.raises(InvalidPathError):
+            FileSystem(local_backend, namespace="{user_id}{team_id}")
+        # A separator makes resolution unique again.
+        FileSystem(local_backend, namespace="{user_id}-{team_id}")
+        FileSystem(local_backend, namespace="{user_id}/{team_id}")

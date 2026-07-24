@@ -8,6 +8,7 @@ appended content and ``check_lines`` inputs so exact-line dedupe cannot drift.
 import re
 import unicodedata
 from typing import List, Sequence, Tuple
+from urllib.parse import quote
 
 from agno.fs.errors import InvalidPathError
 
@@ -77,30 +78,45 @@ def parse_namespace_template(name: str) -> Tuple[str, ...]:
     remainder = _PLACEHOLDER_RE.sub("", name)
     if "{" in remainder or "}" in remainder:
         raise _invalid_path(name, "braces are reserved in namespace names")
+    # Two placeholders with nothing between them do not resolve uniquely:
+    # "{user_id}{team_id}" maps both ("a", "bc") and ("ab", "c") onto "abc", so two
+    # distinct pairs would share one store. Require a separator.
+    if re.search(r"\}\{", name):
+        raise _invalid_path(
+            name,
+            "placeholders must be separated (e.g. '{user_id}/{team_id}' or '{user_id}-{team_id}'), "
+            "because adjacent placeholders cannot be resolved back to distinct values",
+        )
     return placeholders
 
 
-NAMESPACE_CHARS = re.compile(r"^[a-z0-9._/-]+$")
+# Kept unencoded for readability: ids are commonly emails, and a namespace reads
+# better as "radar/alice@example.com" than fully escaped. "/" is the hierarchy
+# separator. Everything else is percent-encoded, including "%" itself.
+NAMESPACE_SAFE = "abcdefghijklmnopqrstuvwxyz0123456789.-_/@+"
 
 
 def sanitize_namespace_segment(value: str) -> str:
-    """Lowercase one namespace component and require it to be URL-safe.
+    """Lowercase a namespace and percent-encode it to URL-safe ASCII.
 
-    A namespace is an identifier, not a filename: it is lowercased so BANK, bank
-    and BaNk are one store on every backend, and restricted to URL-safe ASCII so
-    the same name is expressible as a directory, a database key and a bucket or
-    object prefix. This is the S3 split - bucket names are lowercased, keys stay
-    case-sensitive - and it is what makes namespaces safe on case-insensitive
-    filesystems, where two spellings would otherwise land on one directory and
-    quietly share files. File paths keep the case-sensitive grammar above.
+    A namespace is an identifier, not a filename. It is lowercased so BANK, bank
+    and BaNk are one store, then percent-encoded so ANY input is expressible as a
+    directory, a database key and a bucket or object prefix. This is the S3 split:
+    bucket names are lowercased, keys stay case-sensitive.
+
+    Encoding rather than rejecting matters because ids are arbitrary. Encoding
+    rather than slugifying matters more: slugs are not injective, so "a b" and
+    "a-b" would collapse into one namespace and two tenants would silently share
+    files. Percent-encoding is reversible, so distinct ids stay distinct.
+
+    It also removes a hazard. The output is plain ASCII, so the NFKC folding and
+    trailing-dot stripping that LocalFileSystem's on-disk map applies cannot alter
+    a namespace, and case-insensitive filesystems cannot alias two of them.
     """
     lowered = unicodedata.normalize("NFC", value).lower()
-    if not NAMESPACE_CHARS.match(lowered):
-        raise InvalidPathError(
-            f"invalid namespace {value!r}: use lowercase letters, digits, '.', '-', '_' and '/' "
-            "(namespaces are URL-safe identifiers; file paths are not restricted this way)."
-        )
-    return lowered
+    # .lower() again because quote() emits uppercase hex (%C3 -> %c3), so the same
+    # input always yields the same namespace.
+    return quote(lowered, safe=NAMESPACE_SAFE).lower()
 
 
 def normalize_namespace(name: str) -> str:
@@ -140,11 +156,10 @@ def normalize_template_value(placeholder: str, value: object) -> str:
         raise InvalidPathError(f"invalid {placeholder} value {value!r}: must be a single valid path segment") from None
     if as_path != normalized or "/" in as_path:
         raise InvalidPathError(f"invalid {placeholder} value {value!r}: must be a single valid path segment")
-    # Interpolated values are part of the namespace, so they get the namespace rule:
-    # lowercased and URL-safe. Consequence worth knowing: ids differing only by case
-    # resolve to one namespace, which is the point of the rule but means an identity
-    # system that treats "Alice" and "alice" as two users would share one store.
-    return sanitize_namespace_segment(normalized)
+    # Returned raw on purpose. The resolved name is re-normalized as a whole
+    # namespace, which is where lowercasing and percent-encoding happen; encoding
+    # here as well would escape the escapes ("ü" -> %c3%bc -> %25c3%25bc).
+    return normalized
 
 
 def normalize_directory(directory: str) -> str:

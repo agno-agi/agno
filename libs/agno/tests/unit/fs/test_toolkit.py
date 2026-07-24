@@ -16,7 +16,8 @@ from agno.tools.workspace import Workspace
 EXPECTED_TOOL_PARAMS = {
     "read_file": ["path", "start_line", "end_line"],
     "write_file": ["path", "content", "overwrite"],
-    "append_file": ["path", "content"],
+    "append_file": ["path", "content", "unique"],
+    "replace_lines": ["path", "start_line", "end_line", "content"],
     "list_files": ["directory", "pattern", "recursive", "max_depth"],
     "search_content": ["query", "directory", "limit"],
     "check_lines": ["lines", "directory"],
@@ -126,7 +127,7 @@ class TestWorkspaceParity:
 
 
 class TestSurface:
-    def test_full_surface_registers_eight_sync_and_async(self, toolkit):
+    def test_full_surface_registers_nine_sync_and_async(self, toolkit):
         assert list(toolkit.functions.keys()) == FileSystemTools.FULL_TOOLS
         assert list(toolkit.async_functions.keys()) == FileSystemTools.FULL_TOOLS
 
@@ -184,16 +185,20 @@ class TestReadFileTool:
     def test_missing_file(self, toolkit):
         assert toolkit.read_file("nope.md") == "Error: file not found: nope.md"
 
-    def test_too_long_guard_at_max_file_bytes(self, tmp_path):
+    def test_too_long_guard_at_max_read_chars(self, tmp_path):
+        # A context budget in chars, deliberately not max_file_bytes: comparing a
+        # char count against a byte cap made this guard unreachable.
+        from agno.fs.toolkit import _MAX_READ_CHARS
+
         backend = LocalFileSystem(root=tmp_path)
-        fs = FileSystem(backend=backend, namespace="radar", max_file_bytes=50)
+        fs = FileSystem(backend=backend, namespace="radar")
         toolkit = fs.tools()
-        backend.write("radar", "big.md", "x" * 51)  # bypass quota via backend
+        oversized = _MAX_READ_CHARS + 1
+        backend.write("radar", "big.md", "x" * oversized)
         result = toolkit.read_file("big.md")
-        assert result == (
-            "Error: file too long (51 chars > 50). Use start_line/end_line to read a chunk, "
-            "or use search_content to find specific text first."
-        )
+        assert result.startswith(f"Error: file too long to read whole ({oversized} chars")
+        assert f"limit {_MAX_READ_CHARS} chars" in result
+        assert "start_line/end_line" in result
         # A file the agent is allowed to write is a file it can read back whole.
         backend.write("radar", "at-cap.md", "y" * 50)
         assert toolkit.read_file("at-cap.md").startswith("     1\t")
@@ -293,12 +298,15 @@ class TestListFilesTool:
         assert set(payload.keys()) == {"directory", "pattern", "recursive", "files", "usage"}
         assert payload["directory"] == "."
         assert payload["usage"] == {"files": 1, "bytes_used": 5, "bytes_limit": fs.max_namespace_bytes}
-        assert {"path": "seen", "type": "dir", "size": None} in payload["files"]
+        assert {"path": "seen", "type": "dir", "size": None, "updated": None} in payload["files"]
 
     def test_entry_shape_matches_workspace(self, fs, toolkit):
         fs.write("a.md", "12345")
         payload = json.loads(toolkit.list_files())
-        assert payload["files"] == [{"path": "a.md", "type": "file", "size": "5B"}]
+        entry = payload["files"][0]
+        assert entry["path"] == "a.md" and entry["type"] == "file" and entry["size"] == "5B"
+        # `updated` is what makes the quota guidance actionable: the model can see age.
+        assert entry["updated"].endswith("Z")
 
     def test_non_recursive_lists_only_top_level(self, fs, toolkit):
         fs.write("x.md", "1")
@@ -345,14 +353,16 @@ class TestListFilesTool:
         payload = json.loads(toolkit.list_files("seen"))
         assert [e["path"] for e in payload["files"]] == ["seen/a.md"]
 
-    def test_dir_entries_capped_at_500(self, tmp_path):
+    def test_dir_entries_capped(self, tmp_path):
+        from agno.fs.toolkit import _MAX_DIR_ENTRIES
+
         backend = LocalFileSystem(root=tmp_path)
-        for i in range(501):
-            backend.write("radar", f"d{i:03d}/f.md", "x")
+        for i in range(_MAX_DIR_ENTRIES + 1):
+            backend.write("radar", f"d{i:04d}/f.md", "x")
         fs = FileSystem(backend=backend, namespace="radar")
         payload = json.loads(fs.tools().list_files())
         dir_entries = [e for e in payload["files"] if e["type"] == "dir"]
-        assert len(dir_entries) == 501  # 500 real + the truncation marker
+        assert len(dir_entries) == _MAX_DIR_ENTRIES + 1  # capped + the truncation marker
         assert dir_entries[-1]["path"] == "...and 1 more"
         assert payload["files"][-1]["path"] == "...and 1 more"
 
@@ -476,10 +486,13 @@ class TestListFilesBounded:
         # not dump an unbounded listing into the model's context (PR review).
         import json
 
+        from agno.fs.toolkit import _MAX_DIR_ENTRIES
+
         fs = FileSystem(backend=LocalFileSystem(root=tmp_path), namespace="many")
-        for i in range(520):
+        extra = 20
+        for i in range(_MAX_DIR_ENTRIES + extra):
             fs.write(f"f{i:04d}.md", "x")
         payload = json.loads(fs.tools().list_files())
         files = [e for e in payload["files"] if e["type"] == "file"]
-        assert len(files) == 501  # 500 entries + the "...and N more" marker
-        assert files[-1]["path"] == "...and 20 more"
+        assert len(files) == _MAX_DIR_ENTRIES + 1  # capped + the "...and N more" marker
+        assert files[-1]["path"] == f"...and {extra} more"

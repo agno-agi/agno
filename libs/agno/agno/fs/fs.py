@@ -56,7 +56,13 @@ Conventions:
 - To keep a record set (items already processed): store one record per line in
   the seen/ directory, one file per date (seen/2026-07-24.md). Call
   check_lines(lines, directory="seen") BEFORE acting, then record the new ones
-  with append_file. check_lines matches exact whole lines.
+  with append_file(..., unique=True). check_lines matches exact whole lines, and
+  unique=True keeps the log free of duplicates if a run overlaps another one.
+- To correct or update part of a file, read it, then call replace_lines with the
+  line numbers you saw. Rewriting a whole file with write_file to change a few
+  lines wastes effort and risks losing the rest.
+- To find something in a large file, use search_content first: it reports the
+  line number of each match, which you can pass to read_file as start_line.
 - Store extracted facts and identifiers, not raw fetched payloads.
 - Never store secrets, passwords, or API keys.
 - Files have size limits. If a write is refused, start a new file in your
@@ -257,15 +263,23 @@ class FileSystem:
                 )
         return self.backend.write(namespace, normalized, content, expected_version=expected_version)
 
-    def append(self, path: str, content: str) -> FileMeta:
+    def append(self, path: str, content: str, *, unique: bool = False) -> FileMeta:
         """Append line-oriented content, creating the file if missing.
 
         Content that is empty (or only line terminators) is a no-op: no write,
         no version bump, and the file is not created if missing.
+
+        ``unique=True`` drops lines the file already holds, so a record log cannot
+        gain a duplicate. It folds check-and-append into one call, which closes the
+        window between two separate tool calls, but it is not atomic against a
+        concurrent writer on any backend: two workers can still both read the file
+        before either appends.
         """
         namespace = self._require_resolved()
         normalized = normalize_path(path)
         chunk = build_chunk(content)
+        if chunk and unique:
+            chunk = self._drop_present_lines(namespace, normalized, chunk)
         if not chunk:
             existing = self.backend._stat(namespace, normalized)
             if existing is not None:
@@ -282,6 +296,50 @@ class FileSystem:
                 limit=self.max_namespace_bytes,
             )
         return self.backend.append(namespace, normalized, chunk, max_file_bytes=self.max_file_bytes)
+
+    def _drop_present_lines(self, namespace: str, normalized: str, chunk: str) -> str:
+        """Return ``chunk`` without lines the file already holds, and without
+        lines repeated inside the chunk itself. Order is preserved."""
+        existing = self.backend.read(namespace, normalized) or ""
+        seen = set(existing.split("\n"))
+        kept: List[str] = []
+        for line in chunk.split("\n"):
+            if not line or line in seen:
+                continue
+            seen.add(line)
+            kept.append(line)
+        return build_chunk("\n".join(kept)) if kept else ""
+
+    def replace_lines(self, path: str, start_line: int, end_line: int, content: str = "") -> FileMeta:
+        """Replace lines ``start_line`` through ``end_line`` (1-indexed, inclusive) with ``content``.
+
+        Empty ``content`` deletes the range. The file's trailing newline is
+        preserved. Raises ``FileNotFoundError`` if the file is missing and
+        ``ValueError`` for a range that does not start inside the file.
+        """
+        namespace = self._require_resolved()
+        normalized = normalize_path(path)
+        existing = self.backend.read(namespace, normalized)
+        if existing is None:
+            raise FileNotFoundError(f"file not found: {normalized}")
+        if start_line < 1:
+            raise ValueError("start_line must be 1 or greater")
+        if end_line < start_line:
+            raise ValueError("end_line must be greater than or equal to start_line")
+        lines = existing.split("\n")
+        trailing_newline = bool(lines) and lines[-1] == ""
+        if trailing_newline:
+            lines = lines[:-1]
+        if start_line > len(lines):
+            raise ValueError(f"start_line {start_line} is past the end of {normalized} ({len(lines)} lines)")
+        replacement = content.split("\n") if content else []
+        if replacement and replacement[-1] == "":
+            replacement = replacement[:-1]
+        new_lines = lines[: start_line - 1] + replacement + lines[min(end_line, len(lines)) :]
+        new_content = "\n".join(new_lines)
+        if new_content and trailing_newline:
+            new_content += "\n"
+        return self.write(normalized, new_content)
 
     def move(self, src: str, dst: str, *, overwrite: bool = False) -> FileMeta:
         """Move or rename a file. Raises ``FileNotFoundError`` if ``src`` is missing,
@@ -352,9 +410,13 @@ class FileSystem:
             self.write, path, content, overwrite=overwrite, expected_version=expected_version
         )
 
-    async def aappend(self, path: str, content: str) -> FileMeta:
+    async def aappend(self, path: str, content: str, *, unique: bool = False) -> FileMeta:
         """Async variant of ``append``."""
-        return await asyncio.to_thread(self.append, path, content)
+        return await asyncio.to_thread(self.append, path, content, unique=unique)
+
+    async def areplace_lines(self, path: str, start_line: int, end_line: int, content: str = "") -> FileMeta:
+        """Async variant of ``replace_lines``."""
+        return await asyncio.to_thread(self.replace_lines, path, start_line, end_line, content)
 
     async def amove(self, src: str, dst: str, *, overwrite: bool = False) -> FileMeta:
         """Async variant of ``move``."""

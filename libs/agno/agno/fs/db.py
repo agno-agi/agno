@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, List, Optional, Sequence, Set
 
 from agno.fs._paths import build_chunk, path_sort_key
-from agno.fs.base import BaseFS, _extract_snippet
+from agno.fs.base import BaseFS, _build_match
 from agno.fs.errors import QuotaExceededError, VersionConflictError
 from agno.fs.types import FileMeta, NamespaceUsage, SearchMatch
 from agno.utils.log import log_debug, log_warning
@@ -460,13 +460,13 @@ class DbFileSystem(BaseFS):
         stmt = select(t.c.path, t.c.size_bytes, t.c.content).where(and_(*conditions))
         with self.db_engine.begin() as conn:
             rows = conn.execute(stmt).all()
-        lower_query = query.lower()
         matches: List[SearchMatch] = []
         for row in sorted(rows, key=lambda r: path_sort_key(r[0])):
             if len(matches) >= limit:
                 break
-            if lower_query in row[2].lower():
-                matches.append(SearchMatch(path=row[0], size_bytes=row[1], snippet=_extract_snippet(row[2], query)))
+            match = _build_match(row[0], row[1], row[2], query)
+            if match is not None:
+                matches.append(match)
         return matches
 
     def usage(self, namespace: str) -> NamespaceUsage:

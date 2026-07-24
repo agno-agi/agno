@@ -19,6 +19,8 @@ class SearchMatch:
     path: str
     size_bytes: int
     snippet: str  # ~400-char window around the first match
+    line: Optional[int] = None  # 1-indexed line the first match starts on
+    match_count: int = 0  # occurrences in the whole file, not just the snippet
 
 
 @dataclass

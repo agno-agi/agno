@@ -3,9 +3,16 @@
 To the agent this is just a filesystem: six tools share their names, shapes and
 output formats with ``agno.tools.workspace.Workspace`` (``read_file``,
 ``write_file``, ``list_files``, ``search_content``, ``move_file``,
-``delete_file``), plus two additions the durability use cases need:
-``append_file`` (line-oriented) and ``check_lines`` (batch exact-line
-membership, the dedupe primitive).
+``delete_file``), plus three additions the durability use cases need:
+``append_file`` (line-oriented, with an optional per-line dedupe),
+``replace_lines`` (edit a line range without rewriting the file) and
+``check_lines`` (batch exact-line membership, the dedupe primitive).
+
+``list_files`` and ``search_content`` return a little more than their Workspace
+counterparts: a file's last-modified time, and the line number and total count of
+each search hit. Both are what an agent needs to orient in state it wrote days
+ago, and neither changes a signature, so Workspace parity holds where it is
+tested.
 
 These names deliberately collide with the rest of the file-toolkit family
 (Workspace, FileTools, PythonTools, CodingTools, ...). Agno's tool resolver
@@ -16,6 +23,7 @@ genuinely needs both FileSystem and a local workspace, wrap one in a sub-agent.
 
 import asyncio
 import json
+from datetime import datetime, timezone
 from fnmatch import fnmatch
 from typing import Dict, List, Optional, Union
 
@@ -31,7 +39,16 @@ from agno.team.team import Team
 from agno.tools.toolkit import Toolkit
 from agno.utils.log import log_debug, log_error
 
-_MAX_DIR_ENTRIES = 500
+_MAX_DIR_ENTRIES = 200
+
+_MAX_READ_CHARS = 100_000
+"""Cap on a whole-file read, in characters.
+
+A context budget, deliberately not ``max_file_bytes``: that is a storage cap in
+bytes, an order of magnitude larger, and comparing it against a character count
+made this guard unreachable (UTF-8 gives chars <= bytes, so a file the store
+accepted always passed).
+"""
 
 
 def _format_size(size: float) -> str:
@@ -41,6 +58,21 @@ def _format_size(size: float) -> str:
             return f"{int(size)}{unit}" if unit == "B" else f"{size:.1f}{unit}"
         size /= 1024
     return f"{size:.1f}GB"
+
+
+def _format_time(updated_at: Optional[int]) -> Optional[str]:
+    """Epoch seconds as ISO 8601 UTC, or None on a backend that does not track it."""
+    if updated_at is None:
+        return None
+    return datetime.fromtimestamp(updated_at, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _line_count(contents: str) -> int:
+    """Number of real lines, ignoring the empty element a terminal newline produces."""
+    lines = contents.split("\n")
+    if lines and lines[-1] == "":
+        lines = lines[:-1]
+    return len(lines)
 
 
 def _format_with_line_numbers(text: str, start_line: int = 1) -> str:
@@ -59,7 +91,7 @@ def _format_with_line_numbers(text: str, start_line: int = 1) -> str:
 class FileSystemTools(Toolkit):
     """Toolkit over one ``FileSystem`` file store. Build it with ``FileSystem.tools()``.
 
-    Registers the full eight-tool surface, or the four read tools when
+    Registers the full nine-tool surface, or the four read tools when
     ``read_only=True`` (the surface for a consumer agent that consults another
     agent's namespace by shared name). Ships the matching FileSystem instructions
     unless ``instructions`` is overridden. Tool errors are returned as
@@ -79,6 +111,7 @@ class FileSystemTools(Toolkit):
         "read_file",
         "write_file",
         "append_file",
+        "replace_lines",
         "list_files",
         "search_content",
         "check_lines",
@@ -112,15 +145,6 @@ class FileSystemTools(Toolkit):
             add_instructions=add_instructions,
             **kwargs,
         )
-
-        # Surface-drift guard: every tool name must resolve to both a sync method
-        # and an async sibling on the class, for the full surface and the
-        # read-only subset alike.
-        for tool_name in self.FULL_TOOLS:
-            assert callable(getattr(self, tool_name, None)), f"FileSystemTools missing sync method '{tool_name}'"
-            assert callable(getattr(self, "a" + tool_name, None)), (
-                f"FileSystemTools missing async method 'a{tool_name}'"
-            )
 
     # ------------------------------------------------------------------
     # Helpers
@@ -168,8 +192,8 @@ class FileSystemTools(Toolkit):
 
         Each line is prefixed with its 1-indexed line number. Line numbers reflect the
         actual line in the file, so reading lines 50-60 numbers the first line 50. The
-        numbers are display only: never include them in content you pass to write_file
-        or append_file.
+        numbers are display only: never include them in content you pass to write_file,
+        append_file or replace_lines.
 
         :param path: File path, e.g. "notes/decisions.md".
         :param start_line: Optional 1-indexed first line to return.
@@ -182,25 +206,32 @@ class FileSystemTools(Toolkit):
             contents = fs.read(path)
             if contents is None:
                 return f"Error: file not found: {path}"
+            total = _line_count(contents)
+            if total == 0:
+                return f"({path} is empty)"
             if start_line is None and end_line is None:
-                if len(contents) > fs.max_file_bytes:
+                if len(contents) > _MAX_READ_CHARS:
                     return (
-                        f"Error: file too long ({len(contents)} chars > {fs.max_file_bytes}). "
-                        "Use start_line/end_line to read a chunk, "
-                        "or use search_content to find specific text first."
+                        f"Error: file too long to read whole ({len(contents)} chars, {total} lines; "
+                        f"limit {_MAX_READ_CHARS} chars). Read a range with start_line/end_line, or "
+                        "use search_content first: it reports the line number of each match."
                     )
                 return _format_with_line_numbers(contents, start_line=1)
-            lines = contents.split("\n")
-            # Clamp to 1-indexed lines: start_line=0 would mislabel every line by one,
-            # a negative start would print negative line numbers, and end_line < 1 would
-            # silently drop the tail. Content stays correct; only the labels are guarded.
-            start = max(1, start_line) if start_line is not None else 1
-            end = end_line if end_line is not None else len(lines)
+            start = start_line if start_line is not None else 1
+            end = end_line if end_line is not None else total
+            # Report a bad range instead of returning an empty string. An empty result
+            # is indistinguishable from an empty file and gives the caller nothing to
+            # correct, so every out-of-range case names the file's real line count.
+            if start < 1:
+                return f"Error: start_line must be 1 or greater (got {start})."
             if end < 1:
-                return "Error: end_line must be 1 or greater."
-            start_idx = start - 1
-            end_idx = min(len(lines), end)
-            chunk = "\n".join(lines[start_idx:end_idx])
+                return f"Error: end_line must be 1 or greater (got {end})."
+            if end < start:
+                return f"Error: end_line {end} is before start_line {start}."
+            if start > total:
+                return f"Error: start_line {start} is past the end of {path}, which has {total} lines."
+            lines = contents.split("\n")
+            chunk = "\n".join(lines[start - 1 : min(end, total)])
             return _format_with_line_numbers(chunk, start_line=start)
         except InvalidPathError as e:
             return f"Error: {e}"
@@ -221,8 +252,10 @@ class FileSystemTools(Toolkit):
     ) -> str:
         """List your files.
 
-        Entries are ``{"path", "type", "size"}``, where ``type`` is "file" or "dir" and ``size`` is
-        human-readable for files, null for dirs. The result also reports total usage
+        Entries are ``{"path", "type", "size", "updated"}``, where ``type`` is "file" or
+        "dir", ``size`` is human-readable for files and null for dirs, and ``updated``
+        is when the file last changed (UTC). Use ``updated`` to tell current working
+        state from state you left behind long ago. The result also reports total usage
         against your storage limit.
 
         :param directory: Directory to list (default "." = top level), e.g. "seen".
@@ -250,7 +283,14 @@ class FileSystemTools(Toolkit):
                     # An empty pattern means no filter: Workspace truthiness, not `is None`
                     # (models do pass pattern="").
                     if not pattern or fnmatch(segments[-1], pattern):
-                        file_entries.append({"path": meta.path, "type": "file", "size": _format_size(meta.size_bytes)})
+                        file_entries.append(
+                            {
+                                "path": meta.path,
+                                "type": "file",
+                                "size": _format_size(meta.size_bytes),
+                                "updated": _format_time(meta.updated_at),
+                            }
+                        )
                 for k in range(1, min(len(rel) - 1, depth_cap) + 1):
                     dir_path = "/".join(segments[: prefix_len + k])
                     if not pattern or fnmatch(dir_path.split("/")[-1], pattern):
@@ -262,7 +302,7 @@ class FileSystemTools(Toolkit):
                 truncated_dirs = len(sorted_dirs) - _MAX_DIR_ENTRIES
                 sorted_dirs = sorted_dirs[:_MAX_DIR_ENTRIES]
             dir_entries: List[Dict[str, Union[str, None]]] = [
-                {"path": dir_path, "type": "dir", "size": None} for dir_path in sorted_dirs
+                {"path": dir_path, "type": "dir", "size": None, "updated": None} for dir_path in sorted_dirs
             ]
 
             # Cap files as well as dirs. The namespace quota bounds total BYTES, not
@@ -276,9 +316,11 @@ class FileSystemTools(Toolkit):
 
             entries = sorted(file_entries + dir_entries, key=lambda e: path_sort_key(str(e["path"])))
             if truncated_files:
-                entries.append({"path": f"...and {truncated_files} more", "type": "file", "size": None})
+                entries.append(
+                    {"path": f"...and {truncated_files} more", "type": "file", "size": None, "updated": None}
+                )
             if truncated_dirs:
-                entries.append({"path": f"...and {truncated_dirs} more", "type": "dir", "size": None})
+                entries.append({"path": f"...and {truncated_dirs} more", "type": "dir", "size": None, "updated": None})
 
             current_usage = fs.usage()
             return json.dumps(
@@ -313,14 +355,17 @@ class FileSystemTools(Toolkit):
     ) -> str:
         """Search your files for text (case-insensitive substring match).
 
-        Finds where text appears. To check whether exact records are already stored,
-        use check_lines instead, since substring matches can mislead there.
+        Each result gives the line number of the first match, so you can follow up with
+        read_file(path, start_line=..., end_line=...) instead of reading the whole file.
+        ``matches`` counts every occurrence in that file, while ``snippet`` shows only
+        the first. To check whether exact records are already stored, use check_lines
+        instead, since substring matches can mislead there.
 
         :param query: Substring to search for.
         :param directory: Directory to scope the search (default "." = everything).
         :param limit: Maximum matching files to return (default 10).
         :return: JSON with keys ``query``, ``matches_found``, ``files`` (each
-            ``{"file", "size", "snippet"}``).
+            ``{"file", "line", "matches", "size", "snippet"}``).
         """
         try:
             if not query or not query.strip():
@@ -328,7 +373,13 @@ class FileSystemTools(Toolkit):
             fs = self._resolved(run_context, agent, team)
             matches = fs.search(query, directory=directory, limit=limit)
             files = [
-                {"file": match.path, "size": _format_size(match.size_bytes), "snippet": match.snippet}
+                {
+                    "file": match.path,
+                    "line": match.line,
+                    "matches": match.match_count,
+                    "size": _format_size(match.size_bytes),
+                    "snippet": match.snippet,
+                }
                 for match in matches
             ]
             return json.dumps({"query": query, "matches_found": len(files), "files": files}, indent=2)
@@ -415,6 +466,7 @@ class FileSystemTools(Toolkit):
         self,
         path: str,
         content: str,
+        unique: bool = False,
         *,
         run_context: Optional[RunContext] = None,
         agent: Optional[Agent] = None,
@@ -428,10 +480,22 @@ class FileSystemTools(Toolkit):
 
         :param path: File path, e.g. "seen/2026-07-24.md". Parent folders are implicit.
         :param content: One or more lines to append.
+        :param unique: If True, skip lines the file already contains, so a record log
+            cannot gain a duplicate. Use it when appending records.
         :return: Success message with the file's new size, or an error message.
         """
         try:
             fs = self._resolved(run_context, agent, team)
+            if unique:
+                # Size delta rather than a second copy of the filter: whatever the
+                # dedupe kept is exactly what the file grew by.
+                previous = fs.read(path)
+                before_bytes = len(previous.encode("utf-8")) if previous else 0
+                meta = fs.append(path, content, unique=True)
+                added = meta.size_bytes - before_bytes
+                if added <= 0:
+                    return f"Appended nothing to {path}: every line was already present (still {meta.size_bytes} bytes)"
+                return f"Appended {added} bytes to {path}, skipping lines already present (now {meta.size_bytes} bytes)"
             meta = fs.append(path, content)
             chunk = build_chunk(content)
             appended_bytes = len(chunk.encode("utf-8")) if chunk else 0
@@ -442,6 +506,48 @@ class FileSystemTools(Toolkit):
             return f"Error: {e}"
         except Exception as e:
             log_error(f"append_file failed: {e}")
+            return f"Error: {e}"
+
+    def replace_lines(
+        self,
+        path: str,
+        start_line: int,
+        end_line: int,
+        content: str = "",
+        *,
+        run_context: Optional[RunContext] = None,
+        agent: Optional[Agent] = None,
+        team: Optional[Team] = None,
+    ) -> str:
+        """Replace lines start_line through end_line with new content, or delete them.
+
+        Use this to correct part of a file instead of rewriting the whole thing with
+        write_file. Read the file (or search it) first to get the line numbers, which
+        are 1-indexed and inclusive on both ends. Leave content empty to delete the
+        range. Pass only the text itself: never the line-number prefixes read_file
+        displays.
+
+        :param path: File path, e.g. "notes/decisions.md".
+        :param start_line: First line to replace, 1-indexed.
+        :param end_line: Last line to replace, inclusive.
+        :param content: Replacement lines. Empty deletes the range.
+        :return: Success message with the file's new size, or an error message.
+        """
+        try:
+            fs = self._resolved(run_context, agent, team)
+            meta = fs.replace_lines(path, start_line, end_line, content)
+            action = "Deleted" if not content else "Replaced"
+            return f"{action} lines {start_line}-{end_line} in {path} (now {meta.size_bytes} bytes)"
+        except FileNotFoundError:
+            return f"Error: file not found: {path}"
+        except ValueError as e:
+            return f"Error: {e}"
+        except QuotaExceededError as e:
+            return self._quota_error(e, path)
+        except InvalidPathError as e:
+            return f"Error: {e}"
+        except Exception as e:
+            log_error(f"replace_lines failed: {e}")
             return f"Error: {e}"
 
     def move_file(
@@ -586,13 +692,32 @@ class FileSystemTools(Toolkit):
         self,
         path: str,
         content: str,
+        unique: bool = False,
         *,
         run_context: Optional[RunContext] = None,
         agent: Optional[Agent] = None,
         team: Optional[Team] = None,
     ) -> str:
         """Async variant of ``append_file``."""
-        return await asyncio.to_thread(self.append_file, path, content, run_context=run_context, agent=agent, team=team)
+        return await asyncio.to_thread(
+            self.append_file, path, content, unique, run_context=run_context, agent=agent, team=team
+        )
+
+    async def areplace_lines(
+        self,
+        path: str,
+        start_line: int,
+        end_line: int,
+        content: str = "",
+        *,
+        run_context: Optional[RunContext] = None,
+        agent: Optional[Agent] = None,
+        team: Optional[Team] = None,
+    ) -> str:
+        """Async variant of ``replace_lines``."""
+        return await asyncio.to_thread(
+            self.replace_lines, path, start_line, end_line, content, run_context=run_context, agent=agent, team=team
+        )
 
     async def amove_file(
         self,

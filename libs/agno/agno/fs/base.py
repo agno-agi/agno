@@ -13,13 +13,21 @@ from agno.fs.errors import QuotaExceededError
 from agno.fs.types import FileMeta, NamespaceUsage, SearchMatch
 
 
-def _extract_snippet(content: str, query: str, context_chars: int = 200) -> str:
-    """Extract a snippet of content around the first case-insensitive match of query."""
+def _build_match(
+    path: str, size_bytes: int, content: str, query: str, context_chars: int = 200
+) -> Optional[SearchMatch]:
+    """Build a ``SearchMatch`` for the first case-insensitive occurrence of ``query``.
+
+    Returns ``None`` when the query does not occur. ``line`` locates the first
+    occurrence so a caller can feed it straight to a ranged read, and
+    ``match_count`` reports occurrences in the whole file so one snippet is not
+    mistaken for the whole story.
+    """
     lower_content = content.lower()
     lower_query = query.lower()
     idx = lower_content.find(lower_query)
     if idx == -1:
-        return ""
+        return None
     start = max(0, idx - context_chars)
     end = min(len(content), idx + len(query) + context_chars)
     snippet = content[start:end]
@@ -27,7 +35,13 @@ def _extract_snippet(content: str, query: str, context_chars: int = 200) -> str:
         snippet = "..." + snippet
     if end < len(content):
         snippet = snippet + "..."
-    return snippet
+    return SearchMatch(
+        path=path,
+        size_bytes=size_bytes,
+        snippet=snippet,
+        line=content.count("\n", 0, idx) + 1,
+        match_count=lower_content.count(lower_query),
+    )
 
 
 class BaseFS(ABC):
@@ -116,7 +130,6 @@ class BaseFS(ABC):
         """Case-insensitive substring search. Base emulation: list + read + scan."""
         if not query:
             return []
-        lower_query = query.lower()
         matches: List[SearchMatch] = []
         for meta in sorted(self.list(namespace, directory), key=lambda m: path_sort_key(m.path)):
             if len(matches) >= limit:
@@ -124,10 +137,9 @@ class BaseFS(ABC):
             content = self.read(namespace, meta.path)
             if content is None:
                 continue
-            if lower_query in content.lower():
-                matches.append(
-                    SearchMatch(path=meta.path, size_bytes=meta.size_bytes, snippet=_extract_snippet(content, query))
-                )
+            match = _build_match(meta.path, meta.size_bytes, content, query)
+            if match is not None:
+                matches.append(match)
         return matches
 
     def contains(self, namespace: str, lines: Sequence[str], directory: str = "") -> Set[str]:
