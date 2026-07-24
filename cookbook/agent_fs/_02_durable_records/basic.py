@@ -39,6 +39,9 @@ agent = Agent(
 
 
 def process_batch(batch: List[str]) -> None:
+    # The check scope must match where the records are appended (seen/): a
+    # mismatched directory returns everything as missing - indistinguishable
+    # from a fresh store - and the work is silently redone.
     agent.print_response(
         "Triage this batch of tickets: " + ", ".join(batch) + ". "
         "First call check_lines with directory='seen' to find which ids you have "

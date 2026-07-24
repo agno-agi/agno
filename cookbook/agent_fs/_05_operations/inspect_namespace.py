@@ -48,4 +48,4 @@ if __name__ == "__main__":
     result = fs.contains(["kite-os-release", "brand-new-story"], directory="seen")
     pprint({"found": result.found, "missing": result.missing})
 
-    print("the agent's next run will now skip everything in 'found'.")
+    print("an agent that checks directory='seen' will now skip everything in 'found'.")

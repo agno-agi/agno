@@ -29,7 +29,7 @@ cookbook/agent_fs/
 │   ├── local_backend.py        # swap DbFileSystem for LocalFileSystem, agent unchanged
 │   └── TEST_LOG.md
 ├── _02_durable_records/        # the dedupe pattern: check_lines -> act -> append_file
-├── _03_working_state/          # checkpoints and monitors that survive restarts
+├── _03_working_state/          # checkpoints and monitors that survive across runs
 ├── _04_multi_tenancy/          # templated namespaces, factories, explicit sharing
 └── _05_operations/             # quota recovery and namespace inspection (no basic.py)
 ````
@@ -38,7 +38,7 @@ cookbook/agent_fs/
 
 - [`_01_getting_started/`](_01_getting_started/): attach AgentFS to an agent with one line; prove durability across processes; use it standalone; swap the storage backend.
 - [`_02_durable_records/`](_02_durable_records/): never repeat work — exact-line dedupe with `check_lines` and `append_file`, ending in a scheduled news agent that reports only the delta.
-- [`_03_working_state/`](_03_working_state/): long-running work that survives restarts — progress checkpoints and a last-seen monitor.
+- [`_03_working_state/`](_03_working_state/): long-running work that survives across sessions and runs — progress checkpoints and a last-seen monitor.
 - [`_04_multi_tenancy/`](_04_multi_tenancy/): one static agent, per-user file stores via `namespace="assistant/{user_id}"`; a callable tool factory for arbitrary policy; two agents sharing one namespace with a read-only consumer.
 - [`_05_operations/`](_05_operations/): hitting the storage cap and recovering; inspecting and seeding a live agent's namespace programmatically.
 

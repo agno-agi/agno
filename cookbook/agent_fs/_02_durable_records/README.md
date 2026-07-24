@@ -4,6 +4,8 @@ The dedupe pattern: `check_lines` BEFORE acting, `append_file` after. An exact, 
 
 This is what user memory cannot give you (LLM-curated memory merges and rewrites — probabilistic where a recurring job needs verbatim) and session state cannot either (scheduled agents get a fresh session per run).
 
+The toolkit's built-in instructions already teach the check-before-act protocol and the `seen/` convention; the demo prompts below also spell it out so runs stay deterministic. In your own agent the instructions alone usually carry it.
+
 ## Files
 
 - `basic.py` — the minimal loop: two passes over overlapping ticket batches; the second pass acts only on the new ticket. Reach for this shape any time an agent must never repeat work.
@@ -23,3 +25,5 @@ python cookbook/agent_fs/_02_durable_records/radar_news_delta.py
 ```
 
 Requires `OPENAI_API_KEY`.
+
+Both files default to a fresh per-run SQLite file so repeated demo runs start clean. A real scheduled deployment pins one fixed, shared `db_url` (or sets `AGNO_FS_DB`) — a new store per process re-reports everything, which is the bug this pattern exists to fix.

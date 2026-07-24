@@ -38,6 +38,8 @@ if __name__ == "__main__":
     print(fs.read("notes/config.md"))
 
     print("which of these records are already stored?")
+    # Check against the same directory the appends wrote to (seen/): a
+    # mismatched scope reads exactly like a fresh, empty store.
     result = fs.contains(
         ["https://example.com/a", "https://example.com/c"], directory="seen"
     )

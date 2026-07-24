@@ -1,8 +1,8 @@
 # Working State
 
-Long-running work that survives restarts. Input is a task bigger than one run (or observations that change between runs); output is an agent that picks up exactly where it left off, because its progress lives in durable files rather than in the session.
+Long-running work that survives across sessions and runs. Input is a task bigger than one run (or observations that change between runs); output is an agent that picks up exactly where it left off, because its progress lives in durable files rather than in the session.
 
-Session state dies with the session, and scheduled agents get a fresh session per run — a checkpoint file does not.
+Session state dies with the session, and scheduled agents get a fresh session per run — a checkpoint file does not. Both examples default to a fresh per-run SQLite file so demo runs start clean; a real deployment pins one fixed, shared `db_url` (or sets `AGNO_FS_DB`) so the state also outlives the process — [`_01_getting_started/basic.py`](../_01_getting_started/basic.py) is the cross-process proof.
 
 ## Files
 
@@ -12,6 +12,7 @@ Session state dies with the session, and scheduled agents get a fresh session pe
 ## When to use
 
 - Multi-run tasks: migrations, audits, backfills — anything you would checkpoint in a job queue, done by an agent instead.
+- Restart-proof deployments: same pattern with a pinned `db_url`, as above.
 - Monitors and watchers that alert on change: the last-seen value is agent working state, not user memory.
 - For exact record-set dedupe (which items did I already process?), use [`_02_durable_records/`](../_02_durable_records/) instead — `check_lines` is built for that. For the basics of attaching AgentFS, see [`_01_getting_started/`](../_01_getting_started/).
 

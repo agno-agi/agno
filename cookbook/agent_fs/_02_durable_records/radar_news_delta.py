@@ -40,6 +40,9 @@ TODAY = date.today().isoformat()
 # Create AgentFS
 # ---------------------------------------------------------------------------
 Path("tmp").mkdir(exist_ok=True)
+# Fresh per-run db so this demo starts clean on every execution. A real
+# scheduled deployment pins one fixed, shared db_url instead - a new store per
+# process re-reports everything, the exact bug Radar exists to fix.
 DB_FILE = os.environ.get("AGNO_FS_DB") or f"tmp/agent_fs_radar_{int(time.time())}.db"
 
 fs = AgentFS(fs=DbFileSystem(db_url=f"sqlite:///{DB_FILE}"), namespace="radar")

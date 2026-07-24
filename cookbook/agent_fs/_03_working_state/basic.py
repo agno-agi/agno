@@ -2,11 +2,12 @@
 Working State - Basic
 =====================
 
-Progress checkpoints that survive restarts: the agent records where it stopped
-in state/checkpoint.md, and the next run - a fresh session with no shared
-history - resumes from exactly that point.
+Progress checkpoints that survive across sessions and runs: the agent records
+where it stopped in state/checkpoint.md, and the next session - fresh, with no
+shared history - resumes from exactly that point.
 
-This example runs a four-step task as two sessions of two steps each.
+This example runs a four-step task as two sessions of two steps each. For the
+cross-PROCESS durability proof, see _01_getting_started/basic.py.
 """
 
 import os
@@ -29,6 +30,9 @@ STEPS = [
 # Create AgentFS
 # ---------------------------------------------------------------------------
 Path("tmp").mkdir(exist_ok=True)
+# Fresh per-run db so the demo starts from step 1 every execution. A real
+# resumable job pins one fixed, shared db_url so the checkpoint outlives the
+# process, not just the session.
 DB_FILE = (
     os.environ.get("AGNO_FS_DB") or f"tmp/agent_fs_checkpoint_{int(time.time())}.db"
 )

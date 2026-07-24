@@ -35,6 +35,9 @@ READINGS_TUESDAY = {
 # Create AgentFS
 # ---------------------------------------------------------------------------
 Path("tmp").mkdir(exist_ok=True)
+# Fresh per-run db so the demo always starts at the baseline. A real scheduled
+# monitor pins one fixed, shared db_url - a new store per process forgets the
+# baseline and reports nothing but baselines.
 DB_FILE = os.environ.get("AGNO_FS_DB") or f"tmp/agent_fs_monitor_{int(time.time())}.db"
 
 fs = AgentFS(
