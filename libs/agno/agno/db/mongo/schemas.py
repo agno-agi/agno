@@ -133,9 +133,12 @@ SCHEDULES_COLLECTION_SCHEMA = [
     {"key": "next_run_at"},
     {"key": "locked_by"},
     {"key": "locked_at"},
+    {"key": "user_id"},
     {"key": "created_at"},
     {"key": "updated_at"},
     {"key": [("enabled", 1), ("next_run_at", 1)]},
+    # Scoped list / claim queries filter on user_id first.
+    {"key": [("user_id", 1), ("enabled", 1), ("next_run_at", 1)]},
 ]
 
 SCHEDULE_RUNS_COLLECTION_SCHEMA = [
@@ -144,6 +147,9 @@ SCHEDULE_RUNS_COLLECTION_SCHEMA = [
     {"key": "status"},
     {"key": "triggered_at"},
     {"key": "completed_at"},
+    # Denormalised from the parent schedule so the runs router can scope
+    # per user without a join.
+    {"key": "user_id"},
     {"key": "created_at"},
 ]
 
