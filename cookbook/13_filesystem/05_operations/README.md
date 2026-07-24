@@ -13,13 +13,13 @@ There is no `basic.py` here. These are two independent operational recipes and n
 
 - An agent's writes started failing and you want to see and fix its store: `quota_recovery.py`.
 - Ops scripts, tests, and migrations that read or seed an agent's files without running the agent: `inspect_files.py`.
-- To build the store these recipes operate on, start at [`_01_getting_started/`](../_01_getting_started/). The record-log layout being inspected comes from [`_02_durable_records/`](../_02_durable_records/).
+- To build the store these recipes operate on, start at [`01_getting_started/`](../01_getting_started/). The record-log layout being inspected comes from [`02_durable_records/`](../02_durable_records/).
 
 ## Run
 
 ```bash
-python cookbook/filesystem/_05_operations/quota_recovery.py
-python cookbook/filesystem/_05_operations/inspect_files.py
+python cookbook/13_filesystem/05_operations/quota_recovery.py
+python cookbook/13_filesystem/05_operations/inspect_files.py
 ```
 
 No environment variables required, since neither file uses a model.

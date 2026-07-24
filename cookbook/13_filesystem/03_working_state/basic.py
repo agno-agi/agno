@@ -7,7 +7,7 @@ that file to pick up from the same point.
 
 This example runs a four-step task as two sessions of two steps each. The
 second session shares no history with the first. To see the same thing hold
-across processes, see _01_getting_started/basic.py.
+across processes, see 01_getting_started/basic.py.
 """
 
 from uuid import uuid4

@@ -17,14 +17,14 @@ The main reason to reach for one is per-user (and per-team) file stores from a s
 - Any user-facing agent that keeps working state. Without `{user_id}` in the namespace, users share one file store.
 - Role- or tenant-based scoping beyond a single placeholder: `custom_factory.py`.
 - One agent producing records that another agent consults: `shared_namespace.py`.
-- For the single-tenant basics first, see [`_01_getting_started/`](../_01_getting_started/). To inspect any of these namespaces from a script, see [`_05_operations/`](../_05_operations/).
+- For the single-tenant basics first, see [`01_getting_started/`](../01_getting_started/). To inspect any of these namespaces from a script, see [`05_operations/`](../05_operations/).
 
 ## Run
 
 ```bash
-python cookbook/filesystem/_04_namespaces/basic.py
-python cookbook/filesystem/_04_namespaces/custom_factory.py
-python cookbook/filesystem/_04_namespaces/shared_namespace.py
+python cookbook/13_filesystem/04_namespaces/basic.py
+python cookbook/13_filesystem/04_namespaces/custom_factory.py
+python cookbook/13_filesystem/04_namespaces/shared_namespace.py
 ```
 
 Requires `OPENAI_API_KEY`.

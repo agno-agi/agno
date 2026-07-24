@@ -1,4 +1,4 @@
-# Test Log - _05_operations
+# Test Log - 05_operations
 
 Tested 2026-07-24, agno 2.8.1 (source tree, branch feat/agent-fs at 7df2fad3a). No model and no API keys, since both files are pure Python against the store.
 Entries quote printed state and tool calls. Both files are pure Python against the store, so their output is deterministic.

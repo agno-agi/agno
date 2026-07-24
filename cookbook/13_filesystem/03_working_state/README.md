@@ -2,7 +2,7 @@
 
 Long-running work that survives across sessions and runs. When a task is bigger than one run, or when observations change between runs, the agent keeps its progress in durable files instead of in the session, and picks up exactly where it left off.
 
-Session state dies with the session, and a scheduled agent gets a fresh session per run. A checkpoint file survives both. Both examples use a fresh per-run SQLite file so demo runs start clean. A real deployment pins one fixed, shared database so the state also outlives the process, which [`_01_getting_started/basic.py`](../_01_getting_started/basic.py) demonstrates.
+Session state dies with the session, and a scheduled agent gets a fresh session per run. A checkpoint file survives both. Both examples use a fresh per-run SQLite file so demo runs start clean. A real deployment pins one fixed, shared database so the state also outlives the process, which [`01_getting_started/basic.py`](../01_getting_started/basic.py) demonstrates.
 
 ## Files
 
@@ -14,13 +14,13 @@ Session state dies with the session, and a scheduled agent gets a fresh session 
 - Multi-run tasks such as migrations, audits and backfills, meaning anything you would checkpoint in a job queue, done by an agent instead.
 - Restart-proof deployments, using the same pattern with one pinned, shared database, as above.
 - Monitors and watchers that alert on change, where the last-seen value is agent working state rather than user memory.
-- For exact record-set dedupe (which items did I already process?), use [`_02_durable_records/`](../_02_durable_records/) instead, since `check_lines` is built for that. For the basics of attaching FileSystem, see [`_01_getting_started/`](../_01_getting_started/).
+- For exact record-set dedupe (which items did I already process?), use [`02_durable_records/`](../02_durable_records/) instead, since `check_lines` is built for that. For the basics of attaching FileSystem, see [`01_getting_started/`](../01_getting_started/).
 
 ## Run
 
 ```bash
-python cookbook/filesystem/_03_working_state/basic.py
-python cookbook/filesystem/_03_working_state/last_seen_monitor.py
+python cookbook/13_filesystem/03_working_state/basic.py
+python cookbook/13_filesystem/03_working_state/last_seen_monitor.py
 ```
 
 Requires `OPENAI_API_KEY`.

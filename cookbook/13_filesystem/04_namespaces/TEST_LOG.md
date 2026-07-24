@@ -1,4 +1,4 @@
-# Test Log - _04_namespaces
+# Test Log - 04_namespaces
 
 Tested 2026-07-24 against `gpt-5.5` (OpenAIResponses), agno 2.8.1 (source tree, branch feat/agent-fs at 7df2fad3a).
 Re-run fresh at the final sweep (same date): every file in this folder PASS.

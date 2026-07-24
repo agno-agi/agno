@@ -13,15 +13,15 @@ Attach a durable, private filesystem to an agent with one line: `Agent(tools=[fs
 - Any agent that should remember its own work between runs. Start here.
 - Seeding or reading an agent's files from scripts and tests: `standalone.py`.
 - Local development where you want to `cat` the store: `local_backend.py`.
-- For the record-keeping dedupe pattern, continue to [`_02_durable_records/`](../_02_durable_records/). For per-user isolation, see [`_04_namespaces/`](../_04_namespaces/).
+- For the record-keeping dedupe pattern, continue to [`02_durable_records/`](../02_durable_records/). For per-user isolation, see [`04_namespaces/`](../04_namespaces/).
 
 ## Run
 
 ```bash
-python cookbook/filesystem/_01_getting_started/basic.py
-python cookbook/filesystem/_01_getting_started/basic.py   # yes, twice
-python cookbook/filesystem/_01_getting_started/standalone.py
-python cookbook/filesystem/_01_getting_started/local_backend.py
+python cookbook/13_filesystem/01_getting_started/basic.py
+python cookbook/13_filesystem/01_getting_started/basic.py   # yes, twice
+python cookbook/13_filesystem/01_getting_started/standalone.py
+python cookbook/13_filesystem/01_getting_started/local_backend.py
 ```
 
 `basic.py` and `local_backend.py` require `OPENAI_API_KEY`; `standalone.py` needs no keys.
