@@ -1,0 +1,319 @@
+"""Unit tests for the AgentFS programmatic API (spec D2) over LocalFileSystem."""
+
+import asyncio
+
+import pytest
+
+from agno.fs import AgentFS
+from agno.fs.errors import InvalidPathError, QuotaExceededError, UnsupportedOperationError
+from agno.fs.local import LocalFileSystem
+
+
+@pytest.fixture
+def local_backend(tmp_path) -> LocalFileSystem:
+    return LocalFileSystem(root=tmp_path)
+
+
+@pytest.fixture
+def fs(local_backend) -> AgentFS:
+    return AgentFS(fs=local_backend, namespace="radar")
+
+
+class TestEdgeBehaviors:
+    def test_read_missing_returns_none(self, fs):
+        assert fs.read("missing.md") is None
+
+    def test_read_empty_file_returns_empty_string(self, fs):
+        fs.write("empty.md", "")
+        assert fs.read("empty.md") == ""
+
+    def test_usage_of_empty_namespace(self, fs):
+        result = fs.usage()
+        assert result.file_count == 0
+        assert result.total_bytes == 0
+
+    def test_contains_empty_input_short_circuits(self, local_backend):
+        class NoContainsBackend(LocalFileSystem):
+            def contains(self, namespace, lines, directory=""):
+                raise AssertionError("backend.contains must not be called for an empty input")
+
+        fs = AgentFS(fs=NoContainsBackend(root=local_backend.root), namespace="radar")
+        assert fs.contains([]).found == []
+        assert fs.contains([]).missing == []
+        # Empty after normalization also short-circuits.
+        result = fs.contains(["", "\r\n", "\n"])
+        assert result.found == [] and result.missing == []
+
+    def test_append_empty_is_noop_and_does_not_create(self, fs):
+        meta = fs.append("seen/log.md", "")
+        assert meta.size_bytes == 0
+        assert meta.version is None
+        assert fs.read("seen/log.md") is None
+        assert fs.append("seen/log.md", "\n\r\n").size_bytes == 0
+        assert fs.read("seen/log.md") is None
+
+    def test_append_empty_on_existing_file_is_noop(self, fs):
+        fs.append("seen/log.md", "one\n")
+        before = fs.read("seen/log.md")
+        meta = fs.append("seen/log.md", "")
+        assert fs.read("seen/log.md") == before
+        assert meta.size_bytes == len(before.encode("utf-8"))
+        assert meta.path == "seen/log.md"
+
+    def test_list_sorted_by_path_segments(self, fs):
+        # The three paths that collate differently in Postgres (spec D2).
+        fs.write("seen/a.md", "1")
+        fs.write("seen.md", "2")
+        fs.write("seen-old/a.md", "3")
+        assert [m.path for m in fs.list()] == ["seen/a.md", "seen-old/a.md", "seen.md"]
+
+    def test_write_overwrite_false_raises_builtin(self, fs):
+        fs.write("a.md", "x")
+        with pytest.raises(FileExistsError):
+            fs.write("a.md", "y", overwrite=False)
+        assert fs.read("a.md") == "x"
+
+    def test_write_overwrite_false_on_missing_file_ok(self, fs):
+        fs.write("a.md", "x", overwrite=False)
+        assert fs.read("a.md") == "x"
+
+    def test_expected_version_unsupported_on_local(self, fs):
+        fs.write("a.md", "x")
+        with pytest.raises(UnsupportedOperationError):
+            fs.write("a.md", "y", expected_version=1)
+
+    def test_version_none_on_local(self, fs):
+        assert fs.write("a.md", "x").version is None
+
+
+class TestRoundTrip:
+    """The dedupe regression: one line transform, both sides (spec D6/D13)."""
+
+    def test_append_then_contains_crlf_and_spaces(self, fs):
+        fs.append("seen/2026-07-24.md", "  a\r\nb  \r\n")
+        result = fs.contains(["  a", "b  "], directory="seen")
+        assert result.found == ["  a", "b  "]
+        assert result.missing == []
+
+    def test_leading_spaces_preserved(self, fs):
+        fs.append("seen/log.md", "  indented record")
+        assert fs.contains(["  indented record"]).found == ["  indented record"]
+        assert fs.contains(["indented record"]).missing == ["indented record"]
+
+    def test_trailing_spaces_preserved(self, fs):
+        fs.append("seen/log.md", "record  \r\n")
+        assert fs.contains(["record  "]).found == ["record  "]
+        assert fs.contains(["record"]).missing == ["record"]
+
+    def test_crlf_input_matches_lf_storage(self, fs):
+        fs.append("seen/log.md", "http://a\r\n")
+        assert fs.read("seen/log.md") == "http://a\n"
+        assert fs.contains(["http://a"]).found == ["http://a"]
+        assert fs.contains(["http://a\r\n"]).found == ["http://a"]
+
+    def test_superstring_no_false_positive(self, fs):
+        fs.append("seen/log.md", "example.com/ab\n")
+        result = fs.contains(["example.com/a"])
+        assert result.missing == ["example.com/a"]
+
+    def test_order_preserved_with_duplicates(self, fs):
+        fs.append("seen/log.md", "b\n")
+        result = fs.contains(["z", "b", "z"])
+        assert result.found == ["b"]
+        assert result.missing == ["z", "z"]
+
+
+class TestDirectorySemantics:
+    @pytest.fixture
+    def populated(self, fs):
+        fs.append("seen/a.md", "in-seen\n")
+        fs.append("seen-old/b.md", "in-seen-old\n")
+        fs.append("a_b/c.md", "in-a_b\n")
+        fs.append("aXb/c.md", "in-aXb\n")
+        return fs
+
+    def test_list_segment_boundary(self, populated):
+        assert [m.path for m in populated.list("seen")] == ["seen/a.md"]
+
+    def test_search_segment_boundary(self, populated):
+        matches = populated.search("in-", directory="seen")
+        assert [m.path for m in matches] == ["seen/a.md"]
+
+    def test_contains_segment_boundary(self, populated):
+        result = populated.contains(["in-seen", "in-seen-old"], directory="seen")
+        assert result.found == ["in-seen"]
+        assert result.missing == ["in-seen-old"]
+
+    def test_underscore_directory_not_a_wildcard(self, populated):
+        result = populated.contains(["in-aXb"], directory="a_b")
+        assert result.missing == ["in-aXb"]
+        assert populated.contains(["in-a_b"], directory="a_b").found == ["in-a_b"]
+
+    def test_dot_means_root_for_directory_params(self, populated):
+        assert len(populated.list(".")) == len(populated.list(""))
+        assert populated.contains(["in-seen"], directory=".").found == ["in-seen"]
+
+    def test_dot_rejected_inside_file_paths(self, populated):
+        with pytest.raises(InvalidPathError):
+            populated.read("seen/./a.md")
+
+
+class TestQuota:
+    def test_file_cap_boundary_on_write(self, local_backend):
+        fs = AgentFS(fs=local_backend, namespace="q", max_file_bytes=10)
+        fs.write("a.md", "0123456789")  # exactly at cap
+        with pytest.raises(QuotaExceededError) as excinfo:
+            fs.write("b.md", "0123456789x")
+        assert excinfo.value.scope == "file"
+        assert excinfo.value.current == 11
+        assert excinfo.value.limit == 10
+
+    def test_file_cap_counts_bytes_not_chars(self, local_backend):
+        fs = AgentFS(fs=local_backend, namespace="q", max_file_bytes=3)
+        with pytest.raises(QuotaExceededError):
+            fs.write("a.md", "\U0001f600")  # 1 char, 4 bytes
+
+    def test_file_cap_on_append(self, local_backend):
+        fs = AgentFS(fs=local_backend, namespace="q", max_file_bytes=10)
+        fs.append("a.md", "12345\n")  # 6 bytes
+        with pytest.raises(QuotaExceededError) as excinfo:
+            fs.append("a.md", "67890\n")  # would be 12
+        assert excinfo.value.scope == "file"
+
+    def test_namespace_cap_on_write(self, local_backend):
+        fs = AgentFS(fs=local_backend, namespace="q", max_namespace_bytes=10)
+        fs.write("a.md", "123456")
+        with pytest.raises(QuotaExceededError) as excinfo:
+            fs.write("b.md", "78901")
+        assert excinfo.value.scope == "namespace"
+        assert excinfo.value.current == 6
+        assert excinfo.value.limit == 10
+
+    def test_namespace_cap_overwrite_uses_delta(self, local_backend):
+        fs = AgentFS(fs=local_backend, namespace="q", max_namespace_bytes=10)
+        fs.write("a.md", "123456789")
+        fs.write("a.md", "12345678")  # shrinking is always fine
+        fs.write("a.md", "1234567890")  # grow back to exactly the cap
+
+    def test_namespace_cap_on_append_overestimates_separator(self, local_backend):
+        fs = AgentFS(fs=local_backend, namespace="q", max_namespace_bytes=10)
+        fs.append("a.md", "12345\n")  # 6 bytes
+        with pytest.raises(QuotaExceededError):
+            fs.append("a.md", "678\n")  # 6 + 4 + 1(estimated sep) = 11 > 10
+
+
+class TestTemplatedNamespaces:
+    def test_construction_validates_placeholders(self, local_backend):
+        with pytest.raises(InvalidPathError):
+            AgentFS(fs=local_backend, namespace="radar/{tenant}")
+        with pytest.raises(InvalidPathError):
+            AgentFS(fs=local_backend, namespace="radar/{user_id")
+
+    def test_unresolved_programmatic_calls_raise(self, local_backend):
+        fs = AgentFS(fs=local_backend, namespace="radar/{user_id}")
+        for operation in (
+            lambda: fs.read("a.md"),
+            lambda: fs.write("a.md", "x"),
+            lambda: fs.append("a.md", "x"),
+            lambda: fs.move("a.md", "b.md"),
+            lambda: fs.delete("a.md"),
+            lambda: fs.list(),
+            lambda: fs.search("x"),
+            lambda: fs.contains(["x"]),
+            lambda: fs.usage(),
+        ):
+            with pytest.raises(InvalidPathError):
+                operation()
+
+    def test_resolve_binds_and_isolates(self, local_backend):
+        fs = AgentFS(fs=local_backend, namespace="radar/{user_id}", max_file_bytes=123)
+        bound = fs.resolve(user_id="u42")
+        assert bound.namespace == "radar/u42"
+        assert bound.max_file_bytes == 123
+        bound.append("seen/log.md", "x\n")
+        other = fs.resolve(user_id="u43")
+        assert other.read("seen/log.md") is None
+        assert bound.read("seen/log.md") == "x\n"
+
+    def test_resolve_rejects_multi_segment_value(self, local_backend):
+        fs = AgentFS(fs=local_backend, namespace="radar/{user_id}")
+        with pytest.raises(InvalidPathError):
+            fs.resolve(user_id="u42/../u43")
+        with pytest.raises(InvalidPathError):
+            fs.resolve(user_id="a/b")
+
+    def test_partial_resolve_stays_templated(self, local_backend):
+        fs = AgentFS(fs=local_backend, namespace="{team_id}/{user_id}")
+        partial = fs.resolve(user_id="u42")
+        assert partial.is_templated
+        with pytest.raises(InvalidPathError):
+            partial.read("a.md")
+        full = partial.resolve(team_id="t1")
+        assert full.namespace == "t1/u42"
+        full.write("a.md", "ok")
+        assert full.read("a.md") == "ok"
+
+    def test_resolve_on_untemplated_returns_self(self, local_backend):
+        fs = AgentFS(fs=local_backend, namespace="radar")
+        assert fs.resolve(user_id="u42") is fs
+
+
+class TestSearch:
+    def test_empty_query_returns_empty(self, fs):
+        fs.write("a.md", "content")
+        assert fs.search("") == []
+        assert fs.search("   ") == []
+
+    def test_case_insensitive(self, fs):
+        fs.write("a.md", "Hello World")
+        matches = fs.search("hello")
+        assert len(matches) == 1
+        assert matches[0].path == "a.md"
+        assert "Hello" in matches[0].snippet
+
+    def test_limit(self, fs):
+        for i in range(5):
+            fs.write(f"f{i}.md", "needle")
+        assert len(fs.search("needle", limit=3)) == 3
+
+
+class TestMoveDelete:
+    def test_move_missing_src(self, fs):
+        with pytest.raises(FileNotFoundError):
+            fs.move("missing.md", "b.md")
+
+    def test_move_dst_exists(self, fs):
+        fs.write("a.md", "x")
+        fs.write("b.md", "y")
+        with pytest.raises(FileExistsError):
+            fs.move("a.md", "b.md")
+
+    def test_move_overwrite(self, fs):
+        fs.write("a.md", "x")
+        fs.write("b.md", "y")
+        meta = fs.move("a.md", "b.md", overwrite=True)
+        assert meta.path == "b.md"
+        assert fs.read("b.md") == "x"
+
+    def test_delete_returns_existed(self, fs):
+        fs.write("a.md", "x")
+        assert fs.delete("a.md") is True
+        assert fs.delete("a.md") is False
+
+
+class TestAsyncTwins:
+    def test_async_smoke_all_operations(self, fs):
+        async def flow():
+            await fs.awrite("a.md", "hello\n")
+            assert await fs.aread("a.md") == "hello\n"
+            await fs.aappend("seen/log.md", "one\n")
+            assert (await fs.acontains(["one"], directory="seen")).found == ["one"]
+            assert [m.path for m in await fs.alist()] == ["a.md", "seen/log.md"]
+            assert len(await fs.asearch("hello")) == 1
+            await fs.amove("a.md", "b.md")
+            assert await fs.aread("b.md") == "hello\n"
+            usage = await fs.ausage()
+            assert usage.file_count == 2
+            assert await fs.adelete("b.md") is True
+
+        asyncio.run(flow())

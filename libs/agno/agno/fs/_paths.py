@@ -148,8 +148,7 @@ def normalize_check_lines(lines: Sequence[str]) -> List[str]:
     """Normalize a ``check_lines`` input batch: cap 200, strip terminators, drop empties."""
     if len(lines) > MAX_CHECK_LINES:
         raise InvalidPathError(
-            f"too many records ({len(lines)} > {MAX_CHECK_LINES}). "
-            f"Check them in batches of {MAX_CHECK_LINES} or fewer."
+            f"too many records ({len(lines)} > {MAX_CHECK_LINES}). Check them in batches of {MAX_CHECK_LINES} or fewer."
         )
     normalized = [normalize_line(line) for line in lines]
     return [line for line in normalized if line]
