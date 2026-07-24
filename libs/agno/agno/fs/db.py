@@ -42,7 +42,7 @@ if TYPE_CHECKING:
 SUPPORTED_DIALECTS = ("postgresql", "sqlite")
 
 DEFAULT_DB_SCHEMA = "fs"
-"""Postgres schema for the agent's files, separate from agno's platform schema.
+"""Database schema for the agent's files, separate from agno's platform schema.
 
 The filesystem is a tool component, not platform state that AgentOS reads back
 (§D4), so it gets its own schema rather than sharing `ai` with sessions, memory
@@ -50,7 +50,7 @@ and evals. That keeps the boundary visible in the database, lets you inspect,
 back up or drop the agent's files on their own, and keeps this table out of any
 future rename of the platform schema. Passing an agno `db` still means one
 database and one connection; the schema is just organization inside it. Override
-with `db_schema=` (SQLite ignores schemas entirely).
+with `db_schema=`. Backends that have no schemas ignore it, as SQLite does.
 """
 
 
