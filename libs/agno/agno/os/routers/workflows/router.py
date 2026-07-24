@@ -21,7 +21,7 @@ from agno.db.base import BaseDb
 from agno.exceptions import InputCheckError, OutputCheckError
 from agno.factory import FactoryContextRequired
 from agno.os.auth import (
-    INTERNAL_SERVICE_USER_ID,
+    INTERNAL_SCHEDULER_USER_ID,
     get_auth_token_from_request,
     get_authentication_dependency,
     require_resource_access,
@@ -609,7 +609,7 @@ async def workflow_response_streamer(
         # backwards compatibility with older clients.
         if isinstance(workflow, RemoteWorkflow):
             return
-        _session = workflow.get_session(session_id=session_id)
+        _session = await workflow.aget_session(session_id=session_id)
         if _session and _session.runs:
             _last_run = _session.runs[-1]
             if getattr(_last_run, "is_paused", False):
@@ -752,7 +752,7 @@ async def workflow_continue_response_streamer(
         # If the workflow re-paused, yield WorkflowPausedEvent as the new clean
         # snapshot event. Also yield the legacy "WorkflowRunOutput" event for
         # backwards compatibility with older clients.
-        _session = workflow.get_session(session_id=session_id)
+        _session = await workflow.aget_session(session_id=session_id)
         if _session and _session.runs:
             _last_run = _session.runs[-1]
             if getattr(_last_run, "is_paused", False):
@@ -1182,7 +1182,7 @@ def get_workflow_router(
         state_user_id = getattr(request.state, "user_id", None)
         if scoped_user_id is not None:
             user_id = scoped_user_id
-        elif state_user_id == INTERNAL_SERVICE_USER_ID and user_id:
+        elif state_user_id == INTERNAL_SCHEDULER_USER_ID and user_id:
             # Scheduler executor caller — trust the form-field owner. See
             # the matching comment in ``agents/router.py``.
             pass

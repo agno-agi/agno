@@ -6,8 +6,9 @@ from pathlib import Path
 
 import pytest
 
+from agno.agent import Agent
 from agno.tools import Toolkit, tool
-from agno.tools.function import Function
+from agno.tools.function import Function, FunctionCall
 
 
 def example_func(a: int, b: int) -> int:
@@ -155,6 +156,49 @@ def test_caching_parameters():
     assert toolkit.cache_results is True
     assert toolkit.cache_ttl == 7200
     assert toolkit.cache_dir == "/tmp/cache"
+
+
+def test_timeout_defaults_to_none():
+    """Timeout is opt-in — the base default is None so subclasses can decide
+    whether to expose it and what value to use."""
+    toolkit = Toolkit(name="notimeout", tools=[example_func])
+    assert toolkit.timeout is None
+
+
+def test_timeout_is_stored_on_instance():
+    """A user-supplied timeout is stored on the toolkit for subclasses to consume."""
+    toolkit = Toolkit(name="withtimeout", tools=[example_func], timeout=45)
+    assert toolkit.timeout == 45
+
+
+def test_subclass_forwards_timeout_via_super():
+    """Regression: subclasses that accept their own ``timeout`` and forward it via
+    ``super().__init__(timeout=...)`` end up with the value on ``self.timeout``.
+    This is the pattern documented in the Toolkit docstring and the calcom /
+    hackernews tools rely on it.
+    """
+
+    class _HttpToolkit(Toolkit):
+        def __init__(self, timeout: int = 30):
+            super().__init__(name="http", tools=[example_func], timeout=timeout)
+
+    assert _HttpToolkit().timeout == 30
+    assert _HttpToolkit(timeout=5).timeout == 5
+
+
+def test_subclass_setting_timeout_before_super_is_preserved():
+    """Regression: many existing toolkits assign ``self.timeout = timeout`` in
+    their own ``__init__`` before calling ``super().__init__(**kwargs)``. The
+    base class must not clobber that pre-existing value with its default None.
+    """
+
+    class _LegacyToolkit(Toolkit):
+        def __init__(self, timeout: int = 42, **kwargs):
+            self.timeout = timeout
+            super().__init__(name="legacy", tools=[example_func], **kwargs)
+
+    assert _LegacyToolkit().timeout == 42
+    assert _LegacyToolkit(timeout=7).timeout == 7
 
 
 def test_toolkit_repr(multi_func_toolkit):
@@ -382,6 +426,31 @@ class TestToolDecoratorOnClassMethods:
         assert "run_context" not in func.parameters.get("properties", {})
         assert "key" in func.parameters.get("properties", {})
         assert "value" in func.parameters.get("properties", {})
+
+    def test_tool_decorator_injects_agent_by_type_with_stringized_annotation(self):
+        """A stringized type annotation (as produced by `from __future__ import annotations`)
+        must resolve so the agent is still injected by type."""
+
+        class MyToolkit(Toolkit):
+            def __init__(self):
+                self.captured_agent = None
+                super().__init__(name="test_toolkit", tools=[self.note])
+
+            @tool(name="note")
+            def note(self, text: str, my_agent: "Agent") -> str:
+                """Save a note."""
+                self.captured_agent = my_agent
+                return f"noted:{text}"
+
+        toolkit = MyToolkit()
+        func = toolkit.functions["note"]
+        agent = Agent(name="tester")
+        func._agent = agent
+
+        result = FunctionCall(function=func, arguments={"text": "hi"}).execute()
+
+        assert result.status == "success"
+        assert toolkit.captured_agent is agent
 
     def test_tool_decorator_multiple_methods(self):
         """Test multiple @tool decorated methods in same toolkit."""

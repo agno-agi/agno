@@ -14,6 +14,7 @@ class Searxng(Toolkit):
         host: str,
         engines: Optional[List[str]] = None,
         fixed_max_results: Optional[int] = None,
+        timeout: int = 30,
         **kwargs,
     ):
         self.host = host
@@ -31,7 +32,7 @@ class Searxng(Toolkit):
             self.video_search,
         ]
 
-        super().__init__(name="searxng", tools=tools, **kwargs)
+        super().__init__(name="searxng", tools=tools, timeout=timeout, **kwargs)
 
     def search_web(self, query: str, max_results: int = 5) -> str:
         """Use this function to search the web.
@@ -140,7 +141,9 @@ class Searxng(Toolkit):
 
         log_info(f"Fetching results from searxng: {url}")
         try:
-            resp = httpx.get(url).json()
+            response = httpx.get(url, timeout=self.timeout)
+            response.raise_for_status()
+            resp = response.json()
             results = self.fixed_max_results or max_results
             resp["results"] = resp["results"][:results]
             return json.dumps(resp)

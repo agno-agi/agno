@@ -39,6 +39,12 @@ def copy_args_for_background(args: Dict[str, Any]) -> Dict[str, Any]:
     return copied_args
 
 
+def get_hook_name(hook: Callable[..., Any]) -> str:
+    """The hook's display name. Callable instances (an object with __call__) and
+    functools.partial wrappers carry no __name__, so fall back to the type name."""
+    return getattr(hook, "__name__", type(hook).__name__)
+
+
 def should_run_hook_in_background(hook: Callable[..., Any]) -> bool:
     """
     Check if a hook function should run in background.
@@ -103,7 +109,7 @@ def normalize_pre_hooks(
 
                     if asyncio.iscoroutinefunction(hook):
                         raise ValueError(
-                            f"Cannot use {hook.__name__} (an async hook) with `run()`. Use `arun()` instead."
+                            f"Cannot use {get_hook_name(hook)} (an async hook) with `run()`. Use `arun()` instead."
                         )
 
                 result_hooks.append(hook)
@@ -146,7 +152,7 @@ def normalize_post_hooks(
 
                     if asyncio.iscoroutinefunction(hook):
                         raise ValueError(
-                            f"Cannot use {hook.__name__} (an async hook) with `run()`. Use `arun()` instead."
+                            f"Cannot use {get_hook_name(hook)} (an async hook) with `run()`. Use `arun()` instead."
                         )
 
                 result_hooks.append(hook)

@@ -760,6 +760,9 @@ class DecisionLogStore(LearningStore):
                 if cutoff_date and decision.created_at:
                     try:
                         created = datetime.fromisoformat(decision.created_at.replace("Z", "+00:00"))
+                        # Records written before this fix are naive; assume UTC.
+                        if created.tzinfo is None:
+                            created = created.replace(tzinfo=timezone.utc)
                         if created < cutoff_date:
                             continue
                     except (ValueError, AttributeError):
@@ -832,6 +835,9 @@ class DecisionLogStore(LearningStore):
                 if cutoff_date and decision.created_at:
                     try:
                         created = datetime.fromisoformat(decision.created_at.replace("Z", "+00:00"))
+                        # Records written before this fix are naive; assume UTC.
+                        if created.tzinfo is None:
+                            created = created.replace(tzinfo=timezone.utc)
                         if created < cutoff_date:
                             continue
                     except (ValueError, AttributeError):

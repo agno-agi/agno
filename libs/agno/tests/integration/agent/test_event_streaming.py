@@ -364,7 +364,7 @@ def test_intermediate_steps_with_user_confirmation(shared_db):
 
     # Mark the tool as confirmed
     run_id = run_response.run_id
-    run_response.tools[0].confirmed = True
+    run_response.requirements[0].confirm()
 
     # Check stored events
     stored_session = shared_db.get_sessions(session_type=SessionType.AGENT)[0]

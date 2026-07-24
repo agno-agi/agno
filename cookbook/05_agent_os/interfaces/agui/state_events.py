@@ -7,6 +7,7 @@ The LLM uses the generic update_session_state tool to modify recipe state.
 """
 
 from agno.agent.agent import Agent
+from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIResponses
 from agno.os import AgentOS
 from agno.os.interfaces.agui import AGUI
@@ -14,6 +15,7 @@ from agno.os.interfaces.agui import AGUI
 agent = Agent(
     name="RecipeAssistant",
     model=OpenAIResponses(id="gpt-5.5"),
+    db=SqliteDb(db_file="/tmp/agui_state_events.db"),
     session_state={
         "recipe": {
             "title": "",

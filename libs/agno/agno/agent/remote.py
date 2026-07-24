@@ -297,6 +297,7 @@ class RemoteAgent(BaseRemote):
                 images=images,
                 videos=videos,
                 files=files,
+                metadata=metadata,
                 headers=headers,
             )
 
@@ -361,6 +362,7 @@ class RemoteAgent(BaseRemote):
         videos: Optional[Sequence[Video]],
         files: Optional[Sequence[File]],
         headers: Optional[Dict[str, str]],
+        metadata: Optional[Dict[str, Any]] = None,
     ) -> Union[RunOutput, AsyncIterator[RunOutputEvent]]:
         """Execute via A2A protocol.
 
@@ -374,6 +376,7 @@ class RemoteAgent(BaseRemote):
             videos: Videos to include
             files: Files to include
             headers: HTTP headers to include in the request (optional)
+            metadata: Additional metadata to include in the message envelope (optional)
 
         Returns:
             RunOutput for non-streaming, AsyncIterator[RunOutputEvent] for streaming
@@ -392,6 +395,7 @@ class RemoteAgent(BaseRemote):
                 audio=list(audio) if audio else None,
                 videos=list(videos) if videos else None,
                 files=list(files) if files else None,
+                metadata=metadata,
                 headers=headers,
             )
             return map_stream_events_to_run_events(event_stream, agent_id=self.agent_id)
@@ -405,6 +409,7 @@ class RemoteAgent(BaseRemote):
                 images=images,
                 videos=videos,
                 files=files,
+                metadata=metadata,
                 headers=headers,
             )
 
@@ -418,6 +423,7 @@ class RemoteAgent(BaseRemote):
         videos: Optional[Sequence[Video]],
         files: Optional[Sequence[File]],
         headers: Optional[Dict[str, str]],
+        metadata: Optional[Dict[str, Any]] = None,
     ) -> RunOutput:
         """Send a non-streaming A2A message and convert response to RunOutput."""
         if not self.a2a_client:
@@ -432,6 +438,7 @@ class RemoteAgent(BaseRemote):
             audio=list(audio) if audio else None,
             videos=list(videos) if videos else None,
             files=list(files) if files else None,
+            metadata=metadata,
             headers=headers,
         )
         return map_task_result_to_run_output(task_result, agent_id=self.agent_id, user_id=user_id)

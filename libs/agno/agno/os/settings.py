@@ -23,6 +23,14 @@ class AgnoAPISettings(BaseSettings):
     # Authorization flag - when True, JWT middleware handles auth and security key validation is skipped
     authorization_enabled: bool = Field(default=False, description="Whether JWT authorization is enabled")
 
+    # Seconds to cache a successful service-account token verification in-process, to
+    # avoid a database lookup on every request. Revocation takes effect within this
+    # window across worker processes (immediately on the worker that processes the
+    # revoke). Set to 0 for strict instant revocation (verify against the DB every time).
+    service_account_cache_ttl_seconds: int = Field(
+        default=30, description="TTL (seconds) for the in-process service-account verification cache; 0 disables it"
+    )
+
     # Cors origin list to allow requests from.
     # This list is set using the set_cors_origin_list validator
     cors_origin_list: Optional[List[str]] = Field(default=None, validate_default=True)
