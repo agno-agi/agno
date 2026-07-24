@@ -226,10 +226,13 @@ class FileSystemTools(Toolkit):
                 return f"Error: start_line must be 1 or greater (got {start})."
             if end < 1:
                 return f"Error: end_line must be 1 or greater (got {end})."
-            if end < start:
-                return f"Error: end_line {end} is before start_line {start}."
+            # Past-EOF before inverted-range: when end_line is omitted it defaults to
+            # the line count, so a start past the end would otherwise be reported as
+            # an end_line problem for a parameter the caller never passed.
             if start > total:
                 return f"Error: start_line {start} is past the end of {path}, which has {total} lines."
+            if end < start:
+                return f"Error: end_line {end} is before start_line {start}."
             lines = contents.split("\n")
             chunk = "\n".join(lines[start - 1 : min(end, total)])
             return _format_with_line_numbers(chunk, start_line=start)

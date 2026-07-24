@@ -496,3 +496,144 @@ class TestListFilesBounded:
         files = [e for e in payload["files"] if e["type"] == "file"]
         assert len(files) == _MAX_DIR_ENTRIES + 1  # capped + the "...and N more" marker
         assert files[-1]["path"] == f"...and {extra} more"
+
+
+class TestReadFileRanges:
+    """Every out-of-range read must name the problem. An empty string is
+    indistinguishable from an empty file and leaves the model nothing to act on."""
+
+    @pytest.fixture
+    def three_lines(self, fs, toolkit):
+        fs.write("a.md", "l1\nl2\nl3\n")
+        return toolkit
+
+    def test_inverted_range_is_an_error(self, three_lines):
+        assert three_lines.read_file("a.md", start_line=3, end_line=2).startswith("Error: end_line 2 is before")
+
+    def test_start_past_eof_names_the_line_count(self, three_lines):
+        result = three_lines.read_file("a.md", start_line=999)
+        assert result.startswith("Error: start_line 999 is past the end")
+        assert "3 lines" in result
+
+    def test_zero_and_negative_starts_are_errors(self, three_lines):
+        assert three_lines.read_file("a.md", start_line=0).startswith("Error: start_line must be 1 or greater")
+        assert three_lines.read_file("a.md", start_line=-5).startswith("Error: start_line must be 1 or greater")
+
+    def test_empty_file_says_so_rather_than_returning_nothing(self, fs, toolkit):
+        fs.write("empty.md", "")
+        assert toolkit.read_file("empty.md") == "(empty.md is empty)"
+
+    def test_valid_range_still_reads(self, three_lines):
+        assert three_lines.read_file("a.md", start_line=2, end_line=3) == "     2\tl2\n     3\tl3"
+
+    def test_end_past_eof_clamps_instead_of_erroring(self, three_lines):
+        assert three_lines.read_file("a.md", start_line=3, end_line=99) == "     3\tl3"
+
+
+class TestReadFileSizeGuard:
+    def test_guard_fires_below_the_storage_cap(self, fs, toolkit):
+        # The old guard compared chars against max_file_bytes. UTF-8 gives
+        # chars <= bytes, so any file the store accepted always passed and a
+        # whole 1MB file could land in context.
+        from agno.fs.toolkit import _MAX_READ_CHARS
+
+        fs.write("big.md", "x" * (_MAX_READ_CHARS + 1))
+        result = toolkit.read_file("big.md")
+        assert result.startswith("Error: file too long to read whole")
+        assert str(_MAX_READ_CHARS) in result
+        assert _MAX_READ_CHARS < fs.max_file_bytes, "a context budget, not the storage cap"
+
+    def test_ranged_read_still_works_on_an_oversized_file(self, fs, toolkit):
+        from agno.fs.toolkit import _MAX_READ_CHARS
+
+        fs.write("big.md", "\n".join("line" for _ in range(_MAX_READ_CHARS)))
+        assert toolkit.read_file("big.md", start_line=1, end_line=2) == "     1\tline\n     2\tline"
+
+
+class TestSearchLocatesMatches:
+    def test_match_carries_line_number_and_count(self, fs, toolkit):
+        fs.write("notes/big.md", "\n".join("hit" if i in (3, 7) else "filler" for i in range(10)))
+        payload = json.loads(toolkit.search_content("hit"))
+        match = payload["files"][0]
+        assert match["line"] == 4  # 1-indexed
+        assert match["matches"] == 2
+
+    def test_line_number_feeds_read_file(self, fs, toolkit):
+        fs.write("a.md", "\n".join(f"line{i}" for i in range(50)) + "\nNEEDLE\n")
+        line = json.loads(toolkit.search_content("NEEDLE"))["files"][0]["line"]
+        assert toolkit.read_file("a.md", start_line=line, end_line=line) == f"{line:6d}\tNEEDLE"
+
+
+class TestAppendUnique:
+    def test_unique_skips_lines_already_present(self, fs, toolkit):
+        toolkit.append_file("seen/a.md", "rec-1\nrec-2")
+        result = toolkit.append_file("seen/a.md", "rec-2\nrec-3", unique=True)
+        assert fs.read("seen/a.md") == "rec-1\nrec-2\nrec-3\n"
+        assert result.startswith("Appended 6 bytes")
+
+    def test_unique_dedupes_within_the_chunk(self, fs, toolkit):
+        toolkit.append_file("seen/a.md", "rec-1\nrec-1\nrec-2", unique=True)
+        assert fs.read("seen/a.md") == "rec-1\nrec-2\n"
+
+    def test_unique_all_present_is_a_no_op(self, fs, toolkit):
+        toolkit.append_file("seen/a.md", "rec-1")
+        result = toolkit.append_file("seen/a.md", "rec-1", unique=True)
+        assert "every line was already present" in result
+        assert fs.read("seen/a.md") == "rec-1\n"
+
+    def test_default_still_appends_duplicates(self, fs, toolkit):
+        toolkit.append_file("seen/a.md", "rec-1")
+        toolkit.append_file("seen/a.md", "rec-1")
+        assert fs.read("seen/a.md") == "rec-1\nrec-1\n"
+
+    def test_unique_on_a_missing_file_creates_it(self, fs, toolkit):
+        toolkit.append_file("seen/new.md", "rec-1", unique=True)
+        assert fs.read("seen/new.md") == "rec-1\n"
+
+
+class TestReplaceLines:
+    @pytest.fixture
+    def four_lines(self, fs, toolkit):
+        fs.write("a.md", "one\ntwo\nthree\nfour\n")
+        return toolkit
+
+    def test_replace_a_middle_range(self, fs, four_lines):
+        assert four_lines.replace_lines("a.md", 2, 3, "TWO\nTHREE").startswith("Replaced lines 2-3")
+        assert fs.read("a.md") == "one\nTWO\nTHREE\nfour\n"
+
+    def test_replace_with_fewer_lines(self, fs, four_lines):
+        four_lines.replace_lines("a.md", 2, 3, "MERGED")
+        assert fs.read("a.md") == "one\nMERGED\nfour\n"
+
+    def test_empty_content_deletes_the_range(self, fs, four_lines):
+        assert four_lines.replace_lines("a.md", 2, 3).startswith("Deleted lines 2-3")
+        assert fs.read("a.md") == "one\nfour\n"
+
+    def test_delete_a_single_record_line(self, fs, toolkit):
+        # The correction path a record log otherwise lacks.
+        toolkit.append_file("seen/a.md", "rec-1\nBAD\nrec-3")
+        toolkit.replace_lines("seen/a.md", 2, 2)
+        assert fs.read("seen/a.md") == "rec-1\nrec-3\n"
+
+    def test_trailing_newline_is_preserved_either_way(self, fs, toolkit):
+        fs.write("no-nl.md", "one\ntwo")
+        toolkit.replace_lines("no-nl.md", 1, 1, "ONE")
+        assert fs.read("no-nl.md") == "ONE\ntwo"
+
+    def test_missing_file_errors(self, toolkit):
+        assert toolkit.replace_lines("nope.md", 1, 1, "x") == "Error: file not found: nope.md"
+
+    def test_range_past_eof_errors(self, four_lines):
+        result = four_lines.replace_lines("a.md", 99, 100, "x")
+        assert result.startswith("Error: start_line 99 is past the end")
+        assert "4 lines" in result
+
+    def test_inverted_range_errors(self, four_lines):
+        assert four_lines.replace_lines("a.md", 3, 2, "x").startswith("Error: end_line must be greater")
+
+    def test_end_past_eof_clamps(self, fs, four_lines):
+        four_lines.replace_lines("a.md", 3, 99, "THREE")
+        assert fs.read("a.md") == "one\ntwo\nTHREE\n"
+
+    def test_not_in_the_read_only_surface(self, fs):
+        assert "replace_lines" not in fs.tools(read_only=True).functions
