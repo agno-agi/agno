@@ -89,6 +89,39 @@ class SystemPromptBlock(BaseModel):
     ttl: Optional[Literal["5m", "1h"]] = None
 
 
+# The count_tokens endpoint rejects provider-executed (server) tool types such as
+# web_search_* and code_execution_* with a 400 — only schema-bearing tools are
+# accepted. Their definitions are injected server-side and are not small (e.g.
+# web_search_20260209 adds ~6K input tokens), so instead of dropping them from the
+# count, their real overhead is measured once per (model, tool set) via two minimal
+# /v1/messages probes and cached for the process lifetime.
+_SERVER_TOOL_OVERHEAD_CACHE: Dict[Any, int] = {}
+_SERVER_TOOL_PROBE_MESSAGES: Any = [{"role": "user", "content": "hi"}]
+
+
+def _split_server_tools(
+    tools: Optional[List[Dict[str, Any]]],
+) -> tuple[Optional[List[Dict[str, Any]]], List[Dict[str, Any]]]:
+    """Split tools into (tools countable via count_tokens, server tools)."""
+    if not tools:
+        return None, []
+    countable = [t for t in tools if "input_schema" in t]
+    server = [t for t in tools if "input_schema" not in t]
+    return countable or None, server
+
+
+def _server_tool_cache_key(model_id: str, server_tools: List[Dict[str, Any]]) -> Any:
+    return (model_id, tuple(sorted(t.get("type", "") for t in server_tools)))
+
+
+def _total_input_tokens(usage: Any) -> int:
+    return (
+        (usage.input_tokens or 0)
+        + (getattr(usage, "cache_read_input_tokens", 0) or 0)
+        + (getattr(usage, "cache_creation_input_tokens", 0) or 0)
+    )
+
+
 @dataclass
 class Claude(Model):
     """
@@ -488,9 +521,10 @@ class Claude(Model):
             enable_citations=self.citations and not self._output_format_enabled(response_format),
         )
         anthropic_tools = None
+        server_tools: List[Dict[str, Any]] = []
         if tools:
             formatted_tools = self._format_tools(tools)
-            anthropic_tools = format_tools_for_model(formatted_tools)
+            anthropic_tools, server_tools = _split_server_tools(format_tools_for_model(formatted_tools))
 
         kwargs: Dict[str, Any] = {"messages": anthropic_messages, "model": self.id}
         system = self._build_system(system_prompt)
@@ -500,7 +534,39 @@ class Claude(Model):
             kwargs["tools"] = anthropic_tools
 
         response = self.get_client().messages.count_tokens(**kwargs)
-        return response.input_tokens + count_schema_tokens(response_format, self.id)
+        return (
+            response.input_tokens
+            + self._measure_server_tools_overhead(server_tools)
+            + count_schema_tokens(response_format, self.id)
+        )
+
+    def _measure_server_tools_overhead(self, server_tools: List[Dict[str, Any]]) -> int:
+        """Measured input-token overhead of server tool definitions.
+
+        The count_tokens endpoint rejects server tools, so their real size is
+        measured once per (model, tool set) with two minimal /v1/messages calls
+        and cached for the process lifetime.
+        """
+        if not server_tools:
+            return 0
+        key = _server_tool_cache_key(self.id, server_tools)
+        if key in _SERVER_TOOL_OVERHEAD_CACHE:
+            return _SERVER_TOOL_OVERHEAD_CACHE[key]
+        try:
+            client = self.get_client()
+            base = client.messages.create(model=self.id, max_tokens=1, messages=_SERVER_TOOL_PROBE_MESSAGES)
+            with_tools = client.messages.create(
+                model=self.id,
+                max_tokens=1,
+                messages=_SERVER_TOOL_PROBE_MESSAGES,
+                tools=server_tools,  # type: ignore[arg-type]
+            )
+            overhead = max(0, _total_input_tokens(with_tools.usage) - _total_input_tokens(base.usage))
+        except Exception as e:
+            log_warning(f"Failed to measure server tool token overhead, counting them as 0: {e}")
+            return 0
+        _SERVER_TOOL_OVERHEAD_CACHE[key] = overhead
+        return overhead
 
     async def acount_tokens(
         self,
@@ -516,9 +582,10 @@ class Claude(Model):
             enable_citations=self.citations and not self._output_format_enabled(response_format),
         )
         anthropic_tools = None
+        server_tools: List[Dict[str, Any]] = []
         if tools:
             formatted_tools = self._format_tools(tools)
-            anthropic_tools = format_tools_for_model(formatted_tools)
+            anthropic_tools, server_tools = _split_server_tools(format_tools_for_model(formatted_tools))
 
         kwargs: Dict[str, Any] = {"messages": anthropic_messages, "model": self.id}
         system = self._build_system(system_prompt)
@@ -528,7 +595,34 @@ class Claude(Model):
             kwargs["tools"] = anthropic_tools
 
         response = await self.get_async_client().messages.count_tokens(**kwargs)
-        return response.input_tokens + count_schema_tokens(response_format, self.id)
+        return (
+            response.input_tokens
+            + await self._ameasure_server_tools_overhead(server_tools)
+            + count_schema_tokens(response_format, self.id)
+        )
+
+    async def _ameasure_server_tools_overhead(self, server_tools: List[Dict[str, Any]]) -> int:
+        """Async variant of _measure_server_tools_overhead."""
+        if not server_tools:
+            return 0
+        key = _server_tool_cache_key(self.id, server_tools)
+        if key in _SERVER_TOOL_OVERHEAD_CACHE:
+            return _SERVER_TOOL_OVERHEAD_CACHE[key]
+        try:
+            client = self.get_async_client()
+            base = await client.messages.create(model=self.id, max_tokens=1, messages=_SERVER_TOOL_PROBE_MESSAGES)
+            with_tools = await client.messages.create(
+                model=self.id,
+                max_tokens=1,
+                messages=_SERVER_TOOL_PROBE_MESSAGES,
+                tools=server_tools,  # type: ignore[arg-type]
+            )
+            overhead = max(0, _total_input_tokens(with_tools.usage) - _total_input_tokens(base.usage))
+        except Exception as e:
+            log_warning(f"Failed to measure server tool token overhead, counting them as 0: {e}")
+            return 0
+        _SERVER_TOOL_OVERHEAD_CACHE[key] = overhead
+        return overhead
 
     def get_request_params(
         self,
