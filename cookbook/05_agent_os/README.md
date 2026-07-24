@@ -44,6 +44,9 @@ surface.
 | [11_learnings](./11_learnings/) | Persist user profiles and memories, then read and manage them through the learnings API. |
 | [12_scheduler](./12_scheduler/) | Run scheduled agents through AgentOS, REST, Python, and SchedulerTools with production-safe claiming. |
 | [13_observability](./13_observability/) | Capture, read, filter, and route traces, then refresh and inspect AgentOS metrics. |
+| [14_mcp](./14_mcp/) | Expose AgentOS as a scoped MCP server, drive its run lifecycle, and secure it with PAT or OAuth authorization. |
+| [15_a2a](./15_a2a/) | Serve agents and teams over A2A, use the first-party client, inspect agent cards, and compose remote agents. |
+| [16_agui](./16_agui/) | Serve standalone AG-UI agents and teams with tools, media, shared state, structured output, and backend HITL. |
 
 Later phases extend this table as the remaining numbered lessons land.
 
@@ -60,7 +63,7 @@ Later phases extend this table as the remaining numbered lessons land.
 | 7783 | `15_a2a/multi_agent/airbnb_agent.py` |
 | 8001 | `20_remote/servers/adk_server.py` |
 
-## Phase 3 environment and runtime requirements
+## Phase 4 environment and runtime requirements
 
 | Scope | Environment | Runtime |
 |---|---|---|
@@ -80,6 +83,9 @@ Later phases extend this table as the remaining numbered lessons land.
 | `11_learnings` | `OPENAI_API_KEY` | Local SQLite |
 | `12_scheduler` | `OPENAI_API_KEY` | `agno[scheduler]` and `./cookbook/scripts/run_pgvector.sh` |
 | `13_observability` | `OPENAI_API_KEY` | Local SQLite; Postgres and ClickHouse only for the split trace-store example |
+| `14_mcp` | `OPENAI_API_KEY`; `OS_SECURITY_KEY` for PAT security; provider values for AuthKit OAuth | Local SQLite and an MCP client |
+| `15_a2a` | `OPENAI_API_KEY`; `OPENWEATHER_API_KEY` for the weather specialist | Standalone servers on ports 7779, 7782, and 7783; Node.js, `npx`, and internet access for OpenBNB |
+| `16_agui` | `OPENAI_API_KEY`; `GOOGLE_API_KEY` for the media example | Local AG-UI servers; a CopilotKit frontend is optional for interactive UI testing |
 
 Run cookbook files with `.venvs/demo/bin/python`. Development checks use
 `.venv`.

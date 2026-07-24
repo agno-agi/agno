@@ -1,14 +1,14 @@
 # AgentOS Cookbook Test Prompt
 
 Thoroughly test the currently published AgentOS curriculum: root `basic.py`
-and numbered lessons `01_getting_started` through `13_observability`.
+and numbered lessons `01_getting_started` through `16_agui`.
 
 ## Read first
 
 - `AGENTS.md`
 - `cookbook/STYLE_GUIDE.md`
 - `cookbook/05_agent_os/README.md`
-- Every Python file, README, and TEST_LOG in the root and lessons 01–13
+- Every Python file, README, and TEST_LOG in the root and lessons 01–16
 
 Do not infer behavior from filenames or old test results. Verify parameters,
 client methods, endpoints, form fields, and response shapes against
@@ -151,6 +151,42 @@ halves and record both observations.
 - Verify `/traces/filter-schema`, advanced FilterExpr search, split trace-store
   routing with an explicit `db_id`, and `/metrics` refresh/readback.
 
+### 14_mcp
+
+- Boot each AgentOS MCP server with the current `mcp_server=` surface and
+  inspect its registered MCP route.
+- Use the live MCP client to discover and call tools, then exercise
+  `continue_run` and `cancel_run` rather than leaving lifecycle calls as
+  commented examples.
+- Prove custom-tool registration and secure PAT authorization, including the
+  service-account principal, host policy, tag filters, and full result mode.
+- Construct and inspect both the built-in OAuth server and AuthKit
+  bring-your-own authorization-server variants. Record construction smoke only
+  when the required external credentials are unavailable.
+
+### 15_a2a
+
+- Boot the standalone agent and team servers on port 7779 and use only routes
+  under `/a2a`.
+- Run first-party client send, stream, multi-turn context threading, and
+  unavailable-server handling.
+- Read one agent card through both the synchronous and asynchronous client
+  methods; verify stable identity and endpoint fields without advertising
+  unsupported capabilities.
+- Start the weather and Airbnb servers on ports 7782 and 7783, run the
+  trip-planning orchestrator, and terminate all three processes.
+
+### 16_agui
+
+- Boot every file as a standalone server, assert `/health`, inspect `/config`,
+  and verify its AG-UI status route.
+- Confirm the configured AG-UI prefix serves `POST {prefix}/agui` and
+  `GET /status`.
+- Distinguish frontend-defined `external_execution` tools from real backend
+  HITL with `requires_confirmation`.
+- Verify tools, structured output, reasoning, Gemini media, shared state,
+  research-team, and multiple-instance configurations.
+
 ## Required validation
 
 ```bash
@@ -182,6 +218,12 @@ halves and record both observations.
   --base-dir cookbook/05_agent_os/12_scheduler --recursive
 .venvs/demo/bin/python cookbook/scripts/check_cookbook_pattern.py \
   --base-dir cookbook/05_agent_os/13_observability --recursive
+.venvs/demo/bin/python cookbook/scripts/check_cookbook_pattern.py \
+  --base-dir cookbook/05_agent_os/14_mcp --recursive
+.venvs/demo/bin/python cookbook/scripts/check_cookbook_pattern.py \
+  --base-dir cookbook/05_agent_os/15_a2a --recursive
+.venvs/demo/bin/python cookbook/scripts/check_cookbook_pattern.py \
+  --base-dir cookbook/05_agent_os/16_agui --recursive
 
 source .venv/bin/activate
 ./scripts/format.sh
@@ -190,5 +232,5 @@ git diff --check
 ```
 
 Also reject stale models, deprecated AgentOS/MCP names, emojis, and non-final
-test statuses in the root and lessons 01–13. Report exact commands, observed
+test statuses in the root and lessons 01–16. Report exact commands, observed
 results, live-versus-construction coverage, and any library follow-up.
