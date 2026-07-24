@@ -1,6 +1,7 @@
 # Test Log - _02_durable_records
 
 Tested 2026-07-24 against `gpt-5.5` (OpenAIResponses), agno 2.8.0 (source tree, branch feat/agent-fs).
+Re-run fresh at the final sweep (same date): every file in this folder PASS.
 
 ### basic.py
 

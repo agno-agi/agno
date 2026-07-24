@@ -1,12 +1,12 @@
 # Getting Started
 
-Attach a durable, private filesystem to an agent with one line: `Agent(tools=[fs.tools()])`. The toolkit carries its own instructions — files written in one run are readable in every future run, session, and process.
+Attach a durable, private filesystem to an agent with one line: `Agent(tools=[fs.tools()])`. Input is an ordinary agent plus that one line; output is an agent whose files survive every future run, session, and process — the toolkit carries its own instructions.
 
 ## Files
 
 - `basic.py` — write a note in run 1, recall it in run 2. This file deliberately reuses one database file across invocations: **run it twice** — durability across processes is the whole point. Delete `tmp/agent_fs_getting_started.db` to reset it.
 - `standalone.py` — AgentFS with no `Agent` import at all: seed, read, append, check membership, and measure usage from plain Python. Runs with no API keys.
-- `local_backend.py` — swap `DbFileSystem` for `LocalFileSystem`; the agent code does not change. Prints the on-disk tree so you can see the files with ordinary shell tools.
+- `local_backend.py` — swap `DbFileSystem` for `LocalFileSystem`; the agent code does not change. Prints the on-disk tree so you can see the files with ordinary shell tools. Takes its root directory from `AGNO_FS_ROOT` (per-run default under `tmp/`).
 
 ## When to use
 

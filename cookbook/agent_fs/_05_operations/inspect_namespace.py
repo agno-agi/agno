@@ -6,7 +6,7 @@ An agent's file store is reachable from any script: construct AgentFS with the
 same backend and namespace name, and you hold the same files the agent holds.
 Inspect, read, and seed - no Agent, no model, no server.
 
-This recipe seeds records a scheduled agent will dedupe against on its next
+This example seeds records a scheduled agent will dedupe against on its next
 run, which is how you backfill "already processed" state before first launch.
 """
 

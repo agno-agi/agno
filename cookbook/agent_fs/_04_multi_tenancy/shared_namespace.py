@@ -39,9 +39,10 @@ recorder = Agent(
     instructions="You record engineering decisions.",
 )
 
+consumer_toolkit = consumer_fs.tools(read_only=True)
 answerer = Agent(
     model=OpenAIResponses(id="gpt-5.5"),
-    tools=[consumer_fs.tools(read_only=True)],
+    tools=[consumer_toolkit],
     instructions="You answer questions about past engineering decisions.",
 )
 
@@ -49,7 +50,6 @@ answerer = Agent(
 # Run
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
-    consumer_toolkit = consumer_fs.tools(read_only=True)
     print("consumer tool surface:", list(consumer_toolkit.functions.keys()))
 
     recorder.print_response(

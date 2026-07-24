@@ -1,6 +1,6 @@
 # Operations
 
-Operating AgentFS stores from the outside: recovering from full quotas and inspecting or seeding a live agent's namespace. Both recipes are plain Python against the same backend the agent uses — no Agent, no model, no server, no API keys.
+Operating AgentFS stores from the outside. Input is a live agent's file store (or one about to go live); output is a healthy, inspected, correctly seeded one. Both recipes are plain Python against the same backend the agent uses — no Agent, no model, no server, no API keys.
 
 There is no `basic.py` here: these are two independent operational recipes with no simplest-case ordering.
 

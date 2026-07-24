@@ -1,6 +1,7 @@
 # Test Log - _05_operations
 
 Tested 2026-07-24, agno 2.8.0 (source tree, branch feat/agent-fs). No model, no API keys — both files are pure Python against the store.
+Re-run fresh at the final sweep (same date): every file in this folder PASS.
 
 ### quota_recovery.py
 

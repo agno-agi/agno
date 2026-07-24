@@ -3,7 +3,7 @@ Operations - Quota Recovery
 ===========================
 
 AgentFS caps every file and every namespace; nothing is evicted silently.
-This recipe hits both caps on purpose, shows the exact guidance the agent
+This example hits both caps on purpose, shows the exact guidance the agent
 would see, and recovers the way the guidance says: partition, then delete
 partitions you no longer need.
 
