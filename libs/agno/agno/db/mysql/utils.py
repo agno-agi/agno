@@ -165,7 +165,10 @@ def bulk_upsert_metrics(session: Session, table: Table, metrics_records: list[di
         stmt = stmt.on_duplicate_key_update(**update_dict)
         session.execute(stmt)
 
-    session.commit()
+    # No commit here: the caller owns the transaction (``self.Session() as sess, sess.begin():``).
+    # Committing mid-flow would close that transaction and the SELECT-back below would raise
+    # InvalidRequestError against a closed transaction — calculate_metrics catches it and
+    # /metrics silently returns empty.
 
     # Fetch the updated records — match by the full unique key (user_id, date, period).
     from sqlalchemy import and_, select

@@ -601,9 +601,11 @@ def get_team_router(
         state_user_id = getattr(request.state, "user_id", None)
         if scoped_user_id is not None:
             user_id = scoped_user_id
-        elif state_user_id == INTERNAL_SCHEDULER_USER_ID and user_id:
-            # Scheduler executor caller — trust the form-field owner. See
-            # the matching comment in ``agents/router.py``.
+        elif state_user_id == INTERNAL_SCHEDULER_USER_ID:
+            # Scheduler executor caller — trust the form-field owner, or leave
+            # user_id unset if the schedule itself was unowned (executor writes
+            # no form-field ``user_id`` in that case). See the matching comment
+            # in ``agents/router.py``.
             pass
         elif state_user_id is not None:
             if user_id and user_id != state_user_id:
