@@ -1,14 +1,14 @@
 # AgentOS Cookbook Test Prompt
 
 Thoroughly test the currently published AgentOS curriculum: root `basic.py`
-and numbered lessons `01_getting_started` through `09_serving_workflows`.
+and numbered lessons `01_getting_started` through `13_observability`.
 
 ## Read first
 
 - `AGENTS.md`
 - `cookbook/STYLE_GUIDE.md`
 - `cookbook/05_agent_os/README.md`
-- Every Python file, README, and TEST_LOG in the root and lessons 01–09
+- Every Python file, README, and TEST_LOG in the root and lessons 01–13
 
 Do not infer behavior from filenames or old test results. Verify parameters,
 client methods, endpoints, form fields, and response shapes against
@@ -122,6 +122,35 @@ halves and record both observations.
 - Exercise the real workflow WebSocket route at `/workflows/ws`; do not treat
   agent or team SSE as WebSocket coverage.
 
+### 10_knowledge
+
+- Boot the single-knowledge server and inspect `/health`, `/config`, and its
+  registered knowledge source.
+- Upload content through `/knowledge/content`, poll its status, list and search
+  it, delete it, and verify the deleted content is no longer readable.
+
+### 11_learnings
+
+- Run the learning-enabled agent with a stable user and immediately read the
+  profile and memory it created through `/learnings`.
+- Exercise create, list, users, get, update, delete, and bulk user cleanup with
+  the current response schemas.
+
+### 12_scheduler
+
+- Start Postgres, boot the scheduler-enabled AgentOS, and observe a naturally
+  due schedule create a successful run with real agent run and session IDs.
+- Exercise REST CRUD, disable/enable, trigger, paginated history, and delete.
+- Run sync and async `ScheduleManager` paths using `page`, not `offset`, and
+  verify the SchedulerTools agent creates the intended default schedule.
+
+### 13_observability
+
+- Run one sync and one async agent call, read both traces through `/traces`,
+  fetch their detail trees, and traverse nested `spans`.
+- Verify `/traces/filter-schema`, advanced FilterExpr search, split trace-store
+  routing with an explicit `db_id`, and `/metrics` refresh/readback.
+
 ## Required validation
 
 ```bash
@@ -145,6 +174,14 @@ halves and record both observations.
   --base-dir cookbook/05_agent_os/08_os_config --recursive
 .venvs/demo/bin/python cookbook/scripts/check_cookbook_pattern.py \
   --base-dir cookbook/05_agent_os/09_serving_workflows --recursive
+.venvs/demo/bin/python cookbook/scripts/check_cookbook_pattern.py \
+  --base-dir cookbook/05_agent_os/10_knowledge --recursive
+.venvs/demo/bin/python cookbook/scripts/check_cookbook_pattern.py \
+  --base-dir cookbook/05_agent_os/11_learnings --recursive
+.venvs/demo/bin/python cookbook/scripts/check_cookbook_pattern.py \
+  --base-dir cookbook/05_agent_os/12_scheduler --recursive
+.venvs/demo/bin/python cookbook/scripts/check_cookbook_pattern.py \
+  --base-dir cookbook/05_agent_os/13_observability --recursive
 
 source .venv/bin/activate
 ./scripts/format.sh
@@ -153,5 +190,5 @@ git diff --check
 ```
 
 Also reject stale models, deprecated AgentOS/MCP names, emojis, and non-final
-test statuses in the root and lessons 01–09. Report exact commands, observed
+test statuses in the root and lessons 01–13. Report exact commands, observed
 results, live-versus-construction coverage, and any library follow-up.
