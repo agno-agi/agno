@@ -389,7 +389,7 @@ class TestTemplatedResolution:
 
     def test_missing_user_id_fails_closed(self, user_toolkit):
         _backend, toolkit = user_toolkit
-        expected = "Error: this agent's files require a user_id for this run and none was provided."
+        expected = "Error: this agent's files require user_id for this run and none was provided."
         assert toolkit.append_file("seen/a.md", "x") == expected
         assert toolkit.read_file("seen/a.md") == expected
         assert toolkit.list_files() == expected
@@ -423,7 +423,7 @@ class TestTemplatedResolution:
         member = Agent(id="member-1", name="Member")
         team = Team(id="team-1", name="T", members=[member])
         result = toolkit.append_file("notes/a.md", "x", team=team)
-        assert result == "Error: this agent's files require a agent_id for this run and none was provided."
+        assert result == "Error: this agent's files require agent_id for this run and none was provided."
 
     def test_team_id_resolves_on_leader_and_member(self, tmp_path):
         backend = LocalFileSystem(root=tmp_path)
@@ -443,14 +443,14 @@ class TestTemplatedResolution:
         toolkit = fs.tools()
         agent = Agent(id="agent-1", name="Solo")
         result = toolkit.append_file("a.md", "x", agent=agent)
-        assert result == "Error: this agent's files require a team_id for this run and none was provided."
+        assert result == "Error: this agent's files require team_id for this run and none was provided."
 
     def test_model_supplied_argument_cannot_redirect(self, user_toolkit):
         # A model smuggling strings into the injected parameter names must not
         # be able to pick a namespace: strings carry no identity attributes.
         _backend, toolkit = user_toolkit
         result = toolkit.append_file("a.md", "x", run_context="hostile", team="hostile")
-        assert result == "Error: this agent's files require a user_id for this run and none was provided."
+        assert result == "Error: this agent's files require user_id for this run and none was provided."
 
     def test_resolution_through_real_function_call_machinery(self, tmp_path):
         backend = LocalFileSystem(root=tmp_path)

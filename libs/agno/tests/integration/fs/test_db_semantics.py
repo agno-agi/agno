@@ -121,6 +121,16 @@ class TestMove:
         # would leave both or neither (spec D13).
         assert [m.path for m in db_fs.list(NS)] == ["b.md"]
 
+    def test_move_missing_src_with_overwrite_rolls_back_the_dst_delete(self, db_fs):
+        """overwrite=True deletes dst first, then the UPDATE finds src missing. The
+        rollback must put dst back; test_move_missing_src only covers overwrite=False,
+        so this path was never exercised (PR review)."""
+        db_fs.write(NS, "dst.md", "keep-me")
+        with pytest.raises(FileNotFoundError):
+            db_fs.move(NS, "ghost.md", "dst.md", overwrite=True)
+        assert db_fs.read(NS, "dst.md") == "keep-me"
+        assert [m.path for m in db_fs.list(NS)] == ["dst.md"]
+
     def test_move_missing_src(self, db_fs):
         with pytest.raises(FileNotFoundError):
             db_fs.move(NS, "ghost.md", "b.md")

@@ -173,7 +173,7 @@ class FileSystem:
     def _require_resolved(self) -> str:
         if self._placeholders:
             raise InvalidPathError(
-                f"this agent's files require a {self._placeholders[0]} for this run and none was provided."
+                f"this agent's files require {self._placeholders[0]} for this run and none was provided."
             )
         return self.namespace
 
@@ -258,8 +258,9 @@ class FileSystem:
                 current=size_bytes,
                 limit=self.max_file_bytes,
             )
-        parent = "/".join(normalized.split("/")[:-1])
-        existing = next((m for m in self.backend.list(namespace, parent) if m.path == normalized), None)
+        # _stat, not list(): DbFileSystem overrides it as an indexed point select,
+        # where listing the parent scans every row in the namespace to find one file.
+        existing = self.backend._stat(namespace, normalized)
         if existing is not None and not overwrite:
             raise FileExistsError(f"file exists: {normalized}")
         delta = size_bytes - (existing.size_bytes if existing is not None else 0)
