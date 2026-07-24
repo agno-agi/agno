@@ -64,7 +64,6 @@ def create_support_ticket(
 db = SqliteDb(
     id="slack-hitl-user-input-db",
     db_file="tmp/slack_hitl_user_input.db",
-    approvals_table="slack_hitl_user_input_approvals",
 )
 
 support_agent = Agent(

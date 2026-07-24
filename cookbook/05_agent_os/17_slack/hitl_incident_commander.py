@@ -109,7 +109,6 @@ def conclude_incident(summary: str) -> str:
 db = SqliteDb(
     id="slack-hitl-incident-db",
     db_file="tmp/slack_hitl_incident.db",
-    approvals_table="slack_hitl_incident_approvals",
 )
 
 incident_commander = Agent(

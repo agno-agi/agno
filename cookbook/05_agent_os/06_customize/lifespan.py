@@ -7,7 +7,8 @@ instance. At startup this example appends a second agent and calls
 ``agent_os.resync(app)`` so the discovery document and routers reflect the
 updated component set. Shutdown uses the same lifespan for cleanup.
 
-Prerequisites: OPENAI_API_KEY
+Prerequisites: none for the serve-and-curl flow below (OPENAI_API_KEY only
+if you send the agent a run)
 Run: .venvs/demo/bin/python cookbook/05_agent_os/06_customize/lifespan.py
 Try: curl http://localhost:7777/config
 """

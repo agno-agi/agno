@@ -9,7 +9,9 @@ Tested on 2026-07-24 against Agno source commit
 
 **Test mode:** LIVE
 
-**Description:** Started the checked-in two-step workflow server on port 7787
+**Description:** Started the checked-in two-step workflow server on
+port 7787 (via the `AGENT_OS_PORT`/`AGENT_OS_BASE_URL` environment
+overrides; the checked-in default is 7777)
 with the repository's direnv OpenAI credentials.
 
 **Result:** The app started cleanly, `GET /health` returned `ok`, and

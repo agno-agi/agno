@@ -8,7 +8,7 @@ download/upload in one focused SlackTools Agent.
 Prerequisites: SLACK_TOKEN, SLACK_SIGNING_SECRET, OPENAI_API_KEY
 Run: .venvs/demo/bin/python cookbook/05_agent_os/17_slack/slack_tools.py
 Try in Slack: Share a file, then ask for related discussions and an uploaded summary
-Slack scopes: app_mentions:read, assistant:write, chat:write, im:history, channels:read, channels:history, groups:read, groups:history, files:read, files:write, users:read, search:read.public, search:read.files, search:read.users
+Slack scopes: app_mentions:read, assistant:write, chat:write, im:history, channels:read, channels:history, groups:read, groups:history, files:read, files:write, search:read.public, search:read.files, search:read.users
 """
 
 from agno.agent import Agent

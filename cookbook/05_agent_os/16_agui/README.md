@@ -106,6 +106,11 @@ These two pause patterns look similar in a UI but have different ownership:
 | Frontend-defined tool | The client sends its schema in `RunAgentInput.tools`; there is no Python implementation on the backend. | The browser executes it and sends a trailing AG-UI tool message with the result. | `agent_with_tools.py` |
 | Backend confirmation | Python registers a real `@tool(requires_confirmation=True)` implementation. | AgentOS persists the paused run; the frontend sends `{"accepted": true}` or a rejection, then AgentOS resumes and conditionally executes Python. | `human_in_the_loop.py` |
 
+The backend pause/resume mechanics themselves (`requires_confirmation`,
+`continue_run`, `@approval` records) are taught in
+[`../05_human_in_the_loop/`](../05_human_in_the_loop/); this folder covers only
+how AG-UI surfaces them.
+
 For example, a CopilotKit frontend can provide `change_background` in the
 request:
 

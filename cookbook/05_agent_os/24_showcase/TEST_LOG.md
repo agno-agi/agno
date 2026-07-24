@@ -11,7 +11,8 @@ Python environment, PostgreSQL with pgvector on port 5532, `gpt-5.5`, and
 
 **Status:** PASS
 
-**Test mode:** LIVE
+**Test mode:** LIVE (support module — no `__main__`; its objects were imported
+and driven by a test harness)
 
 **Description:** Loaded the current AgentOS introduction into the
 `Agno Documentation` knowledge base, searched pgvector, then ran Agno Assist
@@ -31,7 +32,8 @@ data with a linked news source.
 
 **Status:** PASS
 
-**Test mode:** LIVE
+**Test mode:** LIVE (support module — no `__main__`; its objects were imported
+and driven by a test harness)
 
 **Description:** Ran the Finance Team in broadcast mode with a current NVDA
 and AMD comparison that required both registered members and live financial

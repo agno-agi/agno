@@ -45,7 +45,6 @@ def lookup_runbook(symptom: str) -> str:
 db = SqliteDb(
     id="slack-hitl-external-db",
     db_file="tmp/slack_hitl_external.db",
-    approvals_table="slack_hitl_external_approvals",
 )
 
 devops_agent = Agent(

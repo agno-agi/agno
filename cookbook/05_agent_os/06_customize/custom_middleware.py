@@ -7,7 +7,8 @@ Custom Starlette middleware can wrap the FastAPI app returned by
 middleware added last is the outer layer and sees each request before the rate
 limiter added first.
 
-Prerequisites: OPENAI_API_KEY
+Prerequisites: none for the serve-and-curl flow below (OPENAI_API_KEY only
+if you send the agent a run)
 Run: .venvs/demo/bin/python cookbook/05_agent_os/06_customize/custom_middleware.py
 Try: curl -i http://localhost:7777/config
 """

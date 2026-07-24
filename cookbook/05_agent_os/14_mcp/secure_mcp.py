@@ -10,6 +10,13 @@ use the complete structured form.
 Prerequisites: OPENAI_API_KEY and OS_SECURITY_KEY
 Run: .venvs/demo/bin/python cookbook/05_agent_os/14_mcp/secure_mcp.py
 Try: In another terminal, rerun this file with --client
+
+At serve time the library warns that ``authorize`` is set while
+``AgentOS(authorization=False)``. The warning does not apply to this file:
+the service-account verifier populates ``request.state.user_id`` with the PAT
+principal, so the allow-list receives ``sa:...`` as intended. Only anonymous
+paths (for example the raw security key) reach the gate as ``None`` — which
+this lesson deliberately demonstrates as the 401 case.
 """
 
 import argparse

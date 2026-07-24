@@ -7,7 +7,8 @@ provides. ``on_route_conflict="preserve_base_app"`` keeps those custom
 handlers while AgentOS still registers non-conflicting routes such as
 ``/config`` and the agent run surface.
 
-Prerequisites: OPENAI_API_KEY
+Prerequisites: none for the serve-and-curl flow below (OPENAI_API_KEY only
+if you send the agent a run)
 Run: .venvs/demo/bin/python cookbook/05_agent_os/06_customize/route_conflicts.py
 Try: curl http://localhost:7777/health
 """

@@ -68,6 +68,11 @@ the code-defined Agent list.
 
 ## Console versus AgentOS HITL
 
+The pause/resume mechanics used here (`RunRequirement`, `continue_run`, the
+`/continue` route) are taught in
+[`../05_human_in_the_loop/`](../05_human_in_the_loop/); this folder only
+applies them to Studio composition.
+
 Both HITL examples deliberately start with only a component name. The Studio
 Agent must:
 

@@ -64,7 +64,6 @@ def cancel_subscription(customer_id: str, reason: str) -> str:
 db = SqliteDb(
     id="slack-hitl-confirmation-db",
     db_file="tmp/slack_hitl_confirmation.db",
-    approvals_table="slack_hitl_confirmation_approvals",
 )
 
 billing_agent = Agent(

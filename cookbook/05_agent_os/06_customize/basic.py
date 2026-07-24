@@ -5,7 +5,8 @@ Mount AgentOS on an existing FastAPI application
 Pass an existing FastAPI instance through ``base_app`` so its routes and the
 AgentOS routes share one process.
 
-Prerequisites: OPENAI_API_KEY
+Prerequisites: none for the serve-and-curl flow below (OPENAI_API_KEY only
+if you send the agent a run)
 Run: .venvs/demo/bin/python cookbook/05_agent_os/06_customize/basic.py
 Try: curl http://localhost:7777/customers
 """

@@ -9,7 +9,9 @@ Tested on 2026-07-24 against Agno source commit
 
 **Test mode:** LIVE
 
-**Description:** Started the checked-in Python-configured AgentOS on port 7787,
+**Description:** Started the checked-in Python-configured AgentOS on
+port 7787 (via the `AGENT_OS_PORT`/`AGENT_OS_BASE_URL` environment
+overrides; the checked-in default is 7777),
 then ran the checked-in `--demo` client against its health and configuration
 routes.
 
@@ -27,7 +29,9 @@ both manifest labels, all three quick prompts, and the explicit
 
 **Test mode:** LIVE
 
-**Description:** Started the checked-in YAML-configured AgentOS on port 7787,
+**Description:** Started the checked-in YAML-configured AgentOS on
+port 7787 (via the `AGENT_OS_PORT`/`AGENT_OS_BASE_URL` environment
+overrides; the checked-in default is 7777),
 then ran its checked-in `--demo` client.
 
 **Result:** `GET /health` returned `ok`. `GET /config` preserved the YAML
