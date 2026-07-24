@@ -4,7 +4,7 @@ import asyncio
 
 import pytest
 
-from agno.fs import FileSystem
+from agno.fs import DEFAULT_NAMESPACE, FileSystem
 from agno.fs.errors import InvalidPathError, QuotaExceededError, UnsupportedOperationError
 from agno.fs.local import LocalFileSystem
 
@@ -334,3 +334,19 @@ class TestAsyncTwins:
             assert await fs.adelete("b.md") is True
 
         asyncio.run(flow())
+
+
+class TestDefaultNamespace:
+    def test_namespace_is_optional_and_defaults(self, local_backend):
+        # A simple app should not have to name a store.
+        fs = FileSystem(local_backend)
+        assert fs.namespace == DEFAULT_NAMESPACE == "default"
+        fs.write("a.md", "x")
+        assert fs.read("a.md") == "x"
+
+    def test_default_is_a_real_shared_namespace(self, local_backend):
+        # Two unnamed FileSystems on one backend share the default store - the
+        # documented behavior, and why multi-tenant apps must name one.
+        FileSystem(local_backend).write("a.md", "x")
+        assert FileSystem(local_backend).read("a.md") == "x"
+        assert FileSystem(local_backend, "other").read("a.md") is None

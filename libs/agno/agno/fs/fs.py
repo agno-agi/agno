@@ -8,11 +8,14 @@ checkpoints — the fourth kind of state (not memory, not session, not knowledge
 Attach with one line — the toolkit carries its own instructions:
 
     from agno.agent import Agent
+    from agno.db.sqlite import SqliteDb
     from agno.fs import FileSystem
     from agno.fs.db import DbFileSystem
 
-    fs = FileSystem(backend=DbFileSystem(db_url=...), namespace="radar")
+    fs = FileSystem(backend=DbFileSystem(db=SqliteDb(db_file="agent.db")))
     agent = Agent(tools=[fs.tools()], instructions="my instructions")
+
+Name a namespace only when you need more than one store: ``namespace="radar"``.
 
 FileSystem is also a complete durable-filesystem API without any Agent:
 ``fs.read(...)``, ``fs.append(...)``, ``fs.contains(...)`` from plain Python.
@@ -39,6 +42,15 @@ from agno.fs.types import ContainsResult, FileMeta, NamespaceUsage, SearchMatch
 
 if TYPE_CHECKING:
     from agno.tools.toolkit import Toolkit
+
+DEFAULT_NAMESPACE = "default"
+"""Namespace used when the caller does not name one.
+
+A stable, documented default so simple apps need no namespace at all. Name one
+explicitly whenever isolation or sharing matters: two FileSystems on the same
+backend with no namespace share this one store, which is the intended behavior
+but is rarely what a multi-tenant app wants (see the templated namespaces above).
+"""
 
 _DEFAULT_INSTRUCTIONS = """You have your own private, durable filesystem. Files persist across sessions and
 runs: anything you write is available in every future run.
@@ -90,7 +102,8 @@ class FileSystem:
     """A durable, private filesystem scoped to one namespace.
 
     ``backend`` is the storage backend; ``namespace`` names this agent's file
-    store within it. Same ``backend`` + same ``namespace`` = same files; different
+    store within it, defaulting to ``"default"`` when you do not need more than
+    one. Same ``backend`` + same ``namespace`` = same files; different
     ``namespace`` = full isolation. Sharing is explicit, by name.
 
     ``namespace`` may embed the template placeholders ``{user_id}``,
@@ -106,7 +119,7 @@ class FileSystem:
     def __init__(
         self,
         backend: BaseFS,
-        namespace: str,
+        namespace: str = DEFAULT_NAMESPACE,
         *,
         max_file_bytes: int = 1_000_000,
         max_namespace_bytes: int = 20_000_000,

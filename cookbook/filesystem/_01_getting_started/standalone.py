@@ -11,6 +11,7 @@ and prints namespace usage.
 
 from uuid import uuid4
 
+from agno.db.sqlite import SqliteDb
 from agno.fs import FileSystem
 from agno.fs.db import DbFileSystem
 from rich.pretty import pprint
@@ -20,7 +21,7 @@ from rich.pretty import pprint
 # ---------------------------------------------------------------------------
 DB_FILE = f"tmp/agent_fs_standalone_{uuid4().hex}.db"
 
-fs = FileSystem(backend=DbFileSystem(db_url=f"sqlite:///{DB_FILE}"), namespace="radar")
+fs = FileSystem(backend=DbFileSystem(db=SqliteDb(db_file=DB_FILE)), namespace="radar")
 
 # ---------------------------------------------------------------------------
 # Run

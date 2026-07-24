@@ -14,6 +14,7 @@ from typing import Dict
 from uuid import uuid4
 
 from agno.agent import Agent
+from agno.db.sqlite import SqliteDb
 from agno.fs import FileSystem
 from agno.fs.db import DbFileSystem
 from agno.models.openai import OpenAIResponses
@@ -33,12 +34,12 @@ READINGS_TUESDAY = {
 # Create FileSystem
 # ---------------------------------------------------------------------------
 # Fresh per-run db so the demo always starts at the baseline. A real scheduled
-# monitor pins one fixed, shared db_url - a new store per process forgets the
+# monitor pins one fixed, shared database - a new store per process forgets the
 # baseline and reports nothing but baselines.
 DB_FILE = f"tmp/agent_fs_monitor_{uuid4().hex}.db"
 
 fs = FileSystem(
-    backend=DbFileSystem(db_url=f"sqlite:///{DB_FILE}"), namespace="latency-monitor"
+    backend=DbFileSystem(db=SqliteDb(db_file=DB_FILE)), namespace="latency-monitor"
 )
 
 # ---------------------------------------------------------------------------

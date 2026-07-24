@@ -1,7 +1,8 @@
 """DbFileSystem — the database backend for FileSystem (Postgres + SQLite).
 
-Standalone storage component in the VectorDb family: ``db_url``/``db_engine``
-constructor, owns its ``Table``, creates it lazily on first use. Deliberately
+Standalone storage component in the VectorDb family: takes an existing agno
+``db`` (``SqliteDb``/``PostgresDb``) or a raw ``db_url``/``db_engine``, owns its
+``Table``, creates it lazily on first use. Deliberately
 not on the ``BaseDb`` contract — FileSystem is a pure tool component, not platform
 state. Natively full: every operation is implemented, append and move are
 atomic, and rows are versioned.
@@ -12,7 +13,7 @@ from __future__ import annotations
 import threading
 import time
 from pathlib import Path
-from typing import List, Optional, Sequence, Set
+from typing import TYPE_CHECKING, List, Optional, Sequence, Set
 
 from agno.fs._paths import build_chunk, path_sort_key
 from agno.fs.base import BaseFS, _extract_snippet
@@ -45,6 +46,9 @@ try:
 except ImportError:
     raise ImportError("`sqlalchemy` not installed. Please install it using `pip install 'agno[sql]'`")
 
+if TYPE_CHECKING:
+    from agno.db.base import BaseDb
+
 SUPPORTED_DIALECTS = ("postgresql", "sqlite")
 
 
@@ -60,16 +64,32 @@ class DbFileSystem(BaseFS):
 
     def __init__(
         self,
+        db: Optional[BaseDb] = None,
         db_url: Optional[str] = None,
         db_engine: Optional[Engine] = None,
         *,
         table_name: str = "agno_agent_fs",
         db_schema: Optional[str] = "ai",
     ) -> None:
-        if db_engine is None and db_url is None:
-            raise ValueError("One of db_url or db_engine must be provided")
-        if db_engine is not None:
-            self.db_engine: Engine = db_engine
+        provided = [source for source in (db, db_url, db_engine) if source is not None]
+        if len(provided) != 1:
+            raise ValueError("Provide exactly one of db, db_url, or db_engine")
+        if db is not None:
+            # Reuse the engine of an agno db the caller already configured, so the
+            # agent's files live beside its sessions and memory with one connection
+            # setup. Only the engine is borrowed: table_name and db_schema stay this
+            # backend's own, and nothing is added to the BaseDb contract. Not every
+            # agno db is SQL-backed (Mongo, Redis, DynamoDb, ... have no engine), so
+            # fail with a clear message rather than an AttributeError.
+            borrowed = getattr(db, "db_engine", None)
+            if borrowed is None:
+                raise ValueError(
+                    f"DbFileSystem needs a SQL-backed agno db, got {type(db).__name__} which has no db_engine. "
+                    "Use SqliteDb or PostgresDb, or pass db_url/db_engine directly."
+                )
+            self.db_engine: Engine = borrowed
+        elif db_engine is not None:
+            self.db_engine = db_engine
         else:
             url = make_url(db_url)  # type: ignore[arg-type]
             backend_name = url.get_backend_name()

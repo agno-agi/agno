@@ -12,6 +12,7 @@ Runs with tiny caps so the numbers are readable. No model, no API keys.
 
 from uuid import uuid4
 
+from agno.db.sqlite import SqliteDb
 from agno.fs import FileSystem
 from agno.fs.db import DbFileSystem
 from agno.fs.errors import QuotaExceededError
@@ -25,7 +26,7 @@ from agno.fs.errors import QuotaExceededError
 DB_FILE = f"tmp/agent_fs_quota_{uuid4().hex}.db"
 
 fs = FileSystem(
-    backend=DbFileSystem(db_url=f"sqlite:///{DB_FILE}"),
+    backend=DbFileSystem(db=SqliteDb(db_file=DB_FILE)),
     namespace="radar",
     max_file_bytes=200,
     max_namespace_bytes=300,

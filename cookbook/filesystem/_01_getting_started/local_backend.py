@@ -1,10 +1,11 @@
 """
 FileSystem - Local Backend
-=======================
+==========================
+Store the agent's files as real files on disk instead of rows in a database.
+Pass LocalFileSystem as the backend; the agent code stays the same.
 
-The storage backend is a seam: swap DbFileSystem for LocalFileSystem (real
-files on disk) and the agent code does not change. Useful in development when
-you want to inspect the store with ordinary shell tools.
+This is handy in development, when you want to open what the agent wrote with
+your editor or read it with ls and cat.
 
 This example has the agent write two files, then prints the on-disk tree.
 """
@@ -37,8 +38,6 @@ agent = Agent(
 # Run
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
-    # The agent records its OWN working state - a note-to-self and a processed
-    # record - not facts about the user (those belong in memory).
     agent.print_response(
         "Record two things: write 'Summarized the onboarding doc; the migration "
         "timeline is the key risk to flag' to notes/summary.md, and append "

@@ -13,6 +13,7 @@ from typing import List
 from uuid import uuid4
 
 from agno.agent import Agent
+from agno.db.sqlite import SqliteDb
 from agno.fs import FileSystem
 from agno.fs.db import DbFileSystem
 from agno.models.openai import OpenAIResponses
@@ -25,7 +26,7 @@ VIP_USERS = {"alice"}
 # ---------------------------------------------------------------------------
 DB_FILE = f"tmp/agent_fs_factory_{uuid4().hex}.db"
 
-db_fs = DbFileSystem(db_url=f"sqlite:///{DB_FILE}")
+db_fs = DbFileSystem(db=SqliteDb(db_file=DB_FILE))
 
 
 def fs_for_user(run_context: RunContext) -> List:

@@ -26,4 +26,4 @@ python cookbook/filesystem/_02_durable_records/radar_news_delta.py
 
 Requires `OPENAI_API_KEY`.
 
-Both files use a fresh per-run SQLite file so repeated demo runs start clean. A real scheduled deployment pins one fixed, shared `db_url` instead — a new store per process re-reports everything, which is the bug this pattern exists to fix.
+Both files use a fresh per-run SQLite file so repeated demo runs start clean. A real scheduled deployment pins one fixed, shared database instead — a new store per process re-reports everything, which is the bug this pattern exists to fix.

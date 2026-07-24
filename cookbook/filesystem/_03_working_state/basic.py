@@ -13,6 +13,7 @@ cross-PROCESS durability proof, see _01_getting_started/basic.py.
 from uuid import uuid4
 
 from agno.agent import Agent
+from agno.db.sqlite import SqliteDb
 from agno.fs import FileSystem
 from agno.fs.db import DbFileSystem
 from agno.models.openai import OpenAIResponses
@@ -28,12 +29,12 @@ STEPS = [
 # Create FileSystem
 # ---------------------------------------------------------------------------
 # Fresh per-run db so the demo starts from step 1 every execution. A real
-# resumable job pins one fixed, shared db_url so the checkpoint outlives the
+# resumable job pins one fixed, shared database so the checkpoint outlives the
 # process, not just the session.
 DB_FILE = f"tmp/agent_fs_checkpoint_{uuid4().hex}.db"
 
 fs = FileSystem(
-    backend=DbFileSystem(db_url=f"sqlite:///{DB_FILE}"), namespace="migration"
+    backend=DbFileSystem(db=SqliteDb(db_file=DB_FILE)), namespace="migration"
 )
 
 # ---------------------------------------------------------------------------

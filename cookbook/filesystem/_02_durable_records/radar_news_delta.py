@@ -15,6 +15,7 @@ from typing import List
 from uuid import uuid4
 
 from agno.agent import Agent
+from agno.db.sqlite import SqliteDb
 from agno.fs import FileSystem
 from agno.fs.db import DbFileSystem
 from agno.models.openai import OpenAIResponses
@@ -38,11 +39,11 @@ TODAY = date.today().isoformat()
 # Create FileSystem
 # ---------------------------------------------------------------------------
 # Fresh per-run db so this demo starts clean on every execution. A real
-# scheduled deployment pins one fixed, shared db_url instead - a new store per
+# scheduled deployment pins one fixed, shared database instead - a new store per
 # process re-reports everything, the exact bug Radar exists to fix.
 DB_FILE = f"tmp/agent_fs_radar_{uuid4().hex}.db"
 
-fs = FileSystem(backend=DbFileSystem(db_url=f"sqlite:///{DB_FILE}"), namespace="radar")
+fs = FileSystem(backend=DbFileSystem(db=SqliteDb(db_file=DB_FILE)), namespace="radar")
 
 # ---------------------------------------------------------------------------
 # Create Agent

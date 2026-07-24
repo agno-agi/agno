@@ -1,15 +1,15 @@
 """
 FileSystem - Basic
-===============
+==================
+Give your agent a durable, private filesystem. You attach it with one line,
+and anything the agent writes stays available in every future run.
 
-A durable, private filesystem for your agent: attach it with one line, and
-anything the agent writes is available in every future run.
-
-This example proves durability across processes, not just sessions: run it
-twice. Run 1 writes a note; run 2 is a fresh process that reads it back.
+Run this file twice. Run 1 writes a note. Run 2 is a new process with no
+shared session, and it reads the note back.
 """
 
 from agno.agent import Agent
+from agno.db.sqlite import SqliteDb
 from agno.fs import FileSystem
 from agno.fs.db import DbFileSystem
 from agno.models.openai import OpenAIResponses
@@ -17,12 +17,10 @@ from agno.models.openai import OpenAIResponses
 # ---------------------------------------------------------------------------
 # Create FileSystem
 # ---------------------------------------------------------------------------
-# One SQLite file reused across invocations on purpose: this example exists to
-# show the store surviving the process. Delete the db file to start over.
-DB_FILE = "tmp/agent_fs_getting_started.db"
+DB_FILE = "tmp/filesystem/getting_started.db"
 
 fs = FileSystem(
-    backend=DbFileSystem(db_url=f"sqlite:///{DB_FILE}"), namespace="getting-started"
+    backend=DbFileSystem(db=SqliteDb(db_file=DB_FILE)), namespace="getting-started"
 )
 
 # ---------------------------------------------------------------------------

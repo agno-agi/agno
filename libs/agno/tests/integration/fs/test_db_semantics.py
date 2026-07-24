@@ -6,6 +6,7 @@ import os
 import pytest
 from sqlalchemy import create_engine, text
 
+from agno.db.sqlite import SqliteDb
 from agno.fs import FileSystem
 from agno.fs.db import DbFileSystem
 from agno.fs.errors import VersionConflictError
@@ -144,9 +145,22 @@ class TestConstruction:
         with pytest.raises(ValueError):
             DbFileSystem(db_url="mysql://user:pass@localhost/db")
 
-    def test_requires_url_or_engine(self):
+    def test_requires_exactly_one_source(self, tmp_path):
         with pytest.raises(ValueError):
             DbFileSystem()
+        with pytest.raises(ValueError):
+            DbFileSystem(db=SqliteDb(db_file=f"{tmp_path}/a.db"), db_url=f"sqlite:///{tmp_path}/b.db")
+
+    def test_agno_db_constructor_shares_the_engine(self, tmp_path):
+        # An agno db the caller already configured: the agent's files land beside
+        # its sessions in one database, with one connection setup.
+        agno_db = SqliteDb(db_file=f"{tmp_path}/app.db")
+        fs = DbFileSystem(db=agno_db)
+        assert fs.db_engine is agno_db.db_engine
+        fs.write("ns", "a.md", "x")
+        assert fs.read("ns", "a.md") == "x"
+        # The agno db's own tables and the filesystem table coexist.
+        assert DbFileSystem(db=agno_db).read("ns", "a.md") == "x"
 
     def test_engine_sharing_constructor(self, tmp_path):
         engine = create_engine(f"sqlite:///{tmp_path}/shared.db")

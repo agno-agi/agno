@@ -13,6 +13,7 @@ anonymous run.
 from uuid import uuid4
 
 from agno.agent import Agent
+from agno.db.sqlite import SqliteDb
 from agno.fs import FileSystem
 from agno.fs.db import DbFileSystem
 from agno.models.openai import OpenAIResponses
@@ -22,7 +23,7 @@ from agno.models.openai import OpenAIResponses
 # ---------------------------------------------------------------------------
 DB_FILE = f"tmp/agent_fs_tenants_{uuid4().hex}.db"
 
-db_fs = DbFileSystem(db_url=f"sqlite:///{DB_FILE}")
+db_fs = DbFileSystem(db=SqliteDb(db_file=DB_FILE))
 fs = FileSystem(backend=db_fs, namespace="assistant/{user_id}")
 
 # ---------------------------------------------------------------------------
