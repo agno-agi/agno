@@ -2,7 +2,7 @@
 Operations - Quota Recovery
 ===========================
 
-AgentFS caps every file and every namespace; nothing is evicted silently.
+FileSystem caps every file and every namespace; nothing is evicted silently.
 This example hits both caps on purpose, shows the exact guidance the agent
 would see, and recovers the way the guidance says: partition, then delete
 partitions you no longer need.
@@ -14,12 +14,12 @@ import os
 import uuid
 from pathlib import Path
 
-from agno.fs import AgentFS
+from agno.fs import FileSystem
 from agno.fs.db import DbFileSystem
 from agno.fs.errors import QuotaExceededError
 
 # ---------------------------------------------------------------------------
-# Create AgentFS - deliberately tiny caps
+# Create FileSystem - deliberately tiny caps
 # ---------------------------------------------------------------------------
 # A fresh store per run: this example fills a namespace to its cap, so a reused
 # store would already be full on the second run. A uuid suffix (not a 1-second
@@ -27,8 +27,8 @@ from agno.fs.errors import QuotaExceededError
 Path("tmp").mkdir(exist_ok=True)
 DB_FILE = os.environ.get("AGNO_FS_DB") or f"tmp/agent_fs_quota_{uuid.uuid4().hex}.db"
 
-fs = AgentFS(
-    fs=DbFileSystem(db_url=f"sqlite:///{DB_FILE}"),
+fs = FileSystem(
+    backend=DbFileSystem(db_url=f"sqlite:///{DB_FILE}"),
     namespace="radar",
     max_file_bytes=200,
     max_namespace_bytes=300,

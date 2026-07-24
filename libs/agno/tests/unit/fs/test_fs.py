@@ -1,10 +1,10 @@
-"""Unit tests for the AgentFS programmatic API (spec D2) over LocalFileSystem."""
+"""Unit tests for the FileSystem programmatic API (spec D2) over LocalFileSystem."""
 
 import asyncio
 
 import pytest
 
-from agno.fs import AgentFS
+from agno.fs import FileSystem
 from agno.fs.errors import InvalidPathError, QuotaExceededError, UnsupportedOperationError
 from agno.fs.local import LocalFileSystem
 
@@ -15,8 +15,8 @@ def local_backend(tmp_path) -> LocalFileSystem:
 
 
 @pytest.fixture
-def fs(local_backend) -> AgentFS:
-    return AgentFS(fs=local_backend, namespace="radar")
+def fs(local_backend) -> FileSystem:
+    return FileSystem(backend=local_backend, namespace="radar")
 
 
 class TestEdgeBehaviors:
@@ -37,7 +37,7 @@ class TestEdgeBehaviors:
             def contains(self, namespace, lines, directory=""):
                 raise AssertionError("backend.contains must not be called for an empty input")
 
-        fs = AgentFS(fs=NoContainsBackend(root=local_backend.root), namespace="radar")
+        fs = FileSystem(backend=NoContainsBackend(root=local_backend.root), namespace="radar")
         assert fs.contains([]).found == []
         assert fs.contains([]).missing == []
         # Empty after normalization also short-circuits.
@@ -177,7 +177,7 @@ class TestDirectorySemantics:
 
 class TestQuota:
     def test_file_cap_boundary_on_write(self, local_backend):
-        fs = AgentFS(fs=local_backend, namespace="q", max_file_bytes=10)
+        fs = FileSystem(backend=local_backend, namespace="q", max_file_bytes=10)
         fs.write("a.md", "0123456789")  # exactly at cap
         with pytest.raises(QuotaExceededError) as excinfo:
             fs.write("b.md", "0123456789x")
@@ -186,19 +186,19 @@ class TestQuota:
         assert excinfo.value.limit == 10
 
     def test_file_cap_counts_bytes_not_chars(self, local_backend):
-        fs = AgentFS(fs=local_backend, namespace="q", max_file_bytes=3)
+        fs = FileSystem(backend=local_backend, namespace="q", max_file_bytes=3)
         with pytest.raises(QuotaExceededError):
             fs.write("a.md", "\U0001f600")  # 1 char, 4 bytes
 
     def test_file_cap_on_append(self, local_backend):
-        fs = AgentFS(fs=local_backend, namespace="q", max_file_bytes=10)
+        fs = FileSystem(backend=local_backend, namespace="q", max_file_bytes=10)
         fs.append("a.md", "12345\n")  # 6 bytes
         with pytest.raises(QuotaExceededError) as excinfo:
             fs.append("a.md", "67890\n")  # would be 12
         assert excinfo.value.scope == "file"
 
     def test_namespace_cap_on_write(self, local_backend):
-        fs = AgentFS(fs=local_backend, namespace="q", max_namespace_bytes=10)
+        fs = FileSystem(backend=local_backend, namespace="q", max_namespace_bytes=10)
         fs.write("a.md", "123456")
         with pytest.raises(QuotaExceededError) as excinfo:
             fs.write("b.md", "78901")
@@ -207,13 +207,13 @@ class TestQuota:
         assert excinfo.value.limit == 10
 
     def test_namespace_cap_overwrite_uses_delta(self, local_backend):
-        fs = AgentFS(fs=local_backend, namespace="q", max_namespace_bytes=10)
+        fs = FileSystem(backend=local_backend, namespace="q", max_namespace_bytes=10)
         fs.write("a.md", "123456789")
         fs.write("a.md", "12345678")  # shrinking is always fine
         fs.write("a.md", "1234567890")  # grow back to exactly the cap
 
     def test_namespace_cap_on_append_overestimates_separator(self, local_backend):
-        fs = AgentFS(fs=local_backend, namespace="q", max_namespace_bytes=10)
+        fs = FileSystem(backend=local_backend, namespace="q", max_namespace_bytes=10)
         fs.append("a.md", "12345\n")  # 6 bytes
         with pytest.raises(QuotaExceededError):
             fs.append("a.md", "678\n")  # 6 + 4 + 1(estimated sep) = 11 > 10
@@ -222,12 +222,12 @@ class TestQuota:
 class TestTemplatedNamespaces:
     def test_construction_validates_placeholders(self, local_backend):
         with pytest.raises(InvalidPathError):
-            AgentFS(fs=local_backend, namespace="radar/{tenant}")
+            FileSystem(backend=local_backend, namespace="radar/{tenant}")
         with pytest.raises(InvalidPathError):
-            AgentFS(fs=local_backend, namespace="radar/{user_id")
+            FileSystem(backend=local_backend, namespace="radar/{user_id")
 
     def test_unresolved_programmatic_calls_raise(self, local_backend):
-        fs = AgentFS(fs=local_backend, namespace="radar/{user_id}")
+        fs = FileSystem(backend=local_backend, namespace="radar/{user_id}")
         for operation in (
             lambda: fs.read("a.md"),
             lambda: fs.write("a.md", "x"),
@@ -243,7 +243,7 @@ class TestTemplatedNamespaces:
                 operation()
 
     def test_resolve_binds_and_isolates(self, local_backend):
-        fs = AgentFS(fs=local_backend, namespace="radar/{user_id}", max_file_bytes=123)
+        fs = FileSystem(backend=local_backend, namespace="radar/{user_id}", max_file_bytes=123)
         bound = fs.resolve(user_id="u42")
         assert bound.namespace == "radar/u42"
         assert bound.max_file_bytes == 123
@@ -253,14 +253,14 @@ class TestTemplatedNamespaces:
         assert bound.read("seen/log.md") == "x\n"
 
     def test_resolve_rejects_multi_segment_value(self, local_backend):
-        fs = AgentFS(fs=local_backend, namespace="radar/{user_id}")
+        fs = FileSystem(backend=local_backend, namespace="radar/{user_id}")
         with pytest.raises(InvalidPathError):
             fs.resolve(user_id="u42/../u43")
         with pytest.raises(InvalidPathError):
             fs.resolve(user_id="a/b")
 
     def test_partial_resolve_stays_templated(self, local_backend):
-        fs = AgentFS(fs=local_backend, namespace="{team_id}/{user_id}")
+        fs = FileSystem(backend=local_backend, namespace="{team_id}/{user_id}")
         partial = fs.resolve(user_id="u42")
         assert partial.is_templated
         with pytest.raises(InvalidPathError):
@@ -271,7 +271,7 @@ class TestTemplatedNamespaces:
         assert full.read("a.md") == "ok"
 
     def test_resolve_on_untemplated_returns_self(self, local_backend):
-        fs = AgentFS(fs=local_backend, namespace="radar")
+        fs = FileSystem(backend=local_backend, namespace="radar")
         assert fs.resolve(user_id="u42") is fs
 
 

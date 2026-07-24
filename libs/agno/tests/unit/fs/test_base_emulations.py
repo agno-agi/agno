@@ -1,4 +1,4 @@
-"""Unit tests for the FileSystem base emulations (spec D3) against a minimal backend."""
+"""Unit tests for the BaseFS base emulations (spec D3) against a minimal backend."""
 
 import asyncio
 from typing import Dict, List, Optional, Tuple
@@ -6,14 +6,14 @@ from typing import Dict, List, Optional, Tuple
 import pytest
 
 from agno.fs._paths import path_in_directory
-from agno.fs.base import FileSystem
+from agno.fs.base import BaseFS
 from agno.fs.errors import QuotaExceededError, UnsupportedOperationError
 from agno.fs.types import FileMeta
 
 NS = "ns"
 
 
-class DictBackend(FileSystem):
+class DictBackend(BaseFS):
     """Minimal backend implementing only the required core — everything else emulated."""
 
     def __init__(self) -> None:

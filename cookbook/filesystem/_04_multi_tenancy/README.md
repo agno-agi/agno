@@ -7,7 +7,7 @@ Scoping is the explicit namespace name: identity enters only where you write it 
 ## Files
 
 - `basic.py` — the declarative common case: `namespace="assistant/{user_id}"`. One agent serves alice and bob with fully isolated files, and an anonymous run fails closed instead of collapsing into a shared store.
-- `custom_factory.py` — the escape hatch for arbitrary policy: a callable tool factory builds the AgentFS per run from `run_context` (here: VIP users get their own tier of namespaces).
+- `custom_factory.py` — the escape hatch for arbitrary policy: a callable tool factory builds the FileSystem per run from `run_context` (here: VIP users get their own tier of namespaces).
 - `shared_namespace.py` — sharing is explicit, by name: a producer agent writes a namespace, a consumer agent attaches the same name with `tools(read_only=True)` — four read tools and the read-only instructions variant, no way to write.
 
 ## When to use
@@ -20,9 +20,9 @@ Scoping is the explicit namespace name: identity enters only where you write it 
 ## Run
 
 ```bash
-python cookbook/agent_fs/_04_multi_tenancy/basic.py
-python cookbook/agent_fs/_04_multi_tenancy/custom_factory.py
-python cookbook/agent_fs/_04_multi_tenancy/shared_namespace.py
+python cookbook/filesystem/_04_multi_tenancy/basic.py
+python cookbook/filesystem/_04_multi_tenancy/custom_factory.py
+python cookbook/filesystem/_04_multi_tenancy/shared_namespace.py
 ```
 
 Requires `OPENAI_API_KEY`.

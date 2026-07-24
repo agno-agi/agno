@@ -14,13 +14,13 @@ Session state dies with the session, and scheduled agents get a fresh session pe
 - Multi-run tasks: migrations, audits, backfills — anything you would checkpoint in a job queue, done by an agent instead.
 - Restart-proof deployments: same pattern with a pinned `db_url`, as above.
 - Monitors and watchers that alert on change: the last-seen value is agent working state, not user memory.
-- For exact record-set dedupe (which items did I already process?), use [`_02_durable_records/`](../_02_durable_records/) instead — `check_lines` is built for that. For the basics of attaching AgentFS, see [`_01_getting_started/`](../_01_getting_started/).
+- For exact record-set dedupe (which items did I already process?), use [`_02_durable_records/`](../_02_durable_records/) instead — `check_lines` is built for that. For the basics of attaching FileSystem, see [`_01_getting_started/`](../_01_getting_started/).
 
 ## Run
 
 ```bash
-python cookbook/agent_fs/_03_working_state/basic.py
-python cookbook/agent_fs/_03_working_state/last_seen_monitor.py
+python cookbook/filesystem/_03_working_state/basic.py
+python cookbook/filesystem/_03_working_state/last_seen_monitor.py
 ```
 
 Requires `OPENAI_API_KEY`.

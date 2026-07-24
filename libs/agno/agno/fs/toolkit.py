@@ -1,4 +1,4 @@
-"""AgentFSTools — the tool surface over AgentFS, built by ``AgentFS.tools()``.
+"""FileSystemTools — the tool surface over FileSystem, built by ``FileSystem.tools()``.
 
 To the agent this is just a filesystem: six tools share their names, shapes and
 output formats with ``agno.tools.workspace.Workspace`` (``read_file``,
@@ -11,7 +11,7 @@ These names deliberately collide with the rest of the file-toolkit family
 (Workspace, FileTools, PythonTools, CodingTools, ...). Agno's tool resolver
 keeps the first registration per name and drops later duplicates with a logged
 warning, so attach at most one file-like toolkit per agent; when an agent
-genuinely needs both AgentFS and a local workspace, wrap one in a sub-agent.
+genuinely needs both FileSystem and a local workspace, wrap one in a sub-agent.
 """
 
 from __future__ import annotations
@@ -27,7 +27,7 @@ from typing import Dict, List, Optional, Union
 from agno.agent.agent import Agent
 from agno.fs._paths import build_chunk, normalize_directory, path_sort_key
 from agno.fs.errors import InvalidPathError, QuotaExceededError
-from agno.fs.fs import AgentFS
+from agno.fs.fs import FileSystem
 from agno.run import RunContext
 from agno.team.team import Team
 from agno.tools.toolkit import Toolkit
@@ -58,12 +58,12 @@ def _format_with_line_numbers(text: str, start_line: int = 1) -> str:
     return "\n".join(f"{i + start_line:6d}\t{line}" for i, line in enumerate(lines))
 
 
-class AgentFSTools(Toolkit):
-    """Toolkit over one ``AgentFS`` file store. Build it with ``AgentFS.tools()``.
+class FileSystemTools(Toolkit):
+    """Toolkit over one ``FileSystem`` file store. Build it with ``FileSystem.tools()``.
 
     Registers the full eight-tool surface, or the four read tools when
     ``read_only=True`` (the surface for a consumer agent that consults another
-    agent's namespace by shared name). Ships the matching AgentFS instructions
+    agent's namespace by shared name). Ships the matching FileSystem instructions
     unless ``instructions`` is overridden. Tool errors are returned as
     ``"Error: ..."`` strings, never raised. Writes are last-writer-wins by
     design; there is no confirmation surface — this is the agent's own private,
@@ -84,7 +84,7 @@ class AgentFSTools(Toolkit):
 
     def __init__(
         self,
-        fs: AgentFS,
+        fs: FileSystem,
         read_only: bool = False,
         instructions: Optional[str] = None,
         add_instructions: bool = True,
@@ -93,14 +93,14 @@ class AgentFSTools(Toolkit):
         self.fs = fs
         self.read_only = read_only
         if instructions is None:
-            instructions = AgentFS.instructions(read_only=read_only)
+            instructions = FileSystem.instructions(read_only=read_only)
 
         registered = self.READ_ONLY_TOOLS if read_only else self.FULL_TOOLS
         sync_tools = [getattr(self, name) for name in registered]
         async_tools = [(getattr(self, "a" + name), name) for name in registered]
 
         super().__init__(
-            name="agent_fs",
+            name="filesystem",
             tools=sync_tools,
             async_tools=async_tools,
             instructions=instructions,
@@ -112,8 +112,8 @@ class AgentFSTools(Toolkit):
         # and an async sibling on the class, for the full surface and the
         # read-only subset alike.
         for tool_name in self.FULL_TOOLS:
-            assert callable(getattr(self, tool_name, None)), f"AgentFSTools missing sync method '{tool_name}'"
-            assert callable(getattr(self, "a" + tool_name, None)), f"AgentFSTools missing async method 'a{tool_name}'"
+            assert callable(getattr(self, tool_name, None)), f"FileSystemTools missing sync method '{tool_name}'"
+            assert callable(getattr(self, "a" + tool_name, None)), f"FileSystemTools missing async method 'a{tool_name}'"
 
     # ------------------------------------------------------------------
     # Helpers
@@ -124,7 +124,7 @@ class AgentFSTools(Toolkit):
         run_context: Optional[RunContext],
         agent: Optional[Agent],
         team: Optional[Team],
-    ) -> AgentFS:
+    ) -> FileSystem:
         """Resolve a templated namespace from injected context. Fails closed."""
         return self.fs._resolve_from_context(run_context=run_context, agent=agent, team=team)
 

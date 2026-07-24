@@ -3,15 +3,15 @@ from __future__ import annotations
 from typing import Optional
 
 
-class AgentFSError(Exception):
-    """Base class for all AgentFS errors."""
+class FileSystemError(Exception):
+    """Base class for all FileSystem errors."""
 
 
-class InvalidPathError(AgentFSError):
+class InvalidPathError(FileSystemError):
     """Raised for an invalid path, namespace name, directory parameter, or check-lines record."""
 
 
-class QuotaExceededError(AgentFSError):
+class QuotaExceededError(FileSystemError):
     """Raised when a write or append would exceed a size cap.
 
     ``scope`` is ``"file"`` or ``"namespace"``; ``current`` and ``limit`` are byte counts.
@@ -25,7 +25,7 @@ class QuotaExceededError(AgentFSError):
         self.limit = limit
 
 
-class VersionConflictError(AgentFSError):
+class VersionConflictError(FileSystemError):
     """Raised when a compare-and-swap write finds a version other than ``expected``.
 
     ``actual`` is ``None`` when the file does not exist.
@@ -37,7 +37,7 @@ class VersionConflictError(AgentFSError):
         self.actual = actual
 
 
-class UnsupportedOperationError(AgentFSError):
+class UnsupportedOperationError(FileSystemError):
     """Raised by a backend that does not support the requested operation."""
 
     def __init__(self, message: str, *, operation: str, backend: str) -> None:

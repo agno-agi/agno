@@ -1,7 +1,7 @@
-"""FileSystem — the storage backend seam under AgentFS.
+"""BaseFS — the storage backend seam under FileSystem.
 
 Backends store text files by ``(namespace, path)``. Paths and namespace names
-arrive already normalized by ``AgentFS``; backends never normalize. Four core
+arrive already normalized by ``FileSystem``; backends never normalize. Four core
 operations are required; the rest have base emulations that a backend overrides
 when it can do better (atomically, or in fewer round trips).
 """
@@ -34,7 +34,7 @@ def _extract_snippet(content: str, query: str, context_chars: int = 200) -> str:
     return snippet
 
 
-class FileSystem(ABC):
+class BaseFS(ABC):
     """Storage backend ABC: text files keyed by ``(namespace, path)``.
 
     Sync methods plus ``a``-prefixed async twins; the base class implements every
@@ -133,7 +133,7 @@ class FileSystem(ABC):
     def contains(self, namespace: str, lines: Sequence[str], directory: str = "") -> Set[str]:
         """Batch exact-line membership: return the subset of ``lines`` found as whole lines.
 
-        Lines arrive already normalized by ``AgentFS``. Base emulation: list + read
+        Lines arrive already normalized by ``FileSystem``. Base emulation: list + read
         + line-set intersection over raw ``split("\\n")`` segments, which agrees
         byte-for-byte with the database backend's padded LIKE predicate.
         """

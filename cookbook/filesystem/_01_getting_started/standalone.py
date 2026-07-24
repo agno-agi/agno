@@ -1,8 +1,8 @@
 """
-AgentFS - Standalone
+FileSystem - Standalone
 ====================
 
-AgentFS is a complete durable-filesystem API without any Agent: the same
+FileSystem is a complete durable-filesystem API without any Agent: the same
 object an agent uses, driven from plain Python. No model, no API keys.
 
 This example seeds a record log, proves exact-line dedupe with contains(),
@@ -13,19 +13,19 @@ import os
 import time
 from pathlib import Path
 
-from agno.fs import AgentFS
+from agno.fs import FileSystem
 from agno.fs.db import DbFileSystem
 from rich.pretty import pprint
 
 # ---------------------------------------------------------------------------
-# Create AgentFS
+# Create FileSystem
 # ---------------------------------------------------------------------------
 Path("tmp").mkdir(exist_ok=True)
 DB_FILE = (
     os.environ.get("AGNO_FS_DB") or f"tmp/agent_fs_standalone_{int(time.time())}.db"
 )
 
-fs = AgentFS(fs=DbFileSystem(db_url=f"sqlite:///{DB_FILE}"), namespace="radar")
+fs = FileSystem(backend=DbFileSystem(db_url=f"sqlite:///{DB_FILE}"), namespace="radar")
 
 # ---------------------------------------------------------------------------
 # Run

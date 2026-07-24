@@ -1,5 +1,5 @@
 """
-AgentFS - Basic
+FileSystem - Basic
 ===============
 
 A durable, private filesystem for your agent: attach it with one line, and
@@ -13,20 +13,20 @@ import os
 from pathlib import Path
 
 from agno.agent import Agent
-from agno.fs import AgentFS
+from agno.fs import FileSystem
 from agno.fs.db import DbFileSystem
 from agno.models.openai import OpenAIResponses
 
 # ---------------------------------------------------------------------------
-# Create AgentFS
+# Create FileSystem
 # ---------------------------------------------------------------------------
 # One SQLite file reused across invocations on purpose: this example exists to
 # show the store surviving the process. Delete the db file to start over.
 Path("tmp").mkdir(exist_ok=True)
 DB_FILE = os.environ.get("AGNO_FS_DB") or "tmp/agent_fs_getting_started.db"
 
-fs = AgentFS(
-    fs=DbFileSystem(db_url=f"sqlite:///{DB_FILE}"), namespace="getting-started"
+fs = FileSystem(
+    backend=DbFileSystem(db_url=f"sqlite:///{DB_FILE}"), namespace="getting-started"
 )
 
 # ---------------------------------------------------------------------------

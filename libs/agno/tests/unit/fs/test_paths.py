@@ -1,4 +1,4 @@
-"""Unit tests for the AgentFS path/namespace/line grammar (spec D6)."""
+"""Unit tests for the FileSystem path/namespace/line grammar (spec D6)."""
 
 import pytest
 

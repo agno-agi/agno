@@ -2,7 +2,7 @@
 Operations - Inspect a Namespace
 ================================
 
-An agent's file store is reachable from any script: construct AgentFS with the
+An agent's file store is reachable from any script: construct FileSystem with the
 same backend and namespace name, and you hold the same files the agent holds.
 Inspect, read, and seed - no Agent, no model, no server.
 
@@ -14,17 +14,17 @@ import os
 import time
 from pathlib import Path
 
-from agno.fs import AgentFS
+from agno.fs import FileSystem
 from agno.fs.db import DbFileSystem
 from rich.pretty import pprint
 
 # ---------------------------------------------------------------------------
-# Create AgentFS - the same backend and namespace the agent uses
+# Create FileSystem - the same backend and namespace the agent uses
 # ---------------------------------------------------------------------------
 Path("tmp").mkdir(exist_ok=True)
 DB_FILE = os.environ.get("AGNO_FS_DB") or f"tmp/agent_fs_inspect_{int(time.time())}.db"
 
-fs = AgentFS(fs=DbFileSystem(db_url=f"sqlite:///{DB_FILE}"), namespace="radar")
+fs = FileSystem(backend=DbFileSystem(db_url=f"sqlite:///{DB_FILE}"), namespace="radar")
 
 # ---------------------------------------------------------------------------
 # Run

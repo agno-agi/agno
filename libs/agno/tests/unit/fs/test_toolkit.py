@@ -1,4 +1,4 @@
-"""Unit tests for AgentFSTools (spec D7/D8): schemas, parity, error strings, injection."""
+"""Unit tests for FileSystemTools (spec D7/D8): schemas, parity, error strings, injection."""
 
 import inspect
 import json
@@ -6,9 +6,9 @@ import json
 import pytest
 
 from agno.agent import Agent
-from agno.fs import AgentFS
+from agno.fs import FileSystem
 from agno.fs.local import LocalFileSystem
-from agno.fs.toolkit import AgentFSTools
+from agno.fs.toolkit import FileSystemTools
 from agno.team import Team
 from agno.tools.function import FunctionCall
 from agno.tools.workspace import Workspace
@@ -28,12 +28,12 @@ INJECTED_PARAMS = ("run_context", "agent", "team")
 
 
 @pytest.fixture
-def fs(tmp_path) -> AgentFS:
-    return AgentFS(fs=LocalFileSystem(root=tmp_path), namespace="radar")
+def fs(tmp_path) -> FileSystem:
+    return FileSystem(backend=LocalFileSystem(root=tmp_path), namespace="radar")
 
 
 @pytest.fixture
-def toolkit(fs) -> AgentFSTools:
+def toolkit(fs) -> FileSystemTools:
     return fs.tools()
 
 
@@ -74,7 +74,7 @@ class TestWorkspaceParity:
         # Per parameter (name -> default), never by index: the trailing
         # keyword-only injected params have no Workspace counterpart (spec D13).
         ws_sig = inspect.signature(getattr(Workspace, tool_name))
-        fs_sig = inspect.signature(getattr(AgentFSTools, tool_name))
+        fs_sig = inspect.signature(getattr(FileSystemTools, tool_name))
         ws_defaults = {
             name: p.default
             for name, p in ws_sig.parameters.items()
@@ -85,9 +85,9 @@ class TestWorkspaceParity:
         }
         assert fs_defaults == ws_defaults
 
-    @pytest.mark.parametrize("tool_name", AgentFSTools.FULL_TOOLS)
+    @pytest.mark.parametrize("tool_name", FileSystemTools.FULL_TOOLS)
     def test_injected_params_keyword_only_on_sync_and_async(self, tool_name):
-        for method in (getattr(AgentFSTools, tool_name), getattr(AgentFSTools, "a" + tool_name)):
+        for method in (getattr(FileSystemTools, tool_name), getattr(FileSystemTools, "a" + tool_name)):
             signature = inspect.signature(method)
             for injected in INJECTED_PARAMS:
                 param = signature.parameters[injected]
@@ -95,8 +95,8 @@ class TestWorkspaceParity:
                 assert param.default is None
 
     def test_no_encoding_params_anywhere(self):
-        for tool_name in AgentFSTools.FULL_TOOLS:
-            signature = inspect.signature(getattr(AgentFSTools, tool_name))
+        for tool_name in FileSystemTools.FULL_TOOLS:
+            signature = inspect.signature(getattr(FileSystemTools, tool_name))
             assert "encoding" not in signature.parameters
 
     def test_no_run_command_or_edit_file(self, toolkit):
@@ -115,36 +115,36 @@ class TestWorkspaceParity:
 
 class TestSurface:
     def test_full_surface_registers_eight_sync_and_async(self, toolkit):
-        assert list(toolkit.functions.keys()) == AgentFSTools.FULL_TOOLS
-        assert list(toolkit.async_functions.keys()) == AgentFSTools.FULL_TOOLS
+        assert list(toolkit.functions.keys()) == FileSystemTools.FULL_TOOLS
+        assert list(toolkit.async_functions.keys()) == FileSystemTools.FULL_TOOLS
 
     def test_read_only_registers_exactly_four(self, fs):
         tk = fs.tools(read_only=True)
-        assert list(tk.functions.keys()) == AgentFSTools.READ_ONLY_TOOLS
-        assert list(tk.async_functions.keys()) == AgentFSTools.READ_ONLY_TOOLS
+        assert list(tk.functions.keys()) == FileSystemTools.READ_ONLY_TOOLS
+        assert list(tk.async_functions.keys()) == FileSystemTools.READ_ONLY_TOOLS
 
     def test_toolkit_name(self, toolkit):
-        assert toolkit.name == "agent_fs"
+        assert toolkit.name == "filesystem"
 
     def test_surface_drift_guard_sync_and_async_methods_exist(self):
-        for tool_name in AgentFSTools.FULL_TOOLS:
-            assert callable(getattr(AgentFSTools, tool_name))
-            assert callable(getattr(AgentFSTools, "a" + tool_name))
+        for tool_name in FileSystemTools.FULL_TOOLS:
+            assert callable(getattr(FileSystemTools, tool_name))
+            assert callable(getattr(FileSystemTools, "a" + tool_name))
 
 
 class TestInstructions:
     def test_toolkit_carries_instructions(self, toolkit):
         assert toolkit.add_instructions is True
-        assert toolkit.instructions == AgentFS.instructions()
+        assert toolkit.instructions == FileSystem.instructions()
         assert 'check_lines(lines, directory="seen")' in toolkit.instructions
 
     def test_static_call_without_instance(self):
-        text = AgentFS.instructions()
+        text = FileSystem.instructions()
         assert text.startswith("You have your own private, durable filesystem.")
         assert "Never store secrets, passwords, or API keys." in text
 
     def test_read_only_variant_names_no_write_tool(self, fs):
-        text = AgentFS.instructions(read_only=True)
+        text = FileSystem.instructions(read_only=True)
         for write_tool in ("append_file", "write_file", "delete_file", "move_file"):
             assert write_tool not in text
         assert "read access to a durable filesystem written by another agent" in text
@@ -152,9 +152,9 @@ class TestInstructions:
         assert tk.instructions == text
 
     def test_namespace_never_in_instructions(self, fs):
-        assert "radar" not in AgentFS.instructions()
-        assert "namespace" not in AgentFS.instructions().lower()
-        assert "namespace" not in AgentFS.instructions(read_only=True).lower()
+        assert "radar" not in FileSystem.instructions()
+        assert "namespace" not in FileSystem.instructions().lower()
+        assert "namespace" not in FileSystem.instructions(read_only=True).lower()
 
 
 class TestReadFileTool:
@@ -171,7 +171,7 @@ class TestReadFileTool:
 
     def test_too_long_guard_at_max_file_bytes(self, tmp_path):
         backend = LocalFileSystem(root=tmp_path)
-        fs = AgentFS(fs=backend, namespace="radar", max_file_bytes=50)
+        fs = FileSystem(backend=backend, namespace="radar", max_file_bytes=50)
         toolkit = fs.tools()
         backend.write("radar", "big.md", "x" * 51)  # bypass quota via backend
         result = toolkit.read_file("big.md")
@@ -185,7 +185,7 @@ class TestReadFileTool:
 
     def test_too_long_guard_bypassed_for_chunked_read(self, tmp_path):
         backend = LocalFileSystem(root=tmp_path)
-        fs = AgentFS(fs=backend, namespace="radar", max_file_bytes=10)
+        fs = FileSystem(backend=backend, namespace="radar", max_file_bytes=10)
         toolkit = fs.tools()
         backend.write("radar", "big.md", "line1\nline2\nline3\n")
         assert toolkit.read_file("big.md", start_line=2, end_line=2) == "     2\tline2"
@@ -208,7 +208,7 @@ class TestErrorStringsVerbatim:
         assert toolkit.delete_file("a.md") == "Error: file not found: a.md"
 
     def test_quota_file_string(self, tmp_path):
-        fs = AgentFS(fs=LocalFileSystem(root=tmp_path), namespace="radar", max_file_bytes=10)
+        fs = FileSystem(backend=LocalFileSystem(root=tmp_path), namespace="radar", max_file_bytes=10)
         toolkit = fs.tools()
         result = toolkit.write_file("a.md", "0123456789x")
         assert result == (
@@ -218,7 +218,7 @@ class TestErrorStringsVerbatim:
         )
 
     def test_quota_namespace_string(self, tmp_path):
-        fs = AgentFS(fs=LocalFileSystem(root=tmp_path), namespace="radar", max_namespace_bytes=10)
+        fs = FileSystem(backend=LocalFileSystem(root=tmp_path), namespace="radar", max_namespace_bytes=10)
         toolkit = fs.tools()
         toolkit.write_file("a.md", "123456")
         result = toolkit.write_file("b.md", "78901")
@@ -331,7 +331,7 @@ class TestListFilesTool:
         backend = LocalFileSystem(root=tmp_path)
         for i in range(501):
             backend.write("radar", f"d{i:03d}/f.md", "x")
-        fs = AgentFS(fs=backend, namespace="radar")
+        fs = FileSystem(backend=backend, namespace="radar")
         payload = json.loads(fs.tools().list_files())
         dir_entries = [e for e in payload["files"] if e["type"] == "dir"]
         assert len(dir_entries) == 501  # 500 real + the truncation marker
@@ -369,7 +369,7 @@ class TestTemplatedResolution:
     @pytest.fixture
     def user_toolkit(self, tmp_path):
         backend = LocalFileSystem(root=tmp_path)
-        fs = AgentFS(fs=backend, namespace="radar/{user_id}")
+        fs = FileSystem(backend=backend, namespace="radar/{user_id}")
         return backend, fs.tools()
 
     def test_missing_user_id_fails_closed(self, user_toolkit):
@@ -393,7 +393,7 @@ class TestTemplatedResolution:
 
     def test_agent_id_resolves_on_plain_agent(self, tmp_path):
         backend = LocalFileSystem(root=tmp_path)
-        fs = AgentFS(fs=backend, namespace="ws/{agent_id}")
+        fs = FileSystem(backend=backend, namespace="ws/{agent_id}")
         toolkit = fs.tools()
         agent = Agent(id="agent-1", name="Radar")
         result = toolkit.append_file("notes/a.md", "x", agent=agent)
@@ -403,7 +403,7 @@ class TestTemplatedResolution:
     def test_agent_id_fails_closed_on_team_leader(self, tmp_path):
         # A Team leader's own tools get `team` injected but never `agent`
         # (team/_tools.py), so a leader-attached {agent_id} fails closed.
-        fs = AgentFS(fs=LocalFileSystem(root=tmp_path), namespace="ws/{agent_id}")
+        fs = FileSystem(backend=LocalFileSystem(root=tmp_path), namespace="ws/{agent_id}")
         toolkit = fs.tools()
         member = Agent(id="member-1", name="Member")
         team = Team(id="team-1", name="T", members=[member])
@@ -412,7 +412,7 @@ class TestTemplatedResolution:
 
     def test_team_id_resolves_on_leader_and_member(self, tmp_path):
         backend = LocalFileSystem(root=tmp_path)
-        fs = AgentFS(fs=backend, namespace="shared/{team_id}")
+        fs = FileSystem(backend=backend, namespace="shared/{team_id}")
         toolkit = fs.tools()
         member = Agent(id="member-1", name="Member")
         team = Team(id="team-1", name="T", members=[member])
@@ -424,7 +424,7 @@ class TestTemplatedResolution:
         assert content == "from-leader\nfrom-member\n"
 
     def test_team_id_fails_closed_on_plain_agent(self, tmp_path):
-        fs = AgentFS(fs=LocalFileSystem(root=tmp_path), namespace="shared/{team_id}")
+        fs = FileSystem(backend=LocalFileSystem(root=tmp_path), namespace="shared/{team_id}")
         toolkit = fs.tools()
         agent = Agent(id="agent-1", name="Solo")
         result = toolkit.append_file("a.md", "x", agent=agent)
@@ -439,7 +439,7 @@ class TestTemplatedResolution:
 
     def test_resolution_through_real_function_call_machinery(self, tmp_path):
         backend = LocalFileSystem(root=tmp_path)
-        fs = AgentFS(fs=backend, namespace="shared/{team_id}")
+        fs = FileSystem(backend=backend, namespace="shared/{team_id}")
         toolkit = fs.tools()
         member = Agent(id="member-1", name="Member")
         team = Team(id="team-1", name="T", members=[member])

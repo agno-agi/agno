@@ -1,8 +1,8 @@
-"""DbFileSystem — the database backend for AgentFS (Postgres + SQLite).
+"""DbFileSystem — the database backend for FileSystem (Postgres + SQLite).
 
 Standalone storage component in the VectorDb family: ``db_url``/``db_engine``
 constructor, owns its ``Table``, creates it lazily on first use. Deliberately
-not on the ``BaseDb`` contract — AgentFS is a pure tool component, not platform
+not on the ``BaseDb`` contract — FileSystem is a pure tool component, not platform
 state. Natively full: every operation is implemented, append and move are
 atomic, and rows are versioned.
 """
@@ -14,7 +14,7 @@ import time
 from typing import List, Optional, Sequence, Set
 
 from agno.fs._paths import build_chunk, path_sort_key
-from agno.fs.base import FileSystem, _extract_snippet
+from agno.fs.base import BaseFS, _extract_snippet
 from agno.fs.errors import QuotaExceededError, VersionConflictError
 from agno.fs.types import FileMeta, NamespaceUsage, SearchMatch
 from agno.utils.log import log_debug
@@ -47,7 +47,7 @@ except ImportError:
 SUPPORTED_DIALECTS = ("postgresql", "sqlite")
 
 
-class DbFileSystem(FileSystem):
+class DbFileSystem(BaseFS):
     """Database-backed file storage: one row per ``(namespace_id, path)``.
 
     Safe for multi-worker deployments — all coordination happens in the

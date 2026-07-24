@@ -15,18 +15,18 @@ import time
 from pathlib import Path
 
 from agno.agent import Agent
-from agno.fs import AgentFS
+from agno.fs import FileSystem
 from agno.fs.db import DbFileSystem
 from agno.models.openai import OpenAIResponses
 
 # ---------------------------------------------------------------------------
-# Create AgentFS
+# Create FileSystem
 # ---------------------------------------------------------------------------
 Path("tmp").mkdir(exist_ok=True)
 DB_FILE = os.environ.get("AGNO_FS_DB") or f"tmp/agent_fs_tenants_{int(time.time())}.db"
 
 db_fs = DbFileSystem(db_url=f"sqlite:///{DB_FILE}")
-fs = AgentFS(fs=db_fs, namespace="assistant/{user_id}")
+fs = FileSystem(backend=db_fs, namespace="assistant/{user_id}")
 
 # ---------------------------------------------------------------------------
 # Create Agent - one instance serves every user

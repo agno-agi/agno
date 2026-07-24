@@ -1,4 +1,4 @@
-"""LocalFileSystem — real-disk backend for AgentFS.
+"""LocalFileSystem — real-disk backend for FileSystem.
 
 Dev/tests backend, and proof that the storage seam is real. Layout is
 ``root/<namespace>/<path>``; parents are created on demand.
@@ -13,13 +13,13 @@ from typing import List, Optional, Union
 
 from agno.exceptions import PathSecurityError
 from agno.fs._paths import build_chunk, path_in_directory
-from agno.fs.base import FileSystem
+from agno.fs.base import BaseFS
 from agno.fs.errors import InvalidPathError, QuotaExceededError, UnsupportedOperationError
 from agno.fs.types import FileMeta
 from agno.utils.path_safety import safe_join_relative_path
 
 
-class LocalFileSystem(FileSystem):
+class LocalFileSystem(BaseFS):
     """Real-disk backend: files live at ``root/<namespace>/<path>``.
 
     Single-process by contract: ``append`` is a tail-check plus ``open("a")`` —

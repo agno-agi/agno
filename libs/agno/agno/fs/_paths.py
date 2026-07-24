@@ -1,4 +1,4 @@
-"""Path, namespace-name, directory and line normalization for AgentFS.
+"""Path, namespace-name, directory and line normalization for FileSystem.
 
 Pure string logic — no disk, no database. One grammar covers file paths,
 namespace names and directory parameters; one line transform covers both
@@ -28,7 +28,7 @@ def _invalid_path(original: object, reason: str) -> InvalidPathError:
 
 
 def normalize_path(path: str) -> str:
-    """Validate and canonicalize a file path (or namespace name) per the AgentFS grammar.
+    """Validate and canonicalize a file path (or namespace name) per the FileSystem grammar.
 
     Canonical form has no leading slash. Raises ``InvalidPathError`` on any violation.
     """

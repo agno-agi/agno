@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import List
 
 from agno.agent import Agent
-from agno.fs import AgentFS
+from agno.fs import FileSystem
 from agno.fs.db import DbFileSystem
 from agno.models.openai import OpenAIResponses
 from agno.run import RunContext
@@ -23,7 +23,7 @@ from agno.run import RunContext
 VIP_USERS = {"alice"}
 
 # ---------------------------------------------------------------------------
-# Create AgentFS factory
+# Create FileSystem factory
 # ---------------------------------------------------------------------------
 Path("tmp").mkdir(exist_ok=True)
 DB_FILE = os.environ.get("AGNO_FS_DB") or f"tmp/agent_fs_factory_{int(time.time())}.db"
@@ -34,7 +34,7 @@ db_fs = DbFileSystem(db_url=f"sqlite:///{DB_FILE}")
 def fs_for_user(run_context: RunContext) -> List:
     tier = "vip" if run_context.user_id in VIP_USERS else "standard"
     namespace = f"support/{tier}/{run_context.user_id}"
-    return [AgentFS(fs=db_fs, namespace=namespace).tools()]
+    return [FileSystem(backend=db_fs, namespace=namespace).tools()]
 
 
 # ---------------------------------------------------------------------------
@@ -58,7 +58,7 @@ if __name__ == "__main__":
     )
 
     print("namespaces chosen by the factory:")
-    vip = AgentFS(fs=db_fs, namespace="support/vip/alice")
-    standard = AgentFS(fs=db_fs, namespace="support/standard/carol")
+    vip = FileSystem(backend=db_fs, namespace="support/vip/alice")
+    standard = FileSystem(backend=db_fs, namespace="support/standard/carol")
     print("support/vip/alice      ->", repr(vip.read("cases/open.md")))
     print("support/standard/carol ->", repr(standard.read("cases/open.md")))

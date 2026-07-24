@@ -6,7 +6,7 @@ import os
 import pytest
 from sqlalchemy import create_engine, text
 
-from agno.fs import AgentFS
+from agno.fs import FileSystem
 from agno.fs.db import DbFileSystem
 from agno.fs.errors import VersionConflictError
 
@@ -50,7 +50,7 @@ class TestMembershipPredicate:
 
     def test_round_trip_dedupe_regression(self, db_fs):
         # append("  a\r\nb  \r\n") then contains(["  a", "b  "]) — spec D13.
-        fs = AgentFS(fs=db_fs, namespace="roundtrip")
+        fs = FileSystem(backend=db_fs, namespace="roundtrip")
         fs.append("seen/2026-07-24.md", "  a\r\nb  \r\n")
         result = fs.contains(["  a", "b  "], directory="seen")
         assert result.found == ["  a", "b  "]
@@ -58,14 +58,14 @@ class TestMembershipPredicate:
 
     def test_u2028_round_trip(self, db_fs):
         # A splitlines() split would store two rows and return missing forever.
-        fs = AgentFS(fs=db_fs, namespace="roundtrip")
+        fs = FileSystem(backend=db_fs, namespace="roundtrip")
         fs.append("seen/log.md", "a\u2028b\n")
         assert fs.read("seen/log.md") == "a\u2028b\n"
         assert fs.contains(["a\u2028b"]).found == ["a\u2028b"]
 
     def test_list_sorted_by_path_segments(self, db_fs):
         # Neither the Postgres ORDER BY order nor the raw-string order (spec D2/D13).
-        fs = AgentFS(fs=db_fs, namespace="sorting")
+        fs = FileSystem(backend=db_fs, namespace="sorting")
         fs.write("seen/a.md", "1")
         fs.write("seen.md", "2")
         fs.write("seen-old/a.md", "3")

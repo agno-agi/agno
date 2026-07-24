@@ -1,5 +1,5 @@
 """
-AgentFS - Local Backend
+FileSystem - Local Backend
 =======================
 
 The storage backend is a seam: swap DbFileSystem for LocalFileSystem (real
@@ -14,17 +14,17 @@ import time
 from pathlib import Path
 
 from agno.agent import Agent
-from agno.fs import AgentFS
+from agno.fs import FileSystem
 from agno.fs.local import LocalFileSystem
 from agno.models.openai import OpenAIResponses
 
 # ---------------------------------------------------------------------------
-# Create AgentFS
+# Create FileSystem
 # ---------------------------------------------------------------------------
 Path("tmp").mkdir(exist_ok=True)
 ROOT = os.environ.get("AGNO_FS_ROOT") or f"tmp/agent_fs_local_{int(time.time())}"
 
-fs = AgentFS(fs=LocalFileSystem(root=ROOT), namespace="getting-started")
+fs = FileSystem(backend=LocalFileSystem(root=ROOT), namespace="getting-started")
 
 # ---------------------------------------------------------------------------
 # Create Agent - identical to the database-backed version

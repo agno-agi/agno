@@ -15,13 +15,13 @@ The toolkit's built-in instructions already teach the check-before-act protocol 
 
 - Recurring jobs that must report only what is new: news digests, changelog watchers, inbox triage.
 - Crawlers and monitors keeping a visited-set: URLs fetched, IDs processed, sources read.
-- Any "have I already handled this exact item?" question — exact-line matching, not similarity. For checkpointing partial progress through one long task instead, see [`_03_working_state/`](../_03_working_state/). For getting started with AgentFS itself, see [`_01_getting_started/`](../_01_getting_started/).
+- Any "have I already handled this exact item?" question — exact-line matching, not similarity. For checkpointing partial progress through one long task instead, see [`_03_working_state/`](../_03_working_state/). For getting started with FileSystem itself, see [`_01_getting_started/`](../_01_getting_started/).
 
 ## Run
 
 ```bash
-python cookbook/agent_fs/_02_durable_records/basic.py
-python cookbook/agent_fs/_02_durable_records/radar_news_delta.py
+python cookbook/filesystem/_02_durable_records/basic.py
+python cookbook/filesystem/_02_durable_records/radar_news_delta.py
 ```
 
 Requires `OPENAI_API_KEY`.

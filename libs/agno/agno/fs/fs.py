@@ -1,20 +1,20 @@
-"""AgentFS — a durable, private filesystem for agents.
+"""FileSystem — a durable, private filesystem for agents.
 
 To the agent it looks exactly like a normal filesystem toolkit; underneath it is
-a pluggable ``FileSystem`` backend, database by default. Use it for the agent's
+a pluggable ``BaseFS`` backend, database by default. Use it for the agent's
 own working state: records of items already processed, decisions, progress
 checkpoints — the fourth kind of state (not memory, not session, not knowledge).
 
 Attach with one line — the toolkit carries its own instructions:
 
     from agno.agent import Agent
-    from agno.fs import AgentFS
+    from agno.fs import FileSystem
     from agno.fs.db import DbFileSystem
 
-    fs = AgentFS(fs=DbFileSystem(db_url=...), namespace="radar")
+    fs = FileSystem(backend=DbFileSystem(db_url=...), namespace="radar")
     agent = Agent(tools=[fs.tools()], instructions="my instructions")
 
-AgentFS is also a complete durable-filesystem API without any Agent:
+FileSystem is also a complete durable-filesystem API without any Agent:
 ``fs.read(...)``, ``fs.append(...)``, ``fs.contains(...)`` from plain Python.
 """
 
@@ -33,7 +33,7 @@ from agno.fs._paths import (
     parse_namespace_template,
     path_sort_key,
 )
-from agno.fs.base import FileSystem
+from agno.fs.base import BaseFS
 from agno.fs.errors import InvalidPathError, QuotaExceededError
 from agno.fs.types import ContainsResult, FileMeta, NamespaceUsage, SearchMatch
 
@@ -82,7 +82,7 @@ Conventions:
   need an exact answer about specific records."""
 
 
-class AgentFS:
+class FileSystem:
     """A durable, private filesystem scoped to one namespace.
 
     ``fs`` is the storage backend; ``namespace`` names this agent's file store
@@ -101,13 +101,13 @@ class AgentFS:
 
     def __init__(
         self,
-        fs: FileSystem,
+        backend: BaseFS,
         namespace: str,
         *,
         max_file_bytes: int = 1_000_000,
         max_namespace_bytes: int = 20_000_000,
     ) -> None:
-        self.fs = fs
+        self.backend = backend
         self.namespace = normalize_namespace(namespace)
         self.max_file_bytes = max_file_bytes
         self.max_namespace_bytes = max_namespace_bytes
@@ -135,7 +135,7 @@ class AgentFS:
         user_id: Optional[str] = None,
         agent_id: Optional[str] = None,
         team_id: Optional[str] = None,
-    ) -> "AgentFS":
+    ) -> "FileSystem":
         """Bind a templated namespace to concrete values and return the bound instance.
 
         Values are validated as single path segments. Placeholders without a
@@ -152,14 +152,14 @@ class AgentFS:
             if value is None:
                 continue
             name = name.replace("{" + placeholder + "}", normalize_template_value(placeholder, value))
-        return AgentFS(
-            fs=self.fs,
+        return FileSystem(
+            backend=self.backend,
             namespace=name,
             max_file_bytes=self.max_file_bytes,
             max_namespace_bytes=self.max_namespace_bytes,
         )
 
-    def _resolve_from_context(self, run_context: Any = None, agent: Any = None, team: Any = None) -> "AgentFS":
+    def _resolve_from_context(self, run_context: Any = None, agent: Any = None, team: Any = None) -> "FileSystem":
         """Resolve template placeholders from framework-injected context. Fails closed.
 
         ``{user_id}`` reads ``run_context.user_id``; ``{agent_id}`` reads the
@@ -184,7 +184,7 @@ class AgentFS:
     def read(self, path: str) -> Optional[str]:
         """Return the file's content, or ``None`` if it does not exist."""
         namespace = self._require_resolved()
-        return self.fs.read(namespace, normalize_path(path))
+        return self.backend.read(namespace, normalize_path(path))
 
     def write(
         self,
@@ -211,12 +211,12 @@ class AgentFS:
                 limit=self.max_file_bytes,
             )
         parent = "/".join(normalized.split("/")[:-1])
-        existing = next((m for m in self.fs.list(namespace, parent) if m.path == normalized), None)
+        existing = next((m for m in self.backend.list(namespace, parent) if m.path == normalized), None)
         if existing is not None and not overwrite:
             raise FileExistsError(f"file exists: {normalized}")
         delta = size_bytes - (existing.size_bytes if existing is not None else 0)
         if delta > 0:
-            current_usage = self.fs.usage(namespace)
+            current_usage = self.backend.usage(namespace)
             if current_usage.total_bytes + delta > self.max_namespace_bytes:
                 raise QuotaExceededError(
                     f"storage is full ({current_usage.total_bytes} of {self.max_namespace_bytes} bytes)",
@@ -224,7 +224,7 @@ class AgentFS:
                     current=current_usage.total_bytes,
                     limit=self.max_namespace_bytes,
                 )
-        return self.fs.write(namespace, normalized, content, expected_version=expected_version)
+        return self.backend.write(namespace, normalized, content, expected_version=expected_version)
 
     def append(self, path: str, content: str) -> FileMeta:
         """Append line-oriented content, creating the file if missing.
@@ -236,12 +236,12 @@ class AgentFS:
         normalized = normalize_path(path)
         chunk = build_chunk(content)
         if not chunk:
-            existing = self.fs._stat(namespace, normalized)
+            existing = self.backend._stat(namespace, normalized)
             if existing is not None:
                 return existing
             return FileMeta(path=normalized, size_bytes=0, version=None, updated_at=None)
         chunk_bytes = len(chunk.encode("utf-8"))
-        current_usage = self.fs.usage(namespace)
+        current_usage = self.backend.usage(namespace)
         # The separator is unknown client-side, so estimate it at 1 byte — over, never under.
         if current_usage.total_bytes + chunk_bytes + 1 > self.max_namespace_bytes:
             raise QuotaExceededError(
@@ -250,23 +250,23 @@ class AgentFS:
                 current=current_usage.total_bytes,
                 limit=self.max_namespace_bytes,
             )
-        return self.fs.append(namespace, normalized, chunk, max_file_bytes=self.max_file_bytes)
+        return self.backend.append(namespace, normalized, chunk, max_file_bytes=self.max_file_bytes)
 
     def move(self, src: str, dst: str, *, overwrite: bool = False) -> FileMeta:
         """Move or rename a file. Raises ``FileNotFoundError`` if ``src`` is missing,
         ``FileExistsError`` if ``dst`` exists and ``overwrite`` is False."""
         namespace = self._require_resolved()
-        return self.fs.move(namespace, normalize_path(src), normalize_path(dst), overwrite=overwrite)
+        return self.backend.move(namespace, normalize_path(src), normalize_path(dst), overwrite=overwrite)
 
     def delete(self, path: str) -> bool:
         """Delete a file. Returns ``True`` if it existed."""
         namespace = self._require_resolved()
-        return self.fs.delete(namespace, normalize_path(path))
+        return self.backend.delete(namespace, normalize_path(path))
 
     def list(self, directory: str = "") -> List[FileMeta]:
         """List files under ``directory`` (``""`` or ``"."`` = namespace root), sorted by path segments."""
         namespace = self._require_resolved()
-        metas = self.fs.list(namespace, normalize_directory(directory))
+        metas = self.backend.list(namespace, normalize_directory(directory))
         return sorted(metas, key=lambda m: path_sort_key(m.path))
 
     def search(self, query: str, directory: str = "", limit: int = 10) -> List[SearchMatch]:
@@ -274,7 +274,7 @@ class AgentFS:
         namespace = self._require_resolved()
         if not query or not query.strip():
             return []
-        return self.fs.search(namespace, query, normalize_directory(directory), limit)
+        return self.backend.search(namespace, query, normalize_directory(directory), limit)
 
     def contains(self, lines: Sequence[str], directory: str = "") -> ContainsResult:
         """Batch exact-line membership check, input order preserved.
@@ -289,7 +289,7 @@ class AgentFS:
         normalized_lines = normalize_check_lines(lines)
         if not normalized_lines:
             return ContainsResult(found=[], missing=[])
-        found_set = self.fs.contains(namespace, normalized_lines, normalized_directory)
+        found_set = self.backend.contains(namespace, normalized_lines, normalized_directory)
         return ContainsResult(
             found=[line for line in normalized_lines if line in found_set],
             missing=[line for line in normalized_lines if line not in found_set],
@@ -298,7 +298,7 @@ class AgentFS:
     def usage(self) -> NamespaceUsage:
         """Aggregate file count and total bytes for this namespace."""
         namespace = self._require_resolved()
-        return self.fs.usage(namespace)
+        return self.backend.usage(namespace)
 
     # ------------------------------------------------------------------
     # Programmatic API (async twins)
@@ -364,9 +364,9 @@ class AgentFS:
         read-only instructions variant. ``**kwargs`` forwards to ``Toolkit``
         (e.g. ``include_tools``, ``requires_confirmation_tools``).
         """
-        from agno.fs.toolkit import AgentFSTools
+        from agno.fs.toolkit import FileSystemTools
 
-        return AgentFSTools(fs=self, read_only=read_only, **kwargs)
+        return FileSystemTools(fs=self, read_only=read_only, **kwargs)
 
     @staticmethod
     def instructions(read_only: bool = False) -> str:

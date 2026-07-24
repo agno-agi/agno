@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import List
 
 from agno.agent import Agent
-from agno.fs import AgentFS
+from agno.fs import FileSystem
 from agno.fs.db import DbFileSystem
 from agno.models.openai import OpenAIResponses
 
@@ -37,7 +37,7 @@ FEED_TUESDAY = FEED_MONDAY + [
 TODAY = date.today().isoformat()
 
 # ---------------------------------------------------------------------------
-# Create AgentFS
+# Create FileSystem
 # ---------------------------------------------------------------------------
 Path("tmp").mkdir(exist_ok=True)
 # Fresh per-run db so this demo starts clean on every execution. A real
@@ -45,7 +45,7 @@ Path("tmp").mkdir(exist_ok=True)
 # process re-reports everything, the exact bug Radar exists to fix.
 DB_FILE = os.environ.get("AGNO_FS_DB") or f"tmp/agent_fs_radar_{int(time.time())}.db"
 
-fs = AgentFS(fs=DbFileSystem(db_url=f"sqlite:///{DB_FILE}"), namespace="radar")
+fs = FileSystem(backend=DbFileSystem(db_url=f"sqlite:///{DB_FILE}"), namespace="radar")
 
 # ---------------------------------------------------------------------------
 # Create Agent

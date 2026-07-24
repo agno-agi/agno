@@ -16,19 +16,19 @@ import time
 from pathlib import Path
 
 from agno.agent import Agent
-from agno.fs import AgentFS
+from agno.fs import FileSystem
 from agno.fs.db import DbFileSystem
 from agno.models.openai import OpenAIResponses
 
 # ---------------------------------------------------------------------------
-# Create AgentFS - same backend, same namespace name, two surfaces
+# Create FileSystem - same backend, same namespace name, two surfaces
 # ---------------------------------------------------------------------------
 Path("tmp").mkdir(exist_ok=True)
 DB_FILE = os.environ.get("AGNO_FS_DB") or f"tmp/agent_fs_shared_{int(time.time())}.db"
 
 db_fs = DbFileSystem(db_url=f"sqlite:///{DB_FILE}")
-producer_fs = AgentFS(fs=db_fs, namespace="research/decisions")
-consumer_fs = AgentFS(fs=db_fs, namespace="research/decisions")
+producer_fs = FileSystem(backend=db_fs, namespace="research/decisions")
+consumer_fs = FileSystem(backend=db_fs, namespace="research/decisions")
 
 # ---------------------------------------------------------------------------
 # Create Agents

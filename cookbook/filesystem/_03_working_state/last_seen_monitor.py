@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Dict
 
 from agno.agent import Agent
-from agno.fs import AgentFS
+from agno.fs import FileSystem
 from agno.fs.db import DbFileSystem
 from agno.models.openai import OpenAIResponses
 
@@ -32,7 +32,7 @@ READINGS_TUESDAY = {
 }
 
 # ---------------------------------------------------------------------------
-# Create AgentFS
+# Create FileSystem
 # ---------------------------------------------------------------------------
 Path("tmp").mkdir(exist_ok=True)
 # Fresh per-run db so the demo always starts at the baseline. A real scheduled
@@ -40,8 +40,8 @@ Path("tmp").mkdir(exist_ok=True)
 # baseline and reports nothing but baselines.
 DB_FILE = os.environ.get("AGNO_FS_DB") or f"tmp/agent_fs_monitor_{int(time.time())}.db"
 
-fs = AgentFS(
-    fs=DbFileSystem(db_url=f"sqlite:///{DB_FILE}"), namespace="latency-monitor"
+fs = FileSystem(
+    backend=DbFileSystem(db_url=f"sqlite:///{DB_FILE}"), namespace="latency-monitor"
 )
 
 # ---------------------------------------------------------------------------

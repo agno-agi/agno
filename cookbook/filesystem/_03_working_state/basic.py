@@ -15,7 +15,7 @@ import time
 from pathlib import Path
 
 from agno.agent import Agent
-from agno.fs import AgentFS
+from agno.fs import FileSystem
 from agno.fs.db import DbFileSystem
 from agno.models.openai import OpenAIResponses
 
@@ -27,7 +27,7 @@ STEPS = [
 ]
 
 # ---------------------------------------------------------------------------
-# Create AgentFS
+# Create FileSystem
 # ---------------------------------------------------------------------------
 Path("tmp").mkdir(exist_ok=True)
 # Fresh per-run db so the demo starts from step 1 every execution. A real
@@ -37,7 +37,7 @@ DB_FILE = (
     os.environ.get("AGNO_FS_DB") or f"tmp/agent_fs_checkpoint_{int(time.time())}.db"
 )
 
-fs = AgentFS(fs=DbFileSystem(db_url=f"sqlite:///{DB_FILE}"), namespace="migration")
+fs = FileSystem(backend=DbFileSystem(db_url=f"sqlite:///{DB_FILE}"), namespace="migration")
 
 # ---------------------------------------------------------------------------
 # Create Agent

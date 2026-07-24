@@ -1,22 +1,22 @@
 from __future__ import annotations
 
-from agno.fs.base import FileSystem
+from agno.fs.base import BaseFS
 from agno.fs.errors import (
-    AgentFSError,
+    FileSystemError,
     InvalidPathError,
     QuotaExceededError,
     UnsupportedOperationError,
     VersionConflictError,
 )
-from agno.fs.fs import AgentFS
+from agno.fs.fs import FileSystem
 from agno.fs.types import ContainsResult, FileMeta, NamespaceUsage, SearchMatch
 
 __all__ = [
-    "AgentFS",
-    "AgentFSError",
+    "FileSystem",
+    "FileSystemError",
     "ContainsResult",
     "FileMeta",
-    "FileSystem",
+    "BaseFS",
     "InvalidPathError",
     "NamespaceUsage",
     "QuotaExceededError",

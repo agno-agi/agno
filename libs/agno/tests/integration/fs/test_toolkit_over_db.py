@@ -9,13 +9,13 @@ is parsed; every tool is called against the real backend on both dialects.
 
 import json
 
-from agno.fs import AgentFS
+from agno.fs import FileSystem
 
 NS = "tk"
 
 
 def _fs(db_fs):
-    return AgentFS(fs=db_fs, namespace=NS)
+    return FileSystem(backend=db_fs, namespace=NS)
 
 
 class TestToolkitOverDb:

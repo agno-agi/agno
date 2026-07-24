@@ -1,6 +1,6 @@
 # Operations
 
-Operating AgentFS stores from the outside. Input is a live agent's file store (or one about to go live); output is a healthy, inspected, correctly seeded one. Both recipes are plain Python against the same backend the agent uses — no Agent, no model, no server, no API keys.
+Operating FileSystem stores from the outside. Input is a live agent's file store (or one about to go live); output is a healthy, inspected, correctly seeded one. Both recipes are plain Python against the same backend the agent uses — no Agent, no model, no server, no API keys.
 
 There is no `basic.py` here: these are two independent operational recipes with no simplest-case ordering.
 
@@ -18,8 +18,8 @@ There is no `basic.py` here: these are two independent operational recipes with 
 ## Run
 
 ```bash
-python cookbook/agent_fs/_05_operations/quota_recovery.py
-python cookbook/agent_fs/_05_operations/inspect_namespace.py
+python cookbook/filesystem/_05_operations/quota_recovery.py
+python cookbook/filesystem/_05_operations/inspect_namespace.py
 ```
 
 No environment variables required — neither file uses a model.
