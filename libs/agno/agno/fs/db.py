@@ -55,7 +55,7 @@ with `db_schema=` (SQLite ignores schemas entirely).
 
 
 class DbFileSystem(BaseFS):
-    """Database-backed file storage: one row per ``(namespace_id, path)``.
+    """Database-backed file storage: one row per ``(namespace, path)``.
 
     Safe for multi-worker deployments, since all coordination happens in the
     database: writes are atomic upserts (last-writer-wins, or CAS via
@@ -128,7 +128,7 @@ class DbFileSystem(BaseFS):
         self.table = Table(
             self.table_name,
             self.metadata,
-            Column("namespace_id", String, primary_key=True),
+            Column("namespace", String, primary_key=True),
             Column("path", String, primary_key=True),
             Column("content", Text, nullable=False),
             Column("size_bytes", BigInteger, nullable=False),
@@ -198,7 +198,7 @@ class DbFileSystem(BaseFS):
         self._ensure_table()
         t = self.table
         with self.db_engine.begin() as conn:
-            row = conn.execute(select(t.c.content).where(and_(t.c.namespace_id == namespace, t.c.path == path))).first()
+            row = conn.execute(select(t.c.content).where(and_(t.c.namespace == namespace, t.c.path == path))).first()
         return None if row is None else row[0]
 
     def write(self, namespace: str, path: str, content: str, *, expected_version: Optional[int] = None) -> FileMeta:
@@ -209,7 +209,7 @@ class DbFileSystem(BaseFS):
         if expected_version is not None:
             stmt = (
                 update(t)
-                .where(and_(t.c.namespace_id == namespace, t.c.path == path, t.c.version == expected_version))
+                .where(and_(t.c.namespace == namespace, t.c.path == path, t.c.version == expected_version))
                 .values(content=content, size_bytes=size_bytes, version=t.c.version + 1, updated_at=now)
                 .returning(t.c.version, t.c.size_bytes)
             )
@@ -217,7 +217,7 @@ class DbFileSystem(BaseFS):
                 row = conn.execute(stmt).first()
                 if row is None:
                     actual = conn.execute(
-                        select(t.c.version).where(and_(t.c.namespace_id == namespace, t.c.path == path))
+                        select(t.c.version).where(and_(t.c.namespace == namespace, t.c.path == path))
                     ).scalar()
                     raise VersionConflictError(
                         f"version conflict on {path}: expected {expected_version}, actual {actual}",
@@ -227,7 +227,7 @@ class DbFileSystem(BaseFS):
             return FileMeta(path=path, size_bytes=row[1], version=row[0], updated_at=now)
         insert = self._insert()
         stmt = insert(t).values(
-            namespace_id=namespace,
+            namespace=namespace,
             path=path,
             content=content,
             size_bytes=size_bytes,
@@ -236,7 +236,7 @@ class DbFileSystem(BaseFS):
             updated_at=now,
         )
         stmt = stmt.on_conflict_do_update(
-            index_elements=[t.c.namespace_id, t.c.path],
+            index_elements=[t.c.namespace, t.c.path],
             set_={
                 "content": stmt.excluded.content,
                 "size_bytes": stmt.excluded.size_bytes,
@@ -252,7 +252,7 @@ class DbFileSystem(BaseFS):
         self._ensure_table()
         t = self.table
         stmt = select(t.c.path, t.c.size_bytes, t.c.version, t.c.updated_at).where(
-            and_(t.c.namespace_id == namespace, self._directory_predicate(directory))
+            and_(t.c.namespace == namespace, self._directory_predicate(directory))
         )
         with self.db_engine.begin() as conn:
             rows = conn.execute(stmt).all()
@@ -262,7 +262,7 @@ class DbFileSystem(BaseFS):
         self._ensure_table()
         t = self.table
         with self.db_engine.begin() as conn:
-            result = conn.execute(delete(t).where(and_(t.c.namespace_id == namespace, t.c.path == path)))
+            result = conn.execute(delete(t).where(and_(t.c.namespace == namespace, t.c.path == path)))
         return result.rowcount > 0
 
     # ------------------------------------------------------------------
@@ -275,7 +275,7 @@ class DbFileSystem(BaseFS):
         with self.db_engine.begin() as conn:
             row = conn.execute(
                 select(t.c.size_bytes, t.c.version, t.c.updated_at).where(
-                    and_(t.c.namespace_id == namespace, t.c.path == path)
+                    and_(t.c.namespace == namespace, t.c.path == path)
                 )
             ).first()
         if row is None:
@@ -324,7 +324,7 @@ class DbFileSystem(BaseFS):
 
         insert = self._insert()
         stmt = insert(t).values(
-            namespace_id=namespace,
+            namespace=namespace,
             path=path,
             content=chunk,
             size_bytes=chunk_bytes,
@@ -341,10 +341,10 @@ class DbFileSystem(BaseFS):
         }
         if max_file_bytes is not None:
             stmt = stmt.on_conflict_do_update(
-                index_elements=[t.c.namespace_id, t.c.path], set_=set_, where=(new_size <= max_file_bytes)
+                index_elements=[t.c.namespace, t.c.path], set_=set_, where=(new_size <= max_file_bytes)
             )
         else:
-            stmt = stmt.on_conflict_do_update(index_elements=[t.c.namespace_id, t.c.path], set_=set_)
+            stmt = stmt.on_conflict_do_update(index_elements=[t.c.namespace, t.c.path], set_=set_)
         stmt = stmt.returning(t.c.version, t.c.size_bytes)
 
         with self.db_engine.begin() as conn:
@@ -353,7 +353,7 @@ class DbFileSystem(BaseFS):
                 # Guard blocked the update. Fetch the current tail to report the
                 # exact size the file would have reached.
                 blocked = conn.execute(
-                    select(t.c.size_bytes, tail).where(and_(t.c.namespace_id == namespace, t.c.path == path))
+                    select(t.c.size_bytes, tail).where(and_(t.c.namespace == namespace, t.c.path == path))
                 ).first()
                 if blocked is not None:
                     separator_len = 1 if blocked[0] > 0 and blocked[1] != "\n" else 0
@@ -377,7 +377,7 @@ class DbFileSystem(BaseFS):
         now = int(time.time())
         stmt = (
             update(t)
-            .where(and_(t.c.namespace_id == namespace, t.c.path == src))
+            .where(and_(t.c.namespace == namespace, t.c.path == src))
             .values(path=dst, version=t.c.version + 1, updated_at=now)
             .returning(t.c.version, t.c.size_bytes)
         )
@@ -395,10 +395,10 @@ class DbFileSystem(BaseFS):
                             for locked_path in sorted((src, dst)):
                                 conn.execute(
                                     select(t.c.path)
-                                    .where(and_(t.c.namespace_id == namespace, t.c.path == locked_path))
+                                    .where(and_(t.c.namespace == namespace, t.c.path == locked_path))
                                     .with_for_update()
                                 )
-                        conn.execute(delete(t).where(and_(t.c.namespace_id == namespace, t.c.path == dst)))
+                        conn.execute(delete(t).where(and_(t.c.namespace == namespace, t.c.path == dst)))
                     row = conn.execute(stmt).first()
                     if row is None:
                         raise FileNotFoundError(f"file not found: {src}")
@@ -419,7 +419,7 @@ class DbFileSystem(BaseFS):
         padded = literal("\n") + t.c.content + literal("\n")
         line_predicates = [padded.contains("\n" + line + "\n", autoescape=True) for line in lines]
         stmt = select(t.c.content).where(
-            and_(t.c.namespace_id == namespace, self._directory_predicate(directory), or_(*line_predicates))
+            and_(t.c.namespace == namespace, self._directory_predicate(directory), or_(*line_predicates))
         )
         with self.db_engine.begin() as conn:
             rows = conn.execute(stmt)
@@ -440,7 +440,7 @@ class DbFileSystem(BaseFS):
         if not query:
             return []
         t = self.table
-        conditions = [t.c.namespace_id == namespace, self._directory_predicate(directory)]
+        conditions = [t.c.namespace == namespace, self._directory_predicate(directory)]
         if self.dialect == "postgresql":
             conditions.append(t.c.content.icontains(query, autoescape=True))
         stmt = select(t.c.path, t.c.size_bytes, t.c.content).where(and_(*conditions))
@@ -458,7 +458,7 @@ class DbFileSystem(BaseFS):
     def usage(self, namespace: str) -> NamespaceUsage:
         self._ensure_table()
         t = self.table
-        stmt = select(func.count(), func.coalesce(func.sum(t.c.size_bytes), 0)).where(t.c.namespace_id == namespace)
+        stmt = select(func.count(), func.coalesce(func.sum(t.c.size_bytes), 0)).where(t.c.namespace == namespace)
         with self.db_engine.begin() as conn:
             row = conn.execute(stmt).one()
         # Postgres sum(bigint) returns Decimal; coerce so callers (and json.dumps in
