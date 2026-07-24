@@ -7,10 +7,11 @@ from agno.os.interfaces.agui.handlers import is_completion_event, process_comple
 from agno.os.interfaces.agui.state import StreamState
 from agno.run.agent import RunCompletedEvent, RunOutputEvent
 from agno.run.team import TeamRunOutputEvent
+from agno.run.workflow import WorkflowRunOutputEvent
 
 
 def stream_agno_response_as_agui_events(
-    response_stream: Iterator[Union[RunOutputEvent, TeamRunOutputEvent]],
+    response_stream: Iterator[Union[RunOutputEvent, TeamRunOutputEvent, WorkflowRunOutputEvent]],
     thread_id: str,
     run_id: str,
     run_state: Optional[Dict[str, Any]] = None,
@@ -37,7 +38,7 @@ def stream_agno_response_as_agui_events(
 
 
 async def async_stream_agno_response_as_agui_events(
-    response_stream: AsyncIterator[Union[RunOutputEvent, TeamRunOutputEvent]],
+    response_stream: AsyncIterator[Union[RunOutputEvent, TeamRunOutputEvent, WorkflowRunOutputEvent]],
     thread_id: str,
     run_id: str,
     run_state: Optional[Dict[str, Any]] = None,

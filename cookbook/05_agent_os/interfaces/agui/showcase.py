@@ -10,6 +10,7 @@ Imports agents from individual files and mounts them at Dojo-compatible paths.
 
 from agent_with_media import media_agent
 from agentic_chat import agentic_chat_agent
+from agentic_generative_ui import agentic_generative_ui_agent
 from agno.os import AgentOS
 from agno.os.interfaces.agui import AGUI
 from backend_feedback import backend_feedback_agent
@@ -20,10 +21,12 @@ from shared_state import shared_state_agent
 from tool_based_generative_ui import generative_ui_agent
 from tool_confirmation import tool_confirmation_agent
 from user_input import user_input_agent
+from workflow_progress import stock_research_workflow
 
 agent_os = AgentOS(
     agents=[
         agentic_chat_agent,
+        agentic_generative_ui_agent,
         backend_tool_agent,
         hitl_agent,
         generative_ui_agent,
@@ -34,8 +37,10 @@ agent_os = AgentOS(
         user_input_agent,
         backend_feedback_agent,
     ],
+    workflows=[stock_research_workflow],
     interfaces=[
         AGUI(agent=agentic_chat_agent, prefix="/agentic_chat"),
+        AGUI(agent=agentic_generative_ui_agent, prefix="/agentic_generative_ui"),
         AGUI(agent=backend_tool_agent, prefix="/backend_tool_rendering"),
         AGUI(agent=hitl_agent, prefix="/human_in_the_loop"),
         AGUI(agent=generative_ui_agent, prefix="/tool_based_generative_ui"),
@@ -45,6 +50,7 @@ agent_os = AgentOS(
         AGUI(agent=tool_confirmation_agent, prefix="/tool_confirmation"),
         AGUI(agent=user_input_agent, prefix="/user_input"),
         AGUI(agent=backend_feedback_agent, prefix="/backend_feedback"),
+        AGUI(workflow=stock_research_workflow, prefix="/workflow"),
     ],
 )
 app = agent_os.get_app()
@@ -62,4 +68,6 @@ if __name__ == "__main__":
     print("  /tool_confirmation — Email/delete with confirmation")
     print("  /user_input — Text/secret input collection")
     print("  /backend_feedback — Multiple choice selection")
+    print("  /workflow — Workflow progress streaming")
+    print("  /agentic_generative_ui — Plan creation with step progress")
     agent_os.serve(app="showcase:app", reload=True, port=9001)

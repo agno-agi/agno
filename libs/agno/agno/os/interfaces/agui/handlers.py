@@ -1,3 +1,4 @@
+import ast
 import copy
 import json
 import uuid
@@ -16,6 +17,8 @@ from ag_ui.core import (
     RunFinishedEvent,
     StateDeltaEvent,
     StateSnapshotEvent,
+    StepFinishedEvent,
+    StepStartedEvent,
     TextMessageContentEvent,
     TextMessageEndEvent,
     TextMessageStartEvent,
@@ -35,6 +38,7 @@ from agno.run.base import BaseRunOutputEvent
 from agno.run.team import RunContentEvent as TeamRunContentEvent
 from agno.run.team import RunPausedEvent as TeamRunPausedEvent
 from agno.run.team import TeamRunEvent
+from agno.run.workflow import WorkflowRunEvent
 from agno.utils.message import get_text_from_message
 
 EventHandler = Callable[[BaseRunOutputEvent, StreamState], List[BaseEvent]]
@@ -181,6 +185,66 @@ def on_tool_call_started(chunk: BaseRunOutputEvent, state: StreamState) -> List[
     return events
 
 
+def _parse_state_event_result(result: Any) -> Optional[Dict[str, Any]]:
+    """Parse tool result into a state event dict if applicable. Returns parsed dict or None."""
+    # Handle dict directly
+    if isinstance(result, dict):
+        if result.get("type") in ("STATE_SNAPSHOT", "STATE_DELTA"):
+            return result
+        return None
+
+    # Handle string that may be JSON or Python repr
+    if isinstance(result, str):
+        # Try JSON first
+        try:
+            parsed = json.loads(result)
+            if isinstance(parsed, dict) and parsed.get("type") in ("STATE_SNAPSHOT", "STATE_DELTA"):
+                return parsed
+        except (json.JSONDecodeError, TypeError):
+            pass
+
+        # Try Python literal (for repr-style strings with single quotes)
+        try:
+            parsed = ast.literal_eval(result)
+            if isinstance(parsed, dict) and parsed.get("type") in ("STATE_SNAPSHOT", "STATE_DELTA"):
+                return parsed
+        except (ValueError, SyntaxError):
+            pass
+
+    return None
+
+
+def _apply_json_patch(state: Dict[str, Any], ops: List[Dict[str, Any]]) -> None:
+    """Apply JSON patch operations to state in-place."""
+    try:
+        import jsonpatch
+
+        patch = jsonpatch.JsonPatch(ops)
+        patch.apply(state, in_place=True)
+    except Exception:
+        pass
+
+
+def _emit_state_event_from_tool_result(result: Dict[str, Any], state: StreamState) -> List[BaseEvent]:
+    """Convert a tool result state event dict to AG-UI events."""
+    event_type = result["type"]
+    if event_type == "STATE_SNAPSHOT":
+        snapshot = result.get("snapshot", {})
+        if state.run_state is None:
+            state.run_state = {}
+        state.run_state.update(snapshot)
+        state.set_state_snapshot(state.run_state)
+        return [StateSnapshotEvent(type=EventType.STATE_SNAPSHOT, snapshot=snapshot)]
+    elif event_type == "STATE_DELTA":
+        delta = result.get("delta", [])
+        # Apply delta to internal state so final snapshot is correct
+        if state.run_state is not None and delta:
+            _apply_json_patch(state.run_state, delta)
+            state.set_state_snapshot(state.run_state)
+        return [StateDeltaEvent(type=EventType.STATE_DELTA, delta=delta)]
+    return []
+
+
 def on_tool_call_completed(chunk: BaseRunOutputEvent, state: StreamState) -> List[BaseEvent]:
     events: List[BaseEvent] = []
     tool = getattr(chunk, "tool", None)
@@ -194,17 +258,22 @@ def on_tool_call_completed(chunk: BaseRunOutputEvent, state: StreamState) -> Lis
     state.end_tool_call(tool.tool_call_id)
 
     if tool.result is not None:
-        content = to_json_str(tool.result)
-        events.append(
-            ToolCallResultEvent(
-                type=EventType.TOOL_CALL_RESULT,
-                tool_call_id=tool.tool_call_id,
-                content=content,
-                role="tool",
-                # Use tool_call_id as message_id so frontend can link result to the tool call
-                message_id=tool.tool_call_id,
+        # Check if tool returns a state event (for agentic_generative_ui pattern)
+        parsed_state_event = _parse_state_event_result(tool.result)
+        if parsed_state_event:
+            events.extend(_emit_state_event_from_tool_result(parsed_state_event, state))
+        else:
+            content = to_json_str(tool.result)
+            events.append(
+                ToolCallResultEvent(
+                    type=EventType.TOOL_CALL_RESULT,
+                    tool_call_id=tool.tool_call_id,
+                    content=content,
+                    role="tool",
+                    # Use tool_call_id as message_id so frontend can link result to the tool call
+                    message_id=tool.tool_call_id,
+                )
             )
-        )
 
     events.extend(_emit_state_delta(state))
     return events
@@ -290,6 +359,67 @@ def on_reasoning_completed(chunk: BaseRunOutputEvent, state: StreamState) -> Lis
         state.end_reasoning()
 
     return events
+
+
+# =============================================================================
+# Workflow Progress Handlers
+# =============================================================================
+
+
+def _init_workflow_progress(state: StreamState) -> Dict[str, Any]:
+    """Initialize workflow_progress in run_state if not present."""
+    if state.run_state is None:
+        state.run_state = {}
+    if "workflow_progress" not in state.run_state:
+        state.run_state["workflow_progress"] = {"status": "running", "steps": []}
+    return state.run_state["workflow_progress"]
+
+
+def _find_step(steps: List[Dict[str, Any]], step_id: Optional[str]) -> Optional[Dict[str, Any]]:
+    """Find step by id."""
+    if step_id is None:
+        return None
+    for step in steps:
+        if step.get("id") == step_id:
+            return step
+    return None
+
+
+def on_workflow_step_started(chunk: BaseRunOutputEvent, state: StreamState) -> List[BaseEvent]:
+    progress = _init_workflow_progress(state)
+    step_id = getattr(chunk, "step_id", None)
+    step_name = getattr(chunk, "step_name", None) or "Step"
+
+    progress["steps"].append({"id": step_id, "name": step_name, "status": "running"})
+
+    events = _emit_state_delta(state)
+    events.append(StepStartedEvent(type=EventType.STEP_STARTED, step_name=step_name))
+    return events
+
+
+def on_workflow_step_completed(chunk: BaseRunOutputEvent, state: StreamState) -> List[BaseEvent]:
+    progress = _init_workflow_progress(state)
+    step_id = getattr(chunk, "step_id", None)
+    step_name = getattr(chunk, "step_name", None) or "Step"
+
+    step = _find_step(progress["steps"], step_id)
+    if step:
+        step["status"] = "completed"
+
+    events = _emit_state_delta(state)
+    events.append(StepFinishedEvent(type=EventType.STEP_FINISHED, step_name=step_name))
+    return events
+
+
+def on_workflow_step_error(chunk: BaseRunOutputEvent, state: StreamState) -> List[BaseEvent]:
+    progress = _init_workflow_progress(state)
+    step_id = getattr(chunk, "step_id", None)
+
+    step = _find_step(progress["steps"], step_id)
+    if step:
+        step["status"] = "error"
+
+    return _emit_state_delta(state)
 
 
 def on_custom_event(chunk: BaseRunOutputEvent, state: StreamState) -> List[BaseEvent]:
@@ -400,6 +530,17 @@ def on_run_completed(chunk: BaseRunOutputEvent, state: StreamState) -> List[Base
 
             events.append(ToolCallEndEvent(type=EventType.TOOL_CALL_END, tool_call_id=tool.tool_call_id))
 
+    # Handle workflow terminal status
+    event_type = getattr(chunk, "event", None)
+    if event_type == WorkflowRunEvent.workflow_completed:
+        progress = _init_workflow_progress(state)
+        progress["status"] = "completed"
+        events.extend(_emit_state_delta(state))
+    elif event_type == WorkflowRunEvent.workflow_error:
+        progress = _init_workflow_progress(state)
+        progress["status"] = "error"
+        events.extend(_emit_state_delta(state))
+
     # Emit final state snapshot
     if state.run_state is not None:
         authoritative_state = getattr(chunk, "session_state", None)
@@ -417,6 +558,7 @@ def _normalize_event(event: str) -> str:
 
 # Maps normalized event names to handler functions
 HANDLERS: Dict[str, EventHandler] = {
+    # Agent/Team events
     RunEvent.run_content.value: on_run_content,
     RunEvent.tool_call_started.value: on_tool_call_started,
     RunEvent.tool_call_completed.value: on_tool_call_completed,
@@ -425,6 +567,10 @@ HANDLERS: Dict[str, EventHandler] = {
     RunEvent.reasoning_step.value: on_reasoning_step,
     RunEvent.reasoning_completed.value: on_reasoning_completed,
     RunEvent.custom_event.value: on_custom_event,
+    # Workflow step events
+    WorkflowRunEvent.step_started.value: on_workflow_step_started,
+    WorkflowRunEvent.step_completed.value: on_workflow_step_completed,
+    WorkflowRunEvent.step_error.value: on_workflow_step_error,
 }
 
 # Terminal events that trigger completion handling
@@ -434,6 +580,8 @@ _COMPLETION_EVENTS = frozenset(
         RunEvent.run_paused.value,
         TeamRunEvent.run_completed.value,
         TeamRunEvent.run_paused.value,
+        WorkflowRunEvent.workflow_completed.value,
+        WorkflowRunEvent.workflow_error.value,
     }
 )
 

@@ -35,14 +35,15 @@ from agno.os.middleware.user_scope import resolve_run_user_id
 from agno.run.base import RunContext
 from agno.team.remote import RemoteTeam
 from agno.team.team import Team
+from agno.workflow import RemoteWorkflow, Workflow
 
 
 async def run_entity(
-    entity: Union[Agent, RemoteAgent, Team, RemoteTeam],
+    entity: Union[Agent, RemoteAgent, Team, RemoteTeam, Workflow, RemoteWorkflow],
     run_input: RunAgentInput,
     user_id: Optional[str] = None,
 ) -> AsyncIterator[BaseEvent]:
-    """Shared handler for running an Agent or Team with AG-UI input/output mapping.
+    """Shared handler for running an Agent, Team, or Workflow with AG-UI input/output mapping.
 
     ``user_id`` is the server-resolved identity (see the route handler). It is
     deliberately NOT read from ``run_input.forwarded_props`` here: an authenticated
@@ -85,14 +86,25 @@ async def run_entity(
             run_kwargs["add_dependencies_to_context"] = True
 
         # 4. Determine if this is a resume (trailing ToolMessages) or fresh run
-        if tool_messages:
+        if tool_messages and not isinstance(entity, Workflow):
             # Resume: frontend executed external tools and sent results back
+            # Note: Workflow resume is not yet supported via AG-UI
             response_stream = await resume_paused_run(
                 entity=entity,  # type: ignore[arg-type]
                 session_id=run_input.thread_id,
                 tool_messages=tool_messages,
                 run_context=run_context,
                 run_kwargs=run_kwargs,
+            )
+        elif isinstance(entity, (Workflow, RemoteWorkflow)):
+            # Workflow run
+            response_stream = entity.arun(
+                input=user_input,
+                stream=True,
+                stream_events=True,
+                session_id=run_input.thread_id,
+                user_id=user_id,
+                run_id=run_id,
             )
         else:
             # Fresh run: new user input
@@ -125,12 +137,15 @@ async def run_entity(
 
 
 def attach_routes(
-    router: APIRouter, agent: Optional[Union[Agent, RemoteAgent]] = None, team: Optional[Union[Team, RemoteTeam]] = None
+    router: APIRouter,
+    agent: Optional[Union[Agent, RemoteAgent]] = None,
+    team: Optional[Union[Team, RemoteTeam]] = None,
+    workflow: Optional[Union[Workflow, RemoteWorkflow]] = None,
 ) -> APIRouter:
-    if agent is None and team is None:
-        raise ValueError("Either agent or team must be provided.")
+    if agent is None and team is None and workflow is None:
+        raise ValueError("Either agent, team, or workflow must be provided.")
 
-    entity = agent or team
+    entity = agent or team or workflow
     encoder = EventEncoder()
 
     @router.post("/agui", name="run_agent")
