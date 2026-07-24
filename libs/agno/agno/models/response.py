@@ -143,7 +143,7 @@ class ModelResponse:
 
     response_usage: Optional[MessageMetrics] = None
 
-    created_at: int = int(time())
+    created_at: int = field(default_factory=lambda: int(time()))
 
     extra: Optional[Dict[str, Any]] = None
 

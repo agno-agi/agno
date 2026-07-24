@@ -20,6 +20,7 @@ streaming or not).
 | `user_input_required.py` | `user_input_required.py`, `user_input_required_stream.py` |
 | `external_tool_execution.py` | `external_tool_execution.py`, `external_tool_execution_stream.py` |
 | `team_tool_confirmation.py` | `team_tool_confirmation.py`, `team_tool_confirmation_stream.py` |
+| `multi_round_user_input.py` | `multi_round_user_input.py` (multi-round HITL, issue #8925) |
 
 ## Running
 
@@ -30,6 +31,7 @@ streaming or not).
 .venvs/demo/bin/python cookbook/05_agent_os/hitl/user_input_required.py
 .venvs/demo/bin/python cookbook/05_agent_os/hitl/external_tool_execution.py
 .venvs/demo/bin/python cookbook/05_agent_os/hitl/team_tool_confirmation.py
+.venvs/demo/bin/python cookbook/05_agent_os/human_in_the_loop/team/multi_round_user_input.py
 ```
 
 All servers start on port `7776`. View the configuration at `http://localhost:7776/config`.
@@ -43,3 +45,4 @@ All servers start on port `7776`. View the configuration at `http://localhost:77
 | User input required | `@tool(requires_user_input=True, user_input_fields=[...])` | Run pauses until the client provides the requested fields |
 | External execution | `@tool(external_execution=True)` | Run pauses until the client provides the tool result |
 | Team-level tool | `@tool(requires_confirmation=True)` on the team | Same as confirmation but the tool is on the team, not a member |
+| Multi-round input | Multiple `@tool(requires_user_input=True)` tools | Member pauses multiple times; tests chained HITL |

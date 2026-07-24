@@ -36,7 +36,7 @@ web_research_agent = Agent(
 agent_os = AgentOS(
     description="Example app with MCP enabled",
     agents=[web_research_agent],
-    enable_mcp_server=True,  # This enables a LLM-friendly MCP server at /mcp
+    mcp_server=True,  # This enables a LLM-friendly MCP server at /mcp
 )
 
 app = agent_os.get_app()
@@ -52,4 +52,4 @@ if __name__ == "__main__":
     http://localhost:7777/mcp
 
     """
-    agent_os.serve(app="enable_mcp_example:app")
+    agent_os.serve(app="mcp_server_example:app")

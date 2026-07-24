@@ -51,7 +51,7 @@ def test_searxng_search(searxng_instance):
         assert result_data["results"][0]["title"] == "Result 1"
         assert result_data["results"][1]["title"] == "Result 2"
 
-        mock_get.assert_called_once_with("http://localhost:53153/search?format=json&q=test%20query")
+        mock_get.assert_called_once_with("http://localhost:53153/search?format=json&q=test%20query", timeout=30)
 
 
 def test_searxng_search_with_engines(searxng_with_engines):
@@ -66,7 +66,7 @@ def test_searxng_search_with_engines(searxng_with_engines):
         searxng_with_engines.search_web("test query")
 
         expected_url = "http://localhost:53153/search?format=json&q=test%20query&engines=google,bing"
-        mock_get.assert_called_once_with(expected_url)
+        mock_get.assert_called_once_with(expected_url, timeout=30)
 
 
 def test_searxng_search_with_fixed_max_results(searxng_with_fixed_results):
@@ -101,7 +101,7 @@ def test_searxng_image_search(searxng_instance):
         result = searxng_images.image_search("test image")
 
         expected_url = "http://localhost:53153/search?format=json&q=test%20image&categories=images"
-        mock_get.assert_called_once_with(expected_url)
+        mock_get.assert_called_once_with(expected_url, timeout=30)
 
         result_data = json.loads(result)
         assert result_data["results"][0]["title"] == "Image 1"
@@ -120,7 +120,7 @@ def test_searxng_news_search():
         searxng_news.news_search("breaking news")
 
         expected_url = "http://localhost:53153/search?format=json&q=breaking%20news&categories=news"
-        mock_get.assert_called_once_with(expected_url)
+        mock_get.assert_called_once_with(expected_url, timeout=30)
 
 
 def test_searxng_search_error_handling(searxng_instance):
@@ -145,7 +145,7 @@ def test_searxng_query_encoding(searxng_instance):
         searxng_instance.search_web("test query with spaces & symbols")
 
         expected_url = "http://localhost:53153/search?format=json&q=test%20query%20with%20spaces%20%26%20symbols"
-        mock_get.assert_called_once_with(expected_url)
+        mock_get.assert_called_once_with(expected_url, timeout=30)
 
 
 def test_searxng_initialization():
@@ -208,7 +208,7 @@ def test_category_searches(category, method_name):
         result = method("test query")
 
         expected_url = f"http://localhost:53153/search?format=json&q=test%20query&categories={category}"
-        mock_get.assert_called_once_with(expected_url)
+        mock_get.assert_called_once_with(expected_url, timeout=30)
 
         result_data = json.loads(result)
         assert result_data["results"][0]["title"] == "Test"

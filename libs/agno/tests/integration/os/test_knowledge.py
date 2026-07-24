@@ -43,6 +43,7 @@ def mock_knowledge():
     knowledge.apatch_content = AsyncMock()
     knowledge.get_content = Mock()
     knowledge.get_content_by_id = Mock()
+    knowledge.aget_content_by_id = AsyncMock()
     knowledge.remove_content_by_id = Mock()
     knowledge.aremove_content_by_id = AsyncMock()
     knowledge.remove_all_content = Mock()
@@ -164,9 +165,13 @@ def test_upload_content_invalid_json(test_app):
         assert "id" in data
 
 
-def test_edit_content_success(test_app, mock_knowledge):
+def test_edit_content_success(test_app, mock_knowledge, mock_content_row):
     """Test successful content editing."""
-    content_id = str(uuid4())
+    content_id = mock_content_row.id
+
+    # Route pre-checks ownership via aget_content_by_id; return the row so the
+    # scope gate passes.
+    mock_knowledge.aget_content_by_id.return_value = mock_content_row
 
     # Mock the return value of patch_content
     mock_content_dict = {
@@ -199,10 +204,12 @@ def test_edit_content_success(test_app, mock_knowledge):
     mock_knowledge.patch_content.assert_called_once()
 
 
-def test_edit_content_with_invalid_reader(test_app, mock_knowledge):
+def test_edit_content_with_invalid_reader(test_app, mock_knowledge, mock_content_row):
     """Test content editing with invalid reader_id."""
-    content_id = str(uuid4())
+    content_id = mock_content_row.id
     mock_knowledge.readers = {"valid_reader": Mock()}
+    # Route pre-checks ownership before validating the reader_id.
+    mock_knowledge.aget_content_by_id.return_value = mock_content_row
 
     response = test_app.patch(
         f"/knowledge/content/{content_id}", data={"name": "Updated Content", "reader_id": "invalid_reader"}
@@ -229,24 +236,27 @@ def test_get_content_list(test_app, mock_knowledge, mock_content_row):
     assert data["meta"]["limit"] == 10
 
 
-def test_get_content_by_id(test_app, mock_knowledge, mock_content_row):
+def test_get_content_by_id(test_app, mock_knowledge, mock_content):
     """Test getting content by ID."""
-    mock_knowledge.contents_db.get_knowledge_content.return_value = mock_content_row
+    # Route reads Content via aget_content_by_id (not the raw KnowledgeRow),
+    # so return the Content fixture.
+    mock_knowledge.aget_content_by_id.return_value = mock_content
 
-    response = test_app.get(f"/knowledge/content/{mock_content_row.id}")
+    response = test_app.get(f"/knowledge/content/{mock_content.id}")
 
     assert response.status_code == 200
     data = response.json()
-    assert data["id"] == mock_content_row.id
-    assert data["name"] == mock_content_row.name
-    assert data["description"] == mock_content_row.description
-    assert data["status"] == mock_content_row.status
+    assert data["id"] == mock_content.id
+    assert data["name"] == mock_content.name
+    assert data["description"] == mock_content.description
+    assert data["status"] == mock_content.status
 
 
 def test_get_content_by_id_not_found(test_app, mock_knowledge):
     """Test getting content by ID when not found."""
     content_id = str(uuid4())
     mock_knowledge.contents_db.get_knowledge_content.return_value = None
+    mock_knowledge.aget_content_by_id.return_value = None
 
     # Mock the Content constructor to handle None case
     with patch("agno.knowledge.content.Content") as mock_content_class:
@@ -263,6 +273,8 @@ def test_get_content_by_id_not_found(test_app, mock_knowledge):
 def test_delete_content_by_id(test_app, mock_knowledge, mock_content_row):
     """Test deleting content by ID."""
     mock_knowledge.contents_db.get_knowledge_content.return_value = mock_content_row
+    # Route pre-checks ownership before deleting.
+    mock_knowledge.aget_content_by_id.return_value = mock_content_row
 
     response = test_app.delete(f"/knowledge/content/{mock_content_row.id}")
 
@@ -270,8 +282,11 @@ def test_delete_content_by_id(test_app, mock_knowledge, mock_content_row):
     data = response.json()
     assert data["id"] == mock_content_row.id
 
-    # Verify knowledge.remove_content_by_id was called
-    mock_knowledge.aremove_content_by_id.assert_called_once_with(content_id=mock_content_row.id)
+    # Verify knowledge.aremove_content_by_id was called. ``user_id=None`` because
+    # the test app has no auth wired, so ``get_scoped_user_id`` returns None.
+    mock_knowledge.aremove_content_by_id.assert_called_once_with(
+        content_id=mock_content_row.id, user_id=None
+    )
 
 
 def test_delete_all_content(test_app, mock_knowledge):
@@ -600,7 +615,7 @@ def test_search_knowledge_timing(test_app, mock_knowledge):
 
 def test_search_knowledge_document_serialization(test_app, mock_knowledge):
     """Test that Document objects are properly serialized without numpy arrays."""
-    import numpy as np
+    np = pytest.importorskip("numpy", reason="numpy is not part of agno[dev]; agno[tests] carries it")
 
     from agno.knowledge.document import Document
 

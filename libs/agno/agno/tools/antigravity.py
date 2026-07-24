@@ -6,9 +6,11 @@ from typing import Any, Dict, List, Optional, Union
 import httpx
 
 from agno.agent import Agent
+from agno.exceptions import PathSecurityError
 from agno.team import Team
 from agno.tools import Toolkit
 from agno.utils.log import log_debug, log_error, log_warning
+from agno.utils.path_safety import safe_join_relative_path
 
 DEFAULT_BASE_URL = "https://generativelanguage.googleapis.com/v1beta"
 INLINE_SOURCE_MAX_BYTES = 75 * 1024  # API limit for inline source content per file
@@ -162,7 +164,11 @@ class AntigravityTools(Toolkit):
         path = Path(directory)
         if not path.is_dir():
             raise FileNotFoundError(f"agent directory not found: {directory}")
-        config_path = path / "agent.yaml"
+
+        try:
+            config_path = safe_join_relative_path(path, "agent.yaml")
+        except PathSecurityError as e:
+            raise FileNotFoundError(f"agent.yaml not found in {directory}") from e
         if not config_path.is_file():
             raise FileNotFoundError(f"agent.yaml not found in {directory}")
         config = yaml.safe_load(config_path.read_text()) or {}
@@ -173,9 +179,12 @@ class AntigravityTools(Toolkit):
             raise ValueError("agent.yaml must contain both `id` and `base_agent`")
 
         instructions = config.get("system_instruction")
-        agents_md = path / "AGENTS.md"
-        if agents_md.is_file():
-            instructions = agents_md.read_text()
+        try:
+            agents_md = safe_join_relative_path(path, "AGENTS.md")
+            if agents_md.is_file():
+                instructions = agents_md.read_text()
+        except PathSecurityError:
+            pass
 
         sources = self._build_sources_from_directory(path)
 
@@ -236,17 +245,22 @@ class AntigravityTools(Toolkit):
                 return
             sources.append({"type": "inline", "content": content, "target": target})
 
-        workspace = path / "workspace"
-        if workspace.is_dir():
-            for f in workspace.rglob("*"):
-                if f.is_file():
-                    add(f, "/" + f.relative_to(workspace).as_posix())
-
-        skills = path / "skills"
-        if skills.is_dir():
-            for f in skills.rglob("*"):
-                if f.is_file():
-                    add(f, "/.agents/skills/" + f.relative_to(skills).as_posix())
+        for source_name, target_prefix in (("workspace", "/"), ("skills", "/.agents/skills/")):
+            try:
+                source_dir = safe_join_relative_path(path, source_name)
+            except PathSecurityError:
+                continue
+            if not source_dir.is_dir():
+                continue
+            for f in source_dir.rglob("*"):
+                if not f.is_file():
+                    continue
+                rel = f.relative_to(source_dir).as_posix()
+                try:
+                    safe_join_relative_path(source_dir, rel)
+                except PathSecurityError:
+                    continue
+                add(f, target_prefix + rel)
 
         return sources
 
