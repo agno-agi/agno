@@ -109,7 +109,7 @@ class TestColdStartAndCyclicMoves:
         from agno.fs.db import DbFileSystem
 
         engine = db_fs.db_engine
-        cold_table = "agno_agent_fs_cold_start"
+        cold_table = "agno_fs_cold_start"
         schema_prefix = f"{db_fs.db_schema}." if db_fs.db_schema else ""
         with engine.begin() as conn:
             conn.execute(sql_text(f"DROP TABLE IF EXISTS {schema_prefix}{cold_table}"))

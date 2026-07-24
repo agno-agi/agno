@@ -1,9 +1,7 @@
-"""BaseFS: the storage backend under FileSystem.
+"""BaseFS: the storage backend for Agno FileSystem.
 
-Backends store text files by ``(namespace, path)``. Paths and namespace names
-arrive already normalized by ``FileSystem``; backends never normalize. Four core
-operations are required; the rest have base emulations that a backend overrides
-when it can do better (atomically, or in fewer round trips).
+Backends store text files by ``(namespace, path)``.
+Paths and namespace names are normalized by ``FileSystem``.
 """
 
 import asyncio

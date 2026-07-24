@@ -9,7 +9,7 @@ Isolation: this suite gets its OWN Postgres schema, unique per process
 `DROP SCHEMA test_schema CASCADE`; a shared schema (or table) means two concurrent
 pytest processes — cross-suite, or `-p xdist`, or the same suite run twice — clobber
 each other's table between a `create_all(checkfirst=True)` and the DML that follows,
-surfacing as `relation "…agno_agent_fs" does not exist`. A per-process schema removes
+surfacing as `relation "…agno_fs" does not exist`. A per-process schema removes
 every such cross-process race; it is created once and dropped CASCADE at session end.
 """
 

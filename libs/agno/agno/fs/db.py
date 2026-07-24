@@ -1,12 +1,4 @@
-"""DbFileSystem: the database backend for FileSystem (Postgres + SQLite).
-
-Standalone storage component in the VectorDb family: takes an existing agno
-``db`` (``SqliteDb``/``PostgresDb``) or a raw ``db_url``/``db_engine``, owns its
-``Table``, creates it lazily on first use. Deliberately
-not on the ``BaseDb`` contract, because FileSystem is a pure tool component, not platform
-state. Natively full: every operation is implemented, append and move are
-atomic, and rows are versioned.
-"""
+"""DbFileSystem: the database backend for FileSystem (Postgres + SQLite)."""
 
 import threading
 import time
@@ -78,7 +70,7 @@ class DbFileSystem(BaseFS):
         db_url: Optional[str] = None,
         db_engine: Optional[Engine] = None,
         *,
-        table_name: str = "agno_agent_fs",
+        table_name: str = "agno_fs",
         db_schema: Optional[str] = DEFAULT_DB_SCHEMA,
     ) -> None:
         provided = [source for source in (db, db_url, db_engine) if source is not None]
