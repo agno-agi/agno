@@ -1,0 +1,162 @@
+"""LocalFileSystem — real-disk backend for AgentFS.
+
+Dev/tests backend, and proof that the storage seam is real. Layout is
+``root/<namespace>/<path>``; parents are created on demand.
+"""
+
+from __future__ import annotations
+
+import os
+from pathlib import Path
+from typing import List, Optional, Union
+
+from agno.exceptions import PathSecurityError
+from agno.fs._paths import build_chunk, path_in_directory
+from agno.fs.base import FileSystem
+from agno.fs.errors import InvalidPathError, QuotaExceededError, UnsupportedOperationError
+from agno.fs.types import FileMeta
+from agno.utils.path_safety import safe_join_relative_path
+
+
+class LocalFileSystem(FileSystem):
+    """Real-disk backend: files live at ``root/<namespace>/<path>``.
+
+    Single-process by contract: ``append`` is a tail-check plus ``open("a")`` —
+    the check and the append are not one operation, so it races across threads
+    as well as processes (async tool calls run sibling operations in threads).
+    ``write(overwrite=False)`` and ``move(overwrite=False)`` are check-then-act
+    for the same reason. No versioning: ``FileMeta.version`` is ``None`` and
+    ``expected_version`` raises ``UnsupportedOperationError``.
+
+    Disk containment is enforced with ``safe_join_relative_path``, which applies
+    a normalizing map rather than a pure restriction: it NFKC-folds and strips
+    trailing dots/spaces from segments, so two distinct valid paths can collapse
+    onto one on-disk file (``notes/report.`` and ``notes/report`` land on the
+    same file), and Windows reserved device names are rejected. Do not rely on
+    path portability across backends.
+    """
+
+    def __init__(self, root: Union[str, Path]) -> None:
+        self.root: Path = Path(root).resolve()
+
+    # ---- helpers ----
+
+    def _target(self, namespace: str, path: str) -> Path:
+        try:
+            return safe_join_relative_path(self.root, f"{namespace}/{path}")
+        except PathSecurityError as e:
+            raise InvalidPathError(f"invalid path {path!r}: {e}. Use relative paths like notes/topic.md.") from e
+
+    def _namespace_root(self, namespace: str) -> Path:
+        try:
+            return safe_join_relative_path(self.root, namespace)
+        except PathSecurityError as e:
+            raise InvalidPathError(f"invalid path {namespace!r}: {e}. Use relative paths like notes/topic.md.") from e
+
+    @staticmethod
+    def _read_text(target: Path) -> str:
+        # newline="" disables universal-newline translation: contents round-trip byte-exact.
+        with target.open("r", encoding="utf-8", newline="") as f:
+            return f.read()
+
+    def _meta(self, path: str, target: Path) -> FileMeta:
+        stat = target.stat()
+        return FileMeta(path=path, size_bytes=stat.st_size, version=None, updated_at=int(stat.st_mtime))
+
+    # ---- required core ----
+
+    def read(self, namespace: str, path: str) -> Optional[str]:
+        target = self._target(namespace, path)
+        if not target.is_file():
+            return None
+        return self._read_text(target)
+
+    def write(self, namespace: str, path: str, content: str, *, expected_version: Optional[int] = None) -> FileMeta:
+        if expected_version is not None:
+            raise UnsupportedOperationError(
+                "LocalFileSystem does not version files, expected_version is unsupported",
+                operation="write",
+                backend="LocalFileSystem",
+            )
+        target = self._target(namespace, path)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        tmp_path = target.with_name(target.name + ".tmp")
+        try:
+            with tmp_path.open("w", encoding="utf-8", newline="") as f:
+                f.write(content)
+            os.replace(tmp_path, target)
+        finally:
+            if tmp_path.exists():
+                tmp_path.unlink()
+        return self._meta(path, target)
+
+    def list(self, namespace: str, directory: str = "") -> List[FileMeta]:
+        namespace_root = self._namespace_root(namespace)
+        if not namespace_root.is_dir():
+            return []
+        metas: List[FileMeta] = []
+        for dirpath, _dirnames, filenames in os.walk(namespace_root):
+            for filename in filenames:
+                full = Path(dirpath) / filename
+                rel = full.relative_to(namespace_root).as_posix()
+                if not path_in_directory(rel, directory):
+                    continue
+                try:
+                    metas.append(self._meta(rel, full))
+                except OSError:
+                    continue
+        return metas
+
+    def delete(self, namespace: str, path: str) -> bool:
+        target = self._target(namespace, path)
+        if not target.is_file():
+            return False
+        target.unlink()
+        return True
+
+    # ---- native overrides ----
+
+    def append(self, namespace: str, path: str, content: str, *, max_file_bytes: Optional[int] = None) -> FileMeta:
+        chunk = build_chunk(content)
+        target = self._target(namespace, path)
+        if not chunk:
+            if target.is_file():
+                return self._meta(path, target)
+            return FileMeta(path=path, size_bytes=0, version=None, updated_at=None)
+        chunk_bytes = len(chunk.encode("utf-8"))
+        if target.is_file():
+            existing = self._read_text(target)
+            separator = "\n" if existing and not existing.endswith("\n") else ""
+            new_size = len(existing.encode("utf-8")) + len(separator) + chunk_bytes
+            if max_file_bytes is not None and new_size > max_file_bytes:
+                raise QuotaExceededError(
+                    f"{path} would be {new_size} bytes (limit {max_file_bytes} per file)",
+                    scope="file",
+                    current=new_size,
+                    limit=max_file_bytes,
+                )
+            with target.open("a", encoding="utf-8", newline="") as f:
+                f.write(separator + chunk)
+        else:
+            if max_file_bytes is not None and chunk_bytes > max_file_bytes:
+                raise QuotaExceededError(
+                    f"{path} would be {chunk_bytes} bytes (limit {max_file_bytes} per file)",
+                    scope="file",
+                    current=chunk_bytes,
+                    limit=max_file_bytes,
+                )
+            target.parent.mkdir(parents=True, exist_ok=True)
+            with target.open("a", encoding="utf-8", newline="") as f:
+                f.write(chunk)
+        return self._meta(path, target)
+
+    def move(self, namespace: str, src: str, dst: str, *, overwrite: bool = False) -> FileMeta:
+        src_target = self._target(namespace, src)
+        dst_target = self._target(namespace, dst)
+        if not src_target.is_file():
+            raise FileNotFoundError(f"file not found: {src}")
+        if dst_target.exists() and not overwrite:
+            raise FileExistsError(f"file exists: {dst}")
+        dst_target.parent.mkdir(parents=True, exist_ok=True)
+        os.replace(src_target, dst_target)
+        return self._meta(dst, dst_target)
