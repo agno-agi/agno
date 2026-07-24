@@ -183,3 +183,14 @@ class TestLocalListAndIsolation:
         local_fs.write("radar/u42", "f.md", "x")
         assert local_fs.read("radar/u42", "f.md") == "x"
         assert local_fs.read("radar/u43", "f.md") is None
+
+    def test_parent_namespace_does_not_leak_child_namespace(self, local_fs):
+        # A child namespace must not surface inside its name-prefix parent — on disk
+        # the namespace is one percent-encoded component, so "radar" and "radar/alice"
+        # are siblings, not nested. Regression for the flatten-collision leak.
+        local_fs.write("radar/alice", "secret.md", "private")
+        local_fs.write("radar", "own.md", "mine")
+        assert {m.path for m in local_fs.list("radar")} == {"own.md"}
+        assert local_fs.read("radar", "alice/secret.md") is None
+        assert local_fs.delete("radar", "alice/secret.md") is False
+        assert local_fs.read("radar/alice", "secret.md") == "private"
