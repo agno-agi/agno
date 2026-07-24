@@ -38,29 +38,31 @@ agent = Agent(
 # Run
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
+    # Each run records what the AGENT did for that tenant - its own work log, not a
+    # profile of the user (that would be memory). The namespace keeps the logs apart.
     agent.print_response(
-        "Note down in projects/current.md: this run is about the checkout service.",
+        "Append to work-log.md: 'Resolved a duplicate-charge refund on the checkout service.'",
         user_id="alice",
     )
     agent.print_response(
-        "Note down in projects/current.md: this run is about the billing service.",
+        "Append to work-log.md: 'Investigated a failed invoice on the billing service.'",
         user_id="bob",
     )
 
-    print("alice asks - and gets only her own notes:")
+    print("alice asks - and gets only her own work log:")
     agent.print_response(
-        "What is my current project? Check your files.", user_id="alice"
+        "What have you logged for me so far? Check your files.", user_id="alice"
     )
 
     print("anonymous run - fails closed, no shared fallback namespace:")
-    agent.print_response("What is my current project? Check your files.")
+    agent.print_response("What have you logged for me? Check your files.")
 
     print("proof of isolation, straight from the backend:")
     print(
         "assistant/alice ->",
-        repr(fs.resolve(user_id="alice").read("projects/current.md")),
+        repr(fs.resolve(user_id="alice").read("work-log.md")),
     )
     print(
         "assistant/bob   ->",
-        repr(fs.resolve(user_id="bob").read("projects/current.md")),
+        repr(fs.resolve(user_id="bob").read("work-log.md")),
     )

@@ -7,9 +7,9 @@ Re-run fresh at the final sweep (same date): every file in this folder PASS.
 
 **Status:** PASS
 
-**Description:** One static agent with namespace="assistant/{user_id}": alice and bob write to fully isolated stores, alice's recall returns only her note, and an anonymous run (no user_id) fails closed.
+**Description:** One static agent with namespace="assistant/{user_id}": alice and bob each get an isolated work-log of what the agent did for them, alice's recall returns only her log, and an anonymous run (no user_id) fails closed.
 
-**Result:** Alice's recall answered "Your current project is the **checkout service**." (bob's note untouched). The anonymous run reported the tool refusal honestly: "the file tool is unavailable for this run because no `user_id` was provided to the file system". Backend proof printed both namespaces: assistant/alice -> 'This run is about the checkout service.\n', assistant/bob -> 'This run is about the billing service.\n'.
+**Result:** Alice's recall returned only her own work log (bob's untouched). The anonymous run failed closed (the file tool was unavailable with no `user_id`). Backend proof printed both isolated namespaces: assistant/alice -> 'Resolved a duplicate-charge refund on the checkout service.\n', assistant/bob -> 'Investigated a failed invoice on the billing service.\n'.
 
 ---
 

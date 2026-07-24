@@ -235,7 +235,10 @@ class TestErrorStringsVerbatim:
         toolkit.write_file("a.md", "123456")
         result = toolkit.write_file("b.md", "78901")
         assert result == (
-            "Error: storage is full (6 of 10 bytes). Delete files you no longer need (see list_files), then retry."
+            "Error: storage is full (6 of 10 bytes). Delete only files you are certain are obsolete "
+            "(see list_files) — e.g. an old date partition — then retry. Do not overwrite or delete "
+            "records you might still need to make room; if nothing is safely disposable, stop and "
+            "report that storage is full."
         )
 
     def test_check_lines_count_string(self, toolkit):

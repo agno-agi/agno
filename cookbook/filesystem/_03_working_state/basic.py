@@ -56,12 +56,14 @@ agent = Agent(
 # Run
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
+    # Distinct session_ids: session 2 is genuinely fresh (no shared conversation
+    # state), so resuming the migration can only come from the checkpoint file.
     print("session 1: no checkpoint exists yet")
-    agent.print_response("Continue the migration.")
+    agent.print_response("Continue the migration.", session_id="migration-1")
     print("checkpoint after session 1:")
     print(fs.read("state/checkpoint.md"))
 
     print("session 2: a fresh session resumes from the checkpoint")
-    agent.print_response("Continue the migration.")
+    agent.print_response("Continue the migration.", session_id="migration-2")
     print("checkpoint after session 2:")
     print(fs.read("state/checkpoint.md"))

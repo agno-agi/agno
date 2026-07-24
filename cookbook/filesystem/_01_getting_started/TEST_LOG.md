@@ -29,6 +29,6 @@ Re-run fresh at the final sweep (same date): every file in this folder PASS.
 
 **Description:** Same agent code over LocalFileSystem instead of DbFileSystem; prints the real on-disk tree afterwards.
 
-**Result:** Agent called `write_file(path=notes/style.md, content=prefer short answers, overwrite=True)` and `append_file(path=seen/2026-07-24.md, content=https://example.com/a)`, replied "Recorded both items." On-disk tree printed under `tmp/agent_fs_local_1784858047`: `getting-started/notes/style.md` and `getting-started/seen/2026-07-24.md`.
+**Result:** Agent wrote its own working note to `notes/summary.md` (the onboarding-doc summary) and appended `https://example.com/a` to `seen/2026-07-24.md`, replied "Recorded both items." On-disk tree printed under `tmp/agent_fs_local_<uuid>`: `getting-started/notes/summary.md` and `getting-started/seen/2026-07-24.md`. Both are the agent's own records, not user facts.
 
 ---

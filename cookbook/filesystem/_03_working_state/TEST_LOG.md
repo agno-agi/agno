@@ -9,7 +9,7 @@ Re-run fresh at the final sweep (same date): every file in this folder PASS.
 
 **Description:** A four-step migration run as two sessions of two steps each; the agent reads state/checkpoint.md at the start of each session and overwrites it at the end, so session 2 resumes with no shared history.
 
-**Result:** Session 1 replied "Completed this session: 1. Exported the users table / 2. Exported the orders table"; checkpoint after session 1 contained exactly steps 1-2. Session 2 (fresh session) read the checkpoint and replied "Completed these migration steps this session: 3. Verify row counts match / 4. Write the summary report"; the final checkpoint listed all four steps.
+**Result:** Session 1 (session_id `migration-1`) replied "Completed this session: 1. Exported the users table / 2. Exported the orders table"; checkpoint after session 1 contained exactly steps 1-2. Session 2 (session_id `migration-2`, a genuinely distinct session) read the checkpoint and replied "Completed these migration steps this session: 3. Verify row counts match / 4. Write the summary report"; the final checkpoint listed all four steps.
 
 ---
 

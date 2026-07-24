@@ -61,19 +61,24 @@ agent = Agent(
 )
 
 
-def run_radar(feed: List[str]) -> None:
-    agent.print_response("Current feed:\n" + "\n".join(feed))
+def run_radar(feed: List[str], session_id: str) -> None:
+    # A distinct session_id per run: a scheduled agent gets a fresh session each
+    # time, so nothing carries over in session state. The delta is proof that the
+    # durable filesystem - not the conversation - is what remembers.
+    agent.print_response("Current feed:\n" + "\n".join(feed), session_id=session_id)
 
 
 # ---------------------------------------------------------------------------
 # Run
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
-    print("run 1: everything is new")
-    run_radar(FEED_MONDAY)
+    print("run 1 (session radar-monday): everything is new")
+    run_radar(FEED_MONDAY, session_id="radar-monday")
 
-    print("run 2: the feed grew by two stories - the brief must cover only those")
-    run_radar(FEED_TUESDAY)
+    print(
+        "run 2 (session radar-tuesday, fresh session): the feed grew by two - brief only those"
+    )
+    run_radar(FEED_TUESDAY, session_id="radar-tuesday")
 
     print("date-partitioned record log:")
     for meta in fs.list("seen"):

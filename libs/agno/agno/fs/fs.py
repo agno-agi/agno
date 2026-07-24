@@ -63,7 +63,11 @@ Conventions:
 - Store extracted facts and identifiers, not raw fetched payloads.
 - Never store secrets, passwords, or API keys.
 - Files have size limits. If a write is refused, start a new file in your
-  partition scheme or delete files you no longer need."""
+  partition scheme (e.g. a new dated file), or delete only files you are certain
+  are obsolete, like a date partition older than you still need. Never overwrite
+  or delete a file of records to make room if you might still need those records:
+  dropping them means you will repeat work you already did. If nothing is safely
+  disposable, stop and report that storage is full rather than evicting history."""
 
 _READ_ONLY_INSTRUCTIONS = """You have read access to a durable filesystem written by another agent. The files
 persist across sessions and runs.

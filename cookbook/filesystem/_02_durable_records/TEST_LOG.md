@@ -19,6 +19,6 @@ Re-run fresh at the final sweep (same date): every file in this folder PASS.
 
 **Description:** The flagship scheduled news-brief agent run twice over an expanding feed (3 stories, then the same 3 plus 2 new); date-partitioned seen/ files; run 2 must brief only the delta.
 
-**Result:** Run 1 briefed all three Monday stories. Run 2 checked the five ids with check_lines and briefed exactly the two new ones: "Acme adds hybrid search to its vector database." and "Nimbus launches a spot-GPU cloud for fine-tuning." The date-partitioned log listed `seen/2026-07-24.md` containing all five ids, one per line (acme-ships-vector-db, meridian-raises-b, kite-os-release, acme-adds-hybrid-search, nimbus-gpu-cloud).
+**Result:** Run 1 (session `radar-monday`) briefed all three Monday stories. Run 2 (session `radar-tuesday`, a genuinely distinct session — so nothing carried in session state) checked the five ids with check_lines and briefed exactly the two new ones: "Acme adds hybrid search to its vector database." and "Nimbus launches a spot-GPU cloud for fine-tuning." The date-partitioned log listed `seen/2026-07-24.md` containing all five ids, one per line (acme-ships-vector-db, meridian-raises-b, kite-os-release, acme-adds-hybrid-search, nimbus-gpu-cloud).
 
 ---

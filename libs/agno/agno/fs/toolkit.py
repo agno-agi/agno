@@ -147,7 +147,9 @@ class FileSystemTools(Toolkit):
             )
         return (
             f"Error: storage is full ({e.current} of {e.limit} bytes). "
-            "Delete files you no longer need (see list_files), then retry."
+            "Delete only files you are certain are obsolete (see list_files) — e.g. an old date "
+            "partition — then retry. Do not overwrite or delete records you might still need to "
+            "make room; if nothing is safely disposable, stop and report that storage is full."
         )
 
     # ------------------------------------------------------------------

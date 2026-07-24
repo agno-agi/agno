@@ -37,9 +37,12 @@ agent = Agent(
 # Run
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
+    # The agent records its OWN working state - a note-to-self and a processed
+    # record - not facts about the user (those belong in memory).
     agent.print_response(
-        "Record two things: write 'prefer short answers' to notes/style.md, and "
-        "append 'https://example.com/a' to seen/2026-07-24.md."
+        "Record two things: write 'Summarized the onboarding doc; the migration "
+        "timeline is the key risk to flag' to notes/summary.md, and append "
+        "'https://example.com/a' to seen/2026-07-24.md."
     )
 
     print("on-disk tree under " + ROOT + ":")
