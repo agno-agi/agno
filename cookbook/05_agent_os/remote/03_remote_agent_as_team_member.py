@@ -18,9 +18,16 @@ Then run this app and talk to the hybrid team on http://localhost:7777:
 """
 
 from agno.agent import Agent, RemoteAgent
+from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIResponses
 from agno.os import AgentOS
 from agno.team import Team
+
+# ---------------------------------------------------------------------------
+# Database Configuration
+# ---------------------------------------------------------------------------
+
+db = SqliteDb(id="hybrid-team-db", db_file="tmp/remote_hybrid_team.db")
 
 # ---------------------------------------------------------------------------
 # Create Local Member
@@ -30,6 +37,7 @@ local_summarizer = Agent(
     name="Summarizer",
     role="You synthesize information into clear, concise summaries.",
     model=OpenAIResponses(id="gpt-5.5"),
+    db=db,
 )
 
 # ---------------------------------------------------------------------------
@@ -67,6 +75,7 @@ hybrid_team = Team(
     ],
     markdown=True,
     show_members_responses=True,
+    db=db,
 )
 
 agent_os = AgentOS(

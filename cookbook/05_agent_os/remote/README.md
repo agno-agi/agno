@@ -52,3 +52,5 @@ curl http://localhost:7778/remote/agents/internal-agent   # 404 - not exposed
 - RemoteAgent and RemoteTeam are async-only and talk exclusively to the `/remote/...` endpoints.
 - Session, memory, and knowledge proxies (`RemoteDb`, `RemoteKnowledge`) still use the remote server's main API.
 - Passing workflows to `RemoteAccess` logs an error and ignores them.
+- If the backing server is unreachable, the client OS still boots and serves: each remote entity is logged as unreachable and listed with a placeholder description, and it recovers automatically once the server is back.
+- Exception to auto-recovery: remote databases are discovered once, at startup. If the backing server was down when the client booted, db-scoped routes return 404 (`No database found with id '...'`) even after it comes back — call `agent_os.resync(app)` or restart the client with the server reachable. Start `server.py` first to avoid this.

@@ -18,11 +18,16 @@ Then run this app and talk to the remote agents on http://localhost:7777:
 """
 
 from agno.agent import RemoteAgent
+from agno.db.sqlite import SqliteDb
 from agno.os import AgentOS
 
 # ---------------------------------------------------------------------------
 # Create Example
 # ---------------------------------------------------------------------------
+
+# Local database for this client OS. Remote agent runs execute and persist on the
+# backing server's database; this db exists so you can compare what each side records.
+db = SqliteDb(id="remote-agent-client-db", db_file="tmp/remote_agent_client.db")
 
 # Proxies to agents hosted on the remote AgentOS
 remote_assistant = RemoteAgent(
@@ -39,6 +44,7 @@ agent_os = AgentOS(
     id="remote-agent-client",
     description="AgentOS serving agents that live on a remote AgentOS",
     agents=[remote_assistant, remote_researcher],
+    db=db,
 )
 
 app = agent_os.get_app()

@@ -41,18 +41,21 @@ story_writer = Agent(
     name="Story Writer",
     model=OpenAIResponses(id="gpt-5.5"),
     instructions="You are tasked with writing a 100 word story based on a given topic",
+    db=db,
 )
 
 story_editor = Agent(
     name="Story Editor",
     model=OpenAIResponses(id="gpt-5.5"),
     instructions="Review and improve the story's grammar, flow, and clarity",
+    db=db,
 )
 
 story_formatter = Agent(
     name="Story Formatter",
     model=OpenAIResponses(id="gpt-5.5"),
     instructions="Break down the story into prologue, body, and epilogue sections",
+    db=db,
 )
 
 
@@ -124,6 +127,7 @@ agent_os = AgentOS(
     ],
     teams=[RemoteTeam(base_url="http://localhost:7778", team_id="research-team")],
     workflows=[story_workflow],
+    db=db,
 )
 app = agent_os.get_app()
 

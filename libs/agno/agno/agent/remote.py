@@ -19,7 +19,7 @@ from agno.remote.http import (
 )
 from agno.run.agent import RunOutput, RunOutputEvent, run_output_event_from_dict
 from agno.utils.agent import validate_input
-from agno.utils.log import log_warning
+from agno.utils.log import log_error, log_warning
 from agno.utils.remote import serialize_input
 
 if TYPE_CHECKING:
@@ -76,17 +76,35 @@ class RemoteAgent(BaseRemote):
         return self.agent_id
 
     async def get_agent_config(self) -> "AgentResponse":
-        """Get the agent config from the RemoteAccess interface. Always fetches fresh config."""
+        """Get the agent config from the RemoteAccess interface. Always fetches fresh config.
+
+        Returns a placeholder AgentResponse when the remote server is unreachable so
+        listings and gateways can render the agent instead of failing.
+        """
+        from agno.exceptions import RemoteServerUnavailableError
         from agno.os.routers.agents.schema import AgentResponse
 
-        data = await aget_json(self.base_url, f"{self.api_prefix}/agents/{self.agent_id}", timeout=self.timeout)
+        try:
+            data = await aget_json(self.base_url, f"{self.api_prefix}/agents/{self.agent_id}", timeout=self.timeout)
+        except RemoteServerUnavailableError:
+            log_error(f"RemoteAgent '{self.agent_id}' at {self.base_url} is unreachable, likely offline")
+            return AgentResponse(
+                id=self.agent_id,
+                name=self.agent_id,
+                description="RemoteAgent is unreachable, likely offline",
+            )
         return AgentResponse.model_validate(data)
 
     @property
     def _agent_config(self) -> Optional["AgentResponse"]:
-        """Get the agent config from the RemoteAccess interface, cached with TTL."""
+        """Get the agent config from the RemoteAccess interface, cached with TTL.
+
+        Returns None when the remote server is unreachable; failures are not cached,
+        so the next access retries.
+        """
         import time
 
+        from agno.exceptions import RemoteServerUnavailableError
         from agno.os.routers.agents.schema import AgentResponse
 
         current_time = time.time()
@@ -98,9 +116,13 @@ class RemoteAgent(BaseRemote):
                 return cached_config
 
         # Fetch fresh config
-        config: AgentResponse = AgentResponse.model_validate(
-            get_json(self.base_url, f"{self.api_prefix}/agents/{self.agent_id}", timeout=self.timeout)
-        )
+        try:
+            config: AgentResponse = AgentResponse.model_validate(
+                get_json(self.base_url, f"{self.api_prefix}/agents/{self.agent_id}", timeout=self.timeout)
+            )
+        except RemoteServerUnavailableError:
+            log_error(f"RemoteAgent '{self.agent_id}' at {self.base_url} is unreachable, likely offline")
+            return None
         self._cached_agent_config = (config, current_time)
         return config
 

@@ -18,7 +18,7 @@ from agno.remote.http import (
 from agno.run.agent import RunOutputEvent
 from agno.run.team import TeamRunOutput, TeamRunOutputEvent, team_run_output_event_from_dict
 from agno.utils.agent import validate_input
-from agno.utils.log import log_warning
+from agno.utils.log import log_error, log_warning
 from agno.utils.remote import serialize_input
 
 if TYPE_CHECKING:
@@ -64,17 +64,35 @@ class RemoteTeam(BaseRemote):
         return self.team_id
 
     async def get_team_config(self) -> "TeamResponse":
-        """Get the team config from the RemoteAccess interface. Always fetches fresh config."""
+        """Get the team config from the RemoteAccess interface. Always fetches fresh config.
+
+        Returns a placeholder TeamResponse when the remote server is unreachable so
+        listings and gateways can render the team instead of failing.
+        """
+        from agno.exceptions import RemoteServerUnavailableError
         from agno.os.routers.teams.schema import TeamResponse
 
-        data = await aget_json(self.base_url, f"{self.api_prefix}/teams/{self.team_id}", timeout=self.timeout)
+        try:
+            data = await aget_json(self.base_url, f"{self.api_prefix}/teams/{self.team_id}", timeout=self.timeout)
+        except RemoteServerUnavailableError:
+            log_error(f"RemoteTeam '{self.team_id}' at {self.base_url} is unreachable, likely offline")
+            return TeamResponse(
+                id=self.team_id,
+                name=self.team_id,
+                description="RemoteTeam is unreachable, likely offline",
+            )
         return TeamResponse.model_validate(data)
 
     @property
     def _team_config(self) -> Optional["TeamResponse"]:
-        """Get the team config from the RemoteAccess interface, cached with TTL."""
+        """Get the team config from the RemoteAccess interface, cached with TTL.
+
+        Returns None when the remote server is unreachable; failures are not cached,
+        so the next access retries.
+        """
         import time
 
+        from agno.exceptions import RemoteServerUnavailableError
         from agno.os.routers.teams.schema import TeamResponse
 
         current_time = time.time()
@@ -84,9 +102,13 @@ class RemoteTeam(BaseRemote):
                 return cached_config
 
         # Fetch fresh config and update cache
-        config: TeamResponse = TeamResponse.model_validate(
-            get_json(self.base_url, f"{self.api_prefix}/teams/{self.team_id}", timeout=self.timeout)
-        )
+        try:
+            config: TeamResponse = TeamResponse.model_validate(
+                get_json(self.base_url, f"{self.api_prefix}/teams/{self.team_id}", timeout=self.timeout)
+            )
+        except RemoteServerUnavailableError:
+            log_error(f"RemoteTeam '{self.team_id}' at {self.base_url} is unreachable, likely offline")
+            return None
         self._cached_team_config = (config, current_time)
         return config
 

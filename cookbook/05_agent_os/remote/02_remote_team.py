@@ -16,12 +16,17 @@ Then run this app and talk to the remote team on http://localhost:7777:
    curl -X POST -F "message=Calculate 15 * 23" -F "stream=false" http://localhost:7777/teams/research-team/runs
 """
 
+from agno.db.sqlite import SqliteDb
 from agno.os import AgentOS
 from agno.team import RemoteTeam
 
 # ---------------------------------------------------------------------------
 # Create Example
 # ---------------------------------------------------------------------------
+
+# Local database for this client OS. Remote team runs execute and persist on the
+# backing server's database; this db exists so you can compare what each side records.
+db = SqliteDb(id="remote-team-client-db", db_file="tmp/remote_team_client.db")
 
 remote_research_team = RemoteTeam(
     base_url="http://localhost:7778",
@@ -32,6 +37,7 @@ agent_os = AgentOS(
     id="remote-team-client",
     description="AgentOS serving a team that lives on a remote AgentOS",
     teams=[remote_research_team],
+    db=db,
 )
 
 app = agent_os.get_app()

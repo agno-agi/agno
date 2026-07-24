@@ -423,9 +423,15 @@ class BaseRemote:
 
     @property
     def _config(self) -> Optional["ConfigResponse"]:
-        """Get the OS config from the RemoteAccess interface, cached with TTL."""
+        """Get the OS config from the RemoteAccess interface, cached with TTL.
+
+        Returns None when the remote server is unreachable so consumers (and the
+        hosting AgentOS) can degrade gracefully instead of failing.
+        """
+        from agno.exceptions import RemoteServerUnavailableError
         from agno.os.schema import ConfigResponse
         from agno.remote.http import get_json
+        from agno.utils.log import log_error
 
         current_time = time.time()
 
@@ -435,10 +441,14 @@ class BaseRemote:
             if current_time - cached_at < self.config_ttl:
                 return cached_config
 
-        # Fetch fresh config
-        config: ConfigResponse = ConfigResponse.model_validate(
-            get_json(self.base_url, f"{self.api_prefix}/config", timeout=self.timeout)
-        )
+        # Fetch fresh config. Failures are not cached, so the next access retries.
+        try:
+            config: ConfigResponse = ConfigResponse.model_validate(
+                get_json(self.base_url, f"{self.api_prefix}/config", timeout=self.timeout)
+            )
+        except RemoteServerUnavailableError:
+            log_error(f"Remote server at {self.base_url} is unreachable, likely offline: config unavailable")
+            return None
         self._cached_config = (config, current_time)
         return config
 
