@@ -25,6 +25,9 @@ from agno.models.openai import OpenAIResponses
 
 db = PostgresDb(db_url="postgresql+psycopg://ai:ai@localhost:5532/ai")
 
+# Org charts and relationship-heavy prompts can trigger many entity updates.
+# max_updates_per_run (default: 10) caps updates per extraction. Increase
+# if your prompts contain many entities.
 agent = Agent(
     model=OpenAIResponses(id="gpt-5.5"),
     db=db,
@@ -35,6 +38,7 @@ agent = Agent(
     learning=LearningMachine(
         entity_memory=EntityMemoryConfig(
             mode=LearningMode.AGENTIC,
+            max_updates_per_run=15,
         ),
     ),
     markdown=True,
