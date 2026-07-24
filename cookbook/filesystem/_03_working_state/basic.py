@@ -32,7 +32,7 @@ STEPS = [
 # process, not just the session.
 DB_FILE = f"tmp/agent_fs_checkpoint_{uuid4().hex}.db"
 
-fs = FileSystem(SqliteDb(db_file=DB_FILE), namespace="migration")
+fs = FileSystem(SqliteDb(db_file=DB_FILE))
 
 # ---------------------------------------------------------------------------
 # Create Agent

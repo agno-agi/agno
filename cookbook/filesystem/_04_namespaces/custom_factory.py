@@ -1,6 +1,6 @@
 """
-Multi-Tenancy - Custom Factory
-==============================
+Namespaces - Custom Factory
+===========================
 When a single {user_id} placeholder is not enough, pass a callable instead of
 a tools list. The callable picks the namespace with whatever logic you need,
 such as roles, tenants or custom keys. It reads the trusted run context, and

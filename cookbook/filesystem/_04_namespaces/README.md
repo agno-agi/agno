@@ -1,8 +1,10 @@
-# Multi-Tenancy
+# Namespaces
 
-Per-user (and per-team) file stores from one static agent. Put a `user_id` on the run and users get completely isolated files, with no factories, no per-user agent objects, and no way for a prompt to redirect the namespace.
+A namespace names the file store an agent uses. You do not need one to start: everywhere else in this cookbook the default store is fine, and `FileSystem(db)` uses it. Name one when you need more than one store in the same backend, which in practice means isolating users or deliberately sharing between agents.
 
-Scoping happens through the namespace name, so identity enters only where you write it into that name.
+Namespaces are lowercase and URL-safe, so `BANK`, `bank` and `BaNk` are one store. Same backend plus same name means the same files; a different name means full isolation. Sharing is explicit, by name.
+
+The main reason to reach for one is per-user (and per-team) file stores from a single static agent. Put a `user_id` on the run and users get completely isolated files, with no factories, no per-user agent objects, and no way for a prompt to redirect the namespace. Identity enters only where you write it into the name.
 
 ## Files
 
@@ -20,9 +22,9 @@ Scoping happens through the namespace name, so identity enters only where you wr
 ## Run
 
 ```bash
-python cookbook/filesystem/_04_multi_tenancy/basic.py
-python cookbook/filesystem/_04_multi_tenancy/custom_factory.py
-python cookbook/filesystem/_04_multi_tenancy/shared_namespace.py
+python cookbook/filesystem/_04_namespaces/basic.py
+python cookbook/filesystem/_04_namespaces/custom_factory.py
+python cookbook/filesystem/_04_namespaces/shared_namespace.py
 ```
 
 Requires `OPENAI_API_KEY`.

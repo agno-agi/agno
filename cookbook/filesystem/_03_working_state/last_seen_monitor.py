@@ -37,7 +37,7 @@ READINGS_TUESDAY = {
 # forget the baseline and report nothing but baselines.
 DB_FILE = f"tmp/agent_fs_monitor_{uuid4().hex}.db"
 
-fs = FileSystem(SqliteDb(db_file=DB_FILE), namespace="latency-monitor")
+fs = FileSystem(SqliteDb(db_file=DB_FILE))
 
 # ---------------------------------------------------------------------------
 # Create Agent

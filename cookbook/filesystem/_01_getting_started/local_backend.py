@@ -23,7 +23,7 @@ from agno.models.openai import OpenAIResponses
 # ---------------------------------------------------------------------------
 ROOT = f"tmp/agent_fs_local_{uuid4().hex}"
 
-fs = FileSystem(LocalFileSystem(root=ROOT), namespace="getting-started")
+fs = FileSystem(LocalFileSystem(root=ROOT))
 
 # ---------------------------------------------------------------------------
 # Create Agent - identical to the database-backed version

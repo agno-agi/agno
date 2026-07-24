@@ -13,7 +13,7 @@ Re-run 2026-07-24 after the `FileSystem(db)` change and the quota-message reword
 
 ---
 
-### inspect_namespace.py
+### inspect_files.py
 
 **Status:** PASS
 

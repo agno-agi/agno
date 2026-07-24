@@ -22,7 +22,7 @@ from agno.models.openai import OpenAIResponses
 # ---------------------------------------------------------------------------
 DB_FILE = f"tmp/agent_fs_records_{uuid4().hex}.db"
 
-fs = FileSystem(SqliteDb(db_file=DB_FILE), namespace="triage")
+fs = FileSystem(SqliteDb(db_file=DB_FILE))
 
 # ---------------------------------------------------------------------------
 # Create Agent

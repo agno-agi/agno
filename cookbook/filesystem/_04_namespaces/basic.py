@@ -1,6 +1,6 @@
 """
-Multi-Tenancy - Basic
-=====================
+Namespaces - Per-User Stores
+============================
 One agent instance, one file store per end-user. The namespace
 "assistant/{user_id}" is resolved on every tool call from the run's user_id,
 which your code sets and the model cannot influence. A run without a user_id

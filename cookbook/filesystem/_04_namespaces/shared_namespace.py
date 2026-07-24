@@ -1,6 +1,6 @@
 """
-Multi-Tenancy - Shared Namespace
-================================
+Namespaces - Sharing One Store
+==============================
 Two agents share files by attaching the same namespace by name. The producer
 gets the full tool surface. The consumer gets tools(read_only=True), which is
 four read tools plus the read-only instructions, so it can consult the

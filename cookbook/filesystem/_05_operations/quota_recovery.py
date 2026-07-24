@@ -26,7 +26,6 @@ DB_FILE = f"tmp/agent_fs_quota_{uuid4().hex}.db"
 
 fs = FileSystem(
     SqliteDb(db_file=DB_FILE),
-    namespace="radar",
     max_file_bytes=200,
     max_namespace_bytes=300,
 )

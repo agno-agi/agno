@@ -7,19 +7,19 @@ There is no `basic.py` here. These are two independent operational recipes and n
 ## Files
 
 - `quota_recovery.py`: hits both caps on purpose, per-file and per-namespace, shows the exact error strings the agent would see, and recovers the way those errors suggest, by starting a new partition and deleting partitions you no longer need.
-- `inspect_namespace.py`: attach to an agent's namespace by name from a script, then list files, measure usage, read state, and seed records the agent will dedupe against on its next run.
+- `inspect_files.py`: attach to an agent's namespace by name from a script, then list files, measure usage, read state, and seed records the agent will dedupe against on its next run.
 
 ## When to use
 
 - An agent's writes started failing and you want to see and fix its store: `quota_recovery.py`.
-- Ops scripts, tests, and migrations that read or seed agent state without running the agent: `inspect_namespace.py`.
+- Ops scripts, tests, and migrations that read or seed agent state without running the agent: `inspect_files.py`.
 - To build the store these recipes operate on, start at [`_01_getting_started/`](../_01_getting_started/). The record-log layout being inspected comes from [`_02_durable_records/`](../_02_durable_records/).
 
 ## Run
 
 ```bash
 python cookbook/filesystem/_05_operations/quota_recovery.py
-python cookbook/filesystem/_05_operations/inspect_namespace.py
+python cookbook/filesystem/_05_operations/inspect_files.py
 ```
 
 No environment variables required, since neither file uses a model.

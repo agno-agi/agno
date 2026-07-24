@@ -18,7 +18,7 @@ from agno.models.openai import OpenAIResponses
 # ---------------------------------------------------------------------------
 DB_FILE = "tmp/filesystem/getting_started.db"
 
-fs = FileSystem(SqliteDb(db_file=DB_FILE), namespace="getting-started")
+fs = FileSystem(SqliteDb(db_file=DB_FILE))
 
 # ---------------------------------------------------------------------------
 # Create Agent

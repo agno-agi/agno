@@ -41,7 +41,7 @@ TODAY = date.today().isoformat()
 # process it would re-report every story it has already briefed.
 DB_FILE = f"tmp/agent_fs_radar_{uuid4().hex}.db"
 
-fs = FileSystem(SqliteDb(db_file=DB_FILE), namespace="radar")
+fs = FileSystem(SqliteDb(db_file=DB_FILE))
 
 # ---------------------------------------------------------------------------
 # Create Agent

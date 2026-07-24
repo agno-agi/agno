@@ -1,9 +1,10 @@
 """
-Operations - Inspect a Namespace
-================================
-An agent's file store is reachable from any script. Construct FileSystem with
-the same backend and namespace name and you hold the same files the agent
-holds, so you can inspect, read and seed them with no Agent, model or server.
+Operations - Inspect and Seed Files
+==================================
+An agent's files are reachable from any script. Point FileSystem at the same
+backend and you hold the same files the agent holds, so you can inspect, read
+and seed them with no Agent, model or server. (If the agent names a namespace,
+pass the same one here.)
 
 This example seeds records that a scheduled agent will dedupe against on its
 next run. That is how you backfill "already processed" state before a first
@@ -21,7 +22,7 @@ from rich.pretty import pprint
 # ---------------------------------------------------------------------------
 DB_FILE = f"tmp/agent_fs_inspect_{uuid4().hex}.db"
 
-fs = FileSystem(SqliteDb(db_file=DB_FILE), namespace="radar")
+fs = FileSystem(SqliteDb(db_file=DB_FILE))
 
 # ---------------------------------------------------------------------------
 # Run

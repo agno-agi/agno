@@ -20,7 +20,7 @@ from rich.pretty import pprint
 # ---------------------------------------------------------------------------
 DB_FILE = f"tmp/agent_fs_standalone_{uuid4().hex}.db"
 
-fs = FileSystem(SqliteDb(db_file=DB_FILE), namespace="radar")
+fs = FileSystem(SqliteDb(db_file=DB_FILE))
 
 # ---------------------------------------------------------------------------
 # Run

@@ -13,7 +13,7 @@ Attach a durable, private filesystem to an agent with one line: `Agent(tools=[fs
 - Any agent that should remember its own work between runs. Start here.
 - Seeding or reading an agent's files from scripts and tests: `standalone.py`.
 - Local development where you want to `cat` the store: `local_backend.py`.
-- For the record-keeping dedupe pattern, continue to [`_02_durable_records/`](../_02_durable_records/). For per-user isolation, see [`_04_multi_tenancy/`](../_04_multi_tenancy/).
+- For the record-keeping dedupe pattern, continue to [`_02_durable_records/`](../_02_durable_records/). For per-user isolation, see [`_04_namespaces/`](../_04_namespaces/).
 
 ## Run
 

@@ -30,8 +30,8 @@ cookbook/filesystem/
 │   └── TEST_LOG.md
 ├── _02_durable_records/        # the dedupe pattern: check_lines -> act -> append_file
 ├── _03_working_state/          # checkpoints and monitors that survive across runs
-├── _04_multi_tenancy/          # templated namespaces, factories, explicit sharing
-└── _05_operations/             # quota recovery and namespace inspection (no basic.py)
+├── _04_namespaces/            # naming a store: per-user isolation and explicit sharing
+└── _05_operations/            # quota recovery and inspecting files (no basic.py)
 ````
 
 ## Workflows
@@ -39,8 +39,8 @@ cookbook/filesystem/
 - [`_01_getting_started/`](_01_getting_started/): attach FileSystem to an agent with one line, see that the files outlive the process, use FileSystem standalone, and swap the storage backend.
 - [`_02_durable_records/`](_02_durable_records/): never repeat work, using exact-line dedupe with `check_lines` and `append_file`. Ends with a scheduled news agent that briefs only what is new.
 - [`_03_working_state/`](_03_working_state/): progress checkpoints and a last-seen monitor, for work that runs longer than one session.
-- [`_04_multi_tenancy/`](_04_multi_tenancy/): one static agent with per-user file stores via `namespace="assistant/{user_id}"`, a callable tool factory for arbitrary policy, and two agents sharing one namespace with a read-only consumer.
-- [`_05_operations/`](_05_operations/): hitting the storage cap and recovering, then inspecting and seeding a live agent's namespace programmatically.
+- [`_04_namespaces/`](_04_namespaces/): everything else uses the default store. Name a namespace when you need more than one: per-user file stores via `namespace="assistant/{user_id}"`, a callable tool factory for arbitrary policy, and two agents sharing one namespace with a read-only consumer.
+- [`_05_operations/`](_05_operations/): hitting the storage cap and recovering, then inspecting and seeding a live agent's files programmatically.
 
 ## Running a cookbook
 
@@ -58,7 +58,7 @@ source .venvs/demo/bin/activate
 python cookbook/filesystem/_01_getting_started/basic.py
 ```
 
-Examples hand `FileSystem` a `SqliteDb`, so everything runs with no services to start. The same code points at Postgres in production by passing a `PostgresDb` instead. Agent examples use `OPENAI_API_KEY` (gpt-5.5); `standalone.py`, `quota_recovery.py`, and `inspect_namespace.py` run with no keys at all.
+Examples hand `FileSystem` a `SqliteDb`, so everything runs with no services to start. The same code points at Postgres in production by passing a `PostgresDb` instead. Agent examples use `OPENAI_API_KEY` (gpt-5.5); `standalone.py`, `quota_recovery.py`, and `inspect_files.py` run with no keys at all.
 
 ## One file-like toolkit per agent
 
