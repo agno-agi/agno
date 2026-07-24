@@ -80,24 +80,49 @@ def parse_namespace_template(name: str) -> Tuple[str, ...]:
     return placeholders
 
 
-def normalize_namespace(name: str) -> str:
-    """Validate a namespace name, which may embed template placeholders.
+NAMESPACE_CHARS = re.compile(r"^[a-z0-9._/-]+$")
 
-    Untemplated names are canonicalized by ``normalize_path``. Templated names are
-    validated against the grammar with each placeholder standing in for one segment
-    character, and returned with the placeholders intact.
+
+def sanitize_namespace_segment(value: str) -> str:
+    """Lowercase one namespace component and require it to be URL-safe.
+
+    A namespace is an identifier, not a filename: it is lowercased so BANK, bank
+    and BaNk are one store on every backend, and restricted to URL-safe ASCII so
+    the same name is expressible as a directory, a database key and a bucket or
+    object prefix. This is the S3 split - bucket names are lowercased, keys stay
+    case-sensitive - and it is what makes namespaces safe on case-insensitive
+    filesystems, where two spellings would otherwise land on one directory and
+    quietly share files. File paths keep the case-sensitive grammar above.
+    """
+    lowered = unicodedata.normalize("NFC", value).lower()
+    if not NAMESPACE_CHARS.match(lowered):
+        raise InvalidPathError(
+            f"invalid namespace {value!r}: use lowercase letters, digits, '.', '-', '_' and '/' "
+            "(namespaces are URL-safe identifiers; file paths are not restricted this way)."
+        )
+    return lowered
+
+
+def normalize_namespace(name: str) -> str:
+    """Validate and canonicalize a namespace name, which may embed placeholders.
+
+    Lowercased and restricted to URL-safe ASCII (see
+    ``sanitize_namespace_segment``), then held to the §D6 path grammar. Templated
+    names are validated with each placeholder standing in for one segment
+    character and returned with the placeholders intact.
     """
     if not isinstance(name, str):
         raise _invalid_path(name, "namespace must be a string")
     value = unicodedata.normalize("NFC", name)
     placeholders = parse_namespace_template(value)
     if not placeholders:
-        return normalize_path(value)
+        return sanitize_namespace_segment(normalize_path(value))
     stand_in = value
     for placeholder in set(placeholders):
         stand_in = stand_in.replace("{" + placeholder + "}", "x")
-    normalize_path(stand_in)
-    return value
+    # Lowercase the literal parts; placeholders are sanitized when they resolve.
+    sanitize_namespace_segment(normalize_path(stand_in))
+    return value.lower()
 
 
 def normalize_template_value(placeholder: str, value: object) -> str:
@@ -115,7 +140,11 @@ def normalize_template_value(placeholder: str, value: object) -> str:
         raise InvalidPathError(f"invalid {placeholder} value {value!r}: must be a single valid path segment") from None
     if as_path != normalized or "/" in as_path:
         raise InvalidPathError(f"invalid {placeholder} value {value!r}: must be a single valid path segment")
-    return normalized
+    # Interpolated values are part of the namespace, so they get the namespace rule:
+    # lowercased and URL-safe. Consequence worth knowing: ids differing only by case
+    # resolve to one namespace, which is the point of the rule but means an identity
+    # system that treats "Alice" and "alice" as two users would share one store.
+    return sanitize_namespace_segment(normalized)
 
 
 def normalize_directory(directory: str) -> str:

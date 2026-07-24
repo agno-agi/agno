@@ -305,16 +305,20 @@ class DbFileSystem(BaseFS):
                 return existing
             return FileMeta(path=path, size_bytes=0, version=None, updated_at=None)
         chunk_bytes = len(chunk.encode("utf-8"))
-        # New-file inserts take the VALUES arm, which the WHERE guard does not
-        # cover, so pre-check the chunk alone client-side (exact: content is fully
-        # known). When the row already exists, fall through instead: the guarded
-        # statement blocks and its error path reports the size the file would
-        # actually have reached.
-        if max_file_bytes is not None and chunk_bytes > max_file_bytes and self._stat(namespace, path) is None:
+        # New-file inserts take the VALUES arm, which the WHERE guard does not cover,
+        # so pre-check the chunk client-side (exact: content is fully known). This must
+        # NOT be conditional on the row existing: a concurrent delete between that check
+        # and the upsert would send an oversized chunk down the uncovered insert arm and
+        # blow past the cap. A chunk over the cap can never land either way — the insert
+        # would create an oversized file, the update arm would be larger still — so
+        # refuse unconditionally. _stat only enriches the reported size.
+        if max_file_bytes is not None and chunk_bytes > max_file_bytes:
+            existing = self._stat(namespace, path)
+            would_be = chunk_bytes if existing is None else existing.size_bytes + 1 + chunk_bytes
             raise QuotaExceededError(
-                f"{path} would be {chunk_bytes} bytes (limit {max_file_bytes} per file)",
+                f"{path} would be {would_be} bytes (limit {max_file_bytes} per file)",
                 scope="file",
-                current=chunk_bytes,
+                current=would_be,
                 limit=max_file_bytes,
             )
         t = self.table

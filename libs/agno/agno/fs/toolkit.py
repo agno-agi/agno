@@ -265,7 +265,18 @@ class FileSystemTools(Toolkit):
                 {"path": dir_path, "type": "dir", "size": None} for dir_path in sorted_dirs
             ]
 
+            # Cap files as well as dirs. The namespace quota bounds total BYTES, not
+            # entry count, so a namespace of many tiny files would otherwise dump an
+            # unbounded listing straight into the model's context.
+            file_entries.sort(key=lambda e: path_sort_key(str(e["path"])))
+            truncated_files = 0
+            if len(file_entries) > _MAX_DIR_ENTRIES:
+                truncated_files = len(file_entries) - _MAX_DIR_ENTRIES
+                file_entries = file_entries[:_MAX_DIR_ENTRIES]
+
             entries = sorted(file_entries + dir_entries, key=lambda e: path_sort_key(str(e["path"])))
+            if truncated_files:
+                entries.append({"path": f"...and {truncated_files} more", "type": "file", "size": None})
             if truncated_dirs:
                 entries.append({"path": f"...and {truncated_dirs} more", "type": "dir", "size": None})
 
@@ -611,13 +622,13 @@ class FileSystemTools(Toolkit):
 
 
 # The async twins delegate to their sync counterparts via asyncio.to_thread, so they
-# are behaviourally identical — but agno builds the async agent's tool schema from the
+# are behaviourally identical, but agno builds the async agent's tool schema from the
 # ASYNC method's docstring. Give each async method the sync method's full D7 docstring
 # so an async agent gets the same normative prompt surface (names, param guidance, the
 # check_lines contract) instead of a bare "Async variant of ...". The sync docstrings
 # stay the single source of truth. (Framework note: the tuple-form async_tools
 # registration could copy this automatically for every toolkit; that is a broader
-# follow-up — Workspace has the same degradation.)
+# follow-up, and Workspace has the same degradation.)
 for _tool_name in FileSystemTools.FULL_TOOLS:
     _async = getattr(FileSystemTools, "a" + _tool_name)
     _async.__doc__ = getattr(FileSystemTools, _tool_name).__doc__

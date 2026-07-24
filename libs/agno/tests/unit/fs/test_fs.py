@@ -382,3 +382,38 @@ class TestBackendDispatch:
             text=True,
         )
         assert out.stdout.strip() == "False", out.stdout
+
+
+class TestNamespaceSanitization:
+    """Namespaces are lowercase, URL-safe identifiers (spec D6)."""
+
+    def test_case_folds_to_one_store(self, local_backend):
+        FileSystem(local_backend, namespace="BANK").write("secret.md", "x")
+        for spelling in ("bank", "Bank", "BaNk", "BANK"):
+            fs = FileSystem(local_backend, namespace=spelling)
+            assert fs.namespace == "bank"
+            assert fs.read("secret.md") == "x"
+
+    def test_case_folding_closes_the_case_insensitive_fs_alias(self, local_backend):
+        # On a case-insensitive filesystem two spellings land on one directory. With
+        # folding they are one namespace ON PURPOSE, and a different name stays apart.
+        FileSystem(local_backend, namespace="bank").write("secret.md", "TOPSECRET")
+        assert FileSystem(local_backend, namespace="other").read("secret.md") is None
+
+    def test_multi_segment_and_templates_fold(self, local_backend):
+        assert FileSystem(local_backend, namespace="Radar/User-42").namespace == "radar/user-42"
+        templated = FileSystem(local_backend, namespace="Radar/{user_id}")
+        assert templated.namespace == "radar/{user_id}"
+        assert templated.resolve(user_id="Alice").namespace == "radar/alice"
+        assert templated.resolve(user_id="alice").namespace == "radar/alice"
+
+    @pytest.mark.parametrize("bad", ["münchen", "my namespace", "a%b", "a\tb"])
+    def test_non_url_safe_rejected(self, local_backend, bad):
+        with pytest.raises(InvalidPathError):
+            FileSystem(local_backend, namespace=bad)
+
+    def test_file_paths_stay_case_sensitive(self, local_backend):
+        # Only the namespace is an identifier; paths keep the D6 grammar.
+        fs = FileSystem(local_backend, namespace="n")
+        fs.write("Notes/README.md", "x")
+        assert [m.path for m in fs.list()] == ["Notes/README.md"]

@@ -48,8 +48,9 @@ class LocalFileSystem(BaseFS):
         # its slashes. Without this, namespace "radar/alice" nests inside namespace
         # "radar" on disk, so a walk of "radar" leaks "radar/alice"'s files. The
         # namespace and path columns are separate in DbFileSystem but flatten to the
-        # same tree here. Encode "%" first so the mapping is unambiguous.
-        return namespace.replace("%", "%25").replace("/", "%2F")
+        # same tree here. Namespaces are lowercase and URL-safe, so "%" cannot occur
+        # in one and this encoding is unambiguous without escaping it.
+        return namespace.replace("/", "%2f")
 
     def _safe_join(self, rel: str, shown: str) -> Path:
         """Join ``rel`` under root, and REJECT any name that safe_join does not map to

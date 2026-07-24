@@ -10,7 +10,7 @@ from agno.db.postgres import PostgresDb
 from agno.db.sqlite import SqliteDb
 from agno.fs import FileSystem
 from agno.fs.db import DEFAULT_DB_SCHEMA, DbFileSystem
-from agno.fs.errors import VersionConflictError
+from agno.fs.errors import QuotaExceededError, VersionConflictError
 
 NS = "sem"
 
@@ -237,3 +237,23 @@ class TestAsyncTwins:
             assert await db_fs.adelete(NS, "b.md") is True
 
         asyncio.run(flow())
+
+
+class TestAppendCapRace:
+    def test_oversized_chunk_refused_even_when_row_exists(self, db_fs):
+        """The client-side chunk check must not be conditional on the row existing.
+
+        It used to run only when _stat found no row, so a concurrent delete between
+        that check and the upsert sent an oversized chunk down the INSERT arm, which
+        the ON CONFLICT WHERE guard does not cover, blowing past the cap (PR review).
+        """
+        db_fs.append(NS, "log.md", "seed", max_file_bytes=1000)
+        with pytest.raises(QuotaExceededError):
+            db_fs.append(NS, "log.md", "x" * 2000, max_file_bytes=1000)
+        # And the file the delete would have raced is still within the cap.
+        assert len(db_fs.read(NS, "log.md").encode("utf-8")) <= 1000
+
+    def test_oversized_chunk_refused_on_missing_row(self, db_fs):
+        with pytest.raises(QuotaExceededError):
+            db_fs.append(NS, "fresh.md", "x" * 2000, max_file_bytes=1000)
+        assert db_fs.read(NS, "fresh.md") is None

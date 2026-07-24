@@ -465,3 +465,18 @@ class TestTemplatedResolution:
         fc.execute()
         assert backend.read("shared/team-1", "a.md") == "via-fc\n"
         assert isinstance(fc.result, str) and fc.result.startswith("Appended")
+
+
+class TestListFilesBounded:
+    def test_file_entries_capped_like_dir_entries(self, tmp_path):
+        # The namespace quota bounds BYTES, not entry count: many tiny files must
+        # not dump an unbounded listing into the model's context (PR review).
+        import json
+
+        fs = FileSystem(backend=LocalFileSystem(root=tmp_path), namespace="many")
+        for i in range(520):
+            fs.write(f"f{i:04d}.md", "x")
+        payload = json.loads(fs.tools().list_files())
+        files = [e for e in payload["files"] if e["type"] == "file"]
+        assert len(files) == 501  # 500 entries + the "...and N more" marker
+        assert files[-1]["path"] == "...and 20 more"
