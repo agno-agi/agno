@@ -1,0 +1,185 @@
+"""Semantics tests for DbFileSystem (spec D4/D6/D9/D13), both dialects."""
+
+import asyncio
+
+import pytest
+from sqlalchemy import create_engine, text
+
+from agno.fs import AgentFS
+from agno.fs.db import DbFileSystem
+from agno.fs.errors import VersionConflictError
+
+NS = "sem"
+
+
+class TestMembershipPredicate:
+    def test_superstring_no_false_positive(self, db_fs):
+        db_fs.append(NS, "seen/log.md", "example.com/ab")
+        assert db_fs.contains(NS, ["example.com/a"]) == set()
+        assert db_fs.contains(NS, ["example.com/ab"]) == {"example.com/ab"}
+
+    def test_percent_and_underscore_metachars(self, db_fs):
+        db_fs.append(NS, "seen/log.md", "50%off\na_b\n")
+        found = db_fs.contains(NS, ["50%off", "a_b", "50Xoff", "aXb", "50%%off"])
+        assert found == {"50%off", "a_b"}
+
+    def test_last_line_without_trailing_newline(self, db_fs):
+        db_fs.write(NS, "raw.md", "first\nlast-no-newline")
+        assert db_fs.contains(NS, ["last-no-newline"]) == {"last-no-newline"}
+        assert db_fs.contains(NS, ["first"]) == {"first"}
+
+    def test_cross_partition_via_directory_scope(self, db_fs):
+        db_fs.append(NS, "seen/2026-07-23.md", "url-a")
+        db_fs.append(NS, "seen/2026-07-24.md", "url-b")
+        db_fs.append(NS, "notes/other.md", "url-c")
+        found = db_fs.contains(NS, ["url-a", "url-b", "url-c"], directory="seen")
+        assert found == {"url-a", "url-b"}
+
+    def test_directory_autoescape_on_db_backend(self, db_fs):
+        # The house convention in db/ is unescaped .like() — this pins the
+        # opposite: directory rendering must autoescape (spec D6).
+        db_fs.append(NS, "seen_urls/a.md", "in-underscore-dir")
+        db_fs.append(NS, "seen-urls/b.md", "in-dash-dir")
+        db_fs.append(NS, "50%off/c.md", "in-percent-dir")
+        db_fs.append(NS, "50-EVERYTHING-off/d.md", "in-decoy-dir")
+        assert db_fs.contains(NS, ["in-dash-dir"], directory="seen_urls") == set()
+        assert {m.path for m in db_fs.list(NS, "seen_urls")} == {"seen_urls/a.md"}
+        assert {m.path for m in db_fs.list(NS, "50%off")} == {"50%off/c.md"}
+        assert db_fs.contains(NS, ["in-decoy-dir"], directory="50%off") == set()
+
+    def test_round_trip_dedupe_regression(self, db_fs):
+        # append("  a\r\nb  \r\n") then contains(["  a", "b  "]) — spec D13.
+        fs = AgentFS(fs=db_fs, namespace="roundtrip")
+        fs.append("seen/2026-07-24.md", "  a\r\nb  \r\n")
+        result = fs.contains(["  a", "b  "], directory="seen")
+        assert result.found == ["  a", "b  "]
+        assert result.missing == []
+
+
+class TestSearchCaseFolding:
+    def test_non_ascii_query_finds_lowercase(self, db_fs):
+        # "Ü" finds "ü": identical behavior on the Postgres ILIKE prefilter and
+        # the SQLite full Python scan (spec D9/D13).
+        db_fs.write(NS, "notes/muc.md", "wir fahren nach münchen")
+        matches = db_fs.search(NS, "MÜNCHEN")
+        assert [m.path for m in matches] == ["notes/muc.md"]
+        assert "münchen" in matches[0].snippet
+
+    def test_ascii_case_insensitive(self, db_fs):
+        db_fs.write(NS, "a.md", "Hello World")
+        assert len(db_fs.search(NS, "hello")) == 1
+
+    def test_metachars_in_query_do_not_wildcard(self, db_fs):
+        db_fs.write(NS, "a.md", "100% sure")
+        db_fs.write(NS, "b.md", "100x sure")
+        matches = db_fs.search(NS, "100% sure")
+        assert [m.path for m in matches] == ["a.md"]
+
+
+class TestMove:
+    def test_move_basic(self, db_fs):
+        db_fs.write(NS, "a.md", "x")
+        meta = db_fs.move(NS, "a.md", "b/c.md")
+        assert meta.path == "b/c.md"
+        assert meta.version == 2
+        assert db_fs.read(NS, "a.md") is None
+        assert db_fs.read(NS, "b/c.md") == "x"
+
+    def test_move_dst_exists_refused(self, db_fs):
+        db_fs.write(NS, "a.md", "x")
+        db_fs.write(NS, "b.md", "y")
+        with pytest.raises(FileExistsError):
+            db_fs.move(NS, "a.md", "b.md")
+        assert db_fs.read(NS, "a.md") == "x"
+        assert db_fs.read(NS, "b.md") == "y"
+
+    def test_move_overwrite(self, db_fs):
+        db_fs.write(NS, "a.md", "x")
+        db_fs.write(NS, "b.md", "y")
+        db_fs.move(NS, "a.md", "b.md", overwrite=True)
+        assert db_fs.read(NS, "b.md") == "x"
+        assert db_fs.read(NS, "a.md") is None
+
+    def test_move_missing_src(self, db_fs):
+        with pytest.raises(FileNotFoundError):
+            db_fs.move(NS, "ghost.md", "b.md")
+
+    def test_collision_does_not_poison_follow_up_statements(self, db_fs):
+        """A move collision raises IntegrityError inside a SAVEPOINT; on Postgres
+        an unwrapped IntegrityError would leave the connection in
+        InFailedSqlTransaction and every follow-up statement would fail
+        (spec D9). SQLite hides this, so the test runs on both dialects."""
+        db_fs.write(NS, "a.md", "x")
+        db_fs.write(NS, "b.md", "y")
+        with pytest.raises(FileExistsError):
+            db_fs.move(NS, "a.md", "b.md")
+        # Follow-up statements on the same engine/pool must work.
+        assert db_fs.read(NS, "a.md") == "x"
+        db_fs.write(NS, "c.md", "z")
+        assert db_fs.read(NS, "c.md") == "z"
+        assert db_fs.delete(NS, "c.md") is True
+
+
+class TestConstruction:
+    def test_dialect_rejection_mysql_url(self):
+        with pytest.raises(ValueError):
+            DbFileSystem(db_url="mysql://user:pass@localhost/db")
+
+    def test_requires_url_or_engine(self):
+        with pytest.raises(ValueError):
+            DbFileSystem()
+
+    def test_engine_sharing_constructor(self, tmp_path):
+        engine = create_engine(f"sqlite:///{tmp_path}/shared.db")
+        fs_a = DbFileSystem(db_engine=engine)
+        fs_b = DbFileSystem(db_engine=engine)
+        fs_a.write("ns", "a.md", "x")
+        assert fs_b.read("ns", "a.md") == "x"
+        assert fs_b.db_engine is engine
+        engine.dispose()
+
+    def test_table_autocreation_fresh_schema_postgres(self, pg_engine):
+        fresh_schema = "test_schema_fresh"
+        fs = DbFileSystem(db_engine=pg_engine, db_schema=fresh_schema)
+        try:
+            fs.write("ns", "a.md", "x")
+            assert fs.read("ns", "a.md") == "x"
+        finally:
+            with pg_engine.begin() as conn:
+                conn.execute(text(f"DROP SCHEMA IF EXISTS {fresh_schema} CASCADE"))
+
+    def test_table_autocreation_sqlite_url(self, tmp_path):
+        fs = DbFileSystem(db_url=f"sqlite:///{tmp_path}/fresh.db")
+        fs.write("ns", "a.md", "x")
+        assert fs.read("ns", "a.md") == "x"
+
+    def test_version_starts_at_one_and_increments(self, db_fs):
+        assert db_fs.write(NS, "v.md", "a").version == 1
+        assert db_fs.write(NS, "v.md", "b").version == 2
+        assert db_fs.append(NS, "v.md", "c").version == 3
+
+
+class TestVersioning:
+    def test_expected_version_happy_path(self, db_fs):
+        db_fs.write(NS, "v.md", "one")
+        meta = db_fs.write(NS, "v.md", "two", expected_version=1)
+        assert meta.version == 2
+        with pytest.raises(VersionConflictError):
+            db_fs.write(NS, "v.md", "three", expected_version=1)
+
+
+class TestAsyncTwins:
+    def test_async_smoke_all_operations(self, db_fs):
+        async def flow():
+            await db_fs.awrite(NS, "a.md", "hello\n")
+            assert await db_fs.aread(NS, "a.md") == "hello\n"
+            await db_fs.aappend(NS, "seen/log.md", "one\n")
+            assert await db_fs.acontains(NS, ["one"], "seen") == {"one"}
+            assert {m.path for m in await db_fs.alist(NS)} == {"a.md", "seen/log.md"}
+            assert len(await db_fs.asearch(NS, "hello")) == 1
+            await db_fs.amove(NS, "a.md", "b.md")
+            usage = await db_fs.ausage(NS)
+            assert usage.file_count == 2
+            assert await db_fs.adelete(NS, "b.md") is True
+
+        asyncio.run(flow())
