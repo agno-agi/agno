@@ -4,6 +4,7 @@ from typing import List, Optional, Union, cast
 
 from fastapi import Depends, HTTPException, Query, Request
 from fastapi.routing import APIRouter
+from starlette.concurrency import run_in_threadpool
 
 from agno.db.base import AsyncBaseDb, BaseDb
 from agno.os.auth import get_auth_token_from_request, get_authentication_dependency
@@ -117,7 +118,9 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
                 db = cast(AsyncBaseDb, db)
                 metrics, latest_updated_at = await db.get_metrics(starting_date=starting_date, ending_date=ending_date)
             else:
-                metrics, latest_updated_at = db.get_metrics(starting_date=starting_date, ending_date=ending_date)
+                metrics, latest_updated_at = await run_in_threadpool(
+                    db.get_metrics, starting_date=starting_date, ending_date=ending_date
+                )
 
             return MetricsResponse(
                 metrics=[DayAggregatedMetrics.from_dict(metric) for metric in metrics],
@@ -193,7 +196,7 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
                 db = cast(AsyncBaseDb, db)
                 result = await db.calculate_metrics()
             else:
-                result = db.calculate_metrics()
+                result = await run_in_threadpool(db.calculate_metrics)
             if result is None:
                 return []
 
