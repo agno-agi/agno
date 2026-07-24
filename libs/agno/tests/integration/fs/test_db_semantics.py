@@ -6,9 +6,10 @@ import os
 import pytest
 from sqlalchemy import create_engine, text
 
+from agno.db.postgres import PostgresDb
 from agno.db.sqlite import SqliteDb
 from agno.fs import FileSystem
-from agno.fs.db import DbFileSystem
+from agno.fs.db import DEFAULT_DB_SCHEMA, DbFileSystem
 from agno.fs.errors import VersionConflictError
 
 NS = "sem"
@@ -161,6 +162,16 @@ class TestConstruction:
         assert fs.read("ns", "a.md") == "x"
         # The agno db's own tables and the filesystem table coexist.
         assert DbFileSystem(db=agno_db).read("ns", "a.md") == "x"
+
+    def test_files_get_their_own_schema_not_the_platform_one(self):
+        # The filesystem is a tool component, not platform state: its table lives
+        # in its own schema, independent of the db's (spec D4).
+        pg = "postgresql+psycopg://ai:ai@localhost:5532/ai"
+        assert DbFileSystem(db=PostgresDb(db_url=pg)).db_schema == DEFAULT_DB_SCHEMA == "fs"
+        assert DbFileSystem(db=PostgresDb(db_url=pg, db_schema="myapp")).db_schema == "fs"
+        assert DbFileSystem(db=PostgresDb(db_url=pg), db_schema="other").db_schema == "other"
+        # SQLite has no schemas.
+        assert DbFileSystem(db_url="sqlite://").db_schema is None
 
     def test_engine_sharing_constructor(self, tmp_path):
         engine = create_engine(f"sqlite:///{tmp_path}/shared.db")
