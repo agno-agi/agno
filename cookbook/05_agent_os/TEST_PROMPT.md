@@ -1,14 +1,14 @@
 # AgentOS Cookbook Test Prompt
 
 Thoroughly test the currently published AgentOS curriculum: root `basic.py`
-and numbered lessons `01_getting_started` through `04_run_lifecycle`.
+and numbered lessons `01_getting_started` through `09_serving_workflows`.
 
 ## Read first
 
 - `AGENTS.md`
 - `cookbook/STYLE_GUIDE.md`
 - `cookbook/05_agent_os/README.md`
-- Every Python file, README, and TEST_LOG in the root and lessons 01–04
+- Every Python file, README, and TEST_LOG in the root and lessons 01–09
 
 Do not infer behavior from filenames or old test results. Verify parameters,
 client methods, endpoints, form fields, and response shapes against
@@ -83,6 +83,45 @@ halves and record both observations.
   selected `message_index`.
 - Observe blocking and background hook/eval behavior.
 
+### 05_human_in_the_loop
+
+- Verify the README distinguishes ephemeral `requires_*` pauses from
+  persistent `@approval` records.
+- Run every pause-and-resume pair in the same file, including multi-round user
+  input, external execution, team placement, and workflow review.
+- List and resolve required approvals through `/approvals`; confirm an audit
+  approval is paired with a real HITL flag.
+
+### 06_customize
+
+- Boot and inspect each base-app, route-conflict, lifespan, middleware,
+  event, dependency, CORS, and security-key example.
+- Confirm `base_app` is the real constructor parameter, middleware ordering is
+  documented as LIFO, and response middleware uses no private Starlette type.
+- Verify unauthenticated and authenticated behavior for `OS_SECURITY_KEY`.
+
+### 07_security
+
+- Run HS256 and RS256 examples and observe both allowed and forbidden calls.
+- Prove reader/runner/admin, per-resource, team, workflow, cookie, claims,
+  user-isolation, and service-account paths.
+- Enable audience verification and observe the mismatched audience rejected.
+- Use construction smoke for WorkOS only when its external credentials are
+  unavailable.
+
+### 08_os_config
+
+- Fetch `/config` from both the Python and YAML examples.
+- Verify explicit component IDs, labels, quick prompts, available models,
+  named domains, and YAML `db_ids` match the constructed databases.
+
+### 09_serving_workflows
+
+- Boot each workflow server, inspect `/health`, `/config`, and workflow
+  metadata, then run the paired REST/SSE client.
+- Exercise the real workflow WebSocket route at `/workflows/ws`; do not treat
+  agent or team SSE as WebSocket coverage.
+
 ## Required validation
 
 ```bash
@@ -96,6 +135,16 @@ halves and record both observations.
   --base-dir cookbook/05_agent_os/03_python_client --recursive
 .venvs/demo/bin/python cookbook/scripts/check_cookbook_pattern.py \
   --base-dir cookbook/05_agent_os/04_run_lifecycle --recursive
+.venvs/demo/bin/python cookbook/scripts/check_cookbook_pattern.py \
+  --base-dir cookbook/05_agent_os/05_human_in_the_loop --recursive
+.venvs/demo/bin/python cookbook/scripts/check_cookbook_pattern.py \
+  --base-dir cookbook/05_agent_os/06_customize --recursive
+.venvs/demo/bin/python cookbook/scripts/check_cookbook_pattern.py \
+  --base-dir cookbook/05_agent_os/07_security --recursive
+.venvs/demo/bin/python cookbook/scripts/check_cookbook_pattern.py \
+  --base-dir cookbook/05_agent_os/08_os_config --recursive
+.venvs/demo/bin/python cookbook/scripts/check_cookbook_pattern.py \
+  --base-dir cookbook/05_agent_os/09_serving_workflows --recursive
 
 source .venv/bin/activate
 ./scripts/format.sh
@@ -104,5 +153,5 @@ git diff --check
 ```
 
 Also reject stale models, deprecated AgentOS/MCP names, emojis, and non-final
-test statuses in the root and lessons 01–04. Report exact commands, observed
+test statuses in the root and lessons 01–09. Report exact commands, observed
 results, live-versus-construction coverage, and any library follow-up.

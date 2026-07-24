@@ -35,6 +35,11 @@ surface.
 | [02_databases](./02_databases/) | Set one default AgentOS database, choose a production backend, and manage schema migrations. |
 | [03_python_client](./03_python_client/) | Use `AgentOSClient` for configuration, runs, sessions, memory, knowledge, evals, and authentication. |
 | [04_run_lifecycle](./04_run_lifecycle/) | Treat runs as durable objects that can execute in the background, be cancelled, resumed, and checkpointed. |
+| [05_human_in_the_loop](./05_human_in_the_loop/) | Pause runs for confirmation, user input, external execution, or persistent approval records, then resume them correctly. |
+| [06_customize](./06_customize/) | Extend the FastAPI app with base apps, route policies, lifespans, middleware, events, dependencies, CORS, and a security key. |
+| [07_security](./07_security/) | Secure AgentOS with JWTs, RBAC scopes, cookies, user isolation, service accounts, and a bring-your-own issuer. |
+| [08_os_config](./08_os_config/) | Shape the control-plane manifest in Python or YAML and inspect the rendered `/config`. |
+| [09_serving_workflows](./09_serving_workflows/) | Serve workflows over REST, SSE, and the workflow-only WebSocket surface. |
 
 Later phases extend this table as the remaining numbered lessons land.
 
@@ -51,7 +56,7 @@ Later phases extend this table as the remaining numbered lessons land.
 | 7783 | `15_a2a/multi_agent/airbnb_agent.py` |
 | 8001 | `20_remote/servers/adk_server.py` |
 
-## Phase 1 environment and runtime requirements
+## Phase 2 environment and runtime requirements
 
 | Scope | Environment | Runtime |
 |---|---|---|
@@ -62,6 +67,11 @@ Later phases extend this table as the remaining numbered lessons land.
 | `02_databases/surreal.py` | `OPENAI_API_KEY`; optional `SURREALDB_*` overrides | `agno[surrealdb]` and `./cookbook/scripts/run_surrealdb.sh` |
 | `03_python_client` | `OPENAI_API_KEY`; optional `OS_SECURITY_KEY` | In-folder server on port 7778 |
 | `04_run_lifecycle` | `OPENAI_API_KEY` | Local SQLite |
+| `05_human_in_the_loop` | `OPENAI_API_KEY` | Local SQLite for persistent approvals |
+| `06_customize` | `OPENAI_API_KEY`; optional `OS_SECURITY_KEY` | Local FastAPI app on port 7777 |
+| `07_security` | `OPENAI_API_KEY`; WorkOS values only for `workos_byot.py` | Local JWT keys and SQLite; WorkOS example may use construction smoke |
+| `08_os_config` | `OPENAI_API_KEY` for agent runs | Python or YAML configuration on port 7777 |
+| `09_serving_workflows` | `OPENAI_API_KEY` | Local workflow server on port 7777 |
 
 Run cookbook files with `.venvs/demo/bin/python`. Development checks use
 `.venv`.
