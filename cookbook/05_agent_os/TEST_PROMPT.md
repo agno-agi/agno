@@ -1,14 +1,14 @@
 # AgentOS Cookbook Test Prompt
 
-Thoroughly test the currently published AgentOS curriculum: root `basic.py`
-and numbered lessons `01_getting_started` through `21_factories`.
+Thoroughly test the complete AgentOS curriculum: root `basic.py` and numbered
+lessons `01_getting_started` through `24_showcase`.
 
 ## Read first
 
 - `AGENTS.md`
 - `cookbook/STYLE_GUIDE.md`
 - `cookbook/05_agent_os/README.md`
-- Every Python file, README, and TEST_LOG in the root and lessons 01–21
+- Every Python file, README, and TEST_LOG in the root and lessons 01–24
 
 Do not infer behavior from filenames or old test results. Verify parameters,
 client methods, endpoints, form fields, and response shapes against
@@ -249,6 +249,39 @@ halves and record both observations.
   TeamFactory, WorkflowFactory, synchronous AgentFactory, and asynchronous
   AgentFactory paths.
 
+### 22_studio
+
+- Run the standalone StudioTools create, edit, version, and publish lifecycle
+  against a synchronous SQLite database.
+- Boot the AgentOS Studio servers and inspect registry primitives, code-defined
+  components, and versioning tools.
+- Exercise user-feedback, user-input, and confirmation pauses both on the
+  console and through the AgentOS continue route.
+- Call `GET /registry`, then create, read, update, and delete a component
+  through `/components`; verify the sync-database requirement is documented.
+
+### 23_skills
+
+- Execute both checked-in sample-skill scripts directly and verify they exit 0
+  with valid JSON output.
+- Boot the Skills AgentOS, inspect `/health` and `/config`, and run the Agent
+  through the REST API.
+- Observe the Agent discover the `system-info` skill, call
+  `get_skill_script(..., execute=True)`, and return real script output.
+- Confirm the skill package contains `SKILL.md` and its scripts but no nested
+  cookbook README or TEST_LOG.
+
+### 24_showcase
+
+- Start pgvector, load the Agno documentation knowledge, and boot the one
+  capstone AgentOS with `OS_SECURITY_KEY`.
+- Verify unauthenticated access is rejected, authenticated `/config` exposes
+  the two distinct Agents and finance Team, and live runs exercise RAG,
+  web/finance research, and Team coordination.
+- Confirm tracing is enabled and read back the resulting trace.
+- Run the checked-in `AccuracyEval` from `demo.py` and record its observed
+  result; do not leave the evaluation commented out or replace it with a stub.
+
 ## Required validation
 
 ```bash
@@ -296,6 +329,14 @@ halves and record both observations.
   --base-dir cookbook/05_agent_os/20_remote --recursive
 .venvs/demo/bin/python cookbook/scripts/check_cookbook_pattern.py \
   --base-dir cookbook/05_agent_os/21_factories --recursive
+.venvs/demo/bin/python cookbook/scripts/check_cookbook_pattern.py \
+  --base-dir cookbook/05_agent_os/22_studio --recursive
+.venvs/demo/bin/python cookbook/scripts/check_cookbook_pattern.py \
+  --base-dir cookbook/05_agent_os/23_skills --recursive
+.venvs/demo/bin/python cookbook/scripts/check_cookbook_pattern.py \
+  --base-dir cookbook/05_agent_os/24_showcase --recursive
+.venvs/demo/bin/python cookbook/scripts/check_cookbook_pattern.py \
+  --base-dir cookbook/05_agent_os --recursive
 
 source .venv/bin/activate
 ./scripts/format.sh
@@ -304,5 +345,7 @@ git diff --check
 ```
 
 Also reject stale models, deprecated AgentOS/MCP names, emojis, and non-final
-test statuses in the root and lessons 01–21. Report exact commands, observed
-results, live-versus-construction coverage, and any library follow-up.
+test statuses in the root and lessons 01–24. Verify exactly 132 Python files,
+exactly 24 numbered top-level lessons, no unnumbered topic directory, and all
+363 migration rows. Report exact commands, observed results,
+live-versus-construction coverage, and any library follow-up.

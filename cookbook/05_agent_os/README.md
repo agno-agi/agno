@@ -52,8 +52,9 @@ surface.
 | [19_whatsapp](./19_whatsapp/) | Serve WhatsApp assistants with interactive messages, media, reasoning, webhook verification, and multiple numbers. |
 | [20_remote](./20_remote/) | Compose AgentOS, Agno A2A, and Google ADK services through RemoteAgent, RemoteTeam, and RemoteWorkflow. |
 | [21_factories](./21_factories/) | Construct request-scoped agents, teams, and workflows from validated input and trusted identity. |
-
-The final phase extends this table with Studio, skills, and the capstone.
+| [22_studio](./22_studio/) | Compose, version, inspect, and approve AgentOS components with the Registry, StudioTools, and components API. |
+| [23_skills](./23_skills/) | Serve local skills through an Agent and execute checked-in skill scripts through the AgentOS run API. |
+| [24_showcase](./24_showcase/) | Run the secure, traced capstone with RAG, web and finance research, a Team, and a real evaluation. |
 
 ## Canonical ports
 
@@ -68,7 +69,7 @@ The final phase extends this table with Studio, skills, and the capstone.
 | 7783 | `15_a2a/multi_agent/airbnb_agent.py` |
 | 8001 | `20_remote/servers/adk_server.py` |
 
-## Phase 5 environment and runtime requirements
+## Environment and runtime requirements
 
 | Scope | Environment | Runtime |
 |---|---|---|
@@ -96,6 +97,9 @@ The final phase extends this table with Studio, skills, and the capstone.
 | `19_whatsapp` | Meta access, phone-number, verify-token, and app-secret values; provider keys used by each served entity | A Meta app and public HTTPS callback; construction smoke is valid without live phone numbers |
 | `20_remote` | `OPENAI_API_KEY`; `GOOGLE_API_KEY` for ADK; `OS_SECURITY_KEY` for the auth example | AgentOS on 7780, Agno A2A on 7781, Google ADK on 8001, and gateway on 7777 |
 | `21_factories` | `OPENAI_API_KEY` | Local SQLite; no external service |
+| `22_studio` | `OPENAI_API_KEY`; `ANTHROPIC_API_KEY` for Claude-backed runs | Local synchronous SQLite for Registry and components CRUD |
+| `23_skills` | `OPENAI_API_KEY` | Local sample-skill files with executable Python scripts |
+| `24_showcase` | `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `OS_SECURITY_KEY` | `./cookbook/scripts/run_pgvector.sh`, internet access, and tracing |
 
 Run cookbook files with `.venvs/demo/bin/python`. Development checks use
 `.venv`.
