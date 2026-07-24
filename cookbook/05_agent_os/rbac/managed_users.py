@@ -60,7 +60,9 @@ users.upsert("bob", email="bob@co", name="Bob")
 roles.assign("bob", "viewer")
 
 db = SqliteDb(db_file="tmp/managed_users_agentos.db")
-research_agent = Agent(id="research-agent", name="Research Agent", model=OpenAIChat(id="gpt-4o"), db=db)
+research_agent = Agent(
+    id="research-agent", name="Research Agent", model=OpenAIChat(id="gpt-4o"), db=db
+)
 
 # Wire BOTH stores into AgentOS. user_store= turns on the directory + off-switch.
 agent_os = AgentOS(
@@ -93,8 +95,14 @@ if __name__ == "__main__":
 
     def token(sub: str) -> str:
         return jwt.encode(
-            {"sub": sub, "aud": OS_ID, "scopes": [], "exp": datetime.now(UTC) + timedelta(hours=24)},
-            JWT_SECRET, algorithm="HS256",
+            {
+                "sub": sub,
+                "aud": OS_ID,
+                "scopes": [],
+                "exp": datetime.now(UTC) + timedelta(hours=24),
+            },
+            JWT_SECRET,
+            algorithm="HS256",
         )
 
     def auth(sub: str) -> dict:
@@ -112,21 +120,39 @@ if __name__ == "__main__":
     print("\n  the directory:")
     for u in users.list():
         role = (roles.roles_of(u["id"]) or [None])[0]
-        print(f"    - {u['id']:8s} {str(u['email'] or ''):12s} role={role}  disabled={u['disabled']}")
+        print(
+            f"    - {u['id']:8s} {str(u['email'] or ''):12s} role={role}  disabled={u['disabled']}"
+        )
 
     print("\n  bob is a viewer, so he can look at the agent:")
-    show("bob asks to LOOK at the agent", client.get("/agents/research-agent", headers=auth("bob")), "viewers can look")
+    show(
+        "bob asks to LOOK at the agent",
+        client.get("/agents/research-agent", headers=auth("bob")),
+        "viewers can look",
+    )
 
     print("\n  >> now an admin DISABLES bob (e.g. he left the company)...\n")
     users.set_disabled("bob", True, actor="alice")
-    show("bob asks to LOOK at the agent", client.get("/agents/research-agent", headers=auth("bob")), "same valid token, but he's blocked now")
+    show(
+        "bob asks to LOOK at the agent",
+        client.get("/agents/research-agent", headers=auth("bob")),
+        "same valid token, but he's blocked now",
+    )
 
     print("\n  >> ...bob is back, re-enable him...\n")
     users.set_disabled("bob", False, actor="alice")
-    show("bob asks to LOOK at the agent", client.get("/agents/research-agent", headers=auth("bob")), "allowed again, instantly")
+    show(
+        "bob asks to LOOK at the agent",
+        client.get("/agents/research-agent", headers=auth("bob")),
+        "allowed again, instantly",
+    )
 
     print("=" * 80)
-    print("the point: you keep the list of users and an off-switch per person. disabling")
+    print(
+        "the point: you keep the list of users and an off-switch per person. disabling"
+    )
     print("someone blocks their NEXT request even though their token is still valid -")
-    print("something you can't do with tokens alone. no passwords are ever stored here.")
+    print(
+        "something you can't do with tokens alone. no passwords are ever stored here."
+    )
     print("=" * 80)

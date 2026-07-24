@@ -111,7 +111,9 @@ class TierAuthorizationProvider(AuthorizationProvider):
 # ---------------------------------------------------------------------------
 
 db = SqliteDb(db_file="tmp/agentos.db")
-research_agent = Agent(id="research-agent", name="Research Agent", model=OpenAIChat(id="gpt-4o"), db=db)
+research_agent = Agent(
+    id="research-agent", name="Research Agent", model=OpenAIChat(id="gpt-4o"), db=db
+)
 
 agent_os = AgentOS(
     id=OS_ID,
@@ -155,7 +157,12 @@ if __name__ == "__main__":
         )
 
     def show(label: str, tok: str, method: str, path: str, note: str = "") -> None:
-        r = client.request(method, path, headers={"Authorization": f"Bearer {tok}"}, data={"message": "hi"})
+        r = client.request(
+            method,
+            path,
+            headers={"Authorization": f"Bearer {tok}"},
+            data={"message": "hi"},
+        )
         verdict = "BLOCKED" if r.status_code in (401, 403) else "ALLOWED"
         print(f"  {label:48s} -> {verdict:7s} ({r.status_code})  {note}")
 
@@ -165,13 +172,47 @@ if __name__ == "__main__":
     print("  tiers:  reader = read | runner = read + run | owner = anything")
     print("  each caller makes a real request. ALLOWED = got in, BLOCKED = bounced.\n")
 
-    show("reader  LOOK at the agent", token("r", "reader"), "GET", "/agents/research-agent", "readers can read")
-    show("reader  RUN the agent", token("r", "reader"), "POST", "/agents/research-agent/runs", "readers can't run -> bounced")
-    show("runner  RUN the agent", token("n", "runner"), "POST", "/agents/research-agent/runs", "runners can run")
-    show("owner   RUN the agent", token("o", "owner"), "POST", "/agents/research-agent/runs", "owners can do anything")
-    show("guest   LOOK at the agent", token("g", "guest"), "GET", "/agents/research-agent", "unknown tier -> bounced")
+    show(
+        "reader  LOOK at the agent",
+        token("r", "reader"),
+        "GET",
+        "/agents/research-agent",
+        "readers can read",
+    )
+    show(
+        "reader  RUN the agent",
+        token("r", "reader"),
+        "POST",
+        "/agents/research-agent/runs",
+        "readers can't run -> bounced",
+    )
+    show(
+        "runner  RUN the agent",
+        token("n", "runner"),
+        "POST",
+        "/agents/research-agent/runs",
+        "runners can run",
+    )
+    show(
+        "owner   RUN the agent",
+        token("o", "owner"),
+        "POST",
+        "/agents/research-agent/runs",
+        "owners can do anything",
+    )
+    show(
+        "guest   LOOK at the agent",
+        token("g", "guest"),
+        "GET",
+        "/agents/research-agent",
+        "unknown tier -> bounced",
+    )
 
     print("=" * 80)
-    print("the point: one AuthorizationProvider IS the whole integration. Swap the body")
-    print("of check()/accessible_resource_ids() for your own engine; nothing else changes.")
+    print(
+        "the point: one AuthorizationProvider IS the whole integration. Swap the body"
+    )
+    print(
+        "of check()/accessible_resource_ids() for your own engine; nothing else changes."
+    )
     print("=" * 80)

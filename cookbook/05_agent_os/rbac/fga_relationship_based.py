@@ -27,13 +27,12 @@ notion of a non-resource route. A request is allowed if either grants.
 from datetime import UTC, datetime, timedelta
 
 import jwt
-from fastapi.testclient import TestClient
-
 from agno.agent import Agent
 from agno.db.in_memory import InMemoryDb
 from agno.os import AgentOS
 from agno.os.authz import FGAAuthorizationProvider, ScopeAuthorizationProvider
 from agno.os.config import AuthorizationConfig
+from fastapi.testclient import TestClient
 
 SECRET = "fga-cookbook-secret-at-least-256-bits-long-padding-xx"
 OS_ID = "fga-cookbook-os"
@@ -52,7 +51,11 @@ class InMemoryFGA:
         return (user, relation, obj) in self._tuples
 
     def list_objects(self, user, relation, object_type):
-        return [o for (u, r, o) in self._tuples if u == user and r == relation and o.startswith(f"{object_type}:")]
+        return [
+            o
+            for (u, r, o) in self._tuples
+            if u == user and r == relation and o.startswith(f"{object_type}:")
+        ]
 
 
 fga = InMemoryFGA(
@@ -76,8 +79,10 @@ agent_os = AgentOS(
         verify_audience=True,
         audience=OS_ID,
         authorization_provider=[
-            ScopeAuthorizationProvider(),       # coarse: gates non-resource routes by scope
-            FGAAuthorizationProvider(fga),      # fine: per-resource agents/teams/workflows by relationship
+            ScopeAuthorizationProvider(),  # coarse: gates non-resource routes by scope
+            FGAAuthorizationProvider(
+                fga
+            ),  # fine: per-resource agents/teams/workflows by relationship
         ],
     ),
 )
@@ -86,8 +91,14 @@ app = agent_os.get_app()
 
 def _token(sub):
     return jwt.encode(
-        {"sub": sub, "aud": OS_ID, "scopes": [], "exp": datetime.now(UTC) + timedelta(hours=1)},
-        SECRET, algorithm="HS256",
+        {
+            "sub": sub,
+            "aud": OS_ID,
+            "scopes": [],
+            "exp": datetime.now(UTC) + timedelta(hours=1),
+        },
+        SECRET,
+        algorithm="HS256",
     )
 
 
@@ -99,19 +110,48 @@ if __name__ == "__main__":
     client = TestClient(app)
 
     def show(who, what, resp):
-        verdict = "DENIED" if resp.status_code in (401, 403) else f"OK ({resp.status_code})"
+        verdict = (
+            "DENIED" if resp.status_code in (401, 403) else f"OK ({resp.status_code})"
+        )
         print(f"  {who:6s} {what:32s} -> {verdict}")
 
-    print("\nrelationships decide access (no roles, no scopes — just who is related to what):\n")
-    show("alice", "GET  /agents/research-agent", client.get("/agents/research-agent", headers=_auth("alice")))
-    show("alice", "POST .../runs (alice owns it)",
-         client.post("/agents/research-agent/runs", headers=_auth("alice"), data={"message": "hi"}))
-    show("bob", "GET  /agents/research-agent", client.get("/agents/research-agent", headers=_auth("bob")))
-    show("bob", "POST .../runs (bob can only read)",
-         client.post("/agents/research-agent/runs", headers=_auth("bob"), data={"message": "hi"}))
-    show("carol", "GET  /agents/research-agent (no relationship)",
-         client.get("/agents/research-agent", headers=_auth("carol")))
-    print("\nalice owns it (read+run), bob can only read, carol has no relationship at all.\n")
+    print(
+        "\nrelationships decide access (no roles, no scopes — just who is related to what):\n"
+    )
+    show(
+        "alice",
+        "GET  /agents/research-agent",
+        client.get("/agents/research-agent", headers=_auth("alice")),
+    )
+    show(
+        "alice",
+        "POST .../runs (alice owns it)",
+        client.post(
+            "/agents/research-agent/runs",
+            headers=_auth("alice"),
+            data={"message": "hi"},
+        ),
+    )
+    show(
+        "bob",
+        "GET  /agents/research-agent",
+        client.get("/agents/research-agent", headers=_auth("bob")),
+    )
+    show(
+        "bob",
+        "POST .../runs (bob can only read)",
+        client.post(
+            "/agents/research-agent/runs", headers=_auth("bob"), data={"message": "hi"}
+        ),
+    )
+    show(
+        "carol",
+        "GET  /agents/research-agent (no relationship)",
+        client.get("/agents/research-agent", headers=_auth("carol")),
+    )
+    print(
+        "\nalice owns it (read+run), bob can only read, carol has no relationship at all.\n"
+    )
 
 # --- production: point at real OpenFGA --------------------------------------
 # Swap the in-memory store for OpenFGA (pip install "agno[fga]"); the provider is
