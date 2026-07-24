@@ -20,7 +20,10 @@ from agno.utils.path_safety import safe_join_relative_path
 
 
 class LocalFileSystem(BaseFS):
-    """Real-disk backend: files live at ``root/<namespace>/<path>``.
+    """Real-disk backend: files live at ``root/<namespace-dir>/<path>``, where
+    ``<namespace-dir>`` is the namespace with its slashes percent-encoded into one
+    directory component (namespace ``"research/decisions"`` -> ``research%2Fdecisions``).
+    Encoding keeps a child namespace from nesting inside a name-prefix parent on disk.
 
     Single-process by contract: ``append`` is a tail-check plus ``open("a")`` —
     the check and the append are not one operation, so it races across threads
@@ -29,12 +32,11 @@ class LocalFileSystem(BaseFS):
     for the same reason. No versioning: ``FileMeta.version`` is ``None`` and
     ``expected_version`` raises ``UnsupportedOperationError``.
 
-    Disk containment is enforced with ``safe_join_relative_path``, which applies
-    a normalizing map rather than a pure restriction: it NFKC-folds and strips
-    trailing dots/spaces from segments, so two distinct valid paths can collapse
-    onto one on-disk file (``notes/report.`` and ``notes/report`` land on the
-    same file), and Windows reserved device names are rejected. Do not rely on
-    path portability across backends.
+    Disk containment is enforced with ``safe_join_relative_path``. Its per-segment
+    map (NFKC fold, strip trailing dots/spaces) is non-injective and stronger than
+    the D6 grammar, so this backend REJECTS any name the map would alter rather than
+    remap it silently: its legal path set is a strict subset of ``DbFileSystem``'s.
+    Do not rely on path portability across backends.
     """
 
     def __init__(self, root: Union[str, Path]) -> None:
@@ -51,17 +53,36 @@ class LocalFileSystem(BaseFS):
         # same tree here. Encode "%" first so the mapping is unambiguous.
         return namespace.replace("%", "%25").replace("/", "%2F")
 
-    def _target(self, namespace: str, path: str) -> Path:
+    def _safe_join(self, rel: str, shown: str) -> Path:
+        """Join ``rel`` under root, and REJECT any name that safe_join does not map to
+        itself. ``safe_join_relative_path`` NFKC-folds and rstrips ". " per segment, a
+        map that is both non-injective and stronger than the D6 grammar: it silently
+        collapses distinct legal names (``a.`` and ``a``, ``ﬀ`` and ``ff``) onto one
+        directory, and folds NFC-stable fullwidth dots (``．．``) into ``..`` — a
+        cross-namespace traversal escape reachable through model-supplied paths. D5
+        promises LocalFileSystem's legal set is a strict subset of D6, so enforce that:
+        anything the on-disk map would alter is rejected here, not silently remapped.
+        """
         try:
-            return safe_join_relative_path(self.root, f"{self._encode_namespace(namespace)}/{path}")
-        except PathSecurityError as e:
-            raise InvalidPathError(f"invalid path {path!r}: {e}. Use relative paths like notes/topic.md.") from e
+            resolved = safe_join_relative_path(self.root, rel)
+        except PathSecurityError:
+            # Never surface the host root in the error — that leaks the absolute path.
+            raise InvalidPathError(
+                f"invalid path {shown!r}: not representable on this backend. Use relative paths like notes/topic.md."
+            ) from None
+        if resolved.relative_to(self.root).as_posix() != rel:
+            raise InvalidPathError(
+                f"invalid path {shown!r}: contains characters this backend cannot store safely "
+                "(e.g. fullwidth dots, trailing dots/spaces, or compatibility variants). "
+                "Use plain relative paths like notes/topic.md."
+            )
+        return resolved
+
+    def _target(self, namespace: str, path: str) -> Path:
+        return self._safe_join(f"{self._encode_namespace(namespace)}/{path}", path)
 
     def _namespace_root(self, namespace: str) -> Path:
-        try:
-            return safe_join_relative_path(self.root, self._encode_namespace(namespace))
-        except PathSecurityError as e:
-            raise InvalidPathError(f"invalid path {namespace!r}: {e}. Use relative paths like notes/topic.md.") from e
+        return self._safe_join(self._encode_namespace(namespace), namespace)
 
     @staticmethod
     def _read_text(target: Path) -> str:

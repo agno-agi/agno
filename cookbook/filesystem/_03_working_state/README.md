@@ -2,7 +2,7 @@
 
 Long-running work that survives across sessions and runs. Input is a task bigger than one run (or observations that change between runs); output is an agent that picks up exactly where it left off, because its progress lives in durable files rather than in the session.
 
-Session state dies with the session, and scheduled agents get a fresh session per run — a checkpoint file does not. Both examples default to a fresh per-run SQLite file so demo runs start clean; a real deployment pins one fixed, shared `db_url` (or sets `AGNO_FS_DB`) so the state also outlives the process — [`_01_getting_started/basic.py`](../_01_getting_started/basic.py) is the cross-process proof.
+Session state dies with the session, and scheduled agents get a fresh session per run — a checkpoint file does not. Both examples use a fresh per-run SQLite file so demo runs start clean; a real deployment pins one fixed, shared `db_url` instead so the state also outlives the process — [`_01_getting_started/basic.py`](../_01_getting_started/basic.py) is the cross-process proof.
 
 ## Files
 

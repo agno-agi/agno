@@ -106,6 +106,10 @@ class BaseFS(ABC):
         content = self.read(namespace, src)
         if content is None:
             raise FileNotFoundError(f"file not found: {src}")
+        if src == dst:
+            # A self-move is a no-op. Falling through would write dst then delete src
+            # (== dst), destroying the file and returning a lying success.
+            return self.write(namespace, dst, content)
         if not overwrite and self.read(namespace, dst) is not None:
             raise FileExistsError(f"file exists: {dst}")
         meta = self.write(namespace, dst, content)

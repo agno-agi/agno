@@ -85,8 +85,8 @@ Conventions:
 class FileSystem:
     """A durable, private filesystem scoped to one namespace.
 
-    ``fs`` is the storage backend; ``namespace`` names this agent's file store
-    within it. Same ``fs`` + same ``namespace`` = same files; different
+    ``backend`` is the storage backend; ``namespace`` names this agent's file
+    store within it. Same ``backend`` + same ``namespace`` = same files; different
     ``namespace`` = full isolation. Sharing is explicit, by name.
 
     ``namespace`` may embed the template placeholders ``{user_id}``,

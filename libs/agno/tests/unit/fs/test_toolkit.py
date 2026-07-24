@@ -60,6 +60,18 @@ class TestSchemas:
         assert list(properties.keys()) == EXPECTED_TOOL_PARAMS[tool_name]
         for injected in INJECTED_PARAMS:
             assert injected not in properties
+        # The async agent's prompt surface must be the D7 text, not "Async variant of".
+        for prop in properties.values():
+            assert prop.get("description"), "every async parameter carries its docstring description"
+
+    @pytest.mark.parametrize("tool_name", list(EXPECTED_TOOL_PARAMS.keys()))
+    def test_async_description_matches_sync(self, toolkit, tool_name):
+        sync_fn = toolkit.functions[tool_name]
+        async_fn = toolkit.async_functions[tool_name]
+        sync_fn.process_entrypoint()
+        async_fn.process_entrypoint()
+        assert async_fn.description == sync_fn.description
+        assert "Async variant" not in (async_fn.description or "")
 
 
 class TestWorkspaceParity:

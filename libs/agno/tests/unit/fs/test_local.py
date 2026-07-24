@@ -91,14 +91,29 @@ class TestLocalWrite:
 
 
 class TestLocalPathCollapse:
-    def test_trailing_dot_collapses_to_same_file(self, local_fs):
-        # safe_join_relative_path strips trailing dots from segments: a normalizing
-        # map, not a restriction (spec D5). Pinned, not discovered.
-        local_fs.write(NS, "notes/report.", "first")
+    def test_trailing_dot_rejected_not_collapsed(self, local_fs):
+        # safe_join_relative_path would strip the trailing dot and silently collapse
+        # "notes/report." onto "notes/report" — a non-injective map that also enables a
+        # cross-namespace collapse. LocalFileSystem now rejects any name the on-disk map
+        # would alter, so its legal set is a true strict subset of D6 (spec D5).
         local_fs.write(NS, "notes/report", "second")
-        assert local_fs.read(NS, "notes/report.") == "second"
-        assert local_fs.read(NS, "notes/report") == "second"
-        assert len(local_fs.list(NS)) == 1
+        with pytest.raises(InvalidPathError):
+            local_fs.write(NS, "notes/report.", "first")
+        with pytest.raises(InvalidPathError):
+            local_fs.read(NS, "notes/report.")
+
+    def test_fullwidth_dot_traversal_rejected(self, local_fs):
+        # Fullwidth dots are NFC-stable so D6 accepts them, but safe_join NFKC-folds
+        # them to ".." — a traversal escape. Must be rejected, not remapped.
+        local_fs.write("bank", "secret.md", "TOPSECRET")
+        with pytest.raises(InvalidPathError):
+            local_fs.read(NS, "．．/bank/secret.md")
+
+    def test_compat_variant_namespace_rejected(self, local_fs):
+        # Ligature "ﬀ" NFKC-folds to "ff"; rejecting it keeps distinct tenants isolated.
+        local_fs.write("ff", "s.md", "ff-data")
+        with pytest.raises(InvalidPathError):
+            local_fs.write("ﬀ", "s.md", "collision")
 
     def test_windows_drive_prefix_rejected_by_containment(self, local_fs):
         with pytest.raises(InvalidPathError):

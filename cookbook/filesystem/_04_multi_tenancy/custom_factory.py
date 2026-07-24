@@ -29,6 +29,14 @@ db_fs = DbFileSystem(db_url=f"sqlite:///{DB_FILE}")
 
 
 def fs_for_user(run_context: RunContext) -> List:
+    # Fail closed on an anonymous run. Without this guard, user_id=None interpolates
+    # to "support/standard/None" and every anonymous caller shares one namespace. A
+    # factory owns its own anonymous policy — here we refuse; another policy might
+    # route to an explicit shared "anon" namespace, but never by accident.
+    if not run_context.user_id:
+        raise ValueError(
+            "this agent's files require a user_id and none was provided for this run"
+        )
     tier = "vip" if run_context.user_id in VIP_USERS else "standard"
     namespace = f"support/{tier}/{run_context.user_id}"
     return [FileSystem(backend=db_fs, namespace=namespace).tools()]

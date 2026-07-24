@@ -68,6 +68,13 @@ class FileSystemTools(Toolkit):
     ``"Error: ..."`` strings, never raised. Writes are last-writer-wins by
     design; there is no confirmation surface — this is the agent's own private,
     quota-capped store (pass ``requires_confirmation_tools`` to opt in).
+
+    The six shared tool names (``read_file``, ``write_file``, ``list_files``,
+    ``search_content``, ``move_file``, ``delete_file``) deliberately collide with
+    the rest of the file-toolkit family (Workspace, FileTools, PythonTools, ...).
+    Agno's resolver keeps the first registration per name and drops later duplicates
+    with a logged warning, so attach at most one file-like toolkit per agent; if an
+    agent genuinely needs both, wrap one in a sub-agent.
     """
 
     FULL_TOOLS: List[str] = [
@@ -452,7 +459,9 @@ class FileSystemTools(Toolkit):
         except FileExistsError:
             if not overwrite:
                 return f"Error: dst exists and overwrite=False: {dst}"
-            return f"Error: cannot move to {dst}: a parent path segment is an existing file."
+            # overwrite=True still surfaced a collision: on the DB backend two runs may
+            # have moved onto {dst} at once; on local disk a parent segment may be a file.
+            return f"Error: could not move to {dst}; it may have changed concurrently. Retry or use another name."
         except InvalidPathError as e:
             return f"Error: {e}"
         except Exception as e:
@@ -599,3 +608,17 @@ class FileSystemTools(Toolkit):
     ) -> str:
         """Async variant of ``delete_file``."""
         return await asyncio.to_thread(self.delete_file, path, run_context=run_context, agent=agent, team=team)
+
+
+# The async twins delegate to their sync counterparts via asyncio.to_thread, so they
+# are behaviourally identical — but agno builds the async agent's tool schema from the
+# ASYNC method's docstring. Give each async method the sync method's full D7 docstring
+# so an async agent gets the same normative prompt surface (names, param guidance, the
+# check_lines contract) instead of a bare "Async variant of ...". The sync docstrings
+# stay the single source of truth. (Framework note: the tuple-form async_tools
+# registration could copy this automatically for every toolkit; that is a broader
+# follow-up — Workspace has the same degradation.)
+for _tool_name in FileSystemTools.FULL_TOOLS:
+    _async = getattr(FileSystemTools, "a" + _tool_name)
+    _async.__doc__ = getattr(FileSystemTools, _tool_name).__doc__
+del _tool_name, _async
