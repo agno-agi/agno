@@ -1200,9 +1200,7 @@ def test_managed_role_provider_is_mirrored_onto_mcp_subapp():
             agents=[_agent()],
             authorization=True,
             mcp_server=True,
-            authorization_config=AuthorizationConfig(
-                verification_keys=["x" * 40], algorithm="HS256", role_store=roles
-            ),
+            authorization_config=AuthorizationConfig(verification_keys=["x" * 40], algorithm="HS256", role_store=roles),
         )
         app = os.get_app()
         main_provider = getattr(app.state, "authorization_provider", None)
