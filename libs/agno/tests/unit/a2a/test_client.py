@@ -1,5 +1,11 @@
-"""Unit tests for A2AClient."""
+"""Unit tests for the DEPRECATED agno.client.a2a.A2AClient.
 
+The client still powers RemoteAgent/RemoteTeam/RemoteWorkflow transport, so
+its behavior remains tested; direct construction is deprecated in favor of
+the `A2AClient` toolkit in agno.tools.a2a.
+"""
+
+import warnings
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -11,6 +17,21 @@ from agno.client.a2a import (
     TaskResult,
 )
 from agno.exceptions import RemoteServerUnavailableError
+
+# Construction is deprecated but behavior must stay covered while remote
+# entities depend on it — silence the (separately tested) warning here.
+pytestmark = pytest.mark.filterwarnings("ignore::DeprecationWarning")
+
+
+def test_direct_construction_emits_deprecation_warning():
+    with pytest.warns(DeprecationWarning, match="agno.tools.a2a"):
+        A2AClient("http://localhost:7777")
+
+
+def test_internal_construction_is_silent():
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", DeprecationWarning)
+        A2AClient("http://localhost:7777", _warn=False)
 
 
 class TestA2AClientInit:

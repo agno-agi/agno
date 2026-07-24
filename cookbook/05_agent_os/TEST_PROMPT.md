@@ -31,7 +31,7 @@ Execution requirements:
 4. After all agents complete, collect and merge results.
 
 Special cases:
-- `client_a2a/` contains server/client pairs — validate the server starts, then terminate. Do not wait for client connections.
+- `client_a2a/` is deprecated (README-only pointer) — skip it. A2A server/client pairs now live in `interfaces/a2a/basic_agent/`; validate the server starts, then terminate.
 - `mcp_demo/` contains MCP server examples — validate startup only.
 - `background_tasks/` examples may spawn background tasks — validate execution starts and terminate after initial output.
 - `rbac/` contains symmetric and asymmetric encryption examples — both subdirectories should be tested independently.

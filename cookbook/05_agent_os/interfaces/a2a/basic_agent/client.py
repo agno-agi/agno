@@ -2,59 +2,35 @@
 Basic A2A Client
 ================
 
-Sends a message to the local A2A server and prints the JSON response.
+The minimal way to call a remote A2A 1.0 agent from Agno: `A2AClient`.
+One toolkit instance binds one remote agent — it resolves the AgentCard,
+opens an official `a2a-sdk` client and consumes the response stream for you.
+
+Start `server.py` in another terminal first, then run this script.
 """
 
-from typing import Any
-from uuid import uuid4
+import asyncio
 
-import httpx
-from a2a.client import A2AClient
-from a2a.types import (
-    MessageSendParams,
-    SendMessageRequest,
-    SendStreamingMessageRequest,  # noqa: F401
-)
+from agno.tools.a2a import A2AClient
+
+AGENT_URL = "http://localhost:9999/a2a/agents/basic-agent"
 
 
-# ---------------------------------------------------------------------------
-# Create Client Request
-# ---------------------------------------------------------------------------
 async def main() -> None:
-    async with httpx.AsyncClient() as httpx_client:
-        client = await A2AClient.get_client_from_agent_card_url(
-            httpx_client, "http://localhost:9999"
+    # `async with` resolves the card, opens one connection and reuses it for
+    # every call. Give the toolkit to an Agent via `tools=[...]` to let an LLM
+    # drive these same calls (see cookbook/91_tools/a2a/).
+    async with A2AClient(url=AGENT_URL) as remote_agent:
+        print("Agent card:")
+        print(await remote_agent.aget_agent_card())
+        print()
+        print("Response:")
+        print(
+            await remote_agent.asend_message(
+                message="Introduce yourself in one sentence."
+            )
         )
-        send_message_payload: dict[str, Any] = {
-            "message": {
-                "role": "user",
-                "parts": [
-                    {
-                        "type": "text",
-                        "text": "Hello! What can you tell me about the weather in Tokyo?",
-                    }
-                ],
-                "messageId": uuid4().hex,
-            },
-        }
-        request = SendMessageRequest(params=MessageSendParams(**send_message_payload))
-
-        response = await client.send_message(request)
-        print(response.model_dump(mode="json", exclude_none=True))
-
-        # streaming_request = SendStreamingMessageRequest(
-        #     params=MessageSendParams(**send_message_payload)
-        # )
-
-        # stream_response = client.send_message_streaming(streaming_request)
-        # async for chunk in stream_response:
-        #     print(chunk.model_dump(mode='json', exclude_none=True))
 
 
-# ---------------------------------------------------------------------------
-# Run Client
-# ---------------------------------------------------------------------------
 if __name__ == "__main__":
-    import asyncio
-
     asyncio.run(main())

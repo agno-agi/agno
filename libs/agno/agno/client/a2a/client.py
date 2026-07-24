@@ -1,11 +1,15 @@
 """A2A (Agent-to-Agent) protocol client for Agno.
 
-This module provides a Pythonic client for communicating with any A2A-compatible
-agent server, enabling cross-framework agent communication.
+DEPRECATED: this hand-rolled client predates A2A 1.0 and is no longer the
+supported way to call A2A agents. Use the `A2AClient` toolkit from
+`agno.tools.a2a` (wraps the official `a2a-sdk` client) to call A2A agents
+from an Agno agent, or `RemoteAgent`/`RemoteTeam`/`RemoteWorkflow` to use a
+remote Agno entity as a first-class object.
 
 """
 
 import json
+import warnings
 from typing import Any, AsyncIterator, Dict, List, Literal, Optional
 from uuid import uuid4
 
@@ -25,13 +29,12 @@ __all__ = ["A2AClient"]
 
 
 class A2AClient:
-    """Async client for A2A (Agent-to-Agent) protocol communication.
+    """DEPRECATED async client for A2A (Agent-to-Agent) protocol communication.
 
-    Provides a Pythonic interface for communicating with any A2A-compatible
-    agent server, including Agno AgentOS with a2a_interface=True.
-
-    The A2A protocol is a standard for agent-to-agent communication that enables
-    interoperability between different AI agent frameworks.
+    Use the `A2AClient` toolkit from `agno.tools.a2a` instead — it wraps the
+    official `a2a-sdk` client and speaks the current A2A 1.0 wire format. For
+    using a remote Agno entity as a first-class object, use
+    `RemoteAgent`/`RemoteTeam`/`RemoteWorkflow`.
 
     Attributes:
         base_url: Base URL of the A2A server
@@ -45,6 +48,7 @@ class A2AClient:
         base_url: str,
         timeout: int = 30,
         protocol: Literal["rest", "json-rpc"] = "rest",
+        _warn: bool = True,
     ):
         """Initialize A2AClient.
 
@@ -52,7 +56,19 @@ class A2AClient:
             base_url: Base URL of the A2A server (e.g., "http://localhost:7777")
             timeout: Request timeout in seconds (default: 30)
             protocol: Protocol to use for A2A communication (default: "rest")
+            _warn: Internal — RemoteAgent/RemoteTeam/RemoteWorkflow suppress the
+                deprecation warning until their transport migrates to the
+                official a2a-sdk client.
         """
+        if _warn:
+            warnings.warn(
+                "agno.client.a2a.A2AClient is deprecated. Use the A2AClient toolkit "
+                "from agno.tools.a2a to call A2A agents from an Agno agent (see "
+                "cookbook/91_tools/a2a), or RemoteAgent/RemoteTeam/RemoteWorkflow "
+                "for remote Agno entities.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
         self.base_url = base_url.rstrip("/")
         self.timeout = timeout
         self.protocol = protocol

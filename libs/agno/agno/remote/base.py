@@ -435,8 +435,10 @@ class BaseRemote:
     def get_a2a_client(self) -> "A2AClient":
         """Get an A2AClient for A2A protocol communication.
 
-        Returns cached client if available, otherwise creates a new one.
-        This method provides lazy initialization of the A2A client.
+        Note: agno.client.a2a.A2AClient is deprecated for direct use — prefer
+        the A2AClient toolkit from agno.tools.a2a. Remote entities still use it
+        internally as their transport (warning suppressed) until that transport
+        migrates to the official a2a-sdk client.
 
         Returns:
             A2AClient: Client configured for A2A protocol communication
@@ -447,6 +449,7 @@ class BaseRemote:
             base_url=self.base_url,
             timeout=int(self.timeout),
             protocol=self.a2a_protocol,
+            _warn=False,
         )
 
     @property

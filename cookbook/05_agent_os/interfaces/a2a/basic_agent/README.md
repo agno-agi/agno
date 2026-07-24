@@ -1,32 +1,28 @@
-# Basic Agno A2A Agent Example
+# Basic A2A Server + Client
 
-Basic Agno A2A Agent example that uses A2A to send and receive messages to/from an agent.
+The smallest complete A2A 1.0 pair built on Agno's abstractions:
 
-## Getting started
+- `server.py` — exposes an Agno agent over A2A with `AgentOS(a2a_interface=True)`. No protocol code.
+- `client.py` — calls it with `A2AClient`, the toolkit that wraps the official `a2a-sdk` client (one instance per remote agent).
 
-1. Clone a2a python repository: https://github.com/google/a2a-python
+## Run it
 
-2. Install the a2a library in your virtual environment which has Agno installed
+```bash
+# Terminal 1
+.venvs/demo/bin/python cookbook/05_agent_os/interfaces/a2a/basic_agent/server.py
 
-   ```bash
-   uv pip install .
-   ```
+# Terminal 2
+.venvs/demo/bin/python cookbook/05_agent_os/interfaces/a2a/basic_agent/client.py
+```
 
-3. Start the server
+Expected output: the agent's v1 AgentCard (JSON) followed by a one-sentence
+introduction from the agent.
 
-   ```bash
-   python cookbook/examples/a2a/basic_agent
-   ```
+The server is a standard A2A 1.0 endpoint — it also works with any external
+a2a-sdk client, the a2a-inspector, or another framework's A2A client. See the
+parent folder's README for the full endpoint reference and stream event shapes.
 
-4. Run the test client in a different terminal
+## Prerequisites
 
-   ```bash
-   python cookbook/examples/a2a/basic_agent/client.py
-   ```
-
-## Notes
-
-- The test client sends a message to the server and prints the response.
-- The server uses the `BasicAgentExecutor` to execute the message and send the response back to the client.
-- Streaming is not yet functional.
-- The server runs on `http://localhost:9999` by default.
+- `a2a-sdk>=1.0` (`pip install -U "a2a-sdk>=1.0"`, already in `agno[a2a]`)
+- `OPENAI_API_KEY`

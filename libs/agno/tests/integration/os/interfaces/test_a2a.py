@@ -1,5 +1,5 @@
 import json
-from typing import AsyncIterator
+from typing import AsyncIterator, List
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -38,6 +38,33 @@ from agno.run.workflow import (
 )
 from agno.team import Team
 from agno.workflow import Workflow
+
+
+def parse_sse_events(response_text: str) -> List[dict]:
+    """Parse SSE format ("event: EventType\\ndata: JSON\\n\\n") into JSON-RPC envelopes."""
+    events = []
+    for chunk in response_text.split("\n\n"):
+        if chunk.strip():
+            lines = chunk.strip().split("\n")
+            for line in lines:
+                if line.startswith("data: "):
+                    events.append(json.loads(line[6:]))
+    return events
+
+
+def get_status_updates(events: List[dict]) -> List[dict]:
+    """Extract the StreamResponse `statusUpdate` payloads from JSON-RPC envelopes."""
+    return [e["result"]["statusUpdate"] for e in events if "statusUpdate" in e["result"]]
+
+
+def get_artifact_updates(events: List[dict]) -> List[dict]:
+    """Extract the StreamResponse `artifactUpdate` payloads from JSON-RPC envelopes."""
+    return [e["result"]["artifactUpdate"] for e in events if "artifactUpdate" in e["result"]]
+
+
+def get_content_chunks(events: List[dict]) -> List[dict]:
+    """Extract artifact updates carrying content chunks (parts-bearing artifacts)."""
+    return [a for a in get_artifact_updates(events) if a.get("artifact", {}).get("parts")]
 
 
 @pytest.fixture
@@ -108,7 +135,7 @@ def test_a2a(test_agent: Agent, test_client: TestClient):
                     "messageId": "msg-123",
                     "role": "user",
                     "contextId": "context-789",
-                    "parts": [{"kind": "text", "text": "Hello, agent!"}],
+                    "parts": [{"text": "Hello, agent!"}],
                 }
             },
         }
@@ -122,17 +149,18 @@ def test_a2a(test_agent: Agent, test_client: TestClient):
         assert data["id"] == "request-123"
         assert "result" in data
 
-        task = data["result"]
+        # v1: the Task is nested under result["task"] (SendMessageResponse oneof)
+        task = data["result"]["task"]
         assert task["id"] == "test-run-123"
         assert task["contextId"] == "context-789"
-        assert task["status"]["state"] == "completed"
+        assert task["status"]["state"] == "TASK_STATE_COMPLETED"
         assert len(task["history"]) == 1
 
         message = task["history"][0]
-        assert message["role"] == "agent"
+        assert message["role"] == "ROLE_AGENT"
         assert len(message["parts"]) == 1
-        assert message["parts"][0]["kind"] == "text"
         assert message["parts"][0]["text"] == "Hello! This is a test response."
+        assert message["parts"][0]["mediaType"] == "text/plain"
 
         mock_arun.assert_called_once()
         call_kwargs = mock_arun.call_args.kwargs
@@ -195,7 +223,7 @@ def test_a2a_streaming(test_agent: Agent, test_client: TestClient):
                     "messageId": "msg-123",
                     "role": "user",
                     "contextId": "context-789",
-                    "parts": [{"kind": "text", "text": "Hello, agent!"}],
+                    "parts": [{"text": "Hello, agent!"}],
                 }
             },
         }
@@ -205,43 +233,64 @@ def test_a2a_streaming(test_agent: Agent, test_client: TestClient):
         assert response.status_code == 200
         assert response.headers["content-type"] == "text/event-stream; charset=utf-8"
 
-        # Parse SSE format: "event: EventType\ndata: JSON\n\n"
-        events = []
-        for chunk in response.text.split("\n\n"):
-            if chunk.strip():
-                lines = chunk.strip().split("\n")
-                for line in lines:
-                    if line.startswith("data: "):
-                        events.append(json.loads(line[6:]))
+        events = parse_sse_events(response.text)
 
-        assert len(events) >= 5
+        # Task (submitted), working, 3 content chunks, closing chunk, completed, final Task
+        assert len(events) == 8
+        for event in events:
+            assert event["jsonrpc"] == "2.0"
+            assert event["id"] == "request-123"
 
-        assert events[0]["result"]["kind"] == "status-update"
-        assert events[0]["result"]["status"]["state"] == "working"
-        assert events[0]["result"]["taskId"] == "test-run-123"
-        assert events[0]["result"]["contextId"] == "context-789"
+        # 1. The stream must open with the initial Task in submitted state
+        initial_task = events[0]["result"]["task"]
+        assert initial_task["id"] == "test-run-123"
+        assert initial_task["contextId"] == "context-789"
+        assert initial_task["status"]["state"] == "TASK_STATE_SUBMITTED"
 
-        content_messages = [e for e in events if e["result"].get("kind") == "message" and e["result"].get("parts")]
-        assert len(content_messages) == 3
-        assert content_messages[0]["result"]["parts"][0]["text"] == "Hello! "
-        assert content_messages[1]["result"]["parts"][0]["text"] == "This is "
-        assert content_messages[2]["result"]["parts"][0]["text"] == "a streaming response."
+        # 2. Working status update after the RunStartedEvent
+        working_update = events[1]["result"]["statusUpdate"]
+        assert working_update["status"]["state"] == "TASK_STATE_WORKING"
+        assert working_update["taskId"] == "test-run-123"
+        assert working_update["contextId"] == "context-789"
 
-        for msg in content_messages:
-            assert msg["result"]["metadata"]["agno_content_category"] == "content"
-            assert msg["result"]["role"] == "agent"
+        # 3. Content chunks are streamed as artifact updates
+        content_chunks = get_content_chunks(events)
+        assert len(content_chunks) == 3
+        assert content_chunks[0]["artifact"]["parts"][0]["text"] == "Hello! "
+        assert content_chunks[1]["artifact"]["parts"][0]["text"] == "This is "
+        assert content_chunks[2]["artifact"]["parts"][0]["text"] == "a streaming response."
 
-        final_status_events = [
-            e for e in events if e["result"].get("kind") == "status-update" and e["result"].get("final") is True
-        ]
-        assert len(final_status_events) == 1
-        assert final_status_events[0]["result"]["status"]["state"] == "completed"
+        # First chunk creates the artifact (append omitted, i.e. false); later chunks append
+        assert "append" not in content_chunks[0]
+        assert content_chunks[1]["append"] is True
+        assert content_chunks[2]["append"] is True
 
-        final_task = events[-1]
-        assert final_task["id"] == "request-123"
-        assert final_task["result"]["contextId"] == "context-789"
-        assert final_task["result"]["status"]["state"] == "completed"
-        assert final_task["result"]["history"][0]["parts"][0]["text"] == "Hello! this is a streaming response."
+        artifact_ids = {chunk["artifact"]["artifactId"] for chunk in content_chunks}
+        assert len(artifact_ids) == 1
+        for chunk in content_chunks:
+            assert chunk["artifact"]["name"] == "agent-response"
+            assert chunk["metadata"]["agno_content_category"] == "content"
+            assert chunk["taskId"] == "test-run-123"
+            assert chunk["contextId"] == "context-789"
+
+        # 4. The content artifact is closed with a last-chunk marker before completion
+        closing_chunks = [a for a in get_artifact_updates(events) if a.get("lastChunk") is True]
+        assert len(closing_chunks) == 1
+        assert closing_chunks[0]["append"] is True
+        assert closing_chunks[0]["artifact"]["artifactId"] in artifact_ids
+        assert not closing_chunks[0]["artifact"].get("parts")
+
+        # 5. Terminal status update: completed
+        completed_updates = [s for s in get_status_updates(events) if s["status"]["state"] == "TASK_STATE_COMPLETED"]
+        assert len(completed_updates) == 1
+
+        # 6. The stream closes with the final Task snapshot
+        final_task = events[-1]["result"]["task"]
+        assert final_task["id"] == "test-run-123"
+        assert final_task["contextId"] == "context-789"
+        assert final_task["status"]["state"] == "TASK_STATE_COMPLETED"
+        assert final_task["history"][0]["role"] == "ROLE_AGENT"
+        assert final_task["history"][0]["parts"][0]["text"] == "Hello! this is a streaming response."
 
         mock_arun.assert_called_once()
         call_kwargs = mock_arun.call_args.kwargs
@@ -308,7 +357,7 @@ def test_a2a_streaming_with_tools(test_agent: Agent, test_client: TestClient):
                     "messageId": "msg-123",
                     "role": "user",
                     "contextId": "context-789",
-                    "parts": [{"kind": "text", "text": "What's the weather in SF?"}],
+                    "parts": [{"text": "What's the weather in SF?"}],
                 }
             },
         }
@@ -318,41 +367,35 @@ def test_a2a_streaming_with_tools(test_agent: Agent, test_client: TestClient):
         assert response.status_code == 200
         assert response.headers["content-type"] == "text/event-stream; charset=utf-8"
 
-        # Parse SSE format: "event: EventType\ndata: JSON\n\n"
-        events = []
-        for chunk in response.text.split("\n\n"):
-            if chunk.strip():
-                lines = chunk.strip().split("\n")
-                for line in lines:
-                    if line.startswith("data: "):
-                        events.append(json.loads(line[6:]))
+        events = parse_sse_events(response.text)
+        status_updates = get_status_updates(events)
 
+        # Tool events surface as working status updates with agno metadata
         tool_started = [
-            e for e in events if e["result"].get("metadata", {}).get("agno_event_type") == "tool_call_started"
+            s for s in status_updates if s.get("metadata", {}).get("agno_event_type") == "tool_call_started"
         ]
         assert len(tool_started) == 1
-        assert tool_started[0]["result"]["kind"] == "status-update"
-        assert tool_started[0]["result"]["status"]["state"] == "working"
-        assert tool_started[0]["result"]["metadata"]["tool_name"] == "get_weather"
-        tool_args = json.loads(tool_started[0]["result"]["metadata"]["tool_args"])
+        assert tool_started[0]["status"]["state"] == "TASK_STATE_WORKING"
+        assert tool_started[0]["metadata"]["tool_name"] == "get_weather"
+        tool_args = json.loads(tool_started[0]["metadata"]["tool_args"])
         assert tool_args == {"location": "Shanghai"}
 
         tool_completed = [
-            e for e in events if e["result"].get("metadata", {}).get("agno_event_type") == "tool_call_completed"
+            s for s in status_updates if s.get("metadata", {}).get("agno_event_type") == "tool_call_completed"
         ]
         assert len(tool_completed) == 1
-        assert tool_completed[0]["result"]["kind"] == "status-update"
-        assert tool_completed[0]["result"]["metadata"]["tool_name"] == "get_weather"
+        assert tool_completed[0]["status"]["state"] == "TASK_STATE_WORKING"
+        assert tool_completed[0]["metadata"]["tool_name"] == "get_weather"
 
-        content_messages = [e for e in events if e["result"].get("kind") == "message" and e["result"].get("parts")]
-        assert len(content_messages) == 1
-        assert content_messages[0]["result"]["parts"][0]["text"] == "The weather in Shanghai is 72°F and sunny."
-        assert content_messages[0]["result"]["metadata"]["agno_content_category"] == "content"
+        # Content is streamed as artifact updates
+        content_chunks = get_content_chunks(events)
+        assert len(content_chunks) == 1
+        assert content_chunks[0]["artifact"]["parts"][0]["text"] == "The weather in Shanghai is 72°F and sunny."
+        assert content_chunks[0]["metadata"]["agno_content_category"] == "content"
 
-        final_task = events[-1]
-        assert final_task["result"]["kind"] == "task"
-        assert final_task["result"]["status"]["state"] == "completed"
-        assert final_task["result"]["history"][0]["parts"][0]["text"] == "The weather in Shanghai is 72°F and sunny."
+        final_task = events[-1]["result"]["task"]
+        assert final_task["status"]["state"] == "TASK_STATE_COMPLETED"
+        assert final_task["history"][0]["parts"][0]["text"] == "The weather in Shanghai is 72°F and sunny."
 
 
 def test_a2a_streaming_with_reasoning(test_agent: Agent, test_client: TestClient):
@@ -427,7 +470,7 @@ def test_a2a_streaming_with_reasoning(test_agent: Agent, test_client: TestClient
                     "messageId": "msg-123",
                     "role": "user",
                     "contextId": "context-789",
-                    "parts": [{"kind": "text", "text": "Help me think through this problem."}],
+                    "parts": [{"text": "Help me think through this problem."}],
                 }
             },
         }
@@ -437,58 +480,45 @@ def test_a2a_streaming_with_reasoning(test_agent: Agent, test_client: TestClient
         assert response.status_code == 200
         assert response.headers["content-type"] == "text/event-stream; charset=utf-8"
 
-        # Parse SSE format: "event: EventType\ndata: JSON\n\n"
-        events = []
-        for chunk in response.text.split("\n\n"):
-            if chunk.strip():
-                lines = chunk.strip().split("\n")
-                for line in lines:
-                    if line.startswith("data: "):
-                        events.append(json.loads(line[6:]))
+        events = parse_sse_events(response.text)
+        status_updates = get_status_updates(events)
 
         reasoning_started = [
-            e for e in events if e["result"].get("metadata", {}).get("agno_event_type") == "reasoning_started"
+            s for s in status_updates if s.get("metadata", {}).get("agno_event_type") == "reasoning_started"
         ]
         assert len(reasoning_started) == 1
-        assert reasoning_started[0]["result"]["kind"] == "status-update"
-        assert reasoning_started[0]["result"]["status"]["state"] == "working"
+        assert reasoning_started[0]["status"]["state"] == "TASK_STATE_WORKING"
 
-        reasoning_messages = [
-            e
-            for e in events
-            if e["result"].get("kind") == "message"
-            and e["result"].get("metadata", {}).get("agno_content_category") == "reasoning"
+        # Reasoning steps surface as working status updates with the reasoning text
+        # in metadata (a stream Message is terminal in v1, so they cannot be Messages)
+        reasoning_steps = [
+            s for s in status_updates if s.get("metadata", {}).get("agno_event_type") == "reasoning_step"
         ]
-        assert len(reasoning_messages) == 2
+        assert len(reasoning_steps) == 2
         assert (
-            reasoning_messages[0]["result"]["parts"][0]["text"]
+            reasoning_steps[0]["metadata"]["reasoning_content"]
             == "First, I need to understand what the user is asking..."
         )
-        assert reasoning_messages[1]["result"]["parts"][0]["text"] == "Then I should formulate a clear response."
+        assert reasoning_steps[1]["metadata"]["reasoning_content"] == "Then I should formulate a clear response."
 
-        for msg in reasoning_messages:
-            assert msg["result"]["metadata"]["agno_content_category"] == "reasoning"
-            assert msg["result"]["metadata"]["agno_event_type"] == "reasoning_step"
+        for step in reasoning_steps:
+            assert step["status"]["state"] == "TASK_STATE_WORKING"
+            assert step["metadata"]["agno_content_category"] == "reasoning"
+            assert step["metadata"]["step_type"] == "str"
 
         reasoning_completed = [
-            e for e in events if e["result"].get("metadata", {}).get("agno_event_type") == "reasoning_completed"
+            s for s in status_updates if s.get("metadata", {}).get("agno_event_type") == "reasoning_completed"
         ]
         assert len(reasoning_completed) == 1
-        assert reasoning_completed[0]["result"]["kind"] == "status-update"
 
-        content_messages = [
-            e
-            for e in events
-            if e["result"].get("kind") == "message"
-            and e["result"].get("metadata", {}).get("agno_content_category") == "content"
-        ]
-        assert len(content_messages) == 1
-        assert content_messages[0]["result"]["parts"][0]["text"] == "Based on my analysis, here's the answer."
+        content_chunks = get_content_chunks(events)
+        assert len(content_chunks) == 1
+        assert content_chunks[0]["artifact"]["parts"][0]["text"] == "Based on my analysis, here's the answer."
+        assert content_chunks[0]["metadata"]["agno_content_category"] == "content"
 
-        final_task = events[-1]
-        assert final_task["result"]["kind"] == "task"
-        assert final_task["result"]["status"]["state"] == "completed"
-        assert final_task["result"]["history"][0]["parts"][0]["text"] == "Based on my analysis, here's the answer."
+        final_task = events[-1]["result"]["task"]
+        assert final_task["status"]["state"] == "TASK_STATE_COMPLETED"
+        assert final_task["history"][0]["parts"][0]["text"] == "Based on my analysis, here's the answer."
 
 
 def test_a2a_streaming_with_memory(test_agent: Agent, test_client: TestClient):
@@ -543,7 +573,7 @@ def test_a2a_streaming_with_memory(test_agent: Agent, test_client: TestClient):
                     "messageId": "msg-123",
                     "role": "user",
                     "contextId": "context-789",
-                    "parts": [{"kind": "text", "text": "Remember this for later."}],
+                    "parts": [{"text": "Remember this for later."}],
                 }
             },
         }
@@ -553,41 +583,29 @@ def test_a2a_streaming_with_memory(test_agent: Agent, test_client: TestClient):
         assert response.status_code == 200
         assert response.headers["content-type"] == "text/event-stream; charset=utf-8"
 
-        # Parse SSE format: "event: EventType\ndata: JSON\n\n"
-        events = []
-        for chunk in response.text.split("\n\n"):
-            if chunk.strip():
-                lines = chunk.strip().split("\n")
-                for line in lines:
-                    if line.startswith("data: "):
-                        events.append(json.loads(line[6:]))
+        events = parse_sse_events(response.text)
+        status_updates = get_status_updates(events)
 
         memory_started = [
-            e for e in events if e["result"].get("metadata", {}).get("agno_event_type") == "memory_update_started"
+            s for s in status_updates if s.get("metadata", {}).get("agno_event_type") == "memory_update_started"
         ]
         assert len(memory_started) == 1
-        assert memory_started[0]["result"]["kind"] == "status-update"
-        assert memory_started[0]["result"]["status"]["state"] == "working"
+        assert memory_started[0]["status"]["state"] == "TASK_STATE_WORKING"
 
         memory_completed = [
-            e for e in events if e["result"].get("metadata", {}).get("agno_event_type") == "memory_update_completed"
+            s for s in status_updates if s.get("metadata", {}).get("agno_event_type") == "memory_update_completed"
         ]
         assert len(memory_completed) == 1
-        assert memory_completed[0]["result"]["kind"] == "status-update"
+        assert memory_completed[0]["status"]["state"] == "TASK_STATE_WORKING"
 
-        content_messages = [
-            e
-            for e in events
-            if e["result"].get("kind") == "message"
-            and e["result"].get("metadata", {}).get("agno_content_category") == "content"
-        ]
-        assert len(content_messages) == 1
-        assert content_messages[0]["result"]["parts"][0]["text"] == "I've updated my memory with this information."
+        content_chunks = get_content_chunks(events)
+        assert len(content_chunks) == 1
+        assert content_chunks[0]["artifact"]["parts"][0]["text"] == "I've updated my memory with this information."
+        assert content_chunks[0]["metadata"]["agno_content_category"] == "content"
 
-        final_task = events[-1]
-        assert final_task["result"]["kind"] == "task"
-        assert final_task["result"]["status"]["state"] == "completed"
-        assert final_task["result"]["history"][0]["parts"][0]["text"] == "I've updated my memory with this information."
+        final_task = events[-1]["result"]["task"]
+        assert final_task["status"]["state"] == "TASK_STATE_COMPLETED"
+        assert final_task["history"][0]["parts"][0]["text"] == "I've updated my memory with this information."
 
 
 @pytest.fixture
@@ -633,7 +651,7 @@ def test_a2a_team(test_team: Team, test_team_client: TestClient):
                     "messageId": "msg-123",
                     "role": "user",
                     "contextId": "context-789",
-                    "parts": [{"kind": "text", "text": "Hello, team!"}],
+                    "parts": [{"text": "Hello, team!"}],
                 }
             },
         }
@@ -647,17 +665,17 @@ def test_a2a_team(test_team: Team, test_team_client: TestClient):
         assert data["id"] == "request-123"
         assert "result" in data
 
-        task = data["result"]
+        task = data["result"]["task"]
         assert task["id"] == "test-run-123"
         assert task["contextId"] == "context-789"
-        assert task["status"]["state"] == "completed"
+        assert task["status"]["state"] == "TASK_STATE_COMPLETED"
         assert len(task["history"]) == 1
 
         message = task["history"][0]
-        assert message["role"] == "agent"
+        assert message["role"] == "ROLE_AGENT"
         assert len(message["parts"]) == 1
-        assert message["parts"][0]["kind"] == "text"
         assert message["parts"][0]["text"] == "Hello! This is a test response from the team."
+        assert message["parts"][0]["mediaType"] == "text/plain"
 
         mock_arun.assert_called_once()
         call_kwargs = mock_arun.call_args.kwargs
@@ -720,7 +738,7 @@ def test_a2a_streaming_team(test_team: Team, test_team_client: TestClient):
                     "messageId": "msg-123",
                     "role": "user",
                     "contextId": "context-789",
-                    "parts": [{"kind": "text", "text": "Hello, team!"}],
+                    "parts": [{"text": "Hello, team!"}],
                 }
             },
         }
@@ -730,46 +748,40 @@ def test_a2a_streaming_team(test_team: Team, test_team_client: TestClient):
         assert response.status_code == 200
         assert response.headers["content-type"] == "text/event-stream; charset=utf-8"
 
-        # Parse SSE format: "event: EventType\ndata: JSON\n\n"
-        events = []
-        for chunk in response.text.split("\n\n"):
-            if chunk.strip():
-                lines = chunk.strip().split("\n")
-                for line in lines:
-                    if line.startswith("data: "):
-                        events.append(json.loads(line[6:]))
+        events = parse_sse_events(response.text)
 
-        assert len(events) >= 5
+        # Task (submitted), working, 3 content chunks, closing chunk, completed, final Task
+        assert len(events) == 8
 
-        assert events[0]["result"]["kind"] == "status-update"
-        assert events[0]["result"]["status"]["state"] == "working"
-        assert events[0]["result"]["taskId"] == "test-run-123"
-        assert events[0]["result"]["contextId"] == "context-789"
+        initial_task = events[0]["result"]["task"]
+        assert initial_task["id"] == "test-run-123"
+        assert initial_task["contextId"] == "context-789"
+        assert initial_task["status"]["state"] == "TASK_STATE_SUBMITTED"
 
-        content_messages = [e for e in events if e["result"].get("kind") == "message" and e["result"].get("parts")]
-        assert len(content_messages) == 3
-        assert content_messages[0]["result"]["parts"][0]["text"] == "Hello! "
-        assert content_messages[1]["result"]["parts"][0]["text"] == "This is "
-        assert content_messages[2]["result"]["parts"][0]["text"] == "a streaming response from the team."
+        working_update = events[1]["result"]["statusUpdate"]
+        assert working_update["status"]["state"] == "TASK_STATE_WORKING"
+        assert working_update["taskId"] == "test-run-123"
+        assert working_update["contextId"] == "context-789"
 
-        for msg in content_messages:
-            assert msg["result"]["metadata"]["agno_content_category"] == "content"
-            assert msg["result"]["role"] == "agent"
+        content_chunks = get_content_chunks(events)
+        assert len(content_chunks) == 3
+        assert content_chunks[0]["artifact"]["parts"][0]["text"] == "Hello! "
+        assert content_chunks[1]["artifact"]["parts"][0]["text"] == "This is "
+        assert content_chunks[2]["artifact"]["parts"][0]["text"] == "a streaming response from the team."
 
-        final_status_events = [
-            e for e in events if e["result"].get("kind") == "status-update" and e["result"].get("final") is True
-        ]
-        assert len(final_status_events) == 1
-        assert final_status_events[0]["result"]["status"]["state"] == "completed"
+        for chunk in content_chunks:
+            assert chunk["metadata"]["agno_content_category"] == "content"
+            assert chunk["artifact"]["name"] == "agent-response"
 
-        final_task = events[-1]
-        assert final_task["id"] == "request-123"
-        assert final_task["result"]["contextId"] == "context-789"
-        assert final_task["result"]["status"]["state"] == "completed"
-        assert (
-            final_task["result"]["history"][0]["parts"][0]["text"]
-            == "Hello! this is a streaming response from the team."
-        )
+        completed_updates = [s for s in get_status_updates(events) if s["status"]["state"] == "TASK_STATE_COMPLETED"]
+        assert len(completed_updates) == 1
+
+        final_task_event = events[-1]
+        assert final_task_event["id"] == "request-123"
+        final_task = final_task_event["result"]["task"]
+        assert final_task["contextId"] == "context-789"
+        assert final_task["status"]["state"] == "TASK_STATE_COMPLETED"
+        assert final_task["history"][0]["parts"][0]["text"] == "Hello! this is a streaming response from the team."
 
         mock_arun.assert_called_once()
         call_kwargs = mock_arun.call_args.kwargs
@@ -800,7 +812,7 @@ def test_a2a_user_id_from_header(test_agent: Agent, test_client: TestClient):
                 "message": {
                     "messageId": "msg-123",
                     "role": "user",
-                    "parts": [{"kind": "text", "text": "Hello!"}],
+                    "parts": [{"text": "Hello!"}],
                 }
             },
         }
@@ -837,7 +849,7 @@ def test_a2a_user_id_from_metadata(test_agent: Agent, test_client: TestClient):
                     "messageId": "msg-123",
                     "role": "user",
                     "metadata": {"userId": "user-789"},
-                    "parts": [{"kind": "text", "text": "Hello!"}],
+                    "parts": [{"text": "Hello!"}],
                 }
             },
         }
@@ -865,7 +877,7 @@ def test_a2a_error_handling_non_streaming(test_agent: Agent, test_client: TestCl
                     "messageId": "msg-123",
                     "role": "user",
                     "contextId": "context-789",
-                    "parts": [{"kind": "text", "text": "Hello!"}],
+                    "parts": [{"text": "Hello!"}],
                 }
             },
         }
@@ -876,10 +888,16 @@ def test_a2a_error_handling_non_streaming(test_agent: Agent, test_client: TestCl
         data = response.json()
         assert data["jsonrpc"] == "2.0"
         assert data["id"] == "request-123"
-        assert data["result"]["status"]["state"] == "failed"
-        assert data["result"]["contextId"] == "context-789"
-        assert len(data["result"]["history"]) == 1
-        assert "Agent execution failed" in data["result"]["history"][0]["parts"][0]["text"]
+
+        task = data["result"]["task"]
+        assert task["status"]["state"] == "TASK_STATE_FAILED"
+        assert task["contextId"] == "context-789"
+        assert len(task["history"]) == 1
+        assert task["history"][0]["role"] == "ROLE_AGENT"
+        # Exception details must NOT leak onto the wire — only a generic notice.
+        wire_text = task["history"][0]["parts"][0]["text"]
+        assert "Agent execution failed" not in wire_text
+        assert "internal server error" in wire_text
 
 
 def test_a2a_streaming_with_media_artifacts(test_agent: Agent, test_client: TestClient):
@@ -926,7 +944,7 @@ def test_a2a_streaming_with_media_artifacts(test_agent: Agent, test_client: Test
                     "messageId": "msg-123",
                     "role": "user",
                     "contextId": "context-789",
-                    "parts": [{"kind": "text", "text": "Generate media"}],
+                    "parts": [{"text": "Generate media"}],
                 }
             },
         }
@@ -936,37 +954,33 @@ def test_a2a_streaming_with_media_artifacts(test_agent: Agent, test_client: Test
         assert response.status_code == 200
         assert response.headers["content-type"] == "text/event-stream; charset=utf-8"
 
-        # Parse SSE format: "event: EventType\ndata: JSON\n\n"
-        events = []
-        for chunk in response.text.split("\n\n"):
-            if chunk.strip():
-                lines = chunk.strip().split("\n")
-                for line in lines:
-                    if line.startswith("data: "):
-                        events.append(json.loads(line[6:]))
+        events = parse_sse_events(response.text)
 
-        final_task = events[-1]
-        assert final_task["result"]["kind"] == "task"
-        assert final_task["result"]["status"]["state"] == "completed"
+        final_task = events[-1]["result"]["task"]
+        assert final_task["status"]["state"] == "TASK_STATE_COMPLETED"
 
-        artifacts = final_task["result"].get("artifacts")
+        artifacts = final_task.get("artifacts")
         assert artifacts is not None
         assert len(artifacts) == 3
 
+        # v1 file parts carry the location in `url` (no nested `file` object)
         image_artifact = next((a for a in artifacts if "image" in a["artifactId"]), None)
         assert image_artifact is not None
         assert image_artifact["name"] == "image-0"
-        assert image_artifact["parts"][0]["file"]["uri"] == "https://example.com/image.png"
+        assert image_artifact["parts"][0]["url"] == "https://example.com/image.png"
+        assert image_artifact["parts"][0]["mediaType"] == "image/*"
 
         video_artifact = next((a for a in artifacts if "video" in a["artifactId"]), None)
         assert video_artifact is not None
         assert video_artifact["name"] == "video-0"
-        assert video_artifact["parts"][0]["file"]["uri"] == "https://example.com/video.mp4"
+        assert video_artifact["parts"][0]["url"] == "https://example.com/video.mp4"
+        assert video_artifact["parts"][0]["mediaType"] == "video/*"
 
         audio_artifact = next((a for a in artifacts if "audio" in a["artifactId"]), None)
         assert audio_artifact is not None
         assert audio_artifact["name"] == "audio-0"
-        assert audio_artifact["parts"][0]["file"]["uri"] == "https://example.com/audio.mp3"
+        assert audio_artifact["parts"][0]["url"] == "https://example.com/audio.mp3"
+        assert audio_artifact["parts"][0]["mediaType"] == "audio/*"
 
 
 def test_a2a_streaming_with_cancellation(test_agent: Agent, test_client: TestClient):
@@ -1008,7 +1022,7 @@ def test_a2a_streaming_with_cancellation(test_agent: Agent, test_client: TestCli
                     "messageId": "msg-123",
                     "role": "user",
                     "contextId": "context-789",
-                    "parts": [{"kind": "text", "text": "Start processing"}],
+                    "parts": [{"text": "Start processing"}],
                 }
             },
         }
@@ -1018,38 +1032,28 @@ def test_a2a_streaming_with_cancellation(test_agent: Agent, test_client: TestCli
         assert response.status_code == 200
         assert response.headers["content-type"] == "text/event-stream; charset=utf-8"
 
-        # Parse SSE format: "event: EventType\ndata: JSON\n\n"
-        events = []
-        for chunk in response.text.split("\n\n"):
-            if chunk.strip():
-                lines = chunk.strip().split("\n")
-                for line in lines:
-                    if line.startswith("data: "):
-                        events.append(json.loads(line[6:]))
+        events = parse_sse_events(response.text)
 
-        content_messages = [
-            e
-            for e in events
-            if e["result"].get("kind") == "message"
-            and e["result"].get("metadata", {}).get("agno_content_category") == "content"
-        ]
-        assert len(content_messages) == 1
-        assert content_messages[0]["result"]["parts"][0]["text"] == "Starting to process..."
+        content_chunks = get_content_chunks(events)
+        assert len(content_chunks) == 1
+        assert content_chunks[0]["artifact"]["parts"][0]["text"] == "Starting to process..."
+        assert content_chunks[0]["metadata"]["agno_content_category"] == "content"
 
-        final_status_events = [
-            e for e in events if e["result"].get("kind") == "status-update" and e["result"].get("final") is True
-        ]
-        assert len(final_status_events) == 1
-        assert final_status_events[0]["result"]["status"]["state"] == "canceled"
-        assert final_status_events[0]["result"]["metadata"]["agno_event_type"] == "run_cancelled"
-        assert final_status_events[0]["result"]["metadata"]["reason"] == "User requested cancellation"
+        # Cancelled runs do not emit a closing (last-chunk) artifact update
+        closing_chunks = [a for a in get_artifact_updates(events) if a.get("lastChunk") is True]
+        assert len(closing_chunks) == 0
 
-        final_task = events[-1]
-        assert final_task["result"]["kind"] == "task"
-        assert final_task["result"]["status"]["state"] == "canceled"
-        assert final_task["result"]["history"][0]["metadata"]["agno_event_type"] == "run_cancelled"
+        # Terminal status update: canceled, with cancellation metadata
+        canceled_updates = [s for s in get_status_updates(events) if s["status"]["state"] == "TASK_STATE_CANCELED"]
+        assert len(canceled_updates) == 1
+        assert canceled_updates[0]["metadata"]["agno_event_type"] == "run_cancelled"
+        assert canceled_updates[0]["metadata"]["reason"] == "User requested cancellation"
 
-        parts = final_task["result"]["history"][0]["parts"]
+        final_task = events[-1]["result"]["task"]
+        assert final_task["status"]["state"] == "TASK_STATE_CANCELED"
+        assert final_task["history"][0]["metadata"]["agno_event_type"] == "run_cancelled"
+
+        parts = final_task["history"][0]["parts"]
         cancellation_text = " ".join([p["text"] for p in parts])
         assert "cancelled" in cancellation_text.lower()
         assert "User requested cancellation" in cancellation_text
@@ -1077,7 +1081,7 @@ def test_a2a_user_id_in_response_metadata(test_agent: Agent, test_client: TestCl
                 "message": {
                     "messageId": "msg-123",
                     "role": "user",
-                    "parts": [{"kind": "text", "text": "Hello!"}],
+                    "parts": [{"text": "Hello!"}],
                 }
             },
         }
@@ -1089,7 +1093,7 @@ def test_a2a_user_id_in_response_metadata(test_agent: Agent, test_client: TestCl
         assert response.status_code == 200
         data = response.json()
 
-        task = data["result"]
+        task = data["result"]["task"]
         assert len(task["history"]) == 1
         message = task["history"][0]
         assert message["metadata"] is not None
@@ -1141,7 +1145,7 @@ def test_a2a_workflow(test_workflow: Workflow, test_workflow_client: TestClient)
                     "messageId": "msg-123",
                     "role": "user",
                     "contextId": "context-789",
-                    "parts": [{"kind": "text", "text": "Hello, workflow!"}],
+                    "parts": [{"text": "Hello, workflow!"}],
                 }
             },
         }
@@ -1155,16 +1159,16 @@ def test_a2a_workflow(test_workflow: Workflow, test_workflow_client: TestClient)
         assert data["id"] == "request-123"
         assert "result" in data
 
-        task = data["result"]
+        task = data["result"]["task"]
         assert task["contextId"] == "context-789"
-        assert task["status"]["state"] == "completed"
+        assert task["status"]["state"] == "TASK_STATE_COMPLETED"
         assert len(task["history"]) == 1
 
         message = task["history"][0]
-        assert message["role"] == "agent"
+        assert message["role"] == "ROLE_AGENT"
         assert len(message["parts"]) == 1
-        assert message["parts"][0]["kind"] == "text"
         assert message["parts"][0]["text"] == "Workflow echo: Hello from workflow!"
+        assert message["parts"][0]["mediaType"] == "text/plain"
 
         mock_arun.assert_called_once()
         call_kwargs = mock_arun.call_args.kwargs
@@ -1219,7 +1223,7 @@ def test_a2a_streaming_workflow(test_workflow: Workflow, test_workflow_client: T
                     "messageId": "msg-123",
                     "role": "user",
                     "contextId": "context-789",
-                    "parts": [{"kind": "text", "text": "Hello, workflow!"}],
+                    "parts": [{"text": "Hello, workflow!"}],
                 }
             },
         }
@@ -1229,17 +1233,37 @@ def test_a2a_streaming_workflow(test_workflow: Workflow, test_workflow_client: T
         assert response.status_code == 200
         assert response.headers["content-type"] == "text/event-stream; charset=utf-8"
 
-        # Parse SSE format: "event: EventType\ndata: JSON\n\n"
-        events = []
-        for chunk in response.text.split("\n\n"):
-            if chunk.strip():
-                lines = chunk.strip().split("\n")
-                for line in lines:
-                    if line.startswith("data: "):
-                        events.append(json.loads(line[6:]))
+        events = parse_sse_events(response.text)
 
         assert len(events) >= 2
 
-        final_task = events[-1]
-        assert final_task["result"]["kind"] == "task"
-        assert final_task["result"]["status"]["state"] in ["completed", "failed"]
+        # The stream opens with the initial Task in submitted state
+        initial_task = events[0]["result"]["task"]
+        assert initial_task["id"] == "test-run-123"
+        assert initial_task["contextId"] == "context-789"
+        assert initial_task["status"]["state"] == "TASK_STATE_SUBMITTED"
+
+        status_updates = get_status_updates(events)
+
+        working_updates = [s for s in status_updates if s["status"]["state"] == "TASK_STATE_WORKING"]
+        assert len(working_updates) >= 1
+
+        step_started = [
+            s for s in status_updates if s.get("metadata", {}).get("agno_event_type") == "workflow_step_started"
+        ]
+        assert len(step_started) == 1
+        assert step_started[0]["metadata"]["step_name"] == "echo_step"
+
+        step_completed = [
+            s for s in status_updates if s.get("metadata", {}).get("agno_event_type") == "workflow_step_completed"
+        ]
+        assert len(step_completed) == 1
+        assert step_completed[0]["metadata"]["step_name"] == "echo_step"
+
+        completed_updates = [s for s in status_updates if s["status"]["state"] == "TASK_STATE_COMPLETED"]
+        assert len(completed_updates) == 1
+
+        final_task = events[-1]["result"]["task"]
+        assert final_task["contextId"] == "context-789"
+        assert final_task["status"]["state"] == "TASK_STATE_COMPLETED"
+        assert final_task["history"][0]["parts"][0]["text"] == "Workflow echo: Hello from workflow!"
