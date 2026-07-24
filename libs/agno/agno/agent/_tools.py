@@ -485,6 +485,15 @@ def determine_tools_for_model(
 ) -> List[Union[Function, dict]]:
     _functions: List[Union[Function, dict]] = []
 
+    # Add the contacts tool; parse_tools collects its instructions and applies hooks
+    if agent.contacts:
+        from agno.contacts.contacts import get_message_contact_function
+
+        processed_tools = [
+            *(processed_tools or []),
+            get_message_contact_function(agent=agent, run_context=run_context, async_mode=async_mode),
+        ]
+
     # Get Agent tools
     if processed_tools is not None and len(processed_tools) > 0:
         log_debug("Processing tools for model")
