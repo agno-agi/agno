@@ -43,6 +43,17 @@ def pg_engine():
             conn.execute(text("SELECT 1"))
     except OperationalError as e:
         engine.dispose()
+        # In CI this must FAIL, never skip. The dialects genuinely diverge (psycopg3
+        # returns rowcount -1 for a guarded upsert, so a SQLite-only run passes a
+        # quota guard that never fires in production), and a skip would hide the loss
+        # of that coverage behind a green build. CI provides the service; locally,
+        # skipping just means "start the container".
+        if os.environ.get("CI"):
+            pytest.fail(
+                f"Postgres is required in CI but was unreachable at {PG_URL} ({type(e).__name__}). "
+                "The Postgres lane must run here: it is the only place dialect-specific "
+                "behaviour is covered. Check the postgres service on this job."
+            )
         pytest.skip(f"Postgres not reachable at {PG_URL} ({type(e).__name__}); run cookbook/scripts/run_pgvector.sh")
     with engine.begin() as conn:
         conn.execute(text(f'CREATE SCHEMA IF NOT EXISTS "{PG_SCHEMA}"'))

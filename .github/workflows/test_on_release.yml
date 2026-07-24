@@ -1208,6 +1208,26 @@ jobs:
     env:
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      CI: "true"
+    # tests/integration/fs exercises DbFileSystem on Postgres as well as SQLite, and
+    # the dialects genuinely diverge: psycopg3 returns rowcount -1 for a guarded
+    # upsert, so a SQLite-only run passes a quota guard that never fires in
+    # production. Port 5532 matches cookbook/scripts/run_pgvector.sh so local and CI
+    # share one URL.
+    services:
+      postgres:
+        image: pgvector/pgvector:pg17
+        env:
+          POSTGRES_USER: ai
+          POSTGRES_PASSWORD: ai
+          POSTGRES_DB: ai
+        ports:
+          - 5532:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
     steps:
       - uses: actions/checkout@v3
       - name: Set up Python ${{ matrix.python-version }}
