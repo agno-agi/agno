@@ -47,8 +47,13 @@ surface.
 | [14_mcp](./14_mcp/) | Expose AgentOS as a scoped MCP server, drive its run lifecycle, and secure it with PAT or OAuth authorization. |
 | [15_a2a](./15_a2a/) | Serve agents and teams over A2A, use the first-party client, inspect agent cards, and compose remote agents. |
 | [16_agui](./16_agui/) | Serve standalone AG-UI agents and teams with tools, media, shared state, structured output, and backend HITL. |
+| [17_slack](./17_slack/) | Connect agents, teams, and workflows to Slack with streaming UX, workspace tools, threaded sessions, peer bots, and HITL. |
+| [18_telegram](./18_telegram/) | Serve Telegram bots with streaming replies, group mention filtering, media, commands, and multiple prefixes. |
+| [19_whatsapp](./19_whatsapp/) | Serve WhatsApp assistants with interactive messages, media, reasoning, webhook verification, and multiple numbers. |
+| [20_remote](./20_remote/) | Compose AgentOS, Agno A2A, and Google ADK services through RemoteAgent, RemoteTeam, and RemoteWorkflow. |
+| [21_factories](./21_factories/) | Construct request-scoped agents, teams, and workflows from validated input and trusted identity. |
 
-Later phases extend this table as the remaining numbered lessons land.
+The final phase extends this table with Studio, skills, and the capstone.
 
 ## Canonical ports
 
@@ -63,7 +68,7 @@ Later phases extend this table as the remaining numbered lessons land.
 | 7783 | `15_a2a/multi_agent/airbnb_agent.py` |
 | 8001 | `20_remote/servers/adk_server.py` |
 
-## Phase 4 environment and runtime requirements
+## Phase 5 environment and runtime requirements
 
 | Scope | Environment | Runtime |
 |---|---|---|
@@ -86,6 +91,11 @@ Later phases extend this table as the remaining numbered lessons land.
 | `14_mcp` | `OPENAI_API_KEY`; `OS_SECURITY_KEY` for PAT security; provider values for AuthKit OAuth | Local SQLite and an MCP client |
 | `15_a2a` | `OPENAI_API_KEY`; `OPENWEATHER_API_KEY` for the weather specialist | Standalone servers on ports 7779, 7782, and 7783; Node.js, `npx`, and internet access for OpenBNB |
 | `16_agui` | `OPENAI_API_KEY`; `GOOGLE_API_KEY` for the media example | Local AG-UI servers; a CopilotKit frontend is optional for interactive UI testing |
+| `17_slack` | Slack bot tokens and signing secrets; provider keys used by each served entity | Slack app configuration and a public HTTPS callback; construction smoke is valid without a live workspace |
+| `18_telegram` | Telegram bot tokens; provider keys used by each served entity | `agno[telegram]` and a public HTTPS callback; construction smoke is valid without live bots |
+| `19_whatsapp` | Meta access, phone-number, verify-token, and app-secret values; provider keys used by each served entity | A Meta app and public HTTPS callback; construction smoke is valid without live phone numbers |
+| `20_remote` | `OPENAI_API_KEY`; `GOOGLE_API_KEY` for ADK; `OS_SECURITY_KEY` for the auth example | AgentOS on 7780, Agno A2A on 7781, Google ADK on 8001, and gateway on 7777 |
+| `21_factories` | `OPENAI_API_KEY` | Local SQLite; no external service |
 
 Run cookbook files with `.venvs/demo/bin/python`. Development checks use
 `.venv`.

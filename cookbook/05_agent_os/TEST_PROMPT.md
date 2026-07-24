@@ -1,14 +1,14 @@
 # AgentOS Cookbook Test Prompt
 
 Thoroughly test the currently published AgentOS curriculum: root `basic.py`
-and numbered lessons `01_getting_started` through `16_agui`.
+and numbered lessons `01_getting_started` through `21_factories`.
 
 ## Read first
 
 - `AGENTS.md`
 - `cookbook/STYLE_GUIDE.md`
 - `cookbook/05_agent_os/README.md`
-- Every Python file, README, and TEST_LOG in the root and lessons 01–16
+- Every Python file, README, and TEST_LOG in the root and lessons 01–21
 
 Do not infer behavior from filenames or old test results. Verify parameters,
 client methods, endpoints, form fields, and response shapes against
@@ -21,6 +21,10 @@ client methods, endpoints, form fields, and response shapes against
 - Environment variables: load with `direnv allow` when available
 - Postgres: `./cookbook/scripts/run_pgvector.sh`
 - SurrealDB: `./cookbook/scripts/run_surrealdb.sh`
+
+When using a development environment from a different checkout or worktree,
+set `PYTHONPATH=<current-worktree>/libs/agno` so imports resolve to the source
+being tested rather than another editable installation.
 
 Use `tmp/` only for runtime artifacts. Remove generated databases,
 `__pycache__`, and temporary server output when the run is complete.
@@ -187,6 +191,64 @@ halves and record both observations.
 - Verify tools, structured output, reasoning, Gemini media, shared state,
   research-team, and multiple-instance configurations.
 
+### 17_slack
+
+- Construct every Slack app with sentinel credentials, patch Slack
+  `auth_test` to return synthetic bot identity, and verify `/health`,
+  `/config`, plus each exact events and interactions route pair.
+- Confirm every file documents both the Slack scopes and an in-Slack payoff.
+- Verify streaming task cards, SlackTools workspace search, user-memory
+  identity resolution, multi-bot prefixes, asymmetric peer-bot filtering, and
+  all four HITL patterns.
+- Run the focused Slack router, helper, filtering, security, media, tools, and
+  route suites without sending a real workspace message.
+
+### 18_telegram
+
+- Construct all three examples with sentinel bot credentials and verify
+  `/health`, `/config`, each status route, and each POST webhook route.
+- Confirm the README documents commands, lazy command registration,
+  `quoted_responses`, group mention filtering, session keys, media limits, and
+  distinct webhook prefixes for multiple bots.
+- Do not claim live command registration, delivery, inference, or media
+  transfer without real provider credentials and a public HTTPS callback.
+
+### 19_whatsapp
+
+- Construct all five examples with sentinel Meta credentials and verify
+  `/health`, `/config`, status, GET verification challenge, and POST webhook
+  routes.
+- Verify reply buttons, lists, locations, reactions, inbound and generated
+  media, reasoning exposure, encryption and timeout documentation, and
+  per-number prefixes.
+- Confirm the multi-instance example documents that signature validation
+  currently uses one process-wide `WHATSAPP_APP_SECRET`.
+
+### 20_remote
+
+- Start the AgentOS upstream on 7780 and Agno A2A upstream on 7781; verify
+  health, config, and the A2A card before running the remote clients.
+- Start Google ADK on 8001 and use its standard agent-card and JSON-RPC
+  surfaces; do not invent AgentOS health or config endpoints for ADK.
+- Exercise RemoteAgent call and stream, RemoteTeam, RemoteWorkflow, both A2A
+  transports, remote Team membership, and all registered gateway paths.
+- Restart the 7780 upstream with `OS_SECURITY_KEY`, observe an unauthenticated
+  run rejected, and pass the key through `arun(auth_token=...)`.
+- Verify the README distinguishes AgentOS RemoteAgent, A2A RemoteAgent, and
+  raw A2AClient, and states current discovery/auth and parity limitations.
+
+### 21_factories
+
+- Boot every factory server, inspect discovery metadata, and run its `--demo`
+  client.
+- Verify factory identity override, database inheritance, forced event
+  storage, fresh instances, and per-request cost guidance.
+- Observe input-schema validation return HTTP 400 and
+  `FactoryPermissionError` return HTTP 403.
+- Verify trusted claims and scopes control RBAC and tier policy, then run the
+  TeamFactory, WorkflowFactory, synchronous AgentFactory, and asynchronous
+  AgentFactory paths.
+
 ## Required validation
 
 ```bash
@@ -224,6 +286,16 @@ halves and record both observations.
   --base-dir cookbook/05_agent_os/15_a2a --recursive
 .venvs/demo/bin/python cookbook/scripts/check_cookbook_pattern.py \
   --base-dir cookbook/05_agent_os/16_agui --recursive
+.venvs/demo/bin/python cookbook/scripts/check_cookbook_pattern.py \
+  --base-dir cookbook/05_agent_os/17_slack --recursive
+.venvs/demo/bin/python cookbook/scripts/check_cookbook_pattern.py \
+  --base-dir cookbook/05_agent_os/18_telegram --recursive
+.venvs/demo/bin/python cookbook/scripts/check_cookbook_pattern.py \
+  --base-dir cookbook/05_agent_os/19_whatsapp --recursive
+.venvs/demo/bin/python cookbook/scripts/check_cookbook_pattern.py \
+  --base-dir cookbook/05_agent_os/20_remote --recursive
+.venvs/demo/bin/python cookbook/scripts/check_cookbook_pattern.py \
+  --base-dir cookbook/05_agent_os/21_factories --recursive
 
 source .venv/bin/activate
 ./scripts/format.sh
@@ -232,5 +304,5 @@ git diff --check
 ```
 
 Also reject stale models, deprecated AgentOS/MCP names, emojis, and non-final
-test statuses in the root and lessons 01–16. Report exact commands, observed
+test statuses in the root and lessons 01–21. Report exact commands, observed
 results, live-versus-construction coverage, and any library follow-up.
