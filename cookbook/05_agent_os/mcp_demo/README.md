@@ -7,9 +7,6 @@ Examples for `mcp_demo` in AgentOS.
 - `custom_mcp_tool_example.py` — Expose ONE custom MCP tool routed through an agent, with the built-in tools disabled (uses `MCPServerConfig`).
 - `oauth_builtin_example.py` — Add OAuth so claude.ai / ChatGPT can connect by pasting the `/mcp` URL, using the built-in authorization server (`AgentOSBuiltinAuth.from_env()`).
 - `oauth_authkit_example.py` — Same, but with an external authorization server (WorkOS AuthKit) for production / multi-user.
-- `mcp_tools_advanced_example.py` — Example AgentOS app where the agent has MCPTools.
-- `mcp_tools_example.py` — Example AgentOS app where the agent has MCPTools.
-- `mcp_tools_existing_lifespan.py` — Example AgentOS app where the agent has MCPTools.
 - `test_client.py` — First run the AgentOS with `mcp_server=True` (`mcp_server_example.py`), then run this client against it.
 
 ## The MCP tool surface

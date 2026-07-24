@@ -9,7 +9,6 @@ Examples for `middleware` in AgentOS.
 - `agent_os_with_service_accounts.py` — This example demonstrates service accounts: opaque `agno_pat_...` tokens for machine identities (coding agents, chat apps, CI), minted and revoked over the API, with runs attributed to `sa:<name>`.
 - `custom_fastapi_app_with_jwt_middleware.py` — This example demonstrates how to use our JWT middleware with your custom FastAPI app.
 - `extract_content_middleware.py` — Example for AgentOS to show how to extract content from a response and send it to a notification service.
-- `guardrails_demo.py` — Example demonstrating how to use guardrails with an Agno Agent.
 
 ## Prerequisites
 - Load environment variables with `direnv allow` (requires `.envrc`).

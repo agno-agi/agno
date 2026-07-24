@@ -32,12 +32,16 @@ from agno.models.anthropic import Claude
 from agno.os import AgentOS, AgentOSBuiltinAuth
 from agno.tools.websearch import WebSearchTools
 
+# ---------------------------------------------------------------------------
+# Create OAuth-enabled AgentOS
+# ---------------------------------------------------------------------------
+
 db = PostgresDb(db_url="postgresql+psycopg://ai:ai@localhost:5532/ai")
 
 web_research_agent = Agent(
     id="web-research-agent",
     name="Web Research Agent",
-    model=Claude(id="claude-sonnet-4-5"),
+    model=Claude(id="claude-sonnet-4-6"),
     db=db,
     tools=[WebSearchTools()],
     add_history_to_context=True,
@@ -63,6 +67,10 @@ agent_os = AgentOS(
 )
 
 app = agent_os.get_app()
+
+# ---------------------------------------------------------------------------
+# Run AgentOS
+# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     """Run your AgentOS.

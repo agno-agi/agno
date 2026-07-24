@@ -51,11 +51,3 @@
 **Description:** Example for AgentOS to show how to extract content from a response and send it to a notification service.
 
 ---
-
-### guardrails_demo.py
-
-**Status:** PENDING
-
-**Description:** Example demonstrating how to use guardrails with an Agno Agent.
-
----

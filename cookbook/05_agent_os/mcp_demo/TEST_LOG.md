@@ -64,30 +64,6 @@ middlewares are wired (verified with an in-memory FastMCP client). A live model 
 
 ---
 
-### mcp_tools_advanced_example.py
-
-**Status:** PENDING
-
-**Description:** Example AgentOS app where the agent has MCPTools.
-
----
-
-### mcp_tools_example.py
-
-**Status:** PENDING
-
-**Description:** Example AgentOS app where the agent has MCPTools.
-
----
-
-### mcp_tools_existing_lifespan.py
-
-**Status:** PENDING
-
-**Description:** Example AgentOS app where the agent has MCPTools.
-
----
-
 ### test_client.py
 
 **Status:** PASS (2026-07-04, updated)

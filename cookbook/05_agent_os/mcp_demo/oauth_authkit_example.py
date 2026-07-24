@@ -33,12 +33,16 @@ from agno.os import AgentOS
 from agno.tools.websearch import WebSearchTools
 from fastmcp.server.auth.providers.workos import AuthKitProvider
 
+# ---------------------------------------------------------------------------
+# Create OAuth-enabled AgentOS
+# ---------------------------------------------------------------------------
+
 db = PostgresDb(db_url="postgresql+psycopg://ai:ai@localhost:5532/ai")
 
 web_research_agent = Agent(
     id="web-research-agent",
     name="Web Research Agent",
-    model=Claude(id="claude-sonnet-4-5"),
+    model=Claude(id="claude-sonnet-4-6"),
     db=db,
     tools=[WebSearchTools()],
     markdown=True,
@@ -61,6 +65,10 @@ agent_os = AgentOS(
 )
 
 app = agent_os.get_app()
+
+# ---------------------------------------------------------------------------
+# Run AgentOS
+# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     agent_os.serve(app="oauth_authkit_example:app")
