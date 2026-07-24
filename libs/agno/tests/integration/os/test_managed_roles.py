@@ -277,9 +277,7 @@ def test_managed_roles_enforce_on_rest_gate_via_shortcut(tmp_path):
 
     # read allowed, run denied — same subject, same (empty-scope) token
     assert client.get("/agents/research-agent", headers=_auth("bob")).status_code == 200
-    assert (
-        client.post("/agents/research-agent/runs", headers=_auth("bob"), data={"message": "hi"}).status_code == 403
-    )
+    assert client.post("/agents/research-agent/runs", headers=_auth("bob"), data={"message": "hi"}).status_code == 403
 
 
 def test_role_store_and_provider_are_mutually_exclusive():

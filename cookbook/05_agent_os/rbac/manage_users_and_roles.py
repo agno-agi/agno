@@ -60,8 +60,6 @@ from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
 import jwt
-from fastapi import HTTPException, Request
-
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIChat
@@ -72,6 +70,7 @@ from agno.os.authz.role_store import ManagedRoleStore
 from agno.os.authz.scope_provider import ScopeAuthorizationProvider
 from agno.os.authz.user_store import ManagedUserStore
 from agno.os.config import AuthorizationConfig
+from fastapi import HTTPException, Request
 
 # --- config: supports BOTH planes by default ---------------------------------
 # Plane 1 - control plane / operators: tokens minted by the agno control plane
@@ -80,15 +79,21 @@ from agno.os.config import AuthorizationConfig
 # Plane 2 - managed store / end users: roles you manage at runtime in the store.
 # Both are wired by default; you just point verification at your control plane.
 OS_ID = os.getenv("OS_ID", "manage-users-os")  # the token audience (your os_id)
-ADMIN_SUBJECT = os.getenv("ADMIN_SUBJECT", "admin")  # whose `sub` is the bootstrap admin
-ISSUER = os.getenv("JWT_ISSUER") or None  # optionally pin the issuer (e.g. agent-os-api)
+ADMIN_SUBJECT = os.getenv(
+    "ADMIN_SUBJECT", "admin"
+)  # whose `sub` is the bootstrap admin
+ISSUER = (
+    os.getenv("JWT_ISSUER") or None
+)  # optionally pin the issuer (e.g. agent-os-api)
 
 # Verification source, in priority order:
 #   1. JWT_JWKS_FILE         - path to a JWKS downloaded from your control plane / IdP (RS256)
 #   2. JWT_VERIFICATION_KEY  - the OS public key (RS256) or an HS256 secret
 #   3. dev fallback          - a built-in HS256 secret (prints an admin token)
 JWKS_FILE = os.getenv("JWT_JWKS_FILE") or None
-VERIFICATION_KEY = (os.getenv("JWT_VERIFICATION_KEY") or "").replace("\\n", "\n") or None
+VERIFICATION_KEY = (os.getenv("JWT_VERIFICATION_KEY") or "").replace(
+    "\\n", "\n"
+) or None
 DEV_SECRET = "your-secret-key-at-least-256-bits-long"
 
 
@@ -101,7 +106,13 @@ def mint_dev_token(sub: str, expires_in: int) -> str:
     """
     now = datetime.now(UTC)
     return jwt.encode(
-        {"sub": sub, "aud": OS_ID, "iat": now, "exp": now + timedelta(seconds=expires_in), "jti": uuid4().hex},
+        {
+            "sub": sub,
+            "aud": OS_ID,
+            "iat": now,
+            "exp": now + timedelta(seconds=expires_in),
+            "jti": uuid4().hex,
+        },
         DEV_SECRET,
         algorithm="HS256",
     )
@@ -110,7 +121,10 @@ def mint_dev_token(sub: str, expires_in: int) -> str:
 if JWKS_FILE:
     ALGORITHM, KEYS = "RS256", None
 elif VERIFICATION_KEY:
-    ALGORITHM, KEYS = ("RS256" if "BEGIN" in VERIFICATION_KEY else "HS256"), [VERIFICATION_KEY]
+    ALGORITHM, KEYS = (
+        ("RS256" if "BEGIN" in VERIFICATION_KEY else "HS256"),
+        [VERIFICATION_KEY],
+    )
 else:
     ALGORITHM, KEYS = "HS256", [DEV_SECRET]
 
@@ -149,7 +163,9 @@ roles.assign("bob", "viewer")
 users.upsert("carol", email="carol@co", name="Carol")
 roles.assign("carol", "runner")
 
-research_agent = Agent(id="research-agent", name="Research Agent", model=OpenAIChat(id="gpt-4o"), db=db)
+research_agent = Agent(
+    id="research-agent", name="Research Agent", model=OpenAIChat(id="gpt-4o"), db=db
+)
 
 # The console's heist game (console.html -> 🏴 Heist) breaks into this one. It is
 # guarded by explicit DENY scopes on the "intern" role the game sets up, so the
@@ -210,7 +226,9 @@ if IS_DEV:
         user_id = getattr(request.state, "user_id", None)
         claims = getattr(request.state, "claims", {}) or {}
         if "agent_os:admin" not in scopes and not roles.can_manage(user_id, claims):
-            raise HTTPException(status_code=403, detail="Only admins can mint persona tokens")
+            raise HTTPException(
+                status_code=403, detail="Only admins can mint persona tokens"
+            )
         sub = (payload.get("sub") or "").strip()
         if not sub:
             raise HTTPException(status_code=422, detail="sub is required")
@@ -222,11 +240,19 @@ if __name__ == "__main__":
     print("\n" + "=" * 78)
     print("USER + ROLE MANAGEMENT AGENTOS - serving for a frontend")
     print("=" * 78)
-    src = "JWKS_FILE" if JWKS_FILE else ("JWT_VERIFICATION_KEY" if VERIFICATION_KEY else "dev secret")
+    src = (
+        "JWKS_FILE"
+        if JWKS_FILE
+        else ("JWT_VERIFICATION_KEY" if VERIFICATION_KEY else "dev secret")
+    )
     print("  endpoint:   http://localhost:7777")
     print("  manage at:  http://localhost:7777/authz/...   (admin-only)")
-    print("  planes:     control plane (token scopes) + managed role store, in parallel")
-    print(f"  verify:     {ALGORITHM} via {src}   audience={OS_ID}   admin sub={ADMIN_SUBJECT!r}")
+    print(
+        "  planes:     control plane (token scopes) + managed role store, in parallel"
+    )
+    print(
+        f"  verify:     {ALGORITHM} via {src}   audience={OS_ID}   admin sub={ADMIN_SUBJECT!r}"
+    )
     print(f"  CORS open to: {', '.join(CORS_ORIGINS)}")
 
     # Dev only (built-in HS256 secret): mint a ready-to-use admin token so you can
@@ -236,14 +262,26 @@ if __name__ == "__main__":
     is_dev = ALGORITHM == "HS256" and not VERIFICATION_KEY and not JWKS_FILE
     if is_dev:
         admin_token = mint_dev_token(ADMIN_SUBJECT, expires_in=7 * 24 * 3600)
-        print("\n  dev mode - admin bearer token (paste into the console / your frontend / curl):")
+        print(
+            "\n  dev mode - admin bearer token (paste into the console / your frontend / curl):"
+        )
         print(f"    {admin_token}")
-        print("\n  test client:  open console.html (this folder) in a browser and paste the token")
-        print("  or curl:      curl -H 'Authorization: Bearer <token>' http://localhost:7777/authz/users")
+        print(
+            "\n  test client:  open console.html (this folder) in a browser and paste the token"
+        )
+        print(
+            "  or curl:      curl -H 'Authorization: Bearer <token>' http://localhost:7777/authz/users"
+        )
     else:
-        print("\n  control-plane mode: the frontend sends a token signed by your control")
-        print(f"  plane / IdP (aud={OS_ID!r}). Operators are authorized by the token's scopes;")
-        print("  end users by the role store. To manage roles, the caller needs agent_os:admin")
+        print(
+            "\n  control-plane mode: the frontend sends a token signed by your control"
+        )
+        print(
+            f"  plane / IdP (aud={OS_ID!r}). Operators are authorized by the token's scopes;"
+        )
+        print(
+            "  end users by the role store. To manage roles, the caller needs agent_os:admin"
+        )
         print(f"  on the token OR be seeded here (ADMIN_SUBJECT={ADMIN_SUBJECT!r}).")
     print("=" * 78 + "\n")
 
