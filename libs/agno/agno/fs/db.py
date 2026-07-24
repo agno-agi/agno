@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import threading
 import time
+from pathlib import Path
 from typing import List, Optional, Sequence, Set
 
 from agno.fs._paths import build_chunk, path_sort_key
@@ -70,12 +71,18 @@ class DbFileSystem(BaseFS):
         if db_engine is not None:
             self.db_engine: Engine = db_engine
         else:
-            backend_name = make_url(db_url).get_backend_name()  # type: ignore[arg-type]
+            url = make_url(db_url)  # type: ignore[arg-type]
+            backend_name = url.get_backend_name()
             if backend_name not in SUPPORTED_DIALECTS:
                 raise ValueError(
                     f"DbFileSystem supports dialects {SUPPORTED_DIALECTS}, got {backend_name!r}. "
                     "Use a postgresql or sqlite db_url/db_engine."
                 )
+            # Create the parent directory for a sqlite file path — sqlite will not
+            # create it and errors on connect. Matches SqliteDb (db/sqlite/sqlite.py),
+            # so a `sqlite:///tmp/x.db` url just works without the caller pre-making tmp/.
+            if backend_name == "sqlite" and url.database and url.database != ":memory:":
+                Path(url.database).resolve().parent.mkdir(parents=True, exist_ok=True)
             self.db_engine = create_engine(db_url)  # type: ignore[arg-type]
         self.dialect: str = self.db_engine.dialect.name
         if self.dialect not in SUPPORTED_DIALECTS:

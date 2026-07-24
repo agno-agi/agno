@@ -10,10 +10,8 @@ This example runs the monitor twice; run 2 flags the one service whose latency
 moved and stays quiet about the rest.
 """
 
-import os
-import time
-from pathlib import Path
 from typing import Dict
+from uuid import uuid4
 
 from agno.agent import Agent
 from agno.fs import FileSystem
@@ -34,11 +32,10 @@ READINGS_TUESDAY = {
 # ---------------------------------------------------------------------------
 # Create FileSystem
 # ---------------------------------------------------------------------------
-Path("tmp").mkdir(exist_ok=True)
 # Fresh per-run db so the demo always starts at the baseline. A real scheduled
 # monitor pins one fixed, shared db_url - a new store per process forgets the
 # baseline and reports nothing but baselines.
-DB_FILE = os.environ.get("AGNO_FS_DB") or f"tmp/agent_fs_monitor_{int(time.time())}.db"
+DB_FILE = f"tmp/agent_fs_monitor_{uuid4().hex}.db"
 
 fs = FileSystem(
     backend=DbFileSystem(db_url=f"sqlite:///{DB_FILE}"), namespace="latency-monitor"

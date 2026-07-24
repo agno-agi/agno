@@ -9,9 +9,7 @@ This example seeds a record log, proves exact-line dedupe with contains(),
 and prints namespace usage.
 """
 
-import os
-import time
-from pathlib import Path
+from uuid import uuid4
 
 from agno.fs import FileSystem
 from agno.fs.db import DbFileSystem
@@ -20,10 +18,7 @@ from rich.pretty import pprint
 # ---------------------------------------------------------------------------
 # Create FileSystem
 # ---------------------------------------------------------------------------
-Path("tmp").mkdir(exist_ok=True)
-DB_FILE = (
-    os.environ.get("AGNO_FS_DB") or f"tmp/agent_fs_standalone_{int(time.time())}.db"
-)
+DB_FILE = f"tmp/agent_fs_standalone_{uuid4().hex}.db"
 
 fs = FileSystem(backend=DbFileSystem(db_url=f"sqlite:///{DB_FILE}"), namespace="radar")
 

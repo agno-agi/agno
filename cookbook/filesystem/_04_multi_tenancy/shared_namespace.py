@@ -11,9 +11,7 @@ This example has a recorder agent write decisions and an answering agent look
 them up read-only.
 """
 
-import os
-import time
-from pathlib import Path
+from uuid import uuid4
 
 from agno.agent import Agent
 from agno.fs import FileSystem
@@ -23,8 +21,7 @@ from agno.models.openai import OpenAIResponses
 # ---------------------------------------------------------------------------
 # Create FileSystem - same backend, same namespace name, two surfaces
 # ---------------------------------------------------------------------------
-Path("tmp").mkdir(exist_ok=True)
-DB_FILE = os.environ.get("AGNO_FS_DB") or f"tmp/agent_fs_shared_{int(time.time())}.db"
+DB_FILE = f"tmp/agent_fs_shared_{uuid4().hex}.db"
 
 db_fs = DbFileSystem(db_url=f"sqlite:///{DB_FILE}")
 producer_fs = FileSystem(backend=db_fs, namespace="research/decisions")

@@ -10,9 +10,7 @@ This example runs a four-step task as two sessions of two steps each. For the
 cross-PROCESS durability proof, see _01_getting_started/basic.py.
 """
 
-import os
-import time
-from pathlib import Path
+from uuid import uuid4
 
 from agno.agent import Agent
 from agno.fs import FileSystem
@@ -29,15 +27,14 @@ STEPS = [
 # ---------------------------------------------------------------------------
 # Create FileSystem
 # ---------------------------------------------------------------------------
-Path("tmp").mkdir(exist_ok=True)
 # Fresh per-run db so the demo starts from step 1 every execution. A real
 # resumable job pins one fixed, shared db_url so the checkpoint outlives the
 # process, not just the session.
-DB_FILE = (
-    os.environ.get("AGNO_FS_DB") or f"tmp/agent_fs_checkpoint_{int(time.time())}.db"
-)
+DB_FILE = f"tmp/agent_fs_checkpoint_{uuid4().hex}.db"
 
-fs = FileSystem(backend=DbFileSystem(db_url=f"sqlite:///{DB_FILE}"), namespace="migration")
+fs = FileSystem(
+    backend=DbFileSystem(db_url=f"sqlite:///{DB_FILE}"), namespace="migration"
+)
 
 # ---------------------------------------------------------------------------
 # Create Agent

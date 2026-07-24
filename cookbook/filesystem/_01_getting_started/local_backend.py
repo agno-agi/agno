@@ -9,9 +9,8 @@ you want to inspect the store with ordinary shell tools.
 This example has the agent write two files, then prints the on-disk tree.
 """
 
-import os
-import time
 from pathlib import Path
+from uuid import uuid4
 
 from agno.agent import Agent
 from agno.fs import FileSystem
@@ -21,8 +20,7 @@ from agno.models.openai import OpenAIResponses
 # ---------------------------------------------------------------------------
 # Create FileSystem
 # ---------------------------------------------------------------------------
-Path("tmp").mkdir(exist_ok=True)
-ROOT = os.environ.get("AGNO_FS_ROOT") or f"tmp/agent_fs_local_{int(time.time())}"
+ROOT = f"tmp/agent_fs_local_{uuid4().hex}"
 
 fs = FileSystem(backend=LocalFileSystem(root=ROOT), namespace="getting-started")
 

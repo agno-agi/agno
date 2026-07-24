@@ -9,10 +9,8 @@ run from the trusted run context, and cached per user.
 This example routes VIP users into their own namespace tier.
 """
 
-import os
-import time
-from pathlib import Path
 from typing import List
+from uuid import uuid4
 
 from agno.agent import Agent
 from agno.fs import FileSystem
@@ -25,8 +23,7 @@ VIP_USERS = {"alice"}
 # ---------------------------------------------------------------------------
 # Create FileSystem factory
 # ---------------------------------------------------------------------------
-Path("tmp").mkdir(exist_ok=True)
-DB_FILE = os.environ.get("AGNO_FS_DB") or f"tmp/agent_fs_factory_{int(time.time())}.db"
+DB_FILE = f"tmp/agent_fs_factory_{uuid4().hex}.db"
 
 db_fs = DbFileSystem(db_url=f"sqlite:///{DB_FILE}")
 

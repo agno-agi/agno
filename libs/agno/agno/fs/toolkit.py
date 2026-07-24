@@ -113,7 +113,9 @@ class FileSystemTools(Toolkit):
         # read-only subset alike.
         for tool_name in self.FULL_TOOLS:
             assert callable(getattr(self, tool_name, None)), f"FileSystemTools missing sync method '{tool_name}'"
-            assert callable(getattr(self, "a" + tool_name, None)), f"FileSystemTools missing async method 'a{tool_name}'"
+            assert callable(getattr(self, "a" + tool_name, None)), (
+                f"FileSystemTools missing async method 'a{tool_name}'"
+            )
 
     # ------------------------------------------------------------------
     # Helpers

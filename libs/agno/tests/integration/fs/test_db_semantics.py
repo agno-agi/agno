@@ -173,6 +173,15 @@ class TestConstruction:
         fs.write("ns", "a.md", "x")
         assert fs.read("ns", "a.md") == "x"
 
+    def test_sqlite_url_creates_missing_parent_dirs(self, tmp_path):
+        # sqlite errors on connect if the parent dir is missing; DbFileSystem creates
+        # it (matching SqliteDb), so cookbooks need no Path(...).mkdir boilerplate.
+        nested = tmp_path / "does" / "not" / "exist" / "x.db"
+        fs = DbFileSystem(db_url=f"sqlite:///{nested}")
+        fs.write("ns", "a.md", "x")
+        assert fs.read("ns", "a.md") == "x"
+        assert nested.exists()
+
     def test_version_starts_at_one_and_increments(self, db_fs):
         assert db_fs.write(NS, "v.md", "a").version == 1
         assert db_fs.write(NS, "v.md", "b").version == 2

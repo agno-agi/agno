@@ -10,9 +10,7 @@ partitions you no longer need.
 Runs with tiny caps so the numbers are readable. No model, no API keys.
 """
 
-import os
-import uuid
-from pathlib import Path
+from uuid import uuid4
 
 from agno.fs import FileSystem
 from agno.fs.db import DbFileSystem
@@ -24,8 +22,7 @@ from agno.fs.errors import QuotaExceededError
 # A fresh store per run: this example fills a namespace to its cap, so a reused
 # store would already be full on the second run. A uuid suffix (not a 1-second
 # timestamp, which two back-to-back runs share) keeps it re-runnable.
-Path("tmp").mkdir(exist_ok=True)
-DB_FILE = os.environ.get("AGNO_FS_DB") or f"tmp/agent_fs_quota_{uuid.uuid4().hex}.db"
+DB_FILE = f"tmp/agent_fs_quota_{uuid4().hex}.db"
 
 fs = FileSystem(
     backend=DbFileSystem(db_url=f"sqlite:///{DB_FILE}"),

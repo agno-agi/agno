@@ -10,10 +10,8 @@ This example processes two overlapping ticket batches; the second pass acts
 only on the genuinely new ticket.
 """
 
-import os
-import time
-from pathlib import Path
 from typing import List
+from uuid import uuid4
 
 from agno.agent import Agent
 from agno.fs import FileSystem
@@ -23,8 +21,7 @@ from agno.models.openai import OpenAIResponses
 # ---------------------------------------------------------------------------
 # Create FileSystem
 # ---------------------------------------------------------------------------
-Path("tmp").mkdir(exist_ok=True)
-DB_FILE = os.environ.get("AGNO_FS_DB") or f"tmp/agent_fs_records_{int(time.time())}.db"
+DB_FILE = f"tmp/agent_fs_records_{uuid4().hex}.db"
 
 fs = FileSystem(backend=DbFileSystem(db_url=f"sqlite:///{DB_FILE}"), namespace="triage")
 

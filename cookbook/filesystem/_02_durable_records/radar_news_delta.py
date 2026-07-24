@@ -10,11 +10,9 @@ This example runs the agent twice over an expanding feed: run 1 briefs
 everything, run 2 briefs only the two new stories.
 """
 
-import os
-import time
 from datetime import date
-from pathlib import Path
 from typing import List
+from uuid import uuid4
 
 from agno.agent import Agent
 from agno.fs import FileSystem
@@ -39,11 +37,10 @@ TODAY = date.today().isoformat()
 # ---------------------------------------------------------------------------
 # Create FileSystem
 # ---------------------------------------------------------------------------
-Path("tmp").mkdir(exist_ok=True)
 # Fresh per-run db so this demo starts clean on every execution. A real
 # scheduled deployment pins one fixed, shared db_url instead - a new store per
 # process re-reports everything, the exact bug Radar exists to fix.
-DB_FILE = os.environ.get("AGNO_FS_DB") or f"tmp/agent_fs_radar_{int(time.time())}.db"
+DB_FILE = f"tmp/agent_fs_radar_{uuid4().hex}.db"
 
 fs = FileSystem(backend=DbFileSystem(db_url=f"sqlite:///{DB_FILE}"), namespace="radar")
 
