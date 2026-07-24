@@ -40,8 +40,9 @@ class WorkspaceContextProvider(ContextProvider):
         exclude_patterns: list[str] | None = None,
         max_file_lines: int = 100_000,
         max_file_length: int = 10_000_000,
+        stream_sub_agent_events: bool = True,
     ) -> None:
-        super().__init__(id=id, name=name, mode=mode, model=model)
+        super().__init__(id=id, name=name, mode=mode, model=model, stream_sub_agent_events=stream_sub_agent_events)
         self.root = Path(root).expanduser().resolve() if root is not None else Path.cwd().resolve()
         self.instructions_text = instructions if instructions is not None else DEFAULT_WORKSPACE_INSTRUCTIONS
         self.exclude_patterns = exclude_patterns if exclude_patterns is not None else list(DEFAULT_EXCLUDE_PATTERNS)

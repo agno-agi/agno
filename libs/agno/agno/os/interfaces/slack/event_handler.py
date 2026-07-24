@@ -16,6 +16,7 @@ from agno.os.interfaces.slack.helpers import (
     open_chat_stream,
     resolve_channel_name,
     resolve_session_id,
+    resolve_slack_bot,
     resolve_slack_user,
     send_slack_message_async,
     should_respond,
@@ -42,11 +43,28 @@ class EventContext:
     user: str
     message_text: str
     session_id: str
+    # Bot sender ID (B...) when message is from a bot; empty for human messages
+    bot_id: str = ""
     team_id: Optional[str] = None
     resolved_user_id: str = ""
     display_name: Optional[str] = None
     channel_name: Optional[str] = None
     action_token: Optional[str] = None
+
+
+# Subtypes that indicate lifecycle events, not user messages
+_IGNORED_SUBTYPES = frozenset(
+    {
+        "message_changed",
+        "message_deleted",
+        "message_replied",
+        "channel_join",
+        "channel_leave",
+        "channel_topic",
+        "channel_purpose",
+        "thread_broadcast",
+    }
+)
 
 
 @dataclass
@@ -60,6 +78,9 @@ class SlackEventHandler:
     bot_name_resolver: BotNameResolver
     reply_to_mentions_only: bool
     resolve_user_identity: bool
+    respond_to_other_apps: bool
+    own_bot_id: Optional[str]
+    own_bot_user_id: Optional[str]
     loading_text: str
     loading_messages: Optional[List[str]]
     task_display_mode: str
@@ -68,6 +89,27 @@ class SlackEventHandler:
 
     def _client(self) -> AsyncWebClient:
         return AsyncWebClient(token=self.slack_tools.token, ssl=self.ssl)
+
+    def should_process(self, event: dict) -> bool:
+        """Return True if event should be processed, False to skip."""
+        ctx = extract_event_context(event)
+        subtype = event.get("subtype")
+        is_bot = ctx["bot_id"] or subtype == "bot_message"
+
+        if subtype in _IGNORED_SUBTYPES:
+            return False
+
+        # Skip own messages (bot_id for bot posts, user for as_user posts)
+        if self.own_bot_id and ctx["bot_id"] == self.own_bot_id:
+            return False
+        if self.own_bot_user_id and ctx["user"] == self.own_bot_user_id:
+            return False
+
+        # Skip bot messages unless opted in
+        if is_bot and not self.respond_to_other_apps:
+            return False
+
+        return True
 
     async def resolve_context(self, data: dict) -> Optional[EventContext]:
         event = data["event"]
@@ -84,17 +126,24 @@ class SlackEventHandler:
         session_id = await resolve_session_id(self.entity, self.entity_id, raw_ctx["channel_id"], raw_ctx["thread_id"])
         team_id = data.get("team_id") or event.get("team")
 
-        resolved_user_id = raw_ctx["user"]
+        sender_user = raw_ctx["user"]
+        sender_bot_id = raw_ctx["bot_id"]
+
+        resolved_user_id = sender_user or sender_bot_id
         display_name = None
         if self.resolve_user_identity:
-            resolved_user_id, display_name = await resolve_slack_user(client, raw_ctx["user"])
+            if sender_bot_id:
+                resolved_user_id, display_name = await resolve_slack_bot(client, sender_bot_id)
+            elif sender_user:
+                resolved_user_id, display_name = await resolve_slack_user(client, sender_user)
 
         channel_name = await resolve_channel_name(client, raw_ctx["channel_id"])
 
         return EventContext(
             channel_id=raw_ctx["channel_id"],
             thread_id=raw_ctx["thread_id"],
-            user=raw_ctx["user"],
+            user=sender_user,
+            bot_id=sender_bot_id,
             message_text=message_text,
             session_id=session_id,
             team_id=team_id,

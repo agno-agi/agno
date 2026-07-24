@@ -51,6 +51,12 @@ Hundreds of examples. Copy, paste, run.
 ### Memory
 [11_memory](./11_memory) — Agents that remember. Store insights and facts about users across conversations for personalized responses.
 
+### Context
+[12_context](./12_context) — Plug an external source into an agent as a natural-language tool. Local directories, project workspaces, the web via Exa, databases, Slack, Google Drive, and MCP servers, all behind one `ContextProvider` API.
+
+### FileSystem
+[13_filesystem](./13_filesystem) — Give your agent a durable, private filesystem for its own working state: records of what it has processed, decisions, progress checkpoints. Database-backed by default, local disk optional.
+
 ### Models
 [90_models](./90_models) — 40+ model providers. Gemini, Claude, GPT, Llama, Mistral, DeepSeek, Groq, Ollama, vLLM — if it exists, we probably support it.
 

@@ -20,6 +20,16 @@
 
 ---
 
+### file_tools.py (Example 9: directory-scoped list_files)
+
+**Status:** PASS
+
+**Description:** Added Example 9 demonstrating the optional `directory` argument on `list_files`, backed by a `setup_subdir_sandbox()` fixture (`root_notes.txt` plus a `reports/` subdir with `q1.csv`, `q2.csv`, `summary.md`). Example 1's prompt was made concrete ("List three leading LLM providers and save the list to 'llm_providers.txt'") so the agent saves a file and creates the shared `tmp/file` base_dir that the read-only Example 2 then lists. `list_files` now falls back to `base_dir` when `directory` is empty, matching the `if directory:` guard `search_content` uses. New example uses `model=OpenAIResponses(id="gpt-5.4")` to match Examples 6-8. `ruff format` also reflowed `file_generation_tools.py` and `cookbook/scripts/cookbook_runner.py`.
+
+**Result:** All nine examples run clean end-to-end; the directory-scoped agent calls `list_files(directory="reports")` and returns only the `reports/` files. 24 filetools unit tests pass; `ruff format`, `ruff check`, and mypy clean.
+
+---
+
 ### docling_tools/run.py
 
 **Status:** PASS
