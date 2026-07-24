@@ -7,6 +7,7 @@ Dev/tests backend, and proof that the storage seam is real. Layout is
 from __future__ import annotations
 
 import os
+import tempfile
 from pathlib import Path
 from typing import List, Optional, Union
 
@@ -41,15 +42,24 @@ class LocalFileSystem(FileSystem):
 
     # ---- helpers ----
 
+    @staticmethod
+    def _encode_namespace(namespace: str) -> str:
+        # Fold the namespace into ONE on-disk directory component by percent-encoding
+        # its slashes. Without this, namespace "radar/alice" nests inside namespace
+        # "radar" on disk, so a walk of "radar" leaks "radar/alice"'s files — the
+        # namespace and path columns are separate in DbFileSystem but flatten to the
+        # same tree here. Encode "%" first so the mapping is unambiguous.
+        return namespace.replace("%", "%25").replace("/", "%2F")
+
     def _target(self, namespace: str, path: str) -> Path:
         try:
-            return safe_join_relative_path(self.root, f"{namespace}/{path}")
+            return safe_join_relative_path(self.root, f"{self._encode_namespace(namespace)}/{path}")
         except PathSecurityError as e:
             raise InvalidPathError(f"invalid path {path!r}: {e}. Use relative paths like notes/topic.md.") from e
 
     def _namespace_root(self, namespace: str) -> Path:
         try:
-            return safe_join_relative_path(self.root, namespace)
+            return safe_join_relative_path(self.root, self._encode_namespace(namespace))
         except PathSecurityError as e:
             raise InvalidPathError(f"invalid path {namespace!r}: {e}. Use relative paths like notes/topic.md.") from e
 
@@ -80,9 +90,14 @@ class LocalFileSystem(FileSystem):
             )
         target = self._target(namespace, path)
         target.parent.mkdir(parents=True, exist_ok=True)
-        tmp_path = target.with_name(target.name + ".tmp")
+        # A per-write unique temp file, not a fixed "<name>.tmp": concurrent writers to
+        # one path would otherwise share the temp and unlink it out from under each
+        # other (FileNotFoundError instead of last-writer-wins), and writing "a.md"
+        # would clobber a pre-existing "a.md.tmp".
+        fd, tmp_name = tempfile.mkstemp(dir=str(target.parent), prefix=f".{target.name}.", suffix=".tmp")
+        tmp_path = Path(tmp_name)
         try:
-            with tmp_path.open("w", encoding="utf-8", newline="") as f:
+            with os.fdopen(fd, "w", encoding="utf-8", newline="") as f:
                 f.write(content)
             os.replace(tmp_path, target)
         finally:

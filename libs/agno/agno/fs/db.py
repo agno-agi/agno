@@ -147,9 +147,13 @@ class DbFileSystem(FileSystem):
         t = self.table
         if not directory:
             return true()
-        # Segment-boundary matching; autoescape is load-bearing — % and _ are
-        # legal in segments, and an unescaped LIKE turns them into wildcards.
-        return or_(t.c.path == directory, t.c.path.startswith(directory + "/", autoescape=True))
+        # Segment-boundary matching by exact prefix comparison, NOT LIKE: SQLite's LIKE
+        # case-folds ASCII while Postgres's does not, so a LIKE predicate would scope
+        # differently on the two backends for the same data — and in the harmful
+        # direction (dev silently treating a genuinely-new item as already-seen). substr
+        # equality is case-sensitive and byte-exact on both, matching the == arm.
+        prefix = directory + "/"
+        return or_(t.c.path == directory, func.substr(t.c.path, 1, len(prefix)) == prefix)
 
     def _tail_expression(self):
         t = self.table
@@ -424,4 +428,6 @@ class DbFileSystem(FileSystem):
         stmt = select(func.count(), func.coalesce(func.sum(t.c.size_bytes), 0)).where(t.c.namespace_id == namespace)
         with self.db_engine.begin() as conn:
             row = conn.execute(stmt).one()
-        return NamespaceUsage(file_count=row[0], total_bytes=row[1])
+        # Postgres sum(bigint) returns Decimal; coerce so callers (and json.dumps in
+        # list_files) always see plain ints, matching SQLite.
+        return NamespaceUsage(file_count=int(row[0]), total_bytes=int(row[1]))

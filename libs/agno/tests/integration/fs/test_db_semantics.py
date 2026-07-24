@@ -1,6 +1,7 @@
 """Semantics tests for DbFileSystem (spec D4/D6/D9/D13), both dialects."""
 
 import asyncio
+import os
 
 import pytest
 from sqlalchemy import create_engine, text
@@ -157,7 +158,8 @@ class TestConstruction:
         engine.dispose()
 
     def test_table_autocreation_fresh_schema_postgres(self, pg_engine):
-        fresh_schema = "test_schema_fresh"
+        # Process-unique so parallel test processes cannot collide on create/drop.
+        fresh_schema = f"agentfs_fresh_{os.getpid()}"
         fs = DbFileSystem(db_engine=pg_engine, db_schema=fresh_schema)
         try:
             fs.write("ns", "a.md", "x")

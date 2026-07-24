@@ -146,6 +146,14 @@ def normalize_line(line: str) -> str:
 
 def normalize_check_lines(lines: Sequence[str]) -> List[str]:
     """Normalize a ``check_lines`` input batch: cap 200, strip terminators, drop empties."""
+    # A bare str is a Sequence[str] of single characters, so an unguarded call would
+    # iterate it per character and report every char missing — a silent wrong answer
+    # from the dedupe primitive. Reject any non list/tuple; the type checker cannot
+    # catch this because str satisfies Sequence[str].
+    if not isinstance(lines, (list, tuple)):
+        raise InvalidPathError(
+            f'invalid records {lines!r}: pass a list of lines, e.g. ["url-1", "url-2"], not a single string.'
+        )
     if len(lines) > MAX_CHECK_LINES:
         raise InvalidPathError(
             f"too many records ({len(lines)} > {MAX_CHECK_LINES}). Check them in batches of {MAX_CHECK_LINES} or fewer."

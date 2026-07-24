@@ -182,9 +182,14 @@ class AgentFSTools(Toolkit):
                     )
                 return _format_with_line_numbers(contents, start_line=1)
             lines = contents.split("\n")
-            start = start_line if start_line is not None else 1
+            # Clamp to 1-indexed lines: start_line=0 would mislabel every line by one,
+            # a negative start would print negative line numbers, and end_line < 1 would
+            # silently drop the tail. Content stays correct; only the labels are guarded.
+            start = max(1, start_line) if start_line is not None else 1
             end = end_line if end_line is not None else len(lines)
-            start_idx = max(0, start - 1)
+            if end < 1:
+                return "Error: end_line must be 1 or greater."
+            start_idx = start - 1
             end_idx = min(len(lines), end)
             chunk = "\n".join(lines[start_idx:end_idx])
             return _format_with_line_numbers(chunk, start_line=start)
@@ -372,7 +377,12 @@ class AgentFSTools(Toolkit):
             meta = fs.write(path, content, overwrite=overwrite)
             return f"Wrote {meta.size_bytes} bytes to {path}"
         except FileExistsError:
-            return f"Error: file exists and overwrite=False: {path}"
+            if not overwrite:
+                return f"Error: file exists and overwrite=False: {path}"
+            # overwrite=True yet a FileExistsError surfaced: a path segment collides with
+            # an existing file on disk. Blaming overwrite here is false and makes the
+            # model retry identically.
+            return f"Error: cannot write {path}: a parent path segment is an existing file."
         except QuotaExceededError as e:
             return self._quota_error(e, path)
         except InvalidPathError as e:
@@ -438,7 +448,9 @@ class AgentFSTools(Toolkit):
         except FileNotFoundError:
             return f"Error: file not found: {src}"
         except FileExistsError:
-            return f"Error: dst exists and overwrite=False: {dst}"
+            if not overwrite:
+                return f"Error: dst exists and overwrite=False: {dst}"
+            return f"Error: cannot move to {dst}: a parent path segment is an existing file."
         except InvalidPathError as e:
             return f"Error: {e}"
         except Exception as e:
