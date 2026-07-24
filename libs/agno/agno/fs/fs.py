@@ -38,24 +38,17 @@ if TYPE_CHECKING:
 DEFAULT_NAMESPACE = "default"
 """Namespace used when the caller does not name one.
 
-A stable, documented default so simple apps need no namespace at all. Name one
+A stable, documented default so simple apps need no namespace at all. Set one
 explicitly whenever isolation or sharing matters: two FileSystems on the same
 backend with no namespace share this one store, which is the intended behavior
 but is rarely what a multi-tenant app wants (see the templated namespaces above).
 """
 
-_DEFAULT_INSTRUCTIONS = """You have your own private, durable filesystem. Files persist across sessions and
-runs: anything you write is available in every future run.
+_DEFAULT_INSTRUCTIONS = """You have your own private, durable filesystem you can use to
+persist files across sessions and runs. Use it for your working state: records of items you have processed,
+decisions, progress checkpoints, notes to your future self.
 
-Use it for your own working state: records of items you have already processed,
-decisions, progress checkpoints, notes to your future self. Do not use it for
-facts about the user (that belongs in memory) or scratch work for the current
-reply.
-
-These files are the only state you carry from one run to the next. Before
-starting work that may have been started before - a recurring job, a long task
-you could have checkpointed, a set of items you may already have processed -
-call list_files to see what you have, then read what is relevant.
+For storing facts and memories about the user, prefer the user memory if provided and fallback to the filesystem if not.
 
 Conventions:
 - Paths are relative, like notes/decisions.md or seen/2026-07-24.md. Group
@@ -73,21 +66,16 @@ Conventions:
   dropping them means you will repeat work you already did. If nothing is safely
   disposable, stop and report that storage is full rather than evicting history."""
 
-_READ_ONLY_INSTRUCTIONS = """You have read access to a durable filesystem written by another agent. The files
-persist across sessions and runs.
+_READ_ONLY_INSTRUCTIONS = """You have read access to a durable filesystem.
+The files persist across sessions and runs.
 
-Use it to look up what that agent has recorded: items it has processed, decisions
-it made, notes it left. You cannot change these files - you have no tool to
+Use it to look up what you have recorded: items you have processed, decisions
+you made, notes you left. You cannot change these files - you have no tool to
 write, append, move, or delete.
-
-Before answering something these files might already cover, call list_files to
-see what is there, then read what is relevant.
 
 Conventions:
 - Paths are relative, like notes/decisions.md or seen/2026-07-24.md.
-- search_content finds where text appears. check_lines answers whether exact
-  whole lines are already recorded - reach for it, not search_content, when you
-  need an exact answer about specific records."""
+- Use check_lines to see what is already recorded before acting."""
 
 
 def _as_backend(source: Any) -> BaseFS:

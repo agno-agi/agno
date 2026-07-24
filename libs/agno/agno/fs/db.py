@@ -315,8 +315,8 @@ class DbFileSystem(BaseFS):
         # so pre-check the chunk client-side (exact: content is fully known). This must
         # NOT be conditional on the row existing: a concurrent delete between that check
         # and the upsert would send an oversized chunk down the uncovered insert arm and
-        # blow past the cap. A chunk over the cap can never land either way — the insert
-        # would create an oversized file, the update arm would be larger still — so
+        # blow past the cap. A chunk over the cap can never land either way: the insert
+        # would create an oversized file, and the update arm would be larger still, so
         # refuse unconditionally. _stat only enriches the reported size.
         if max_file_bytes is not None and chunk_bytes > max_file_bytes:
             existing = self._stat(namespace, path)

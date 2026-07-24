@@ -152,14 +152,17 @@ class TestInstructions:
 
     def test_static_call_without_instance(self):
         text = FileSystem.instructions()
-        assert text.startswith("You have your own private, durable filesystem.")
+        assert text.startswith("You have your own private, durable filesystem")
         assert "Never store secrets, passwords, or API keys." in text
 
     def test_read_only_variant_names_no_write_tool(self, fs):
         text = FileSystem.instructions(read_only=True)
         for write_tool in ("append_file", "write_file", "delete_file", "move_file"):
             assert write_tool not in text
-        assert "read access to a durable filesystem written by another agent" in text
+        # Assert the contract, not the phrasing: read-only must describe read access
+        # and say the files cannot be changed.
+        assert "read access" in text
+        assert "cannot change these files" in text
         tk = fs.tools(read_only=True)
         assert tk.instructions == text
 

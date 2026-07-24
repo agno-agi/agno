@@ -1,8 +1,4 @@
-"""LocalFileSystem: the real-disk backend for FileSystem.
-
-Dev/tests backend, and proof that the storage seam is real. Layout is
-``root/<namespace>/<path>``; parents are created on demand.
-"""
+"""LocalFileSystem: the disk-based backend for FileSystem."""
 
 import os
 import tempfile
@@ -18,23 +14,10 @@ from agno.utils.path_safety import safe_join_relative_path
 
 
 class LocalFileSystem(BaseFS):
-    """Real-disk backend: files live at ``root/<namespace-dir>/<path>``, where
+    """Disk-based backend: files live at ``root/<namespace-dir>/<path>``, where
     ``<namespace-dir>`` is the namespace with its slashes percent-encoded into one
     directory component (namespace ``"research/decisions"`` -> ``research%2Fdecisions``).
     Encoding keeps a child namespace from nesting inside a name-prefix parent on disk.
-
-    Single-process by contract: ``append`` is a tail-check plus ``open("a")``, and
-    the check and the append are not one operation, so it races across threads
-    as well as processes (async tool calls run sibling operations in threads).
-    ``write(overwrite=False)`` and ``move(overwrite=False)`` are check-then-act
-    for the same reason. No versioning: ``FileMeta.version`` is ``None`` and
-    ``expected_version`` raises ``UnsupportedOperationError``.
-
-    Disk containment is enforced with ``safe_join_relative_path``. Its per-segment
-    map (NFKC fold, strip trailing dots/spaces) is non-injective and stronger than
-    the D6 grammar, so this backend REJECTS any name the map would alter rather than
-    remap it silently: its legal path set is a strict subset of ``DbFileSystem``'s.
-    Do not rely on path portability across backends.
     """
 
     def __init__(self, root: Union[str, Path]) -> None:

@@ -2,6 +2,7 @@
 
 Tested 2026-07-24 against `gpt-5.5` (OpenAIResponses), agno 2.8.1 (source tree, branch feat/agent-fs at 937e1e973).
 Re-run fresh at the final sweep (same date): every file in this folder PASS.
+Entries quote tool calls and printed state. Model prose varies run to run and is paraphrased rather than quoted.
 
 ### basic.py
 
@@ -9,7 +10,7 @@ Re-run fresh at the final sweep (same date): every file in this folder PASS.
 
 **Description:** A four-step migration run as two sessions of two steps each; the agent reads state/checkpoint.md at the start of each session and overwrites it at the end, so session 2 resumes with no shared history.
 
-**Result:** Session 1 (session_id `migration-1`) replied "Completed this session: 1. Exported the users table / 2. Exported the orders table"; checkpoint after session 1 contained exactly steps 1-2. Session 2 (session_id `migration-2`, a genuinely distinct session) read the checkpoint and replied "Completed these migration steps this session: 3. Verify row counts match / 4. Write the summary report"; the final checkpoint listed all four steps.
+**Result:** Session 1 (session_id `migration-1`) called `list_files(directory=state, pattern=checkpoint.md, ...)` then `write_file(path=state/checkpoint.md, content=1. Export the users table\n2. Export the orders table, overwrite=True)`. The printed checkpoint after session 1 held exactly those two steps. Session 2 (session_id `migration-2`, a distinct session) called `read_file(path=state/checkpoint.md, ...)` first and then wrote all four steps back. The printed checkpoint after session 2 listed steps 1 through 4, so session 2 resumed at step 3 rather than restarting.
 
 ---
 
@@ -17,8 +18,8 @@ Re-run fresh at the final sweep (same date): every file in this folder PASS.
 
 **Status:** PASS
 
-**Description:** A latency monitor comparing current p95 readings against state/last-run.md, flagging >20 percent movers only, then updating the baseline.
+**Description:** A latency monitor comparing current p95 readings against state/last-run.md, flagging movers over 20 percent only, then updating the baseline.
 
-**Result:** Run 1: "Baseline run: no previous readings found." and saved all three readings. Run 2 flagged exactly the mover: "checkout-api: 210ms -> 540ms, increased by 157.1%" with no mention of the two stable services. Stored baseline afterwards read checkout-api: 540ms / billing-api: 185ms / search-api: 96ms.
+**Result:** Run 1 reported a baseline with no previous readings and saved all three. Run 2 called `read_file(path=state/last-run.md, ...)`, flagged exactly one service, `checkout-api: 210ms → 540ms (+157.1%)`, and stated that no other service moved more than 20 percent; billing-api (180 to 185ms) and search-api (95 to 96ms) went unmentioned. It then called `write_file(path=state/last-run.md, ...)` and the printed baseline afterwards read checkout-api: 540ms / billing-api: 185ms / search-api: 96ms.
 
 ---

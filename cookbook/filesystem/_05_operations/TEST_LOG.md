@@ -1,7 +1,8 @@
 # Test Log - _05_operations
 
 Tested 2026-07-24, agno 2.8.1 (source tree, branch feat/agent-fs at 937e1e973). No model and no API keys, since both files are pure Python against the store.
-Re-run 2026-07-24 after the `FileSystem(db)` change and the quota-message rewording: every file in this folder PASS.
+Re-run 2026-07-24 after the `FileSystem(db)` change and the quota-message rewording.
+Entries quote printed state verbatim; both files are deterministic.
 
 ### quota_recovery.py
 
@@ -15,10 +16,12 @@ Re-run 2026-07-24 after the `FileSystem(db)` change and the quota-message reword
 
 ### inspect_files.py
 
-**Status:** PASS
+**Status:** PARTIAL
 
-**Description:** Attaches to an agent's namespace from a plain script: lists files with sizes and versions, reads working state, seeds seen-records, and verifies them with contains().
+**Description:** Drives a file store from a plain script: lists files with sizes and versions, reads working state, seeds seen-records, and verifies them with contains().
 
-**Result:** Listing showed `seen/2026-07-23.md 39B v1` and `state/last-run.md 30B v1`, usage `{'files': 2, 'bytes': 69}`. Read back "2026-07-23: briefed 3 stories". After seeding two more ids, the membership check returned `{'found': ['kite-os-release'], 'missing': ['brand-new-story']}`, so the agent's next run will skip everything in found.
+**Result:** Every operation works and the output is deterministic across runs. Listing showed `seen/2026-07-23.md  39B  v1` and `state/last-run.md  30B  v1`, usage `{'files': 2, 'bytes': 69}`. Read back "2026-07-23: briefed 3 stories". After seeding two more ids, the membership check returned `{'found': ['kite-os-release'], 'missing': ['brand-new-story']}`.
+
+**Gap:** the example does not demonstrate its headline claim. It mints a throwaway `tmp/agent_fs_inspect_<uuid>.db`, seeds that store itself, and then inspects the data it just wrote, all in one process. Nothing here shows a script reaching a store some agent wrote, so every printed line would be identical if FileSystem had no cross-process sharing at all. The capability is real and covered by `libs/agno/tests/`; this file just does not put it on screen. Pointing it at `tmp/filesystem/getting_started.db`, the one store an agent actually writes in this cookbook, would close the gap.
 
 ---
