@@ -228,6 +228,12 @@ class TestBuildChunk:
         with pytest.raises(InvalidPathError):
             build_chunk("a\rb")
 
+    def test_unicode_line_separators_are_one_line(self):
+        # split("\n"), never splitlines(): U+2028 (and \v, \f, U+2029, ...) are
+        # legal record bytes, not line breaks (spec D9 step 1).
+        assert build_chunk("a\u2028b\n") == "a\u2028b\n"
+        assert build_chunk("a\vb\fc\u2029d") == "a\vb\fc\u2029d\n"
+
 
 class TestPathInDirectory:
     def test_root_matches_everything(self):

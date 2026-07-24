@@ -71,13 +71,28 @@ class TestWorkspaceParity:
 
     @pytest.mark.parametrize("tool_name", SHARED_TOOLS)
     def test_shared_signature_parity(self, tool_name):
+        # Per parameter (name -> default), never by index: the trailing
+        # keyword-only injected params have no Workspace counterpart (spec D13).
         ws_sig = inspect.signature(getattr(Workspace, tool_name))
         fs_sig = inspect.signature(getattr(AgentFSTools, tool_name))
-        ws_params = [p for name, p in ws_sig.parameters.items() if name != "self" and name not in self.ALLOWED_MISSING]
-        fs_params = [p for name, p in fs_sig.parameters.items() if name != "self" and name not in INJECTED_PARAMS]
-        assert [p.name for p in fs_params] == [p.name for p in ws_params]
-        for ws_param, fs_param in zip(ws_params, fs_params):
-            assert fs_param.default == ws_param.default, f"{tool_name}.{fs_param.name} default drifted"
+        ws_defaults = {
+            name: p.default
+            for name, p in ws_sig.parameters.items()
+            if name != "self" and name not in self.ALLOWED_MISSING
+        }
+        fs_defaults = {
+            name: p.default for name, p in fs_sig.parameters.items() if name != "self" and name not in INJECTED_PARAMS
+        }
+        assert fs_defaults == ws_defaults
+
+    @pytest.mark.parametrize("tool_name", AgentFSTools.FULL_TOOLS)
+    def test_injected_params_keyword_only_on_sync_and_async(self, tool_name):
+        for method in (getattr(AgentFSTools, tool_name), getattr(AgentFSTools, "a" + tool_name)):
+            signature = inspect.signature(method)
+            for injected in INJECTED_PARAMS:
+                param = signature.parameters[injected]
+                assert param.kind == inspect.Parameter.KEYWORD_ONLY
+                assert param.default is None
 
     def test_no_encoding_params_anywhere(self):
         for tool_name in AgentFSTools.FULL_TOOLS:
@@ -219,6 +234,10 @@ class TestErrorStringsVerbatim:
         result = toolkit.check_lines(["ok", "bad\nrecord"])
         assert result == "Error: invalid record 'bad\\nrecord': records must be single lines with no newlines."
 
+    def test_append_file_interior_cr_record_string(self, toolkit):
+        result = toolkit.append_file("log.md", "a\rb")
+        assert result == "Error: invalid record 'a\\rb': records must be single lines with no newlines."
+
     def test_invalid_path_string(self, toolkit):
         result = toolkit.read_file("../escape.md")
         assert result.startswith("Error: invalid path '../escape.md': ")
@@ -286,6 +305,12 @@ class TestListFilesTool:
         payload = json.loads(toolkit.list_files(recursive=True))
         listed = {e["path"] for e in payload["files"]}
         assert "a/b/c/deep.md" in listed
+
+    def test_empty_pattern_means_no_filter(self, fs, toolkit):
+        # Models pass pattern="" — Workspace treats it as falsy, so must we.
+        fs.write("notes/a.md", "1")
+        payload = json.loads(toolkit.list_files(pattern="", recursive=True))
+        assert {e["path"] for e in payload["files"]} == {"notes", "notes/a.md"}
 
     def test_pattern_fnmatch_on_basename_both_modes(self, fs, toolkit):
         fs.write("a.md", "1")

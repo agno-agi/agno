@@ -40,4 +40,4 @@ def db_fs(request, tmp_path):
         fs = DbFileSystem(db_engine=engine, db_schema="test_schema")
         yield fs
         with engine.begin() as conn:
-            conn.execute(text(f"DELETE FROM test_schema.{fs.table_name}"))
+            conn.execute(text(f"DROP TABLE IF EXISTS test_schema.{fs.table_name}"))

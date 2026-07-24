@@ -150,6 +150,7 @@ class AgentFSTools(Toolkit):
         path: str,
         start_line: Optional[int] = None,
         end_line: Optional[int] = None,
+        *,
         run_context: Optional[RunContext] = None,
         agent: Optional[Agent] = None,
         team: Optional[Team] = None,
@@ -199,6 +200,7 @@ class AgentFSTools(Toolkit):
         pattern: Optional[str] = None,
         recursive: bool = False,
         max_depth: int = 3,
+        *,
         run_context: Optional[RunContext] = None,
         agent: Optional[Agent] = None,
         team: Optional[Team] = None,
@@ -231,11 +233,13 @@ class AgentFSTools(Toolkit):
                 segments = meta.path.split("/")
                 rel = segments[prefix_len:]
                 if len(rel) <= depth_cap:
-                    if pattern is None or fnmatch(segments[-1], pattern):
+                    # An empty pattern means no filter — Workspace truthiness, not `is None`
+                    # (models do pass pattern="").
+                    if not pattern or fnmatch(segments[-1], pattern):
                         file_entries.append({"path": meta.path, "type": "file", "size": _format_size(meta.size_bytes)})
                 for k in range(1, min(len(rel) - 1, depth_cap) + 1):
                     dir_path = "/".join(segments[: prefix_len + k])
-                    if pattern is None or fnmatch(dir_path.split("/")[-1], pattern):
+                    if not pattern or fnmatch(dir_path.split("/")[-1], pattern):
                         dir_paths.add(dir_path)
 
             sorted_dirs = sorted(dir_paths, key=path_sort_key)
@@ -277,6 +281,7 @@ class AgentFSTools(Toolkit):
         query: str,
         directory: str = ".",
         limit: int = 10,
+        *,
         run_context: Optional[RunContext] = None,
         agent: Optional[Agent] = None,
         team: Optional[Team] = None,
@@ -312,6 +317,7 @@ class AgentFSTools(Toolkit):
         self,
         lines: List[str],
         directory: str = ".",
+        *,
         run_context: Optional[RunContext] = None,
         agent: Optional[Agent] = None,
         team: Optional[Team] = None,
@@ -348,6 +354,7 @@ class AgentFSTools(Toolkit):
         path: str,
         content: str,
         overwrite: bool = True,
+        *,
         run_context: Optional[RunContext] = None,
         agent: Optional[Agent] = None,
         team: Optional[Team] = None,
@@ -378,6 +385,7 @@ class AgentFSTools(Toolkit):
         self,
         path: str,
         content: str,
+        *,
         run_context: Optional[RunContext] = None,
         agent: Optional[Agent] = None,
         team: Optional[Team] = None,
@@ -411,6 +419,7 @@ class AgentFSTools(Toolkit):
         src: str,
         dst: str,
         overwrite: bool = False,
+        *,
         run_context: Optional[RunContext] = None,
         agent: Optional[Agent] = None,
         team: Optional[Team] = None,
@@ -439,6 +448,7 @@ class AgentFSTools(Toolkit):
     def delete_file(
         self,
         path: str,
+        *,
         run_context: Optional[RunContext] = None,
         agent: Optional[Agent] = None,
         team: Optional[Team] = None,
@@ -468,12 +478,15 @@ class AgentFSTools(Toolkit):
         path: str,
         start_line: Optional[int] = None,
         end_line: Optional[int] = None,
+        *,
         run_context: Optional[RunContext] = None,
         agent: Optional[Agent] = None,
         team: Optional[Team] = None,
     ) -> str:
         """Async variant of ``read_file``."""
-        return await asyncio.to_thread(self.read_file, path, start_line, end_line, run_context, agent, team)
+        return await asyncio.to_thread(
+            self.read_file, path, start_line, end_line, run_context=run_context, agent=agent, team=team
+        )
 
     async def alist_files(
         self,
@@ -481,13 +494,14 @@ class AgentFSTools(Toolkit):
         pattern: Optional[str] = None,
         recursive: bool = False,
         max_depth: int = 3,
+        *,
         run_context: Optional[RunContext] = None,
         agent: Optional[Agent] = None,
         team: Optional[Team] = None,
     ) -> str:
         """Async variant of ``list_files``."""
         return await asyncio.to_thread(
-            self.list_files, directory, pattern, recursive, max_depth, run_context, agent, team
+            self.list_files, directory, pattern, recursive, max_depth, run_context=run_context, agent=agent, team=team
         )
 
     async def asearch_content(
@@ -495,65 +509,79 @@ class AgentFSTools(Toolkit):
         query: str,
         directory: str = ".",
         limit: int = 10,
+        *,
         run_context: Optional[RunContext] = None,
         agent: Optional[Agent] = None,
         team: Optional[Team] = None,
     ) -> str:
         """Async variant of ``search_content``."""
-        return await asyncio.to_thread(self.search_content, query, directory, limit, run_context, agent, team)
+        return await asyncio.to_thread(
+            self.search_content, query, directory, limit, run_context=run_context, agent=agent, team=team
+        )
 
     async def acheck_lines(
         self,
         lines: List[str],
         directory: str = ".",
+        *,
         run_context: Optional[RunContext] = None,
         agent: Optional[Agent] = None,
         team: Optional[Team] = None,
     ) -> str:
         """Async variant of ``check_lines``."""
-        return await asyncio.to_thread(self.check_lines, lines, directory, run_context, agent, team)
+        return await asyncio.to_thread(
+            self.check_lines, lines, directory, run_context=run_context, agent=agent, team=team
+        )
 
     async def awrite_file(
         self,
         path: str,
         content: str,
         overwrite: bool = True,
+        *,
         run_context: Optional[RunContext] = None,
         agent: Optional[Agent] = None,
         team: Optional[Team] = None,
     ) -> str:
         """Async variant of ``write_file``."""
-        return await asyncio.to_thread(self.write_file, path, content, overwrite, run_context, agent, team)
+        return await asyncio.to_thread(
+            self.write_file, path, content, overwrite, run_context=run_context, agent=agent, team=team
+        )
 
     async def aappend_file(
         self,
         path: str,
         content: str,
+        *,
         run_context: Optional[RunContext] = None,
         agent: Optional[Agent] = None,
         team: Optional[Team] = None,
     ) -> str:
         """Async variant of ``append_file``."""
-        return await asyncio.to_thread(self.append_file, path, content, run_context, agent, team)
+        return await asyncio.to_thread(self.append_file, path, content, run_context=run_context, agent=agent, team=team)
 
     async def amove_file(
         self,
         src: str,
         dst: str,
         overwrite: bool = False,
+        *,
         run_context: Optional[RunContext] = None,
         agent: Optional[Agent] = None,
         team: Optional[Team] = None,
     ) -> str:
         """Async variant of ``move_file``."""
-        return await asyncio.to_thread(self.move_file, src, dst, overwrite, run_context, agent, team)
+        return await asyncio.to_thread(
+            self.move_file, src, dst, overwrite, run_context=run_context, agent=agent, team=team
+        )
 
     async def adelete_file(
         self,
         path: str,
+        *,
         run_context: Optional[RunContext] = None,
         agent: Optional[Agent] = None,
         team: Optional[Team] = None,
     ) -> str:
         """Async variant of ``delete_file``."""
-        return await asyncio.to_thread(self.delete_file, path, run_context, agent, team)
+        return await asyncio.to_thread(self.delete_file, path, run_context=run_context, agent=agent, team=team)

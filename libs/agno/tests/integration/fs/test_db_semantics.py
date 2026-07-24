@@ -55,6 +55,21 @@ class TestMembershipPredicate:
         assert result.found == ["  a", "b  "]
         assert result.missing == []
 
+    def test_u2028_round_trip(self, db_fs):
+        # A splitlines() split would store two rows and return missing forever.
+        fs = AgentFS(fs=db_fs, namespace="roundtrip")
+        fs.append("seen/log.md", "a\u2028b\n")
+        assert fs.read("seen/log.md") == "a\u2028b\n"
+        assert fs.contains(["a\u2028b"]).found == ["a\u2028b"]
+
+    def test_list_sorted_by_path_segments(self, db_fs):
+        # Neither the Postgres ORDER BY order nor the raw-string order (spec D2/D13).
+        fs = AgentFS(fs=db_fs, namespace="sorting")
+        fs.write("seen/a.md", "1")
+        fs.write("seen.md", "2")
+        fs.write("seen-old/a.md", "3")
+        assert [m.path for m in fs.list()] == ["seen/a.md", "seen-old/a.md", "seen.md"]
+
 
 class TestSearchCaseFolding:
     def test_non_ascii_query_finds_lowercase(self, db_fs):
@@ -99,6 +114,9 @@ class TestMove:
         db_fs.move(NS, "a.md", "b.md", overwrite=True)
         assert db_fs.read(NS, "b.md") == "x"
         assert db_fs.read(NS, "a.md") is None
+        # Exactly one row for dst: a DELETE+UPDATE escaping its transaction
+        # would leave both or neither (spec D13).
+        assert [m.path for m in db_fs.list(NS)] == ["b.md"]
 
     def test_move_missing_src(self, db_fs):
         with pytest.raises(FileNotFoundError):

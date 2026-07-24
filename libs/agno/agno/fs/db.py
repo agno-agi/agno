@@ -36,9 +36,10 @@ try:
         true,
         update,
     )
+    from sqlalchemy import inspect as sa_inspect
     from sqlalchemy import text as sql_text
     from sqlalchemy.engine import Engine, create_engine, make_url
-    from sqlalchemy.exc import IntegrityError
+    from sqlalchemy.exc import IntegrityError, OperationalError, ProgrammingError
     from sqlalchemy.sql import select
 except ImportError:
     raise ImportError("`sqlalchemy` not installed. Please install it using `pip install 'agno[sql]'`")
@@ -82,6 +83,16 @@ class DbFileSystem(FileSystem):
                 f"DbFileSystem supports dialects {SUPPORTED_DIALECTS}, got {self.dialect!r}. "
                 "Use a postgresql or sqlite db_url/db_engine."
             )
+        if self.dialect == "sqlite":
+            import sqlite3
+
+            # The guarded append and CAS write detect outcomes via RETURNING,
+            # which SQLite added in 3.35.0 — fail with a clear message instead
+            # of an opaque CompileError on first write.
+            if sqlite3.sqlite_version_info < (3, 35, 0):
+                raise ValueError(
+                    f"DbFileSystem requires SQLite >= 3.35.0 (RETURNING support); found {sqlite3.sqlite_version}."
+                )
         self.table_name = table_name
         self.db_schema = db_schema if self.dialect == "postgresql" else None
         self.metadata = MetaData(schema=self.db_schema)
@@ -109,10 +120,17 @@ class DbFileSystem(FileSystem):
         with self._table_lock:
             if self._table_ready:
                 return
-            if self.db_schema is not None:
-                with self.db_engine.begin() as conn:
-                    conn.execute(sql_text(f'CREATE SCHEMA IF NOT EXISTS "{self.db_schema}"'))
-            self.metadata.create_all(self.db_engine, tables=[self.table], checkfirst=True)
+            # CREATE SCHEMA IF NOT EXISTS and checkfirst are both check-then-create,
+            # so instances in other threads, workers, or processes can race them on
+            # first use. Losing the race is fine — verify the table exists and move on.
+            try:
+                if self.db_schema is not None:
+                    with self.db_engine.begin() as conn:
+                        conn.execute(sql_text(f'CREATE SCHEMA IF NOT EXISTS "{self.db_schema}"'))
+                self.metadata.create_all(self.db_engine, tables=[self.table], checkfirst=True)
+            except (IntegrityError, ProgrammingError, OperationalError):
+                if not sa_inspect(self.db_engine).has_table(self.table_name, schema=self.db_schema):
+                    raise
             log_debug(f"DbFileSystem table ready: {self.table.fullname}")
             self._table_ready = True
 
@@ -247,8 +265,11 @@ class DbFileSystem(FileSystem):
             return FileMeta(path=path, size_bytes=0, version=None, updated_at=None)
         chunk_bytes = len(chunk.encode("utf-8"))
         # New-file inserts take the VALUES arm, which the WHERE guard does not
-        # cover — pre-check the chunk alone client-side (exact: content is fully known).
-        if max_file_bytes is not None and chunk_bytes > max_file_bytes:
+        # cover — pre-check the chunk alone client-side (exact: content is fully
+        # known). When the row already exists, fall through instead: the guarded
+        # statement blocks and its error path reports the size the file would
+        # actually have reached.
+        if max_file_bytes is not None and chunk_bytes > max_file_bytes and self._stat(namespace, path) is None:
             raise QuotaExceededError(
                 f"{path} would be {chunk_bytes} bytes (limit {max_file_bytes} per file)",
                 scope="file",
@@ -324,15 +345,28 @@ class DbFileSystem(FileSystem):
             .returning(t.c.version, t.c.size_bytes)
         )
         with self.db_engine.begin() as conn:
-            if overwrite and src != dst:
-                conn.execute(delete(t).where(and_(t.c.namespace_id == namespace, t.c.path == dst)))
             try:
+                # Both statements inside the one SAVEPOINT: the DELETE+UPDATE
+                # pair is a single rollback unit on the overwrite path.
                 with conn.begin_nested():
+                    if overwrite and src != dst:
+                        if self.dialect == "postgresql":
+                            # Lock both rows in sorted order first: cyclic
+                            # concurrent moves (a->b and b->a) would otherwise
+                            # acquire the two row locks in opposite order and
+                            # deadlock.
+                            for locked_path in sorted((src, dst)):
+                                conn.execute(
+                                    select(t.c.path)
+                                    .where(and_(t.c.namespace_id == namespace, t.c.path == locked_path))
+                                    .with_for_update()
+                                )
+                        conn.execute(delete(t).where(and_(t.c.namespace_id == namespace, t.c.path == dst)))
                     row = conn.execute(stmt).first()
+                    if row is None:
+                        raise FileNotFoundError(f"file not found: {src}")
             except IntegrityError:
                 raise FileExistsError(f"file exists: {dst}") from None
-            if row is None:
-                raise FileNotFoundError(f"file not found: {src}")
         return FileMeta(path=dst, size_bytes=row[1], version=row[0], updated_at=now)
 
     def contains(self, namespace: str, lines: Sequence[str], directory: str = "") -> Set[str]:

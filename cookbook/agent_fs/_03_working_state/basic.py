@@ -1,0 +1,66 @@
+"""
+Working State - Basic
+=====================
+
+Progress checkpoints that survive restarts: the agent records where it stopped
+in state/checkpoint.md, and the next run - a fresh session with no shared
+history - resumes from exactly that point.
+
+This example runs a four-step task as two sessions of two steps each.
+"""
+
+import os
+import time
+from pathlib import Path
+
+from agno.agent import Agent
+from agno.fs import AgentFS
+from agno.fs.db import DbFileSystem
+from agno.models.openai import OpenAIResponses
+
+STEPS = [
+    "1. Export the users table",
+    "2. Export the orders table",
+    "3. Verify row counts match",
+    "4. Write the summary report",
+]
+
+# ---------------------------------------------------------------------------
+# Create AgentFS
+# ---------------------------------------------------------------------------
+Path("tmp").mkdir(exist_ok=True)
+DB_FILE = (
+    os.environ.get("AGNO_FS_DB") or f"tmp/agent_fs_checkpoint_{int(time.time())}.db"
+)
+
+fs = AgentFS(fs=DbFileSystem(db_url=f"sqlite:///{DB_FILE}"), namespace="migration")
+
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
+agent = Agent(
+    model=OpenAIResponses(id="gpt-5.5"),
+    tools=[fs.tools()],
+    instructions=(
+        "You run a data migration with these steps:\n" + "\n".join(STEPS) + "\n"
+        "Each session you have time for exactly TWO steps. Read state/checkpoint.md "
+        "first (it may not exist on the first run) to see what is already done. "
+        "Perform the next two pending steps (performing = describing the work as "
+        "done), then overwrite state/checkpoint.md with the full list of completed "
+        "steps using write_file. Reply with which steps you completed this session."
+    ),
+)
+
+# ---------------------------------------------------------------------------
+# Run
+# ---------------------------------------------------------------------------
+if __name__ == "__main__":
+    print("session 1: no checkpoint exists yet")
+    agent.print_response("Continue the migration.")
+    print("checkpoint after session 1:")
+    print(fs.read("state/checkpoint.md"))
+
+    print("session 2: a fresh session resumes from the checkpoint")
+    agent.print_response("Continue the migration.")
+    print("checkpoint after session 2:")
+    print(fs.read("state/checkpoint.md"))

@@ -1,0 +1,78 @@
+"""
+Operations - Quota Recovery
+===========================
+
+AgentFS caps every file and every namespace; nothing is evicted silently.
+This recipe hits both caps on purpose, shows the exact guidance the agent
+would see, and recovers the way the guidance says: partition, then delete
+partitions you no longer need.
+
+Runs with tiny caps so the numbers are readable. No model, no API keys.
+"""
+
+import os
+import time
+from pathlib import Path
+
+from agno.fs import AgentFS
+from agno.fs.db import DbFileSystem
+from agno.fs.errors import QuotaExceededError
+
+# ---------------------------------------------------------------------------
+# Create AgentFS - deliberately tiny caps
+# ---------------------------------------------------------------------------
+Path("tmp").mkdir(exist_ok=True)
+DB_FILE = os.environ.get("AGNO_FS_DB") or f"tmp/agent_fs_quota_{int(time.time())}.db"
+
+fs = AgentFS(
+    fs=DbFileSystem(db_url=f"sqlite:///{DB_FILE}"),
+    namespace="radar",
+    max_file_bytes=200,
+    max_namespace_bytes=300,
+)
+
+# ---------------------------------------------------------------------------
+# Run
+# ---------------------------------------------------------------------------
+if __name__ == "__main__":
+    print("fill one partition to its per-file cap:")
+    fs.append(
+        "seen/2026-07-22.md", "\n".join(f"https://example.com/{i}" for i in range(8))
+    )
+    try:
+        fs.append("seen/2026-07-22.md", "https://example.com/one-too-many")
+    except QuotaExceededError as e:
+        print("  typed error:", e.scope, e.current, ">", e.limit)
+
+    print("the agent would see the same refusal as a tool string:")
+    toolkit = fs.tools()
+    print(
+        "  "
+        + toolkit.append_file("seen/2026-07-22.md", "https://example.com/one-too-many")
+    )
+
+    print("recovery 1 - start a new partition (the error suggests date partitioning):")
+    fs.append("seen/2026-07-23.md", "https://example.com/one-too-many")
+    print("  wrote to seen/2026-07-23.md")
+
+    print("fill the namespace to its cap:")
+    try:
+        while True:
+            fs.append("seen/2026-07-24.md", "https://example.com/more")
+    except QuotaExceededError as e:
+        print("  typed error:", e.scope, e.current, "of", e.limit)
+    print("  " + toolkit.append_file("seen/2026-07-24.md", "https://example.com/more"))
+
+    print("recovery 2 - delete the oldest partition, then retry:")
+    usage = fs.usage()
+    print("  before:", usage.file_count, "files,", usage.total_bytes, "bytes")
+    fs.delete("seen/2026-07-22.md")
+    fs.append("seen/2026-07-24.md", "https://example.com/more")
+    usage = fs.usage()
+    print(
+        "  after: ",
+        usage.file_count,
+        "files,",
+        usage.total_bytes,
+        "bytes - append succeeded",
+    )

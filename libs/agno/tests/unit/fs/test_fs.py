@@ -116,6 +116,23 @@ class TestRoundTrip:
         result = fs.contains(["example.com/a"])
         assert result.missing == ["example.com/a"]
 
+    def test_u2028_stored_as_one_line_and_found(self, fs):
+        # The split-choice regression: a splitlines() append would store two
+        # rows and return missing forever (spec D9 step 1 / D13).
+        fs.append("seen/log.md", "a\u2028b\n")
+        assert fs.read("seen/log.md") == "a\u2028b\n"
+        assert fs.contains(["a\u2028b"]).found == ["a\u2028b"]
+
+    def test_interior_cr_rejected_at_append(self, fs):
+        with pytest.raises(InvalidPathError):
+            fs.append("seen/log.md", "a\rb\r")
+        assert fs.read("seen/log.md") is None
+
+    def test_missing_files_mean_all_missing(self, fs):
+        result = fs.contains(["a", "b"], directory="seen")
+        assert result.found == []
+        assert result.missing == ["a", "b"]
+
     def test_order_preserved_with_duplicates(self, fs):
         fs.append("seen/log.md", "b\n")
         result = fs.contains(["z", "b", "z"])

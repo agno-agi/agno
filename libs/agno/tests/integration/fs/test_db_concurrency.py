@@ -99,6 +99,63 @@ class TestCas:
         assert excinfo.value.actual is None
 
 
+class TestColdStartAndCyclicMoves:
+    def test_concurrent_first_use_across_instances(self, db_fs):
+        """A dozen instances sharing one engine race CREATE SCHEMA/TABLE on
+        genuinely-cold first use (the table does not exist yet) — losing the
+        DDL race must be silent, not an IntegrityError burst on cold start."""
+        from sqlalchemy import text as sql_text
+
+        from agno.fs.db import DbFileSystem
+
+        engine = db_fs.db_engine
+        cold_table = "agno_agent_fs_cold_start"
+        schema_prefix = f"{db_fs.db_schema}." if db_fs.db_schema else ""
+        with engine.begin() as conn:
+            conn.execute(sql_text(f"DROP TABLE IF EXISTS {schema_prefix}{cold_table}"))
+        instances = [
+            DbFileSystem(db_engine=engine, table_name=cold_table, db_schema=db_fs.db_schema)
+            if db_fs.dialect == "postgresql"
+            else DbFileSystem(db_engine=engine, table_name=cold_table)
+            for _ in range(12)
+        ]
+
+        def first_use(pair):
+            index, instance = pair
+            instance.write(NS, f"cold/{index}.md", "x")
+
+        try:
+            with ThreadPoolExecutor(max_workers=12) as pool:
+                list(pool.map(first_use, enumerate(instances)))
+            assert len(instances[0].list(NS, "cold")) == 12
+        finally:
+            with engine.begin() as conn:
+                conn.execute(sql_text(f"DROP TABLE IF EXISTS {schema_prefix}{cold_table}"))
+
+    def test_cyclic_concurrent_overwrite_moves_do_not_deadlock(self, db_fs):
+        """a->b and b->a with overwrite=True concurrently: without deterministic
+        lock ordering the two row locks are acquired in opposite order and
+        Postgres aborts one mover with an uncaught DeadlockDetected."""
+        for round_index in range(10):
+            db_fs.write(NS, "cyc-a.md", f"content-a-{round_index}")
+            db_fs.write(NS, "cyc-b.md", f"content-b-{round_index}")
+
+            def mover(direction):
+                src, dst = direction
+                try:
+                    db_fs.move(NS, src, dst, overwrite=True)
+                    return "ok"
+                except FileNotFoundError:
+                    return "missing"
+
+            with ThreadPoolExecutor(max_workers=2) as pool:
+                outcomes = list(pool.map(mover, [("cyc-a.md", "cyc-b.md"), ("cyc-b.md", "cyc-a.md")]))
+            assert set(outcomes) <= {"ok", "missing"}
+            remaining = {m.path for m in db_fs.list(NS)} & {"cyc-a.md", "cyc-b.md"}
+            for path in remaining:
+                db_fs.delete(NS, path)
+
+
 class TestLastWriterWins:
     def test_concurrent_plain_writes_leave_one_intact_content(self, db_fs):
         """A read-then-INSERT-or-UPDATE implementation passes every serial test
