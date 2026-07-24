@@ -201,6 +201,7 @@ class Weaviate(VectorDb):
             content_hash (str): The content hash to check.
             user_id (Optional[str]): When set, restrict the check to the owner's chunks.
         """
+        self._validate_user_id(user_id)
         collection = self.get_client().collections.get(self.collection)
         where = Filter.by_property("content_hash").equal(content_hash)
         if user_id is not None:
@@ -427,6 +428,7 @@ class Weaviate(VectorDb):
             filters (Optional[Dict[str, Any]]): Filters to apply while upserting
             user_id (Optional[str]): Owner of these chunks for per-user isolation.
         """
+        self._validate_user_id(user_id)
         log_debug(f"Upserting {len(documents)} documents into Weaviate.")
         if self.content_hash_exists(content_hash, user_id=user_id):
             self._delete_by_content_hash(content_hash, user_id=user_id)
@@ -449,6 +451,7 @@ class Weaviate(VectorDb):
             filters (Optional[Dict[str, Any]]): Filters to apply while upserting
             user_id (Optional[str]): Owner of these chunks for per-user isolation.
         """
+        self._validate_user_id(user_id)
         if self.content_hash_exists(content_hash, user_id=user_id):
             self._delete_by_content_hash(content_hash, user_id=user_id)
         await self.async_insert(content_hash=content_hash, documents=documents, filters=filters, user_id=user_id)
@@ -897,6 +900,7 @@ class Weaviate(VectorDb):
             user_id (Optional[str]): Restrict the delete to the owner's chunks. Only None
                 deletes all chunks with this content_id regardless of owner.
         """
+        self._validate_user_id(user_id)
         try:
             collection = self.get_client().collections.get(self.collection)
 
