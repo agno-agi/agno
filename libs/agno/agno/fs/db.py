@@ -13,7 +13,7 @@ from __future__ import annotations
 import threading
 import time
 from pathlib import Path
-from typing import TYPE_CHECKING, List, Optional, Sequence, Set
+from typing import TYPE_CHECKING, Any, List, Optional, Sequence, Set
 
 from agno.fs._paths import build_chunk, path_sort_key
 from agno.fs.base import BaseFS, _extract_snippet
@@ -51,6 +51,9 @@ if TYPE_CHECKING:
 
 SUPPORTED_DIALECTS = ("postgresql", "sqlite")
 
+# Distinguishes "caller did not specify a schema" from an explicit None or "ai".
+_INHERIT_SCHEMA: Any = object()
+
 
 class DbFileSystem(BaseFS):
     """Database-backed file storage: one row per ``(namespace_id, path)``.
@@ -69,7 +72,7 @@ class DbFileSystem(BaseFS):
         db_engine: Optional[Engine] = None,
         *,
         table_name: str = "agno_agent_fs",
-        db_schema: Optional[str] = "ai",
+        db_schema: Optional[str] = _INHERIT_SCHEMA,
     ) -> None:
         provided = [source for source in (db, db_url, db_engine) if source is not None]
         if len(provided) != 1:
@@ -77,8 +80,8 @@ class DbFileSystem(BaseFS):
         if db is not None:
             # Reuse the engine of an agno db the caller already configured, so the
             # agent's files live beside its sessions and memory with one connection
-            # setup. Only the engine is borrowed: table_name and db_schema stay this
-            # backend's own, and nothing is added to the BaseDb contract. Not every
+            # setup. The engine and (unless overridden) the schema are borrowed;
+            # nothing is added to the BaseDb contract. Not every
             # agno db is SQL-backed (Mongo, Redis, DynamoDb, ... have no engine), so
             # fail with a clear message rather than an AttributeError.
             borrowed = getattr(db, "db_engine", None)
@@ -121,6 +124,12 @@ class DbFileSystem(BaseFS):
                     f"DbFileSystem requires SQLite >= 3.35.0 (RETURNING support); found {sqlite3.sqlite_version}."
                 )
         self.table_name = table_name
+        if db_schema is _INHERIT_SCHEMA:
+            # Follow the db's own schema so the agent's files land beside its
+            # sessions; "ai" is agno's default for both, so this only bites when
+            # the caller customized theirs (PostgresDb(db_schema="myapp")).
+            inherited = getattr(db, "db_schema", None) if db is not None else None
+            db_schema = inherited or "ai"
         self.db_schema = db_schema if self.dialect == "postgresql" else None
         self.metadata = MetaData(schema=self.db_schema)
         self.table = Table(

@@ -1,11 +1,10 @@
 """
 Multi-Tenancy - Shared Namespace
 ================================
-
-Sharing is explicit, by name: two agents attach the same namespace. The
-producer holds the full surface; the consumer gets tools(read_only=True) -
-four read tools and the read-only instructions variant - so it can consult
-the records but has no tool that could change them.
+Two agents share files by attaching the same namespace by name. The producer
+gets the full tool surface. The consumer gets tools(read_only=True), which is
+four read tools plus the read-only instructions, so it can consult the
+records but holds no tool that could change them.
 
 This example has a recorder agent write decisions and an answering agent look
 them up read-only.
@@ -16,7 +15,6 @@ from uuid import uuid4
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.fs import FileSystem
-from agno.fs.db import DbFileSystem
 from agno.models.openai import OpenAIResponses
 
 # ---------------------------------------------------------------------------
@@ -24,9 +22,9 @@ from agno.models.openai import OpenAIResponses
 # ---------------------------------------------------------------------------
 DB_FILE = f"tmp/agent_fs_shared_{uuid4().hex}.db"
 
-db_fs = DbFileSystem(db=SqliteDb(db_file=DB_FILE))
-producer_fs = FileSystem(backend=db_fs, namespace="research/decisions")
-consumer_fs = FileSystem(backend=db_fs, namespace="research/decisions")
+db = SqliteDb(db_file=DB_FILE)
+producer_fs = FileSystem(db, namespace="research/decisions")
+consumer_fs = FileSystem(db, namespace="research/decisions")
 
 # ---------------------------------------------------------------------------
 # Create Agents

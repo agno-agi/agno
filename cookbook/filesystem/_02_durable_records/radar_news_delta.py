@@ -1,12 +1,11 @@
 """
 Durable Records - Radar News Delta
 ==================================
+A scheduled news-brief agent that reports only what is new since its last
+run. The seen-list is date-partitioned, one file per day under seen/, so you
+can delete old partitions without touching recent state.
 
-A scheduled news-brief agent that reports only the delta since its last run.
-The seen-list is date-partitioned (one file per day under seen/), so old
-partitions can be deleted without touching recent state.
-
-This example runs the agent twice over an expanding feed: run 1 briefs
+This example runs the agent twice over a growing feed. Run 1 briefs
 everything, run 2 briefs only the two new stories.
 """
 
@@ -17,7 +16,6 @@ from uuid import uuid4
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.fs import FileSystem
-from agno.fs.db import DbFileSystem
 from agno.models.openai import OpenAIResponses
 
 # ---------------------------------------------------------------------------
@@ -39,11 +37,11 @@ TODAY = date.today().isoformat()
 # Create FileSystem
 # ---------------------------------------------------------------------------
 # Fresh per-run db so this demo starts clean on every execution. A real
-# scheduled deployment pins one fixed, shared database instead - a new store per
-# process re-reports everything, the exact bug Radar exists to fix.
+# scheduled deployment pins one fixed, shared database. With a new store per
+# process it would re-report every story it has already briefed.
 DB_FILE = f"tmp/agent_fs_radar_{uuid4().hex}.db"
 
-fs = FileSystem(backend=DbFileSystem(db=SqliteDb(db_file=DB_FILE)), namespace="radar")
+fs = FileSystem(SqliteDb(db_file=DB_FILE), namespace="radar")
 
 # ---------------------------------------------------------------------------
 # Create Agent
@@ -63,9 +61,9 @@ agent = Agent(
 
 
 def run_radar(feed: List[str], session_id: str) -> None:
-    # A distinct session_id per run: a scheduled agent gets a fresh session each
-    # time, so nothing carries over in session state. The delta is proof that the
-    # durable filesystem - not the conversation - is what remembers.
+    # A distinct session_id per run, matching a scheduled agent that gets a fresh
+    # session every time. Nothing carries over in session state, so the delta can
+    # only come from the durable filesystem.
     agent.print_response("Current feed:\n" + "\n".join(feed), session_id=session_id)
 
 
@@ -77,7 +75,7 @@ if __name__ == "__main__":
     run_radar(FEED_MONDAY, session_id="radar-monday")
 
     print(
-        "run 2 (session radar-tuesday, fresh session): the feed grew by two - brief only those"
+        "run 2 (session radar-tuesday, fresh session): the feed grew by two, so brief only those"
     )
     run_radar(FEED_TUESDAY, session_id="radar-tuesday")
 

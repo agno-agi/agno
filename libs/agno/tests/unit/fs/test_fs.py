@@ -350,3 +350,35 @@ class TestDefaultNamespace:
         FileSystem(local_backend).write("a.md", "x")
         assert FileSystem(local_backend).read("a.md") == "x"
         assert FileSystem(local_backend, "other").read("a.md") is None
+
+
+class TestBackendDispatch:
+    def test_agno_db_is_wrapped_automatically(self, tmp_path):
+        from agno.db.sqlite import SqliteDb
+        from agno.fs.db import DbFileSystem
+
+        fs = FileSystem(SqliteDb(db_file=f"{tmp_path}/agent.db"))
+        assert isinstance(fs.backend, DbFileSystem)
+        fs.write("a.md", "x")
+        assert fs.read("a.md") == "x"
+
+    def test_basefs_is_used_as_given(self, local_backend):
+        assert FileSystem(local_backend).backend is local_backend
+
+    def test_unrecognised_source_raises_with_guidance(self):
+        with pytest.raises(TypeError) as exc:
+            FileSystem("not-a-backend")
+        assert "SqliteDb" in str(exc.value) and "LocalFileSystem" in str(exc.value)
+
+    def test_import_agno_fs_stays_dependency_light(self):
+        # The dispatch imports its backend lazily; `import agno.fs` must not drag
+        # SQLAlchemy in (spec D1).
+        import subprocess
+        import sys
+
+        out = subprocess.run(
+            [sys.executable, "-c", "import sys, agno.fs; print('sqlalchemy' in sys.modules)"],
+            capture_output=True,
+            text=True,
+        )
+        assert out.stdout.strip() == "False", out.stdout

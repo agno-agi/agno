@@ -1,12 +1,11 @@
 """
 Durable Records - Basic
 =======================
+Deduplicate work with a record log. The agent calls check_lines before it
+acts and append_file after. The log matches on exact lines and outlives the
+process, so a recurring job never repeats work it has already done.
 
-The dedupe pattern: check_lines BEFORE acting, append_file after. The record
-log is exact and durable, so a recurring job never repeats work - even across
-restarts and fresh sessions.
-
-This example processes two overlapping ticket batches; the second pass acts
+This example processes two overlapping ticket batches. The second pass acts
 only on the genuinely new ticket.
 """
 
@@ -16,7 +15,6 @@ from uuid import uuid4
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.fs import FileSystem
-from agno.fs.db import DbFileSystem
 from agno.models.openai import OpenAIResponses
 
 # ---------------------------------------------------------------------------
@@ -24,7 +22,7 @@ from agno.models.openai import OpenAIResponses
 # ---------------------------------------------------------------------------
 DB_FILE = f"tmp/agent_fs_records_{uuid4().hex}.db"
 
-fs = FileSystem(backend=DbFileSystem(db=SqliteDb(db_file=DB_FILE)), namespace="triage")
+fs = FileSystem(SqliteDb(db_file=DB_FILE), namespace="triage")
 
 # ---------------------------------------------------------------------------
 # Create Agent
@@ -37,9 +35,9 @@ agent = Agent(
 
 
 def process_batch(batch: List[str]) -> None:
-    # The check scope must match where the records are appended (seen/): a
-    # mismatched directory returns everything as missing - indistinguishable
-    # from a fresh store - and the work is silently redone.
+    # The directory the agent checks must match where it appends the records
+    # (seen/). A mismatched directory returns everything as missing, which is
+    # indistinguishable from a fresh store, and the work gets silently redone.
     agent.print_response(
         "Triage this batch of tickets: " + ", ".join(batch) + ". "
         "First call check_lines with directory='seen' to find which ids you have "

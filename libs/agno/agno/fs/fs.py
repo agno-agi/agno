@@ -10,12 +10,14 @@ Attach with one line — the toolkit carries its own instructions:
     from agno.agent import Agent
     from agno.db.sqlite import SqliteDb
     from agno.fs import FileSystem
-    from agno.fs.db import DbFileSystem
 
-    fs = FileSystem(backend=DbFileSystem(db=SqliteDb(db_file="agent.db")))
+    fs = FileSystem(SqliteDb(db_file="agent.db"))
     agent = Agent(tools=[fs.tools()], instructions="my instructions")
 
-Name a namespace only when you need more than one store: ``namespace="radar"``.
+Hand it the db you already use and the files land in it, no backend import
+needed. Reach for a backend directly when you want one: ``LocalFileSystem`` for
+real files on disk, or ``DbFileSystem(...)`` for table/schema options. Name a
+namespace only when you need more than one store: ``namespace="radar"``.
 
 FileSystem is also a complete durable-filesystem API without any Agent:
 ``fs.read(...)``, ``fs.append(...)``, ``fs.contains(...)`` from plain Python.
@@ -98,10 +100,40 @@ Conventions:
   need an exact answer about specific records."""
 
 
+def _as_backend(source: Any) -> BaseFS:
+    """Resolve the first constructor argument to a storage backend.
+
+    A ``BaseFS`` is used as given. Anything else is a storage handle we recognise
+    and wrap, so the common case needs no backend import at all::
+
+        FileSystem(SqliteDb(db_file="agent.db"))   # -> DbFileSystem over that db
+
+    This is the single dispatch point. Each branch detects cheaply (no import) and
+    only then imports its backend, which is what keeps ``import agno.fs`` free of
+    SQLAlchemy and every other optional dependency. Backends that land later
+    (object storage, remote/agent-native stores) add a branch here the same way.
+    """
+    if isinstance(source, BaseFS):
+        return source
+    # An agno SQL db (SqliteDb / PostgresDb): keep the agent's files in the same
+    # database as its sessions and memory. Detected by its engine, so recognising
+    # it costs no import - and holding one means agno.db is already loaded.
+    if hasattr(source, "db_engine"):
+        from agno.fs.db import DbFileSystem
+
+        return DbFileSystem(db=source)
+    raise TypeError(
+        f"FileSystem needs a backend or a storage handle it recognises, got {type(source).__name__}. "
+        "Pass a SqliteDb/PostgresDb to store files in that database, or a backend "
+        "such as DbFileSystem(...) or LocalFileSystem(root=...)."
+    )
+
+
 class FileSystem:
     """A durable, private filesystem scoped to one namespace.
 
-    ``backend`` is the storage backend; ``namespace`` names this agent's file
+    ``backend`` is a storage backend, or any storage handle FileSystem recognises
+    (an agno ``SqliteDb``/``PostgresDb``, wrapped for you); ``namespace`` names this agent's file
     store within it, defaulting to ``"default"`` when you do not need more than
     one. Same ``backend`` + same ``namespace`` = same files; different
     ``namespace`` = full isolation. Sharing is explicit, by name.
@@ -118,13 +150,13 @@ class FileSystem:
 
     def __init__(
         self,
-        backend: BaseFS,
+        backend: Any,
         namespace: str = DEFAULT_NAMESPACE,
         *,
         max_file_bytes: int = 1_000_000,
         max_namespace_bytes: int = 20_000_000,
     ) -> None:
-        self.backend = backend
+        self.backend: BaseFS = _as_backend(backend)
         self.namespace = normalize_namespace(namespace)
         self.max_file_bytes = max_file_bytes
         self.max_namespace_bytes = max_namespace_bytes

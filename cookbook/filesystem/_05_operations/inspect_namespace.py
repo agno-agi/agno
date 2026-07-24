@@ -1,20 +1,19 @@
 """
 Operations - Inspect a Namespace
 ================================
+An agent's file store is reachable from any script. Construct FileSystem with
+the same backend and namespace name and you hold the same files the agent
+holds, so you can inspect, read and seed them with no Agent, model or server.
 
-An agent's file store is reachable from any script: construct FileSystem with the
-same backend and namespace name, and you hold the same files the agent holds.
-Inspect, read, and seed - no Agent, no model, no server.
-
-This example seeds records a scheduled agent will dedupe against on its next
-run, which is how you backfill "already processed" state before first launch.
+This example seeds records that a scheduled agent will dedupe against on its
+next run. That is how you backfill "already processed" state before a first
+launch.
 """
 
 from uuid import uuid4
 
 from agno.db.sqlite import SqliteDb
 from agno.fs import FileSystem
-from agno.fs.db import DbFileSystem
 from rich.pretty import pprint
 
 # ---------------------------------------------------------------------------
@@ -22,7 +21,7 @@ from rich.pretty import pprint
 # ---------------------------------------------------------------------------
 DB_FILE = f"tmp/agent_fs_inspect_{uuid4().hex}.db"
 
-fs = FileSystem(backend=DbFileSystem(db=SqliteDb(db_file=DB_FILE)), namespace="radar")
+fs = FileSystem(SqliteDb(db_file=DB_FILE), namespace="radar")
 
 # ---------------------------------------------------------------------------
 # Run

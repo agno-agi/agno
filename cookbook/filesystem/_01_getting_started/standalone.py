@@ -1,19 +1,18 @@
 """
 FileSystem - Standalone
-====================
+=======================
+FileSystem works without an Agent. It is the same object the agent uses,
+driven from plain Python, so you get the whole API with no model and no API
+keys.
 
-FileSystem is a complete durable-filesystem API without any Agent: the same
-object an agent uses, driven from plain Python. No model, no API keys.
-
-This example seeds a record log, proves exact-line dedupe with contains(),
-and prints namespace usage.
+This example seeds a record log, checks for exact lines with contains(), and
+prints namespace usage.
 """
 
 from uuid import uuid4
 
 from agno.db.sqlite import SqliteDb
 from agno.fs import FileSystem
-from agno.fs.db import DbFileSystem
 from rich.pretty import pprint
 
 # ---------------------------------------------------------------------------
@@ -21,7 +20,7 @@ from rich.pretty import pprint
 # ---------------------------------------------------------------------------
 DB_FILE = f"tmp/agent_fs_standalone_{uuid4().hex}.db"
 
-fs = FileSystem(backend=DbFileSystem(db=SqliteDb(db_file=DB_FILE)), namespace="radar")
+fs = FileSystem(SqliteDb(db_file=DB_FILE), namespace="radar")
 
 # ---------------------------------------------------------------------------
 # Run
@@ -34,8 +33,9 @@ if __name__ == "__main__":
     print(fs.read("notes/config.md"))
 
     print("which of these records are already stored?")
-    # Check against the same directory the appends wrote to (seen/): a
-    # mismatched scope reads exactly like a fresh, empty store.
+    # contains() only looks inside the directory you give it. Point it at the
+    # same one the appends wrote to (seen/). A mismatched directory returns
+    # everything as missing, which looks just like an empty store.
     result = fs.contains(
         ["https://example.com/a", "https://example.com/c"], directory="seen"
     )

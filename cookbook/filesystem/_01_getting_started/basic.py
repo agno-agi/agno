@@ -11,7 +11,6 @@ shared session, and it reads the note back.
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.fs import FileSystem
-from agno.fs.db import DbFileSystem
 from agno.models.openai import OpenAIResponses
 
 # ---------------------------------------------------------------------------
@@ -19,9 +18,7 @@ from agno.models.openai import OpenAIResponses
 # ---------------------------------------------------------------------------
 DB_FILE = "tmp/filesystem/getting_started.db"
 
-fs = FileSystem(
-    backend=DbFileSystem(db=SqliteDb(db_file=DB_FILE)), namespace="getting-started"
-)
+fs = FileSystem(SqliteDb(db_file=DB_FILE), namespace="getting-started")
 
 # ---------------------------------------------------------------------------
 # Create Agent
@@ -37,7 +34,7 @@ agent = Agent(
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
     if fs.read("notes/decisions.md") is None:
-        print("run 1 of 2: store is empty - asking the agent to record a decision")
+        print("run 1 of 2: the store is empty, so ask the agent to record a decision")
         agent.print_response(
             "We just made a decision you will need in future runs: use SQLite for "
             "local development and Postgres in production. Record it in "
@@ -45,7 +42,7 @@ if __name__ == "__main__":
         )
         print("Run this file again: a fresh process will read the note back.")
     else:
-        print("run 2 of 2: store already populated - asking the agent to recall")
+        print("run 2 of 2: the store is populated, so ask the agent to recall")
         agent.print_response(
             "Which database did we decide to use for local development? "
             "Check your files before answering."

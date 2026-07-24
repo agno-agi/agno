@@ -1,13 +1,13 @@
 """
 Working State - Basic
 =====================
+Checkpoint progress to a file so long work can resume later. The agent
+records where it stopped in state/checkpoint.md, and the next session reads
+that file to pick up from the same point.
 
-Progress checkpoints that survive across sessions and runs: the agent records
-where it stopped in state/checkpoint.md, and the next session - fresh, with no
-shared history - resumes from exactly that point.
-
-This example runs a four-step task as two sessions of two steps each. For the
-cross-PROCESS durability proof, see _01_getting_started/basic.py.
+This example runs a four-step task as two sessions of two steps each. The
+second session shares no history with the first. To see the same thing hold
+across processes, see _01_getting_started/basic.py.
 """
 
 from uuid import uuid4
@@ -15,7 +15,6 @@ from uuid import uuid4
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.fs import FileSystem
-from agno.fs.db import DbFileSystem
 from agno.models.openai import OpenAIResponses
 
 STEPS = [
@@ -33,9 +32,7 @@ STEPS = [
 # process, not just the session.
 DB_FILE = f"tmp/agent_fs_checkpoint_{uuid4().hex}.db"
 
-fs = FileSystem(
-    backend=DbFileSystem(db=SqliteDb(db_file=DB_FILE)), namespace="migration"
-)
+fs = FileSystem(SqliteDb(db_file=DB_FILE), namespace="migration")
 
 # ---------------------------------------------------------------------------
 # Create Agent
@@ -57,8 +54,8 @@ agent = Agent(
 # Run
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
-    # Distinct session_ids: session 2 is genuinely fresh (no shared conversation
-    # state), so resuming the migration can only come from the checkpoint file.
+    # Distinct session_ids, so session 2 shares no conversation state with
+    # session 1 and can only resume from the checkpoint file.
     print("session 1: no checkpoint exists yet")
     agent.print_response("Continue the migration.", session_id="migration-1")
     print("checkpoint after session 1:")
