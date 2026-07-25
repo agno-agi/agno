@@ -5884,7 +5884,14 @@ def _build_continuation_message(member_results: List[str]) -> str:
 
 def _tool_result_requires_human_input(tool: ToolExecution) -> bool:
     result = tool.result or ""
-    return isinstance(result, str) and "requires human input" in result.lower()
+    if isinstance(result, str) and "requires human input" in result.lower():
+        return True
+
+    return (
+        tool.tool_name in {"delegate_task_to_member", "delegate_task_to_members"}
+        and tool.child_run_id is not None
+        and not result
+    )
 
 
 def _prepare_member_hitl_continuation(
