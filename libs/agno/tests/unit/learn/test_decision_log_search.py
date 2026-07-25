@@ -138,6 +138,53 @@ def test_json_key_names_do_not_match_decisions() -> None:
     assert store.search(query="decision_type") == []
 
 
+def test_decision_log_defaults_agentic_and_never_writes_contentless_rows() -> None:
+    from agno.learn.config import LearningMode
+
+    assert DecisionLogConfig().mode is LearningMode.AGENTIC
+
+    db = FakeDecisionDb()
+    store = _store(db)
+
+    # The old ALWAYS extraction wrote one contentless row per tool call from
+    # the message snapshot; process is now a no-op.
+    class FakeToolCallMessage:
+        tool_calls = [type("TC", (), {"name": "web_search"})()]
+
+    store.process(messages=[FakeToolCallMessage()], agent_id="a1", session_id="s1")
+    assert db.rows == []
+    assert not hasattr(store, "_extract_decisions_from_messages")
+
+
+def test_search_honors_session_id() -> None:
+    db = FakeDecisionDb()
+    captured: List[Dict[str, Any]] = []
+    original = db.search_learnings
+
+    def spy(query: str, **kwargs: Any) -> List[Dict[str, Any]]:
+        captured.append(kwargs)
+        return original(query, **kwargs)
+
+    db.search_learnings = spy  # type: ignore[method-assign]
+    store = _store(db)
+    _log(store, "Chose Postgres over Dynamo")
+
+    store.search(query="postgres", session_id="sess-42")
+    assert captured and captured[0]["session_id"] == "sess-42"
+
+    # And the listing path passes it to get_learnings
+    listing_calls: List[Dict[str, Any]] = []
+    original_get = db.get_learnings
+
+    def spy_get(**kwargs: Any) -> List[Dict[str, Any]]:
+        listing_calls.append(kwargs)
+        return original_get(**kwargs)
+
+    db.get_learnings = spy_get  # type: ignore[method-assign]
+    store.search(session_id="sess-42")
+    assert listing_calls and listing_calls[0]["session_id"] == "sess-42"
+
+
 def test_decision_type_filter_composes_with_query() -> None:
     db = FakeDecisionDb()
     store = _store(db)

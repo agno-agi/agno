@@ -415,6 +415,10 @@ class DecisionLogConfig:
     Decision Logs record decisions made by the agent with reasoning
     and context. Useful for auditing and learning from past decisions.
 
+    Mode: AGENTIC only (matching what LearningMachine already forces on the
+    bool path). The old ALWAYS extraction wrote one contentless row per tool
+    call and was removed.
+
     Scope: AGENT (fixed) - Stored and retrieved by agent_id.
     """
 
@@ -422,8 +426,8 @@ class DecisionLogConfig:
     db: Optional[Union["BaseDb", "AsyncBaseDb"]] = None
     model: Optional["Model"] = None
 
-    # Mode and extraction
-    mode: LearningMode = LearningMode.ALWAYS
+    # Mode (AGENTIC only)
+    mode: LearningMode = LearningMode.AGENTIC
     schema: Optional[Type[Any]] = None
 
     # Extraction limits

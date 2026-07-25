@@ -17,8 +17,10 @@ Scope:
 - Can be queried by agent_id, session_id, or time range
 
 Supported Modes:
-- ALWAYS: Automatic extraction of decisions from tool calls
-- AGENTIC: Agent explicitly logs decisions via tools
+- AGENTIC only. The agent logs decisions explicitly via tools; there is no
+  extraction pass. (The old ALWAYS extraction wrote one contentless row per
+  tool call - decision="Called tool: {name}" with empty reasoning - and, being
+  snapshot-based, re-minted rows for historical calls on every run.)
 """
 
 import uuid
@@ -41,7 +43,6 @@ from agno.utils.log import (
 
 try:
     from agno.db.base import AsyncBaseDb, BaseDb
-    from agno.models.message import Message
 except ImportError:
     pass
 
@@ -68,6 +69,13 @@ class DecisionLogStore(LearningStore):
 
     def __post_init__(self):
         self._schema = self.config.schema or DecisionLog
+
+        if self.config.mode != LearningMode.AGENTIC:
+            log_warning(
+                "DecisionLogStore is AGENTIC-only: decisions are logged explicitly through its "
+                "tools, and the old ALWAYS extraction (one contentless row per tool call) was "
+                "removed. Proceeding in AGENTIC behavior."
+            )
 
     # =========================================================================
     # LearningStore Protocol Implementation
@@ -131,67 +139,13 @@ class DecisionLogStore(LearningStore):
             days=days,
         )
 
-    def process(
-        self,
-        messages: List[Any],
-        agent_id: Optional[str] = None,
-        session_id: Optional[str] = None,
-        user_id: Optional[str] = None,
-        team_id: Optional[str] = None,
-        **kwargs,
-    ) -> None:
-        """Extract decisions from messages (tool calls, etc).
+    def process(self, messages: List[Any], **kwargs) -> None:
+        """No-op: decision logging is AGENTIC-only, capture happens through the tools."""
+        return
 
-        In ALWAYS mode, this extracts decisions from tool calls and
-        significant response choices. In AGENTIC mode, this is a no-op
-        as decisions are logged explicitly via tools.
-
-        Args:
-            messages: Conversation messages to analyze.
-            agent_id: Agent context.
-            session_id: Session context.
-            user_id: User context.
-            team_id: Team context.
-            **kwargs: Additional context (ignored).
-        """
-        if self.config.mode != LearningMode.ALWAYS:
-            return
-
-        if not messages:
-            return
-
-        # Extract decisions from tool calls in messages
-        self._extract_decisions_from_messages(
-            messages=messages,
-            agent_id=agent_id,
-            session_id=session_id,
-            user_id=user_id,
-            team_id=team_id,
-        )
-
-    async def aprocess(
-        self,
-        messages: List[Any],
-        agent_id: Optional[str] = None,
-        session_id: Optional[str] = None,
-        user_id: Optional[str] = None,
-        team_id: Optional[str] = None,
-        **kwargs,
-    ) -> None:
-        """Async version of process."""
-        if self.config.mode != LearningMode.ALWAYS:
-            return
-
-        if not messages:
-            return
-
-        await self._aextract_decisions_from_messages(
-            messages=messages,
-            agent_id=agent_id,
-            session_id=session_id,
-            user_id=user_id,
-            team_id=team_id,
-        )
+    async def aprocess(self, messages: List[Any], **kwargs) -> None:
+        """Async version of process (no-op)."""
+        return
 
     def build_context(self, data: Any) -> str:
         """Build the DATA context for the agent.
@@ -745,20 +699,21 @@ class DecisionLogStore(LearningStore):
         if query:
             if not callable(getattr(self.db, "search_learnings", None)):
                 self._log_degraded_search_once()
-                results = self._fetch_recent_rows(agent_id=agent_id, limit=limit * 3)
+                results = self._fetch_recent_rows(agent_id=agent_id, session_id=session_id, limit=limit * 3)
             else:
                 try:
                     results = self.db.search_learnings(
                         query=query,
                         learning_type=self.learning_type,
                         agent_id=agent_id,
+                        session_id=session_id,
                         limit=fetch_limit,
                     )
                 except NotImplementedError:
                     self._log_degraded_search_once()
-                    results = self._fetch_recent_rows(agent_id=agent_id, limit=limit * 3)
+                    results = self._fetch_recent_rows(agent_id=agent_id, session_id=session_id, limit=limit * 3)
         else:
-            results = self._fetch_recent_rows(agent_id=agent_id, limit=fetch_limit)
+            results = self._fetch_recent_rows(agent_id=agent_id, session_id=session_id, limit=fetch_limit)
 
         return self._filter_decisions(
             results or [],
@@ -786,7 +741,7 @@ class DecisionLogStore(LearningStore):
         if query:
             if not callable(getattr(self.db, "search_learnings", None)):
                 self._log_degraded_search_once()
-                results = await self._afetch_recent_rows(agent_id=agent_id, limit=limit * 3)
+                results = await self._afetch_recent_rows(agent_id=agent_id, session_id=session_id, limit=limit * 3)
             else:
                 try:
                     if isinstance(self.db, AsyncBaseDb):
@@ -794,6 +749,7 @@ class DecisionLogStore(LearningStore):
                             query=query,
                             learning_type=self.learning_type,
                             agent_id=agent_id,
+                            session_id=session_id,
                             limit=fetch_limit,
                         )
                     else:
@@ -805,9 +761,9 @@ class DecisionLogStore(LearningStore):
                         )
                 except NotImplementedError:
                     self._log_degraded_search_once()
-                    results = await self._afetch_recent_rows(agent_id=agent_id, limit=limit * 3)
+                    results = await self._afetch_recent_rows(agent_id=agent_id, session_id=session_id, limit=limit * 3)
         else:
-            results = await self._afetch_recent_rows(agent_id=agent_id, limit=fetch_limit)
+            results = await self._afetch_recent_rows(agent_id=agent_id, session_id=session_id, limit=fetch_limit)
 
         return self._filter_decisions(
             results or [],
@@ -826,12 +782,13 @@ class DecisionLogStore(LearningStore):
                 "Search quality degrades as the store grows."
             )
 
-    def _fetch_recent_rows(self, agent_id: Optional[str], limit: int) -> List[Any]:
+    def _fetch_recent_rows(self, agent_id: Optional[str], limit: int, session_id: Optional[str] = None) -> List[Any]:
         try:
             return (
                 self.db.get_learnings(  # type: ignore[union-attr]
                     learning_type=self.learning_type,
                     agent_id=agent_id,
+                    session_id=session_id,
                     limit=limit,
                 )
                 or []
@@ -840,18 +797,22 @@ class DecisionLogStore(LearningStore):
             log_debug(f"DecisionLogStore._fetch_recent_rows failed: {e}")
             return []
 
-    async def _afetch_recent_rows(self, agent_id: Optional[str], limit: int) -> List[Any]:
+    async def _afetch_recent_rows(
+        self, agent_id: Optional[str], limit: int, session_id: Optional[str] = None
+    ) -> List[Any]:
         try:
             if isinstance(self.db, AsyncBaseDb):
                 rows = await self.db.get_learnings(
                     learning_type=self.learning_type,
                     agent_id=agent_id,
+                    session_id=session_id,
                     limit=limit,
                 )
             else:
                 rows = self.db.get_learnings(  # type: ignore[union-attr]
                     learning_type=self.learning_type,
                     agent_id=agent_id,
+                    session_id=session_id,
                     limit=limit,
                 )
             return rows or []
@@ -1074,82 +1035,6 @@ class DecisionLogStore(LearningStore):
 
         await self.asave(decision=decision)
         return True
-
-    # =========================================================================
-    # Extraction (ALWAYS mode)
-    # =========================================================================
-
-    def _extract_decisions_from_messages(
-        self,
-        messages: List["Message"],
-        agent_id: Optional[str] = None,
-        session_id: Optional[str] = None,
-        user_id: Optional[str] = None,
-        team_id: Optional[str] = None,
-    ) -> None:
-        """Extract decisions from tool calls in messages."""
-        for msg in messages:
-            if not hasattr(msg, "tool_calls") or not msg.tool_calls:
-                continue
-
-            for tool_call in msg.tool_calls:
-                tool_name = getattr(tool_call, "name", None) or getattr(
-                    getattr(tool_call, "function", None), "name", None
-                )
-
-                if not tool_name:
-                    continue
-
-                decision_id = f"dec_{uuid.uuid4().hex[:8]}"
-                decision = DecisionLog(
-                    id=decision_id,
-                    decision=f"Called tool: {tool_name}",
-                    decision_type="tool_selection",
-                    context="During conversation with user",
-                    session_id=session_id,
-                    user_id=user_id,
-                    agent_id=agent_id,
-                    team_id=team_id,
-                    created_at=datetime.now(timezone.utc).isoformat(),
-                )
-
-                self.save(decision=decision)
-
-    async def _aextract_decisions_from_messages(
-        self,
-        messages: List["Message"],
-        agent_id: Optional[str] = None,
-        session_id: Optional[str] = None,
-        user_id: Optional[str] = None,
-        team_id: Optional[str] = None,
-    ) -> None:
-        """Async version of _extract_decisions_from_messages."""
-        for msg in messages:
-            if not hasattr(msg, "tool_calls") or not msg.tool_calls:
-                continue
-
-            for tool_call in msg.tool_calls:
-                tool_name = getattr(tool_call, "name", None) or getattr(
-                    getattr(tool_call, "function", None), "name", None
-                )
-
-                if not tool_name:
-                    continue
-
-                decision_id = f"dec_{uuid.uuid4().hex[:8]}"
-                decision = DecisionLog(
-                    id=decision_id,
-                    decision=f"Called tool: {tool_name}",
-                    decision_type="tool_selection",
-                    context="During conversation with user",
-                    session_id=session_id,
-                    user_id=user_id,
-                    agent_id=agent_id,
-                    team_id=team_id,
-                    created_at=datetime.now(timezone.utc).isoformat(),
-                )
-
-                await self.asave(decision=decision)
 
     # =========================================================================
     # Representation
