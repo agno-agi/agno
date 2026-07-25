@@ -192,22 +192,46 @@ def get_sort_value(record: Dict[str, Any], sort_by: str) -> Any:
 def learning_search_patterns(query: str) -> List[str]:
     """Build the ILIKE patterns for a learnings text search.
 
-    The stored content mixes display names ("Sarah Chen") with slugs
-    ("sarah_chen"), so the query is matched in both its space and underscore
-    forms - a raw substring would miss across that boundary.
+    Three properties, each load-bearing:
+
+    - The stored content mixes display names ("Sarah Chen") with slugs
+      ("sarah_chen"), so runs of spaces and underscores in the query become the
+      single-char LIKE wildcard ``_`` - one pattern crosses both forms.
+    - ``%`` and ``\\`` in the query are escaped (callers pass the pattern with
+      ``escape="\\\\"``), so a model-authored query containing ``%`` cannot
+      collapse search into match-everything-by-recency.
+    - SQLite stores JSON with ``ensure_ascii`` escapes (``café`` is stored as
+      ``caf\\u00e9``), so a non-ASCII query also gets its JSON-escaped variant;
+      on Postgres, where ``::text`` renders real characters, that extra pattern
+      simply never matches.
+
+    A query with no content beyond wildcards and whitespace yields no patterns.
 
     Args:
         query: The text to search for.
 
     Returns:
-        Deduplicated '%...%' patterns to OR together with ILIKE.
+        Deduplicated '%...%' patterns to OR together with ILIKE (escape '\\').
     """
+    import re
+
     stripped = query.strip()
-    variants = []
-    for variant in (stripped, stripped.replace("_", " "), stripped.replace(" ", "_")):
-        if variant and variant not in variants:
-            variants.append(variant)
-    return [f"%{variant}%" for variant in variants]
+    if not re.sub(r"[%_\s]+", "", stripped):
+        return []
+
+    variants = [stripped]
+    json_form = json.dumps(stripped, ensure_ascii=True)[1:-1]
+    if json_form != stripped:
+        variants.append(json_form)
+
+    patterns: List[str] = []
+    for variant in variants:
+        escaped = variant.replace("\\", "\\\\").replace("%", "\\%")
+        crossed = re.sub(r"[\s_]+", "_", escaped)
+        pattern = f"%{crossed}%"
+        if pattern not in patterns:
+            patterns.append(pattern)
+    return patterns
 
 
 class CustomJSONEncoder(json.JSONEncoder):

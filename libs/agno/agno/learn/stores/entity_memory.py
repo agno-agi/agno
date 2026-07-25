@@ -41,7 +41,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple, Union, cast
 from agno.learn.config import EntityMemoryConfig, LearningMode
 from agno.learn.schemas import EntityMemory
 from agno.learn.stores.protocol import LearningStore
-from agno.learn.utils import build_learning_id
+from agno.learn.utils import build_learning_id, content_values_text, query_variants
 from agno.utils.log import (
     log_debug,
     log_info,
@@ -218,6 +218,7 @@ class EntityMemoryStore(LearningStore):
     entity_updated: bool = field(default=False, init=False)
     _schema: Any = field(default=None, init=False)
     _degraded_search_logged: bool = field(default=False, init=False)
+    _async_db_in_sync_logged: bool = field(default=False, init=False)
 
     def __post_init__(self):
         self._schema = self.config.schema or EntityMemory
@@ -1559,11 +1560,18 @@ class EntityMemoryStore(LearningStore):
         return self._match_name_or_alias(candidates=candidates, entity=entity)
 
     def _name_candidates(self, entity: str, user_id: Optional[str], namespace: str) -> List[Dict[str, Any]]:
-        """Fetch candidate rows for name/alias matching via the text query surface."""
-        if not self.db:
+        """Fetch candidate rows for name/alias matching via the text query surface.
+
+        Database errors RAISE: a resolution miss caused by a failing backend
+        would silently create a duplicate entity instead of merging.
+        """
+        db = self._sync_db()
+        if db is None:
             return []
+        if not callable(getattr(db, "search_learnings", None)):
+            return self._get_recent_rows(user_id=user_id, namespace=namespace, limit=50)
         try:
-            rows = self.db.search_learnings(
+            rows = db.search_learnings(
                 query=entity,
                 learning_type=self.learning_type,
                 namespace=namespace,
@@ -1571,16 +1579,15 @@ class EntityMemoryStore(LearningStore):
                 limit=20,
             )
             return rows or []
-        except (NotImplementedError, AttributeError):
+        except NotImplementedError:
             return self._get_recent_rows(user_id=user_id, namespace=namespace, limit=50)
-        except Exception as e:
-            log_debug(f"EntityMemoryStore._name_candidates failed: {e}")
-            return []
 
     async def _aname_candidates(self, entity: str, user_id: Optional[str], namespace: str) -> List[Dict[str, Any]]:
         """Async version of _name_candidates."""
         if not self.db:
             return []
+        if not callable(getattr(self.db, "search_learnings", None)):
+            return await self._aget_recent_rows(user_id=user_id, namespace=namespace, limit=50)
         try:
             if isinstance(self.db, AsyncBaseDb):
                 rows = await self.db.search_learnings(
@@ -1599,15 +1606,15 @@ class EntityMemoryStore(LearningStore):
                     limit=20,
                 )
             return rows or []
-        except (NotImplementedError, AttributeError):
+        except NotImplementedError:
             return await self._aget_recent_rows(user_id=user_id, namespace=namespace, limit=50)
-        except Exception as e:
-            log_debug(f"EntityMemoryStore._aname_candidates failed: {e}")
-            return []
 
     def _get_recent_rows(self, user_id: Optional[str], namespace: str, limit: int) -> List[Dict[str, Any]]:
+        db = self._sync_db()
+        if db is None:
+            return []
         try:
-            rows = self.db.get_learnings(  # type: ignore[union-attr]
+            rows = db.get_learnings(
                 learning_type=self.learning_type,
                 namespace=namespace,
                 user_id=user_id if namespace == "user" else None,
@@ -1717,10 +1724,11 @@ class EntityMemoryStore(LearningStore):
 
     def _get_rows_by_entity_id(self, entity_id: str, user_id: Optional[str], namespace: str) -> List[Dict[str, Any]]:
         """Fetch learnings rows for an entity id across entity types."""
-        if not self.db:
+        db = self._sync_db()
+        if db is None:
             return []
         try:
-            rows = self.db.get_learnings(
+            rows = db.get_learnings(
                 learning_type=self.learning_type,
                 entity_id=entity_id,
                 namespace=namespace,
@@ -1793,13 +1801,14 @@ class EntityMemoryStore(LearningStore):
         Returns:
             EntityMemory instance, or None if not found.
         """
-        if not self.db:
+        db = self._sync_db()
+        if db is None:
             return None
 
         effective_namespace = namespace or self.config.namespace
 
         try:
-            result = self.db.get_learning(
+            result = db.get_learning(
                 learning_type=self.learning_type,
                 entity_id=entity_id,
                 entity_type=entity_type,
@@ -1865,7 +1874,8 @@ class EntityMemoryStore(LearningStore):
         include_archived: bool = False,
     ) -> List[EntityMemory]:
         """List entities by recency (most recently updated first)."""
-        if not self.db:
+        db = self._sync_db()
+        if db is None:
             return []
 
         effective_namespace = namespace or self.config.namespace
@@ -1875,7 +1885,7 @@ class EntityMemoryStore(LearningStore):
             return []
 
         try:
-            results = self.db.get_learnings(
+            results = db.get_learnings(
                 learning_type=self.learning_type,
                 entity_type=entity_type,
                 namespace=effective_namespace,
@@ -1967,7 +1977,8 @@ class EntityMemoryStore(LearningStore):
         Returns:
             List of matching EntityMemory objects.
         """
-        if not self.db:
+        db = self._sync_db()
+        if db is None:
             return []
 
         effective_namespace = namespace or self.config.namespace
@@ -1976,17 +1987,7 @@ class EntityMemoryStore(LearningStore):
             log_warning("EntityMemoryStore.search: namespace='user' requires user_id")
             return []
 
-        try:
-            rows = self.db.search_learnings(
-                query=query,
-                learning_type=self.learning_type,
-                entity_type=entity_type,
-                namespace=effective_namespace,
-                user_id=user_id if effective_namespace == "user" else None,
-                # Headroom for the client-side archived filter below.
-                limit=limit if include_archived else limit * 2,
-            )
-        except (NotImplementedError, AttributeError):
+        if not callable(getattr(db, "search_learnings", None)):
             self._log_degraded_search_once()
             return self._search_client_side(
                 query=query,
@@ -1997,7 +1998,28 @@ class EntityMemoryStore(LearningStore):
                 include_archived=include_archived,
             )
 
-        entities = self._parse_rows(rows or [], limit=limit, include_archived=include_archived)
+        try:
+            rows = db.search_learnings(
+                query=query,
+                learning_type=self.learning_type,
+                entity_type=entity_type,
+                namespace=effective_namespace,
+                user_id=user_id if effective_namespace == "user" else None,
+                # Headroom for the client-side verification and archived filters.
+                limit=limit * 3,
+            )
+        except NotImplementedError:
+            self._log_degraded_search_once()
+            return self._search_client_side(
+                query=query,
+                entity_type=entity_type,
+                user_id=user_id,
+                namespace=effective_namespace,
+                limit=limit,
+                include_archived=include_archived,
+            )
+
+        entities = self._filter_rows_by_query(rows or [], query=query, limit=limit, include_archived=include_archived)
         log_debug(f"EntityMemoryStore.search: found {len(entities)} entities for query: {query[:50]}")
         return entities
 
@@ -2020,26 +2042,7 @@ class EntityMemoryStore(LearningStore):
             log_warning("EntityMemoryStore.asearch: namespace='user' requires user_id")
             return []
 
-        try:
-            if isinstance(self.db, AsyncBaseDb):
-                rows = await self.db.search_learnings(
-                    query=query,
-                    learning_type=self.learning_type,
-                    entity_type=entity_type,
-                    namespace=effective_namespace,
-                    user_id=user_id if effective_namespace == "user" else None,
-                    limit=limit if include_archived else limit * 2,
-                )
-            else:
-                rows = self.db.search_learnings(
-                    query=query,
-                    learning_type=self.learning_type,
-                    entity_type=entity_type,
-                    namespace=effective_namespace,
-                    user_id=user_id if effective_namespace == "user" else None,
-                    limit=limit if include_archived else limit * 2,
-                )
-        except (NotImplementedError, AttributeError):
+        if not callable(getattr(self.db, "search_learnings", None)):
             self._log_degraded_search_once()
             return await self._asearch_client_side(
                 query=query,
@@ -2050,16 +2053,65 @@ class EntityMemoryStore(LearningStore):
                 include_archived=include_archived,
             )
 
-        entities = self._parse_rows(rows or [], limit=limit, include_archived=include_archived)
+        try:
+            if isinstance(self.db, AsyncBaseDb):
+                rows = await self.db.search_learnings(
+                    query=query,
+                    learning_type=self.learning_type,
+                    entity_type=entity_type,
+                    namespace=effective_namespace,
+                    user_id=user_id if effective_namespace == "user" else None,
+                    limit=limit * 3,
+                )
+            else:
+                rows = self.db.search_learnings(
+                    query=query,
+                    learning_type=self.learning_type,
+                    entity_type=entity_type,
+                    namespace=effective_namespace,
+                    user_id=user_id if effective_namespace == "user" else None,
+                    limit=limit * 3,
+                )
+        except NotImplementedError:
+            self._log_degraded_search_once()
+            return await self._asearch_client_side(
+                query=query,
+                entity_type=entity_type,
+                user_id=user_id,
+                namespace=effective_namespace,
+                limit=limit,
+                include_archived=include_archived,
+            )
+
+        entities = self._filter_rows_by_query(rows or [], query=query, limit=limit, include_archived=include_archived)
         log_debug(f"EntityMemoryStore.asearch: found {len(entities)} entities for query: {query[:50]}")
         return entities
+
+    def _sync_db(self) -> Optional[Any]:
+        """The db for sync methods, or None when it is async (logged once).
+
+        A sync call on an AsyncBaseDb would return an un-awaited coroutine and
+        surface as a confusing TypeError downstream; refuse it explicitly.
+        """
+        if self.db is None:
+            return None
+        if isinstance(self.db, AsyncBaseDb):
+            if not self._async_db_in_sync_logged:
+                self._async_db_in_sync_logged = True
+                log_warning(
+                    "EntityMemoryStore: a sync method was called with an async db (AsyncBaseDb). "
+                    "Use the async API (arecall/aremember_about/asearch/...) with this backend."
+                )
+            return None
+        return self.db
 
     def _log_degraded_search_once(self) -> None:
         if not self._degraded_search_logged:
             self._degraded_search_logged = True
             log_warning(
                 "EntityMemoryStore: this db backend has no search_learnings implementation; "
-                "falling back to a client-side scan over the most recently updated rows. "
+                "falling back to a client-side scan over the most recently updated rows - "
+                "fewer rows are considered and the match surface is narrower. "
                 "Search quality degrades as the store grows."
             )
 
@@ -2073,8 +2125,11 @@ class EntityMemoryStore(LearningStore):
         include_archived: bool,
     ) -> List[EntityMemory]:
         """Degraded fallback: over-fetch recent rows and substring-match in Python."""
+        db = self._sync_db()
+        if db is None:
+            return []
         try:
-            results = self.db.get_learnings(  # type: ignore[union-attr]
+            results = db.get_learnings(
                 learning_type=self.learning_type,
                 entity_type=entity_type,
                 namespace=namespace,
@@ -2122,68 +2177,34 @@ class EntityMemoryStore(LearningStore):
         self, rows: List[Dict[str, Any]], query: str, limit: int, include_archived: bool
     ) -> List[EntityMemory]:
         entities: List[EntityMemory] = []
-        query_lower = query.lower()
         for row in rows:
-            content = row.get("content", {})
-            if not self._matches_query(content=content, query=query_lower):
+            try:
+                content = row.get("content", {})
+                if not self._matches_query(content=content, query=query):
+                    continue
+                entity = self.schema.from_dict(content)
+                if entity is None:
+                    continue
+                if not include_archived and getattr(entity, "archived_at", None):
+                    continue
+                entities.append(entity)
+                if len(entities) >= limit:
+                    break
+            except Exception as e:
+                log_debug(f"EntityMemoryStore._filter_rows_by_query: skipping malformed row: {e}")
                 continue
-            entity = self.schema.from_dict(content)
-            if entity is None:
-                continue
-            if not include_archived and getattr(entity, "archived_at", None):
-                continue
-            entities.append(entity)
-            if len(entities) >= limit:
-                break
         return entities
 
     def _matches_query(self, content: Dict[str, Any], query: str) -> bool:
-        """Check if entity content matches search query."""
-        # Check name
-        name = content.get("name", "")
-        if name and query in name.lower():
-            return True
+        """Check if the entity content's VALUES match the query.
 
-        # Check entity_id
-        entity_id = content.get("entity_id", "")
-        if entity_id and query in entity_id.lower():
-            return True
-
-        # Check description
-        description = content.get("description", "")
-        if description and query in description.lower():
-            return True
-
-        # Check properties
-        properties = content.get("properties", {})
-        for value in properties.values():
-            if query in str(value).lower():
-                return True
-
-        # Check facts
-        facts = content.get("facts", [])
-        for fact in facts:
-            fact_content = fact.get("content", "") if isinstance(fact, dict) else str(fact)
-            if query in fact_content.lower():
-                return True
-
-        # Check events
-        events = content.get("events", [])
-        for event in events:
-            event_content = event.get("content", "") if isinstance(event, dict) else str(event)
-            if query in event_content.lower():
-                return True
-
-        # Check relationships
-        relationships = content.get("relationships", [])
-        for rel in relationships:
-            if isinstance(rel, dict):
-                if query in rel.get("entity_id", "").lower():
-                    return True
-                if query in rel.get("relation", "").lower():
-                    return True
-
-        return False
+        The db-side ILIKE matches the whole serialized document, keys included;
+        this value-scoped check verifies server hits (so "facts" or "name" do
+        not match every row) and drives the degraded client-side scan. Variants
+        with swapped word separators keep the server's slug-boundary crossing.
+        """
+        haystack = content_values_text(content)
+        return any(variant in haystack for variant in query_variants(query))
 
     def delete(
         self,
@@ -2192,14 +2213,13 @@ class EntityMemoryStore(LearningStore):
         namespace: Optional[str] = None,
     ) -> bool:
         """Hard-delete an entity from the store (data API - not exposed as a tool)."""
-        if not self.db:
+        db = self._sync_db()
+        if db is None:
             return False
 
         effective_namespace = namespace or self.config.namespace
         try:
-            return bool(
-                self.db.delete_learning(id=self._build_entity_db_id(entity_id, entity_type, effective_namespace))
-            )
+            return bool(db.delete_learning(id=self._build_entity_db_id(entity_id, entity_type, effective_namespace)))
         except Exception as e:
             log_debug(f"EntityMemoryStore.delete failed: {e}")
             return False
@@ -2242,7 +2262,8 @@ class EntityMemoryStore(LearningStore):
         namespace: Optional[str] = None,
     ) -> bool:
         """Save entity to database."""
-        if not self.db:
+        db = self._sync_db()
+        if db is None:
             return False
 
         effective_namespace = namespace or self.config.namespace
@@ -2252,7 +2273,7 @@ class EntityMemoryStore(LearningStore):
             if not content:
                 return False
 
-            self.db.upsert_learning(
+            db.upsert_learning(
                 id=self._build_entity_db_id(entity.entity_id, entity.entity_type, effective_namespace),
                 learning_type=self.learning_type,
                 entity_id=entity.entity_id,

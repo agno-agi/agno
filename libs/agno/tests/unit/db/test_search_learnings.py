@@ -23,13 +23,28 @@ def _seed(db: SqliteDb, id: str, content: dict, **kwargs) -> None:
 
 
 class TestPatterns:
-    def test_space_and_underscore_variants(self) -> None:
-        assert learning_search_patterns("sarah chen") == ["%sarah chen%", "%sarah_chen%"]
-        assert learning_search_patterns("sarah_chen") == ["%sarah_chen%", "%sarah chen%"]
+    def test_space_and_underscore_cross_via_wildcard(self) -> None:
+        # Spaces and underscores collapse to the single-char LIKE wildcard, so
+        # one pattern matches both "sarah chen" and "sarah_chen".
+        assert learning_search_patterns("sarah chen") == ["%sarah_chen%"]
+        assert learning_search_patterns("sarah_chen") == ["%sarah_chen%"]
         assert learning_search_patterns("radar") == ["%radar%"]
 
-    def test_empty_query_yields_no_patterns(self) -> None:
+    def test_percent_is_escaped(self) -> None:
+        assert learning_search_patterns("50% done") == ["%50\\%_done%"]
+
+    def test_wildcard_only_query_yields_no_patterns(self) -> None:
         assert learning_search_patterns("   ") == []
+        assert learning_search_patterns("%") == []
+        assert learning_search_patterns("___") == []
+        assert learning_search_patterns("% _ %") == []
+
+    def test_non_ascii_gets_json_escaped_variant(self) -> None:
+        patterns = learning_search_patterns("café")
+        assert patterns[0] == "%café%"
+        # SQLite stores JSON with ensure_ascii escapes; the second pattern
+        # matches the stored form (backslash doubled for the ESCAPE clause).
+        assert patterns[1] == "%caf\\\\u00e9%"
 
 
 class TestBaseDefaults:
@@ -89,6 +104,34 @@ class TestSqliteSearchLearnings:
     def test_empty_query_returns_empty(self, db: SqliteDb) -> None:
         _seed(db, "a", {"x": "content"})
         assert db.search_learnings(query="   ") == []
+
+    def test_non_ascii_query_finds_json_escaped_content(self, db: SqliteDb) -> None:
+        # SQLite serializes JSON with ensure_ascii=True, so "café" is stored as
+        # "café" - the raw pattern alone would silently miss it.
+        _seed(db, "e1", {"entity_id": "cafe", "name": "Café Régulier"}, entity_id="cafe")
+        rows = db.search_learnings(query="café")
+        assert [r["learning_id"] for r in rows] == ["e1"]
+
+    def test_wildcard_query_does_not_match_everything(self, db: SqliteDb) -> None:
+        _seed(db, "a", {"x": "alpha"})
+        _seed(db, "b", {"x": "beta"})
+        assert db.search_learnings(query="%") == []
+        assert db.search_learnings(query="___") == []
+        # An embedded % is literal, not a wildcard
+        _seed(db, "c", {"x": "progress: 50% done"})
+        assert [r["learning_id"] for r in db.search_learnings(query="50% done")] == ["c"]
+        assert db.search_learnings(query="50%zzz") == []
+
+    def test_null_updated_at_sorts_last(self, db: SqliteDb) -> None:
+        from sqlalchemy import text
+
+        _seed(db, "real", {"x": "needle latest"})
+        _seed(db, "nulled", {"x": "needle nulled"})
+        with db.Session() as sess, sess.begin():
+            sess.execute(text("UPDATE agno_learnings SET updated_at = NULL WHERE learning_id = 'nulled'"))
+
+        rows = db.search_learnings(query="needle")
+        assert [r["learning_id"] for r in rows] == ["real", "nulled"]
 
     def test_search_fails_loudly_on_db_error(self, db: SqliteDb, monkeypatch: pytest.MonkeyPatch) -> None:
         # get_learnings swallows db errors into []; search_learnings must not.

@@ -57,6 +57,50 @@ def build_learning_id(
     return None
 
 
+def content_values_text(content: Any) -> str:
+    """Flatten a content payload to a lowercased text of its VALUES only.
+
+    Used to verify text-search hits: the db-side ILIKE matches the whole
+    serialized JSON document, keys included, so a query like "facts" or "name"
+    would match every row. Matching against the value projection restores
+    value-scoped precision without dropping any field.
+    """
+    parts: List[str] = []
+
+    def walk(node: Any) -> None:
+        if isinstance(node, dict):
+            for value in node.values():
+                walk(value)
+        elif isinstance(node, (list, tuple)):
+            for value in node:
+                walk(value)
+        elif node is not None:
+            parts.append(str(node))
+
+    walk(content)
+    return "\n".join(parts).lower()
+
+
+def query_variants(query: str) -> List[str]:
+    """Lowercased query variants with word separators swapped.
+
+    Mirrors the space/underscore(/hyphen) crossing the db-side search performs
+    with the LIKE single-char wildcard, so a client-side verification pass does
+    not drop hits the server legitimately matched ("sarah chen" vs sarah_chen).
+    """
+    import re
+
+    lowered = query.strip().lower()
+    if not lowered:
+        return []
+    variants: List[str] = []
+    for separator in (" ", "_", "-"):
+        variant = re.sub(r"[\s_\-]+", separator, lowered)
+        if variant and variant not in variants:
+            variants.append(variant)
+    return variants
+
+
 def _safe_get(data: Any, key: str, default: Any = None) -> Any:
     """Safely get a key from dict-like data.
 

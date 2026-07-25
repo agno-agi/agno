@@ -4598,9 +4598,9 @@ class SqliteDb(BaseDb):
                 if entity_type is not None:
                     stmt = stmt.where(table.c.entity_type == entity_type)
 
-                stmt = stmt.where(or_(*[table.c.content.ilike(pattern) for pattern in patterns]))
+                stmt = stmt.where(or_(*[table.c.content.ilike(pattern, escape="\\") for pattern in patterns]))
 
-                stmt = stmt.order_by(table.c.updated_at.desc())
+                stmt = stmt.order_by(table.c.updated_at.desc().nulls_last())
                 if limit is not None:
                     stmt = stmt.limit(limit)
 

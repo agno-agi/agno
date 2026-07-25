@@ -517,6 +517,81 @@ class TestSearchRouting:
         results = await store.asearch(query="postgres")
         assert [e.entity_id for e in results] == ["radar"]
 
+    def test_json_key_names_do_not_match(self, store: EntityMemoryStore) -> None:
+        # The db-side ILIKE sees the whole serialized document; the store must
+        # verify hits against values only, or "facts"/"name" match every row.
+        store.remember_about(entity="radar", entity_type="project", facts=["db: Postgres"])
+        for key_name in ("facts", "name", "entity_id", "properties", "relationships"):
+            assert store.search(query=key_name) == [], key_name
+        # ...but a value containing such a word still matches
+        store.remember_about(entity="naming service", entity_type="system")
+        assert [e.entity_id for e in store.search(query="naming")] == ["naming_service"]
+
+    def test_attribute_error_inside_backend_is_not_masked(self) -> None:
+        # A backend that HAS search_learnings but raises AttributeError inside
+        # it is a real bug, not a missing implementation - it must propagate.
+        class BuggyDb(RecordingLearningDb):
+            def search_learnings(self, query: str, **kwargs: Any) -> List[Dict[str, Any]]:
+                raise AttributeError("'NoneType' object has no attribute 'client'")
+
+        store = EntityMemoryStore(config=EntityMemoryConfig(db=BuggyDb()))  # type: ignore[arg-type]
+        with pytest.raises(AttributeError, match="client"):
+            store.search(query="anything")
+
+    def test_archived_rows_do_not_crowd_out_live_hits(self, store: EntityMemoryStore) -> None:
+        for i in range(3):
+            store.remember_about(entity=f"live topic {i}", entity_type="project", facts=["about postgres"])
+        for i in range(15):
+            store.remember_about(entity=f"dead topic {i}", entity_type="project", facts=["about postgres"])
+            store.forget(entity=f"dead topic {i}")
+
+        results = store.search(query="postgres", limit=10)
+        assert len(results) == 3
+        assert all(e.archived_at is None for e in results)
+
+    async def test_asearch_awaits_async_base_db(self) -> None:
+        from agno.db.base import AsyncBaseDb
+
+        inner = RecordingLearningDb()
+        calls: List[str] = []
+
+        class FakeAsyncDb(AsyncBaseDb):
+            def __init__(self) -> None:
+                pass
+
+            async def get_learning(self, **kwargs: Any) -> Any:
+                return inner.get_learning(**kwargs)
+
+            async def upsert_learning(self, **kwargs: Any) -> None:
+                inner.upsert_learning(**kwargs)
+
+            async def get_learnings(self, **kwargs: Any) -> Any:
+                return inner.get_learnings(**kwargs)
+
+            async def search_learnings(self, query: str, **kwargs: Any) -> Any:
+                calls.append(query)
+                return inner.search_learnings(query, **kwargs)
+
+        FakeAsyncDb.__abstractmethods__ = frozenset()  # type: ignore[attr-defined]
+        store = EntityMemoryStore(config=EntityMemoryConfig(db=FakeAsyncDb()))
+        await store.aremember_about(entity="radar", entity_type="project", facts=["db: Postgres"])
+        results = await store.asearch(query="postgres")
+        assert [e.entity_id for e in results] == ["radar"]
+        assert "postgres" in calls  # the awaited AsyncBaseDb branch really ran
+
+    def test_sync_call_with_async_db_refuses_instead_of_type_error(self) -> None:
+        from agno.db.base import AsyncBaseDb
+
+        class FakeAsyncDb(AsyncBaseDb):
+            def __init__(self) -> None:
+                pass
+
+        FakeAsyncDb.__abstractmethods__ = frozenset()  # type: ignore[attr-defined]
+        store = EntityMemoryStore(config=EntityMemoryConfig(db=FakeAsyncDb()))
+        assert store.search(query="anything") == []
+        assert store.list_entities() == []
+        assert "Failed" in store.remember_about(entity="radar", entity_type="project")
+
     def test_search_finds_match_outside_recent_window_with_sqlite(self, tmp_path) -> None:
         from agno.db.sqlite import SqliteDb
 

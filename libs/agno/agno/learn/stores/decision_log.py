@@ -31,7 +31,7 @@ from typing import Any, Callable, List, Optional, Union
 from agno.learn.config import DecisionLogConfig, LearningMode
 from agno.learn.schemas import DecisionLog
 from agno.learn.stores.protocol import LearningStore
-from agno.learn.utils import from_dict_safe, to_dict_safe
+from agno.learn.utils import content_values_text, from_dict_safe, query_variants, to_dict_safe
 from agno.utils.log import (
     log_debug,
     log_warning,
@@ -733,28 +733,30 @@ class DecisionLogStore(LearningStore):
         if not isinstance(self.db, BaseDb):
             return []
 
-        # Headroom for the client-side decision_type/days filters below.
-        fetch_limit = limit * 3 if (decision_type or days) else limit
+        # Headroom for the client-side verification and decision_type/days filters.
+        fetch_limit = limit * 3 if (query or decision_type or days) else limit
 
-        client_query: Optional[str] = None
         if query:
-            try:
-                results = self.db.search_learnings(
-                    query=query,
-                    learning_type=self.learning_type,
-                    agent_id=agent_id,
-                    limit=fetch_limit,
-                )
-            except (NotImplementedError, AttributeError):
+            if not callable(getattr(self.db, "search_learnings", None)):
                 self._log_degraded_search_once()
                 results = self._fetch_recent_rows(agent_id=agent_id, limit=limit * 3)
-                client_query = query
+            else:
+                try:
+                    results = self.db.search_learnings(
+                        query=query,
+                        learning_type=self.learning_type,
+                        agent_id=agent_id,
+                        limit=fetch_limit,
+                    )
+                except NotImplementedError:
+                    self._log_degraded_search_once()
+                    results = self._fetch_recent_rows(agent_id=agent_id, limit=limit * 3)
         else:
             results = self._fetch_recent_rows(agent_id=agent_id, limit=fetch_limit)
 
         return self._filter_decisions(
             results or [],
-            query=client_query,
+            query=query,
             decision_type=decision_type,
             days=days,
             limit=limit,
@@ -773,35 +775,37 @@ class DecisionLogStore(LearningStore):
         if not self.db:
             return []
 
-        fetch_limit = limit * 3 if (decision_type or days) else limit
+        fetch_limit = limit * 3 if (query or decision_type or days) else limit
 
-        client_query: Optional[str] = None
         if query:
-            try:
-                if isinstance(self.db, AsyncBaseDb):
-                    results = await self.db.search_learnings(
-                        query=query,
-                        learning_type=self.learning_type,
-                        agent_id=agent_id,
-                        limit=fetch_limit,
-                    )
-                else:
-                    results = self.db.search_learnings(
-                        query=query,
-                        learning_type=self.learning_type,
-                        agent_id=agent_id,
-                        limit=fetch_limit,
-                    )
-            except (NotImplementedError, AttributeError):
+            if not callable(getattr(self.db, "search_learnings", None)):
                 self._log_degraded_search_once()
                 results = await self._afetch_recent_rows(agent_id=agent_id, limit=limit * 3)
-                client_query = query
+            else:
+                try:
+                    if isinstance(self.db, AsyncBaseDb):
+                        results = await self.db.search_learnings(
+                            query=query,
+                            learning_type=self.learning_type,
+                            agent_id=agent_id,
+                            limit=fetch_limit,
+                        )
+                    else:
+                        results = self.db.search_learnings(
+                            query=query,
+                            learning_type=self.learning_type,
+                            agent_id=agent_id,
+                            limit=fetch_limit,
+                        )
+                except NotImplementedError:
+                    self._log_degraded_search_once()
+                    results = await self._afetch_recent_rows(agent_id=agent_id, limit=limit * 3)
         else:
             results = await self._afetch_recent_rows(agent_id=agent_id, limit=fetch_limit)
 
         return self._filter_decisions(
             results or [],
-            query=client_query,
+            query=query,
             decision_type=decision_type,
             days=days,
             limit=limit,
@@ -886,9 +890,11 @@ class DecisionLogStore(LearningStore):
                     pass
 
             if query:
-                query_lower = query.lower()
-                text = decision.to_text().lower()
-                if query_lower not in text:
+                # Value-scoped verification: the db-side ILIKE matched the whole
+                # serialized document (keys included); this check keeps the match
+                # surface at the record's values, across every field.
+                haystack = content_values_text(content)
+                if not any(variant in haystack for variant in query_variants(query)):
                     continue
 
             decisions.append(decision)

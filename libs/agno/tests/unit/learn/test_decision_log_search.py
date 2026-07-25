@@ -106,6 +106,36 @@ async def test_async_query_routes_through_search_learnings() -> None:
 
     results = await store.asearch(query="postgres")
     assert len(results) == 1
+    assert db.search_calls and db.search_calls[0]["query"] == "postgres"
+
+
+def test_server_hit_in_any_field_is_kept() -> None:
+    # A hit whose only match is in a field to_text() omits (alternatives) must
+    # survive the client-side value verification.
+    import uuid
+
+    db = FakeDecisionDb()
+    store = _store(db)
+    store.save(
+        decision=DecisionLog(
+            id=f"dec_{uuid.uuid4().hex[:6]}",
+            decision="Picked the database",
+            alternatives=["postgres", "dynamo"],
+        )
+    )
+
+    results = store.search(query="postgres")
+    assert len(results) == 1
+    assert db.search_calls  # served by the server-side path, kept by the verifier
+
+
+def test_json_key_names_do_not_match_decisions() -> None:
+    db = FakeDecisionDb()
+    store = _store(db)
+    _log(store, "Chose Postgres over Dynamo")
+
+    assert store.search(query="reasoning") == []
+    assert store.search(query="decision_type") == []
 
 
 def test_decision_type_filter_composes_with_query() -> None:

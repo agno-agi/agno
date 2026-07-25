@@ -1064,7 +1064,9 @@ class BaseDb(ABC):
             user_id: Filter by user ID.
             agent_id: Filter by agent ID.
             team_id: Filter by team ID.
-            workflow_id: Filter by workflow ID.
+            workflow_id: Filter by workflow ID. Note: upsert_learning does not
+                currently populate the workflow_id column, so this filter only
+                matches rows written by an external writer that sets it.
             session_id: Filter by session ID.
             namespace: Filter by namespace ('user', 'global', or custom).
             entity_id: Filter by entity ID.
@@ -2077,7 +2079,9 @@ class AsyncBaseDb(ABC):
             user_id: Filter by user ID.
             agent_id: Filter by agent ID.
             team_id: Filter by team ID.
-            workflow_id: Filter by workflow ID.
+            workflow_id: Filter by workflow ID. Note: upsert_learning does not
+                currently populate the workflow_id column, so this filter only
+                matches rows written by an external writer that sets it.
             session_id: Filter by session ID.
             namespace: Filter by namespace ('user', 'global', or custom).
             entity_id: Filter by entity ID.
