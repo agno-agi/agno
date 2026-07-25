@@ -109,6 +109,7 @@ class FileSystemTools(Toolkit):
     agent genuinely needs both, wrap one in a sub-agent.
     """
 
+    # The whole surface, exported for callers that want everything explicitly.
     FULL_TOOLS: List[str] = [
         "read_file",
         "write_file",
@@ -120,22 +121,46 @@ class FileSystemTools(Toolkit):
         "move_file",
         "delete_file",
     ]
-    READ_ONLY_TOOLS: List[str] = ["read_file", "list_files", "search_content", "check_lines"]
+    # The default surface: the notes seven. check_lines (the batched record-set
+    # membership test) is requested by name via include_tools; delete_file (the
+    # one tool that can lose work) sits behind allow_delete=True.
+    DEFAULT_TOOLS: List[str] = [
+        "read_file",
+        "write_file",
+        "append_file",
+        "replace_lines",
+        "list_files",
+        "search_content",
+        "move_file",
+    ]
+    READ_ONLY_TOOLS: List[str] = ["read_file", "list_files", "search_content"]
+    # What a read-only toolkit may select from via include_tools.
+    _READ_CAPABLE_TOOLS: List[str] = ["read_file", "list_files", "search_content", "check_lines"]
 
     def __init__(
         self,
         fs: FileSystem,
         read_only: bool = False,
+        allow_delete: bool = False,
         instructions: Optional[str] = None,
         add_instructions: bool = False,
         **kwargs,
     ):
         self.fs = fs
         self.read_only = read_only
+        if read_only and allow_delete:
+            raise ValueError("allow_delete=True contradicts read_only=True; pick one.")
         if instructions is None:
             instructions = FileSystem.instructions(read_only=read_only)
 
-        registered = self.READ_ONLY_TOOLS if read_only else self.FULL_TOOLS
+        if kwargs.get("include_tools") is not None:
+            # include_tools is a whitelist over the whole (read-capable) surface,
+            # so check_lines and delete_file are reachable by naming them.
+            registered = self._READ_CAPABLE_TOOLS if read_only else self.FULL_TOOLS
+        elif read_only:
+            registered = self.READ_ONLY_TOOLS
+        else:
+            registered = self.DEFAULT_TOOLS + (["delete_file"] if allow_delete else [])
         sync_tools = [getattr(self, name) for name in registered]
         async_tools = [(getattr(self, "a" + name), name) for name in registered]
 

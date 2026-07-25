@@ -46,13 +46,19 @@ def toolkit(fs) -> FileSystemTools:
     return fs.tools()
 
 
+@pytest.fixture
+def full_toolkit(fs) -> FileSystemTools:
+    # The whole nine-tool surface, selected explicitly.
+    return fs.tools(include_tools=FileSystemTools.FULL_TOOLS)
+
+
 class TestSchemas:
     """The empty-schema regression (spec D1): every schema must be non-empty AND
     name every documented parameter AND lack the framework-injected ones."""
 
     @pytest.mark.parametrize("tool_name", list(EXPECTED_TOOL_PARAMS.keys()))
-    def test_schema_names_documented_params_and_lacks_injected(self, toolkit, tool_name):
-        function = toolkit.functions[tool_name]
+    def test_schema_names_documented_params_and_lacks_injected(self, full_toolkit, tool_name):
+        function = full_toolkit.functions[tool_name]
         function.process_entrypoint()
         properties = function.parameters.get("properties", {})
         assert list(properties.keys()) == EXPECTED_TOOL_PARAMS[tool_name]
@@ -62,8 +68,8 @@ class TestSchemas:
             assert prop.get("description"), "every model-facing parameter carries its docstring description"
 
     @pytest.mark.parametrize("tool_name", list(EXPECTED_TOOL_PARAMS.keys()))
-    def test_async_schema_names_documented_params(self, toolkit, tool_name):
-        function = toolkit.async_functions[tool_name]
+    def test_async_schema_names_documented_params(self, full_toolkit, tool_name):
+        function = full_toolkit.async_functions[tool_name]
         function.process_entrypoint()
         properties = function.parameters.get("properties", {})
         assert list(properties.keys()) == EXPECTED_TOOL_PARAMS[tool_name]
@@ -74,9 +80,9 @@ class TestSchemas:
             assert prop.get("description"), "every async parameter carries its docstring description"
 
     @pytest.mark.parametrize("tool_name", list(EXPECTED_TOOL_PARAMS.keys()))
-    def test_async_description_matches_sync(self, toolkit, tool_name):
-        sync_fn = toolkit.functions[tool_name]
-        async_fn = toolkit.async_functions[tool_name]
+    def test_async_description_matches_sync(self, full_toolkit, tool_name):
+        sync_fn = full_toolkit.functions[tool_name]
+        async_fn = full_toolkit.async_functions[tool_name]
         sync_fn.process_entrypoint()
         async_fn.process_entrypoint()
         assert async_fn.description == sync_fn.description
@@ -130,19 +136,45 @@ class TestWorkspaceParity:
         assert toolkit.requires_confirmation_tools == []
 
     def test_confirmation_opt_in_via_kwargs(self, fs):
-        tk = fs.tools(requires_confirmation_tools=["delete_file"])
+        tk = fs.tools(allow_delete=True, requires_confirmation_tools=["delete_file"])
         assert tk.functions["delete_file"].requires_confirmation is True
 
 
 class TestSurface:
-    def test_full_surface_registers_nine_sync_and_async(self, toolkit):
-        assert list(toolkit.functions.keys()) == FileSystemTools.FULL_TOOLS
-        assert list(toolkit.async_functions.keys()) == FileSystemTools.FULL_TOOLS
+    def test_default_surface_is_the_notes_seven(self, toolkit):
+        assert list(toolkit.functions.keys()) == FileSystemTools.DEFAULT_TOOLS
+        assert list(toolkit.async_functions.keys()) == FileSystemTools.DEFAULT_TOOLS
+        assert len(FileSystemTools.DEFAULT_TOOLS) == 7
+        assert "check_lines" not in toolkit.functions
+        assert "delete_file" not in toolkit.functions
 
-    def test_read_only_registers_exactly_four(self, fs):
+    def test_allow_delete_adds_delete_file(self, fs):
+        tk = fs.tools(allow_delete=True)
+        assert list(tk.functions.keys()) == FileSystemTools.DEFAULT_TOOLS + ["delete_file"]
+
+    def test_read_only_registers_exactly_three(self, fs):
         tk = fs.tools(read_only=True)
         assert list(tk.functions.keys()) == FileSystemTools.READ_ONLY_TOOLS
         assert list(tk.async_functions.keys()) == FileSystemTools.READ_ONLY_TOOLS
+        assert len(FileSystemTools.READ_ONLY_TOOLS) == 3
+
+    def test_check_lines_reachable_via_include_tools(self, fs):
+        tk = fs.tools(include_tools=FileSystemTools.DEFAULT_TOOLS + ["check_lines"])
+        assert "check_lines" in tk.functions
+        read_tk = fs.tools(read_only=True, include_tools=["read_file", "check_lines"])
+        assert set(read_tk.functions.keys()) == {"read_file", "check_lines"}
+
+    def test_include_tools_cannot_reach_write_tools_when_read_only(self, fs):
+        with pytest.raises(ValueError):
+            fs.tools(read_only=True, include_tools=["write_file"])
+
+    def test_read_only_with_allow_delete_raises(self, fs):
+        with pytest.raises(ValueError):
+            fs.tools(read_only=True, allow_delete=True)
+
+    def test_full_tools_stays_exported_as_the_whole_surface(self, fs):
+        tk = fs.tools(include_tools=FileSystemTools.FULL_TOOLS)
+        assert list(tk.functions.keys()) == FileSystemTools.FULL_TOOLS
 
     def test_toolkit_name(self, toolkit):
         assert toolkit.name == "filesystem"
@@ -158,7 +190,14 @@ class TestInstructions:
         text = FileSystem.instructions()
         assert text.startswith("You have your own private, durable filesystem")
         assert "Never store secrets, passwords, or API keys." in text
-        assert 'check_lines(lines, directory="seen")' in text
+        assert "replace_lines" in text
+        assert "move_file" in text and "archive/" in text
+        # The record-set/seen-directory conventions moved to the durable-records
+        # cookbook, and the user-memory steer is gone: this text is the notes
+        # contract, nothing else.
+        assert "check_lines" not in text
+        assert "seen/" not in text
+        assert "user memory" not in text
 
     def test_read_only_variant_names_no_write_tool(self, fs):
         text = FileSystem.instructions(read_only=True)
