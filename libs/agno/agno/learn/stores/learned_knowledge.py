@@ -244,7 +244,7 @@ class LearnedKnowledgeStore(LearningStore):
         elif mode == LearningMode.AGENTIC:
             return self._build_agentic_mode_context(data=data)
         else:
-            return self._build_background_mode_context(data=data)
+            return self._build_always_mode_context(data=data)
 
     def _build_agentic_mode_context(self, data: Any) -> str:
         """Build context for AGENTIC mode."""
@@ -373,7 +373,7 @@ class LearnedKnowledgeStore(LearningStore):
 
         return instructions
 
-    def _build_background_mode_context(self, data: Any) -> str:
+    def _build_always_mode_context(self, data: Any) -> str:
         """Build context for ALWAYS mode (just show relevant learnings)."""
         if not data:
             return ""
