@@ -132,12 +132,7 @@ agent_os = AgentOS(
     description="News agency AgentOS exposing the news agent, publishing team and coding agent as contacts",
     agents=[news_agent, editor, typesetter, coding_agent],
     teams=[publish_team],
-    interfaces=[
-        RemoteAccess(
-            agents=[news_agent, coding_agent],
-            teams=[publish_team],
-        ),
-    ],
+    remote_access=True
 )
 
 app = agent_os.get_app()
