@@ -11,20 +11,16 @@ Think of it as:
 - UserProfile = what you know about THE USER
 - EntityMemory = what you know about EVERYTHING ELSE
 
-Key Features:
-- Entity-scoped storage (entity_id + entity_type)
-- Three types of memory per entity:
-    - Facts (semantic): Timeless truths ("Acme uses PostgreSQL")
-    - Events (episodic): Time-bound occurrences ("Acme launched v2 on Jan 15")
-    - Relationships (graph): Connections to other entities ("Bob is CEO of Acme")
-- Namespace-based sharing control
-- Agent tools for CRUD operations
-- Background extraction from conversations
+The agent surface is four tools:
+- remember_about: upsert an entity with facts, events and an optional note pointer
+- link_entities: record a relationship between two entities
+- search_entities: search stored entities, or list them by recency
+- forget: retire a fact, or archive a whole entity
 
 Scoping:
-- entity_id: Unique identifier (e.g., "acme_corp", "bob_smith")
-- entity_type: Category (e.g., "company", "person", "project", "product")
-- namespace: Sharing scope:
+- entity_id: derived in the store from the entity's name (slugified)
+- entity_type: category (e.g., "company", "person", "project", "product")
+- namespace: sharing scope:
     - "user": Private to current user
     - "global": Shared with everyone (default)
     - "<custom>": Custom grouping (e.g., "sales_team")
@@ -35,11 +31,12 @@ Supported Modes:
   ALWAYS-only.
 """
 
+import re
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from os import getenv
 from textwrap import dedent
-from typing import Any, Callable, Dict, List, Optional, Union, cast
+from typing import Any, Callable, Dict, List, Optional, Tuple, Union, cast
 
 from agno.learn.config import EntityMemoryConfig, LearningMode
 from agno.learn.schemas import EntityMemory
@@ -47,6 +44,7 @@ from agno.learn.stores.protocol import LearningStore
 from agno.learn.utils import build_learning_id
 from agno.utils.log import (
     log_debug,
+    log_info,
     log_warning,
     set_log_level_to_debug,
     set_log_level_to_info,
@@ -58,12 +56,101 @@ except ImportError:
     pass
 
 
+def _utc_now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def _slugify(name: str) -> str:
+    """Derive a stable entity_id from a display name: lowercase, underscores."""
+    slug = re.sub(r"[^a-z0-9]+", "_", name.strip().lower()).strip("_")
+    return slug or name.strip().lower()
+
+
+def _normalize_fact_text(text: str) -> str:
+    """Fold case and collapse whitespace for fact matching."""
+    return re.sub(r"\s+", " ", text.strip().casefold())
+
+
+# =============================================================================
+# Tool docstrings (shared between the sync and async tool variants)
+# =============================================================================
+
+_REMEMBER_ABOUT_DOC = """Record something about an entity - a person, project, company, system, or product.
+
+Upserts: the entity is created if new, merged into if already known. Refer to the
+entity by name ("Sarah Chen", "radar") - never invent an id.
+
+What goes where:
+- facts: one-line current values you expect to be replaced ("db: Postgres - see note").
+- events: things that happened on a date ("shipped v1 on 2026-07-20"). Positions and
+  opinions are events, not facts.
+- note: the path of the note file holding the detail this entity indexes
+  (e.g. "notes/radar.md"). Set it whenever the content lives in a note.
+
+Args:
+    entity: The entity's name as people say it (e.g. "Sarah Chen", "radar").
+    entity_type: Category: person, project, company, system, product - or another short noun.
+    description: One-line description of what this entity is.
+    facts: One-line facts to record on the entity.
+    events: Dated occurrences to record.
+    note: Path of the note file with the full detail (e.g. "notes/radar.md").
+
+Returns:
+    Confirmation of what was recorded.
+"""
+
+_LINK_ENTITIES_DOC = """Link two entities with a relationship ("Sarah Chen" works_on "radar").
+
+Both ends are resolved by name. An end that is not known yet is created as a
+minimal entity, so it is safe to link first and describe later. The link is
+stored on both entities, so it is visible from either side.
+
+Args:
+    entity: Source entity name.
+    relation: The relationship, a short verb phrase ("works_on", "owns", "uses").
+    related_entity: Target entity name.
+
+Returns:
+    Confirmation of the recorded link.
+"""
+
+_SEARCH_ENTITIES_DOC = """Search stored entities, or list them.
+
+With a query, matches entity names, facts, events and relationships. Without a
+query, lists entities by recency - use that to browse what exists ("who works on
+what"). Results include each entity's note path; follow it with read_file when you
+need the detail behind an indexed line.
+
+Args:
+    query: Text to match (a name, a fact fragment). Omit to list entities by recency.
+    entity_type: Optional filter: person, project, company, system, product, etc.
+
+Returns:
+    Matching entities with their facts, events and relationships, or a listing.
+"""
+
+_FORGET_DOC = """Retire a fact from an entity, or archive the whole entity.
+
+With fact: retires the matching fact - it stops being recalled, nothing is deleted.
+Without fact: archives the entity. An archived entity leaves recall and the entity
+directory, stays findable via search_entities, and any later remember_about about
+it revives it.
+
+Args:
+    entity: The entity's name.
+    fact: The fact to retire, worded as closely as you can to how it was stored.
+
+Returns:
+    Confirmation of what was retired or archived.
+"""
+
+
 @dataclass
 class EntityMemoryStore(LearningStore):
     """Storage backend for Entity Memory learning type.
 
     Stores knowledge about external entities with three types of memory:
-    - **Facts**: Semantic memory - timeless truths about the entity
+    - **Facts**: Semantic memory - current truths about the entity
     - **Events**: Episodic memory - time-bound occurrences
     - **Relationships**: Graph edges - connections to other entities
 
@@ -115,6 +202,8 @@ class EntityMemoryStore(LearningStore):
     ) -> Optional[Any]:
         """Retrieve entity memory from storage.
 
+        Archived entities are excluded from recall (they stay reachable via search).
+
         Args:
             entity_id: The entity to retrieve (required with entity_type).
             entity_type: The type of entity (required with entity_id).
@@ -130,15 +219,18 @@ class EntityMemoryStore(LearningStore):
 
         effective_namespace = namespace or self.config.namespace
         if effective_namespace == "user" and not user_id:
-            log_warning("EntityMemoryStore.process: namespace='user' requires user_id")
+            log_warning("EntityMemoryStore.recall: namespace='user' requires user_id")
             return None
 
-        return self.get(
+        entity = self.get(
             entity_id=entity_id,
             entity_type=entity_type,
             user_id=user_id,
             namespace=effective_namespace,
         )
+        if entity is not None and getattr(entity, "archived_at", None):
+            return None
+        return entity
 
     async def arecall(
         self,
@@ -157,12 +249,15 @@ class EntityMemoryStore(LearningStore):
             log_warning("EntityMemoryStore.arecall: namespace='user' requires user_id")
             return None
 
-        return await self.aget(
+        entity = await self.aget(
             entity_id=entity_id,
             entity_type=entity_type,
             user_id=user_id,
             namespace=effective_namespace,
         )
+        if entity is not None and getattr(entity, "archived_at", None):
+            return None
+        return entity
 
     def process(self, messages: List[Any], **kwargs) -> None:
         """No-op: entity memory is AGENTIC-only, capture happens through the tools."""
@@ -176,8 +271,6 @@ class EntityMemoryStore(LearningStore):
         """Build context for the agent.
 
         Formats entity memory for injection into the agent's system prompt.
-        Entity memory provides knowledge about external things - people, companies,
-        projects, products - distinct from knowledge about the user themselves.
 
         Args:
             data: Entity memory data from recall() - single entity or list.
@@ -189,25 +282,20 @@ class EntityMemoryStore(LearningStore):
             if self._should_expose_tools:
                 return dedent("""\
                     <entity_memory_system>
-                    You have access to entity memory - a knowledge base about people, companies,
-                    projects, products, and other external entities relevant to your work.
+                    You have entity memory - a knowledge base about the people, companies,
+                    projects, systems and products relevant to your work.
 
                     **Available Tools:**
-                    - `search_entities`: Find stored information about entities
-                    - `create_entity`: Store a new entity with its facts
-                    - `add_fact`: Add a timeless truth about an entity
-                    - `add_event`: Record a time-bound occurrence
-                    - `add_relationship`: Capture connections between entities
+                    - `remember_about`: Record facts, events, a description or a note pointer on an entity
+                    - `link_entities`: Record a relationship between two entities
+                    - `search_entities`: Find stored entities, or list them by recency
+                    - `forget`: Retire a fact, or archive an entity
 
                     **When to use entity memory:**
                     - You learn something substantive about a company, person, or project
                     - Information would be useful to recall in future conversations
-                    - Facts are stable enough to be worth storing
-
-                    **Entity memory vs other memory types:**
-                    - User memory = about THE USER (their preferences, role, context)
-                    - Entity memory = about EXTERNAL THINGS (companies, people, projects)
-                    - Learned knowledge = reusable TASK insights (patterns, approaches)
+                    - A stored fact turns out to be wrong or obsolete (state the new fact;
+                      supersession retires the old one)
                     </entity_memory_system>""")
             return ""
 
@@ -216,7 +304,6 @@ class EntityMemoryStore(LearningStore):
         if not entities:
             return ""
 
-        # Use schema's get_context_text
         formatted_parts = []
         for entity in entities:
             if hasattr(entity, "get_context_text"):
@@ -237,16 +324,11 @@ class EntityMemoryStore(LearningStore):
             - Reference stored facts without citing "entity memory"
             - Treat this as background knowledge you simply have
             - Current conversation takes precedence if there's conflicting information
-            - Update entity memory if you learn something new and substantive
+            - Record new substantive information with remember_about
             </entity_memory_guidelines>
         """)
 
-        if self._should_expose_tools:
-            context += dedent("""
-            Entity memory tools are available to search, create, or update entities.
-            </entity_memory>""")
-        else:
-            context += "</entity_memory>"
+        context += "</entity_memory>"
 
         return context
 
@@ -258,7 +340,7 @@ class EntityMemoryStore(LearningStore):
         namespace: Optional[str] = None,
         **kwargs,
     ) -> List[Callable]:
-        """Get tools to expose to agent.
+        """Get the four agent tools (sync variants).
 
         Args:
             user_id: User context (for "user" namespace scoping).
@@ -272,7 +354,8 @@ class EntityMemoryStore(LearningStore):
         """
         if not self._should_expose_tools:
             return []
-        return self.get_agent_tools(
+        return self._build_agent_tools(
+            async_mode=False,
             user_id=user_id,
             agent_id=agent_id,
             team_id=team_id,
@@ -287,10 +370,11 @@ class EntityMemoryStore(LearningStore):
         namespace: Optional[str] = None,
         **kwargs,
     ) -> List[Callable]:
-        """Async version of get_tools."""
+        """Async version of get_tools: the same four tools as async callables."""
         if not self._should_expose_tools:
             return []
-        return await self.aget_agent_tools(
+        return self._build_agent_tools(
+            async_mode=True,
             user_id=user_id,
             agent_id=agent_id,
             team_id=team_id,
@@ -304,13 +388,8 @@ class EntityMemoryStore(LearningStore):
 
     @property
     def _should_expose_tools(self) -> bool:
-        """Check if tools should be exposed to the agent.
-
-        Returns True if either:
-        - mode is AGENTIC (tools are the primary way to manage entities), OR
-        - enable_agent_tools is explicitly True
-        """
-        return self.config.mode == LearningMode.AGENTIC or self.config.enable_agent_tools
+        """Whether the four tools are exposed to the agent."""
+        return self.config.enable_agent_tools
 
     # =========================================================================
     # Properties
@@ -323,7 +402,7 @@ class EntityMemoryStore(LearningStore):
 
     @property
     def model(self):
-        """Model for extraction."""
+        """Model for the fact-supersession judgment."""
         return self.config.model
 
     # =========================================================================
@@ -339,1237 +418,899 @@ class EntityMemoryStore(LearningStore):
             set_log_level_to_info()
 
     # =========================================================================
-    # Agent Tools
+    # Agent Tools (one factory generates the sync and async variants)
     # =========================================================================
 
-    def get_agent_tools(
+    def _build_agent_tools(
         self,
+        async_mode: bool,
         user_id: Optional[str] = None,
         agent_id: Optional[str] = None,
         team_id: Optional[str] = None,
         namespace: Optional[str] = None,
     ) -> List[Callable]:
-        """Get the tools to expose to the agent.
+        """Build the four agent tools, closing over the run's identity context.
 
-        Tools are included based on config settings:
-        - search_entities (agent_can_search_entities)
-        - create_entity (agent_can_create_entity)
-        - update_entity (agent_can_update_entity)
-        - add_fact, update_fact, delete_fact
-        - add_event
-        - add_relationship
+        The sync and async variants share their docstrings (the model-facing
+        contract) and both delegate to the store's public write methods.
+        """
+        store = self
+        effective_namespace = namespace or self.config.namespace
 
-        Args:
-            user_id: User context (for "user" namespace scoping).
-            agent_id: Agent context (stored for audit).
-            team_id: Team context (stored for audit).
-            namespace: Default namespace for operations.
+        if async_mode:
+
+            async def remember_about(
+                entity: str,
+                entity_type: str,
+                description: Optional[str] = None,
+                facts: List[str] = [],
+                events: List[str] = [],
+                note: Optional[str] = None,
+            ) -> str:
+                return await store.aremember_about(
+                    entity=entity,
+                    entity_type=entity_type,
+                    description=description,
+                    facts=facts,
+                    events=events,
+                    note=note,
+                    user_id=user_id,
+                    agent_id=agent_id,
+                    team_id=team_id,
+                    namespace=effective_namespace,
+                )
+
+            async def link_entities(entity: str, relation: str, related_entity: str) -> str:
+                return await store.alink_entities(
+                    entity=entity,
+                    relation=relation,
+                    related_entity=related_entity,
+                    user_id=user_id,
+                    agent_id=agent_id,
+                    team_id=team_id,
+                    namespace=effective_namespace,
+                )
+
+            async def search_entities(query: Optional[str] = None, entity_type: Optional[str] = None) -> str:
+                return await store.asearch_entities(
+                    query=query,
+                    entity_type=entity_type,
+                    user_id=user_id,
+                    namespace=effective_namespace,
+                )
+
+            async def forget(entity: str, fact: Optional[str] = None) -> str:
+                return await store.aforget(
+                    entity=entity,
+                    fact=fact,
+                    user_id=user_id,
+                    agent_id=agent_id,
+                    team_id=team_id,
+                    namespace=effective_namespace,
+                )
+        else:
+
+            def remember_about(  # type: ignore[misc]
+                entity: str,
+                entity_type: str,
+                description: Optional[str] = None,
+                facts: List[str] = [],
+                events: List[str] = [],
+                note: Optional[str] = None,
+            ) -> str:
+                return store.remember_about(
+                    entity=entity,
+                    entity_type=entity_type,
+                    description=description,
+                    facts=facts,
+                    events=events,
+                    note=note,
+                    user_id=user_id,
+                    agent_id=agent_id,
+                    team_id=team_id,
+                    namespace=effective_namespace,
+                )
+
+            def link_entities(entity: str, relation: str, related_entity: str) -> str:  # type: ignore[misc]
+                return store.link_entities(
+                    entity=entity,
+                    relation=relation,
+                    related_entity=related_entity,
+                    user_id=user_id,
+                    agent_id=agent_id,
+                    team_id=team_id,
+                    namespace=effective_namespace,
+                )
+
+            def search_entities(  # type: ignore[misc]
+                query: Optional[str] = None, entity_type: Optional[str] = None
+            ) -> str:
+                return store.search_entities(
+                    query=query,
+                    entity_type=entity_type,
+                    user_id=user_id,
+                    namespace=effective_namespace,
+                )
+
+            def forget(entity: str, fact: Optional[str] = None) -> str:  # type: ignore[misc]
+                return store.forget(
+                    entity=entity,
+                    fact=fact,
+                    user_id=user_id,
+                    agent_id=agent_id,
+                    team_id=team_id,
+                    namespace=effective_namespace,
+                )
+
+        remember_about.__doc__ = _REMEMBER_ABOUT_DOC
+        link_entities.__doc__ = _LINK_ENTITIES_DOC
+        search_entities.__doc__ = _SEARCH_ENTITIES_DOC
+        forget.__doc__ = _FORGET_DOC
+
+        return [remember_about, link_entities, search_entities, forget]
+
+    # =========================================================================
+    # Public write API: remember_about
+    # =========================================================================
+
+    def remember_about(
+        self,
+        entity: str,
+        entity_type: str,
+        description: Optional[str] = None,
+        facts: Optional[List[str]] = None,
+        events: Optional[List[str]] = None,
+        note: Optional[str] = None,
+        user_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
+        namespace: Optional[str] = None,
+    ) -> str:
+        """Upsert an entity by name: create it if new, merge into it if known.
 
         Returns:
-            List of callable tools.
+            A confirmation message describing what was recorded.
         """
-        tools = []
+        if not self.db:
+            return "Entity memory has no database configured; nothing was recorded."
+
         effective_namespace = namespace or self.config.namespace
+        if effective_namespace == "user" and not user_id:
+            log_warning("EntityMemoryStore.remember_about: namespace='user' requires user_id")
+            return "Entity memory needs a user_id for the 'user' namespace; nothing was recorded."
 
-        if self.config.agent_can_search_entities:
-            tools.append(
-                self._create_search_entities_tool(
-                    user_id=user_id,
-                    namespace=effective_namespace,
-                )
-            )
+        existing = self._resolve(
+            entity=entity,
+            entity_type=entity_type,
+            user_id=user_id,
+            namespace=effective_namespace,
+        )
 
-        if self.config.agent_can_create_entity:
-            tools.append(
-                self._create_create_entity_tool(
-                    user_id=user_id,
-                    agent_id=agent_id,
-                    team_id=team_id,
-                    namespace=effective_namespace,
-                )
-            )
+        entity_obj, created, revived = self._apply_remember(
+            existing=existing,
+            entity=entity,
+            entity_type=entity_type,
+            description=description,
+            facts=facts or [],
+            events=events or [],
+            note=note,
+            user_id=user_id,
+            agent_id=agent_id,
+            team_id=team_id,
+            namespace=effective_namespace,
+        )
 
-        if self.config.agent_can_update_entity:
-            tools.append(
-                self._create_update_entity_tool(
-                    user_id=user_id,
-                    agent_id=agent_id,
-                    team_id=team_id,
-                    namespace=effective_namespace,
-                )
-            )
+        saved = self._save_entity(
+            entity=entity_obj,
+            user_id=user_id,
+            agent_id=agent_id,
+            team_id=team_id,
+            namespace=effective_namespace,
+        )
+        if not saved:
+            return f"Failed to record on {entity_obj.entity_type}/{entity_obj.entity_id}."
 
-        if self.config.enable_add_fact:
-            tools.append(
-                self._create_add_fact_tool(
-                    user_id=user_id,
-                    agent_id=agent_id,
-                    team_id=team_id,
-                    namespace=effective_namespace,
-                )
-            )
+        self.entity_updated = True
+        return self._remember_message(
+            entity_obj, created=created, revived=revived, facts=facts or [], events=events or [], note=note
+        )
 
-        if self.config.enable_update_fact:
-            tools.append(
-                self._create_update_fact_tool(
-                    user_id=user_id,
-                    agent_id=agent_id,
-                    team_id=team_id,
-                    namespace=effective_namespace,
-                )
-            )
-
-        if self.config.enable_delete_fact:
-            tools.append(
-                self._create_delete_fact_tool(
-                    user_id=user_id,
-                    agent_id=agent_id,
-                    team_id=team_id,
-                    namespace=effective_namespace,
-                )
-            )
-
-        if self.config.enable_add_event:
-            tools.append(
-                self._create_add_event_tool(
-                    user_id=user_id,
-                    agent_id=agent_id,
-                    team_id=team_id,
-                    namespace=effective_namespace,
-                )
-            )
-
-        if self.config.enable_add_relationship:
-            tools.append(
-                self._create_add_relationship_tool(
-                    user_id=user_id,
-                    agent_id=agent_id,
-                    team_id=team_id,
-                    namespace=effective_namespace,
-                )
-            )
-
-        return tools
-
-    async def aget_agent_tools(
+    async def aremember_about(
         self,
+        entity: str,
+        entity_type: str,
+        description: Optional[str] = None,
+        facts: Optional[List[str]] = None,
+        events: Optional[List[str]] = None,
+        note: Optional[str] = None,
         user_id: Optional[str] = None,
         agent_id: Optional[str] = None,
         team_id: Optional[str] = None,
         namespace: Optional[str] = None,
-    ) -> List[Callable]:
-        """Async version of get_agent_tools."""
-        tools = []
+    ) -> str:
+        """Async version of remember_about."""
+        if not self.db:
+            return "Entity memory has no database configured; nothing was recorded."
+
         effective_namespace = namespace or self.config.namespace
+        if effective_namespace == "user" and not user_id:
+            log_warning("EntityMemoryStore.aremember_about: namespace='user' requires user_id")
+            return "Entity memory needs a user_id for the 'user' namespace; nothing was recorded."
 
-        if self.config.agent_can_search_entities:
-            tools.append(
-                self._create_async_search_entities_tool(
-                    user_id=user_id,
-                    namespace=effective_namespace,
-                )
-            )
+        existing = await self._aresolve(
+            entity=entity,
+            entity_type=entity_type,
+            user_id=user_id,
+            namespace=effective_namespace,
+        )
 
-        if self.config.agent_can_create_entity:
-            tools.append(
-                self._create_async_create_entity_tool(
-                    user_id=user_id,
-                    agent_id=agent_id,
-                    team_id=team_id,
-                    namespace=effective_namespace,
-                )
-            )
+        entity_obj, created, revived = self._apply_remember(
+            existing=existing,
+            entity=entity,
+            entity_type=entity_type,
+            description=description,
+            facts=facts or [],
+            events=events or [],
+            note=note,
+            user_id=user_id,
+            agent_id=agent_id,
+            team_id=team_id,
+            namespace=effective_namespace,
+        )
 
-        if self.config.agent_can_update_entity:
-            tools.append(
-                self._create_async_update_entity_tool(
-                    user_id=user_id,
-                    agent_id=agent_id,
-                    team_id=team_id,
-                    namespace=effective_namespace,
-                )
-            )
+        saved = await self._asave_entity(
+            entity=entity_obj,
+            user_id=user_id,
+            agent_id=agent_id,
+            team_id=team_id,
+            namespace=effective_namespace,
+        )
+        if not saved:
+            return f"Failed to record on {entity_obj.entity_type}/{entity_obj.entity_id}."
 
-        if self.config.enable_add_fact:
-            tools.append(
-                self._create_async_add_fact_tool(
-                    user_id=user_id,
-                    agent_id=agent_id,
-                    team_id=team_id,
-                    namespace=effective_namespace,
-                )
-            )
+        self.entity_updated = True
+        return self._remember_message(
+            entity_obj, created=created, revived=revived, facts=facts or [], events=events or [], note=note
+        )
 
-        if self.config.enable_update_fact:
-            tools.append(
-                self._create_async_update_fact_tool(
-                    user_id=user_id,
-                    agent_id=agent_id,
-                    team_id=team_id,
-                    namespace=effective_namespace,
-                )
-            )
-
-        if self.config.enable_delete_fact:
-            tools.append(
-                self._create_async_delete_fact_tool(
-                    user_id=user_id,
-                    agent_id=agent_id,
-                    team_id=team_id,
-                    namespace=effective_namespace,
-                )
-            )
-
-        if self.config.enable_add_event:
-            tools.append(
-                self._create_async_add_event_tool(
-                    user_id=user_id,
-                    agent_id=agent_id,
-                    team_id=team_id,
-                    namespace=effective_namespace,
-                )
-            )
-
-        if self.config.enable_add_relationship:
-            tools.append(
-                self._create_async_add_relationship_tool(
-                    user_id=user_id,
-                    agent_id=agent_id,
-                    team_id=team_id,
-                    namespace=effective_namespace,
-                )
-            )
-
-        return tools
-
-    # =========================================================================
-    # Tool: search_entities
-    # =========================================================================
-
-    def _create_search_entities_tool(
+    def _apply_remember(
         self,
+        existing: Optional[EntityMemory],
+        entity: str,
+        entity_type: str,
+        description: Optional[str],
+        facts: List[str],
+        events: List[str],
+        note: Optional[str],
+        user_id: Optional[str],
+        agent_id: Optional[str],
+        team_id: Optional[str],
+        namespace: str,
+    ) -> Tuple[EntityMemory, bool, bool]:
+        """Create or merge the entity in memory. Returns (entity, created, revived)."""
+        now = _utc_now_iso()
+        created = False
+        revived = False
+
+        if existing is None:
+            created = True
+            entity_obj = self.schema(
+                entity_id=_slugify(entity),
+                entity_type=entity_type,
+                name=entity.strip(),
+                description=description,
+                properties={},
+                facts=[],
+                events=[],
+                relationships=[],
+                namespace=namespace,
+                user_id=user_id if namespace == "user" else None,
+                agent_id=agent_id,
+                team_id=team_id,
+                created_at=now,
+                updated_at=now,
+            )
+        else:
+            entity_obj = existing
+            if description is not None:
+                entity_obj.description = description
+            if getattr(entity_obj, "archived_at", None):
+                entity_obj.archived_at = None
+                revived = True
+                log_info(
+                    f"EntityMemoryStore: entity {entity_obj.entity_type}/{entity_obj.entity_id} "
+                    f"was archived and has been revived by this write."
+                )
+
+        for fact in facts:
+            if fact and fact.strip():
+                entity_obj.add_fact(fact)
+        for event in events:
+            if event and event.strip():
+                entity_obj.add_event(event)
+        if note is not None and note.strip():
+            entity_obj.properties = {**(entity_obj.properties or {}), "note": note.strip()}
+
+        entity_obj.updated_at = now
+        return entity_obj, created, revived
+
+    def _remember_message(
+        self,
+        entity_obj: EntityMemory,
+        created: bool,
+        revived: bool,
+        facts: List[str],
+        events: List[str],
+        note: Optional[str],
+    ) -> str:
+        label = f"{entity_obj.entity_type}/{entity_obj.entity_id}"
+        verb = "Created" if created else "Updated"
+        parts = []
+        if facts:
+            parts.append(f"{len(facts)} fact(s)")
+        if events:
+            parts.append(f"{len(events)} event(s)")
+        if note:
+            parts.append(f"note pointer {note}")
+        recorded = f" Recorded {', '.join(parts)}." if parts else ""
+        revived_text = " The entity was archived and is now revived." if revived else ""
+        return f"{verb} {label}.{recorded}{revived_text}"
+
+    # =========================================================================
+    # Public write API: link_entities
+    # =========================================================================
+
+    def link_entities(
+        self,
+        entity: str,
+        relation: str,
+        related_entity: str,
+        user_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
+        namespace: Optional[str] = None,
+    ) -> str:
+        """Record a relationship between two entities, resolving both ends by name.
+
+        An end that does not resolve is created as a minimal entity with
+        entity_type="unknown"; a later remember_about with a real type merges it.
+        The edge is written on both rows, each carrying the far end's resolved id,
+        type, relation and direction.
+        """
+        if not self.db:
+            return "Entity memory has no database configured; nothing was recorded."
+
+        effective_namespace = namespace or self.config.namespace
+        if effective_namespace == "user" and not user_id:
+            log_warning("EntityMemoryStore.link_entities: namespace='user' requires user_id")
+            return "Entity memory needs a user_id for the 'user' namespace; nothing was recorded."
+
+        source = self._resolve_or_create_minimal(
+            entity, user_id=user_id, agent_id=agent_id, team_id=team_id, namespace=effective_namespace
+        )
+        target = self._resolve_or_create_minimal(
+            related_entity, user_id=user_id, agent_id=agent_id, team_id=team_id, namespace=effective_namespace
+        )
+
+        self._write_edge(source=source, target=target, relation=relation)
+
+        for entity_obj in (source, target):
+            if not self._save_entity(
+                entity=entity_obj,
+                user_id=user_id,
+                agent_id=agent_id,
+                team_id=team_id,
+                namespace=effective_namespace,
+            ):
+                return "Failed to record the link."
+
+        self.entity_updated = True
+        return self._link_message(source=source, relation=relation, target=target)
+
+    async def alink_entities(
+        self,
+        entity: str,
+        relation: str,
+        related_entity: str,
+        user_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
+        namespace: Optional[str] = None,
+    ) -> str:
+        """Async version of link_entities."""
+        if not self.db:
+            return "Entity memory has no database configured; nothing was recorded."
+
+        effective_namespace = namespace or self.config.namespace
+        if effective_namespace == "user" and not user_id:
+            log_warning("EntityMemoryStore.alink_entities: namespace='user' requires user_id")
+            return "Entity memory needs a user_id for the 'user' namespace; nothing was recorded."
+
+        source = await self._aresolve_or_create_minimal(
+            entity, user_id=user_id, agent_id=agent_id, team_id=team_id, namespace=effective_namespace
+        )
+        target = await self._aresolve_or_create_minimal(
+            related_entity, user_id=user_id, agent_id=agent_id, team_id=team_id, namespace=effective_namespace
+        )
+
+        self._write_edge(source=source, target=target, relation=relation)
+
+        for entity_obj in (source, target):
+            if not await self._asave_entity(
+                entity=entity_obj,
+                user_id=user_id,
+                agent_id=agent_id,
+                team_id=team_id,
+                namespace=effective_namespace,
+            ):
+                return "Failed to record the link."
+
+        self.entity_updated = True
+        return self._link_message(source=source, relation=relation, target=target)
+
+    def _write_edge(self, source: EntityMemory, target: EntityMemory, relation: str) -> None:
+        """Write the edge on both rows, each carrying the far end's id and type."""
+        now = _utc_now_iso()
+        source.add_relationship(
+            related_entity_id=target.entity_id,
+            relation=relation,
+            direction="outgoing",
+            entity_type=target.entity_type,
+        )
+        source.updated_at = now
+        target.add_relationship(
+            related_entity_id=source.entity_id,
+            relation=relation,
+            direction="incoming",
+            entity_type=source.entity_type,
+        )
+        target.updated_at = now
+
+    def _link_message(self, source: EntityMemory, relation: str, target: EntityMemory) -> str:
+        return (
+            f"Linked {source.entity_type}/{source.entity_id} --[{relation}]--> {target.entity_type}/{target.entity_id}."
+        )
+
+    # =========================================================================
+    # Public read API: search_entities (agent-facing, formatted)
+    # =========================================================================
+
+    def search_entities(
+        self,
+        query: Optional[str] = None,
+        entity_type: Optional[str] = None,
         user_id: Optional[str] = None,
         namespace: Optional[str] = None,
-    ) -> Callable:
-        """Create the search_entities tool."""
+        limit: int = 10,
+    ) -> str:
+        """Search stored entities (or list them by recency) and format the results."""
+        effective_namespace = namespace or self.config.namespace
 
-        def search_entities(
-            query: str,
-            entity_type: Optional[str] = None,
-            limit: int = 5,
-        ) -> str:
-            """Search for entities in the knowledge base.
-
-            Use this to recall information about people, companies, projects, products,
-            or other entities that have been stored. Searches across names, facts,
-            events, and relationships.
-
-            **Good times to search:**
-            - Before discussing a company/person that might have stored context
-            - When the user references an entity by name
-            - To recall details about a project or product
-            - To find relationships between entities
-
-            **Search tips:**
-            - Search by name: "Acme Corp", "Jane Smith"
-            - Search by attribute: "PostgreSQL", "San Francisco"
-            - Search by relationship: "CEO", "competitor"
-            - Combine with entity_type to narrow results
-
-            Args:
-                query: What to search for. Can be a name, fact content, relationship,
-                       or any text that might appear in entity records.
-                       Examples: "Acme", "uses PostgreSQL", "VP Engineering"
-                entity_type: Optional filter - "person", "company", "project", "product", etc.
-                limit: Maximum results (default: 5)
-
-            Returns:
-                Formatted list of matching entities with their facts, events, and relationships.
-            """
+        if query:
             results = self.search(
                 query=query,
                 entity_type=entity_type,
                 user_id=user_id,
-                namespace=namespace,
+                namespace=effective_namespace,
                 limit=limit,
+                include_archived=True,
+            )
+        else:
+            results = self.list_entities(
+                entity_type=entity_type,
+                user_id=user_id,
+                namespace=effective_namespace,
+                limit=limit,
+                include_archived=True,
             )
 
-            if not results:
-                return "No matching entities found."
+        return self._format_search_results(
+            entities=results,
+            query=query,
+            entity_type=entity_type,
+            namespace=effective_namespace,
+            limit=limit,
+        )
 
-            formatted = self._format_entities_list(entities=results)
-            return f"Found {len(results)} entity/entities:\n\n{formatted}"
-
-        return search_entities
-
-    def _create_async_search_entities_tool(
+    async def asearch_entities(
         self,
+        query: Optional[str] = None,
+        entity_type: Optional[str] = None,
         user_id: Optional[str] = None,
         namespace: Optional[str] = None,
-    ) -> Callable:
-        """Create the async search_entities tool."""
+        limit: int = 10,
+    ) -> str:
+        """Async version of search_entities."""
+        effective_namespace = namespace or self.config.namespace
 
-        async def search_entities(
-            query: str,
-            entity_type: Optional[str] = None,
-            limit: int = 5,
-        ) -> str:
-            """Search for entities in the knowledge base.
-
-            Use this to recall information about people, companies, projects, products,
-            or other entities that have been stored. Searches across names, facts,
-            events, and relationships.
-
-            **Good times to search:**
-            - Before discussing a company/person that might have stored context
-            - When the user references an entity by name
-            - To recall details about a project or product
-            - To find relationships between entities
-
-            **Search tips:**
-            - Search by name: "Acme Corp", "Jane Smith"
-            - Search by attribute: "PostgreSQL", "San Francisco"
-            - Search by relationship: "CEO", "competitor"
-            - Combine with entity_type to narrow results
-
-            Args:
-                query: What to search for. Can be a name, fact content, relationship,
-                       or any text that might appear in entity records.
-                       Examples: "Acme", "uses PostgreSQL", "VP Engineering"
-                entity_type: Optional filter - "person", "company", "project", "product", etc.
-                limit: Maximum results (default: 5)
-
-            Returns:
-                Formatted list of matching entities with their facts, events, and relationships.
-            """
+        if query:
             results = await self.asearch(
                 query=query,
                 entity_type=entity_type,
                 user_id=user_id,
-                namespace=namespace,
+                namespace=effective_namespace,
                 limit=limit,
+                include_archived=True,
+            )
+        else:
+            results = await self.alist_entities(
+                entity_type=entity_type,
+                user_id=user_id,
+                namespace=effective_namespace,
+                limit=limit,
+                include_archived=True,
             )
 
-            if not results:
-                return "No matching entities found."
+        return self._format_search_results(
+            entities=results,
+            query=query,
+            entity_type=entity_type,
+            namespace=effective_namespace,
+            limit=limit,
+        )
 
-            formatted = self._format_entities_list(entities=results)
-            return f"Found {len(results)} entity/entities:\n\n{formatted}"
-
-        return search_entities
-
-    # =========================================================================
-    # Tool: create_entity
-    # =========================================================================
-
-    def _create_create_entity_tool(
+    def _format_search_results(
         self,
+        entities: List[EntityMemory],
+        query: Optional[str],
+        entity_type: Optional[str],
+        namespace: str,
+        limit: int,
+    ) -> str:
+        scope = f"namespace '{namespace}'"
+        if entity_type:
+            scope += f", type '{entity_type}'"
+
+        if not entities:
+            if query:
+                return f"No entities matching {query!r} (searched {scope})."
+            return f"No entities stored yet (searched {scope})."
+
+        parts = []
+        for i, entity in enumerate(entities, 1):
+            parts.append(f"{i}. {self._format_entity_hit(entity)}")
+
+        header = (
+            f"Found {len(entities)} entity/entities matching {query!r} in {scope}"
+            if query
+            else f"{len(entities)} most recently updated entity/entities in {scope}"
+        )
+        footer = ""
+        if len(entities) >= limit:
+            footer = f"\n\nShowing the first {limit}; narrow the query or entity_type to see others."
+        return f"{header}:\n\n" + "\n\n".join(parts) + footer
+
+    def _format_entity_hit(self, entity: EntityMemory, max_facts: int = 6, max_events: int = 3) -> str:
+        """Format one search hit: bounded, with truncation markers and the note path."""
+        name = getattr(entity, "name", None) or entity.entity_id
+        archived = " (archived)" if getattr(entity, "archived_at", None) else ""
+        lines = [f"**{name}** ({entity.entity_type}){archived}"]
+
+        description = getattr(entity, "description", None)
+        if description:
+            lines.append(description)
+
+        properties = getattr(entity, "properties", {}) or {}
+        note = properties.get("note")
+        if note:
+            lines.append(f"note: {note}")
+        other_props = {k: v for k, v in properties.items() if k != "note"}
+        if other_props:
+            lines.append("Properties: " + ", ".join(f"{k}: {v}" for k, v in other_props.items()))
+
+        live = entity.live_facts() if hasattr(entity, "live_facts") else getattr(entity, "facts", [])
+        if live:
+            shown = live[:max_facts]
+            marker = f" ({len(shown)} of {len(live)} facts)" if len(live) > len(shown) else ""
+            lines.append("Facts:" + marker)
+            for f in shown:
+                lines.append(f"  - {f.get('content', f) if isinstance(f, dict) else f}")
+
+        entity_events = getattr(entity, "events", []) or []
+        if entity_events:
+            shown_events = entity_events[-max_events:]
+            marker = (
+                f" (last {len(shown_events)} of {len(entity_events)} events)"
+                if len(entity_events) > len(shown_events)
+                else ""
+            )
+            lines.append("Events:" + marker)
+            for e in shown_events:
+                if isinstance(e, dict):
+                    date = f" ({e.get('date')})" if e.get("date") else ""
+                    lines.append(f"  - {e.get('content', e)}{date}")
+                else:
+                    lines.append(f"  - {e}")
+
+        relationships = getattr(entity, "relationships", []) or []
+        if relationships:
+            lines.append("Relationships:")
+            for r in relationships:
+                if isinstance(r, dict):
+                    arrow = "->" if r.get("direction", "outgoing") == "outgoing" else "<-"
+                    lines.append(f"  - {r.get('relation')} {arrow} {r.get('entity_id')}")
+
+        return "\n".join(lines)
+
+    # =========================================================================
+    # Public write API: forget
+    # =========================================================================
+
+    def forget(
+        self,
+        entity: str,
+        fact: Optional[str] = None,
         user_id: Optional[str] = None,
         agent_id: Optional[str] = None,
         team_id: Optional[str] = None,
         namespace: Optional[str] = None,
-    ) -> Callable:
-        """Create the create_entity tool."""
+    ) -> str:
+        """Retire a fact from an entity, or archive the whole entity."""
+        if not self.db:
+            return "Entity memory has no database configured; nothing was changed."
 
-        def create_entity(
-            entity_id: str,
-            entity_type: str,
-            name: str,
-            description: Optional[str] = None,
-            properties: Optional[Dict[str, str]] = None,
-        ) -> str:
-            """Create a new entity in the knowledge base.
+        effective_namespace = namespace or self.config.namespace
+        entity_obj = self._resolve(entity=entity, entity_type=None, user_id=user_id, namespace=effective_namespace)
+        if entity_obj is None:
+            return f"No entity found matching {entity!r}."
 
-            Use this when you encounter a person, company, project, or other entity
-            worth remembering. Create the entity first, then add facts/events/relationships.
-
-            **When to create an entity:**
-            - A company, person, or project is discussed with substantive details
-            - Information would be useful to recall in future conversations
-            - The entity has a specific identity (not just "a company")
-
-            **When NOT to create:**
-            - For the user themselves (use user memory)
-            - For generic concepts without specific identity
-            - For one-off mentions with no useful details
-
-            Args:
-                entity_id: Unique identifier using lowercase and underscores.
-                          Convention: descriptive name like "acme_corp", "jane_smith", "project_atlas"
-                          Bad: "company1", "entity_123", "c"
-                entity_type: Category of entity. Common types:
-                          - "person": Individual people
-                          - "company": Businesses, organizations
-                          - "project": Specific initiatives or projects
-                          - "product": Software, services, offerings
-                          - "system": Technical systems, platforms
-                          - "concept": Domain-specific concepts worth tracking
-                name: Human-readable display name (e.g., "Acme Corporation", "Jane Smith")
-                description: Brief description of what/who this entity is.
-                          Good: "Enterprise SaaS startup in the fintech space, potential client"
-                          Bad: "A company" (too vague)
-                properties: Optional key-value metadata (e.g., {"industry": "fintech", "stage": "Series A"})
-
-            Returns:
-                Confirmation message.
-            """
-            success = self.create_entity(
-                entity_id=entity_id,
-                entity_type=entity_type,
-                name=name,
-                description=description,
-                properties=properties,
+        result, should_save = self._apply_forget(entity_obj=entity_obj, fact=fact)
+        if should_save:
+            saved = self._save_entity(
+                entity=entity_obj,
                 user_id=user_id,
                 agent_id=agent_id,
                 team_id=team_id,
-                namespace=namespace,
+                namespace=effective_namespace,
             )
+            if not saved:
+                return f"Failed to update {entity_obj.entity_type}/{entity_obj.entity_id}."
+            self.entity_updated = True
+        return result
 
-            if success:
-                self.entity_updated = True
-                return f"Entity created: {entity_type}/{entity_id} ({name})"
-            return "Failed to create entity (may already exist)"
-
-        return create_entity
-
-    def _create_async_create_entity_tool(
+    async def aforget(
         self,
+        entity: str,
+        fact: Optional[str] = None,
         user_id: Optional[str] = None,
         agent_id: Optional[str] = None,
         team_id: Optional[str] = None,
         namespace: Optional[str] = None,
-    ) -> Callable:
-        """Create the async create_entity tool."""
+    ) -> str:
+        """Async version of forget."""
+        if not self.db:
+            return "Entity memory has no database configured; nothing was changed."
 
-        async def create_entity(
-            entity_id: str,
-            entity_type: str,
-            name: str,
-            description: Optional[str] = None,
-            properties: Optional[Dict[str, str]] = None,
-        ) -> str:
-            """Create a new entity in the knowledge base.
+        effective_namespace = namespace or self.config.namespace
+        entity_obj = await self._aresolve(
+            entity=entity, entity_type=None, user_id=user_id, namespace=effective_namespace
+        )
+        if entity_obj is None:
+            return f"No entity found matching {entity!r}."
 
-            Use this when you encounter a person, company, project, or other entity
-            worth remembering. Create the entity first, then add facts/events/relationships.
-
-            **When to create an entity:**
-            - A company, person, or project is discussed with substantive details
-            - Information would be useful to recall in future conversations
-            - The entity has a specific identity (not just "a company")
-
-            **When NOT to create:**
-            - For the user themselves (use user memory)
-            - For generic concepts without specific identity
-            - For one-off mentions with no useful details
-
-            Args:
-                entity_id: Unique identifier using lowercase and underscores.
-                          Convention: descriptive name like "acme_corp", "jane_smith", "project_atlas"
-                          Bad: "company1", "entity_123", "c"
-                entity_type: Category of entity. Common types:
-                          - "person": Individual people
-                          - "company": Businesses, organizations
-                          - "project": Specific initiatives or projects
-                          - "product": Software, services, offerings
-                          - "system": Technical systems, platforms
-                          - "concept": Domain-specific concepts worth tracking
-                name: Human-readable display name (e.g., "Acme Corporation", "Jane Smith")
-                description: Brief description of what/who this entity is.
-                          Good: "Enterprise SaaS startup in the fintech space, potential client"
-                          Bad: "A company" (too vague)
-                properties: Optional key-value metadata (e.g., {"industry": "fintech", "stage": "Series A"})
-
-            Returns:
-                Confirmation message.
-            """
-            success = await self.acreate_entity(
-                entity_id=entity_id,
-                entity_type=entity_type,
-                name=name,
-                description=description,
-                properties=properties,
+        result, should_save = self._apply_forget(entity_obj=entity_obj, fact=fact)
+        if should_save:
+            saved = await self._asave_entity(
+                entity=entity_obj,
                 user_id=user_id,
                 agent_id=agent_id,
                 team_id=team_id,
-                namespace=namespace,
+                namespace=effective_namespace,
+            )
+            if not saved:
+                return f"Failed to update {entity_obj.entity_type}/{entity_obj.entity_id}."
+            self.entity_updated = True
+        return result
+
+    def _apply_forget(self, entity_obj: EntityMemory, fact: Optional[str]) -> Tuple[str, bool]:
+        """Apply forget in memory. Returns (message, should_save)."""
+        label = f"{entity_obj.entity_type}/{entity_obj.entity_id}"
+
+        # No fact: archive the entity.
+        if fact is None or not fact.strip():
+            if getattr(entity_obj, "archived_at", None):
+                return f"{label} is already archived.", False
+            entity_obj.archived_at = _utc_now_iso()
+            entity_obj.updated_at = _utc_now_iso()
+            return (
+                f"Archived {label}. It will no longer be recalled; search_entities can still "
+                f"find it, and any new remember_about about it revives it.",
+                True,
             )
 
-            if success:
-                self.entity_updated = True
-                return f"Entity created: {entity_type}/{entity_id} ({name})"
-            return "Failed to create entity (may already exist)"
+        # Fact given: match against live fact content.
+        needle = _normalize_fact_text(fact)
+        live = entity_obj.live_facts()
 
-        return create_entity
+        exact = [f for f in live if isinstance(f, dict) and _normalize_fact_text(str(f.get("content", ""))) == needle]
+        if exact:
+            for f in exact:
+                entity_obj.retire_fact(f["id"], superseded_by="forgotten")
+            entity_obj.updated_at = _utc_now_iso()
+            return f"Retired fact on {label}: {exact[0].get('content')}", True
+
+        contains = [
+            f
+            for f in live
+            if isinstance(f, dict)
+            and (
+                needle in _normalize_fact_text(str(f.get("content", "")))
+                or _normalize_fact_text(str(f.get("content", ""))) in needle
+            )
+        ]
+        if len(contains) == 1:
+            entity_obj.retire_fact(contains[0]["id"], superseded_by="forgotten")
+            entity_obj.updated_at = _utc_now_iso()
+            return f"Retired fact on {label}: {contains[0].get('content')}", True
+        if len(contains) > 1:
+            listing = "\n".join(f"  - {f.get('content')}" for f in contains)
+            return (
+                f"Multiple facts on {label} match {fact!r}; nothing was retired. "
+                f"Call forget again with the exact wording of one of:\n{listing}",
+                False,
+            )
+
+        if not live:
+            return f"No matching fact on {label}. It has no live facts.", False
+        bounded = live[:10]
+        listing = "\n".join(f"  - {f.get('content') if isinstance(f, dict) else f}" for f in bounded)
+        more = f"\n  ... and {len(live) - len(bounded)} more" if len(live) > len(bounded) else ""
+        return f"No matching fact on {label}. Its live facts are:\n{listing}{more}", False
 
     # =========================================================================
-    # Tool: update_entity
+    # Resolution (name -> stored entity)
     # =========================================================================
 
-    def _create_update_entity_tool(
+    def _resolve(
         self,
-        user_id: Optional[str] = None,
-        agent_id: Optional[str] = None,
-        team_id: Optional[str] = None,
-        namespace: Optional[str] = None,
-    ) -> Callable:
-        """Create the update_entity tool."""
+        entity: str,
+        entity_type: Optional[str],
+        user_id: Optional[str],
+        namespace: str,
+    ) -> Optional[EntityMemory]:
+        """Resolve an entity by name within the namespace.
 
-        def update_entity(
-            entity_id: str,
-            entity_type: str,
-            name: Optional[str] = None,
-            description: Optional[str] = None,
-            properties: Optional[Dict[str, str]] = None,
-        ) -> str:
-            """Update an existing entity's core properties.
+        Matches the slugified name against stored entity ids. When entity_type is
+        given, that exact key is tried first; otherwise (and as a fallback) the id
+        is matched across types.
+        """
+        slug = _slugify(entity)
 
-            Use this to modify the entity's identity information. Only provided
-            fields will be updated - omitted fields remain unchanged.
+        if entity_type:
+            found = self.get(entity_id=slug, entity_type=entity_type, user_id=user_id, namespace=namespace)
+            if found is not None:
+                return found
 
-            **When to update:**
-            - Name change: Company rebranded, person changed name
-            - Description evolved: Better understanding of what entity is
-            - Properties changed: New metadata to add
+        rows = self._get_rows_by_entity_id(entity_id=slug, user_id=user_id, namespace=namespace)
+        for row in rows:
+            parsed = self.schema.from_dict(row.get("content"))
+            if parsed is not None:
+                return parsed
+        return None
 
-            **Note:** To update facts, events, or relationships, use the specific
-            tools (update_fact, add_event, add_relationship) instead.
-
-            Args:
-                entity_id: The entity's identifier
-                entity_type: Type of entity
-                name: New display name (only if changed)
-                description: New description (only if you have better info)
-                properties: Properties to add/update (merged with existing)
-                           Existing properties not in this dict are preserved
-
-            Returns:
-                Confirmation message.
-            """
-            success = self.update_entity(
-                entity_id=entity_id,
-                entity_type=entity_type,
-                name=name,
-                description=description,
-                properties=properties,
-                user_id=user_id,
-                agent_id=agent_id,
-                team_id=team_id,
-                namespace=namespace,
-            )
-
-            if success:
-                self.entity_updated = True
-                return f"Entity updated: {entity_type}/{entity_id}"
-            return f"Entity not found: {entity_type}/{entity_id}"
-
-        return update_entity
-
-    def _create_async_update_entity_tool(
+    async def _aresolve(
         self,
-        user_id: Optional[str] = None,
-        agent_id: Optional[str] = None,
-        team_id: Optional[str] = None,
-        namespace: Optional[str] = None,
-    ) -> Callable:
-        """Create the async update_entity tool."""
+        entity: str,
+        entity_type: Optional[str],
+        user_id: Optional[str],
+        namespace: str,
+    ) -> Optional[EntityMemory]:
+        """Async version of _resolve."""
+        slug = _slugify(entity)
 
-        async def update_entity(
-            entity_id: str,
-            entity_type: str,
-            name: Optional[str] = None,
-            description: Optional[str] = None,
-            properties: Optional[Dict[str, str]] = None,
-        ) -> str:
-            """Update an existing entity's core properties.
+        if entity_type:
+            found = await self.aget(entity_id=slug, entity_type=entity_type, user_id=user_id, namespace=namespace)
+            if found is not None:
+                return found
 
-            Use this to modify the entity's identity information. Only provided
-            fields will be updated - omitted fields remain unchanged.
+        rows = await self._aget_rows_by_entity_id(entity_id=slug, user_id=user_id, namespace=namespace)
+        for row in rows:
+            parsed = self.schema.from_dict(row.get("content"))
+            if parsed is not None:
+                return parsed
+        return None
 
-            **When to update:**
-            - Name change: Company rebranded, person changed name
-            - Description evolved: Better understanding of what entity is
-            - Properties changed: New metadata to add
+    def _resolve_or_create_minimal(
+        self,
+        entity: str,
+        user_id: Optional[str],
+        agent_id: Optional[str],
+        team_id: Optional[str],
+        namespace: str,
+    ) -> EntityMemory:
+        """Resolve an entity by name, creating a minimal 'unknown' entity if absent."""
+        found = self._resolve(entity=entity, entity_type=None, user_id=user_id, namespace=namespace)
+        if found is not None:
+            return found
+        return self._minimal_entity(
+            entity=entity, user_id=user_id, agent_id=agent_id, team_id=team_id, namespace=namespace
+        )
 
-            **Note:** To update facts, events, or relationships, use the specific
-            tools (update_fact, add_event, add_relationship) instead.
+    async def _aresolve_or_create_minimal(
+        self,
+        entity: str,
+        user_id: Optional[str],
+        agent_id: Optional[str],
+        team_id: Optional[str],
+        namespace: str,
+    ) -> EntityMemory:
+        """Async version of _resolve_or_create_minimal."""
+        found = await self._aresolve(entity=entity, entity_type=None, user_id=user_id, namespace=namespace)
+        if found is not None:
+            return found
+        return self._minimal_entity(
+            entity=entity, user_id=user_id, agent_id=agent_id, team_id=team_id, namespace=namespace
+        )
 
-            Args:
-                entity_id: The entity's identifier
-                entity_type: Type of entity
-                name: New display name (only if changed)
-                description: New description (only if you have better info)
-                properties: Properties to add/update (merged with existing)
-                           Existing properties not in this dict are preserved
+    def _minimal_entity(
+        self,
+        entity: str,
+        user_id: Optional[str],
+        agent_id: Optional[str],
+        team_id: Optional[str],
+        namespace: str,
+    ) -> EntityMemory:
+        now = _utc_now_iso()
+        return self.schema(
+            entity_id=_slugify(entity),
+            entity_type="unknown",
+            name=entity.strip(),
+            properties={},
+            facts=[],
+            events=[],
+            relationships=[],
+            namespace=namespace,
+            user_id=user_id if namespace == "user" else None,
+            agent_id=agent_id,
+            team_id=team_id,
+            created_at=now,
+            updated_at=now,
+        )
 
-            Returns:
-                Confirmation message.
-            """
-            success = await self.aupdate_entity(
+    def _get_rows_by_entity_id(self, entity_id: str, user_id: Optional[str], namespace: str) -> List[Dict[str, Any]]:
+        """Fetch learnings rows for an entity id across entity types."""
+        if not self.db:
+            return []
+        try:
+            rows = self.db.get_learnings(
+                learning_type=self.learning_type,
                 entity_id=entity_id,
-                entity_type=entity_type,
-                name=name,
-                description=description,
-                properties=properties,
-                user_id=user_id,
-                agent_id=agent_id,
-                team_id=team_id,
                 namespace=namespace,
+                user_id=user_id if namespace == "user" else None,
             )
+            return rows or []
+        except Exception as e:
+            log_debug(f"EntityMemoryStore._get_rows_by_entity_id failed: {e}")
+            return []
 
-            if success:
-                self.entity_updated = True
-                return f"Entity updated: {entity_type}/{entity_id}"
-            return f"Entity not found: {entity_type}/{entity_id}"
-
-        return update_entity
+    async def _aget_rows_by_entity_id(
+        self, entity_id: str, user_id: Optional[str], namespace: str
+    ) -> List[Dict[str, Any]]:
+        """Async version of _get_rows_by_entity_id."""
+        if not self.db:
+            return []
+        try:
+            if isinstance(self.db, AsyncBaseDb):
+                rows = await self.db.get_learnings(
+                    learning_type=self.learning_type,
+                    entity_id=entity_id,
+                    namespace=namespace,
+                    user_id=user_id if namespace == "user" else None,
+                )
+            else:
+                rows = self.db.get_learnings(
+                    learning_type=self.learning_type,
+                    entity_id=entity_id,
+                    namespace=namespace,
+                    user_id=user_id if namespace == "user" else None,
+                )
+            return rows or []
+        except Exception as e:
+            log_debug(f"EntityMemoryStore._aget_rows_by_entity_id failed: {e}")
+            return []
 
     # =========================================================================
-    # Tool: add_fact
-    # =========================================================================
-
-    def _create_add_fact_tool(
-        self,
-        user_id: Optional[str] = None,
-        agent_id: Optional[str] = None,
-        team_id: Optional[str] = None,
-        namespace: Optional[str] = None,
-    ) -> Callable:
-        """Create the add_fact tool."""
-
-        def add_fact(
-            entity_id: str,
-            entity_type: str,
-            fact: str,
-        ) -> str:
-            """Add a fact to an entity.
-
-            Facts are **timeless truths** about an entity (semantic memory).
-            They describe what IS, not what HAPPENED.
-
-            **Good facts (timeless, descriptive):**
-            - "Uses PostgreSQL and Redis for their data layer"
-            - "Headquarters in San Francisco, engineering team in Austin"
-            - "Founded by ex-Google engineers in 2019"
-            - "Main product is a B2B analytics platform"
-            - "Prefers async communication via Slack"
-
-            **Not facts (use events instead):**
-            - "Launched v2.0 last month" → This is an EVENT (time-bound)
-            - "Just closed Series B" → This is an EVENT
-            - "Had a meeting yesterday" → This is an EVENT
-
-            **Not facts (too vague):**
-            - "It's a good company" → Subjective, not useful
-            - "They do tech stuff" → Too vague
-
-            Args:
-                entity_id: The entity's identifier (e.g., "acme_corp")
-                entity_type: Type of entity (e.g., "company")
-                fact: The fact to add - should be specific and timeless
-
-            Returns:
-                Confirmation message with fact ID.
-            """
-            fact_id = self.add_fact(
-                entity_id=entity_id,
-                entity_type=entity_type,
-                fact=fact,
-                user_id=user_id,
-                agent_id=agent_id,
-                team_id=team_id,
-                namespace=namespace,
-            )
-
-            if fact_id:
-                self.entity_updated = True
-                return f"Fact added to {entity_type}/{entity_id} (id: {fact_id})"
-            return "Failed to add fact (entity may not exist)"
-
-        return add_fact
-
-    def _create_async_add_fact_tool(
-        self,
-        user_id: Optional[str] = None,
-        agent_id: Optional[str] = None,
-        team_id: Optional[str] = None,
-        namespace: Optional[str] = None,
-    ) -> Callable:
-        """Create the async add_fact tool."""
-
-        async def add_fact(
-            entity_id: str,
-            entity_type: str,
-            fact: str,
-        ) -> str:
-            """Add a fact to an entity.
-
-            Facts are **timeless truths** about an entity (semantic memory).
-            They describe what IS, not what HAPPENED.
-
-            **Good facts (timeless, descriptive):**
-            - "Uses PostgreSQL and Redis for their data layer"
-            - "Headquarters in San Francisco, engineering team in Austin"
-            - "Founded by ex-Google engineers in 2019"
-            - "Main product is a B2B analytics platform"
-            - "Prefers async communication via Slack"
-
-            **Not facts (use events instead):**
-            - "Launched v2.0 last month" → This is an EVENT (time-bound)
-            - "Just closed Series B" → This is an EVENT
-            - "Had a meeting yesterday" → This is an EVENT
-
-            **Not facts (too vague):**
-            - "It's a good company" → Subjective, not useful
-            - "They do tech stuff" → Too vague
-
-            Args:
-                entity_id: The entity's identifier (e.g., "acme_corp")
-                entity_type: Type of entity (e.g., "company")
-                fact: The fact to add - should be specific and timeless
-
-            Returns:
-                Confirmation message with fact ID.
-            """
-            fact_id = await self.aadd_fact(
-                entity_id=entity_id,
-                entity_type=entity_type,
-                fact=fact,
-                user_id=user_id,
-                agent_id=agent_id,
-                team_id=team_id,
-                namespace=namespace,
-            )
-
-            if fact_id:
-                self.entity_updated = True
-                return f"Fact added to {entity_type}/{entity_id} (id: {fact_id})"
-            return "Failed to add fact (entity may not exist)"
-
-        return add_fact
-
-    # =========================================================================
-    # Tool: update_fact
-    # =========================================================================
-
-    def _create_update_fact_tool(
-        self,
-        user_id: Optional[str] = None,
-        agent_id: Optional[str] = None,
-        team_id: Optional[str] = None,
-        namespace: Optional[str] = None,
-    ) -> Callable:
-        """Create the update_fact tool."""
-
-        def update_fact(
-            entity_id: str,
-            entity_type: str,
-            fact_id: str,
-            fact: str,
-        ) -> str:
-            """Update an existing fact on an entity.
-
-            Use this when a fact needs correction or has become more specific.
-            The new fact completely replaces the old one.
-
-            **When to update:**
-            - Correction: Original fact was wrong
-            - More detail: "Uses PostgreSQL" → "Uses PostgreSQL 15 with TimescaleDB extension"
-            - Changed reality: "50 employees" → "75 employees after recent hiring"
-
-            **When to delete instead:**
-            - Fact is no longer true and shouldn't be replaced
-            - Fact was a misunderstanding
-
-            Args:
-                entity_id: The entity's identifier
-                entity_type: Type of entity
-                fact_id: ID of the fact to update (from search_entities results)
-                fact: New fact content - complete replacement, not a diff
-
-            Returns:
-                Confirmation message.
-            """
-            success = self.update_fact(
-                entity_id=entity_id,
-                entity_type=entity_type,
-                fact_id=fact_id,
-                fact=fact,
-                user_id=user_id,
-                agent_id=agent_id,
-                team_id=team_id,
-                namespace=namespace,
-            )
-
-            if success:
-                self.entity_updated = True
-                return f"Fact updated on {entity_type}/{entity_id}"
-            return f"Fact not found: {fact_id}"
-
-        return update_fact
-
-    def _create_async_update_fact_tool(
-        self,
-        user_id: Optional[str] = None,
-        agent_id: Optional[str] = None,
-        team_id: Optional[str] = None,
-        namespace: Optional[str] = None,
-    ) -> Callable:
-        """Create the async update_fact tool."""
-
-        async def update_fact(
-            entity_id: str,
-            entity_type: str,
-            fact_id: str,
-            fact: str,
-        ) -> str:
-            """Update an existing fact on an entity.
-
-            Use this when a fact needs correction or has become more specific.
-            The new fact completely replaces the old one.
-
-            **When to update:**
-            - Correction: Original fact was wrong
-            - More detail: "Uses PostgreSQL" → "Uses PostgreSQL 15 with TimescaleDB extension"
-            - Changed reality: "50 employees" → "75 employees after recent hiring"
-
-            **When to delete instead:**
-            - Fact is no longer true and shouldn't be replaced
-            - Fact was a misunderstanding
-
-            Args:
-                entity_id: The entity's identifier
-                entity_type: Type of entity
-                fact_id: ID of the fact to update (from search_entities results)
-                fact: New fact content - complete replacement, not a diff
-
-            Returns:
-                Confirmation message.
-            """
-            success = await self.aupdate_fact(
-                entity_id=entity_id,
-                entity_type=entity_type,
-                fact_id=fact_id,
-                fact=fact,
-                user_id=user_id,
-                agent_id=agent_id,
-                team_id=team_id,
-                namespace=namespace,
-            )
-
-            if success:
-                self.entity_updated = True
-                return f"Fact updated on {entity_type}/{entity_id}"
-            return f"Fact not found: {fact_id}"
-
-        return update_fact
-
-    # =========================================================================
-    # Tool: delete_fact
-    # =========================================================================
-
-    def _create_delete_fact_tool(
-        self,
-        user_id: Optional[str] = None,
-        agent_id: Optional[str] = None,
-        team_id: Optional[str] = None,
-        namespace: Optional[str] = None,
-    ) -> Callable:
-        """Create the delete_fact tool."""
-
-        def delete_fact(
-            entity_id: str,
-            entity_type: str,
-            fact_id: str,
-        ) -> str:
-            """Delete a fact from an entity.
-
-            Use this when a fact is no longer accurate and shouldn't be replaced
-            with updated information.
-
-            **When to delete:**
-            - Fact was incorrect/misunderstood
-            - Fact is no longer true (and no replacement makes sense)
-            - Duplicate of another fact
-            - Too vague to be useful
-
-            **When to update instead:**
-            - Fact needs correction but the topic is still relevant
-            - Fact needs more detail
-
-            Args:
-                entity_id: The entity's identifier
-                entity_type: Type of entity
-                fact_id: ID of the fact to delete (from search_entities results)
-
-            Returns:
-                Confirmation message.
-            """
-            success = self.delete_fact(
-                entity_id=entity_id,
-                entity_type=entity_type,
-                fact_id=fact_id,
-                user_id=user_id,
-                agent_id=agent_id,
-                team_id=team_id,
-                namespace=namespace,
-            )
-
-            if success:
-                self.entity_updated = True
-                return f"Fact deleted from {entity_type}/{entity_id}"
-            return f"Fact not found: {fact_id}"
-
-        return delete_fact
-
-    def _create_async_delete_fact_tool(
-        self,
-        user_id: Optional[str] = None,
-        agent_id: Optional[str] = None,
-        team_id: Optional[str] = None,
-        namespace: Optional[str] = None,
-    ) -> Callable:
-        """Create the async delete_fact tool."""
-
-        async def delete_fact(
-            entity_id: str,
-            entity_type: str,
-            fact_id: str,
-        ) -> str:
-            """Delete a fact from an entity.
-
-            Use this when a fact is no longer accurate and shouldn't be replaced
-            with updated information.
-
-            **When to delete:**
-            - Fact was incorrect/misunderstood
-            - Fact is no longer true (and no replacement makes sense)
-            - Duplicate of another fact
-            - Too vague to be useful
-
-            **When to update instead:**
-            - Fact needs correction but the topic is still relevant
-            - Fact needs more detail
-
-            Args:
-                entity_id: The entity's identifier
-                entity_type: Type of entity
-                fact_id: ID of the fact to delete (from search_entities results)
-
-            Returns:
-                Confirmation message.
-            """
-            success = await self.adelete_fact(
-                entity_id=entity_id,
-                entity_type=entity_type,
-                fact_id=fact_id,
-                user_id=user_id,
-                agent_id=agent_id,
-                team_id=team_id,
-                namespace=namespace,
-            )
-
-            if success:
-                self.entity_updated = True
-                return f"Fact deleted from {entity_type}/{entity_id}"
-            return f"Fact not found: {fact_id}"
-
-        return delete_fact
-
-    # =========================================================================
-    # Tool: add_event
-    # =========================================================================
-
-    def _create_add_event_tool(
-        self,
-        user_id: Optional[str] = None,
-        agent_id: Optional[str] = None,
-        team_id: Optional[str] = None,
-        namespace: Optional[str] = None,
-    ) -> Callable:
-        """Create the add_event tool."""
-
-        def add_event(
-            entity_id: str,
-            entity_type: str,
-            event: str,
-            date: Optional[str] = None,
-        ) -> str:
-            """Add an event to an entity.
-
-            Events are **time-bound occurrences** (episodic memory).
-            They describe what HAPPENED, not what IS.
-
-            **Good events (specific, time-bound):**
-            - "Launched v2.0 with new ML features" (date: "2025-01-15")
-            - "Closed $50M Series B led by Sequoia" (date: "2024-Q3")
-            - "Had 4-hour outage affecting payment processing" (date: "2024-12-20")
-            - "CEO announced pivot to enterprise market" (date: "2024-11")
-            - "Initial discovery call - interested in our analytics product"
-
-            **Not events (use facts instead):**
-            - "Uses PostgreSQL" → This is a FACT (timeless truth)
-            - "Based in San Francisco" → This is a FACT
-            - "Has 50 employees" → This is a FACT
-
-            **Include dates when known** - even approximate dates help:
-            - Exact: "2025-01-15"
-            - Month: "January 2025" or "2025-01"
-            - Quarter: "Q1 2025"
-            - Relative: "early 2024", "last week"
-
-            Args:
-                entity_id: The entity's identifier (e.g., "acme_corp")
-                entity_type: Type of entity (e.g., "company")
-                event: Description of what happened - be specific
-                date: When it happened (ISO format, natural language, or approximate)
-
-            Returns:
-                Confirmation message with event ID.
-            """
-            event_id = self.add_event(
-                entity_id=entity_id,
-                entity_type=entity_type,
-                event=event,
-                date=date,
-                user_id=user_id,
-                agent_id=agent_id,
-                team_id=team_id,
-                namespace=namespace,
-            )
-
-            if event_id:
-                self.entity_updated = True
-                return f"Event added to {entity_type}/{entity_id} (id: {event_id})"
-            return "Failed to add event (entity may not exist)"
-
-        return add_event
-
-    def _create_async_add_event_tool(
-        self,
-        user_id: Optional[str] = None,
-        agent_id: Optional[str] = None,
-        team_id: Optional[str] = None,
-        namespace: Optional[str] = None,
-    ) -> Callable:
-        """Create the async add_event tool."""
-
-        async def add_event(
-            entity_id: str,
-            entity_type: str,
-            event: str,
-            date: Optional[str] = None,
-        ) -> str:
-            """Add an event to an entity.
-
-            Events are **time-bound occurrences** (episodic memory).
-            They describe what HAPPENED, not what IS.
-
-            **Good events (specific, time-bound):**
-            - "Launched v2.0 with new ML features" (date: "2025-01-15")
-            - "Closed $50M Series B led by Sequoia" (date: "2024-Q3")
-            - "Had 4-hour outage affecting payment processing" (date: "2024-12-20")
-            - "CEO announced pivot to enterprise market" (date: "2024-11")
-            - "Initial discovery call - interested in our analytics product"
-
-            **Not events (use facts instead):**
-            - "Uses PostgreSQL" → This is a FACT (timeless truth)
-            - "Based in San Francisco" → This is a FACT
-            - "Has 50 employees" → This is a FACT
-
-            **Include dates when known** - even approximate dates help:
-            - Exact: "2025-01-15"
-            - Month: "January 2025" or "2025-01"
-            - Quarter: "Q1 2025"
-            - Relative: "early 2024", "last week"
-
-            Args:
-                entity_id: The entity's identifier (e.g., "acme_corp")
-                entity_type: Type of entity (e.g., "company")
-                event: Description of what happened - be specific
-                date: When it happened (ISO format, natural language, or approximate)
-
-            Returns:
-                Confirmation message with event ID.
-            """
-            event_id = await self.aadd_event(
-                entity_id=entity_id,
-                entity_type=entity_type,
-                event=event,
-                date=date,
-                user_id=user_id,
-                agent_id=agent_id,
-                team_id=team_id,
-                namespace=namespace,
-            )
-
-            if event_id:
-                self.entity_updated = True
-                return f"Event added to {entity_type}/{entity_id} (id: {event_id})"
-            return "Failed to add event (entity may not exist)"
-
-        return add_event
-
-    # =========================================================================
-    # Tool: add_relationship
-    # =========================================================================
-
-    def _create_add_relationship_tool(
-        self,
-        user_id: Optional[str] = None,
-        agent_id: Optional[str] = None,
-        team_id: Optional[str] = None,
-        namespace: Optional[str] = None,
-    ) -> Callable:
-        """Create the add_relationship tool."""
-
-        def add_relationship(
-            entity_id: str,
-            entity_type: str,
-            related_entity_id: str,
-            relation: str,
-            direction: str = "outgoing",
-        ) -> str:
-            """Add a relationship between two entities.
-
-            Relationships are **graph edges** connecting entities - they capture
-            how entities relate to each other.
-
-            **Common relationship patterns:**
-
-            People → Companies:
-            - "jane_smith" --[CEO]--> "acme_corp"
-            - "bob_jones" --[engineer_at]--> "acme_corp"
-            - "sarah_chen" --[founder]--> "startup_xyz"
-
-            Companies → Companies:
-            - "acme_corp" --[competitor_of]--> "beta_inc"
-            - "acme_corp" --[acquired]--> "small_startup"
-            - "acme_corp" --[partner_of]--> "big_vendor"
-
-            Projects → Other entities:
-            - "project_atlas" --[uses]--> "postgresql"
-            - "project_atlas" --[owned_by]--> "acme_corp"
-            - "project_atlas" --[led_by]--> "jane_smith"
-
-            **Direction matters:**
-            - "outgoing": This entity → Related entity (default)
-              "jane_smith" --[CEO]--> "acme_corp" means Jane IS CEO OF Acme
-            - "incoming": Related entity → This entity
-              "acme_corp" with incoming "CEO" from "jane_smith" means Acme HAS CEO Jane
-
-            Args:
-                entity_id: The source entity's identifier
-                entity_type: Type of source entity
-                related_entity_id: The target entity's identifier (must exist or will be created)
-                relation: Type of relationship - use clear, consistent labels:
-                         For roles: "CEO", "CTO", "engineer_at", "founder"
-                         For ownership: "owns", "owned_by", "part_of"
-                         For competition: "competitor_of", "partner_of"
-                         For technical: "uses", "depends_on", "integrates_with"
-                direction: "outgoing" (source → target) or "incoming" (target → source)
-
-            Returns:
-                Confirmation message with relationship ID.
-            """
-            rel_id = self.add_relationship(
-                entity_id=entity_id,
-                entity_type=entity_type,
-                related_entity_id=related_entity_id,
-                relation=relation,
-                direction=direction,
-                user_id=user_id,
-                agent_id=agent_id,
-                team_id=team_id,
-                namespace=namespace,
-            )
-
-            if rel_id:
-                self.entity_updated = True
-                return f"Relationship added: {entity_id} --[{relation}]--> {related_entity_id} (id: {rel_id})"
-            return "Failed to add relationship (entity may not exist)"
-
-        return add_relationship
-
-    def _create_async_add_relationship_tool(
-        self,
-        user_id: Optional[str] = None,
-        agent_id: Optional[str] = None,
-        team_id: Optional[str] = None,
-        namespace: Optional[str] = None,
-    ) -> Callable:
-        """Create the async add_relationship tool."""
-
-        async def add_relationship(
-            entity_id: str,
-            entity_type: str,
-            related_entity_id: str,
-            relation: str,
-            direction: str = "outgoing",
-        ) -> str:
-            """Add a relationship between two entities.
-
-            Relationships are **graph edges** connecting entities - they capture
-            how entities relate to each other.
-
-            **Common relationship patterns:**
-
-            People → Companies:
-            - "jane_smith" --[CEO]--> "acme_corp"
-            - "bob_jones" --[engineer_at]--> "acme_corp"
-            - "sarah_chen" --[founder]--> "startup_xyz"
-
-            Companies → Companies:
-            - "acme_corp" --[competitor_of]--> "beta_inc"
-            - "acme_corp" --[acquired]--> "small_startup"
-            - "acme_corp" --[partner_of]--> "big_vendor"
-
-            Projects → Other entities:
-            - "project_atlas" --[uses]--> "postgresql"
-            - "project_atlas" --[owned_by]--> "acme_corp"
-            - "project_atlas" --[led_by]--> "jane_smith"
-
-            **Direction matters:**
-            - "outgoing": This entity → Related entity (default)
-              "jane_smith" --[CEO]--> "acme_corp" means Jane IS CEO OF Acme
-            - "incoming": Related entity → This entity
-              "acme_corp" with incoming "CEO" from "jane_smith" means Acme HAS CEO Jane
-
-            Args:
-                entity_id: The source entity's identifier
-                entity_type: Type of source entity
-                related_entity_id: The target entity's identifier (must exist or will be created)
-                relation: Type of relationship - use clear, consistent labels:
-                         For roles: "CEO", "CTO", "engineer_at", "founder"
-                         For ownership: "owns", "owned_by", "part_of"
-                         For competition: "competitor_of", "partner_of"
-                         For technical: "uses", "depends_on", "integrates_with"
-                direction: "outgoing" (source → target) or "incoming" (target → source)
-
-            Returns:
-                Confirmation message with relationship ID.
-            """
-            rel_id = await self.aadd_relationship(
-                entity_id=entity_id,
-                entity_type=entity_type,
-                related_entity_id=related_entity_id,
-                relation=relation,
-                direction=direction,
-                user_id=user_id,
-                agent_id=agent_id,
-                team_id=team_id,
-                namespace=namespace,
-            )
-
-            if rel_id:
-                self.entity_updated = True
-                return f"Relationship added: {entity_id} --[{relation}]--> {related_entity_id} (id: {rel_id})"
-            return "Failed to add relationship (entity may not exist)"
-
-        return add_relationship
-
-    # =========================================================================
-    # Read Operations
+    # Data API: get / list / search / delete
     # =========================================================================
 
     def get(
@@ -1580,6 +1321,8 @@ class EntityMemoryStore(LearningStore):
         namespace: Optional[str] = None,
     ) -> Optional[EntityMemory]:
         """Retrieve entity by entity_id and entity_type.
+
+        This is the keyed data API; it returns archived entities too.
 
         Args:
             entity_id: The unique entity identifier.
@@ -1653,9 +1396,81 @@ class EntityMemoryStore(LearningStore):
             log_debug(f"EntityMemoryStore.aget failed for {entity_type}/{entity_id}: {e}")
             return None
 
-    # =========================================================================
-    # Search Operations
-    # =========================================================================
+    def list_entities(
+        self,
+        entity_type: Optional[str] = None,
+        user_id: Optional[str] = None,
+        namespace: Optional[str] = None,
+        limit: int = 10,
+        include_archived: bool = False,
+    ) -> List[EntityMemory]:
+        """List entities by recency (most recently updated first)."""
+        if not self.db:
+            return []
+
+        effective_namespace = namespace or self.config.namespace
+
+        try:
+            results = self.db.get_learnings(
+                learning_type=self.learning_type,
+                entity_type=entity_type,
+                namespace=effective_namespace,
+                user_id=user_id if effective_namespace == "user" else None,
+                limit=limit if include_archived else limit * 2,
+            )
+            return self._parse_rows(results or [], limit=limit, include_archived=include_archived)
+        except Exception as e:
+            log_debug(f"EntityMemoryStore.list_entities failed: {e}")
+            return []
+
+    async def alist_entities(
+        self,
+        entity_type: Optional[str] = None,
+        user_id: Optional[str] = None,
+        namespace: Optional[str] = None,
+        limit: int = 10,
+        include_archived: bool = False,
+    ) -> List[EntityMemory]:
+        """Async version of list_entities."""
+        if not self.db:
+            return []
+
+        effective_namespace = namespace or self.config.namespace
+
+        try:
+            if isinstance(self.db, AsyncBaseDb):
+                results = await self.db.get_learnings(
+                    learning_type=self.learning_type,
+                    entity_type=entity_type,
+                    namespace=effective_namespace,
+                    user_id=user_id if effective_namespace == "user" else None,
+                    limit=limit if include_archived else limit * 2,
+                )
+            else:
+                results = self.db.get_learnings(
+                    learning_type=self.learning_type,
+                    entity_type=entity_type,
+                    namespace=effective_namespace,
+                    user_id=user_id if effective_namespace == "user" else None,
+                    limit=limit if include_archived else limit * 2,
+                )
+            return self._parse_rows(results or [], limit=limit, include_archived=include_archived)
+        except Exception as e:
+            log_debug(f"EntityMemoryStore.alist_entities failed: {e}")
+            return []
+
+    def _parse_rows(self, rows: List[Dict[str, Any]], limit: int, include_archived: bool) -> List[EntityMemory]:
+        entities: List[EntityMemory] = []
+        for row in rows:
+            entity = self.schema.from_dict(row.get("content"))
+            if entity is None:
+                continue
+            if not include_archived and getattr(entity, "archived_at", None):
+                continue
+            entities.append(entity)
+            if len(entities) >= limit:
+                break
+        return entities
 
     def search(
         self,
@@ -1664,6 +1479,7 @@ class EntityMemoryStore(LearningStore):
         user_id: Optional[str] = None,
         namespace: Optional[str] = None,
         limit: int = 10,
+        include_archived: bool = False,
     ) -> List[EntityMemory]:
         """Search for entities matching query.
 
@@ -1673,6 +1489,7 @@ class EntityMemoryStore(LearningStore):
             user_id: User ID for "user" namespace scoping.
             namespace: Filter by namespace.
             limit: Maximum results to return.
+            include_archived: Include archived entities in results.
 
         Returns:
             List of matching EntityMemory objects.
@@ -1698,8 +1515,11 @@ class EntityMemoryStore(LearningStore):
                 content = result.get("content", {})
                 if self._matches_query(content=content, query=query_lower):
                     entity = self.schema.from_dict(content)
-                    if entity:
-                        entities.append(entity)
+                    if entity is None:
+                        continue
+                    if not include_archived and getattr(entity, "archived_at", None):
+                        continue
+                    entities.append(entity)
 
                 if len(entities) >= limit:
                     break
@@ -1718,6 +1538,7 @@ class EntityMemoryStore(LearningStore):
         user_id: Optional[str] = None,
         namespace: Optional[str] = None,
         limit: int = 10,
+        include_archived: bool = False,
     ) -> List[EntityMemory]:
         """Async version of search."""
         if not self.db:
@@ -1750,8 +1571,11 @@ class EntityMemoryStore(LearningStore):
                 content = result.get("content", {})
                 if self._matches_query(content=content, query=query_lower):
                     entity = self.schema.from_dict(content)
-                    if entity:
-                        entities.append(entity)
+                    if entity is None:
+                        continue
+                    if not include_archived and getattr(entity, "archived_at", None):
+                        continue
+                    entities.append(entity)
 
                 if len(entities) >= limit:
                     break
@@ -1811,677 +1635,49 @@ class EntityMemoryStore(LearningStore):
 
         return False
 
-    # =========================================================================
-    # Create Operations
-    # =========================================================================
-
-    def create_entity(
+    def delete(
         self,
         entity_id: str,
         entity_type: str,
-        name: str,
-        description: Optional[str] = None,
-        properties: Optional[Dict[str, str]] = None,
-        user_id: Optional[str] = None,
-        agent_id: Optional[str] = None,
-        team_id: Optional[str] = None,
         namespace: Optional[str] = None,
     ) -> bool:
-        """Create a new entity.
-
-        Args:
-            entity_id: Unique identifier for the entity.
-            entity_type: Type of entity.
-            name: Display name.
-            description: Brief description.
-            properties: Key-value properties.
-            user_id: User ID (required for "user" namespace).
-            agent_id: Agent context (stored for audit).
-            team_id: Team context (stored for audit).
-            namespace: Namespace for scoping.
-
-        Returns:
-            True if created, False if already exists or error.
-        """
+        """Hard-delete an entity from the store (data API - not exposed as a tool)."""
         if not self.db:
             return False
 
         effective_namespace = namespace or self.config.namespace
-
-        # Validate "user" namespace has user_id
-        if effective_namespace == "user" and not user_id:
-            log_warning("EntityMemoryStore.create_entity: 'user' namespace requires user_id")
-            return False
-
-        # Check if already exists
-        existing = self.get(
-            entity_id=entity_id,
-            entity_type=entity_type,
-            user_id=user_id,
-            namespace=effective_namespace,
-        )
-        if existing:
-            log_debug(f"EntityMemoryStore.create_entity: entity already exists {entity_type}/{entity_id}")
-            return False
-
         try:
-            now = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
-
-            entity = self.schema(
-                entity_id=entity_id,
-                entity_type=entity_type,
-                name=name,
-                description=description,
-                properties=properties or {},
-                facts=[],
-                events=[],
-                relationships=[],
-                namespace=effective_namespace,
-                user_id=user_id if effective_namespace == "user" else None,
-                agent_id=agent_id,
-                team_id=team_id,
-                created_at=now,
-                updated_at=now,
+            return bool(
+                self.db.delete_learning(id=self._build_entity_db_id(entity_id, entity_type, effective_namespace))
             )
-
-            self.db.upsert_learning(
-                id=self._build_entity_db_id(entity_id, entity_type, effective_namespace),
-                learning_type=self.learning_type,
-                entity_id=entity_id,
-                entity_type=entity_type,
-                namespace=effective_namespace,
-                user_id=user_id if effective_namespace == "user" else None,
-                agent_id=agent_id,
-                team_id=team_id,
-                content=entity.to_dict(),
-            )
-
-            log_debug(f"EntityMemoryStore.create_entity: created {entity_type}/{entity_id}")
-            return True
-
         except Exception as e:
-            log_debug(f"EntityMemoryStore.create_entity failed: {e}")
+            log_debug(f"EntityMemoryStore.delete failed: {e}")
             return False
 
-    async def acreate_entity(
+    async def adelete(
         self,
         entity_id: str,
         entity_type: str,
-        name: str,
-        description: Optional[str] = None,
-        properties: Optional[Dict[str, str]] = None,
-        user_id: Optional[str] = None,
-        agent_id: Optional[str] = None,
-        team_id: Optional[str] = None,
         namespace: Optional[str] = None,
     ) -> bool:
-        """Async version of create_entity."""
+        """Async version of delete."""
         if not self.db:
             return False
 
         effective_namespace = namespace or self.config.namespace
-
-        if effective_namespace == "user" and not user_id:
-            log_warning("EntityMemoryStore.acreate_entity: 'user' namespace requires user_id")
-            return False
-
-        existing = await self.aget(
-            entity_id=entity_id,
-            entity_type=entity_type,
-            user_id=user_id,
-            namespace=effective_namespace,
-        )
-        if existing:
-            log_debug(f"EntityMemoryStore.acreate_entity: entity already exists {entity_type}/{entity_id}")
-            return False
-
         try:
-            now = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
-
-            entity = self.schema(
-                entity_id=entity_id,
-                entity_type=entity_type,
-                name=name,
-                description=description,
-                properties=properties or {},
-                facts=[],
-                events=[],
-                relationships=[],
-                namespace=effective_namespace,
-                user_id=user_id if effective_namespace == "user" else None,
-                agent_id=agent_id,
-                team_id=team_id,
-                created_at=now,
-                updated_at=now,
-            )
-
             if isinstance(self.db, AsyncBaseDb):
-                await self.db.upsert_learning(
-                    id=self._build_entity_db_id(entity_id, entity_type, effective_namespace),
-                    learning_type=self.learning_type,
-                    entity_id=entity_id,
-                    entity_type=entity_type,
-                    namespace=effective_namespace,
-                    user_id=user_id if effective_namespace == "user" else None,
-                    agent_id=agent_id,
-                    team_id=team_id,
-                    content=entity.to_dict(),
+                return bool(
+                    await self.db.delete_learning(
+                        id=self._build_entity_db_id(entity_id, entity_type, effective_namespace)
+                    )
                 )
-            else:
-                self.db.upsert_learning(
-                    id=self._build_entity_db_id(entity_id, entity_type, effective_namespace),
-                    learning_type=self.learning_type,
-                    entity_id=entity_id,
-                    entity_type=entity_type,
-                    namespace=effective_namespace,
-                    user_id=user_id if effective_namespace == "user" else None,
-                    agent_id=agent_id,
-                    team_id=team_id,
-                    content=entity.to_dict(),
-                )
-
-            log_debug(f"EntityMemoryStore.acreate_entity: created {entity_type}/{entity_id}")
-            return True
-
+            return bool(
+                self.db.delete_learning(id=self._build_entity_db_id(entity_id, entity_type, effective_namespace))
+            )
         except Exception as e:
-            log_debug(f"EntityMemoryStore.acreate_entity failed: {e}")
+            log_debug(f"EntityMemoryStore.adelete failed: {e}")
             return False
-
-    # =========================================================================
-    # Update Operations
-    # =========================================================================
-
-    def update_entity(
-        self,
-        entity_id: str,
-        entity_type: str,
-        name: Optional[str] = None,
-        description: Optional[str] = None,
-        properties: Optional[Dict[str, str]] = None,
-        user_id: Optional[str] = None,
-        agent_id: Optional[str] = None,
-        team_id: Optional[str] = None,
-        namespace: Optional[str] = None,
-    ) -> bool:
-        """Update an existing entity's core properties.
-
-        Args:
-            entity_id: The entity's identifier.
-            entity_type: Type of entity.
-            name: New display name (optional).
-            description: New description (optional).
-            properties: Properties to merge (optional).
-            user_id: User ID for namespace scoping.
-            agent_id: Agent context.
-            team_id: Team context.
-            namespace: Namespace to search in.
-
-        Returns:
-            True if updated, False if not found.
-        """
-        effective_namespace = namespace or self.config.namespace
-
-        entity = self.get(
-            entity_id=entity_id,
-            entity_type=entity_type,
-            user_id=user_id,
-            namespace=effective_namespace,
-        )
-
-        if not entity:
-            return False
-
-        # Update fields
-        if name is not None:
-            entity.name = name
-        if description is not None:
-            entity.description = description
-        if properties is not None:
-            entity.properties = {**(entity.properties or {}), **properties}
-
-        entity.updated_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
-
-        return self._save_entity(
-            entity=entity,
-            user_id=user_id,
-            agent_id=agent_id,
-            team_id=team_id,
-            namespace=effective_namespace,
-        )
-
-    async def aupdate_entity(
-        self,
-        entity_id: str,
-        entity_type: str,
-        name: Optional[str] = None,
-        description: Optional[str] = None,
-        properties: Optional[Dict[str, str]] = None,
-        user_id: Optional[str] = None,
-        agent_id: Optional[str] = None,
-        team_id: Optional[str] = None,
-        namespace: Optional[str] = None,
-    ) -> bool:
-        """Async version of update_entity."""
-        effective_namespace = namespace or self.config.namespace
-
-        entity = await self.aget(
-            entity_id=entity_id,
-            entity_type=entity_type,
-            user_id=user_id,
-            namespace=effective_namespace,
-        )
-
-        if not entity:
-            return False
-
-        if name is not None:
-            entity.name = name
-        if description is not None:
-            entity.description = description
-        if properties is not None:
-            entity.properties = {**(entity.properties or {}), **properties}
-
-        entity.updated_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
-
-        return await self._asave_entity(
-            entity=entity,
-            user_id=user_id,
-            agent_id=agent_id,
-            team_id=team_id,
-            namespace=effective_namespace,
-        )
-
-    # =========================================================================
-    # Fact Operations
-    # =========================================================================
-
-    def add_fact(
-        self,
-        entity_id: str,
-        entity_type: str,
-        fact: str,
-        user_id: Optional[str] = None,
-        agent_id: Optional[str] = None,
-        team_id: Optional[str] = None,
-        namespace: Optional[str] = None,
-    ) -> Optional[str]:
-        """Add a fact to an entity.
-
-        Returns:
-            Fact ID if added, None if entity not found.
-        """
-        effective_namespace = namespace or self.config.namespace
-
-        entity = self.get(
-            entity_id=entity_id,
-            entity_type=entity_type,
-            user_id=user_id,
-            namespace=effective_namespace,
-        )
-
-        if not entity:
-            return None
-
-        fact_id = entity.add_fact(fact)
-        entity.updated_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
-
-        success = self._save_entity(
-            entity=entity,
-            user_id=user_id,
-            agent_id=agent_id,
-            team_id=team_id,
-            namespace=effective_namespace,
-        )
-
-        return fact_id if success else None
-
-    async def aadd_fact(
-        self,
-        entity_id: str,
-        entity_type: str,
-        fact: str,
-        user_id: Optional[str] = None,
-        agent_id: Optional[str] = None,
-        team_id: Optional[str] = None,
-        namespace: Optional[str] = None,
-    ) -> Optional[str]:
-        """Async version of add_fact."""
-        effective_namespace = namespace or self.config.namespace
-
-        entity = await self.aget(
-            entity_id=entity_id,
-            entity_type=entity_type,
-            user_id=user_id,
-            namespace=effective_namespace,
-        )
-
-        if not entity:
-            return None
-
-        fact_id = entity.add_fact(fact)
-        entity.updated_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
-
-        success = await self._asave_entity(
-            entity=entity,
-            user_id=user_id,
-            agent_id=agent_id,
-            team_id=team_id,
-            namespace=effective_namespace,
-        )
-
-        return fact_id if success else None
-
-    def update_fact(
-        self,
-        entity_id: str,
-        entity_type: str,
-        fact_id: str,
-        fact: str,
-        user_id: Optional[str] = None,
-        agent_id: Optional[str] = None,
-        team_id: Optional[str] = None,
-        namespace: Optional[str] = None,
-    ) -> bool:
-        """Update an existing fact."""
-        effective_namespace = namespace or self.config.namespace
-
-        entity = self.get(
-            entity_id=entity_id,
-            entity_type=entity_type,
-            user_id=user_id,
-            namespace=effective_namespace,
-        )
-
-        if not entity:
-            return False
-
-        if not entity.update_fact(fact_id, fact):
-            return False
-
-        entity.updated_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
-
-        return self._save_entity(
-            entity=entity,
-            user_id=user_id,
-            agent_id=agent_id,
-            team_id=team_id,
-            namespace=effective_namespace,
-        )
-
-    async def aupdate_fact(
-        self,
-        entity_id: str,
-        entity_type: str,
-        fact_id: str,
-        fact: str,
-        user_id: Optional[str] = None,
-        agent_id: Optional[str] = None,
-        team_id: Optional[str] = None,
-        namespace: Optional[str] = None,
-    ) -> bool:
-        """Async version of update_fact."""
-        effective_namespace = namespace or self.config.namespace
-
-        entity = await self.aget(
-            entity_id=entity_id,
-            entity_type=entity_type,
-            user_id=user_id,
-            namespace=effective_namespace,
-        )
-
-        if not entity:
-            return False
-
-        if not entity.update_fact(fact_id, fact):
-            return False
-
-        entity.updated_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
-
-        return await self._asave_entity(
-            entity=entity,
-            user_id=user_id,
-            agent_id=agent_id,
-            team_id=team_id,
-            namespace=effective_namespace,
-        )
-
-    def delete_fact(
-        self,
-        entity_id: str,
-        entity_type: str,
-        fact_id: str,
-        user_id: Optional[str] = None,
-        agent_id: Optional[str] = None,
-        team_id: Optional[str] = None,
-        namespace: Optional[str] = None,
-    ) -> bool:
-        """Delete a fact from an entity."""
-        effective_namespace = namespace or self.config.namespace
-
-        entity = self.get(
-            entity_id=entity_id,
-            entity_type=entity_type,
-            user_id=user_id,
-            namespace=effective_namespace,
-        )
-
-        if not entity:
-            return False
-
-        if not entity.delete_fact(fact_id):
-            return False
-
-        entity.updated_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
-
-        return self._save_entity(
-            entity=entity,
-            user_id=user_id,
-            agent_id=agent_id,
-            team_id=team_id,
-            namespace=effective_namespace,
-        )
-
-    async def adelete_fact(
-        self,
-        entity_id: str,
-        entity_type: str,
-        fact_id: str,
-        user_id: Optional[str] = None,
-        agent_id: Optional[str] = None,
-        team_id: Optional[str] = None,
-        namespace: Optional[str] = None,
-    ) -> bool:
-        """Async version of delete_fact."""
-        effective_namespace = namespace or self.config.namespace
-
-        entity = await self.aget(
-            entity_id=entity_id,
-            entity_type=entity_type,
-            user_id=user_id,
-            namespace=effective_namespace,
-        )
-
-        if not entity:
-            return False
-
-        if not entity.delete_fact(fact_id):
-            return False
-
-        entity.updated_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
-
-        return await self._asave_entity(
-            entity=entity,
-            user_id=user_id,
-            agent_id=agent_id,
-            team_id=team_id,
-            namespace=effective_namespace,
-        )
-
-    # =========================================================================
-    # Event Operations
-    # =========================================================================
-
-    def add_event(
-        self,
-        entity_id: str,
-        entity_type: str,
-        event: str,
-        date: Optional[str] = None,
-        user_id: Optional[str] = None,
-        agent_id: Optional[str] = None,
-        team_id: Optional[str] = None,
-        namespace: Optional[str] = None,
-    ) -> Optional[str]:
-        """Add an event to an entity.
-
-        Returns:
-            Event ID if added, None if entity not found.
-        """
-        effective_namespace = namespace or self.config.namespace
-
-        entity = self.get(
-            entity_id=entity_id,
-            entity_type=entity_type,
-            user_id=user_id,
-            namespace=effective_namespace,
-        )
-
-        if not entity:
-            return None
-
-        event_id = entity.add_event(event, date=date)
-        entity.updated_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
-
-        success = self._save_entity(
-            entity=entity,
-            user_id=user_id,
-            agent_id=agent_id,
-            team_id=team_id,
-            namespace=effective_namespace,
-        )
-
-        return event_id if success else None
-
-    async def aadd_event(
-        self,
-        entity_id: str,
-        entity_type: str,
-        event: str,
-        date: Optional[str] = None,
-        user_id: Optional[str] = None,
-        agent_id: Optional[str] = None,
-        team_id: Optional[str] = None,
-        namespace: Optional[str] = None,
-    ) -> Optional[str]:
-        """Async version of add_event."""
-        effective_namespace = namespace or self.config.namespace
-
-        entity = await self.aget(
-            entity_id=entity_id,
-            entity_type=entity_type,
-            user_id=user_id,
-            namespace=effective_namespace,
-        )
-
-        if not entity:
-            return None
-
-        event_id = entity.add_event(event, date=date)
-        entity.updated_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
-
-        success = await self._asave_entity(
-            entity=entity,
-            user_id=user_id,
-            agent_id=agent_id,
-            team_id=team_id,
-            namespace=effective_namespace,
-        )
-
-        return event_id if success else None
-
-    # =========================================================================
-    # Relationship Operations
-    # =========================================================================
-
-    def add_relationship(
-        self,
-        entity_id: str,
-        entity_type: str,
-        related_entity_id: str,
-        relation: str,
-        direction: str = "outgoing",
-        user_id: Optional[str] = None,
-        agent_id: Optional[str] = None,
-        team_id: Optional[str] = None,
-        namespace: Optional[str] = None,
-    ) -> Optional[str]:
-        """Add a relationship to an entity.
-
-        Returns:
-            Relationship ID if added, None if entity not found.
-        """
-        effective_namespace = namespace or self.config.namespace
-
-        entity = self.get(
-            entity_id=entity_id,
-            entity_type=entity_type,
-            user_id=user_id,
-            namespace=effective_namespace,
-        )
-
-        if not entity:
-            return None
-
-        rel_id = entity.add_relationship(related_entity_id, relation, direction=direction)
-        entity.updated_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
-
-        success = self._save_entity(
-            entity=entity,
-            user_id=user_id,
-            agent_id=agent_id,
-            team_id=team_id,
-            namespace=effective_namespace,
-        )
-
-        return rel_id if success else None
-
-    async def aadd_relationship(
-        self,
-        entity_id: str,
-        entity_type: str,
-        related_entity_id: str,
-        relation: str,
-        direction: str = "outgoing",
-        user_id: Optional[str] = None,
-        agent_id: Optional[str] = None,
-        team_id: Optional[str] = None,
-        namespace: Optional[str] = None,
-    ) -> Optional[str]:
-        """Async version of add_relationship."""
-        effective_namespace = namespace or self.config.namespace
-
-        entity = await self.aget(
-            entity_id=entity_id,
-            entity_type=entity_type,
-            user_id=user_id,
-            namespace=effective_namespace,
-        )
-
-        if not entity:
-            return None
-
-        rel_id = entity.add_relationship(related_entity_id, relation, direction=direction)
-        entity.updated_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
-
-        success = await self._asave_entity(
-            entity=entity,
-            user_id=user_id,
-            agent_id=agent_id,
-            team_id=team_id,
-            namespace=effective_namespace,
-        )
-
-        return rel_id if success else None
 
     # =========================================================================
     # Internal Save Helpers
@@ -2614,17 +1810,6 @@ class EntityMemoryStore(LearningStore):
 
         return "\n".join(parts)
 
-    def _format_entities_list(self, entities: List[EntityMemory]) -> str:
-        """Format entities for tool output."""
-        parts = []
-        for i, entity in enumerate(entities, 1):
-            if hasattr(entity, "get_context_text"):
-                formatted = entity.get_context_text()
-            else:
-                formatted = self._format_entity_basic(entity=entity)
-            parts.append(f"{i}. {formatted}")
-        return "\n\n".join(parts)
-
     # =========================================================================
     # Representation
     # =========================================================================
@@ -2659,27 +1844,6 @@ class EntityMemoryStore(LearningStore):
             user_id: User ID for "user" namespace scoping.
             namespace: Namespace to search in.
             raw: If True, print raw dict using pprint instead of formatted panel.
-
-        Example:
-            >>> store.print(entity_id="acme_corp", entity_type="company")
-            ╭────────────────── Entity Memory ──────────────────╮
-            │ Acme Corporation (company)                        │
-            │ Enterprise software company                       │
-            │                                                   │
-            │ Properties:                                       │
-            │   industry: fintech                               │
-            │   size: startup                                   │
-            │                                                   │
-            │ Facts:                                            │
-            │   [dim][f1][/dim] Uses PostgreSQL for main DB     │
-            │   [dim][f2][/dim] API uses OAuth2 authentication  │
-            │                                                   │
-            │ Events:                                           │
-            │   [dim][e1][/dim] Launched v2.0 (2024-01-15)      │
-            │                                                   │
-            │ Relationships:                                    │
-            │   CEO → bob_smith                                 │
-            ╰────────────────── acme_corp ──────────────────────╯
         """
         from agno.learn.utils import print_panel
 
@@ -2698,10 +1862,10 @@ class EntityMemoryStore(LearningStore):
             # Header: name and type
             name = getattr(entity, "name", None)
             etype = getattr(entity, "entity_type", entity_type)
-            if name:
-                lines.append(f"[bold]{name}[/bold] ({etype})")
-            else:
-                lines.append(f"[bold]{entity_id}[/bold] ({etype})")
+            header = f"[bold]{name or entity_id}[/bold] ({etype})"
+            if getattr(entity, "archived_at", None):
+                header += " [dim](archived)[/dim]"
+            lines.append(header)
 
             # Description
             description = getattr(entity, "description", None)
@@ -2716,12 +1880,12 @@ class EntityMemoryStore(LearningStore):
                 for key, value in properties.items():
                     lines.append(f"  {key}: {value}")
 
-            # Facts
-            facts = getattr(entity, "facts", [])
-            if facts:
+            # Facts (live only)
+            live = entity.live_facts() if hasattr(entity, "live_facts") else getattr(entity, "facts", [])
+            if live:
                 lines.append("")
                 lines.append("Facts:")
-                for fact in facts:
+                for fact in live:
                     if isinstance(fact, dict):
                         fact_id = fact.get("id", "?")
                         content = fact.get("content", str(fact))

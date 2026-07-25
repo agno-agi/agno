@@ -5,6 +5,7 @@ Entity memory is AGENTIC-only: the agent records through four tools
 extraction pass. These tests run offline against a recording fake db.
 """
 
+import inspect
 from typing import Any, Dict, List, Optional
 
 import pytest
@@ -18,6 +19,7 @@ class RecordingLearningDb:
 
     def __init__(self) -> None:
         self.rows: Dict[str, Dict[str, Any]] = {}
+        self._clock = 0
 
     def get_learning(self, **kwargs: Any) -> Optional[Dict[str, Any]]:
         learning_type = kwargs.get("learning_type")
@@ -35,15 +37,15 @@ class RecordingLearningDb:
         return None
 
     def upsert_learning(self, id: str, **kwargs: Any) -> None:
-        import time
-
         existing = self.rows.get(id, {})
         row = {**existing, **kwargs, "learning_id": id}
-        row["updated_at"] = int(time.time())
+        self._clock += 1
+        row["updated_at"] = self._clock
         self.rows[id] = row
 
     def get_learnings(self, **kwargs: Any) -> List[Dict[str, Any]]:
         learning_type = kwargs.get("learning_type")
+        entity_id = kwargs.get("entity_id")
         entity_type = kwargs.get("entity_type")
         namespace = kwargs.get("namespace")
         limit = kwargs.get("limit")
@@ -51,6 +53,7 @@ class RecordingLearningDb:
             row
             for row in self.rows.values()
             if (learning_type is None or row.get("learning_type") == learning_type)
+            and (entity_id is None or row.get("entity_id") == entity_id)
             and (entity_type is None or row.get("entity_type") == entity_type)
             and (namespace is None or row.get("namespace") == namespace)
         ]
@@ -109,3 +112,220 @@ class TestAgenticOnly:
         entity_store = machine.entity_memory_store
         assert entity_store is not None
         assert entity_store.config.mode is LearningMode.AGENTIC
+
+
+class TestToolSurface:
+    def test_sync_tools_are_the_four(self, store: EntityMemoryStore) -> None:
+        tools = store.get_tools(user_id="user-1")
+        assert [t.__name__ for t in tools] == ["remember_about", "link_entities", "search_entities", "forget"]
+        assert all(not inspect.iscoroutinefunction(t) for t in tools)
+
+    async def test_async_tools_are_the_four(self, store: EntityMemoryStore) -> None:
+        tools = await store.aget_tools(user_id="user-1")
+        assert [t.__name__ for t in tools] == ["remember_about", "link_entities", "search_entities", "forget"]
+        assert all(inspect.iscoroutinefunction(t) for t in tools)
+
+    def test_sync_and_async_docstrings_match(self, store: EntityMemoryStore) -> None:
+        import asyncio
+
+        sync_tools = store.get_tools()
+        async_tools = asyncio.run(store.aget_tools())
+        for sync_tool, async_tool in zip(sync_tools, async_tools):
+            assert sync_tool.__doc__ == async_tool.__doc__
+            assert sync_tool.__doc__  # never empty
+
+    def test_tool_signatures_match_the_spec(self, store: EntityMemoryStore) -> None:
+        tools = {t.__name__: t for t in store.get_tools()}
+        assert list(inspect.signature(tools["remember_about"]).parameters) == [
+            "entity",
+            "entity_type",
+            "description",
+            "facts",
+            "events",
+            "note",
+        ]
+        assert list(inspect.signature(tools["link_entities"]).parameters) == ["entity", "relation", "related_entity"]
+        assert list(inspect.signature(tools["search_entities"]).parameters) == ["query", "entity_type"]
+        assert list(inspect.signature(tools["forget"]).parameters) == ["entity", "fact"]
+
+    def test_tools_disabled_when_configured_off(self, db: RecordingLearningDb) -> None:
+        store = EntityMemoryStore(config=EntityMemoryConfig(db=db, enable_agent_tools=False))  # type: ignore[arg-type]
+        assert store.get_tools() == []
+
+
+class TestRememberAbout:
+    def test_creates_entity_with_slugified_id(self, store: EntityMemoryStore) -> None:
+        message = store.remember_about(entity="Sarah Chen", entity_type="person", facts=["designs radar"])
+        assert "person/sarah_chen" in message
+        entity = store.get(entity_id="sarah_chen", entity_type="person")
+        assert entity is not None
+        assert entity.name == "Sarah Chen"
+        assert [f["content"] for f in entity.facts] == ["designs radar"]
+
+    def test_merges_into_existing_entity(self, store: EntityMemoryStore) -> None:
+        store.remember_about(entity="radar", entity_type="project", facts=["db: Postgres"])
+        store.remember_about(entity="radar", entity_type="project", events=["shipped v1"])
+        entity = store.get(entity_id="radar", entity_type="project")
+        assert entity is not None
+        assert len(entity.facts) == 1
+        assert len(entity.events) == 1
+
+    def test_note_pointer_round_trips(self, store: EntityMemoryStore) -> None:
+        store.remember_about(entity="radar", entity_type="project", note="notes/radar.md")
+        entity = store.get(entity_id="radar", entity_type="project")
+        assert entity is not None
+        assert entity.properties["note"] == "notes/radar.md"
+        # And it shows in search results
+        result = store.search_entities(query="radar")
+        assert "note: notes/radar.md" in result
+
+    async def test_async_remember_about(self, store: EntityMemoryStore) -> None:
+        message = await store.aremember_about(entity="Acme Corp", entity_type="company", facts=["fintech"])
+        assert "company/acme_corp" in message
+        entity = await store.aget(entity_id="acme_corp", entity_type="company")
+        assert entity is not None
+
+    def test_user_namespace_requires_user_id(self, db: RecordingLearningDb) -> None:
+        store = EntityMemoryStore(config=EntityMemoryConfig(db=db, namespace="user"))  # type: ignore[arg-type]
+        message = store.remember_about(entity="radar", entity_type="project")
+        assert "user_id" in message
+        assert db.rows == {}
+
+
+class TestLinkEntities:
+    def test_edge_written_on_both_rows_with_far_end_type(self, store: EntityMemoryStore) -> None:
+        store.remember_about(entity="Sarah Chen", entity_type="person")
+        store.remember_about(entity="radar", entity_type="project")
+        message = store.link_entities(entity="Sarah Chen", relation="works_on", related_entity="radar")
+        assert "person/sarah_chen" in message and "project/radar" in message
+
+        sarah = store.get(entity_id="sarah_chen", entity_type="person")
+        radar = store.get(entity_id="radar", entity_type="project")
+        assert sarah is not None and radar is not None
+
+        out_edge = sarah.relationships[0]
+        assert out_edge["entity_id"] == "radar"
+        assert out_edge["entity_type"] == "project"
+        assert out_edge["relation"] == "works_on"
+        assert out_edge["direction"] == "outgoing"
+
+        in_edge = radar.relationships[0]
+        assert in_edge["entity_id"] == "sarah_chen"
+        assert in_edge["entity_type"] == "person"
+        assert in_edge["relation"] == "works_on"
+        assert in_edge["direction"] == "incoming"
+
+    def test_unresolved_end_creates_minimal_unknown_entity(self, store: EntityMemoryStore) -> None:
+        store.remember_about(entity="radar", entity_type="project")
+        store.link_entities(entity="radar", relation="uses", related_entity="Postgres")
+        postgres = store.get(entity_id="postgres", entity_type="unknown")
+        assert postgres is not None
+        assert postgres.relationships[0]["direction"] == "incoming"
+
+    async def test_async_link_entities(self, store: EntityMemoryStore) -> None:
+        await store.aremember_about(entity="radar", entity_type="project")
+        message = await store.alink_entities(entity="radar", relation="owned_by", related_entity="Acme")
+        assert "Linked" in message
+
+
+class TestSearchEntities:
+    def test_query_matches_fact_content(self, store: EntityMemoryStore) -> None:
+        store.remember_about(entity="Acme", entity_type="company", facts=["uses PostgreSQL"])
+        result = store.search_entities(query="postgresql")
+        assert "Acme" in result
+
+    def test_no_query_lists_by_recency(self, store: EntityMemoryStore) -> None:
+        store.remember_about(entity="older", entity_type="project")
+        store.remember_about(entity="newer", entity_type="project")
+        result = store.search_entities()
+        assert result.index("newer") < result.index("older")
+
+    def test_no_match_reports_scan_scope(self, store: EntityMemoryStore) -> None:
+        store.remember_about(entity="radar", entity_type="project")
+        result = store.search_entities(query="nonexistent")
+        assert "No entities matching" in result
+        assert "namespace 'global'" in result
+
+    def test_truncation_marker_on_many_facts(self, store: EntityMemoryStore) -> None:
+        store.remember_about(entity="radar", entity_type="project", facts=[f"fact number {i}" for i in range(19)])
+        result = store.search_entities(query="radar")
+        assert "(6 of 19 facts)" in result
+
+    async def test_async_search_entities(self, store: EntityMemoryStore) -> None:
+        await store.aremember_about(entity="radar", entity_type="project")
+        result = await store.asearch_entities(query="radar")
+        assert "radar" in result
+
+
+class TestForget:
+    def test_archive_excluded_from_recall_but_searchable(self, store: EntityMemoryStore) -> None:
+        store.remember_about(entity="radar", entity_type="project", facts=["shipped"])
+        message = store.forget(entity="radar")
+        assert "Archived project/radar" in message
+
+        # Excluded from recall
+        assert store.recall(entity_id="radar", entity_type="project") is None
+        # Still reachable via explicit search, marked archived
+        result = store.search_entities(query="radar")
+        assert "(archived)" in result
+        # Excluded from the listing path (recall-adjacent surfaces exclude archived)
+        assert store.list_entities() == []
+
+    def test_remember_revives_archived_entity(self, store: EntityMemoryStore) -> None:
+        store.remember_about(entity="radar", entity_type="project")
+        store.forget(entity="radar")
+        message = store.remember_about(entity="radar", entity_type="project", facts=["back on"])
+        assert "revived" in message
+        assert store.recall(entity_id="radar", entity_type="project") is not None
+
+    def test_forget_unknown_entity(self, store: EntityMemoryStore) -> None:
+        assert "No entity found" in store.forget(entity="ghost")
+
+    def test_exact_fact_match_retires(self, store: EntityMemoryStore) -> None:
+        store.remember_about(entity="radar", entity_type="project", facts=["blocked on review", "db: Postgres"])
+        message = store.forget(entity="radar", fact="Blocked on Review")
+        assert "Retired fact" in message
+        entity = store.get(entity_id="radar", entity_type="project")
+        assert entity is not None
+        live = entity.live_facts()
+        assert [f["content"] for f in live] == ["db: Postgres"]
+        retired = [f for f in entity.facts if f.get("superseded_at")]
+        assert len(retired) == 1
+        assert retired[0]["superseded_by"] == "forgotten"
+
+    def test_single_containment_match_retires(self, store: EntityMemoryStore) -> None:
+        store.remember_about(entity="radar", entity_type="project", facts=["blocked on security review"])
+        message = store.forget(entity="radar", fact="security review")
+        assert "Retired fact" in message
+
+    def test_multiple_matches_retire_nothing(self, store: EntityMemoryStore) -> None:
+        store.remember_about(entity="radar", entity_type="project", facts=["review is pending", "review was requested"])
+        message = store.forget(entity="radar", fact="review")
+        assert "Multiple facts" in message
+        assert "review is pending" in message and "review was requested" in message
+        entity = store.get(entity_id="radar", entity_type="project")
+        assert entity is not None
+        assert len(entity.live_facts()) == 2
+
+    def test_zero_matches_returns_live_facts(self, store: EntityMemoryStore) -> None:
+        store.remember_about(entity="radar", entity_type="project", facts=["db: Postgres"])
+        message = store.forget(entity="radar", fact="something else entirely")
+        assert "No matching fact on project/radar" in message
+        assert "db: Postgres" in message
+
+    async def test_async_forget_archives(self, store: EntityMemoryStore) -> None:
+        await store.aremember_about(entity="radar", entity_type="project")
+        message = await store.aforget(entity="radar")
+        assert "Archived" in message
+
+
+class TestDataApi:
+    def test_hard_delete(self, store: EntityMemoryStore, db: RecordingLearningDb) -> None:
+        store.remember_about(entity="radar", entity_type="project")
+        assert store.delete(entity_id="radar", entity_type="project") is True
+        assert db.rows == {}
+        assert store.delete(entity_id="radar", entity_type="project") is False
+
+    async def test_async_hard_delete(self, store: EntityMemoryStore) -> None:
+        await store.aremember_about(entity="radar", entity_type="project")
+        assert await store.adelete(entity_id="radar", entity_type="project") is True

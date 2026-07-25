@@ -612,6 +612,9 @@ class EntityMemory:
     team_id: Optional[str] = field(default=None, metadata={"internal": True})
     created_at: Optional[str] = field(default=None, metadata={"internal": True})
     updated_at: Optional[str] = field(default=None, metadata={"internal": True})
+    # Set when the entity is archived via forget(); archived entities are excluded
+    # from recall, rendering and the directory, but stay reachable by search.
+    archived_at: Optional[str] = field(default=None, metadata={"internal": True})
 
     @classmethod
     def from_dict(cls, data: Any) -> Optional["EntityMemory"]:
@@ -756,6 +759,27 @@ class EntityMemory:
         self.facts = [f for f in self.facts if not (isinstance(f, dict) and f.get("id") == fact_id)]
         return len(self.facts) < original_len
 
+    def live_facts(self) -> List[Dict[str, Any]]:
+        """Facts that have not been superseded. Only these render."""
+        return [f for f in self.facts if not (isinstance(f, dict) and f.get("superseded_at"))]
+
+    def retire_fact(self, fact_id: str, superseded_by: str) -> bool:
+        """Mark a fact superseded without deleting it.
+
+        Args:
+            fact_id: The fact to retire.
+            superseded_by: What replaced it - a new fact's id, or "forgotten".
+
+        Returns:
+            True if the fact was found and retired, False otherwise.
+        """
+        for fact in self.facts:
+            if isinstance(fact, dict) and fact.get("id") == fact_id and not fact.get("superseded_at"):
+                fact["superseded_at"] = _utc_now_iso()
+                fact["superseded_by"] = superseded_by
+                return True
+        return False
+
     def get_context_text(self) -> str:
         """Get entity as formatted string for prompts."""
         parts = []
@@ -772,8 +796,9 @@ class EntityMemory:
             props = ", ".join(f"{k}: {v}" for k, v in self.properties.items())
             parts.append(f"Properties: {props}")
 
-        if self.facts:
-            facts_text = "\n".join(f"  - {f.get('content', f)}" for f in self.facts)
+        live = self.live_facts()
+        if live:
+            facts_text = "\n".join(f"  - {f.get('content', f)}" for f in live)
             parts.append(f"Facts:\n{facts_text}")
 
         if self.events:

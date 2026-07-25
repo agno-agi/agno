@@ -363,23 +363,11 @@ class EntityMemoryConfig:
     # Sharing boundary
     namespace: str = "global"
 
-    # Operations (gate the agent tools)
-    enable_create_entity: bool = True
-    enable_update_entity: bool = True
-    enable_add_fact: bool = True
-    enable_update_fact: bool = True
-    enable_delete_fact: bool = True
-    enable_add_event: bool = True
-    enable_add_relationship: bool = True
-
     # Limits
     max_updates_per_run: Optional[int] = None
 
     # Agent tools
     enable_agent_tools: bool = True
-    agent_can_create_entity: bool = True
-    agent_can_update_entity: bool = True
-    agent_can_search_entities: bool = True
 
     # Prompt customization
     instructions: Optional[str] = None
@@ -428,5 +416,3 @@ class DecisionLogConfig:
 
     def __repr__(self) -> str:
         return f"DecisionLogConfig(mode={self.mode.value})"
-
-
