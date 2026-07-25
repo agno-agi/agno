@@ -419,9 +419,7 @@ class DecisionLogConfig:
     Decision Logs record decisions made by the agent with reasoning
     and context. Useful for auditing and learning from past decisions.
 
-    Mode: AGENTIC only (matching what LearningMachine already forces on the
-    bool path). The old ALWAYS extraction wrote one contentless row per tool
-    call and was removed.
+    Mode: AGENTIC only - the agent logs decisions via tools.
 
     Scope: AGENT (fixed) - Stored and retrieved by agent_id.
     """

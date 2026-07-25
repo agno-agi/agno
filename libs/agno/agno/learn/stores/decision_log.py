@@ -17,10 +17,7 @@ Scope:
 - Can be queried by agent_id, session_id, or time range
 
 Supported Modes:
-- AGENTIC only. The agent logs decisions explicitly via tools; there is no
-  extraction pass. (The old ALWAYS extraction wrote one contentless row per
-  tool call - decision="Called tool: {name}" with empty reasoning - and, being
-  snapshot-based, re-minted rows for historical calls on every run.)
+- AGENTIC: the agent logs decisions via tools.
 """
 
 import uuid
@@ -71,11 +68,7 @@ class DecisionLogStore(LearningStore):
         self._schema = self.config.schema or DecisionLog
 
         if self.config.mode != LearningMode.AGENTIC:
-            log_warning(
-                "DecisionLogStore is AGENTIC-only: decisions are logged explicitly through its "
-                "tools, and the old ALWAYS extraction (one contentless row per tool call) was "
-                "removed. Proceeding in AGENTIC behavior."
-            )
+            log_warning("DecisionLogStore is AGENTIC-only: the agent logs decisions via tools. Proceeding as AGENTIC.")
 
     # =========================================================================
     # LearningStore Protocol Implementation
@@ -852,7 +845,7 @@ class DecisionLogStore(LearningStore):
             if cutoff_date and decision.created_at:
                 try:
                     created = datetime.fromisoformat(decision.created_at.replace("Z", "+00:00"))
-                    # Records written before this fix are naive; assume UTC.
+                    # A stored timestamp without a zone is UTC.
                     if created.tzinfo is None:
                         created = created.replace(tzinfo=timezone.utc)
                     if created < cutoff_date:
