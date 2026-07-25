@@ -366,6 +366,11 @@ class EntityMemoryConfig:
     # Limits
     max_updates_per_run: Optional[int] = None
 
+    # Fact supersession: a new fact retires a contradicted live fact when the
+    # judge's confidence is at or above this threshold. Conservative by design -
+    # a wrong supersession hides information the user gave us.
+    supersession_threshold: float = 0.8
+
     # Agent tools
     enable_agent_tools: bool = True
 

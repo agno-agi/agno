@@ -162,6 +162,23 @@ Returns:
     Matching entities with their facts, events and relationships, or a listing.
 """
 
+_SUPERSESSION_SYSTEM_PROMPT = """You judge fact supersession for an entity's memory.
+
+You are given the entity's live facts (each with an id) and newly stated facts.
+Identify which OLD facts the new facts contradict or replace.
+
+A new fact supersedes an old one when both cannot be true at the same time - a
+changed value, a corrected status, a reversed decision - or when the new fact is
+a direct update of the same attribute. Related but compatible facts do NOT
+supersede each other.
+
+Call mark_superseded exactly once with the ids of the superseded old facts and
+your confidence (0.0 to 1.0) for each, as parallel lists. If nothing is
+superseded, call it with two empty lists. Be conservative: when unsure, do not
+supersede - a wrong supersession hides information the user gave us.
+"""
+
+
 _FORGET_DOC = """Retire a fact from an entity, or archive the whole entity.
 
 With fact: retires the matching fact - it stops being recalled, nothing is deleted.
@@ -622,12 +639,15 @@ class EntityMemoryStore(LearningStore):
             namespace=effective_namespace,
         )
 
+        novel_facts, duplicate_count = self._novel_facts(existing=existing, facts=facts or [])
+        judgments = self._judge_superseded(existing=existing, new_facts=novel_facts)
+
         entity_obj, created, revived, stale_row_key = self._apply_remember(
             existing=existing,
             entity=entity,
             entity_type=entity_type,
             description=description,
-            facts=facts or [],
+            facts=novel_facts,
             events=events or [],
             note=note,
             user_id=user_id,
@@ -635,6 +655,7 @@ class EntityMemoryStore(LearningStore):
             team_id=team_id,
             namespace=effective_namespace,
         )
+        superseded_count = self._apply_supersessions(entity_obj=entity_obj, judgments=judgments, new_facts=novel_facts)
 
         saved = self._save_entity(
             entity=entity_obj,
@@ -655,7 +676,14 @@ class EntityMemoryStore(LearningStore):
 
         self.entity_updated = True
         return self._remember_message(
-            entity_obj, created=created, revived=revived, facts=facts or [], events=events or [], note=note
+            entity_obj,
+            created=created,
+            revived=revived,
+            facts=novel_facts,
+            events=events or [],
+            note=note,
+            superseded_count=superseded_count,
+            duplicate_count=duplicate_count,
         )
 
     async def aremember_about(
@@ -689,12 +717,15 @@ class EntityMemoryStore(LearningStore):
             namespace=effective_namespace,
         )
 
+        novel_facts, duplicate_count = self._novel_facts(existing=existing, facts=facts or [])
+        judgments = await self._ajudge_superseded(existing=existing, new_facts=novel_facts)
+
         entity_obj, created, revived, stale_row_key = self._apply_remember(
             existing=existing,
             entity=entity,
             entity_type=entity_type,
             description=description,
-            facts=facts or [],
+            facts=novel_facts,
             events=events or [],
             note=note,
             user_id=user_id,
@@ -702,6 +733,7 @@ class EntityMemoryStore(LearningStore):
             team_id=team_id,
             namespace=effective_namespace,
         )
+        superseded_count = self._apply_supersessions(entity_obj=entity_obj, judgments=judgments, new_facts=novel_facts)
 
         saved = await self._asave_entity(
             entity=entity_obj,
@@ -725,8 +757,207 @@ class EntityMemoryStore(LearningStore):
 
         self.entity_updated = True
         return self._remember_message(
-            entity_obj, created=created, revived=revived, facts=facts or [], events=events or [], note=note
+            entity_obj,
+            created=created,
+            revived=revived,
+            facts=novel_facts,
+            events=events or [],
+            note=note,
+            superseded_count=superseded_count,
+            duplicate_count=duplicate_count,
         )
+
+    def _novel_facts(self, existing: Optional[EntityMemory], facts: List[str]) -> Tuple[List[str], int]:
+        """Drop blank facts and exact duplicates of the entity's live facts.
+
+        Returns (novel_facts, duplicate_count). Recording the same sentence
+        twice must not double it, and an exact duplicate needs no judgment.
+        """
+        cleaned = [f for f in facts if f and f.strip()]
+        if existing is None:
+            return cleaned, 0
+
+        live_normalized = {
+            _normalize_fact_text(str(f.get("content", ""))) for f in existing.live_facts() if isinstance(f, dict)
+        }
+        novel: List[str] = []
+        duplicates = 0
+        for f in cleaned:
+            normalized = _normalize_fact_text(f)
+            if normalized in live_normalized:
+                duplicates += 1
+                continue
+            live_normalized.add(normalized)
+            novel.append(f)
+        return novel, duplicates
+
+    # =========================================================================
+    # Fact supersession (one judge call in the write path)
+    # =========================================================================
+
+    def _judge_superseded(self, existing: Optional[EntityMemory], new_facts: List[str]) -> List[Tuple[str, float]]:
+        """One structured model call: which live facts do the new facts supersede?
+
+        Skipped entirely when the entity is new, has no live facts, the write
+        carries no facts, or no model is configured. Judge failures are
+        conservative: nothing is superseded and the write proceeds.
+        """
+        if existing is None or not new_facts or self.model is None:
+            return []
+        live = [f for f in existing.live_facts() if isinstance(f, dict) and f.get("id")][:50]
+        if not live:
+            return []
+
+        try:
+            from copy import deepcopy
+
+            from agno.tools.function import Function
+
+            captured: List[Tuple[str, float]] = []
+
+            def mark_superseded(fact_ids: List[str], confidences: List[float]) -> str:
+                """Mark which existing facts are superseded by the newly stated facts.
+
+                Args:
+                    fact_ids: The ids of the superseded existing facts. Empty if none.
+                    confidences: Confidence (0.0-1.0) per id, in the same order.
+
+                Returns:
+                    Confirmation.
+                """
+                for fact_id, confidence in zip(fact_ids, confidences):
+                    captured.append((str(fact_id), float(confidence)))
+                return "Recorded."
+
+            func = Function.from_callable(mark_superseded, strict=True)
+            func.strict = True
+
+            model_copy = deepcopy(self.model)
+            model_copy.response(
+                messages=self._build_supersession_messages(existing=existing, live=live, new_facts=new_facts),
+                tools=[func],
+                tool_call_limit=1,
+            )
+            return captured
+        except Exception as e:
+            log_warning(f"EntityMemoryStore: supersession judgment failed, keeping all facts: {e}")
+            return []
+
+    async def _ajudge_superseded(
+        self, existing: Optional[EntityMemory], new_facts: List[str]
+    ) -> List[Tuple[str, float]]:
+        """Async version of _judge_superseded."""
+        if existing is None or not new_facts or self.model is None:
+            return []
+        live = [f for f in existing.live_facts() if isinstance(f, dict) and f.get("id")][:50]
+        if not live:
+            return []
+
+        try:
+            from copy import deepcopy
+
+            from agno.tools.function import Function
+
+            captured: List[Tuple[str, float]] = []
+
+            def mark_superseded(fact_ids: List[str], confidences: List[float]) -> str:
+                """Mark which existing facts are superseded by the newly stated facts.
+
+                Args:
+                    fact_ids: The ids of the superseded existing facts. Empty if none.
+                    confidences: Confidence (0.0-1.0) per id, in the same order.
+
+                Returns:
+                    Confirmation.
+                """
+                for fact_id, confidence in zip(fact_ids, confidences):
+                    captured.append((str(fact_id), float(confidence)))
+                return "Recorded."
+
+            func = Function.from_callable(mark_superseded, strict=True)
+            func.strict = True
+
+            model_copy = deepcopy(self.model)
+            await model_copy.aresponse(
+                messages=self._build_supersession_messages(existing=existing, live=live, new_facts=new_facts),
+                tools=[func],
+                tool_call_limit=1,
+            )
+            return captured
+        except Exception as e:
+            log_warning(f"EntityMemoryStore: supersession judgment failed, keeping all facts: {e}")
+            return []
+
+    def _build_supersession_messages(
+        self, existing: EntityMemory, live: List[Dict[str, Any]], new_facts: List[str]
+    ) -> List[Any]:
+        from agno.models.message import Message
+
+        if self.config.system_message:
+            system_content = self.config.system_message
+        else:
+            system_content = _SUPERSESSION_SYSTEM_PROMPT
+            if self.config.instructions:
+                system_content += f"\n## Additional Instructions\n\n{self.config.instructions}\n"
+            if self.config.additional_instructions:
+                system_content += f"\n{self.config.additional_instructions}\n"
+
+        label = f"{existing.entity_type}/{existing.entity_id}"
+        live_lines = []
+        for f in live:
+            as_of = str(f.get("updated_at") or f.get("created_at") or "")[:10]
+            as_of_text = f" (as of {as_of})" if as_of else ""
+            live_lines.append(f"- [{f.get('id')}] {f.get('content')}{as_of_text}")
+        new_lines = [f"- {f}" for f in new_facts]
+
+        user_content = (
+            f"Entity: {label}\n\nLive facts:\n"
+            + "\n".join(live_lines)
+            + "\n\nNewly stated facts:\n"
+            + "\n".join(new_lines)
+        )
+        return [
+            Message(role="system", content=system_content),
+            Message(role="user", content=user_content),
+        ]
+
+    def _apply_supersessions(
+        self, entity_obj: EntityMemory, judgments: List[Tuple[str, float]], new_facts: List[str]
+    ) -> int:
+        """Retire judged facts at or above the threshold. Returns the count retired.
+
+        Only pre-existing facts can be retired - the judge never saw the ids of
+        the facts added by this write, and a hallucinated id must not touch them.
+        """
+        if not judgments:
+            return 0
+
+        new_normalized = {_normalize_fact_text(f) for f in new_facts}
+        eligible_ids = {
+            f.get("id")
+            for f in entity_obj.live_facts()
+            if isinstance(f, dict) and _normalize_fact_text(str(f.get("content", ""))) not in new_normalized
+        }
+
+        superseded_by = "superseded"
+        if len(new_facts) == 1:
+            for f in entity_obj.live_facts():
+                if isinstance(f, dict) and _normalize_fact_text(str(f.get("content", ""))) == _normalize_fact_text(
+                    new_facts[0]
+                ):
+                    superseded_by = str(f.get("id"))
+                    break
+
+        count = 0
+        threshold = self.config.supersession_threshold
+        for fact_id, confidence in judgments:
+            if confidence < threshold:
+                continue
+            if fact_id not in eligible_ids:
+                continue
+            if entity_obj.retire_fact(fact_id, superseded_by=superseded_by):
+                count += 1
+        return count
 
     def _apply_remember(
         self,
@@ -818,6 +1049,8 @@ class EntityMemoryStore(LearningStore):
         facts: List[str],
         events: List[str],
         note: Optional[str],
+        superseded_count: int = 0,
+        duplicate_count: int = 0,
     ) -> str:
         label = f"{entity_obj.entity_type}/{entity_obj.entity_id}"
         verb = "Created" if created else "Updated"
@@ -829,8 +1062,10 @@ class EntityMemoryStore(LearningStore):
         if note:
             parts.append(f"note pointer {note}")
         recorded = f" Recorded {', '.join(parts)}." if parts else ""
+        superseded_text = f" Superseded {superseded_count} earlier fact(s)." if superseded_count else ""
+        duplicate_text = f" Skipped {duplicate_count} already-recorded fact(s)." if duplicate_count else ""
         revived_text = " The entity was archived and is now revived." if revived else ""
-        return f"{verb} {label}.{recorded}{revived_text}"
+        return f"{verb} {label}.{recorded}{superseded_text}{duplicate_text}{revived_text}"
 
     # =========================================================================
     # Public write API: link_entities
