@@ -104,9 +104,11 @@ async def test_async_query_routes_through_search_learnings() -> None:
     store = _store(db)
     _log(store, "Chose Postgres over Dynamo")
 
-    results = await store.asearch(query="postgres")
+    results = await store.asearch(query="postgres", session_id="sess-9")
     assert len(results) == 1
     assert db.search_calls and db.search_calls[0]["query"] == "postgres"
+    # The sync-db branch of asearch honors session_id too
+    assert db.search_calls[0]["session_id"] == "sess-9"
 
 
 def test_server_hit_in_any_field_is_kept() -> None:

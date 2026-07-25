@@ -907,6 +907,7 @@ class EntityMemoryStore(LearningStore):
         facts: Optional[List[str]] = None,
         events: Optional[List[str]] = None,
         note: Optional[str] = None,
+        aliases: Optional[List[str]] = None,
         user_id: Optional[str] = None,
         agent_id: Optional[str] = None,
         team_id: Optional[str] = None,
@@ -945,6 +946,7 @@ class EntityMemoryStore(LearningStore):
             facts=novel_facts,
             events=events or [],
             note=note,
+            aliases=aliases,
             user_id=user_id,
             agent_id=agent_id,
             team_id=team_id,
@@ -996,6 +998,7 @@ class EntityMemoryStore(LearningStore):
         facts: Optional[List[str]] = None,
         events: Optional[List[str]] = None,
         note: Optional[str] = None,
+        aliases: Optional[List[str]] = None,
         user_id: Optional[str] = None,
         agent_id: Optional[str] = None,
         team_id: Optional[str] = None,
@@ -1030,6 +1033,7 @@ class EntityMemoryStore(LearningStore):
             facts=novel_facts,
             events=events or [],
             note=note,
+            aliases=aliases,
             user_id=user_id,
             agent_id=agent_id,
             team_id=team_id,
@@ -1350,6 +1354,7 @@ class EntityMemoryStore(LearningStore):
         agent_id: Optional[str],
         team_id: Optional[str],
         namespace: str,
+        aliases: Optional[List[str]] = None,
     ) -> Tuple[EntityMemory, bool, bool, Optional[str]]:
         """Create or merge the entity in memory.
 
@@ -1424,6 +1429,20 @@ class EntityMemoryStore(LearningStore):
                 entity_obj.add_event(event)
         if note is not None and note.strip():
             entity_obj.properties = {**(entity_obj.properties or {}), "note": note.strip()}
+
+        # Explicit aliases (the write path for the resolution ladder's third
+        # rung): merged with dedupe against the name and existing aliases,
+        # bounded at 8.
+        for alias in aliases or []:
+            alias = alias.strip()
+            existing_aliases = list(getattr(entity_obj, "aliases", None) or [])
+            known = [entity_obj.name or ""] + existing_aliases
+            if (
+                alias
+                and len(existing_aliases) < 8
+                and all(_normalize_name(alias) != _normalize_name(n) for n in known if n)
+            ):
+                entity_obj.aliases = [*existing_aliases, alias]
 
         entity_obj.updated_at = now
         return entity_obj, created, revived, stale_row_key

@@ -395,7 +395,6 @@ class FileSystemTools(Toolkit):
         read_file(path, start_line=..., end_line=...) instead of reading the whole file.
         ``matches`` counts every occurrence in that file, while ``snippet`` shows only
         the first.
-        instead, since substring matches can mislead there.
 
         :param query: Substring to search for.
         :param directory: Directory to scope the search (default "." = everything).

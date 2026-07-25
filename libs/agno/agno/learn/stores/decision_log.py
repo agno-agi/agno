@@ -757,6 +757,7 @@ class DecisionLogStore(LearningStore):
                             query=query,
                             learning_type=self.learning_type,
                             agent_id=agent_id,
+                            session_id=session_id,
                             limit=fetch_limit,
                         )
                 except NotImplementedError:

@@ -333,6 +333,20 @@ class TestResolution:
         # The old-typed row is gone
         assert store.get(entity_id="postgres", entity_type="unknown") is None
 
+    def test_explicit_aliases_write_and_resolve(self, store: EntityMemoryStore, db: RecordingLearningDb) -> None:
+        # The alias path on remember_about: an explicit alias is written, then
+        # a later write arriving under that alias resolves to the same entity.
+        store.remember_about(entity="Sarah Chen", entity_type="person", aliases=["SC", "Sarah from Design"])
+        entity = store.get(entity_id="sarah_chen", entity_type="person")
+        assert entity is not None
+        assert entity.aliases == ["SC", "Sarah from Design"]
+
+        store.remember_about(entity="Sarah from Design", entity_type="person", facts=["owns radar UX"])
+        assert len(db.rows) == 1  # resolved via the alias, not duplicated
+        entity = store.get(entity_id="sarah_chen", entity_type="person")
+        assert entity is not None
+        assert [f["content"] for f in entity.facts] == ["owns radar UX"]
+
     def test_no_fuzzy_merge(self, store: EntityMemoryStore, db: RecordingLearningDb) -> None:
         # "Sarah" must NOT merge into "Sarah Chen" - a wrong merge has no unmerge.
         store.remember_about(entity="Sarah Chen", entity_type="person")

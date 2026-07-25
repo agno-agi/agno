@@ -630,6 +630,7 @@ def _set_learning_machine(team: "Team") -> None:
 
     if team.learning is True:
         team._learning = LearningMachine(db=team.db, model=team.model, user_profile=True, user_memory=True)
+        _warn_on_memory_tool_collision(team)
         return
 
     if isinstance(team.learning, LearningMachine):
@@ -640,6 +641,7 @@ def _set_learning_machine(team: "Team") -> None:
         if team.learning.knowledge is None and getattr(team, "knowledge", None) is not None:
             team.learning.knowledge = team.knowledge
         team._learning = team.learning
+        _warn_on_memory_tool_collision(team)
 
         # PROPOSE/HITL modes need chat history for multi-turn confirmation
         if team._learning.requires_history and not team.add_history_to_context:
@@ -846,3 +848,18 @@ def _disconnect_connectable_tools(team: "Team") -> None:
             except Exception as e:
                 log_warning(f"Error disconnecting tool: {str(e)}")
     team._connectable_tools_initialized_on_run = []
+
+
+def _warn_on_memory_tool_collision(team) -> None:
+    """enable_agentic_memory and a learning user_memory store both register a
+    tool named update_user_memory; tool parsing keeps the first name it sees,
+    so the learning store's tool is silently dropped. Say so."""
+    if not getattr(team, "enable_agentic_memory", False) or team._learning is None:
+        return
+    if team._learning.user_memory:
+        log_warning(
+            "Both enable_agentic_memory and a learning user_memory store are configured. "
+            "Both register a tool named update_user_memory, and tool parsing keeps the "
+            "first one it sees - the learning store's tool is silently dropped. Disable "
+            "enable_agentic_memory to capture memories through the LearningMachine."
+        )

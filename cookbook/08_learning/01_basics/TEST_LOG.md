@@ -78,23 +78,24 @@
 
 ---
 
-### 5a_entity_memory_always.py
+### 5_entity_memory.py
 
-**Status:** PENDING
+**Status:** PASS
 
-**Description:** Run and validate `5a_entity_memory_always.py` example behavior.
+**Description:** The four entity tools; capture in one session, recall in a fresh one.
 
-**Result:** Not run yet.
-
----
-
-### 5b_entity_memory_agentic.py
-
-**Status:** PENDING
-
-**Description:** Run and validate `5b_entity_memory_agentic.py` example behavior.
-
-**Result:** Not run yet.
+**Result:** Run live 2026-07-25 (gpt-5.5): Acme Corp captured with properties and the CTO
+edge in s1; s2 answered from the injected block with no tool call.
 
 ---
 
+### 6_extraction_limits.py
+
+**Status:** PENDING
+
+**Description:** max_updates_per_run caps for user_profile/user_memory (entity memory
+removed - it has no extraction pass to limit).
+
+**Result:** Not re-run in this pass.
+
+---
