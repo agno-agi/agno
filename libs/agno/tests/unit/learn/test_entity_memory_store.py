@@ -400,7 +400,8 @@ class TestForget:
 
         # Excluded from recall: neither expanded nor in the directory
         recalled = store.recall(entity_id="radar", entity_type="project")
-        assert recalled == {"directory": [], "entities": []}
+        assert recalled is not None
+        assert recalled["directory"] == [] and recalled["entities"] == []
         # Still reachable via explicit search, marked archived
         result = store.search_entities(query="radar")
         assert "(archived)" in result
@@ -676,6 +677,32 @@ class TestRenderingAndDirectory:
         context = store.build_context(data=store.recall())
         assert "remember_about" in context
         assert "It is empty so far" in context
+
+    def test_one_hop_link_names_render_on_recall(self, store: EntityMemoryStore) -> None:
+        store.remember_about(entity="radar", entity_type="project")
+        store.remember_about(entity="Sarah Chen", entity_type="person")
+        store.link_entities(entity="Sarah Chen", relation="works_on", related_entity="radar")
+
+        recalled = store.recall(entity_id="radar", entity_type="project")
+        assert recalled is not None
+        assert recalled["related_names"]["sarah_chen"] == "Sarah Chen"
+
+        context = store.build_context(data=recalled)
+        # The edge renders the far end's display NAME, not its slug
+        assert "works_on <- Sarah Chen" in context
+
+    def test_one_hop_names_resolve_beyond_the_directory(self, db: RecordingLearningDb) -> None:
+        # Far end outside the directory cap still resolves via a bounded keyed lookup.
+        store = EntityMemoryStore(config=EntityMemoryConfig(db=db, max_entities_in_directory=1))  # type: ignore[arg-type]
+        store.remember_about(entity="Sarah Chen", entity_type="person")
+        store.remember_about(entity="radar", entity_type="project")
+        store.link_entities(entity="radar", relation="designed_by", related_entity="Sarah Chen")
+        store.remember_about(entity="newest thing", entity_type="project")  # crowds the 1-slot directory
+
+        recalled = store.recall(entity_id="radar", entity_type="project")
+        assert recalled is not None
+        assert [e.entity_id for e in recalled["directory"]] == ["newest_thing"]
+        assert recalled["related_names"].get("sarah_chen") == "Sarah Chen"
 
     async def test_arecall_matches_recall(self, store: EntityMemoryStore) -> None:
         await store.aremember_about(entity="radar", entity_type="project")

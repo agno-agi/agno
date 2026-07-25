@@ -781,14 +781,21 @@ class EntityMemory:
                 return True
         return False
 
-    def get_context_text(self, max_facts: Optional[int] = 10, max_events: Optional[int] = 5) -> str:
+    def get_context_text(
+        self,
+        max_facts: Optional[int] = 10,
+        max_events: Optional[int] = 5,
+        related_names: Optional[Dict[str, str]] = None,
+    ) -> str:
         """Get entity as formatted string for prompts.
 
         Bounded and honest: at most ``max_facts`` live facts (each with an
         as-of date, so July's truth outranks March's) and the last
         ``max_events`` events, with explicit truncation markers so a capped
         render is never mistaken for the whole record. Relationships render in
-        full - they are one line each. Pass ``None`` to lift a cap.
+        full - they are one line each; ``related_names`` maps far-end entity
+        ids to display names (the one-hop expansion), falling back to the id.
+        Pass ``None`` to lift a cap.
         """
         parts = []
 
@@ -835,8 +842,13 @@ class EntityMemory:
             parts.append(f"Events:{marker}\n" + "\n".join(event_lines))
 
         if self.relationships:
-            rels_text = "\n".join(f"  - {r.get('relation')}: {r.get('entity_id')}" for r in self.relationships)
-            parts.append(f"Relationships:\n{rels_text}")
+            rel_lines = []
+            for r in self.relationships:
+                far_id = r.get("entity_id", "?")
+                far_label = (related_names or {}).get(far_id, far_id)
+                arrow = "->" if r.get("direction", "outgoing") == "outgoing" else "<-"
+                rel_lines.append(f"  - {r.get('relation')} {arrow} {far_label}")
+            parts.append("Relationships:\n" + "\n".join(rel_lines))
 
         return "\n\n".join(parts)
 

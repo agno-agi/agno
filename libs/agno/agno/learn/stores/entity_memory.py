@@ -294,7 +294,10 @@ class EntityMemoryStore(LearningStore):
             if entity is not None and not getattr(entity, "archived_at", None):
                 entities.append(entity)
 
-        return {"directory": directory, "entities": entities}
+        related_names = self._related_names(
+            entities=entities, directory=directory, user_id=user_id, namespace=effective_namespace
+        )
+        return {"directory": directory, "entities": entities, "related_names": related_names}
 
     async def arecall(
         self,
@@ -327,7 +330,66 @@ class EntityMemoryStore(LearningStore):
             if entity is not None and not getattr(entity, "archived_at", None):
                 entities.append(entity)
 
-        return {"directory": directory, "entities": entities}
+        related_names = await self._arelated_names(
+            entities=entities, directory=directory, user_id=user_id, namespace=effective_namespace
+        )
+        return {"directory": directory, "entities": entities, "related_names": related_names}
+
+    def _related_names(
+        self,
+        entities: List[EntityMemory],
+        directory: List[EntityMemory],
+        user_id: Optional[str],
+        namespace: str,
+        max_lookups: int = 10,
+    ) -> Dict[str, str]:
+        """One-hop link expansion: the display names of the entities the
+        expanded entities link to. Names come from the already-fetched
+        directory where possible; the remainder is a bounded set of keyed
+        lookups (no recursion, no content)."""
+        name_map = {
+            e.entity_id: (getattr(e, "name", None) or e.entity_id) for e in directory if getattr(e, "entity_id", None)
+        }
+        missing = self._missing_link_targets(entities=entities, known=name_map)
+        for far_id, far_type in missing[:max_lookups]:
+            far = self.get(entity_id=far_id, entity_type=far_type, user_id=user_id, namespace=namespace)
+            if far is not None:
+                name_map[far_id] = getattr(far, "name", None) or far_id
+        return name_map
+
+    async def _arelated_names(
+        self,
+        entities: List[EntityMemory],
+        directory: List[EntityMemory],
+        user_id: Optional[str],
+        namespace: str,
+        max_lookups: int = 10,
+    ) -> Dict[str, str]:
+        """Async version of _related_names."""
+        name_map = {
+            e.entity_id: (getattr(e, "name", None) or e.entity_id) for e in directory if getattr(e, "entity_id", None)
+        }
+        missing = self._missing_link_targets(entities=entities, known=name_map)
+        for far_id, far_type in missing[:max_lookups]:
+            far = await self.aget(entity_id=far_id, entity_type=far_type, user_id=user_id, namespace=namespace)
+            if far is not None:
+                name_map[far_id] = getattr(far, "name", None) or far_id
+        return name_map
+
+    @staticmethod
+    def _missing_link_targets(entities: List[EntityMemory], known: Dict[str, str]) -> List[Tuple[str, str]]:
+        missing: List[Tuple[str, str]] = []
+        seen = set(known)
+        for entity in entities:
+            for rel in getattr(entity, "relationships", None) or []:
+                if not isinstance(rel, dict):
+                    continue
+                far_id = rel.get("entity_id")
+                far_type = rel.get("entity_type")
+                if far_id and far_type and far_id not in seen:
+                    seen.add(far_id)
+                    missing.append((far_id, far_type))
+        return missing
 
     def process(self, messages: List[Any], **kwargs) -> None:
         """No-op: entity memory is AGENTIC-only, capture happens through the tools."""
@@ -353,9 +415,11 @@ class EntityMemoryStore(LearningStore):
         """
         directory: List[EntityMemory] = []
         entities: List[Any] = []
+        related_names: Dict[str, str] = {}
         if isinstance(data, dict) and "directory" in data:
             directory = data.get("directory") or []
             entities = data.get("entities") or []
+            related_names = data.get("related_names") or {}
         elif data:
             entities = data if isinstance(data, list) else [data]
 
@@ -398,12 +462,17 @@ class EntityMemoryStore(LearningStore):
             formatted_parts = []
             for entity in shown_entities:
                 if hasattr(entity, "get_context_text"):
-                    formatted_parts.append(
-                        entity.get_context_text(
-                            max_facts=self.config.max_facts_per_entity,
-                            max_events=self.config.max_events_per_entity,
+                    try:
+                        formatted_parts.append(
+                            entity.get_context_text(
+                                max_facts=self.config.max_facts_per_entity,
+                                max_events=self.config.max_events_per_entity,
+                                related_names=related_names,
+                            )
                         )
-                    )
+                    except TypeError:
+                        # A custom schema with its own get_context_text signature.
+                        formatted_parts.append(entity.get_context_text())
                 else:
                     formatted_parts.append(self._format_entity_basic(entity=entity))
             sections.append("**Known information about relevant entities:**\n\n" + "\n\n---\n\n".join(formatted_parts))
