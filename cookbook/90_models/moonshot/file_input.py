@@ -6,8 +6,8 @@ Kimi does not accept inline file attachments. Instead each file is uploaded to K
 Files endpoint with purpose="file-extract", its text is extracted server-side, and that
 text is injected into the message - all handled automatically by the MoonShot model.
 
-Files are uploaded once and cached, so add_history_to_context does not re-upload the
-same file on later turns.
+Files are uploaded once - the Moonshot file id is stored on the File object - so
+add_history_to_context does not re-upload the same file on later turns.
 """
 
 from agno.agent import Agent
@@ -37,5 +37,5 @@ if __name__ == "__main__":
             File(url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf")
         ],
     )
-    # The file is not re-uploaded here - the extracted text is served from cache.
+    # The file is not re-uploaded here - its stored file id is reused.
     agent.print_response("Suggest me a recipe from the attached file.")

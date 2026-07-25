@@ -97,8 +97,8 @@ Kimi accepts each media type differently, and Agno adapts automatically — you 
 Images are sent inline, so there is no upload step. Files cannot be attached inline (Kimi
 rejects the file content part), so each is uploaded, its text is extracted, and that text
 is injected into the message. Videos are uploaded and referenced by a Moonshot storage
-URL. Uploaded files and videos are cached per model instance, so `add_history_to_context`
-does not re-upload the same media on later turns. See
+URL. After an upload the Moonshot file id is stored on the media object itself, so
+`add_history_to_context` does not re-upload the same media on later turns. See
 [Use the Kimi vision model](https://platform.kimi.ai/docs/guide/use-kimi-vision-model).
 
 ## Examples

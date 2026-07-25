@@ -13,20 +13,6 @@ from agno.run.team import TeamRunOutput
 from agno.utils.log import log_error, log_warning
 
 
-def _media_cache_key(media: Union[File, Video]) -> Optional[str]:
-    """Stable key identifying a media object, so it is uploaded at most once per instance."""
-    import hashlib
-
-    if media.content is not None:
-        data = media.content if isinstance(media.content, bytes) else str(media.content).encode("utf-8")
-        return "content:" + hashlib.sha256(data).hexdigest()
-    if media.filepath is not None:
-        return "path:" + str(media.filepath)
-    if media.url is not None:
-        return "url:" + str(media.url)
-    return None
-
-
 @dataclass
 class MoonShot(OpenAILike):
     """
@@ -61,8 +47,9 @@ class MoonShot(OpenAILike):
       text is injected into the message.
     - Videos are uploaded with ``purpose="video"`` and referenced with a Moonshot storage
       URL (``ms://<file-id>``).
-    Uploaded media is cached per instance, so it is not re-uploaded when the same file or
-    video reappears across turns (e.g. with ``add_history_to_context``). See:
+    After an upload the Moonshot file id is stored on the media object's ``id`` field, so
+    a file or video that reappears across turns (e.g. with ``add_history_to_context``) is
+    not uploaded again. See:
     https://platform.kimi.ai/docs/guide/use-kimi-vision-model
 
     Attributes:
@@ -84,12 +71,6 @@ class MoonShot(OpenAILike):
     # Toggle thinking mode via the nested `thinking` object.
     # None = don't send the flag (use the model default), True = force on, False = force off.
     use_thinking: Optional[bool] = None
-
-    # Caches keyed by media identity, so a file/video that reappears across turns (e.g.
-    # with add_history_to_context) is uploaded at most once. Excluded from equality and
-    # repr; to_dict enumerates fields explicitly, so these are not serialized either.
-    _extracted_file_cache: Dict[str, str] = field(default_factory=dict, repr=False, compare=False)
-    _uploaded_video_cache: Dict[str, str] = field(default_factory=dict, repr=False, compare=False)
 
     def get_request_params(
         self,
@@ -184,89 +165,136 @@ class MoonShot(OpenAILike):
 
         try:
             result = self.get_client().files.create(file=file_tuple, purpose=purpose)  # type: ignore
-            return result.id
         except Exception as e:
             log_error(f"Failed to upload media '{filename}' to Moonshot: {e}")
             return None
 
+        # The upload response carries a status; surface a failed parse instead of letting
+        # the follow-up content fetch fail with an opaque 404.
+        status = getattr(result, "status", None)
+        if status in ("error", "failed"):
+            log_error(
+                f"Moonshot could not process media '{filename}': {getattr(result, 'status_details', None) or status}"
+            )
+            return None
+        return result.id
+
     def _extract_file_content(self, file: File) -> Optional[str]:
-        """Return a file's extracted text, uploading and extracting it once and caching it."""
-        key = _media_cache_key(file)
-        if key is not None and key in self._extracted_file_cache:
-            return self._extracted_file_cache[key]
+        """Return a file's extracted text, uploading it at most once.
+
+        The Moonshot file id is written back to ``file.id`` after the upload, so when the
+        same File reappears on a later turn (e.g. with ``add_history_to_context``) only
+        the extracted text is fetched — the file is not uploaded again. No state is kept
+        on the model instance; the id travels with the media object.
+        """
+        import time
+
+        # A previously stored id is a hint, not a guarantee: it may be stale, deleted
+        # server-side, or a foreign id set by the caller. Try it, but fall back to a
+        # fresh upload instead of failing the file outright.
+        if file.id:
+            try:
+                return self.get_client().files.content(file_id=file.id).text
+            except Exception:
+                log_warning(f"Stored Moonshot file id '{file.id}' is not retrievable, re-uploading.")
 
         file_id = self._upload_media(file, purpose="file-extract")
         if file_id is None:
             return None
+        file.id = file_id
+
+        # Uploads are parsed asynchronously ("created" -> "ok"), and fetching the content
+        # of an unparsed file 404s. Mirror OpenAIResponses._create_vector_store: poll the
+        # file status until parsing completes before fetching the extracted text.
+        name = file.filename or file_id
+        status: Optional[str] = None
+        for attempt in range(5):
+            if attempt:
+                time.sleep(1.0)
+            try:
+                status = getattr(self.get_client().files.retrieve(file_id=file_id), "status", None)
+            except Exception:
+                continue
+            if status in ("error", "failed"):
+                log_error(f"Moonshot could not parse file '{name}': {status}")
+                return None
+            if status == "ok":
+                break
 
         try:
-            content = self.get_client().files.content(file_id=file_id).text
+            return self.get_client().files.content(file_id=file_id).text
         except Exception as e:
-            log_error(f"Failed to extract file content from Moonshot: {e}")
+            log_error(f"Failed to extract file content from Moonshot (file status: {status}): {e}")
             return None
 
-        if key is not None:
-            self._extracted_file_cache[key] = content
-        return content
+    def _video_reference(self, video: Video) -> Optional[str]:
+        """Return a Moonshot storage reference (``ms://<id>``) for a video.
 
-    def _upload_video_reference(self, video: Video) -> Optional[str]:
-        """Return a Moonshot storage reference (``ms://<id>``) for a video, uploaded once."""
-        key = _media_cache_key(video)
-        if key is not None and key in self._uploaded_video_cache:
-            return self._uploaded_video_cache[key]
+        The full reference is written back to ``video.id`` after the upload (Video ids
+        are auto-generated UUIDs, so the ``ms://`` prefix is what marks a video as
+        already uploaded). The video is uploaded at most once even when it reappears
+        across turns; no state is kept on the model instance.
+        """
+        if video.id and video.id.startswith("ms://"):
+            return video.id
 
         file_id = self._upload_media(video, purpose="video")
         if file_id is None:
             return None
 
-        reference = f"ms://{file_id}"
-        if key is not None:
-            self._uploaded_video_cache[key] = reference
-        return reference
+        video.id = f"ms://{file_id}"
+        return video.id
 
     def _format_message(self, message: Message, compress_tool_results: bool = False) -> Dict[str, Any]:
         """Adapt an OpenAI-formatted message to what Moonshot accepts.
 
         - Round-trips ``reasoning_content`` so models that carry reasoning across turns
           receive prior assistant turns' reasoning unchanged.
-        - Replaces the OpenAI ``file`` content parts (which Kimi rejects) with each file's
-          extracted text, following Kimi's upload-and-extract flow.
+        - Handles files itself (the base class would build an OpenAI ``file`` part that
+          Kimi rejects): each file is uploaded and its extracted text injected, following
+          Kimi's upload-and-extract flow.
         - Attaches videos (which the base class drops) as ``ms://`` storage references.
 
         Images are left untouched: the base class already inlines them as base64
         ``image_url`` parts, which is exactly what Kimi's vision models accept.
         """
-        # The base class logs "Video input is currently unsupported" and otherwise ignores
-        # videos. We support them (below), so hide them across the super() call to avoid
-        # the misleading warning, then restore them.
-        videos = message.videos
+        # Hide files and videos across the super() call: for files the base class would
+        # download and base64-encode them into an OpenAI `file` part that Kimi rejects
+        # (a wasted fetch for URL files); for videos it would just log "Video input is
+        # currently unsupported". Both are handled below instead.
+        files, videos = message.files, message.videos
+        if files:
+            message.files = None
         if videos:
             message.videos = None
         try:
             message_dict = super()._format_message(message, compress_tool_results)
         finally:
+            if files:
+                message.files = files
             if videos:
                 message.videos = videos
 
         if message.reasoning_content is not None:
             message_dict["reasoning_content"] = message.reasoning_content
 
-        if not message.files and not message.videos:
+        if not files and not videos:
             return message_dict
 
-        # Normalize content to a list of parts so media parts can be attached.
+        # Normalize content to a new list of parts. The base class may return the stored
+        # message's own content list, so never mutate it in place — with history enabled
+        # the same Message is re-formatted every turn and appended parts would accumulate.
         content = message_dict.get("content")
         if isinstance(content, str):
             parts: List[Any] = [{"type": "text", "text": content}] if content else []
         elif isinstance(content, list):
-            parts = content
+            parts = list(content)
         else:
             parts = []
 
-        # Files: drop the OpenAI file parts Kimi rejects and inject the extracted text.
-        if message.files:
-            parts = [part for part in parts if not (isinstance(part, dict) and part.get("type") == "file")]
-            for file in message.files:
+        # Files: upload with purpose="file-extract" and inject the extracted text.
+        if files:
+            for file in files:
                 text = self._extract_file_content(file)
                 if text:
                     name = file.filename or (str(file.filepath) if file.filepath else None) or file.url or "file"
@@ -276,10 +304,10 @@ class MoonShot(OpenAILike):
                         f"Could not attach file to Moonshot request: {file.filename or file.filepath or file.url}"
                     )
 
-        # Videos: the base class drops these, so upload and reference them with ms:// URLs.
-        if message.videos:
-            for video in message.videos:
-                reference = self._upload_video_reference(video)
+        # Videos: upload with purpose="video" and reference them with ms:// URLs.
+        if videos:
+            for video in videos:
+                reference = self._video_reference(video)
                 if reference:
                     parts.append({"type": "video_url", "video_url": {"url": reference}})
                 else:
