@@ -221,3 +221,70 @@ class TestRecallReachesTheAgent:
         assert message is not None
         content = str(message.content)
         assert "db: Postgres, over Dynamo" in content
+
+    def test_stored_entity_reaches_the_system_message_through_get_run_messages(self) -> None:
+        """The same bullet, guarded one layer up.
+
+        The original write-only bug was a dropped kwarg at the CALL SITE, not
+        inside get_system_message, so the regression guard has to run the seam
+        that broke: get_run_messages must hand the run input down.
+        """
+        from agno.agent import Agent
+        from agno.agent._messages import get_run_messages
+        from agno.learn import LearningMachine
+        from agno.models.openai import OpenAIResponses
+        from agno.run.agent import RunOutput
+        from agno.run.base import RunContext
+        from agno.session import AgentSession
+
+        db = RecordingLearningDb()
+        machine = LearningMachine(db=db, entity_memory=True)  # type: ignore[arg-type]
+        entity_store = machine.entity_memory_store
+        assert entity_store is not None
+        entity_store.remember_about(entity="radar", entity_type="project", facts=["db: Postgres, over Dynamo"])
+
+        agent = Agent(db=db, learning=machine, model=OpenAIResponses(id="gpt-5.5"))  # type: ignore[arg-type]
+        agent._learning = machine
+        session = AgentSession(session_id="s1")
+        run_context = RunContext(run_id="r1", session_id="s1", user_id="u1")
+
+        run_messages = get_run_messages(
+            agent,
+            run_response=RunOutput(run_id="r1", session_id="s1"),
+            run_context=run_context,
+            input="what did we decide for radar?",
+            session=session,
+        )
+        assert run_messages.system_message is not None
+        assert "db: Postgres, over Dynamo" in str(run_messages.system_message.content)
+
+    async def test_stored_entity_reaches_the_system_message_through_aget_run_messages(self) -> None:
+        """Async twin of the call-site guard."""
+        from agno.agent import Agent
+        from agno.agent._messages import aget_run_messages
+        from agno.learn import LearningMachine
+        from agno.models.openai import OpenAIResponses
+        from agno.run.agent import RunOutput
+        from agno.run.base import RunContext
+        from agno.session import AgentSession
+
+        db = RecordingLearningDb()
+        machine = LearningMachine(db=db, entity_memory=True)  # type: ignore[arg-type]
+        entity_store = machine.entity_memory_store
+        assert entity_store is not None
+        await entity_store.aremember_about(entity="radar", entity_type="project", facts=["db: Postgres, over Dynamo"])
+
+        agent = Agent(db=db, learning=machine, model=OpenAIResponses(id="gpt-5.5"))  # type: ignore[arg-type]
+        agent._learning = machine
+        session = AgentSession(session_id="s1")
+        run_context = RunContext(run_id="r1", session_id="s1", user_id="u1")
+
+        run_messages = await aget_run_messages(
+            agent,
+            run_response=RunOutput(run_id="r1", session_id="s1"),
+            run_context=run_context,
+            input="what did we decide for radar?",
+            session=session,
+        )
+        assert run_messages.system_message is not None
+        assert "db: Postgres, over Dynamo" in str(run_messages.system_message.content)
