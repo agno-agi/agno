@@ -8,6 +8,8 @@ Hundreds of examples. Copy, paste, run.
 
 **Want to see something real?** Jump to [01_demo](./01_demo) — advanced use cases. Run the examples, break them, learn from them.
 
+**Want an agent a chat app cannot give you?** Browse [examples](./examples) — single-file agents, each proving one thing a chat app cannot do.
+
 **Want to explore a particular topic?** Find your use case below.
 
 ---
@@ -78,28 +80,22 @@ For every cookbook folder that contains runnable Python examples, include:
 
 Use `cookbook/STYLE_GUIDE.md`
 
-Enforce in checks (fails on missing metadata):
-
-```bash
-python3 cookbook/scripts/audit_cookbook_metadata.py --scope direct --fail-on-missing
-```
-
 Check cookbook Python structure pattern:
 
 ```bash
 python3 cookbook/scripts/check_cookbook_pattern.py --base-dir cookbook/00_quickstart
 ```
 
-Run cookbooks in non-interactive batch mode with demo environment defaults:
+Run a folder of cookbooks non-interactively (uses `.venvs/demo/bin/python` unless you pass `--python-bin`):
 
 ```bash
-python3 cookbook/scripts/cookbook_runner.py cookbook/00_quickstart --batch --python-bin .venvs/demo/bin/python
+python3 cookbook/scripts/cookbook_runner.py cookbook/00_quickstart
 ```
 
 Write machine-readable run report:
 
 ```bash
-python3 cookbook/scripts/cookbook_runner.py cookbook/00_quickstart --batch --json-report .context/cookbook-run.json
+python3 cookbook/scripts/cookbook_runner.py cookbook/00_quickstart --json-report .context/cookbook-run.json
 ```
 
 ---
