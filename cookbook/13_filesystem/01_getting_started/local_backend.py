@@ -31,7 +31,10 @@ fs = FileSystem(LocalFileSystem(root=ROOT))
 agent = Agent(
     model=OpenAIResponses(id="gpt-5.5"),
     tools=[fs.tools()],
-    instructions="You are a note-keeping assistant.",
+    instructions=[
+        "You are a note-keeping assistant.",
+        fs.instructions(),
+    ],
 )
 
 # ---------------------------------------------------------------------------

@@ -30,7 +30,10 @@ fs = FileSystem(SqliteDb(db_file=DB_FILE))
 agent = Agent(
     model=OpenAIResponses(id="gpt-5.5"),
     tools=[fs.tools()],
-    instructions="You triage support tickets.",
+    instructions=[
+        "You triage support tickets.",
+        fs.instructions(),
+    ],
 )
 
 
