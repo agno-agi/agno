@@ -673,10 +673,15 @@ class TestRenderingAndDirectory:
         assert context.count("- proj ") == 4
         assert context.count("Facts:") == 2
 
-    def test_empty_store_context_offers_the_tools(self, store: EntityMemoryStore) -> None:
+    def test_empty_store_splits_guidance_and_data(self, store: EntityMemoryStore) -> None:
+        # Guidance (the four tools) lives in instructions(); build_context is data only.
         context = store.build_context(data=store.recall())
-        assert "remember_about" in context
-        assert "It is empty so far" in context
+        assert "No entities recorded yet" in context
+        assert "remember_about" not in context
+
+        guidance = store.instructions()
+        for tool in ("remember_about", "link_entities", "search_entities", "forget"):
+            assert tool in guidance
 
     def test_one_hop_link_names_render_on_recall(self, store: EntityMemoryStore) -> None:
         store.remember_about(entity="radar", entity_type="project")

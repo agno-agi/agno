@@ -426,22 +426,9 @@ class EntityMemoryStore(LearningStore):
         if not directory and not entities:
             if self._should_expose_tools:
                 return dedent("""\
-                    <entity_memory_system>
-                    You have entity memory - a knowledge base about the people, companies,
-                    projects, systems and products relevant to your work. It is empty so far.
-
-                    **Available Tools:**
-                    - `remember_about`: Record facts, events, a description or a note pointer on an entity
-                    - `link_entities`: Record a relationship between two entities
-                    - `search_entities`: Find stored entities, or list them by recency
-                    - `forget`: Retire a fact, or archive an entity
-
-                    **When to use entity memory:**
-                    - You learn something substantive about a company, person, or project
-                    - Information would be useful to recall in future conversations
-                    - A stored fact turns out to be wrong or obsolete (state the new fact;
-                      supersession retires the old one)
-                    </entity_memory_system>""")
+                    <entity_memory>
+                    No entities recorded yet.
+                    </entity_memory>""")
             return ""
 
         sections: List[str] = []
@@ -487,12 +474,36 @@ class EntityMemoryStore(LearningStore):
             - Reference stored facts without citing "entity memory"
             - Treat this as background knowledge you simply have
             - Current conversation takes precedence if there's conflicting information
-            - Record new substantive information with remember_about
             - The directory is the full index: an entity not listed there is not known
             </entity_memory_guidelines>
             </entity_memory>""").format(body=body)
 
         return context
+
+    def instructions(self) -> str:
+        """Agent-facing guidance for this store: the four tools and when to use them.
+
+        Guidance only - the recalled entities and directory live in
+        build_context().
+        """
+        if not self._should_expose_tools:
+            return ""
+        return dedent("""\
+            <entity_memory_instructions>
+            You have entity memory - a knowledge base about the people, companies,
+            projects, systems and products relevant to your work.
+
+            - `remember_about`: record facts, events, a description or a note pointer
+              on an entity, by name. A correction is just the new fact: state it, and
+              the contradicted old fact is retired automatically.
+            - `link_entities`: record a relationship between two entities.
+            - `search_entities`: find stored entities; with no query, list them by
+              recency (the browse surface).
+            - `forget`: retire a fact, or archive a whole entity.
+
+            Record something whenever you learn substantive information about a
+            company, person, project or system that future conversations will need.
+            </entity_memory_instructions>""")
 
     def get_tools(
         self,

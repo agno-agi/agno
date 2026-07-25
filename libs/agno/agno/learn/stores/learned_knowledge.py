@@ -229,7 +229,11 @@ class LearnedKnowledgeStore(LearningStore):
         )
 
     def build_context(self, data: Any) -> str:
-        """Build context for the agent.
+        """Build the DATA context for the agent.
+
+        Data only (the relevant learnings) - the mode-specific how-to-use
+        guidance lives in instructions(); the automatic path concatenates the
+        two at the injection site.
 
         Args:
             data: List of learning objects from recall() (may be None).
@@ -237,14 +241,19 @@ class LearnedKnowledgeStore(LearningStore):
         Returns:
             Context string to inject into the agent's system prompt.
         """
-        mode = self.config.mode
+        return self._build_always_mode_context(data=data)
 
+    def instructions(self) -> str:
+        """Agent-facing guidance for this store, mode-aware.
+
+        Guidance only - the recalled learnings live in build_context().
+        """
+        mode = self.config.mode
         if mode == LearningMode.PROPOSE:
-            return self._build_propose_mode_context(data=data)
-        elif mode == LearningMode.AGENTIC:
-            return self._build_agentic_mode_context(data=data)
-        else:
-            return self._build_always_mode_context(data=data)
+            return self._build_propose_mode_context(data=None)
+        if mode == LearningMode.AGENTIC:
+            return self._build_agentic_mode_context(data=None)
+        return ""
 
     def _build_agentic_mode_context(self, data: Any) -> str:
         """Build context for AGENTIC mode."""

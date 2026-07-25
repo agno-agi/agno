@@ -172,11 +172,11 @@ class UserMemoryStore(LearningStore):
         )
 
     def build_context(self, data: Any) -> str:
-        """Build context for the agent.
+        """Build the DATA context for the agent.
 
         Formats memories data for injection into the agent's system prompt.
-        Designed to enable natural, personalized responses without meta-commentary
-        about memory systems.
+        Data only - the how-to-use guidance lives in instructions(); the
+        automatic path concatenates the two at the injection site.
 
         Args:
             data: Memories data from recall().
@@ -184,22 +184,13 @@ class UserMemoryStore(LearningStore):
         Returns:
             Context string to inject into the agent's system prompt.
         """
-        # Build tool documentation based on what's enabled
-        tool_docs = self._build_tool_documentation()
+        empty_block = dedent("""\
+            <user_memory>
+            No memories saved about this user yet.
+            </user_memory>""")
 
         if not data:
-            if self._should_expose_tools:
-                return (
-                    dedent("""\
-                    <user_memory>
-                    No memories saved about this user yet.
-
-                    """)
-                    + tool_docs
-                    + dedent("""
-                    </user_memory>""")
-                )
-            return ""
+            return empty_block if self._should_expose_tools else ""
 
         # Build memories section
         memories_text = None
@@ -209,18 +200,7 @@ class UserMemoryStore(LearningStore):
             memories_text = "\n".join(f"- {m.get('content', str(m))}" for m in data.memories)
 
         if not memories_text:
-            if self._should_expose_tools:
-                return (
-                    dedent("""\
-                    <user_memory>
-                    No memories saved about this user yet.
-
-                    """)
-                    + tool_docs
-                    + dedent("""
-                    </user_memory>""")
-                )
-            return ""
+            return empty_block if self._should_expose_tools else ""
 
         context = "<user_memory>\n"
         context += memories_text + "\n"
@@ -236,21 +216,22 @@ class UserMemoryStore(LearningStore):
             - Use memories to calibrate tone, depth, and examples without announcing it
             </memory_application_guidelines>""")
 
-        if self._should_expose_tools:
-            context += (
-                dedent("""
-
-            <memory_updates>
-
-            """)
-                + tool_docs
-                + dedent("""
-            </memory_updates>""")
-            )
-
         context += "\n</user_memory>"
 
         return context
+
+    def instructions(self) -> str:
+        """Agent-facing guidance for this store: when to save user memories.
+
+        Guidance only - the recalled data lives in build_context(). Empty when
+        no tools are exposed (ALWAYS mode captures without agent involvement).
+        """
+        if not self._should_expose_tools:
+            return ""
+        tool_docs = self._build_tool_documentation()
+        if not tool_docs:
+            return ""
+        return f"<user_memory_instructions>\n{tool_docs}\n</user_memory_instructions>"
 
     def _build_tool_documentation(self) -> str:
         """Build documentation for available memory tools.

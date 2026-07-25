@@ -396,15 +396,20 @@ def get_system_message(
             "You should ALWAYS prefer information from this conversation over the past summary.\n\n"
         )
 
-    # 3.3.12 then add learnings to the system prompt
+    # 3.3.12 then add learnings to the system prompt: guidance (how to use the
+    # tools) plus data (what was recalled), concatenated here so the automatic
+    # door renders exactly what the manual door's instructions() + build_context()
+    # would.
     if agent._learning is not None and agent.add_learnings_to_context:
+        learning_guidance = agent._learning.instructions()
         learning_context = agent._learning.build_context(
             user_id=user_id,
             session_id=session.session_id if session else None,
             agent_id=agent.id,
         )
-        if learning_context:
-            system_message_content += learning_context + "\n"
+        learning_block = "\n".join(part for part in (learning_guidance, learning_context) if part)
+        if learning_block:
+            system_message_content += learning_block + "\n"
 
     # 3.3.13 then add search_knowledge instructions to the system prompt
     _resolved_knowledge = _get_resolved_knowledge(agent, run_context)
@@ -747,15 +752,17 @@ async def aget_system_message(
             "You should ALWAYS prefer information from this conversation over the past summary.\n\n"
         )
 
-    # 3.3.12 then add learnings to the system prompt
+    # 3.3.12 then add learnings to the system prompt (see the sync twin)
     if agent._learning is not None and agent.add_learnings_to_context:
+        learning_guidance = agent._learning.instructions()
         learning_context = await agent._learning.abuild_context(
             user_id=user_id,
             session_id=session.session_id if session else None,
             agent_id=agent.id,
         )
-        if learning_context:
-            system_message_content += learning_context + "\n"
+        learning_block = "\n".join(part for part in (learning_guidance, learning_context) if part)
+        if learning_block:
+            system_message_content += learning_block + "\n"
 
     # 3.3.13 then add search_knowledge instructions to the system prompt
     _resolved_knowledge = _get_resolved_knowledge(agent, run_context)

@@ -470,15 +470,18 @@ def get_system_message(
     # 2.2 Identity sections: description, role, instructions
     system_message_content += _build_identity_sections(team, instructions)
 
-    # 2.3 Learning context (user profile, user memory, session context)
+    # 2.3 Learning context: guidance + data, concatenated so the automatic door
+    # renders exactly what the manual door's instructions() + build_context() would
     if team._learning is not None and team.add_learnings_to_context:
+        learning_guidance = team._learning.instructions()
         learning_context = team._learning.build_context(
             user_id=user_id,
             session_id=session.session_id if session else None,
             team_id=team.id,
         )
-        if learning_context:
-            system_message_content += learning_context + "\n"
+        learning_block = "\n".join(part for part in (learning_guidance, learning_context) if part)
+        if learning_block:
+            system_message_content += learning_block + "\n"
 
     # 2.4 Knowledge base instructions
     if team.knowledge is not None and team.search_knowledge and team.add_search_knowledge_instructions:
@@ -701,15 +704,17 @@ async def aget_system_message(
     # 2.2 Identity sections: description, role, instructions
     system_message_content += _build_identity_sections(team, instructions)
 
-    # 2.3 Learning context (user profile, user memory, session context)
+    # 2.3 Learning context (see the sync twin)
     if team._learning is not None and team.add_learnings_to_context:
+        learning_guidance = team._learning.instructions()
         learning_context = await team._learning.abuild_context(
             user_id=user_id,
             session_id=session.session_id if session else None,
             team_id=team.id,
         )
-        if learning_context:
-            system_message_content += learning_context + "\n"
+        learning_block = "\n".join(part for part in (learning_guidance, learning_context) if part)
+        if learning_block:
+            system_message_content += learning_block + "\n"
 
     # 2.4 Knowledge base instructions
     if team.knowledge is not None and team.search_knowledge and team.add_search_knowledge_instructions:

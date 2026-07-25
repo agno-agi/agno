@@ -194,9 +194,11 @@ class DecisionLogStore(LearningStore):
         )
 
     def build_context(self, data: Any) -> str:
-        """Build context for the agent.
+        """Build the DATA context for the agent.
 
         Formats recent decisions for injection into the agent's system prompt.
+        Data only - the how-to-use guidance lives in instructions(); the
+        automatic path concatenates the two at the injection site.
 
         Args:
             data: List of decisions from recall().
@@ -209,9 +211,6 @@ class DecisionLogStore(LearningStore):
                 return dedent("""\
                     <decision_log>
                     No recent decisions logged.
-
-                    Use `log_decision` to record significant decisions with reasoning.
-                    Use `search_decisions` to find past decisions.
                     </decision_log>""")
             return ""
 
@@ -236,16 +235,23 @@ class DecisionLogStore(LearningStore):
                     context += f"  Outcome: {decision['outcome']}\n"
                 context += "\n"
 
-        if self._should_expose_tools:
-            context += dedent("""
-                Use `log_decision` to record new decisions.
-                Use `search_decisions` to find past decisions.
-                Use `record_outcome` to update a decision with its outcome.
-            """)
-
         context += "</decision_log>"
 
         return context
+
+    def instructions(self) -> str:
+        """Agent-facing guidance for this store: when to log and search decisions.
+
+        Guidance only - the recalled decisions live in build_context().
+        """
+        if not self._should_expose_tools:
+            return ""
+        return dedent("""\
+            <decision_log_instructions>
+            Use `log_decision` to record significant decisions with reasoning.
+            Use `search_decisions` to find past decisions.
+            Use `record_outcome` to update a decision with its outcome.
+            </decision_log_instructions>""")
 
     def get_tools(
         self,

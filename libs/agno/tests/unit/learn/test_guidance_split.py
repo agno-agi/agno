@@ -1,0 +1,256 @@
+"""Unit tests for the guidance/data split (spec §4.1) and the manual door (§4.2).
+
+instructions() returns guidance only (mode-aware, aggregated on the machine);
+build_context() returns data only; the automatic injection path concatenates the
+two, so the manual door and the automatic door render the same text.
+"""
+
+from typing import Any, Dict, List, Optional
+
+from agno.learn import LearningMachine
+from agno.learn.config import (
+    DecisionLogConfig,
+    EntityMemoryConfig,
+    LearningMode,
+    UserMemoryConfig,
+    UserProfileConfig,
+)
+from agno.learn.stores.decision_log import DecisionLogStore
+from agno.learn.stores.entity_memory import EntityMemoryStore
+from agno.learn.stores.session_context import SessionContextStore
+from agno.learn.stores.user_memory import UserMemoryStore
+from agno.learn.stores.user_profile import UserProfileStore
+
+
+class RecordingLearningDb:
+    """In-memory fake of the learnings table (duplicated per test file - the
+    tests/unit/learn directory is not a package)."""
+
+    def __init__(self) -> None:
+        self.rows: Dict[str, Dict[str, Any]] = {}
+        self._clock = 0
+
+    def get_learning(self, **kwargs: Any) -> Optional[Dict[str, Any]]:
+        for row in self.rows.values():
+            if all(
+                kwargs.get(key) is None or row.get(key) == kwargs.get(key)
+                for key in ("learning_type", "entity_id", "entity_type", "namespace", "user_id")
+                if kwargs.get(key) is not None
+            ):
+                return row
+        return None
+
+    def upsert_learning(self, id: str, **kwargs: Any) -> None:
+        existing = self.rows.get(id, {})
+        row = {**existing, **kwargs, "learning_id": id}
+        self._clock += 1
+        row["updated_at"] = self._clock
+        self.rows[id] = row
+
+    def get_learnings(self, **kwargs: Any) -> List[Dict[str, Any]]:
+        rows = [
+            row
+            for row in self.rows.values()
+            if all(
+                kwargs.get(key) is None or row.get(key) == kwargs.get(key)
+                for key in ("learning_type", "entity_id", "entity_type", "namespace")
+            )
+        ]
+        rows.sort(key=lambda r: r.get("updated_at", 0), reverse=True)
+        limit = kwargs.get("limit")
+        return rows[:limit] if limit is not None else rows
+
+    def delete_learning(self, id: str) -> bool:
+        return self.rows.pop(id, None) is not None
+
+    def search_learnings(self, query: str, **kwargs: Any) -> List[Dict[str, Any]]:
+        import json
+
+        limit = kwargs.pop("limit", None)
+        for key in ("workflow_id", "session_id", "agent_id", "team_id", "user_id"):
+            kwargs.pop(key, None)
+        candidates = self.get_learnings(**kwargs)
+        variants = {query.lower(), query.lower().replace(" ", "_"), query.lower().replace("_", " ")}
+        rows = [row for row in candidates if any(v in json.dumps(row.get("content", {})).lower() for v in variants)]
+        return rows[:limit] if limit is not None else rows
+
+
+class TestStoreSplit:
+    def test_agentic_stores_guidance_never_in_data(self) -> None:
+        db = RecordingLearningDb()
+        cases = [
+            (
+                UserProfileStore(config=UserProfileConfig(db=db, mode=LearningMode.AGENTIC)),  # type: ignore[arg-type]
+                "update_profile",
+            ),
+            (
+                UserMemoryStore(config=UserMemoryConfig(db=db, mode=LearningMode.AGENTIC)),  # type: ignore[arg-type]
+                "update_user_memory",
+            ),
+            (
+                EntityMemoryStore(config=EntityMemoryConfig(db=db)),  # type: ignore[arg-type]
+                "remember_about",
+            ),
+            (
+                DecisionLogStore(config=DecisionLogConfig(db=db, mode=LearningMode.AGENTIC)),  # type: ignore[arg-type]
+                "log_decision",
+            ),
+        ]
+        for store, tool_name in cases:
+            guidance = store.instructions()
+            assert tool_name in guidance, store
+            data = store.build_context(data=store.recall(user_id="u1"))
+            assert tool_name not in data, store
+
+    def test_always_mode_stores_have_no_guidance(self) -> None:
+        db = RecordingLearningDb()
+        profile = UserProfileStore(config=UserProfileConfig(db=db, mode=LearningMode.ALWAYS))  # type: ignore[arg-type]
+        assert profile.instructions() == ""
+        session = SessionContextStore()
+        assert session.instructions() == ""
+
+    def test_machine_instructions_aggregates_enabled_stores(self) -> None:
+        db = RecordingLearningDb()
+        machine = LearningMachine(
+            db=db,  # type: ignore[arg-type]
+            user_memory=UserMemoryConfig(mode=LearningMode.AGENTIC),
+            entity_memory=True,
+        )
+        guidance = machine.instructions()
+        assert "update_user_memory" in guidance
+        assert "remember_about" in guidance
+        assert "update_profile" not in guidance  # not enabled
+
+    def test_machine_instructions_is_mode_aware(self) -> None:
+        db = RecordingLearningDb()
+        always_machine = LearningMachine(db=db, user_memory=UserMemoryConfig(mode=LearningMode.ALWAYS))  # type: ignore[arg-type]
+        assert always_machine.instructions() == ""
+
+    def test_custom_store_without_instructions_still_works(self) -> None:
+        class OldStyleStore:
+            # A pre-2.8.4 third-party store: no instructions() method.
+            learning_type = "old_style"
+            schema = dict
+            was_updated = False
+
+            def recall(self, **kwargs: Any) -> Any:
+                return {"x": 1}
+
+            async def arecall(self, **kwargs: Any) -> Any:
+                return {"x": 1}
+
+            def process(self, messages: Any, **kwargs: Any) -> None:
+                pass
+
+            async def aprocess(self, messages: Any, **kwargs: Any) -> None:
+                pass
+
+            def build_context(self, data: Any) -> str:
+                return "<old_style>x</old_style>"
+
+            def get_tools(self, **kwargs: Any) -> List[Any]:
+                return []
+
+            async def aget_tools(self, **kwargs: Any) -> List[Any]:
+                return []
+
+        machine = LearningMachine(db=RecordingLearningDb(), custom_stores={"old_style": OldStyleStore()})  # type: ignore[arg-type]
+        assert "old_style" in machine.stores
+        assert machine.instructions() == ""  # contributes no guidance, no crash
+        assert "<old_style>x</old_style>" in machine.build_context()
+
+
+class TestManualDoorMatchesAutomaticDoor:
+    def test_injected_block_equals_instructions_plus_build_context(self) -> None:
+        """The §8 regression guard: for the same machine, what the automatic
+        injection site renders equals instructions() + build_context()."""
+        db = RecordingLearningDb()
+        machine = LearningMachine(
+            db=db,  # type: ignore[arg-type]
+            user_memory=UserMemoryConfig(mode=LearningMode.AGENTIC),
+            entity_memory=True,
+        )
+        entity_store = machine.entity_memory_store
+        assert entity_store is not None
+        entity_store.remember_about(entity="radar", entity_type="project", facts=["db: Postgres"])
+
+        # What the automatic door assembles at the injection site
+        # (agent/_messages.py): instructions() + "\n" + build_context(...)
+        guidance = machine.instructions()
+        data = machine.build_context(user_id="u1", session_id="s1", agent_id="a1")
+        auto_block = "\n".join(part for part in (guidance, data) if part)
+
+        # The manual door places the same two surfaces by hand
+        manual_block = "\n".join(
+            part
+            for part in (
+                machine.instructions(),
+                machine.build_context(user_id="u1", session_id="s1", agent_id="a1"),
+            )
+            if part
+        )
+        assert auto_block == manual_block
+        assert "remember_about" in auto_block  # guidance present
+        assert "Entity directory" in auto_block  # data present
+
+    def test_agent_system_message_carries_guidance_and_data(self) -> None:
+        """End to end through the real injection site in agent/_messages.py."""
+        from typing import Any as _Any
+
+        from agno.agent import Agent
+        from agno.agent._messages import get_system_message
+        from agno.models.base import Model
+        from agno.models.response import ModelResponse
+        from agno.run.base import RunContext
+        from agno.session import AgentSession
+
+        class _NullModel(Model):
+            def __init__(self) -> None:
+                super().__init__(id="null-test", name="null-test", provider="test")
+
+            def invoke(self, *args: _Any, **kwargs: _Any) -> ModelResponse:
+                return ModelResponse(role="assistant", content="")
+
+            async def ainvoke(self, *args: _Any, **kwargs: _Any) -> ModelResponse:
+                return ModelResponse(role="assistant", content="")
+
+            def invoke_stream(self, *args: _Any, **kwargs: _Any):
+                raise AssertionError("not used")
+                yield  # pragma: no cover
+
+            async def ainvoke_stream(self, *args: _Any, **kwargs: _Any):
+                raise AssertionError("not used")
+                yield  # pragma: no cover
+
+            def _parse_provider_response(self, response: _Any, **kwargs: _Any) -> ModelResponse:
+                return response
+
+            def _parse_provider_response_delta(self, response: _Any) -> ModelResponse:
+                return response
+
+        db = RecordingLearningDb()
+        machine = LearningMachine(db=db, entity_memory=True)  # type: ignore[arg-type]
+        entity_store = machine.entity_memory_store
+        assert entity_store is not None
+        entity_store.remember_about(entity="radar", entity_type="project", facts=["db: Postgres"])
+
+        agent = Agent(db=db, learning=machine, model=_NullModel())  # type: ignore[arg-type]
+        agent._learning = machine
+        session = AgentSession(session_id="s1")
+        run_context = RunContext(run_id="r1", session_id="s1", user_id="u1")
+
+        message = get_system_message(agent, session=session, run_context=run_context)
+        assert message is not None
+        content = str(message.content)
+        assert "remember_about" in content  # guidance reached the system prompt
+        assert "Entity directory" in content  # data reached the system prompt
+        # And it equals the manual door's assembly, embedded verbatim
+        manual = "\n".join(
+            part
+            for part in (
+                machine.instructions(),
+                machine.build_context(user_id="u1", session_id="s1", agent_id=agent.id),
+            )
+            if part
+        )
+        assert manual in content

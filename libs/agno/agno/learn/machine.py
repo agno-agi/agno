@@ -178,8 +178,14 @@ class LearningMachine:
         Returns:
             Initialized store instance.
         """
-        # Already a store instance
+        # Already a store instance. The Protocol gained instructions() in 2.8.4;
+        # the duck-typed fallback keeps third-party stores written before that
+        # working (they simply contribute no guidance text).
         if isinstance(input_value, LearningStore):
+            return input_value
+        if not isinstance(input_value, bool) and all(
+            callable(getattr(input_value, method, None)) for method in ("recall", "process", "build_context")
+        ):
             return input_value
 
         # Create store based on type
@@ -454,6 +460,28 @@ class LearningMachine:
         )
 
         return self._format_results(results=results)
+
+    def instructions(self) -> str:
+        """The guidance block: how and when to use the learning tools.
+
+        Mode-aware and aggregated across enabled stores, which is why this is
+        an instance method and not a static string - the text depends on which
+        stores are enabled and what mode each is in. Pairs with build_context()
+        (the data block): the automatic path concatenates the two at the
+        injection site, and the manual door places each by hand.
+        """
+        parts: List[str] = []
+        for name, store in self.stores.items():
+            instructions_fn = getattr(store, "instructions", None)
+            if not callable(instructions_fn):
+                continue
+            try:
+                text = instructions_fn()
+                if text:
+                    parts.append(text)
+            except Exception as e:
+                log_warning(f"Error getting instructions from {name}: {str(e)}")
+        return "\n\n".join(parts)
 
     def get_tools(
         self,
