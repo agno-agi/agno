@@ -330,51 +330,40 @@ class EntityMemoryConfig:
     - "global": Shared with everyone (default)
     - Custom string: Explicit grouping (e.g., "sales_west")
 
+    Mode: AGENTIC only. The agent records entities through its four tools
+    (remember_about, link_entities, search_entities, forget); there is no
+    extraction pass.
+
     Attributes:
         db: Database backend for storage.
-        model: Model for extraction (required for ALWAYS mode).
-        mode: How learning is extracted. Default: ALWAYS.
+        model: Model for the fact-supersession judgment on writes.
+        mode: AGENTIC (the only supported mode).
         schema: Custom schema for entity memory data. Default: EntityMemory.
 
         # Sharing boundary
         namespace: Sharing boundary ("user", "global", or custom).
 
-        # Extraction operations
-        enable_create_entity: Allow creating new entities.
-        enable_update_entity: Allow updating entity properties.
-        enable_add_fact: Allow adding facts to entities.
-        enable_update_fact: Allow updating existing facts.
-        enable_delete_fact: Allow deleting facts.
-        enable_add_event: Allow adding events to entities.
-        enable_add_relationship: Allow adding relationships.
-
         # Limits
-        max_updates_per_run: Max updates per extraction run. Default: 10.
-
-        # Agent tools
-        enable_agent_tools: Expose tools to the agent.
-        agent_can_create_entity: If agent_tools enabled, provide create_entity tool.
-        agent_can_update_entity: If agent_tools enabled, provide update_entity tool.
-        agent_can_search_entities: If agent_tools enabled, provide search_entities tool.
+        max_updates_per_run: Retained for LearningMachine limit propagation.
 
         # Prompt customization
-        instructions: Custom instructions for entity extraction.
+        instructions: Custom instructions for the supersession judgment.
         additional_instructions: Extra instructions appended to default.
-        system_message: Full override for extraction system message.
+        system_message: Full override for the supersession system message.
     """
 
     # Required fields
     db: Optional[Union["BaseDb", "AsyncBaseDb"]] = None
     model: Optional["Model"] = None
 
-    # Mode and extraction
-    mode: LearningMode = LearningMode.ALWAYS
+    # Mode (AGENTIC only)
+    mode: LearningMode = LearningMode.AGENTIC
     schema: Optional[Type[Any]] = None
 
     # Sharing boundary
     namespace: str = "global"
 
-    # Extraction operations
+    # Operations (gate the agent tools)
     enable_create_entity: bool = True
     enable_update_entity: bool = True
     enable_add_fact: bool = True
@@ -387,7 +376,7 @@ class EntityMemoryConfig:
     max_updates_per_run: Optional[int] = None
 
     # Agent tools
-    enable_agent_tools: bool = False
+    enable_agent_tools: bool = True
     agent_can_create_entity: bool = True
     agent_can_update_entity: bool = True
     agent_can_search_entities: bool = True

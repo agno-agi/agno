@@ -30,16 +30,16 @@ Scoping:
     - "<custom>": Custom grouping (e.g., "sales_team")
 
 Supported Modes:
-- ALWAYS: Automatic extraction of entity info from conversations
-- AGENTIC: Agent calls tools directly to manage entity info
+- AGENTIC only. The agent records entities through tools; there is no
+  extraction pass. This mirrors how session_context documents itself as
+  ALWAYS-only.
 """
 
-from copy import deepcopy
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from os import getenv
 from textwrap import dedent
-from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Union, cast
+from typing import Any, Callable, Dict, List, Optional, Union, cast
 
 from agno.learn.config import EntityMemoryConfig, LearningMode
 from agno.learn.schemas import EntityMemory
@@ -51,14 +51,9 @@ from agno.utils.log import (
     set_log_level_to_debug,
     set_log_level_to_info,
 )
-from agno.utils.message import get_conversation_text
-
-if TYPE_CHECKING:
-    from agno.metrics import RunMetrics
 
 try:
     from agno.db.base import AsyncBaseDb, BaseDb
-    from agno.models.message import Message
 except ImportError:
     pass
 
@@ -89,10 +84,12 @@ class EntityMemoryStore(LearningStore):
     def __post_init__(self):
         self._schema = self.config.schema or EntityMemory
 
-        if self.config.mode == LearningMode.PROPOSE:
-            log_warning("EntityMemoryStore does not support PROPOSE mode. Falling back to ALWAYS mode.")
-        elif self.config.mode == LearningMode.HITL:
-            log_warning("EntityMemoryStore does not support HITL mode. Falling back to ALWAYS mode.")
+        if self.config.mode != LearningMode.AGENTIC:
+            raise ValueError(
+                f"EntityMemoryStore is AGENTIC-only: the agent records entities through its tools "
+                f"and there is no extraction pass. Remove mode={self.config.mode.value!r} from "
+                f"EntityMemoryConfig or set LearningMode.AGENTIC."
+            )
 
     # =========================================================================
     # LearningStore Protocol Implementation
@@ -167,66 +164,13 @@ class EntityMemoryStore(LearningStore):
             namespace=effective_namespace,
         )
 
-    def process(
-        self,
-        messages: List[Any],
-        user_id: Optional[str] = None,
-        agent_id: Optional[str] = None,
-        team_id: Optional[str] = None,
-        namespace: Optional[str] = None,
-        **kwargs,
-    ) -> None:
-        """Extract entity information from messages.
+    def process(self, messages: List[Any], **kwargs) -> None:
+        """No-op: entity memory is AGENTIC-only, capture happens through the tools."""
+        return
 
-        Args:
-            messages: Conversation messages to analyze.
-            user_id: User context (for "user" namespace scoping).
-            agent_id: Agent context (stored for audit).
-            team_id: Team context (stored for audit).
-            namespace: Namespace to save entities to.
-            **kwargs: Additional context (ignored).
-        """
-        if self.config.mode == LearningMode.AGENTIC:
-            return
-
-        if not messages:
-            return
-
-        effective_namespace = namespace or self.config.namespace
-        self.extract_and_save(
-            messages=messages,
-            user_id=user_id,
-            agent_id=agent_id,
-            team_id=team_id,
-            namespace=effective_namespace,
-            run_metrics=kwargs.get("run_metrics"),
-        )
-
-    async def aprocess(
-        self,
-        messages: List[Any],
-        user_id: Optional[str] = None,
-        agent_id: Optional[str] = None,
-        team_id: Optional[str] = None,
-        namespace: Optional[str] = None,
-        **kwargs,
-    ) -> None:
-        """Async version of process."""
-        if self.config.mode == LearningMode.AGENTIC:
-            return
-
-        if not messages:
-            return
-
-        effective_namespace = namespace or self.config.namespace
-        await self.aextract_and_save(
-            messages=messages,
-            user_id=user_id,
-            agent_id=agent_id,
-            team_id=team_id,
-            namespace=effective_namespace,
-            run_metrics=kwargs.get("run_metrics"),
-        )
+    async def aprocess(self, messages: List[Any], **kwargs) -> None:
+        """Async version of process (no-op)."""
+        return
 
     def build_context(self, data: Any) -> str:
         """Build context for the agent.
@@ -2629,463 +2573,6 @@ class EntityMemoryStore(LearningStore):
         except Exception as e:
             log_debug(f"EntityMemoryStore._asave_entity failed: {e}")
             return False
-
-    # =========================================================================
-    # Background Extraction
-    # =========================================================================
-
-    def extract_and_save(
-        self,
-        messages: List[Any],
-        user_id: Optional[str] = None,
-        agent_id: Optional[str] = None,
-        team_id: Optional[str] = None,
-        namespace: Optional[str] = None,
-        run_metrics: Optional["RunMetrics"] = None,
-    ) -> None:
-        """Extract entities from messages (sync)."""
-        if not self.model or not self.db:
-            return
-
-        try:
-            from agno.models.message import Message
-
-            conversation_text = get_conversation_text(messages)
-
-            tools = self._get_extraction_tools(
-                user_id=user_id,
-                agent_id=agent_id,
-                team_id=team_id,
-                namespace=namespace,
-            )
-
-            functions = self._build_functions_for_model(tools=tools)
-
-            messages_for_model = [
-                self._get_extraction_system_message(),
-                Message(role="user", content=f"Extract entities from this conversation:\n\n{conversation_text}"),
-            ]
-
-            model_copy = deepcopy(self.model)
-            response = model_copy.response(
-                messages=messages_for_model,
-                tools=functions,
-                tool_call_limit=self.config.max_updates_per_run,
-            )
-
-            if run_metrics is not None and response.response_usage is not None:
-                from agno.metrics import ModelType, accumulate_model_metrics
-
-                accumulate_model_metrics(response, model_copy, ModelType.LEARNING_MODEL, run_metrics)
-
-            if response.tool_executions:
-                self.entity_updated = True
-                log_debug("EntityMemoryStore: Extraction saved entities")
-
-        except Exception as e:
-            log_warning(f"EntityMemoryStore.extract_and_save failed: {str(e)}")
-
-    async def aextract_and_save(
-        self,
-        messages: List[Any],
-        user_id: Optional[str] = None,
-        agent_id: Optional[str] = None,
-        team_id: Optional[str] = None,
-        namespace: Optional[str] = None,
-        run_metrics: Optional["RunMetrics"] = None,
-    ) -> None:
-        """Extract entities from messages (async)."""
-        if not self.model or not self.db:
-            return
-
-        try:
-            conversation_text = get_conversation_text(messages)
-
-            tools = self._aget_extraction_tools(
-                user_id=user_id,
-                agent_id=agent_id,
-                team_id=team_id,
-                namespace=namespace,
-            )
-
-            functions = self._build_functions_for_model(tools=tools)
-
-            messages_for_model = [
-                self._get_extraction_system_message(),
-                Message(role="user", content=f"Extract entities from this conversation:\n\n{conversation_text}"),
-            ]
-
-            model_copy = deepcopy(self.model)
-            response = await model_copy.aresponse(
-                messages=messages_for_model,
-                tools=functions,
-                tool_call_limit=self.config.max_updates_per_run,
-            )
-
-            if run_metrics is not None and response.response_usage is not None:
-                from agno.metrics import ModelType, accumulate_model_metrics
-
-                accumulate_model_metrics(response, model_copy, ModelType.LEARNING_MODEL, run_metrics)
-
-            if response.tool_executions:
-                self.entity_updated = True
-                log_debug("EntityMemoryStore: Extraction saved entities")
-
-        except Exception as e:
-            log_warning(f"EntityMemoryStore.aextract_and_save failed: {str(e)}")
-
-    def _get_extraction_system_message(self) -> "Message":
-        """Get system message for extraction."""
-        from agno.models.message import Message
-
-        custom_instructions = self.config.instructions or ""
-        additional = self.config.additional_instructions or ""
-
-        if self.config.system_message:
-            return Message(role="system", content=self.config.system_message)
-
-        content = dedent("""\
-            You are an Entity Extractor. Your job is to identify and capture knowledge about
-            external entities - people, companies, projects, products, systems, and other things
-            mentioned in conversations that are worth remembering.
-
-            ## Philosophy
-
-            Entity memory is your knowledge about the WORLD, distinct from:
-            - **User memory**: What you know about the user themselves
-            - **Learned knowledge**: Reusable task insights and patterns
-            - **Session context**: State of the current conversation
-
-            Think of entity memory like a professional's mental rolodex - the accumulated knowledge
-            about clients, companies, technologies, and projects that helps you work effectively.
-
-            ## Entity Structure
-
-            Each entity has:
-
-            **Core identity:**
-            - `entity_id`: Lowercase with underscores (e.g., "acme_corp", "jane_smith", "project_atlas")
-            - `entity_type`: Category - "person", "company", "project", "product", "system", "concept"
-            - `name`: Human-readable display name
-            - `description`: Brief description of what this entity is
-
-            **Three types of memory:**
-
-            1. **Facts** (semantic memory) - Timeless truths about the entity
-               - "Uses PostgreSQL for their main database"
-               - "Headquarters in San Francisco"
-               - "Founded in 2019"
-               - "Prefers async communication"
-
-            2. **Events** (episodic memory) - Time-bound occurrences
-               - "Launched v2.0 on January 15, 2025"
-               - "Acquired by BigCorp in Q3 2024"
-               - "Had a major outage affecting 10K users"
-               - "Completed Series B funding"
-
-            3. **Relationships** (graph edges) - Connections to other entities
-               - "Bob Smith" --[CEO]--> "Acme Corp"
-               - "Project Atlas" --[uses]--> "PostgreSQL"
-               - "Acme Corp" --[competitor_of]--> "Beta Inc"
-               - "Jane" --[reports_to]--> "Bob"
-
-            ## What to Extract
-
-            **DO extract entities that are:**
-            - Named specifically (not just "a company" but "Acme Corp")
-            - Substantively discussed (not just mentioned in passing)
-            - Likely to be referenced again in future conversations
-            - Important to the user's work or context
-
-            **DO capture:**
-            - Companies the user works with or mentions repeatedly
-            - People (colleagues, clients, stakeholders) with specific roles
-            - Projects with concrete details
-            - Products or systems with technical specifics
-            - Organizations relevant to the user's domain
-
-            ## What NOT to Extract
-
-            **DO NOT extract:**
-            - The user themselves (that belongs in UserProfile)
-            - Generic concepts without specific identity ("databases" vs "PostgreSQL")
-            - One-off mentions unlikely to recur ("I saw a company on the news")
-            - Entities with no substantive information to store
-            - Publicly available information that's easily searchable
-
-            **Avoid:**
-            - Creating entities just because something was named
-            - Storing obvious facts ("Google is a tech company")
-            - Duplicating information across multiple entities unnecessarily
-
-            ## Quality Guidelines
-
-            **Good entity example:**
-            ```
-            entity_id: "northstar_analytics"
-            entity_type: "company"
-            name: "NorthStar Analytics"
-            description: "Data analytics startup, potential client"
-            facts:
-              - "Series A stage, ~50 employees"
-              - "Tech stack: Python, Snowflake, dbt"
-              - "Main contact is Sarah Chen, VP Engineering"
-              - "Decision timeline is Q1 2025"
-            events:
-              - "Initial meeting held December 2024"
-              - "Requested technical deep-dive on ML capabilities"
-            relationships:
-              - sarah_chen --[works_at]--> northstar_analytics
-            ```
-
-            **Poor entity example:**
-            ```
-            entity_id: "company1"  # Too generic
-            name: "Some Company"   # Vague
-            facts:
-              - "It's a company"   # Obvious, not useful
-            ```
-
-            ## Extraction Guidelines
-
-            1. **Be selective**: Only extract entities with substantive, useful information
-            2. **Be specific**: Capture concrete details, not vague generalities
-            3. **Be accurate**: Only store information actually stated in the conversation
-            4. **Categorize correctly**: Facts vs events vs relationships have different purposes
-            5. **Use consistent IDs**: Lowercase, underscores, descriptive (e.g., "acme_corp" not "company_1")
-
-            It's perfectly fine to extract nothing if no notable entities are mentioned.
-            Quality over quantity - one well-documented entity beats five sparse ones.
-
-        """)
-
-        if custom_instructions:
-            content += f"\n## Additional Instructions\n\n{custom_instructions}\n"
-
-        if additional:
-            content += f"\n{additional}\n"
-
-        return Message(role="system", content=content)
-
-    def _get_extraction_tools(
-        self,
-        user_id: Optional[str] = None,
-        agent_id: Optional[str] = None,
-        team_id: Optional[str] = None,
-        namespace: Optional[str] = None,
-    ) -> List[Callable]:
-        """Get sync extraction tools based on config."""
-        tools: List[Callable[..., str]] = []
-        effective_namespace = namespace or self.config.namespace
-
-        if self.config.enable_create_entity:
-
-            def create_entity(
-                entity_id: str,
-                entity_type: str,
-                name: str,
-                description: Optional[str] = None,
-            ) -> str:
-                """Create a new entity."""
-                success = self.create_entity(
-                    entity_id=entity_id,
-                    entity_type=entity_type,
-                    name=name,
-                    description=description,
-                    user_id=user_id,
-                    agent_id=agent_id,
-                    team_id=team_id,
-                    namespace=effective_namespace,
-                )
-                return f"Created: {entity_type}/{entity_id}" if success else "Entity exists"
-
-            tools.append(create_entity)
-
-        if self.config.enable_add_fact:
-
-            def add_fact(entity_id: str, entity_type: str, fact: str) -> str:
-                """Add a fact to an entity."""
-                fact_id = self.add_fact(
-                    entity_id=entity_id,
-                    entity_type=entity_type,
-                    fact=fact,
-                    user_id=user_id,
-                    agent_id=agent_id,
-                    team_id=team_id,
-                    namespace=effective_namespace,
-                )
-                return f"Fact added: {fact_id}" if fact_id else "Entity not found"
-
-            tools.append(add_fact)
-
-        if self.config.enable_add_event:
-
-            def add_event(
-                entity_id: str,
-                entity_type: str,
-                event: str,
-                date: Optional[str] = None,
-            ) -> str:
-                """Add an event to an entity."""
-                event_id = self.add_event(
-                    entity_id=entity_id,
-                    entity_type=entity_type,
-                    event=event,
-                    date=date,
-                    user_id=user_id,
-                    agent_id=agent_id,
-                    team_id=team_id,
-                    namespace=effective_namespace,
-                )
-                return f"Event added: {event_id}" if event_id else "Entity not found"
-
-            tools.append(add_event)
-
-        if self.config.enable_add_relationship:
-
-            def add_relationship(
-                entity_id: str,
-                entity_type: str,
-                related_entity_id: str,
-                relation: str,
-            ) -> str:
-                """Add a relationship between entities."""
-                rel_id = self.add_relationship(
-                    entity_id=entity_id,
-                    entity_type=entity_type,
-                    related_entity_id=related_entity_id,
-                    relation=relation,
-                    user_id=user_id,
-                    agent_id=agent_id,
-                    team_id=team_id,
-                    namespace=effective_namespace,
-                )
-                return f"Relationship added: {rel_id}" if rel_id else "Entity not found"
-
-            tools.append(add_relationship)
-
-        return tools
-
-    def _aget_extraction_tools(
-        self,
-        user_id: Optional[str] = None,
-        agent_id: Optional[str] = None,
-        team_id: Optional[str] = None,
-        namespace: Optional[str] = None,
-    ) -> List[Callable]:
-        """Get async extraction tools based on config."""
-        tools: List[Callable] = []
-        effective_namespace = namespace or self.config.namespace
-
-        if self.config.enable_create_entity:
-
-            async def create_entity(
-                entity_id: str,
-                entity_type: str,
-                name: str,
-                description: Optional[str] = None,
-            ) -> str:
-                """Create a new entity."""
-                success = await self.acreate_entity(
-                    entity_id=entity_id,
-                    entity_type=entity_type,
-                    name=name,
-                    description=description,
-                    user_id=user_id,
-                    agent_id=agent_id,
-                    team_id=team_id,
-                    namespace=effective_namespace,
-                )
-                return f"Created: {entity_type}/{entity_id}" if success else "Entity exists"
-
-            tools.append(create_entity)
-
-        if self.config.enable_add_fact:
-
-            async def add_fact(entity_id: str, entity_type: str, fact: str) -> str:
-                """Add a fact to an entity."""
-                fact_id = await self.aadd_fact(
-                    entity_id=entity_id,
-                    entity_type=entity_type,
-                    fact=fact,
-                    user_id=user_id,
-                    agent_id=agent_id,
-                    team_id=team_id,
-                    namespace=effective_namespace,
-                )
-                return f"Fact added: {fact_id}" if fact_id else "Entity not found"
-
-            tools.append(add_fact)
-
-        if self.config.enable_add_event:
-
-            async def add_event(
-                entity_id: str,
-                entity_type: str,
-                event: str,
-                date: Optional[str] = None,
-            ) -> str:
-                """Add an event to an entity."""
-                event_id = await self.aadd_event(
-                    entity_id=entity_id,
-                    entity_type=entity_type,
-                    event=event,
-                    date=date,
-                    user_id=user_id,
-                    agent_id=agent_id,
-                    team_id=team_id,
-                    namespace=effective_namespace,
-                )
-                return f"Event added: {event_id}" if event_id else "Entity not found"
-
-            tools.append(add_event)
-
-        if self.config.enable_add_relationship:
-
-            async def add_relationship(
-                entity_id: str,
-                entity_type: str,
-                related_entity_id: str,
-                relation: str,
-            ) -> str:
-                """Add a relationship between entities."""
-                rel_id = await self.aadd_relationship(
-                    entity_id=entity_id,
-                    entity_type=entity_type,
-                    related_entity_id=related_entity_id,
-                    relation=relation,
-                    user_id=user_id,
-                    agent_id=agent_id,
-                    team_id=team_id,
-                    namespace=effective_namespace,
-                )
-                return f"Relationship added: {rel_id}" if rel_id else "Entity not found"
-
-            tools.append(add_relationship)
-
-        return tools
-
-    def _build_functions_for_model(self, tools: List[Callable]) -> List[Any]:
-        """Convert callables to Functions for model."""
-        from agno.tools.function import Function
-
-        functions = []
-        seen_names = set()
-
-        for tool in tools:
-            try:
-                name = tool.__name__
-                if name in seen_names:
-                    continue
-                seen_names.add(name)
-
-                func = Function.from_callable(tool, strict=True)
-                func.strict = True
-                functions.append(func)
-            except Exception as e:
-                log_warning(f"Could not add function {tool}: {str(e)}")
-
-        return functions
 
     # =========================================================================
     # Private Helpers

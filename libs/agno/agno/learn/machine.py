@@ -277,7 +277,7 @@ class LearningMachine:
                 db=self.db,
                 model=self.model,
                 namespace=self.namespace,
-                mode=LearningMode.ALWAYS,
+                mode=LearningMode.AGENTIC,
                 max_updates_per_run=self.max_updates_per_run,
             )
 
