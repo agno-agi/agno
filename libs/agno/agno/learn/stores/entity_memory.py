@@ -37,6 +37,7 @@ from datetime import datetime, timezone
 from os import getenv
 from textwrap import dedent
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union, cast
+from weakref import WeakKeyDictionary
 
 from agno.learn.config import EntityMemoryConfig, LearningMode
 from agno.learn.schemas import EntityMemory
@@ -298,8 +299,9 @@ class EntityMemoryStore(LearningStore):
     # assistant turn's tool calls run concurrently (models/base.py gathers
     # them), so two tools touching one entity would overwrite each other and
     # both report success. Writes take this lock; reads and the judge's
-    # provider call stay outside it.
-    _async_write_locks: Dict[int, Any] = field(default_factory=dict, init=False)
+    # provider call stay outside it. Keyed weakly by event loop - see
+    # _write_lock.
+    _async_write_locks: Any = field(default_factory=WeakKeyDictionary, init=False)
 
     def __post_init__(self):
         self._schema = self.config.schema or EntityMemory
@@ -2050,19 +2052,22 @@ class EntityMemoryStore(LearningStore):
     def _write_lock(self) -> Any:
         """The write lock for the running event loop.
 
-        Keyed by loop so a store reused across loops (tests, a worker that
-        restarts its loop) never awaits a lock bound to a dead one.
+        Keyed by the loop itself, weakly: a store outlives the loops that use
+        it (a worker that restarts its loop, a test suite that runs many), and
+        an id-keyed cache would both grow forever and hand a new loop the lock
+        of a dead one that happened to reuse its address - which hangs if that
+        lock died held.
         """
         import asyncio
 
         try:
-            key = id(asyncio.get_running_loop())
+            loop = asyncio.get_running_loop()
         except RuntimeError:
-            key = 0
-        lock = self._async_write_locks.get(key)
+            loop = None
+        lock = self._async_write_locks.get(loop)
         if lock is None:
             lock = asyncio.Lock()
-            self._async_write_locks[key] = lock
+            self._async_write_locks[loop] = lock
         return lock
 
     def _name_candidates(self, entity: str, user_id: Optional[str], namespace: str) -> List[Dict[str, Any]]:
