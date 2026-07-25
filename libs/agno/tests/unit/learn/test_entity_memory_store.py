@@ -478,6 +478,23 @@ class TestSearchEntities:
         result = await store.asearch_entities(query="radar")
         assert "radar" in result
 
+    def test_blank_entity_type_is_no_filter(self, store: EntityMemoryStore) -> None:
+        # A strict tool schema has no "absent", so models send "" for the
+        # optional argument they did not mean to use. Filtering on it would
+        # answer "not found" while holding the entity.
+        store.remember_about(entity="Meridian", entity_type="project", facts=["status: in migration"])
+        assert "Meridian" in store.search_entities(query="Meridian", entity_type="")
+        assert "Meridian" in store.search_entities(query="Meridian", entity_type="   ")
+
+    def test_blank_query_still_lists(self, store: EntityMemoryStore) -> None:
+        store.remember_about(entity="Meridian", entity_type="project")
+        assert "Meridian" in store.search_entities(query="   ", entity_type="")
+
+    async def test_async_blank_entity_type_is_no_filter(self, store: EntityMemoryStore) -> None:
+        await store.aremember_about(entity="Meridian", entity_type="project", facts=["status: in migration"])
+        assert "Meridian" in await store.asearch_entities(query="Meridian", entity_type="")
+        assert "Meridian" in await store.asearch_entities(query="   ", entity_type="")
+
 
 class TestForget:
     def test_archive_excluded_from_recall_but_searchable(self, store: EntityMemoryStore) -> None:

@@ -139,6 +139,19 @@ def _normalize_entity_type(entity_type: Optional[str]) -> Optional[str]:
     return normalized
 
 
+def _blank_to_none(value: Optional[str]) -> Optional[str]:
+    """Blank string in, ``None`` out.
+
+    Models fill unused optional arguments with "" rather than omitting them
+    (a strict tool schema has no way to say "absent"), so a blank argument
+    means "not supplied". Passed through, it would become a filter that
+    matches nothing and read as an honest "not found".
+    """
+    if value is None:
+        return None
+    return value.strip() or None
+
+
 def _types_can_merge(incoming: Optional[str], existing: Optional[str]) -> bool:
     """Whether a name match across two entity types is drift or a collision.
 
@@ -1632,6 +1645,9 @@ class EntityMemoryStore(LearningStore):
             log_warning("EntityMemoryStore.search_entities: namespace='user' requires user_id")
             return "Entity memory needs a user_id for the 'user' namespace; nothing was searched."
 
+        query = _blank_to_none(query)
+        entity_type = _blank_to_none(entity_type)
+
         if query:
             results = self.search(
                 query=query,
@@ -1671,6 +1687,9 @@ class EntityMemoryStore(LearningStore):
         if effective_namespace == "user" and not user_id:
             log_warning("EntityMemoryStore.asearch_entities: namespace='user' requires user_id")
             return "Entity memory needs a user_id for the 'user' namespace; nothing was searched."
+
+        query = _blank_to_none(query)
+        entity_type = _blank_to_none(entity_type)
 
         if query:
             results = await self.asearch(
