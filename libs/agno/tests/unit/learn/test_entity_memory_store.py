@@ -353,6 +353,23 @@ class TestResolution:
         store.remember_about(entity="Sarah", entity_type="person")
         assert len(db.rows) == 2
 
+    def test_archived_entities_do_not_push_live_ones_out_of_the_directory(self, db: RecordingLearningDb) -> None:
+        """Archived rows are dropped after the fetch, so enough recent archives
+        used to shorten the directory - while the block still told the model
+        the directory was the full index and an absent entity was not known."""
+        store = EntityMemoryStore(
+            config=EntityMemoryConfig(db=db, max_entities_in_directory=5)  # type: ignore[arg-type]
+        )
+        for i in range(5):
+            store.remember_about(entity=f"live{i}", entity_type="project", facts=["x"])
+        for i in range(20):
+            store.remember_about(entity=f"dead{i}", entity_type="project", facts=["x"])
+            store.forget(entity=f"dead{i}")
+
+        data = store.recall(message="where do things stand?")
+        assert data is not None
+        assert sorted(e.entity_id for e in data["directory"]) == ["live0", "live1", "live2", "live3", "live4"]
+
     async def test_same_turn_tool_calls_do_not_overwrite_each_other(self, db: RecordingLearningDb) -> None:
         """An assistant turn's tool calls run concurrently (models/base.py
         gathers them), and every entity write is a read-modify-write over the

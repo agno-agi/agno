@@ -2426,14 +2426,19 @@ class EntityMemoryStore(LearningStore):
             return []
 
         try:
-            results = db.get_learnings(
-                learning_type=self.learning_type,
-                entity_type=entity_type,
-                namespace=effective_namespace,
-                user_id=user_id if effective_namespace == "user" else None,
-                limit=limit if include_archived else limit * 2,
-            )
-            return self._parse_rows(results or [], limit=limit, include_archived=include_archived)
+            for fetch in self._archive_headroom(limit=limit, include_archived=include_archived):
+                results = db.get_learnings(
+                    learning_type=self.learning_type,
+                    entity_type=entity_type,
+                    namespace=effective_namespace,
+                    user_id=user_id if effective_namespace == "user" else None,
+                    limit=fetch,
+                )
+                rows = results or []
+                entities = self._parse_rows(rows, limit=limit, include_archived=include_archived)
+                if len(entities) >= limit or len(rows) < fetch:
+                    return entities
+            return entities
         except Exception as e:
             log_debug(f"EntityMemoryStore.list_entities failed: {e}")
             return []
@@ -2457,26 +2462,45 @@ class EntityMemoryStore(LearningStore):
             return []
 
         try:
-            if isinstance(self.db, AsyncBaseDb):
-                results = await self.db.get_learnings(
-                    learning_type=self.learning_type,
-                    entity_type=entity_type,
-                    namespace=effective_namespace,
-                    user_id=user_id if effective_namespace == "user" else None,
-                    limit=limit if include_archived else limit * 2,
-                )
-            else:
-                results = self.db.get_learnings(
-                    learning_type=self.learning_type,
-                    entity_type=entity_type,
-                    namespace=effective_namespace,
-                    user_id=user_id if effective_namespace == "user" else None,
-                    limit=limit if include_archived else limit * 2,
-                )
-            return self._parse_rows(results or [], limit=limit, include_archived=include_archived)
+            for fetch in self._archive_headroom(limit=limit, include_archived=include_archived):
+                if isinstance(self.db, AsyncBaseDb):
+                    results = await self.db.get_learnings(
+                        learning_type=self.learning_type,
+                        entity_type=entity_type,
+                        namespace=effective_namespace,
+                        user_id=user_id if effective_namespace == "user" else None,
+                        limit=fetch,
+                    )
+                else:
+                    results = self.db.get_learnings(
+                        learning_type=self.learning_type,
+                        entity_type=entity_type,
+                        namespace=effective_namespace,
+                        user_id=user_id if effective_namespace == "user" else None,
+                        limit=fetch,
+                    )
+                rows = results or []
+                entities = self._parse_rows(rows, limit=limit, include_archived=include_archived)
+                if len(entities) >= limit or len(rows) < fetch:
+                    return entities
+            return entities
         except Exception as e:
             log_debug(f"EntityMemoryStore.alist_entities failed: {e}")
             return []
+
+    @staticmethod
+    def _archive_headroom(limit: int, include_archived: bool) -> List[int]:
+        """Fetch sizes to try when listing entities by recency.
+
+        Archived rows are dropped after the fetch, so a fixed headroom quietly
+        shortens the listing once enough of the newest rows are archived - and
+        the entity directory then claims to be the full index while live
+        entities sit just outside the window. Escalate until the listing is
+        full or the table is exhausted.
+        """
+        if include_archived:
+            return [limit]
+        return [limit * 2, limit * 8, limit * 32]
 
     def _parse_rows(self, rows: List[Dict[str, Any]], limit: int, include_archived: bool) -> List[EntityMemory]:
         entities: List[EntityMemory] = []
