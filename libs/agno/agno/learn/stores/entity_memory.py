@@ -61,8 +61,19 @@ def _utc_now_iso() -> str:
 
 
 def _slugify(name: str) -> str:
-    """Derive a stable entity_id from a display name: lowercase, underscores."""
-    slug = re.sub(r"[^a-z0-9]+", "_", name.strip().lower()).strip("_")
+    """Derive a stable entity_id from a display name: lowercase, underscores.
+
+    Accented letters fold to their base letter first. Replacing them with the
+    separator instead would map Anna Müller and Anna Möller onto one id, and a
+    merge has no unmerge; folding also lets "Sofia Munoz" resolve to the
+    "Sofía Muñoz" already on file. Scripts with no ASCII form (CJK, Cyrillic)
+    fold to nothing and keep the lowered name as their id.
+    """
+    import unicodedata
+
+    decomposed = unicodedata.normalize("NFKD", name.strip().lower())
+    folded = "".join(ch for ch in decomposed if not unicodedata.combining(ch))
+    slug = re.sub(r"[^a-z0-9]+", "_", folded).strip("_")
     return slug or name.strip().lower()
 
 

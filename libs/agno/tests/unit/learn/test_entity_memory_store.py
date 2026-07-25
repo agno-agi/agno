@@ -353,6 +353,27 @@ class TestResolution:
         store.remember_about(entity="Sarah", entity_type="person")
         assert len(db.rows) == 2
 
+    def test_accented_names_do_not_collide(self, store: EntityMemoryStore, db: RecordingLearningDb) -> None:
+        # Muller and Moller are two people; a slug that drops the accented
+        # letter made them one, and there is no unmerge.
+        store.remember_about(entity="Anna Müller", entity_type="person", facts=["office: Berlin"])
+        store.remember_about(entity="Anna Möller", entity_type="person", facts=["office: Hamburg"])
+        assert len(db.rows) == 2
+
+    def test_accent_folding_merges_the_same_person(self, store: EntityMemoryStore, db: RecordingLearningDb) -> None:
+        store.remember_about(entity="Sofía Muñoz", entity_type="person", facts=["office: Madrid"])
+        store.remember_about(entity="Sofia Munoz", entity_type="person", facts=["team: platform"])
+        assert len(db.rows) == 1
+        entity = store.get(entity_id="sofia_munoz", entity_type="person")
+        assert entity is not None
+        assert len(entity.facts) == 2
+
+    def test_non_latin_names_keep_their_own_id(self, store: EntityMemoryStore, db: RecordingLearningDb) -> None:
+        # Nothing to fold: the lowered name is the id, and two of them stay two.
+        store.remember_about(entity="李明", entity_type="person", facts=["office: Shanghai"])
+        store.remember_about(entity="Дмитрий", entity_type="person", facts=["office: Riga"])
+        assert len(db.rows) == 2
+
     def test_same_name_different_canonical_types_stay_separate(
         self, store: EntityMemoryStore, db: RecordingLearningDb
     ) -> None:
