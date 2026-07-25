@@ -189,6 +189,27 @@ def get_sort_value(record: Dict[str, Any], sort_by: str) -> Any:
     return value
 
 
+def learning_search_patterns(query: str) -> List[str]:
+    """Build the ILIKE patterns for a learnings text search.
+
+    The stored content mixes display names ("Sarah Chen") with slugs
+    ("sarah_chen"), so the query is matched in both its space and underscore
+    forms - a raw substring would miss across that boundary.
+
+    Args:
+        query: The text to search for.
+
+    Returns:
+        Deduplicated '%...%' patterns to OR together with ILIKE.
+    """
+    stripped = query.strip()
+    variants = []
+    for variant in (stripped, stripped.replace("_", " "), stripped.replace(" ", "_")):
+        if variant and variant not in variants:
+            variants.append(variant)
+    return [f"%{variant}%" for variant in variants]
+
+
 class CustomJSONEncoder(json.JSONEncoder):
     """Custom encoder to handle non JSON serializable types."""
 
