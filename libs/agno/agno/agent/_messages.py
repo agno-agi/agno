@@ -103,12 +103,29 @@ def format_message_with_state_variables(
 # ---------------------------------------------------------------------------
 
 
+def _learning_message_text(input: Any) -> Optional[str]:
+    """Flatten the run input to text for message-scoped learning recall."""
+    if input is None:
+        return None
+    if isinstance(input, str):
+        return input
+    if isinstance(input, Message):
+        return input.content if isinstance(input.content, str) else str(input.content)
+    if isinstance(input, list):
+        parts = [_learning_message_text(item) for item in input]
+        return "\n".join(part for part in parts if part) or None
+    if isinstance(input, dict):
+        return str(input)
+    return str(input)
+
+
 def get_system_message(
     agent: Agent,
     session: AgentSession,
     run_context: Optional[RunContext] = None,
     tools: Optional[List[Union[Function, dict]]] = None,
     add_session_state_to_context: Optional[bool] = None,
+    input: Optional[Any] = None,
 ) -> Optional[Message]:
     """Return the system message for the Agent.
 
@@ -406,6 +423,11 @@ def get_system_message(
             user_id=user_id,
             session_id=session.session_id if session else None,
             agent_id=agent.id,
+            message=_learning_message_text(input),
+            run_context=run_context,
+            metadata=run_context.metadata if run_context else None,
+            dependencies=run_context.dependencies if run_context else None,
+            session_state=session_state,
         )
         learning_block = "\n".join(part for part in (learning_guidance, learning_context) if part)
         if learning_block:
@@ -461,6 +483,7 @@ async def aget_system_message(
     run_context: Optional[RunContext] = None,
     tools: Optional[List[Union[Function, dict]]] = None,
     add_session_state_to_context: Optional[bool] = None,
+    input: Optional[Any] = None,
 ) -> Optional[Message]:
     """Return the system message for the Agent.
 
@@ -759,6 +782,11 @@ async def aget_system_message(
             user_id=user_id,
             session_id=session.session_id if session else None,
             agent_id=agent.id,
+            message=_learning_message_text(input),
+            run_context=run_context,
+            metadata=run_context.metadata if run_context else None,
+            dependencies=run_context.dependencies if run_context else None,
+            session_state=session_state,
         )
         learning_block = "\n".join(part for part in (learning_guidance, learning_context) if part)
         if learning_block:
@@ -1212,6 +1240,7 @@ def get_run_messages(
         run_context=run_context,
         tools=tools,
         add_session_state_to_context=add_session_state_to_context,
+        input=input,
     )
     if system_message is not None:
         run_messages.system_message = system_message
@@ -1417,6 +1446,7 @@ async def aget_run_messages(
         run_context=run_context,
         tools=tools,
         add_session_state_to_context=add_session_state_to_context,
+        input=input,
     )
     if system_message is not None:
         run_messages.system_message = system_message

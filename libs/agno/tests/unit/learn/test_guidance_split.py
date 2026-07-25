@@ -160,6 +160,137 @@ class TestStoreSplit:
         assert "<old_style>x</old_style>" in machine.build_context()
 
 
+class TestRunContextThreading:
+    def test_narrow_custom_store_keeps_working(self) -> None:
+        """The §8 bullet: a custom store whose recall(self, user_id=None) takes
+        no **kwargs still works after the new context kwargs arrive."""
+        calls: Dict[str, Any] = {}
+
+        class NarrowStore:
+            learning_type = "narrow"
+            schema = dict
+            was_updated = False
+
+            def recall(self, user_id=None):  # no **kwargs, deliberately
+                calls["recall_user_id"] = user_id
+                return {"seen": True}
+
+            async def arecall(self, user_id=None):
+                calls["arecall_user_id"] = user_id
+                return {"seen": True}
+
+            def process(self, messages, user_id=None):
+                calls["process_messages"] = messages
+
+            async def aprocess(self, messages, user_id=None):
+                calls["aprocess_messages"] = messages
+
+            def build_context(self, data):
+                return "<narrow>ok</narrow>"
+
+            def get_tools(self, user_id=None):
+                calls["get_tools_user_id"] = user_id
+                return []
+
+            async def aget_tools(self, user_id=None):
+                return []
+
+        machine = LearningMachine(db=RecordingLearningDb(), custom_stores={"narrow": NarrowStore()})  # type: ignore[arg-type]
+        context = machine.build_context(
+            user_id="u1",
+            message="the current message",
+            run_context=object(),
+            metadata={"k": "v"},
+            dependencies={"d": 1},
+            session_state={"s": 2},
+        )
+        assert "<narrow>ok</narrow>" in context
+        assert calls["recall_user_id"] == "u1"
+
+        machine.get_tools(user_id="u1", run_context=object())
+        assert calls["get_tools_user_id"] == "u1"
+
+        machine.process(messages=["m"], user_id="u1", run_context=object(), metadata={}, session_state={})
+        assert calls["process_messages"] == ["m"]
+
+    async def test_narrow_custom_store_async_paths(self) -> None:
+        class NarrowStore:
+            learning_type = "narrow"
+            schema = dict
+            was_updated = False
+
+            def recall(self, user_id=None):
+                return None
+
+            async def arecall(self, user_id=None):
+                return {"seen": True}
+
+            def process(self, messages, user_id=None):
+                pass
+
+            async def aprocess(self, messages, user_id=None):
+                pass
+
+            def build_context(self, data):
+                return "<narrow>async ok</narrow>" if data else ""
+
+            def get_tools(self, user_id=None):
+                return []
+
+            async def aget_tools(self, user_id=None):
+                return []
+
+        machine = LearningMachine(db=RecordingLearningDb(), custom_stores={"narrow": NarrowStore()})  # type: ignore[arg-type]
+        context = await machine.abuild_context(user_id="u1", run_context=object(), metadata={})
+        assert "<narrow>async ok</narrow>" in context
+        await machine.aprocess(messages=["m"], run_context=object(), session_state={})
+
+    def test_builtin_store_receives_the_current_message(self) -> None:
+        """Built-in stores take **kwargs and see everything, including message."""
+        seen: Dict[str, Any] = {}
+        machine = LearningMachine(db=RecordingLearningDb(), entity_memory=True)  # type: ignore[arg-type]
+        store = machine.entity_memory_store
+        assert store is not None
+        original_recall = store.recall
+
+        def spy_recall(**kwargs: Any) -> Any:
+            seen.update(kwargs)
+            return original_recall(
+                **{k: v for k, v in kwargs.items() if k in ("entity_id", "entity_type", "user_id", "namespace")}
+            )
+
+        store.recall = spy_recall  # type: ignore[method-assign]
+        machine.build_context(user_id="u1", message="tell me about radar", run_context="RC")
+        assert seen.get("message") == "tell me about radar"
+        assert seen.get("run_context") == "RC"
+
+    def test_injection_site_threads_the_input_message(self) -> None:
+        """End to end: get_system_message(input=...) reaches build_context(message=...)."""
+        from unittest.mock import MagicMock
+
+        from agno.agent import Agent
+        from agno.agent._messages import get_system_message
+        from agno.models.openai import OpenAIResponses
+        from agno.run.base import RunContext
+        from agno.session import AgentSession
+
+        db = RecordingLearningDb()
+        machine = LearningMachine(db=db, entity_memory=True)  # type: ignore[arg-type]
+        machine.build_context = MagicMock(return_value="<ctx/>")  # type: ignore[method-assign]
+
+        agent = Agent(db=db, learning=machine, model=OpenAIResponses(id="gpt-5.5"))  # type: ignore[arg-type]
+        agent._learning = machine
+        session = AgentSession(session_id="s1")
+        run_context = RunContext(run_id="r1", session_id="s1", user_id="u1", metadata={"m": 1}, session_state={"x": 2})
+
+        get_system_message(agent, session=session, run_context=run_context, input="what about radar?")
+        kwargs = machine.build_context.call_args.kwargs
+        assert kwargs["message"] == "what about radar?"
+        assert kwargs["run_context"] is run_context
+        assert kwargs["metadata"] == {"m": 1}
+        assert kwargs["session_state"] == {"x": 2}
+
+
 class TestManualDoor:
     def test_capture_hook_runs_process(self) -> None:
         from types import SimpleNamespace

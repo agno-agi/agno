@@ -91,6 +91,33 @@ def _normalize_name(name: str) -> str:
     return re.sub(r"\s+", " ", name.strip().casefold())
 
 
+_MESSAGE_STOPWORDS = frozenset(
+    """a an and are as at be been but by can could did do does for from had has have how i if in into is it its me my
+    of on or our she so that the their them then there they this to was we were what when where which who why will
+    with would you your about tell know new more some any all just like get make said says told asked shall
+    please show give need want us him her his hers ours yours theirs also very much many still over after before
+    between should must may might each other than too not no yes ok okay let lets going go went come came thing
+    things something anything everything nothing someone anyone everyone whats hows whos""".split()
+)
+
+
+def _message_terms(message: str, max_terms: int = 8) -> List[str]:
+    """Distinctive lexical terms of a message, for relevance recall.
+
+    Deliberately lexical (no semantic retrieval, per the non-goals): lowercase
+    word tokens, minus stopwords and short words, deduplicated in order.
+    """
+    terms: List[str] = []
+    for word in re.findall(r"[\w][\w\-']*", message.lower()):
+        if len(word) < 3 or word in _MESSAGE_STOPWORDS:
+            continue
+        if word not in terms:
+            terms.append(word)
+        if len(terms) >= max_terms:
+            break
+    return terms
+
+
 # The DB key is entity_{namespace}_{entity_type}_{entity_id}, so type drift
 # splits entities exactly like name drift: "person" on Monday and "people" on
 # Friday is two Sarahs. Fold case and singularize against this canonical list;
@@ -258,6 +285,7 @@ class EntityMemoryStore(LearningStore):
         entity_type: Optional[str] = None,
         user_id: Optional[str] = None,
         namespace: Optional[str] = None,
+        message: Optional[str] = None,
         **kwargs,
     ) -> Optional[Any]:
         """Retrieve entity memory for context injection.
@@ -265,20 +293,25 @@ class EntityMemoryStore(LearningStore):
         Always returns the entity directory (name + type, newest first,
         archived excluded) so the agent can see what exists and ground its
         negatives - "not in the directory" is a fact, "substring didn't match"
-        is not. When a keyed lookup is requested (entity_id + entity_type), the
-        matching entity is returned expanded. Archived entities are excluded
-        from recall (they stay reachable via search).
+        is not. With a message, the top-k relevant entities come back expanded:
+        entities whose name or alias appears in the message, then (still under
+        k) entities matched by a bounded lexical search over the message's
+        distinctive terms. A keyed lookup (entity_id + entity_type) stays
+        available and is expanded first. Archived entities are excluded from
+        recall (they stay reachable via search).
 
         Args:
             entity_id: Optional entity to expand (with entity_type).
             entity_type: The type of entity (with entity_id).
             user_id: User ID for "user" namespace scoping.
             namespace: Filter by namespace.
+            message: The current message; drives relevance recall.
             **kwargs: Additional context (ignored).
 
         Returns:
-            Dict with "directory" (all known entities, bounded) and "entities"
-            (the expanded ones), or None when the namespace cannot be read.
+            Dict with "directory" (all known entities, bounded), "entities"
+            (the expanded ones) and "related_names" (the one-hop name map), or
+            None when the namespace cannot be read.
         """
         effective_namespace = namespace or self.config.namespace
         if effective_namespace == "user" and not user_id:
@@ -304,6 +337,24 @@ class EntityMemoryStore(LearningStore):
             if entity is not None and not getattr(entity, "archived_at", None):
                 entities.append(entity)
 
+        if message:
+            top_k = self.config.max_entities_in_context
+            entities = self._merge_relevant(entities, self._match_directory_by_message(directory, message), top_k)
+            if len(entities) < top_k:
+                for term in self._terms_to_search(message, entities):
+                    entities = self._merge_relevant(
+                        entities,
+                        self.search(
+                            query=term,
+                            user_id=user_id,
+                            namespace=effective_namespace,
+                            limit=top_k,
+                        ),
+                        top_k,
+                    )
+                    if len(entities) >= top_k:
+                        break
+
         related_names = self._related_names(
             entities=entities, directory=directory, user_id=user_id, namespace=effective_namespace
         )
@@ -315,6 +366,7 @@ class EntityMemoryStore(LearningStore):
         entity_type: Optional[str] = None,
         user_id: Optional[str] = None,
         namespace: Optional[str] = None,
+        message: Optional[str] = None,
         **kwargs,
     ) -> Optional[Any]:
         """Async version of recall."""
@@ -340,10 +392,65 @@ class EntityMemoryStore(LearningStore):
             if entity is not None and not getattr(entity, "archived_at", None):
                 entities.append(entity)
 
+        if message:
+            top_k = self.config.max_entities_in_context
+            entities = self._merge_relevant(entities, self._match_directory_by_message(directory, message), top_k)
+            if len(entities) < top_k:
+                for term in self._terms_to_search(message, entities):
+                    entities = self._merge_relevant(
+                        entities,
+                        await self.asearch(
+                            query=term,
+                            user_id=user_id,
+                            namespace=effective_namespace,
+                            limit=top_k,
+                        ),
+                        top_k,
+                    )
+                    if len(entities) >= top_k:
+                        break
+
         related_names = await self._arelated_names(
             entities=entities, directory=directory, user_id=user_id, namespace=effective_namespace
         )
         return {"directory": directory, "entities": entities, "related_names": related_names}
+
+    @staticmethod
+    def _match_directory_by_message(directory: List[EntityMemory], message: str) -> List[EntityMemory]:
+        """Directory entries whose name or alias appears in the message."""
+        normalized_message = _normalize_name(message)
+        matched: List[EntityMemory] = []
+        for entity in directory:
+            names = [getattr(entity, "name", None) or ""] + list(getattr(entity, "aliases", None) or [])
+            for candidate in names:
+                if candidate and _normalize_name(candidate) in normalized_message:
+                    matched.append(entity)
+                    break
+        return matched
+
+    @staticmethod
+    def _merge_relevant(current: List[EntityMemory], additions: List[EntityMemory], top_k: int) -> List[EntityMemory]:
+        merged = list(current)
+        seen = {(e.entity_id, e.entity_type) for e in merged}
+        for entity in additions:
+            key = (entity.entity_id, entity.entity_type)
+            if key in seen:
+                continue
+            if getattr(entity, "archived_at", None):
+                continue
+            seen.add(key)
+            merged.append(entity)
+            if len(merged) >= top_k:
+                break
+        return merged[:top_k] if top_k else merged
+
+    @staticmethod
+    def _terms_to_search(message: str, already_matched: List[EntityMemory], max_searches: int = 3) -> List[str]:
+        """Message terms worth a bounded lexical search: not already covering a
+        matched entity's name."""
+        covered = " ".join(_normalize_name(getattr(e, "name", None) or e.entity_id) for e in already_matched)
+        terms = [t for t in _message_terms(message) if t not in covered]
+        return terms[:max_searches]
 
     def _related_names(
         self,

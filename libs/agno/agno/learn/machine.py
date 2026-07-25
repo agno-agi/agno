@@ -40,6 +40,28 @@ try:
 except ImportError:
     pass
 
+
+def _filter_store_kwargs(callee: Callable, kwargs: Dict[str, Any]) -> Dict[str, Any]:
+    """Filter kwargs to what the callee accepts (signature-aware dispatch).
+
+    Third-party custom_stores satisfy a Protocol, and a store written as
+    ``def recall(self, user_id=None)`` with no ``**kwargs`` would raise
+    TypeError the moment new context kwargs (message, run_context, ...) arrive.
+    Built-in stores take ``**kwargs`` and see everything; narrow custom stores
+    keep working untouched. Same inspect.signature approach as
+    invoke_callable_factory.
+    """
+    import inspect
+
+    try:
+        parameters = inspect.signature(callee).parameters
+    except (TypeError, ValueError):
+        return kwargs
+    if any(p.kind == inspect.Parameter.VAR_KEYWORD for p in parameters.values()):
+        return kwargs
+    return {key: value for key, value in kwargs.items() if key in parameters}
+
+
 # Type aliases for cleaner signatures
 UserProfileInput = Union[bool, UserProfileConfig, LearningStore, None]
 UserMemoryInput = Union[bool, UserMemoryConfig, LearningStore, None]
@@ -594,7 +616,7 @@ class LearningMachine:
 
         for name, store in self.stores.items():
             try:
-                store_tools = store.get_tools(**context)
+                store_tools = store.get_tools(**_filter_store_kwargs(store.get_tools, context))
                 if store_tools:
                     tools.extend(store_tools)
                     log_debug(f"Got {len(store_tools)} tools from {name}")
@@ -625,7 +647,7 @@ class LearningMachine:
 
         for name, store in self.stores.items():
             try:
-                store_tools = await store.aget_tools(**context)
+                store_tools = await store.aget_tools(**_filter_store_kwargs(store.aget_tools, context))
                 if store_tools:
                     tools.extend(store_tools)
                     log_debug(f"Got {len(store_tools)} tools from {name}")
@@ -669,7 +691,7 @@ class LearningMachine:
 
         for name, store in self.stores.items():
             try:
-                store.process(**context)
+                store.process(**_filter_store_kwargs(store.process, context))
                 if getattr(store, "was_updated", False):
                     log_debug(f"Store {name} was updated")
             except Exception as e:
@@ -698,7 +720,7 @@ class LearningMachine:
 
         for name, store in self.stores.items():
             try:
-                await store.aprocess(**context)
+                await store.aprocess(**_filter_store_kwargs(store.aprocess, context))
                 if getattr(store, "was_updated", False):
                     log_debug(f"Store {name} was updated")
             except Exception as e:
@@ -743,7 +765,7 @@ class LearningMachine:
 
         for name, store in self.stores.items():
             try:
-                result = store.recall(**context)
+                result = store.recall(**_filter_store_kwargs(store.recall, context))
                 results[name] = result
                 try:
                     log_debug(f"Recalled from {name}: {result}")
@@ -783,7 +805,7 @@ class LearningMachine:
 
         for name, store in self.stores.items():
             try:
-                result = await store.arecall(**context)
+                result = await store.arecall(**_filter_store_kwargs(store.arecall, context))
                 results[name] = result
                 try:
                     log_debug(f"Recalled from {name}: {result}")

@@ -160,6 +160,10 @@ class TestGetSystemMessageLearningContext:
             user_id="user-456",
             session_id="sess-123",
             team_id="my-team",
+            run_context=run_context,
+            metadata=None,
+            dependencies=None,
+            session_state=None,
         )
 
     def test_learning_context_not_added_when_build_context_returns_none(self, mock_db, mock_model, member_agent):
@@ -186,6 +190,10 @@ class TestGetSystemMessageLearningContext:
             user_id=None,
             session_id="sess-123",
             team_id="test-team",
+            run_context=None,
+            metadata=None,
+            dependencies=None,
+            session_state=None,
         )
 
     def test_learning_context_forwards_empty_user_id(self, mock_db, mock_model, member_agent):
@@ -206,6 +214,10 @@ class TestGetSystemMessageLearningContext:
             user_id="",
             session_id="sess-123",
             team_id="test-team",
+            run_context=run_context,
+            metadata=None,
+            dependencies=None,
+            session_state=None,
         )
 
     def test_custom_system_message_bypasses_learning_context(self, mock_db, mock_model, member_agent):
@@ -302,6 +314,10 @@ class TestAgetSystemMessageLearningContext:
             user_id="async-user",
             session_id="async-sess",
             team_id="async-team",
+            run_context=run_context,
+            metadata=None,
+            dependencies=None,
+            session_state=None,
         )
 
     @pytest.mark.asyncio
@@ -345,6 +361,10 @@ class TestAgetSystemMessageLearningContext:
             user_id=None,
             session_id="async-sess",
             team_id="test-team",
+            run_context=None,
+            metadata=None,
+            dependencies=None,
+            session_state=None,
         )
 
 
