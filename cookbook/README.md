@@ -8,7 +8,7 @@ Hundreds of examples. Copy, paste, run.
 
 **Want to see something real?** Jump to [01_demo](./01_demo) — advanced use cases. Run the examples, break them, learn from them.
 
-**Want an agent a chat app cannot give you?** Browse [examples](./examples) — small products, each proving one thing a chat app cannot do. Mostly two files per folder: one builds the agent and serves it, `test.py` drives it from the command line.
+**Want an agent a chat app cannot give you?** Browse [examples](./examples) — small products, each proving one thing a chat app cannot do. Two files per folder: one builds the agent and serves it, `test.py` drives it from the command line.
 
 **Want to explore a particular topic?** Find your use case below.
 
