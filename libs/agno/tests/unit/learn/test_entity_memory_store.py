@@ -129,6 +129,26 @@ class TestAgenticOnly:
         assert entity_store is not None
         assert entity_store.config.mode is LearningMode.AGENTIC
 
+    def test_store_config_namespace_wins_over_machine_default(self, db: RecordingLearningDb) -> None:
+        # EntityMemoryConfig(namespace="ops") under a default machine must not
+        # be silently overridden to "global" at the tool call sites.
+        from agno.learn import LearningMachine
+
+        machine = LearningMachine(db=db, entity_memory=EntityMemoryConfig(namespace="ops"))  # type: ignore[arg-type]
+        tools = machine.get_tools(user_id="u1")
+        remember = next(t for t in tools if t.__name__ == "remember_about")
+        remember(entity="radar", entity_type="project")
+        assert all(row.get("namespace") == "ops" for row in db.rows.values())
+
+    def test_machine_namespace_reaches_default_configs(self, db: RecordingLearningDb) -> None:
+        from agno.learn import LearningMachine
+
+        machine = LearningMachine(db=db, namespace="team_west", entity_memory=True)  # type: ignore[arg-type]
+        tools = machine.get_tools(user_id="u1")
+        remember = next(t for t in tools if t.__name__ == "remember_about")
+        remember(entity="radar", entity_type="project")
+        assert all(row.get("namespace") == "team_west" for row in db.rows.values())
+
 
 class TestToolSurface:
     def test_sync_tools_are_the_four(self, store: EntityMemoryStore) -> None:

@@ -314,6 +314,10 @@ class LearningMachine:
                 config.model = self.model
             if config.max_updates_per_run is None:
                 config.max_updates_per_run = self.max_updates_per_run
+            # A config still on the class default inherits the machine namespace;
+            # an explicit config namespace wins over it at every call site.
+            if config.namespace == "global" and self.namespace != "global":
+                config.namespace = self.namespace
         else:
             config = EntityMemoryConfig(
                 db=self.db,
@@ -336,6 +340,8 @@ class LearningMachine:
                 config.knowledge = self.knowledge
             if config.max_updates_per_run is None:
                 config.max_updates_per_run = self.max_updates_per_run
+            if config.namespace == "global" and self.namespace != "global":
+                config.namespace = self.namespace
         else:
             config = LearnedKnowledgeConfig(
                 model=self.model,
@@ -462,7 +468,7 @@ class LearningMachine:
             message=message,
             entity_id=entity_id,
             entity_type=entity_type,
-            namespace=namespace or self.namespace,
+            namespace=namespace,
             agent_id=agent_id,
             team_id=team_id,
             **kwargs,
@@ -489,7 +495,7 @@ class LearningMachine:
             message=message,
             entity_id=entity_id,
             entity_type=entity_type,
-            namespace=namespace or self.namespace,
+            namespace=namespace,
             agent_id=agent_id,
             team_id=team_id,
             **kwargs,
@@ -662,7 +668,7 @@ class LearningMachine:
         context = {
             "user_id": user_id,
             "session_id": session_id,
-            "namespace": namespace or self.namespace,
+            "namespace": namespace,
             "agent_id": agent_id,
             "team_id": team_id,
             **kwargs,
@@ -694,7 +700,7 @@ class LearningMachine:
         context = {
             "user_id": user_id,
             "session_id": session_id,
-            "namespace": namespace or self.namespace,
+            "namespace": namespace,
             "agent_id": agent_id,
             "team_id": team_id,
             **kwargs,
@@ -738,7 +744,7 @@ class LearningMachine:
             "messages": messages,
             "user_id": user_id,
             "session_id": session_id,
-            "namespace": namespace or self.namespace,
+            "namespace": namespace,
             "agent_id": agent_id,
             "team_id": team_id,
             **kwargs,
@@ -767,7 +773,7 @@ class LearningMachine:
             "messages": messages,
             "user_id": user_id,
             "session_id": session_id,
-            "namespace": namespace or self.namespace,
+            "namespace": namespace,
             "agent_id": agent_id,
             "team_id": team_id,
             **kwargs,
@@ -812,7 +818,7 @@ class LearningMachine:
             "query": message,  # For learned_knowledge
             "entity_id": entity_id,
             "entity_type": entity_type,
-            "namespace": namespace or self.namespace,
+            "namespace": namespace,
             "agent_id": agent_id,
             "team_id": team_id,
             **kwargs,
@@ -852,7 +858,7 @@ class LearningMachine:
             "query": message,
             "entity_id": entity_id,
             "entity_type": entity_type,
-            "namespace": namespace or self.namespace,
+            "namespace": namespace,
             "agent_id": agent_id,
             "team_id": team_id,
             **kwargs,
