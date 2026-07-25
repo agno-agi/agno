@@ -139,6 +139,22 @@ def _normalize_entity_type(entity_type: Optional[str]) -> Optional[str]:
     return normalized
 
 
+def _types_can_merge(incoming: Optional[str], existing: Optional[str]) -> bool:
+    """Whether a name match across two entity types is drift or a collision.
+
+    Resolving by id across types is what folds a free-form type onto its
+    canonical one ("engineer" onto "person") and what upgrades a link's
+    ``unknown`` placeholder once the entity is described. Two *different
+    canonical* types are not drift: a project named Harbor and the company
+    Harbor are separate things, and merging them has no unmerge.
+    """
+    incoming_type = _normalize_entity_type(incoming)
+    existing_type = _normalize_entity_type(existing)
+    if not incoming_type or not existing_type or incoming_type == existing_type:
+        return True
+    return not (incoming_type in _CANONICAL_ENTITY_TYPES and existing_type in _CANONICAL_ENTITY_TYPES)
+
+
 # =============================================================================
 # Tool docstrings (shared between the sync and async tool variants)
 # =============================================================================
@@ -1933,11 +1949,11 @@ class EntityMemoryStore(LearningStore):
         rows = self._get_rows_by_entity_id(entity_id=slug, user_id=user_id, namespace=namespace)
         for row in rows:
             parsed = self.schema.from_dict(row.get("content"))
-            if parsed is not None:
+            if parsed is not None and _types_can_merge(normalized_type, getattr(parsed, "entity_type", None)):
                 return parsed
 
         candidates = self._name_candidates(entity=entity, user_id=user_id, namespace=namespace)
-        return self._match_name_or_alias(candidates=candidates, entity=entity)
+        return self._match_name_or_alias(candidates=candidates, entity=entity, entity_type=normalized_type)
 
     async def _aresolve(
         self,
@@ -1958,11 +1974,11 @@ class EntityMemoryStore(LearningStore):
         rows = await self._aget_rows_by_entity_id(entity_id=slug, user_id=user_id, namespace=namespace)
         for row in rows:
             parsed = self.schema.from_dict(row.get("content"))
-            if parsed is not None:
+            if parsed is not None and _types_can_merge(normalized_type, getattr(parsed, "entity_type", None)):
                 return parsed
 
         candidates = await self._aname_candidates(entity=entity, user_id=user_id, namespace=namespace)
-        return self._match_name_or_alias(candidates=candidates, entity=entity)
+        return self._match_name_or_alias(candidates=candidates, entity=entity, entity_type=normalized_type)
 
     def _name_candidates(self, entity: str, user_id: Optional[str], namespace: str) -> List[Dict[str, Any]]:
         """Fetch candidate rows for name/alias matching via the text query surface.
@@ -2080,13 +2096,19 @@ class EntityMemoryStore(LearningStore):
             log_debug(f"EntityMemoryStore._aget_recent_rows failed: {e}")
             return []
 
-    def _match_name_or_alias(self, candidates: List[Dict[str, Any]], entity: str) -> Optional[EntityMemory]:
-        """Exact (normalized) name match first, then exact alias match."""
+    def _match_name_or_alias(
+        self, candidates: List[Dict[str, Any]], entity: str, entity_type: Optional[str] = None
+    ) -> Optional[EntityMemory]:
+        """Exact (normalized) name match first, then exact alias match.
+
+        A candidate of a different canonical type is a name collision, not the
+        same entity, and is skipped - see ``_types_can_merge``.
+        """
         target = _normalize_name(entity)
         parsed_candidates: List[EntityMemory] = []
         for row in self._order_rows(candidates):
             parsed = self.schema.from_dict(row.get("content"))
-            if parsed is not None:
+            if parsed is not None and _types_can_merge(entity_type, getattr(parsed, "entity_type", None)):
                 parsed_candidates.append(parsed)
 
         for parsed in parsed_candidates:

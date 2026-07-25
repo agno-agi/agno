@@ -353,6 +353,57 @@ class TestResolution:
         store.remember_about(entity="Sarah", entity_type="person")
         assert len(db.rows) == 2
 
+    def test_same_name_different_canonical_types_stay_separate(
+        self, store: EntityMemoryStore, db: RecordingLearningDb
+    ) -> None:
+        # The project Harbor and the company Harbor are different things.
+        store.remember_about(entity="Harbor", entity_type="project", facts=["db: Postgres"])
+        store.remember_about(entity="Harbor", entity_type="company", facts=["HQ: Lisbon"])
+        assert len(db.rows) == 2
+        project = store.get(entity_id="harbor", entity_type="project")
+        company = store.get(entity_id="harbor", entity_type="company")
+        assert project is not None and company is not None
+        assert [f["content"] for f in project.facts] == ["db: Postgres"]
+        assert [f["content"] for f in company.facts] == ["HQ: Lisbon"]
+
+    def test_name_match_across_canonical_types_stays_separate(
+        self, store: EntityMemoryStore, db: RecordingLearningDb
+    ) -> None:
+        # The name rung must not cross canonical types either.
+        db.upsert_learning(
+            id="entity_global_project_rdr_001",
+            learning_type="entity_memory",
+            entity_id="rdr_001",
+            entity_type="project",
+            namespace="global",
+            content={"entity_id": "rdr_001", "entity_type": "project", "name": "Radar", "facts": []},
+        )
+        store.remember_about(entity="Radar", entity_type="person", facts=["role: staff engineer"])
+        assert len(db.rows) == 2
+
+    def test_free_form_type_still_merges_onto_the_canonical_one(
+        self, store: EntityMemoryStore, db: RecordingLearningDb
+    ) -> None:
+        # "engineer" is type drift, not a second Sarah.
+        store.remember_about(entity="Sarah Chen", entity_type="engineer", facts=["designs radar"])
+        store.remember_about(entity="Sarah Chen", entity_type="person", facts=["prefers async"])
+        assert len(db.rows) == 1
+
+    def test_link_placeholder_still_upgrades_to_a_real_type(
+        self, store: EntityMemoryStore, db: RecordingLearningDb
+    ) -> None:
+        # link_entities mints entity_type="unknown"; describing it later must merge.
+        store.link_entities(entity="harbor", relation="uses", related_entity="Postgres")
+        store.remember_about(entity="Postgres", entity_type="system", facts=["v16"])
+        assert sorted(r["entity_type"] for r in db.rows.values()) == ["system", "unknown"]
+
+    async def test_async_same_name_different_canonical_types_stay_separate(
+        self, store: EntityMemoryStore, db: RecordingLearningDb
+    ) -> None:
+        await store.aremember_about(entity="Harbor", entity_type="project", facts=["db: Postgres"])
+        await store.aremember_about(entity="Harbor", entity_type="company", facts=["HQ: Lisbon"])
+        assert len(db.rows) == 2
+
 
 class TestLinkEntities:
     def test_edge_written_on_both_rows_with_far_end_type(self, store: EntityMemoryStore) -> None:
