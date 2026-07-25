@@ -1,14 +1,8 @@
 """
-Second Brain - Drive It From the CLI
+Second Brain - CLI
 ====================================
-Runs the agent from second_brain.py without starting the server: capture a
-decision in one session, then ask for it back in a brand new session that shares
-no history. Everything the second session knows came from the store.
-
-Run it twice. The second run is a new process, and it reads the note the first
-one left before writing anything:
-
-    python cookbook/examples/second_brain/test.py
+Runs the second_brain without starting the server: capture a
+decision in one session, then recall in a new session.
 """
 
 from uuid import uuid4

@@ -3,9 +3,10 @@ Second Brain - Memory You Own, Behind Your Own MCP Server
 =========================================================
 A private agent that remembers what you are building: durable notes in its own
 filesystem, plus what it learns about how you work. It is also an MCP server, so
-Claude Desktop, Cursor and your own apps all read and write the same brain.
+your AI apps (claude, chatgpt, claude code) can read and write the same brain.
 
-Running this file serves it on http://localhost:7777, MCP on http://localhost:7777/mcp.
+Running this file serves the AgentOS on http://localhost:7777
+MCP Server on http://localhost:7777/mcp
 """
 
 from agno.agent import Agent
