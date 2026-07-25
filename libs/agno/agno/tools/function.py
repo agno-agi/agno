@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from functools import partial, wraps
+from functools import lru_cache, partial, wraps
 from importlib.metadata import version
 from typing import Any, Callable, Dict, List, Literal, Optional, Sequence, Type, TypeVar, get_type_hints
 
@@ -11,6 +11,18 @@ from agno.exceptions import AgentRunException, RunCancelledException
 from agno.media import Audio, File, Image, Video
 from agno.run import RunContext
 from agno.utils.log import log_debug, log_exception, log_warning
+
+
+@lru_cache(maxsize=1)
+def _get_pydantic_version() -> Version:
+    """Return the installed pydantic version, resolved once per process.
+
+    ``importlib.metadata.version()`` re-reads and re-parses the distribution's
+    ``METADATA`` file on every call. For pydantic that file is ~109 KB, so
+    resolving the version per tool made tool parsing scale with the number of
+    tools for no benefit -- the answer cannot change while the process runs.
+    """
+    return Version(version("pydantic"))
 
 T = TypeVar("T")
 
@@ -563,7 +575,7 @@ class Function(BaseModel):
         """Wrap a callable with Pydantic's validate_call decorator, if relevant"""
         from inspect import isasyncgenfunction, iscoroutinefunction, signature
 
-        pydantic_version = Version(version("pydantic"))
+        pydantic_version = _get_pydantic_version()
 
         # Async generators need special handling: validate_call turns an `async def ... yield`
         # into a plain function that returns an async_generator, which makes
