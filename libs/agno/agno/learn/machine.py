@@ -14,7 +14,7 @@ Plus maintenance via the Curator for keeping memories healthy.
 
 from dataclasses import dataclass, field
 from os import getenv
-from typing import Any, Callable, Dict, List, Optional, Union
+from typing import Any, Callable, ClassVar, Dict, List, Optional, Union
 
 from agno.learn.config import (
     DecisionLogConfig,
@@ -868,48 +868,148 @@ class LearningMachine:
     # Serialization
     # =========================================================================
 
+    _STORE_CONFIG_CLASSES: ClassVar[Dict[str, Any]] = {
+        "user_profile": UserProfileConfig,
+        "user_memory": UserMemoryConfig,
+        "session_context": SessionContextConfig,
+        "entity_memory": EntityMemoryConfig,
+        "learned_knowledge": LearnedKnowledgeConfig,
+        "decision_log": DecisionLogConfig,
+    }
+
     def to_dict(self) -> Dict[str, Any]:
         """Serialize the LearningMachine configuration to a dictionary.
 
-        Preserves which stores are enabled and the namespace so that
-        from_dict() can reconstruct an equivalent instance. Does not
-        serialize db, model, or knowledge (those are injected at init).
+        Lossless for what a platform rebuild needs: per-store mode,
+        namespace, enable_* toggles, limits, prompt strings and
+        schema-by-import-path all round-trip. db, model and knowledge are
+        never serialized (they are injected at init), and callables cannot
+        be - a config carrying one round-trips as present-but-not-restorable
+        and from_dict logs once. Store INSTANCES serialize their config;
+        custom_stores serialize as import-path refs (informational - the
+        instances cannot be rebuilt from a dict).
         """
         d: Dict[str, Any] = {}
-        if self.user_profile:
-            d["user_profile"] = True
-        if self.user_memory:
-            d["user_memory"] = True
-        if self.session_context:
-            d["session_context"] = True
-        if self.entity_memory:
-            d["entity_memory"] = True
-        if self.learned_knowledge:
-            d["learned_knowledge"] = True
-        if self.decision_log:
-            d["decision_log"] = True
+        for store_name in self._STORE_CONFIG_CLASSES:
+            value = getattr(self, store_name)
+            if not value:
+                continue
+            d[store_name] = self._serialize_store_input(value)
         if self.namespace != "global":
             d["namespace"] = self.namespace
+        if self.max_updates_per_run != 10:
+            d["max_updates_per_run"] = self.max_updates_per_run
+        if self.custom_stores:
+            d["custom_stores"] = {
+                name: f"{type(store).__module__}.{type(store).__qualname__}"
+                for name, store in self.custom_stores.items()
+            }
         if self.debug_mode:
             d["debug_mode"] = True
         return d
+
+    def _serialize_store_input(self, value: Any) -> Any:
+        """bool -> True; Config -> field dict; Store instance -> its config's dict."""
+        import dataclasses
+
+        if value is True:
+            return True
+        # A store instance carries its config (stores are dataclasses too, so
+        # check for the carried config before the dataclass test).
+        inner = getattr(value, "config", None)
+        if inner is not None and dataclasses.is_dataclass(inner):
+            config = inner
+        elif dataclasses.is_dataclass(value) and not isinstance(value, type):
+            config = value
+        else:
+            return True
+
+        serialized: Dict[str, Any] = {}
+        for f in dataclasses.fields(config):
+            if f.name in ("db", "model", "knowledge"):
+                continue
+            field_value = getattr(config, f.name)
+            if field_value is None:
+                continue
+            if isinstance(field_value, LearningMode):
+                serialized["mode"] = field_value.value
+            elif isinstance(field_value, type):
+                serialized[f.name] = f"{field_value.__module__}.{field_value.__qualname__}"
+            elif callable(field_value):
+                serialized[f.name] = {"__callable__": getattr(field_value, "__name__", "callable")}
+            elif isinstance(field_value, (str, int, float, bool, list, dict)):
+                serialized[f.name] = field_value
+        return serialized
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "LearningMachine":
         """Reconstruct a LearningMachine from a serialized dictionary.
 
-        db and model must be injected separately (e.g. during agent/team init).
+        db and model must be injected separately (e.g. during agent/team
+        init). Accepts both the lossless per-store dicts and the old
+        boolean-only payloads. Unrestorable entries (callables, custom-store
+        refs) are logged once, never silently dropped to a different default.
         """
+        kwargs: Dict[str, Any] = {}
+        for store_name, config_cls in cls._STORE_CONFIG_CLASSES.items():
+            value = data.get(store_name, False)
+            if isinstance(value, dict):
+                kwargs[store_name] = cls._deserialize_store_config(store_name, config_cls, value)
+            else:
+                kwargs[store_name] = bool(value)
+
+        if data.get("custom_stores"):
+            log_warning(
+                f"LearningMachine.from_dict: custom stores {sorted(data['custom_stores'])} cannot be "
+                f"rebuilt from a serialized config; re-attach them programmatically."
+            )
+
         return cls(
-            user_profile=data.get("user_profile", False),
-            user_memory=data.get("user_memory", False),
-            session_context=data.get("session_context", False),
-            entity_memory=data.get("entity_memory", False),
-            learned_knowledge=data.get("learned_knowledge", False),
-            decision_log=data.get("decision_log", False),
             namespace=data.get("namespace", "global"),
+            max_updates_per_run=data.get("max_updates_per_run", 10),
             debug_mode=data.get("debug_mode", False),
+            **kwargs,
         )
+
+    @classmethod
+    def _deserialize_store_config(cls, store_name: str, config_cls: Any, payload: Dict[str, Any]) -> Any:
+        import dataclasses
+        import importlib
+
+        field_names = {f.name for f in dataclasses.fields(config_cls)}
+        kwargs: Dict[str, Any] = {}
+        for key, value in payload.items():
+            if key not in field_names:
+                continue
+            if key == "mode":
+                try:
+                    kwargs["mode"] = LearningMode(value)
+                except ValueError:
+                    log_warning(f"LearningMachine.from_dict: unknown mode {value!r} on {store_name}; using default.")
+                continue
+            if key == "schema" and isinstance(value, str):
+                module_path, _, attr_path = value.rpartition(".")
+                try:
+                    target: Any = importlib.import_module(module_path)
+                    for part in attr_path.split("."):
+                        target = getattr(target, part)
+                    kwargs["schema"] = target
+                except Exception as e:
+                    log_warning(f"LearningMachine.from_dict: could not import schema {value!r} for {store_name}: {e}")
+                continue
+            if isinstance(value, dict) and "__callable__" in value:
+                log_warning(
+                    f"LearningMachine.from_dict: {store_name}.{key} was a callable "
+                    f"({value['__callable__']}) and cannot be restored from a serialized config; "
+                    f"set it programmatically."
+                )
+                continue
+            kwargs[key] = value
+        try:
+            return config_cls(**kwargs)
+        except Exception as e:
+            log_warning(f"LearningMachine.from_dict: could not rebuild {store_name} config ({e}); enabling defaults.")
+            return True
 
     # =========================================================================
     # Representation
