@@ -16,7 +16,6 @@ Run with: python cookbook/05_agent_os/contacts/server.py
 """
 
 from agno.agent import Agent
-from agno.agent.remote import RemoteAgent
 from agno.contacts import Contact
 from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIResponses
