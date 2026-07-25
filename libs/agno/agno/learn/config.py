@@ -13,6 +13,10 @@ Configurations:
 - SessionContextConfig: Config for session context learning
 - LearnedKnowledgeConfig: Config for learned knowledge
 - EntityMemoryConfig: Config for entity memory
+
+Custom `schema` classes serialize by import path; define them in an
+importable module, not `__main__`, or they will not survive a
+to_dict/from_dict round-trip across processes.
 """
 
 from dataclasses import dataclass

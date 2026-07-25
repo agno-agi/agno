@@ -1079,7 +1079,17 @@ class LearningMachine:
                         target = getattr(target, part)
                     kwargs["schema"] = target
                 except Exception as e:
-                    log_warning(f"LearningMachine.from_dict: could not import schema {value!r} for {store_name}: {e}")
+                    if module_path == "__main__":
+                        log_warning(
+                            f"LearningMachine.from_dict: schema {value!r} on {store_name} was defined "
+                            f"in a __main__ script and cannot be imported from another process; "
+                            f"define custom schemas in an importable module. The store falls back "
+                            f"to its default schema."
+                        )
+                    else:
+                        log_warning(
+                            f"LearningMachine.from_dict: could not import schema {value!r} for {store_name}: {e}"
+                        )
                 continue
             if isinstance(value, dict) and "__callable__" in value:
                 log_warning(
