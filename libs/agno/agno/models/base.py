@@ -2327,6 +2327,10 @@ class Model(ABC):
                 current_function_call_count += 1
                 # We have reached the function call limit, so we add an error result to the function call results
                 if current_function_call_count > function_call_limit:
+                    log_debug(
+                        f"Tool call limit ({function_call_limit}) reached. "
+                        f"Skipping: {fc.function.name} (call #{current_function_call_count})"
+                    )
                     function_call_results.append(self.create_tool_call_limit_error_result(fc))
                     continue
 
@@ -2522,6 +2526,10 @@ class Model(ABC):
                 current_function_call_count += 1
                 # We have reached the function call limit, so we add an error result to the function call results
                 if current_function_call_count > function_call_limit:
+                    log_debug(
+                        f"Tool call limit ({function_call_limit}) reached. "
+                        f"Skipping: {fc.function.name} (call #{current_function_call_count})"
+                    )
                     function_call_results.append(self.create_tool_call_limit_error_result(fc))
                     # Skip this function call
                     continue

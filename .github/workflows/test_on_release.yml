@@ -1228,7 +1228,57 @@ jobs:
           AGNO_TELEMETRY: false
         run: |
           source .venv/bin/activate
-          python -m pytest --ignore=./libs/agno/tests/integration/db --ignore=./libs/agno/tests/integration/models --ignore=./libs/agno/tests/integration/agent --ignore=./libs/agno/tests/integration/knowledge --ignore=./libs/agno/tests/integration/teams --ignore=./libs/agno/tests/integration/embedder --ignore=./libs/agno/tests/integration/workflows --ignore=./libs/agno/tests/integration/workflows_2 --ignore=./libs/agno/tests/integration/os/interfaces/test_a2a.py --ignore=./libs/agno/tests/integration/os --ignore=./libs/agno/tests/integration/tools/test_seltz.py ./libs/agno/tests/integration
+          python -m pytest --ignore=./libs/agno/tests/integration/db --ignore=./libs/agno/tests/integration/models --ignore=./libs/agno/tests/integration/agent --ignore=./libs/agno/tests/integration/knowledge --ignore=./libs/agno/tests/integration/teams --ignore=./libs/agno/tests/integration/embedder --ignore=./libs/agno/tests/integration/workflows --ignore=./libs/agno/tests/integration/workflows_2 --ignore=./libs/agno/tests/integration/fs --ignore=./libs/agno/tests/integration/os/interfaces/test_a2a.py --ignore=./libs/agno/tests/integration/os --ignore=./libs/agno/tests/integration/tools/test_seltz.py ./libs/agno/tests/integration
+
+  # Run the DbFileSystem suite against a real Postgres (both dialects).
+  #
+  # This suite is ignored by test-remaining because its conftest eager-connects
+  # to Postgres with no skip marker; without a DB, every postgresql-parametrized
+  # case errors on connection-refused. Give it its own job with a pgvector
+  # service on localhost:5532 — the exact host/port/creds the conftest targets —
+  # so both the sqlite and postgresql lanes run in CI.
+  test-fs:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      matrix:
+        python-version: ["3.12"]
+      fail-fast: true # Stop all matrix jobs if one fails
+    services:
+      postgres:
+        image: agnohq/pgvector:18
+        env:
+          POSTGRES_DB: ai
+          POSTGRES_USER: ai
+          POSTGRES_PASSWORD: ai
+        ports:
+          - "5532:5432"
+        options: >-
+          --health-cmd "pg_isready -U ai -d ai"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v3
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install uv
+        run: |
+          curl -LsSf https://astral.sh/uv/install.sh | sh
+          echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+      - name: Run dev setup
+        working-directory: .
+        run: |
+          ./scripts/test_setup.sh
+      - name: Run FileSystem integration tests
+        working-directory: .
+        env:
+          AGNO_TELEMETRY: false
+        run: |
+          source .venv/bin/activate
+          python -m pytest ./libs/agno/tests/integration/fs
 
   test-dev-setup:
     runs-on: ubuntu-latest
