@@ -1,10 +1,15 @@
 """Tests for custom datetime_format on Agent."""
 
 import re
-from unittest.mock import MagicMock
+import time
+from unittest.mock import MagicMock, patch
 
-from agno.agent._messages import get_system_message
+import pytest
+
+from agno.agent._messages import aget_run_messages, get_run_messages, get_system_message
 from agno.agent.agent import Agent
+from agno.run import RunContext
+from agno.run.agent import RunOutput
 from agno.session import AgentSession
 
 # =============================================================================
@@ -73,55 +78,151 @@ def _make_agent_with_model(**kwargs) -> Agent:
     return agent
 
 
-def test_default_format_includes_full_datetime():
-    """When no datetime_format is set, the full default datetime str is used."""
-    agent = _make_agent_with_model(add_datetime_to_context=True)
+def _get_agent_run_messages(agent: Agent, input: str = "What time is it?"):
+    session = AgentSession(session_id="test-session")
+    return get_run_messages(
+        agent,
+        run_response=RunOutput(run_id="test-run", session_id=session.session_id),
+        run_context=RunContext(run_id="test-run", session_id=session.session_id),
+        input=input,
+        session=session,
+    )
+
+
+async def _aget_agent_run_messages(agent: Agent, input: str = "What time is it?"):
+    session = AgentSession(session_id="test-session")
+    return await aget_run_messages(
+        agent,
+        run_response=RunOutput(run_id="test-run", session_id=session.session_id),
+        run_context=RunContext(run_id="test-run", session_id=session.session_id),
+        input=input,
+        session=session,
+    )
+
+
+def test_system_message_is_stable_with_datetime_context_enabled():
+    agent = _make_agent_with_model(
+        instructions="Keep answers concise.",
+        add_datetime_to_context=True,
+        datetime_format="%Y-%m-%d %H:%M:%S.%f",
+    )
     session = AgentSession(session_id="test-session")
 
-    msg = get_system_message(agent, session)
+    first = get_system_message(agent, session)
+    time.sleep(0.01)
+    second = get_system_message(agent, session)
 
-    assert msg is not None
-    # Default Python datetime str format: YYYY-MM-DD HH:MM:SS.ffffff
-    assert re.search(r"The current time is \d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}", msg.content)
+    assert first is not None
+    assert second is not None
+    assert first.content == second.content
+    assert "The current time is" not in first.content
 
 
-def test_custom_date_only_format():
-    """When datetime_format='%Y-%m-%d', only the date portion appears."""
+def test_default_datetime_format_is_sent_after_the_system_message():
     agent = _make_agent_with_model(
+        instructions="Keep answers concise.",
+        add_datetime_to_context=True,
+    )
+
+    run_messages = _get_agent_run_messages(agent)
+    datetime_message = run_messages.messages[-2]
+
+    assert datetime_message.role == "user"
+    assert re.fullmatch(
+        r"The current time is \d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(?:\.\d{6})?\.",
+        datetime_message.content,
+    )
+    assert datetime_message.add_to_agent_memory is False
+    assert run_messages.messages[-1] is run_messages.user_message
+
+
+def test_datetime_context_uses_user_role_when_user_message_role_is_developer():
+    agent = _make_agent_with_model(
+        instructions="Keep answers concise.",
+        add_datetime_to_context=True,
+        user_message_role="developer",
+    )
+
+    run_messages = _get_agent_run_messages(agent)
+
+    assert run_messages.messages[-2].role == "user"
+    assert run_messages.messages[-1].role == "developer"
+
+
+def test_custom_datetime_format_and_timezone_are_preserved():
+    agent = _make_agent_with_model(
+        instructions="Keep answers concise.",
+        add_datetime_to_context=True,
+        datetime_format="%Y-%m-%d %Z %z",
+        timezone_identifier="UTC",
+    )
+
+    run_messages = _get_agent_run_messages(agent)
+
+    assert re.fullmatch(
+        r"The current time is \d{4}-\d{2}-\d{2} UTC \+0000\.",
+        run_messages.messages[-2].content,
+    )
+
+
+def test_invalid_timezone_falls_back_and_keeps_datetime_outside_system_message():
+    agent = _make_agent_with_model(
+        instructions="Keep answers concise.",
         add_datetime_to_context=True,
         datetime_format="%Y-%m-%d",
+        timezone_identifier="Invalid/Timezone",
     )
-    session = AgentSession(session_id="test-session")
 
-    msg = get_system_message(agent, session)
+    with patch("agno.agent._messages.log_warning") as mock_log_warning:
+        run_messages = _get_agent_run_messages(agent)
 
-    assert msg is not None
-    # Should match YYYY-MM-DD followed by period (no time component)
-    assert re.search(r"The current time is \d{4}-\d{2}-\d{2}\.", msg.content)
+    assert run_messages.system_message is not None
+    assert "The current time is" not in str(run_messages.system_message.content)
+    assert re.fullmatch(r"The current time is \d{4}-\d{2}-\d{2}\.", run_messages.messages[-2].content)
+    mock_log_warning.assert_called_once()
+    assert "Invalid timezone identifier" in mock_log_warning.call_args.args[0]
 
 
-def test_custom_format_slash_style():
-    """Custom format with slashes: %d/%m/%Y %H:%M."""
+def test_no_datetime_message_when_disabled():
     agent = _make_agent_with_model(
-        add_datetime_to_context=True,
-        datetime_format="%d/%m/%Y %H:%M",
-    )
-    session = AgentSession(session_id="test-session")
-
-    msg = get_system_message(agent, session)
-
-    assert msg is not None
-    assert re.search(r"The current time is \d{2}/\d{2}/\d{4} \d{2}:\d{2}\.", msg.content)
-
-
-def test_no_datetime_when_disabled():
-    """When add_datetime_to_context is False, no datetime info is added."""
-    agent = _make_agent_with_model(
+        instructions="Keep answers concise.",
         add_datetime_to_context=False,
         datetime_format="%Y-%m-%d",
     )
-    session = AgentSession(session_id="test-session")
-    msg = get_system_message(agent, session)
 
-    if msg is not None:
-        assert "current time" not in msg.content.lower()
+    run_messages = _get_agent_run_messages(agent)
+
+    assert all("current time" not in str(message.content).lower() for message in run_messages.messages)
+
+
+@pytest.mark.asyncio
+async def test_async_datetime_context_matches_sync_message_semantics():
+    agent = _make_agent_with_model(
+        instructions="Keep answers concise.",
+        add_datetime_to_context=True,
+        datetime_format="%Y-%m-%d",
+        timezone_identifier="UTC",
+    )
+
+    run_messages = await _aget_agent_run_messages(agent)
+    datetime_message = run_messages.messages[-2]
+
+    assert run_messages.system_message is not None
+    assert "The current time is" not in str(run_messages.system_message.content)
+    assert re.fullmatch(r"The current time is \d{4}-\d{2}-\d{2}\.", datetime_message.content)
+    assert datetime_message.role == "user"
+    assert datetime_message.add_to_agent_memory is False
+    assert run_messages.messages[-1] is run_messages.user_message
+
+
+@pytest.mark.parametrize(
+    "agent",
+    [
+        _make_agent_with_model(system_message="Custom system", add_datetime_to_context=True),
+        _make_agent_with_model(build_context=False, add_datetime_to_context=True),
+    ],
+)
+def test_datetime_context_preserves_existing_system_message_bypass(agent: Agent):
+    run_messages = _get_agent_run_messages(agent)
+
+    assert all("current time" not in str(message.content).lower() for message in run_messages.messages)

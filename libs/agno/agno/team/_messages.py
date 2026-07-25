@@ -335,6 +335,31 @@ def _build_trailing_sections(
     return content
 
 
+def _get_datetime_context_message(team: "Team") -> Optional[Message]:
+    if not team.add_datetime_to_context or team.system_message is not None:
+        return None
+
+    from datetime import datetime
+
+    tz = None
+    if team.timezone_identifier:
+        try:
+            from zoneinfo import ZoneInfo
+
+            tz = ZoneInfo(team.timezone_identifier)
+        except Exception as e:
+            log_warning(f"Invalid timezone identifier: {str(e)}")
+
+    time = datetime.now(tz) if tz else datetime.now()
+    formatted_time = time.strftime(team.datetime_format) if team.datetime_format else str(time)
+
+    return Message(
+        role="user",
+        content=f"The current time is {formatted_time}.",
+        add_to_agent_memory=False,
+    )
+
+
 def get_system_message(
     team: "Team",
     session: TeamSession,
@@ -422,30 +447,7 @@ def get_system_message(
     # 1.3.1 Add instructions for using markdown
     if team.markdown and output_schema is None:
         additional_information.append("Use markdown to format your answers.")
-    # 1.3.2 Add the current datetime
-    if team.add_datetime_to_context:
-        from datetime import datetime
-
-        tz = None
-
-        if team.timezone_identifier:
-            try:
-                from zoneinfo import ZoneInfo
-
-                tz = ZoneInfo(team.timezone_identifier)
-            except Exception as e:
-                log_warning(f"Invalid timezone identifier: {str(e)}")
-
-        time = datetime.now(tz) if tz else datetime.now()
-
-        if team.datetime_format:
-            formatted_time = time.strftime(team.datetime_format)
-        else:
-            formatted_time = str(time)
-
-        additional_information.append(f"The current time is {formatted_time}.")
-
-    # 1.3.3 Add the current location
+    # 1.3.2 Add the current location
     if team.add_location_to_context:
         from agno.utils.location import get_location
 
@@ -457,7 +459,7 @@ def get_system_message(
             if location_str:
                 additional_information.append(f"Your approximate location is: {location_str}.")
 
-    # 1.3.4 Add team name if provided
+    # 1.3.3 Add team name if provided
     if team.name is not None and team.add_name_to_context:
         additional_information.append(f"Your name is: {team.name}.")
 
@@ -653,30 +655,7 @@ async def aget_system_message(
     # 1.3.1 Add instructions for using markdown
     if team.markdown and output_schema is None:
         additional_information.append("Use markdown to format your answers.")
-    # 1.3.2 Add the current datetime
-    if team.add_datetime_to_context:
-        from datetime import datetime
-
-        tz = None
-
-        if team.timezone_identifier:
-            try:
-                from zoneinfo import ZoneInfo
-
-                tz = ZoneInfo(team.timezone_identifier)
-            except Exception as e:
-                log_warning(f"Invalid timezone identifier: {str(e)}")
-
-        time = datetime.now(tz) if tz else datetime.now()
-
-        if team.datetime_format:
-            formatted_time = time.strftime(team.datetime_format)
-        else:
-            formatted_time = str(time)
-
-        additional_information.append(f"The current time is {formatted_time}.")
-
-    # 1.3.3 Add the current location
+    # 1.3.2 Add the current location
     if team.add_location_to_context:
         from agno.utils.location import get_location
 
@@ -688,7 +667,7 @@ async def aget_system_message(
             if location_str:
                 additional_information.append(f"Your approximate location is: {location_str}.")
 
-    # 1.3.4 Add team name if provided
+    # 1.3.3 Add team name if provided
     if team.name is not None and team.add_name_to_context:
         additional_information.append(f"Your name is: {team.name}.")
 
@@ -833,8 +812,8 @@ def _get_run_messages(
     1. Add system message to run_messages
     2. Add extra messages to run_messages
     3. Add history to run_messages
-    4. Add messages to run_messages if provided (messages parameter first)
-    5. Add user message to run_messages (message parameter second)
+    4. Add datetime context to run_messages if enabled
+    5. Add user message to run_messages
 
     """
     # Initialize the RunMessages object
@@ -915,7 +894,12 @@ def _get_run_messages(
             # Extend the messages with the history
             run_messages.messages += history_copy
 
-    # 5. Add user message to run_messages (message second as per Dirk's requirement)
+    # 4. Add datetime context to run_messages
+    datetime_context_message = _get_datetime_context_message(team)
+    if datetime_context_message is not None:
+        run_messages.messages.append(datetime_context_message)
+
+    # 5. Add user message to run_messages
     # 5.1 Build user message if message is None, str or list
     user_message = _get_user_message(
         team,
@@ -968,8 +952,8 @@ async def _aget_run_messages(
     1. Add system message to run_messages
     2. Add extra messages to run_messages
     3. Add history to run_messages
-    4. Add messages to run_messages if provided (messages parameter first)
-    5. Add user message to run_messages (message parameter second)
+    4. Add datetime context to run_messages if enabled
+    5. Add user message to run_messages
 
     """
     # Initialize the RunMessages object
@@ -1049,7 +1033,12 @@ async def _aget_run_messages(
             # Extend the messages with the history
             run_messages.messages += history_copy
 
-    # 5. Add user message to run_messages (message second as per Dirk's requirement)
+    # 4. Add datetime context to run_messages
+    datetime_context_message = _get_datetime_context_message(team)
+    if datetime_context_message is not None:
+        run_messages.messages.append(datetime_context_message)
+
+    # 5. Add user message to run_messages
     # 5.1 Build user message if message is None, str or list
     user_message = await _aget_user_message(
         team,
