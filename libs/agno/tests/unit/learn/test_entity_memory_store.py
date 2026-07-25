@@ -353,6 +353,54 @@ class TestResolution:
         store.remember_about(entity="Sarah", entity_type="person")
         assert len(db.rows) == 2
 
+    async def test_same_turn_tool_calls_do_not_overwrite_each_other(self, db: RecordingLearningDb) -> None:
+        """An assistant turn's tool calls run concurrently (models/base.py
+        gathers them), and every entity write is a read-modify-write over the
+        whole row. Whatever suspends in the middle - the judge's provider call,
+        or any await on an async db - must not cost a sibling its write."""
+        import asyncio
+
+        class SlowJudge:
+            """Stands in for the supersession judge's provider round trip."""
+
+            id = "slow-judge"
+
+            def response(self, messages: Any, tools: Any = None, **kwargs: Any) -> None:
+                return None
+
+            async def aresponse(self, messages: Any, tools: Any = None, **kwargs: Any) -> None:
+                await asyncio.sleep(0.01)
+                return None
+
+        store = EntityMemoryStore(
+            config=EntityMemoryConfig(db=db, model=SlowJudge())  # type: ignore[arg-type]
+        )
+        await store.aremember_about(entity="radar", entity_type="project", facts=["db: Postgres"])
+
+        await asyncio.gather(
+            store.aremember_about(entity="radar", entity_type="project", facts=["owner: Sarah Chen"]),
+            store.aremember_about(entity="radar", entity_type="project", events=["shipped v1"]),
+            store.alink_entities(entity="radar", relation="uses", related_entity="Postgres"),
+        )
+
+        entity = await store.aget(entity_id="radar", entity_type="project")
+        assert entity is not None
+        assert [f["content"] for f in entity.facts] == ["db: Postgres", "owner: Sarah Chen"]
+        assert [e["content"] for e in entity.events] == ["shipped v1"]
+        assert [r["entity_id"] for r in entity.relationships] == ["postgres"]
+
+    async def test_same_turn_calls_do_not_split_a_new_entity(self, db: RecordingLearningDb) -> None:
+        # remember_about mints person/sarah_chen while link_entities mints the
+        # unknown/ placeholder: concurrently, both used to survive as two rows.
+        import asyncio
+
+        store = EntityMemoryStore(config=EntityMemoryConfig(db=db))  # type: ignore[arg-type]
+        await asyncio.gather(
+            store.aremember_about(entity="Sarah Chen", entity_type="person", facts=["joined radar"]),
+            store.alink_entities(entity="Sarah Chen", relation="works_on", related_entity="apollo"),
+        )
+        assert sorted(r["entity_id"] for r in db.rows.values()) == ["apollo", "sarah_chen"]
+
     def test_accented_names_do_not_collide(self, store: EntityMemoryStore, db: RecordingLearningDb) -> None:
         # Muller and Moller are two people; a slug that drops the accented
         # letter made them one, and there is no unmerge.

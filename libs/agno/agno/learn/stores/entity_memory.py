@@ -294,6 +294,12 @@ class EntityMemoryStore(LearningStore):
     _schema: Any = field(default=None, init=False)
     _degraded_search_logged: bool = field(default=False, init=False)
     _async_db_in_sync_logged: bool = field(default=False, init=False)
+    # Every write here is a read-modify-write over a whole row, and an
+    # assistant turn's tool calls run concurrently (models/base.py gathers
+    # them), so two tools touching one entity would overwrite each other and
+    # both report success. Writes take this lock; reads and the judge's
+    # provider call stay outside it.
+    _async_write_locks: Dict[int, Any] = field(default_factory=dict, init=False)
 
     def __post_init__(self):
         self._schema = self.config.schema or EntityMemory
@@ -977,6 +983,18 @@ class EntityMemoryStore(LearningStore):
 
         novel_facts, duplicate_count = self._novel_facts(existing=existing, facts=facts or [])
         judgments = self._judge_superseded(existing=existing, new_facts=novel_facts)
+        # The judge is a blocking provider call in the middle of a
+        # read-modify-write over the whole row. Nothing else runs on this
+        # thread meanwhile, but the background capture thread shares the store,
+        # so merge onto the row as it stands now rather than the snapshot taken
+        # before the call. The async twin holds a lock instead - there, an
+        # assistant turn's tool calls really do interleave.
+        existing = self._resolve(
+            entity=entity,
+            entity_type=entity_type,
+            user_id=user_id,
+            namespace=effective_namespace,
+        )
 
         entity_obj, created, revived, stale_row_key = self._apply_remember(
             existing=existing,
@@ -1063,31 +1081,46 @@ class EntityMemoryStore(LearningStore):
         )
 
         novel_facts, duplicate_count = self._novel_facts(existing=existing, facts=facts or [])
+        # The judge's provider call stays outside the lock: it only reads.
         judgments = await self._ajudge_superseded(existing=existing, new_facts=novel_facts)
 
-        entity_obj, created, revived, stale_row_key = self._apply_remember(
-            existing=existing,
-            entity=entity,
-            entity_type=entity_type,
-            description=description,
-            facts=novel_facts,
-            events=events or [],
-            note=note,
-            aliases=aliases,
-            user_id=user_id,
-            agent_id=agent_id,
-            team_id=team_id,
-            namespace=effective_namespace,
-        )
-        superseded_count = self._apply_supersessions(entity_obj=entity_obj, judgments=judgments, new_facts=novel_facts)
+        async with self._write_lock():
+            # Resolve again inside the lock. Everything above suspended - the
+            # judge, and every db call on an async db - so a sibling tool call
+            # from the same assistant turn may have created or changed this row
+            # since. Merging onto the stale snapshot would overwrite it.
+            existing = await self._aresolve(
+                entity=entity,
+                entity_type=entity_type,
+                user_id=user_id,
+                namespace=effective_namespace,
+            )
 
-        saved = await self._asave_entity(
-            entity=entity_obj,
-            user_id=user_id,
-            agent_id=agent_id,
-            team_id=team_id,
-            namespace=effective_namespace,
-        )
+            entity_obj, created, revived, stale_row_key = self._apply_remember(
+                existing=existing,
+                entity=entity,
+                entity_type=entity_type,
+                description=description,
+                facts=novel_facts,
+                events=events or [],
+                note=note,
+                aliases=aliases,
+                user_id=user_id,
+                agent_id=agent_id,
+                team_id=team_id,
+                namespace=effective_namespace,
+            )
+            superseded_count = self._apply_supersessions(
+                entity_obj=entity_obj, judgments=judgments, new_facts=novel_facts
+            )
+
+            saved = await self._asave_entity(
+                entity=entity_obj,
+                user_id=user_id,
+                agent_id=agent_id,
+                team_id=team_id,
+                namespace=effective_namespace,
+            )
         if not saved:
             return f"Failed to record on {entity_obj.entity_type}/{entity_obj.entity_id}."
 
@@ -1591,26 +1624,28 @@ class EntityMemoryStore(LearningStore):
         if not _slugify_or_none(entity) or not _slugify_or_none(related_entity):
             return "Both entity names are required; nothing was recorded."
 
-        source = await self._aresolve_or_create_minimal(
-            entity, user_id=user_id, agent_id=agent_id, team_id=team_id, namespace=effective_namespace
-        )
-        target = await self._aresolve_or_create_minimal(
-            related_entity, user_id=user_id, agent_id=agent_id, team_id=team_id, namespace=effective_namespace
-        )
-        if source.entity_id == target.entity_id and source.entity_type == target.entity_type:
-            return f"Cannot link {source.entity_type}/{source.entity_id} to itself; nothing was recorded."
+        async with self._write_lock():
+            # Both ends are read-modify-written; see aremember_about.
+            source = await self._aresolve_or_create_minimal(
+                entity, user_id=user_id, agent_id=agent_id, team_id=team_id, namespace=effective_namespace
+            )
+            target = await self._aresolve_or_create_minimal(
+                related_entity, user_id=user_id, agent_id=agent_id, team_id=team_id, namespace=effective_namespace
+            )
+            if source.entity_id == target.entity_id and source.entity_type == target.entity_type:
+                return f"Cannot link {source.entity_type}/{source.entity_id} to itself; nothing was recorded."
 
-        self._write_edge(source=source, target=target, relation=relation)
+            self._write_edge(source=source, target=target, relation=relation)
 
-        for entity_obj in (source, target):
-            if not await self._asave_entity(
-                entity=entity_obj,
-                user_id=user_id,
-                agent_id=agent_id,
-                team_id=team_id,
-                namespace=effective_namespace,
-            ):
-                return "Failed to record the link."
+            for entity_obj in (source, target):
+                if not await self._asave_entity(
+                    entity=entity_obj,
+                    user_id=user_id,
+                    agent_id=agent_id,
+                    team_id=team_id,
+                    namespace=effective_namespace,
+                ):
+                    return "Failed to record the link."
 
         self.entity_updated = True
         return self._link_message(source=source, relation=relation, target=target)
@@ -1867,24 +1902,26 @@ class EntityMemoryStore(LearningStore):
         if effective_namespace == "user" and not user_id:
             log_warning("EntityMemoryStore.aforget: namespace='user' requires user_id")
             return "Entity memory needs a user_id for the 'user' namespace; nothing was changed."
-        entity_obj = await self._aresolve(
-            entity=entity, entity_type=None, user_id=user_id, namespace=effective_namespace
-        )
-        if entity_obj is None:
-            return f"No entity found matching {entity!r}."
-
-        result, should_save = self._apply_forget(entity_obj=entity_obj, fact=fact)
-        if should_save:
-            saved = await self._asave_entity(
-                entity=entity_obj,
-                user_id=user_id,
-                agent_id=agent_id,
-                team_id=team_id,
-                namespace=effective_namespace,
+        async with self._write_lock():
+            # Read-modify-write; see aremember_about.
+            entity_obj = await self._aresolve(
+                entity=entity, entity_type=None, user_id=user_id, namespace=effective_namespace
             )
-            if not saved:
-                return f"Failed to update {entity_obj.entity_type}/{entity_obj.entity_id}."
-            self.entity_updated = True
+            if entity_obj is None:
+                return f"No entity found matching {entity!r}."
+
+            result, should_save = self._apply_forget(entity_obj=entity_obj, fact=fact)
+            if should_save:
+                saved = await self._asave_entity(
+                    entity=entity_obj,
+                    user_id=user_id,
+                    agent_id=agent_id,
+                    team_id=team_id,
+                    namespace=effective_namespace,
+                )
+                if not saved:
+                    return f"Failed to update {entity_obj.entity_type}/{entity_obj.entity_id}."
+                self.entity_updated = True
         return result
 
     def _retire(self, entity_obj: EntityMemory, fact: Dict[str, Any], superseded_by: str = "forgotten") -> None:
@@ -2009,6 +2046,24 @@ class EntityMemoryStore(LearningStore):
 
         candidates = await self._aname_candidates(entity=entity, user_id=user_id, namespace=namespace)
         return self._match_name_or_alias(candidates=candidates, entity=entity, entity_type=normalized_type)
+
+    def _write_lock(self) -> Any:
+        """The write lock for the running event loop.
+
+        Keyed by loop so a store reused across loops (tests, a worker that
+        restarts its loop) never awaits a lock bound to a dead one.
+        """
+        import asyncio
+
+        try:
+            key = id(asyncio.get_running_loop())
+        except RuntimeError:
+            key = 0
+        lock = self._async_write_locks.get(key)
+        if lock is None:
+            lock = asyncio.Lock()
+            self._async_write_locks[key] = lock
+        return lock
 
     def _name_candidates(self, entity: str, user_id: Optional[str], namespace: str) -> List[Dict[str, Any]]:
         """Fetch candidate rows for name/alias matching via the text query surface.
