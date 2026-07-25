@@ -160,6 +160,95 @@ class TestStoreSplit:
         assert "<old_style>x</old_style>" in machine.build_context()
 
 
+class TestManualDoor:
+    def test_capture_hook_runs_process(self) -> None:
+        from types import SimpleNamespace
+
+        db = RecordingLearningDb()
+        machine = LearningMachine(db=db, user_memory=True)  # type: ignore[arg-type]
+        captured: Dict[str, Any] = {}
+
+        def spy_process(**kwargs: Any) -> None:
+            captured.update(kwargs)
+
+        machine.process = spy_process  # type: ignore[method-assign]
+        hook = machine.capture_hook()
+        hook(
+            run_output=SimpleNamespace(messages=["m1"]),
+            agent=SimpleNamespace(id="agent-1", team_id=None),
+            session=SimpleNamespace(session_id="s1"),
+            user_id="u1",
+        )
+        assert captured["messages"] == ["m1"]
+        assert captured["user_id"] == "u1"
+        assert captured["session_id"] == "s1"
+        assert captured["agent_id"] == "agent-1"
+
+    async def test_acapture_hook_runs_aprocess(self) -> None:
+        from types import SimpleNamespace
+
+        db = RecordingLearningDb()
+        machine = LearningMachine(db=db, user_memory=True)  # type: ignore[arg-type]
+        captured: Dict[str, Any] = {}
+
+        async def spy_aprocess(**kwargs: Any) -> None:
+            captured.update(kwargs)
+
+        machine.aprocess = spy_aprocess  # type: ignore[method-assign]
+        hook = machine.acapture_hook()
+        await hook(
+            run_output=SimpleNamespace(messages=["m1"]),
+            agent=SimpleNamespace(id="agent-1", team_id=None),
+            session=SimpleNamespace(session_id="s1"),
+            user_id="u1",
+        )
+        assert captured["messages"] == ["m1"]
+
+    def test_capture_hook_is_post_hooks_compatible(self) -> None:
+        # filter_hook_args must find only parameters it can supply.
+        import inspect
+
+        from agno.agent._hooks import filter_hook_args
+
+        machine = LearningMachine(db=RecordingLearningDb(), user_memory=True)  # type: ignore[arg-type]
+        hook = machine.capture_hook()
+        params = set(inspect.signature(hook).parameters)
+        assert params <= {"run_output", "agent", "session", "user_id"}
+        filtered = filter_hook_args(
+            hook,
+            {
+                "run_output": None,
+                "agent": None,
+                "session": None,
+                "user_id": "u1",
+                "run_context": object(),
+                "debug_mode": False,
+                "metadata": None,
+            },
+        )
+        assert set(filtered) == params
+
+    def test_double_render_warns_once(self, caplog) -> None:
+        import logging
+
+        machine = LearningMachine(db=RecordingLearningDb(), entity_memory=True)  # type: ignore[arg-type]
+        machine.instructions()  # the manual door was used
+        with caplog.at_level(logging.WARNING):
+            machine._framework_instructions()  # ...and the framework injects too
+            machine._framework_instructions()
+        warnings = [r for r in caplog.records if "render twice" in r.getMessage()]
+        assert len(warnings) == 1
+
+    def test_no_warning_on_a_single_door(self, caplog) -> None:
+        import logging
+
+        machine = LearningMachine(db=RecordingLearningDb(), entity_memory=True)  # type: ignore[arg-type]
+        with caplog.at_level(logging.WARNING):
+            machine._framework_instructions()
+            machine._framework_instructions()
+        assert [r for r in caplog.records if "render twice" in r.getMessage()] == []
+
+
 class TestManualDoorMatchesAutomaticDoor:
     def test_injected_block_equals_instructions_plus_build_context(self) -> None:
         """The §8 regression guard: for the same machine, what the automatic

@@ -99,6 +99,11 @@ class LearningMachine:
     # Internal state (lazy initialization)
     _stores: Optional[Dict[str, LearningStore]] = field(default=None, init=False)
     _curator: Optional[Any] = field(default=None, init=False)
+    # Manual-door tracking: instructions() called by the developer marks the
+    # machine as hand-placed; if the framework then also injects it (learning=),
+    # the blocks would render twice - warn once.
+    _placed_by_hand: bool = field(default=False, init=False)
+    _double_render_warned: bool = field(default=False, init=False)
 
     # =========================================================================
     # Initialization (Lazy)
@@ -469,7 +474,31 @@ class LearningMachine:
         stores are enabled and what mode each is in. Pairs with build_context()
         (the data block): the automatic path concatenates the two at the
         injection site, and the manual door places each by hand.
+
+        Calling this marks the machine as hand-placed; if the same machine is
+        ALSO passed to Agent(learning=...), the framework warns once about the
+        double render.
         """
+        self._placed_by_hand = True
+        return self._instructions_text()
+
+    def _framework_instructions(self) -> str:
+        """The guidance block, fetched by the automatic injection path.
+
+        Detects the double-render case: the same machine placed by hand
+        (instructions() was called) AND attached via learning=.
+        """
+        if self._placed_by_hand and not self._double_render_warned:
+            self._double_render_warned = True
+            log_warning(
+                "This LearningMachine is attached via learning= AND its surfaces are placed by "
+                "hand (instructions()/build_context()); its context will render twice. Pick one "
+                "door: pass learning= for the automatic path, or place the surfaces yourself "
+                "without learning=."
+            )
+        return self._instructions_text()
+
+    def _instructions_text(self) -> str:
         parts: List[str] = []
         for name, store in self.stores.items():
             instructions_fn = getattr(store, "instructions", None)
@@ -482,6 +511,49 @@ class LearningMachine:
             except Exception as e:
                 log_warning(f"Error getting instructions from {name}: {str(e)}")
         return "\n\n".join(parts)
+
+    def capture_hook(self) -> Callable:
+        """A post_hooks-compatible callable that runs this machine's capture pass.
+
+        The manual door is agentic by nature: with no learning= there is no
+        automatic post-run extraction, and the tools are the capture mechanism.
+        For the developer who wants hand-placed prompts AND ALWAYS-mode
+        extraction, add this to Agent(post_hooks=[...]). An escape hatch, not a
+        third shape.
+        """
+        machine = self
+
+        def learning_capture(run_output=None, agent=None, session=None, user_id=None) -> None:
+            messages = list(getattr(run_output, "messages", None) or [])
+            if not messages:
+                return
+            machine.process(
+                messages=messages,
+                user_id=user_id,
+                session_id=getattr(session, "session_id", None) if session is not None else None,
+                agent_id=getattr(agent, "id", None) if agent is not None else None,
+                team_id=getattr(agent, "team_id", None) if agent is not None else None,
+            )
+
+        return learning_capture
+
+    def acapture_hook(self) -> Callable:
+        """Async version of capture_hook, for async runs (uses aprocess)."""
+        machine = self
+
+        async def learning_capture(run_output=None, agent=None, session=None, user_id=None) -> None:
+            messages = list(getattr(run_output, "messages", None) or [])
+            if not messages:
+                return
+            await machine.aprocess(
+                messages=messages,
+                user_id=user_id,
+                session_id=getattr(session, "session_id", None) if session is not None else None,
+                agent_id=getattr(agent, "id", None) if agent is not None else None,
+                team_id=getattr(agent, "team_id", None) if agent is not None else None,
+            )
+
+        return learning_capture
 
     def get_tools(
         self,

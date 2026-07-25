@@ -401,7 +401,7 @@ def get_system_message(
     # door renders exactly what the manual door's instructions() + build_context()
     # would.
     if agent._learning is not None and agent.add_learnings_to_context:
-        learning_guidance = agent._learning.instructions()
+        learning_guidance = agent._learning._framework_instructions()
         learning_context = agent._learning.build_context(
             user_id=user_id,
             session_id=session.session_id if session else None,
@@ -754,7 +754,7 @@ async def aget_system_message(
 
     # 3.3.12 then add learnings to the system prompt (see the sync twin)
     if agent._learning is not None and agent.add_learnings_to_context:
-        learning_guidance = agent._learning.instructions()
+        learning_guidance = agent._learning._framework_instructions()
         learning_context = await agent._learning.abuild_context(
             user_id=user_id,
             session_id=session.session_id if session else None,

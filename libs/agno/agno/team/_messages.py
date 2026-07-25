@@ -473,7 +473,7 @@ def get_system_message(
     # 2.3 Learning context: guidance + data, concatenated so the automatic door
     # renders exactly what the manual door's instructions() + build_context() would
     if team._learning is not None and team.add_learnings_to_context:
-        learning_guidance = team._learning.instructions()
+        learning_guidance = team._learning._framework_instructions()
         learning_context = team._learning.build_context(
             user_id=user_id,
             session_id=session.session_id if session else None,
@@ -706,7 +706,7 @@ async def aget_system_message(
 
     # 2.3 Learning context (see the sync twin)
     if team._learning is not None and team.add_learnings_to_context:
-        learning_guidance = team._learning.instructions()
+        learning_guidance = team._learning._framework_instructions()
         learning_context = await team._learning.abuild_context(
             user_id=user_id,
             session_id=session.session_id if session else None,
