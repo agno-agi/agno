@@ -333,10 +333,6 @@ def __init__(
     team.enable_agentic_memory = enable_agentic_memory
 
     if enable_user_memories is not None:
-        log_warning(
-            "Team(enable_user_memories=...) is deprecated and will be removed in 3.0; "
-            "it is a silent alias of update_memory_on_run - use that instead."
-        )
         team.update_memory_on_run = enable_user_memories
     else:
         team.update_memory_on_run = update_memory_on_run

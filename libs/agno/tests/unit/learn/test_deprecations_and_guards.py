@@ -26,13 +26,21 @@ class RecordingLearningDb:
         return self.rows.pop(id, None) is not None
 
 
-def test_enable_user_memories_warns_deprecated(caplog, tmp_path) -> None:
+def test_enable_user_memories_is_quiet(caplog, tmp_path) -> None:
+    """enable_user_memories still aliases update_memory_on_run and says nothing.
+
+    Every rebuild path passes the alias explicitly (deep_copy from the attribute,
+    Agent.load with a False default), so a deprecation warning here fires on
+    agents whose author never wrote the parameter.
+    """
     from agno.agent import Agent
     from agno.db.sqlite import SqliteDb
 
     with caplog.at_level(logging.WARNING):
-        Agent(db=SqliteDb(db_file=str(tmp_path / "a.db")), enable_user_memories=True)
-    assert any("enable_user_memories" in r.getMessage() and "deprecated" in r.getMessage() for r in caplog.records)
+        agent = Agent(db=SqliteDb(db_file=str(tmp_path / "a.db")), enable_user_memories=True)
+        agent.deep_copy()
+    assert agent.update_memory_on_run is True
+    assert not any("enable_user_memories" in r.getMessage() for r in caplog.records)
 
 
 def test_hitl_mode_warns_deprecated(caplog) -> None:
