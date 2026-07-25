@@ -49,7 +49,11 @@ fs = FileSystem(SqliteDb(db_file=DB_FILE))
 agent = Agent(
     model=OpenAIResponses(id="gpt-5.5"),
     # check_lines is not in the default toolset; a feed agent asks for it by name.
-    tools=[fs.tools(include_tools=["check_lines", "append_file", "read_file", "list_files"])],
+    tools=[
+        fs.tools(
+            include_tools=["check_lines", "append_file", "read_file", "list_files"]
+        )
+    ],
     instructions=[
         "You are Radar, a news-brief agent that runs on a schedule. Each run you "
         "receive the current feed as 'id|headline' lines. Report ONLY stories you "

@@ -43,7 +43,11 @@ RECORD_SET_INSTRUCTIONS = (
 # ---------------------------------------------------------------------------
 agent = Agent(
     model=OpenAIResponses(id="gpt-5.5"),
-    tools=[fs.tools(include_tools=["check_lines", "append_file", "read_file", "list_files"])],
+    tools=[
+        fs.tools(
+            include_tools=["check_lines", "append_file", "read_file", "list_files"]
+        )
+    ],
     instructions=[
         "You triage support tickets.",
         RECORD_SET_INSTRUCTIONS,

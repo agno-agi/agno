@@ -769,7 +769,8 @@ class EntityMemory:
 
         Args:
             fact_id: The fact to retire.
-            superseded_by: What replaced it - a new fact's id, or "forgotten".
+            superseded_by: What replaced it - a new fact's id, "forgotten", or
+                "superseded" when several new facts jointly replaced it.
 
         Returns:
             True if the fact was found and retired, False otherwise.
@@ -813,8 +814,15 @@ class EntityMemory:
 
         live = self.live_facts()
         if live:
-            shown = live[:max_facts] if max_facts is not None else live
-            marker = f" ({len(shown)} of {len(live)} facts)" if len(shown) < len(live) else ""
+            # The NEWEST N facts render (in chronological order) - showing the
+            # oldest slice would date-stamp stale state as current.
+            if max_facts is None:
+                shown = live
+            elif max_facts <= 0:
+                shown = []
+            else:
+                shown = live[-max_facts:]
+            marker = f" (newest {len(shown)} of {len(live)} facts)" if len(shown) < len(live) else ""
             fact_lines = []
             for f in shown:
                 if isinstance(f, dict):
@@ -823,10 +831,16 @@ class EntityMemory:
                     fact_lines.append(f"  - {f.get('content', f)}{as_of_text}")
                 else:
                     fact_lines.append(f"  - {f}")
-            parts.append(f"Facts:{marker}\n" + "\n".join(fact_lines))
+            if shown:
+                parts.append(f"Facts:{marker}\n" + "\n".join(fact_lines))
 
         if self.events:
-            shown_events = self.events[-max_events:] if max_events is not None else self.events
+            if max_events is None:
+                shown_events = self.events
+            elif max_events <= 0:
+                shown_events = []
+            else:
+                shown_events = self.events[-max_events:]
             marker = (
                 f" (last {len(shown_events)} of {len(self.events)} events)"
                 if len(shown_events) < len(self.events)
@@ -839,7 +853,8 @@ class EntityMemory:
                     event_lines.append(f"  - {e.get('content', e)}{date}")
                 else:
                     event_lines.append(f"  - {e}")
-            parts.append(f"Events:{marker}\n" + "\n".join(event_lines))
+            if shown_events:
+                parts.append(f"Events:{marker}\n" + "\n".join(event_lines))
 
         if self.relationships:
             rel_lines = []

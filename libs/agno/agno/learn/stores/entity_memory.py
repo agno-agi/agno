@@ -67,10 +67,18 @@ def _slugify(name: str) -> str:
 
 
 def _slugify_or_none(name: Optional[str]) -> Optional[str]:
-    """Slugify, returning None when the name carries no usable identity."""
+    """Slugify, returning None when the name carries no usable identity.
+
+    Pure-punctuation names ("???", "%") are rejected; non-ASCII names pass
+    through (the ASCII slugifier cannot fold them, so the lowered name itself
+    is the id).
+    """
     if not name or not name.strip():
         return None
-    return _slugify(name) or None
+    slug = _slugify(name)
+    if not slug or not re.search(r"[^\W_]", slug, re.UNICODE):
+        return None
+    return slug
 
 
 def _normalize_fact_text(text: str) -> str:
@@ -277,10 +285,12 @@ class EntityMemoryStore(LearningStore):
             log_warning("EntityMemoryStore.recall: namespace='user' requires user_id")
             return None
 
+        # One row beyond the cap, so a truncated directory is distinguishable
+        # from one that happens to be exactly at the cap.
         directory = self.list_entities(
             user_id=user_id,
             namespace=effective_namespace,
-            limit=self.config.max_entities_in_directory,
+            limit=self.config.max_entities_in_directory + 1,
         )
 
         entities: List[EntityMemory] = []
@@ -316,7 +326,7 @@ class EntityMemoryStore(LearningStore):
         directory = await self.alist_entities(
             user_id=user_id,
             namespace=effective_namespace,
-            limit=self.config.max_entities_in_directory,
+            limit=self.config.max_entities_in_directory + 1,
         )
 
         entities: List[EntityMemory] = []
@@ -353,8 +363,18 @@ class EntityMemoryStore(LearningStore):
         missing = self._missing_link_targets(entities=entities, known=name_map)
         for far_id, far_type in missing[:max_lookups]:
             far = self.get(entity_id=far_id, entity_type=far_type, user_id=user_id, namespace=namespace)
+            if far is None:
+                # The edge's stored type can go stale (unknown -> real upgrade);
+                # resolve the id across types before giving up on the name.
+                for row in self._get_rows_by_entity_id(entity_id=far_id, user_id=user_id, namespace=namespace):
+                    far = self.schema.from_dict(row.get("content"))
+                    if far is not None:
+                        break
             if far is not None:
-                name_map[far_id] = getattr(far, "name", None) or far_id
+                name = getattr(far, "name", None) or far_id
+                if getattr(far, "archived_at", None):
+                    name += " (archived)"
+                name_map[far_id] = name
         return name_map
 
     async def _arelated_names(
@@ -372,8 +392,16 @@ class EntityMemoryStore(LearningStore):
         missing = self._missing_link_targets(entities=entities, known=name_map)
         for far_id, far_type in missing[:max_lookups]:
             far = await self.aget(entity_id=far_id, entity_type=far_type, user_id=user_id, namespace=namespace)
+            if far is None:
+                for row in await self._aget_rows_by_entity_id(entity_id=far_id, user_id=user_id, namespace=namespace):
+                    far = self.schema.from_dict(row.get("content"))
+                    if far is not None:
+                        break
             if far is not None:
-                name_map[far_id] = getattr(far, "name", None) or far_id
+                name = getattr(far, "name", None) or far_id
+                if getattr(far, "archived_at", None):
+                    name += " (archived)"
+                name_map[far_id] = name
         return name_map
 
     @staticmethod
@@ -433,33 +461,43 @@ class EntityMemoryStore(LearningStore):
 
         sections: List[str] = []
 
+        directory_truncated = False
         if directory:
             cap = self.config.max_entities_in_directory
+            directory_truncated = len(directory) > cap
             listed = directory[:cap]
             lines = []
             for entity in listed:
                 name = getattr(entity, "name", None) or getattr(entity, "entity_id", "?")
                 lines.append(f"- {name} ({getattr(entity, 'entity_type', '?')})")
-            header = "**Entity directory** (known entities, newest first"
-            header += f"; showing {len(listed)})" if len(listed) >= cap else ")"
+            if directory_truncated:
+                header = f"**Entity directory** (the {len(listed)} most recently updated entities; more exist)"
+            else:
+                header = "**Entity directory** (all known entities, newest first)"
             sections.append(header + ":\n" + "\n".join(lines))
 
         shown_entities = entities[: self.config.max_entities_in_context]
         if shown_entities:
             formatted_parts = []
+            render_kwargs = {
+                "max_facts": self.config.max_facts_per_entity,
+                "max_events": self.config.max_events_per_entity,
+                "related_names": related_names,
+            }
             for entity in shown_entities:
-                if hasattr(entity, "get_context_text"):
+                render = getattr(entity, "get_context_text", None)
+                if callable(render):
+                    # A custom schema may define its own signature; pass only what
+                    # it accepts (never re-invoke on error - side effects).
+                    import inspect as _inspect
+
                     try:
-                        formatted_parts.append(
-                            entity.get_context_text(
-                                max_facts=self.config.max_facts_per_entity,
-                                max_events=self.config.max_events_per_entity,
-                                related_names=related_names,
-                            )
-                        )
-                    except TypeError:
-                        # A custom schema with its own get_context_text signature.
-                        formatted_parts.append(entity.get_context_text())
+                        params = _inspect.signature(render).parameters
+                        has_var_kw = any(p.kind == p.VAR_KEYWORD for p in params.values())
+                        accepted = {k: v for k, v in render_kwargs.items() if has_var_kw or k in params}
+                    except (TypeError, ValueError):
+                        accepted = {}
+                    formatted_parts.append(render(**accepted))
                 else:
                     formatted_parts.append(self._format_entity_basic(entity=entity))
             sections.append("**Known information about relevant entities:**\n\n" + "\n\n---\n\n".join(formatted_parts))
@@ -474,9 +512,16 @@ class EntityMemoryStore(LearningStore):
             - Reference stored facts without citing "entity memory"
             - Treat this as background knowledge you simply have
             - Current conversation takes precedence if there's conflicting information
-            - The directory is the full index: an entity not listed there is not known
+            - {directory_line}
             </entity_memory_guidelines>
-            </entity_memory>""").format(body=body)
+            </entity_memory>""").format(
+            body=body,
+            directory_line=(
+                "The directory shows the most recently updated entities; use search_entities to check beyond it"
+                if directory_truncated
+                else "The directory is the full index: an entity not listed there is not known"
+            ),
+        )
 
         return context
 
@@ -795,6 +840,13 @@ class EntityMemoryStore(LearningStore):
                 self.db.delete_learning(id=stale_row_key)
             except Exception as e:
                 log_warning(f"EntityMemoryStore.remember_about: failed to delete stale row {stale_row_key}: {e}")
+            self._repair_far_edge_types(
+                entity_obj=entity_obj,
+                user_id=user_id,
+                agent_id=agent_id,
+                team_id=team_id,
+                namespace=effective_namespace,
+            )
 
         self.entity_updated = True
         return self._remember_message(
@@ -876,6 +928,13 @@ class EntityMemoryStore(LearningStore):
                     self.db.delete_learning(id=stale_row_key)
             except Exception as e:
                 log_warning(f"EntityMemoryStore.aremember_about: failed to delete stale row {stale_row_key}: {e}")
+            await self._arepair_far_edge_types(
+                entity_obj=entity_obj,
+                user_id=user_id,
+                agent_id=agent_id,
+                team_id=team_id,
+                namespace=effective_namespace,
+            )
 
         self.entity_updated = True
         return self._remember_message(
@@ -926,7 +985,7 @@ class EntityMemoryStore(LearningStore):
         """
         if existing is None or not new_facts or self.model is None:
             return []
-        live = [f for f in existing.live_facts() if isinstance(f, dict) and f.get("id")][:50]
+        live = [f for f in existing.live_facts() if isinstance(f, dict) and f.get("id")][-50:]
         if not live:
             return []
 
@@ -937,7 +996,7 @@ class EntityMemoryStore(LearningStore):
 
             captured: List[Tuple[str, float]] = []
 
-            def mark_superseded(fact_ids: List[str], confidences: List[float]) -> str:
+            def mark_superseded(fact_ids: List[str], confidences: List[float] = []) -> str:
                 """Mark which existing facts are superseded by the newly stated facts.
 
                 Args:
@@ -971,7 +1030,7 @@ class EntityMemoryStore(LearningStore):
         """Async version of _judge_superseded."""
         if existing is None or not new_facts or self.model is None:
             return []
-        live = [f for f in existing.live_facts() if isinstance(f, dict) and f.get("id")][:50]
+        live = [f for f in existing.live_facts() if isinstance(f, dict) and f.get("id")][-50:]
         if not live:
             return []
 
@@ -982,7 +1041,7 @@ class EntityMemoryStore(LearningStore):
 
             captured: List[Tuple[str, float]] = []
 
-            def mark_superseded(fact_ids: List[str], confidences: List[float]) -> str:
+            def mark_superseded(fact_ids: List[str], confidences: List[float] = []) -> str:
                 """Mark which existing facts are superseded by the newly stated facts.
 
                 Args:
@@ -1081,6 +1140,75 @@ class EntityMemoryStore(LearningStore):
                 count += 1
         return count
 
+    def _repair_far_edge_types(
+        self,
+        entity_obj: EntityMemory,
+        user_id: Optional[str],
+        agent_id: Optional[str],
+        team_id: Optional[str],
+        namespace: str,
+        max_repairs: int = 10,
+    ) -> None:
+        """After an unknown -> real type upgrade, fix the reciprocal edges on the
+        far ends, which still carry entity_type="unknown" for this entity."""
+        for rel in (getattr(entity_obj, "relationships", None) or [])[:max_repairs]:
+            if not isinstance(rel, dict):
+                continue
+            far = self.get(
+                entity_id=rel.get("entity_id", ""),
+                entity_type=rel.get("entity_type", ""),
+                user_id=user_id,
+                namespace=namespace,
+            )
+            if far is None:
+                continue
+            changed = False
+            for far_rel in getattr(far, "relationships", None) or []:
+                if (
+                    isinstance(far_rel, dict)
+                    and far_rel.get("entity_id") == entity_obj.entity_id
+                    and far_rel.get("entity_type") != entity_obj.entity_type
+                ):
+                    far_rel["entity_type"] = entity_obj.entity_type
+                    changed = True
+            if changed:
+                self._save_entity(entity=far, user_id=user_id, agent_id=agent_id, team_id=team_id, namespace=namespace)
+
+    async def _arepair_far_edge_types(
+        self,
+        entity_obj: EntityMemory,
+        user_id: Optional[str],
+        agent_id: Optional[str],
+        team_id: Optional[str],
+        namespace: str,
+        max_repairs: int = 10,
+    ) -> None:
+        """Async version of _repair_far_edge_types."""
+        for rel in (getattr(entity_obj, "relationships", None) or [])[:max_repairs]:
+            if not isinstance(rel, dict):
+                continue
+            far = await self.aget(
+                entity_id=rel.get("entity_id", ""),
+                entity_type=rel.get("entity_type", ""),
+                user_id=user_id,
+                namespace=namespace,
+            )
+            if far is None:
+                continue
+            changed = False
+            for far_rel in getattr(far, "relationships", None) or []:
+                if (
+                    isinstance(far_rel, dict)
+                    and far_rel.get("entity_id") == entity_obj.entity_id
+                    and far_rel.get("entity_type") != entity_obj.entity_type
+                ):
+                    far_rel["entity_type"] = entity_obj.entity_type
+                    changed = True
+            if changed:
+                await self._asave_entity(
+                    entity=far, user_id=user_id, agent_id=agent_id, team_id=team_id, namespace=namespace
+                )
+
     def _apply_remember(
         self,
         existing: Optional[EntityMemory],
@@ -1137,11 +1265,20 @@ class EntityMemoryStore(LearningStore):
                 stale_row_key = self._build_entity_db_id(entity_obj.entity_id, entity_obj.entity_type, namespace)
                 entity_obj.entity_type = normalized_type
 
-            # Remember the name variant this write arrived under.
+            # Remember the name variant this write arrived under - but only a
+            # genuinely different surface (its slug is not already the entity id,
+            # so punctuation variants of the same name do not accumulate), and
+            # bounded so the list cannot grow without limit.
             incoming_name = entity.strip()
-            known_names = [entity_obj.name or ""] + list(getattr(entity_obj, "aliases", None) or [])
-            if incoming_name and all(_normalize_name(incoming_name) != _normalize_name(n) for n in known_names if n):
-                entity_obj.aliases = [*(getattr(entity_obj, "aliases", None) or []), incoming_name]
+            existing_aliases = list(getattr(entity_obj, "aliases", None) or [])
+            known_names = [entity_obj.name or ""] + existing_aliases
+            if (
+                incoming_name
+                and _slugify(incoming_name) != entity_obj.entity_id
+                and len(existing_aliases) < 8
+                and all(_normalize_name(incoming_name) != _normalize_name(n) for n in known_names if n)
+            ):
+                entity_obj.aliases = [*existing_aliases, incoming_name]
 
             if getattr(entity_obj, "archived_at", None):
                 entity_obj.archived_at = None
@@ -1449,8 +1586,8 @@ class EntityMemoryStore(LearningStore):
 
         live = entity.live_facts() if hasattr(entity, "live_facts") else getattr(entity, "facts", [])
         if live:
-            shown = live[:max_facts]
-            marker = f" ({len(shown)} of {len(live)} facts)" if len(live) > len(shown) else ""
+            shown = live[-max_facts:] if max_facts > 0 else []
+            marker = f" (newest {len(shown)} of {len(live)} facts)" if len(live) > len(shown) else ""
             lines.append("Facts:" + marker)
             for f in shown:
                 lines.append(f"  - {f.get('content', f) if isinstance(f, dict) else f}")
@@ -1683,6 +1820,10 @@ class EntityMemoryStore(LearningStore):
     def _name_candidates(self, entity: str, user_id: Optional[str], namespace: str) -> List[Dict[str, Any]]:
         """Fetch candidate rows for name/alias matching via the text query surface.
 
+        The probes are anchored to the JSON shape of a stored name ('name": "..')
+        and to the quoted value (for aliases), so unrelated rows whose FACTS
+        mention the name cannot crowd the true row out of the window.
+
         Database errors RAISE: a resolution miss caused by a failing backend
         would silently create a duplicate entity instead of merging.
         """
@@ -1692,14 +1833,24 @@ class EntityMemoryStore(LearningStore):
         if not callable(getattr(db, "search_learnings", None)):
             return self._get_recent_rows(user_id=user_id, namespace=namespace, limit=50)
         try:
-            rows = db.search_learnings(
-                query=entity,
-                learning_type=self.learning_type,
-                namespace=namespace,
-                user_id=user_id if namespace == "user" else None,
-                limit=20,
-            )
-            return rows or []
+            rows: List[Dict[str, Any]] = []
+            seen_ids: set = set()
+            for probe in self._name_probes(entity):
+                for row in (
+                    db.search_learnings(
+                        query=probe,
+                        learning_type=self.learning_type,
+                        namespace=namespace,
+                        user_id=user_id if namespace == "user" else None,
+                        limit=20,
+                    )
+                    or []
+                ):
+                    row_id = row.get("learning_id")
+                    if row_id not in seen_ids:
+                        seen_ids.add(row_id)
+                        rows.append(row)
+            return rows
         except NotImplementedError:
             return self._get_recent_rows(user_id=user_id, namespace=namespace, limit=50)
 
@@ -1710,25 +1861,40 @@ class EntityMemoryStore(LearningStore):
         if not callable(getattr(self.db, "search_learnings", None)):
             return await self._aget_recent_rows(user_id=user_id, namespace=namespace, limit=50)
         try:
-            if isinstance(self.db, AsyncBaseDb):
-                rows = await self.db.search_learnings(
-                    query=entity,
-                    learning_type=self.learning_type,
-                    namespace=namespace,
-                    user_id=user_id if namespace == "user" else None,
-                    limit=20,
-                )
-            else:
-                rows = self.db.search_learnings(
-                    query=entity,
-                    learning_type=self.learning_type,
-                    namespace=namespace,
-                    user_id=user_id if namespace == "user" else None,
-                    limit=20,
-                )
-            return rows or []
+            rows: List[Dict[str, Any]] = []
+            seen_ids: set = set()
+            for probe in self._name_probes(entity):
+                if isinstance(self.db, AsyncBaseDb):
+                    probe_rows = await self.db.search_learnings(
+                        query=probe,
+                        learning_type=self.learning_type,
+                        namespace=namespace,
+                        user_id=user_id if namespace == "user" else None,
+                        limit=20,
+                    )
+                else:
+                    probe_rows = self.db.search_learnings(
+                        query=probe,
+                        learning_type=self.learning_type,
+                        namespace=namespace,
+                        user_id=user_id if namespace == "user" else None,
+                        limit=20,
+                    )
+                for row in probe_rows or []:
+                    row_id = row.get("learning_id")
+                    if row_id not in seen_ids:
+                        seen_ids.add(row_id)
+                        rows.append(row)
+            return rows
         except NotImplementedError:
             return await self._aget_recent_rows(user_id=user_id, namespace=namespace, limit=50)
+
+    @staticmethod
+    def _name_probes(entity: str) -> List[str]:
+        """Anchored search probes for a display name: the JSON name-field shape
+        and the quoted value (which also matches an alias entry)."""
+        stripped = entity.strip()
+        return [f'name": "{stripped}', f'"{stripped}"']
 
     def _get_recent_rows(self, user_id: Optional[str], namespace: str, limit: int) -> List[Dict[str, Any]]:
         db = self._sync_db()

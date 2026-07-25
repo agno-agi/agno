@@ -1,9 +1,9 @@
 """FileSystem: a durable, private filesystem for agents.
 
 To the agent it looks exactly like a normal filesystem toolkit; underneath it is
-a pluggable ``BaseFS`` backend, database by default. Use it for the agent's
-own working state: records of items already processed, decisions, progress
-checkpoints.
+a pluggable ``BaseFS`` backend, database by default. Use it for the agent's own
+durable notes: decisions with their reasoning, running documents, working state
+it will need again.
 
 Attach the tools, and compose its instructions into your own:
 

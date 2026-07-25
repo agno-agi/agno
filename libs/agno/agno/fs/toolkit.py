@@ -91,8 +91,9 @@ def _format_with_line_numbers(text: str, start_line: int = 1) -> str:
 class FileSystemTools(Toolkit):
     """Toolkit over one ``FileSystem`` file store. Build it with ``FileSystem.tools()``.
 
-    Registers the full nine-tool surface, or the four read tools when
-    ``read_only=True`` (the surface for a consumer agent that consults another
+    Registers the notes seven by default (``allow_delete=True`` adds
+    ``delete_file``; ``include_tools`` selects explicitly from the whole
+    nine-tool surface), or the three read tools when ``read_only=True`` (the surface for a consumer agent that consults another
     agent's namespace by shared name). Holds the matching FileSystem instructions,
     which reach the system prompt only under ``add_instructions=True``; otherwise
     compose ``FileSystem.instructions()`` into the agent's own instructions, and
@@ -154,13 +155,19 @@ class FileSystemTools(Toolkit):
             instructions = FileSystem.instructions(read_only=read_only)
 
         if kwargs.get("include_tools") is not None:
-            # include_tools is a whitelist over the whole (read-capable) surface,
-            # so check_lines and delete_file are reachable by naming them.
+            # include_tools is a fully explicit whitelist over the whole
+            # (read-capable) surface: naming check_lines or delete_file there IS
+            # the opt-in for them.
             registered = self._READ_CAPABLE_TOOLS if read_only else self.FULL_TOOLS
         elif read_only:
             registered = self.READ_ONLY_TOOLS
         else:
             registered = self.DEFAULT_TOOLS + (["delete_file"] if allow_delete else [])
+        if kwargs.get("exclude_tools"):
+            # Excluding a tool that is not registered (e.g. delete_file, which
+            # left the default set) is a no-op, not an error - upgraders used
+            # exclude_tools=["delete_file"] as the safety idiom.
+            kwargs["exclude_tools"] = [name for name in kwargs["exclude_tools"] if name in registered]
         sync_tools = [getattr(self, name) for name in registered]
         async_tools = [(getattr(self, "a" + name), name) for name in registered]
 
@@ -191,14 +198,13 @@ class FileSystemTools(Toolkit):
         if e.scope == "file":
             return (
                 f"Error: {path} would be {e.current} bytes (limit {e.limit} per file). "
-                "Start a new file (for record logs, partition by date, e.g. seen/2026-07-24.md) "
-                "or delete files you no longer need."
+                "Split the topic into smaller files (or partition by date) and retry."
             )
         return (
             f"Error: storage is full ({e.current} of {e.limit} bytes). "
-            "Delete only files you are certain are obsolete (see list_files), such as an old date "
-            "partition, then retry. Do not overwrite or delete records you might still need to "
-            "make room; if nothing is safely disposable, stop and report that storage is full."
+            "Free space only if you have a tool for it and only from files you are certain are "
+            "obsolete (see list_files). Never overwrite or discard records you might still need "
+            "to make room; if nothing is safely disposable, stop and report that storage is full."
         )
 
     # ------------------------------------------------------------------
@@ -241,7 +247,7 @@ class FileSystemTools(Toolkit):
                     return (
                         f"Error: file too long to read whole ({len(contents)} chars, {total} lines; "
                         f"limit {_MAX_READ_CHARS} chars). Read a range with start_line/end_line, or "
-                        "use search_content first: it reports the line number of each match."
+                        "use search_content first: it reports each matching file's first-match line."
                     )
                 return _format_with_line_numbers(contents, start_line=1)
             start = start_line if start_line is not None else 1
@@ -388,7 +394,7 @@ class FileSystemTools(Toolkit):
         Each result gives the line number of the first match, so you can follow up with
         read_file(path, start_line=..., end_line=...) instead of reading the whole file.
         ``matches`` counts every occurrence in that file, while ``snippet`` shows only
-        the first. To check whether exact records are already stored, use check_lines
+        the first.
         instead, since substring matches can mislead there.
 
         :param query: Substring to search for.
@@ -505,7 +511,7 @@ class FileSystemTools(Toolkit):
         """Append lines to a file, creating it if needed.
 
         Line-oriented: appended content always starts on a fresh line and ends with a
-        newline. Keep one record per line (one URL, one ID) so check_lines can match
+        newline. Keep one record per line (one URL, one ID) so exact-line checks can match
         records exactly.
 
         :param path: File path, e.g. "seen/2026-07-24.md". Parent folders are implicit.

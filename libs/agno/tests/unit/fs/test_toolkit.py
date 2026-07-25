@@ -295,8 +295,7 @@ class TestErrorStringsVerbatim:
         result = toolkit.write_file("a.md", "0123456789x")
         assert result == (
             "Error: a.md would be 11 bytes (limit 10 per file). "
-            "Start a new file (for record logs, partition by date, e.g. seen/2026-07-24.md) "
-            "or delete files you no longer need."
+            "Split the topic into smaller files (or partition by date) and retry."
         )
 
     def test_quota_namespace_string(self, tmp_path):
@@ -305,10 +304,10 @@ class TestErrorStringsVerbatim:
         toolkit.write_file("a.md", "123456")
         result = toolkit.write_file("b.md", "78901")
         assert result == (
-            "Error: storage is full (6 of 10 bytes). Delete only files you are certain are obsolete "
-            "(see list_files), such as an old date partition, then retry. Do not overwrite or delete "
-            "records you might still need to make room; if nothing is safely disposable, stop and "
-            "report that storage is full."
+            "Error: storage is full (6 of 10 bytes). Free space only if you have a tool for it and "
+            "only from files you are certain are obsolete (see list_files). Never overwrite or "
+            "discard records you might still need to make room; if nothing is safely disposable, "
+            "stop and report that storage is full."
         )
 
     def test_check_lines_count_string(self, toolkit):

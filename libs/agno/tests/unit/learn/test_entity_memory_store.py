@@ -384,7 +384,9 @@ class TestSearchEntities:
     def test_truncation_marker_on_many_facts(self, store: EntityMemoryStore) -> None:
         store.remember_about(entity="radar", entity_type="project", facts=[f"fact number {i}" for i in range(19)])
         result = store.search_entities(query="radar")
-        assert "(6 of 19 facts)" in result
+        assert "(newest 6 of 19 facts)" in result
+        # The NEWEST facts are shown, not the oldest
+        assert "fact number 18" in result and "fact number 0" not in result
 
     async def test_async_search_entities(self, store: EntityMemoryStore) -> None:
         await store.aremember_about(entity="radar", entity_type="project")
@@ -623,8 +625,11 @@ class TestRenderingAndDirectory:
         assert entity is not None
 
         text = entity.get_context_text(max_facts=10, max_events=5)
-        assert "(10 of 200 facts)" in text
+        assert "(newest 10 of 200 facts)" in text
         assert text.count("fact number") == 10
+        # The NEWEST facts render - showing the oldest slice would date-stamp
+        # stale state as current
+        assert "fact number 199" in text and "fact number 0 " not in text
         # Facts render with as-of dates
         assert "(as of 20" in text
 
@@ -706,7 +711,10 @@ class TestRenderingAndDirectory:
 
         recalled = store.recall(entity_id="radar", entity_type="project")
         assert recalled is not None
-        assert [e.entity_id for e in recalled["directory"]] == ["newest_thing"]
+        # recall fetches one row beyond the cap to detect truncation; the render caps at 1
+        context = store.build_context(data=recalled)
+        assert context.count("\n- ") >= 1
+        assert "most recently updated entities; more exist" in context
         assert recalled["related_names"].get("sarah_chen") == "Sarah Chen"
 
     async def test_arecall_matches_recall(self, store: EntityMemoryStore) -> None:

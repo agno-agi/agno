@@ -450,7 +450,9 @@ class DbFileSystem(BaseFS):
         SQL predicate only prefilters candidate rows. On Postgres ILIKE folds
         every query; on SQLite, LIKE folds ASCII only, so the prefilter applies
         to pure-ASCII queries and a non-ASCII query still scans every in-scope
-        row rather than miss a case variant."""
+        row. One known gap remains on SQLite: content containing a non-ASCII
+        uppercase form whose lowercase is ASCII (the Kelvin sign, U+212A) is
+        excluded by the ASCII prefilter for the matching ASCII query."""
         self._ensure_table()
         if not query:
             return []
