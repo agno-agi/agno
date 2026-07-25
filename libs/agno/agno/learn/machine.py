@@ -126,6 +126,7 @@ class LearningMachine:
     # the blocks would render twice - warn once.
     _placed_by_hand: bool = field(default=False, init=False)
     _double_render_warned: bool = field(default=False, init=False)
+    _missing_user_id_warned: bool = field(default=False, init=False)
 
     # =========================================================================
     # Initialization (Lazy)
@@ -504,6 +505,21 @@ class LearningMachine:
         self._placed_by_hand = True
         return self._instructions_text()
 
+    def _warn_if_user_id_missing(self, user_id: Optional[str]) -> None:
+        """Per-user stores silently drop their tools and capture without a
+        user_id (an unauthenticated /mcp run is the common way to get here).
+        Make the degradation visible, once per machine."""
+        if user_id or self._missing_user_id_warned:
+            return
+        per_user = [name for name in ("user_profile", "user_memory") if self.stores.get(name) is not None]
+        if per_user:
+            self._missing_user_id_warned = True
+            log_warning(
+                f"This run has no user_id, but per-user learning stores are configured "
+                f"({', '.join(per_user)}). Their tools and capture are disabled for this run. "
+                f"Pin Agent(user_id=...) or authenticate the request so a user id reaches the stores."
+            )
+
     def _framework_instructions(self) -> str:
         """The guidance block, fetched by the automatic injection path.
 
@@ -605,6 +621,7 @@ class LearningMachine:
             List of callable tools.
         """
         tools = []
+        self._warn_if_user_id_missing(user_id)
         context = {
             "user_id": user_id,
             "session_id": session_id,
@@ -636,6 +653,7 @@ class LearningMachine:
     ) -> List[Callable]:
         """Async version of get_tools."""
         tools = []
+        self._warn_if_user_id_missing(user_id)
         context = {
             "user_id": user_id,
             "session_id": session_id,

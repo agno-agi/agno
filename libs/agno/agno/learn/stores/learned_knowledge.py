@@ -79,7 +79,9 @@ class LearnedKnowledgeStore(LearningStore):
         self._schema = self.config.schema or LearnedKnowledge
 
         if self.config.mode == LearningMode.HITL:
-            log_warning("LearnedKnowledgeStore does not support HITL mode. Use PROPOSE mode for soft approval.")
+            log_warning(
+                "LearnedKnowledgeStore does not support HITL mode (LearningMode.HITL is deprecated and will be removed in 3.0). Use PROPOSE mode for soft approval."
+            )
 
     # =========================================================================
     # LearningStore Protocol Implementation

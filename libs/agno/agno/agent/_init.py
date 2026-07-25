@@ -162,6 +162,7 @@ def set_learning_machine(agent: Agent) -> None:
     # Enables user_profile (structured fields) and user_memory (unstructured observations)
     if agent.learning is True:
         agent._learning = LearningMachine(db=agent.db, model=agent.model, user_profile=True, user_memory=True)
+        _warn_on_memory_tool_collision(agent)
         return
 
     # Handle learning=LearningMachine(...): inject dependencies
@@ -175,6 +176,22 @@ def set_learning_machine(agent: Agent) -> None:
         # PROPOSE/HITL modes need chat history for multi-turn confirmation
         if agent._learning.requires_history and not agent.add_history_to_context:
             agent.add_history_to_context = True
+        _warn_on_memory_tool_collision(agent)
+
+
+def _warn_on_memory_tool_collision(agent: Agent) -> None:
+    """enable_agentic_memory and a learning user_memory store both register a
+    tool named update_user_memory; tool parsing keeps the first name it sees,
+    so the learning store's tool is silently dropped. Say so."""
+    if not getattr(agent, "enable_agentic_memory", False) or agent._learning is None:
+        return
+    if agent._learning.user_memory:
+        log_warning(
+            "Both enable_agentic_memory and a learning user_memory store are configured. "
+            "Both register a tool named update_user_memory, and tool parsing keeps the "
+            "first one it sees - the learning store's tool is silently dropped. Disable "
+            "enable_agentic_memory to capture memories through the LearningMachine."
+        )
 
 
 def set_session_summary_manager(agent: Agent) -> None:
