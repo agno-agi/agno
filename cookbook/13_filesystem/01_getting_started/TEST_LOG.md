@@ -4,6 +4,17 @@ Tested 2026-07-24 against `gpt-5.5` (OpenAIResponses), agno 2.8.1 (source tree, 
 Re-run fresh at the final sweep (same date): every file in this folder PASS.
 Entries quote tool calls and printed state. Model prose varies run to run and is paraphrased rather than quoted.
 
+
+### Re-run 2026-07-25 — instructions composed explicitly
+
+`fs.tools()` no longer adds its instructions to the system prompt; every agent in this
+folder now passes `fs.instructions()` in its own instructions list. Re-tested against
+`gpt-5.5` (OpenAIResponses), agno 2.8.2 source tree, branch fix/filesystem-explicit-instructions.
+
+**basic.py — PASS.** Run 1 (empty store) called `append_file(path=notes/decisions.md, content=2026-07-25: Use SQLite for local development and Postgres in production., unique=True)`. Run 2, a separate process, called `list_files(directory=., pattern=, recursive=True, max_depth=3)` then `read_file(path=notes/decisions.md, start_line=1, end_line=20)` and answered SQLite. The composed block reaches the prompt as one bullet with its Conventions nested under it, and `unique=True` shows the record-log convention still landing.
+
+---
+
 ### basic.py
 
 **Status:** PASS

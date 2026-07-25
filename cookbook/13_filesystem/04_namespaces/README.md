@@ -10,7 +10,7 @@ The main reason to reach for one is per-user (and per-team) file stores from a s
 
 - `basic.py`: the declarative common case, `namespace="assistant/{user_id}"`. One agent serves alice and bob with fully isolated files, and an anonymous run fails closed instead of collapsing into a shared store.
 - `custom_factory.py`: the escape hatch for arbitrary policy. A callable tool factory builds the FileSystem from `run_context`, and here VIP users get their own tier of namespaces.
-- `shared_namespace.py`: two agents share files by attaching the same namespace name. The producer writes, and the consumer attaches with `tools(read_only=True)`, which gives it four read tools and the read-only instructions and no way to write.
+- `shared_namespace.py`: two agents share files by attaching the same namespace name. The producer writes, and the consumer attaches with `tools(read_only=True)` plus `instructions(read_only=True)`, which gives it four read tools and no way to write.
 
 ## When to use
 

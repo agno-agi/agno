@@ -2,10 +2,12 @@
 
 import inspect
 import json
+from unittest.mock import MagicMock
 
 import pytest
 
 from agno.agent import Agent
+from agno.agent._tools import parse_tools
 from agno.fs import FileSystem
 from agno.fs.local import LocalFileSystem
 from agno.fs.toolkit import FileSystemTools
@@ -26,6 +28,12 @@ EXPECTED_TOOL_PARAMS = {
 }
 
 INJECTED_PARAMS = ("run_context", "agent", "team")
+
+
+def _mock_model():
+    model = MagicMock()
+    model.supports_native_structured_outputs = False
+    return model
 
 
 @pytest.fixture
@@ -146,10 +154,13 @@ class TestSurface:
 
 
 class TestInstructions:
-    def test_toolkit_carries_instructions(self, toolkit):
-        assert toolkit.add_instructions is True
+    def test_toolkit_holds_instructions_but_does_not_add_them(self, toolkit):
+        assert toolkit.add_instructions is False
         assert toolkit.instructions == FileSystem.instructions()
         assert 'check_lines(lines, directory="seen")' in toolkit.instructions
+
+    def test_add_instructions_is_opt_in(self, fs):
+        assert fs.tools(add_instructions=True).add_instructions is True
 
     def test_static_call_without_instance(self):
         text = FileSystem.instructions()
@@ -166,11 +177,32 @@ class TestInstructions:
         assert "cannot change these files" in text
         tk = fs.tools(read_only=True)
         assert tk.instructions == text
+        assert tk.add_instructions is False
 
     def test_namespace_never_in_instructions(self, fs):
         assert "radar" not in FileSystem.instructions()
         assert "namespace" not in FileSystem.instructions().lower()
         assert "namespace" not in FileSystem.instructions(read_only=True).lower()
+
+    def test_conventions_nest_under_one_bullet(self):
+        # Composed into an agent's instructions list, the whole block renders as a
+        # single "- {entry}" bullet, so every line under Conventions: is indented to
+        # stay beneath it.
+        for text in (FileSystem.instructions(), FileSystem.instructions(read_only=True)):
+            body = text.split("Conventions:\n", 1)[1]
+            for line in body.split("\n"):
+                if line:
+                    assert line.startswith("  "), line
+
+    def test_attached_toolkit_adds_nothing_to_the_system_prompt(self, fs):
+        agent = Agent(tools=[fs.tools()])
+        parse_tools(agent=agent, tools=agent.tools, model=_mock_model())
+        assert agent._tool_instructions == []
+
+    def test_add_instructions_carries_the_block(self, fs):
+        agent = Agent(tools=[fs.tools(add_instructions=True)])
+        parse_tools(agent=agent, tools=agent.tools, model=_mock_model())
+        assert agent._tool_instructions == [FileSystem.instructions()]
 
 
 class TestReadFileTool:
