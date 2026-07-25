@@ -508,9 +508,16 @@ def _get_delegate_task_function(
         )
 
         # 5. Get the team history
+        # When the member is a sub-team, filter history by that team's id
+        # so it receives its own history rather than the parent's.
         team_history_str = None
         if team.add_team_history_to_members and session:
-            team_history_str = session.get_team_history_context(num_runs=team.num_team_history_runs)
+            from agno.team.team import Team
+
+            member_team_id = member_agent.id if isinstance(member_agent, Team) else None
+            team_history_str = session.get_team_history_context(
+                team_id=member_team_id, num_runs=team.num_team_history_runs
+            )
 
         # 6. Create the member agent task or use the input directly
         if team.determine_input_for_members is False:
