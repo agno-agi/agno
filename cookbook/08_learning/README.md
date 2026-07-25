@@ -57,8 +57,8 @@ cookbook/08_learning/
 │   ├── 3a_session_context_summary.py
 │   ├── 3b_session_context_planning.py
 │   ├── 4_learned_knowledge.py
-│   ├── 5a_entity_memory_always.py
-│   └── 5b_entity_memory_agentic.py
+│   ├── 5_entity_memory.py
+│   └── 6_extraction_limits.py
 │
 ├── 02_user_profile/        # Deep dives into user profiles
 │   ├── 01_always_extraction.py
@@ -69,9 +69,9 @@ cookbook/08_learning/
 │   ├── 01_summary_mode.py
 │   └── 02_planning_mode.py
 │
-├── 04_entity_memory/       # Deep dives into entity memory
-│   ├── 01_facts_and_events.py
-│   └── 02_entity_relationships.py
+├── 04_entity_memory/       # Deep dives into entity memory (the four tools)
+│   ├── 01_the_four_tools.py
+│   └── 02_links_and_forget.py
 │
 ├── 05_learned_knowledge/   # Deep dives into learned knowledge
 │   ├── 01_agentic_mode.py
@@ -88,14 +88,20 @@ cookbook/08_learning/
 │   ├── 01_minimal_custom_store.py
 │   └── 02_custom_store_with_db.py
 │
-├── 09_decision_logs/       # Decision logging and auditing
+├── 09_decision_logs/       # Decision logging and auditing (AGENTIC-only)
 │   ├── 01_basic_decision_log.py
-│   └── 02_decision_log_always.py
+│   └── 02_record_outcomes.py
 │
-└── 10_demo/                # AgentOS demo: browse learnings in the UI
-    ├── agents.py
-    ├── seed.py
-    └── run.py
+├── 10_demo/                # AgentOS demo: browse learnings in the UI
+│   ├── agents.py
+│   ├── seed.py
+│   └── run.py
+│
+└── 11_composition/         # The manual door: place the surfaces yourself
+    ├── basic.py
+    ├── with_filesystem.py
+    ├── context_block.py
+    └── always_capture.py
 ```
 
 ## Running the Cookbooks
