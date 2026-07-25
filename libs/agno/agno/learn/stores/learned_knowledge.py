@@ -394,16 +394,16 @@ class LearnedKnowledgeStore(LearningStore):
             return ""
 
         formatted = self._format_learnings_for_context(learnings=learnings)
-        return dedent(f"""\
-            <relevant_learnings>
-            Prior insights that may help with this task:
-
-            {formatted}
-
-            Apply these naturally if they're relevant to the current request.
-            Your current analysis and the user's specific context take precedence.
-            </relevant_learnings>\
-        """)
+        # Assembled by concatenation, not dedent: the interpolated learnings are
+        # flush-left and multi-line, which would defeat dedent's common prefix.
+        return (
+            "<relevant_learnings>\n"
+            "Prior insights that may help with this task:\n\n"
+            f"{formatted}\n\n"
+            "Apply these naturally if they're relevant to the current request.\n"
+            "Your current analysis and the user's specific context take precedence.\n"
+            "</relevant_learnings>"
+        )
 
     def _format_learnings_for_context(self, learnings: List[Any]) -> str:
         """Format learnings for inclusion in context."""

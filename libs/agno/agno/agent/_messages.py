@@ -104,18 +104,30 @@ def format_message_with_state_variables(
 
 
 def _learning_message_text(input: Any) -> Optional[str]:
-    """Flatten the run input to text for message-scoped learning recall."""
+    """Flatten the run input to text for message-scoped learning recall.
+
+    Textual parts only: multimodal content parts contribute their "text"
+    values, and non-text parts are skipped rather than leaking Python reprs
+    into the recall terms.
+    """
     if input is None:
         return None
     if isinstance(input, str):
-        return input
+        return input or None
     if isinstance(input, Message):
-        return input.content if isinstance(input.content, str) else str(input.content)
+        return _learning_message_text(input.content)
     if isinstance(input, list):
         parts = [_learning_message_text(item) for item in input]
         return "\n".join(part for part in parts if part) or None
     if isinstance(input, dict):
-        return str(input)
+        # A multimodal content part or a payload dict: keep its string values.
+        parts = [value for value in input.values() if isinstance(value, str)]
+        return "\n".join(part for part in parts if part) or None
+    if isinstance(input, BaseModel):
+        try:
+            return _learning_message_text(input.model_dump())
+        except Exception:
+            return None
     return str(input)
 
 

@@ -84,6 +84,37 @@ class TestMessageTerms:
 
 
 class TestRelevanceRecall:
+    def test_name_path_serves_without_term_search(self, db: RecordingLearningDb) -> None:
+        # Discriminating test for the NAME path: with k=1 filled by the name
+        # match, term search must not run at all - so the name path cannot be
+        # silently replaced by the more expensive search fallback.
+        store = EntityMemoryStore(config=EntityMemoryConfig(db=db, max_entities_in_context=1))  # type: ignore[arg-type]
+        store.remember_about(entity="radar", entity_type="project", facts=["db: Postgres"])
+
+        def forbidden_search(**kwargs: Any) -> Any:
+            raise AssertionError("term search must not run when the name path fills k")
+
+        store.search = forbidden_search  # type: ignore[method-assign]
+        recalled = store.recall(message="what is the status of radar?")
+        assert recalled is not None
+        assert [e.entity_id for e in recalled["entities"]] == ["radar"]
+
+    def test_short_names_match_on_word_boundaries_only(self, store: EntityMemoryStore) -> None:
+        # A two-letter entity must not match inside other words and evict the
+        # entity the turn is actually about.
+        store.remember_about(entity="Al", entity_type="person", facts=["works in finance"])
+        store.remember_about(entity="radar", entity_type="project", facts=["db: Postgres"])
+
+        recalled = store.recall(message="always check the radar dashboard")
+        assert recalled is not None
+        ids = [e.entity_id for e in recalled["entities"]]
+        assert "radar" in ids and "al" not in ids
+
+        # ...but naming Al on a word boundary matches
+        recalled = store.recall(message="ask Al about the budget")
+        assert recalled is not None
+        assert "al" in [e.entity_id for e in recalled["entities"]]
+
     def test_message_naming_an_entity_expands_it(self, store: EntityMemoryStore) -> None:
         store.remember_about(entity="radar", entity_type="project", facts=["db: Postgres"])
         store.remember_about(entity="unrelated", entity_type="project", facts=["nothing here"])

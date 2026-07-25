@@ -1442,6 +1442,7 @@ class Team:
         files: Optional[Sequence[File]] = None,
         tools: Optional[List[Union[Function, dict]]] = None,
         add_session_state_to_context: Optional[bool] = None,
+        input: Optional[Any] = None,
     ) -> Optional[Message]:
         return _messages.get_system_message(
             self,
@@ -1453,6 +1454,7 @@ class Team:
             files=files,
             tools=tools,
             add_session_state_to_context=add_session_state_to_context,
+            input=input,
         )
 
     async def aget_system_message(
@@ -1465,6 +1467,7 @@ class Team:
         files: Optional[Sequence[File]] = None,
         tools: Optional[List[Union[Function, dict]]] = None,
         add_session_state_to_context: Optional[bool] = None,
+        input: Optional[Any] = None,
     ) -> Optional[Message]:
         return await _messages.aget_system_message(
             self,
@@ -1476,6 +1479,7 @@ class Team:
             files=files,
             tools=tools,
             add_session_state_to_context=add_session_state_to_context,
+            input=input,
         )
 
     ###########################################################################

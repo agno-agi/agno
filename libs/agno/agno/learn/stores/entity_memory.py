@@ -341,19 +341,14 @@ class EntityMemoryStore(LearningStore):
             top_k = self.config.max_entities_in_context
             entities = self._merge_relevant(entities, self._match_directory_by_message(directory, message), top_k)
             if len(entities) < top_k:
-                for term in self._terms_to_search(message, entities):
-                    entities = self._merge_relevant(
-                        entities,
-                        self.search(
-                            query=term,
-                            user_id=user_id,
-                            namespace=effective_namespace,
-                            limit=top_k,
-                        ),
-                        top_k,
-                    )
-                    if len(entities) >= top_k:
-                        break
+                # All selected terms are searched and merged round-robin, so a
+                # generic first term cannot consume the budget before the
+                # distinctive one.
+                term_results = [
+                    self.search(query=term, user_id=user_id, namespace=effective_namespace, limit=top_k)
+                    for term in self._terms_to_search(message, entities)
+                ]
+                entities = self._merge_relevant(entities, self._interleave(term_results), top_k)
 
         related_names = self._related_names(
             entities=entities, directory=directory, user_id=user_id, namespace=effective_namespace
@@ -396,19 +391,12 @@ class EntityMemoryStore(LearningStore):
             top_k = self.config.max_entities_in_context
             entities = self._merge_relevant(entities, self._match_directory_by_message(directory, message), top_k)
             if len(entities) < top_k:
+                term_results = []
                 for term in self._terms_to_search(message, entities):
-                    entities = self._merge_relevant(
-                        entities,
-                        await self.asearch(
-                            query=term,
-                            user_id=user_id,
-                            namespace=effective_namespace,
-                            limit=top_k,
-                        ),
-                        top_k,
+                    term_results.append(
+                        await self.asearch(query=term, user_id=user_id, namespace=effective_namespace, limit=top_k)
                     )
-                    if len(entities) >= top_k:
-                        break
+                entities = self._merge_relevant(entities, self._interleave(term_results), top_k)
 
         related_names = await self._arelated_names(
             entities=entities, directory=directory, user_id=user_id, namespace=effective_namespace
@@ -417,16 +405,38 @@ class EntityMemoryStore(LearningStore):
 
     @staticmethod
     def _match_directory_by_message(directory: List[EntityMemory], message: str) -> List[EntityMemory]:
-        """Directory entries whose name or alias appears in the message."""
+        """Directory entries whose name or alias appears in the message.
+
+        Word-boundary matched: a two-letter entity named "Al" must not match
+        "always" and evict the entity the turn is actually about.
+        """
         normalized_message = _normalize_name(message)
         matched: List[EntityMemory] = []
         for entity in directory:
             names = [getattr(entity, "name", None) or ""] + list(getattr(entity, "aliases", None) or [])
             for candidate in names:
-                if candidate and _normalize_name(candidate) in normalized_message:
+                if not candidate:
+                    continue
+                pattern = r"(?<!\w)" + re.escape(_normalize_name(candidate)) + r"(?!\w)"
+                if re.search(pattern, normalized_message):
                     matched.append(entity)
                     break
         return matched
+
+    @staticmethod
+    def _interleave(result_lists: List[List[EntityMemory]]) -> List[EntityMemory]:
+        """Round-robin merge, so one term's results cannot starve another's."""
+        merged: List[EntityMemory] = []
+        index = 0
+        while True:
+            advanced = False
+            for results in result_lists:
+                if index < len(results):
+                    merged.append(results[index])
+                    advanced = True
+            if not advanced:
+                return merged
+            index += 1
 
     @staticmethod
     def _merge_relevant(current: List[EntityMemory], additions: List[EntityMemory], top_k: int) -> List[EntityMemory]:
@@ -442,14 +452,25 @@ class EntityMemoryStore(LearningStore):
             merged.append(entity)
             if len(merged) >= top_k:
                 break
-        return merged[:top_k] if top_k else merged
+        return merged[: max(top_k, 0)]
 
     @staticmethod
     def _terms_to_search(message: str, already_matched: List[EntityMemory], max_searches: int = 3) -> List[str]:
-        """Message terms worth a bounded lexical search: not already covering a
-        matched entity's name."""
-        covered = " ".join(_normalize_name(getattr(e, "name", None) or e.entity_id) for e in already_matched)
-        terms = [t for t in _message_terms(message) if t not in covered]
+        """Message terms worth a bounded lexical search.
+
+        Terms whose token already appears in a matched entity's name are
+        skipped; the rest are ordered proper-noun-ish first (capitalized
+        mid-sentence in the original message - the strongest name signal),
+        then by length, so a generic early word cannot consume the search
+        budget before the distinctive one.
+        """
+        covered_tokens: set = set()
+        for e in already_matched:
+            covered_tokens.update(_normalize_name(getattr(e, "name", None) or e.entity_id).split())
+
+        capitalized = {match.group(0).lower() for match in re.finditer(r"(?<![.!?]\s)(?<!^)\b[A-Z][a-z]+", message)}
+        terms = [t for t in _message_terms(message) if t not in covered_tokens]
+        terms.sort(key=lambda t: (t not in capitalized, -len(t)))
         return terms[:max_searches]
 
     def _related_names(

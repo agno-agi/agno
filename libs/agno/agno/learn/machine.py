@@ -57,7 +57,12 @@ def _filter_store_kwargs(callee: Callable, kwargs: Dict[str, Any]) -> Dict[str, 
         parameters = inspect.signature(callee).parameters
     except (TypeError, ValueError):
         return kwargs
-    if any(p.kind == inspect.Parameter.VAR_KEYWORD for p in parameters.values()):
+    kinds = {p.kind for p in parameters.values()}
+    if inspect.Parameter.VAR_KEYWORD in kinds:
+        return kwargs
+    if inspect.Parameter.VAR_POSITIONAL in kinds:
+        # A *args-only callee cannot take these as keywords; pass everything
+        # through so the mismatch fails loudly instead of silently dropping data.
         return kwargs
     return {key: value for key, value in kwargs.items() if key in parameters}
 
@@ -127,6 +132,9 @@ class LearningMachine:
     _placed_by_hand: bool = field(default=False, init=False)
     _double_render_warned: bool = field(default=False, init=False)
     _missing_user_id_warned: bool = field(default=False, init=False)
+    # Strong refs to fire-and-forget capture tasks (acapture_hook), so the event
+    # loop cannot garbage-collect them mid-flight.
+    _capture_tasks: set = field(default_factory=set, init=False)
 
     # =========================================================================
     # Initialization (Lazy)
@@ -558,40 +566,69 @@ class LearningMachine:
         For the developer who wants hand-placed prompts AND ALWAYS-mode
         extraction, add this to Agent(post_hooks=[...]). An escape hatch, not a
         third shape.
+
+        Extraction is backgrounded on the agent's background executor when one
+        is available (the same place learning= runs it), so it stays off the
+        response path; without an executor it runs inline. Works on both sync
+        and async runs (async post-hook execution calls sync hooks directly).
         """
         machine = self
 
-        def learning_capture(run_output=None, agent=None, session=None, user_id=None) -> None:
+        def learning_capture(run_output=None, agent=None, session=None, user_id=None, run_context=None) -> None:
             messages = list(getattr(run_output, "messages", None) or [])
             if not messages:
                 return
-            machine.process(
+            kwargs = dict(
                 messages=messages,
                 user_id=user_id,
                 session_id=getattr(session, "session_id", None) if session is not None else None,
                 agent_id=getattr(agent, "id", None) if agent is not None else None,
                 team_id=getattr(agent, "team_id", None) if agent is not None else None,
+                run_context=run_context,
+                metadata=getattr(run_context, "metadata", None),
+                dependencies=getattr(run_context, "dependencies", None),
+                session_state=getattr(run_context, "session_state", None),
             )
+            executor = getattr(agent, "background_executor", None) if agent is not None else None
+            if executor is not None:
+                executor.submit(machine.process, **kwargs)
+            else:
+                machine.process(**kwargs)
 
         return learning_capture
 
     def acapture_hook(self) -> Callable:
-        """Async version of capture_hook, for async runs (uses aprocess)."""
+        """Async version of capture_hook: schedules aprocess as a background task.
+
+        Only for async runs - a sync run() skips async hooks with a warning, so
+        pass capture_hook() there instead. The task is fire-and-forget off the
+        response path; failures are logged, never raised into the run.
+        """
         machine = self
 
-        async def learning_capture(run_output=None, agent=None, session=None, user_id=None) -> None:
+        async def alearning_capture(run_output=None, agent=None, session=None, user_id=None, run_context=None) -> None:
+            import asyncio
+
             messages = list(getattr(run_output, "messages", None) or [])
             if not messages:
                 return
-            await machine.aprocess(
-                messages=messages,
-                user_id=user_id,
-                session_id=getattr(session, "session_id", None) if session is not None else None,
-                agent_id=getattr(agent, "id", None) if agent is not None else None,
-                team_id=getattr(agent, "team_id", None) if agent is not None else None,
+            task = asyncio.create_task(
+                machine.aprocess(
+                    messages=messages,
+                    user_id=user_id,
+                    session_id=getattr(session, "session_id", None) if session is not None else None,
+                    agent_id=getattr(agent, "id", None) if agent is not None else None,
+                    team_id=getattr(agent, "team_id", None) if agent is not None else None,
+                    run_context=run_context,
+                    metadata=getattr(run_context, "metadata", None),
+                    dependencies=getattr(run_context, "dependencies", None),
+                    session_state=getattr(run_context, "session_state", None),
+                )
             )
+            machine._capture_tasks.add(task)
+            task.add_done_callback(machine._capture_tasks.discard)
 
-        return learning_capture
+        return alearning_capture
 
     def get_tools(
         self,
@@ -903,7 +940,10 @@ class LearningMachine:
         schema-by-import-path all round-trip. db, model and knowledge are
         never serialized (they are injected at init), and callables cannot
         be - a config carrying one round-trips as present-but-not-restorable
-        and from_dict logs once. Store INSTANCES serialize their config;
+        and from_dict logs once. A schema class defined in a __main__ script
+        serializes as a __main__ path and only resolves inside the same
+        process; define custom schemas in an importable module for a
+        cross-process rebuild. Store INSTANCES serialize their config;
         custom_stores serialize as import-path refs (informational - the
         instances cannot be rebuilt from a dict).
         """
@@ -937,6 +977,12 @@ class LearningMachine:
         inner = getattr(value, "config", None)
         if inner is not None and dataclasses.is_dataclass(inner):
             config = inner
+            store_module = type(value).__module__ or ""
+            if not store_module.startswith("agno.learn.stores"):
+                log_warning(
+                    f"LearningMachine.to_dict: store {type(value).__name__} is serialized by its "
+                    f"config only; the subclass itself cannot be rebuilt from a dict."
+                )
         elif dataclasses.is_dataclass(value) and not isinstance(value, type):
             config = value
         else:
@@ -956,6 +1002,16 @@ class LearningMachine:
             elif callable(field_value):
                 serialized[f.name] = {"__callable__": getattr(field_value, "__name__", "callable")}
             elif isinstance(field_value, (str, int, float, bool, list, dict)):
+                import json
+
+                try:
+                    json.dumps(field_value)
+                except (TypeError, ValueError):
+                    log_warning(
+                        f"LearningMachine.to_dict: dropping non-JSON-serializable config value {f.name!r}; "
+                        f"set it programmatically after rebuild."
+                    )
+                    continue
                 serialized[f.name] = field_value
         return serialized
 
@@ -1003,7 +1059,11 @@ class LearningMachine:
                 try:
                     kwargs["mode"] = LearningMode(value)
                 except ValueError:
-                    log_warning(f"LearningMachine.from_dict: unknown mode {value!r} on {store_name}; using default.")
+                    # AGENTIC, not the class default: several stores default to
+                    # ALWAYS, and an unrecognized mode must never turn into a
+                    # surprise per-run extraction pass.
+                    log_warning(f"LearningMachine.from_dict: unknown mode {value!r} on {store_name}; using AGENTIC.")
+                    kwargs["mode"] = LearningMode.AGENTIC
                 continue
             if key == "schema" and isinstance(value, str):
                 module_path, _, attr_path = value.rpartition(".")
@@ -1026,6 +1086,20 @@ class LearningMachine:
         try:
             return config_cls(**kwargs)
         except Exception as e:
+            # Keep every valid field: a payload carrying an invalid mode (e.g. a
+            # legacy 'always' for entity memory) must not also lose its
+            # namespace and knobs.
+            retry_kwargs = {k: v for k, v in kwargs.items() if k != "mode"}
+            if retry_kwargs != kwargs:
+                try:
+                    rebuilt = config_cls(**retry_kwargs)
+                    log_warning(
+                        f"LearningMachine.from_dict: dropped invalid mode on {store_name} ({e}); "
+                        f"other settings preserved."
+                    )
+                    return rebuilt
+                except Exception:
+                    pass
             log_warning(f"LearningMachine.from_dict: could not rebuild {store_name} config ({e}); enabling defaults.")
             return True
 

@@ -876,6 +876,7 @@ class Agent:
         run_context: Optional[RunContext] = None,
         tools: Optional[List[Union[Function, dict]]] = None,
         add_session_state_to_context: Optional[bool] = None,
+        input: Optional[Any] = None,
     ) -> Optional[Message]:
         return _messages.get_system_message(
             self,
@@ -883,6 +884,7 @@ class Agent:
             run_context=run_context,
             tools=tools,
             add_session_state_to_context=add_session_state_to_context,
+            input=input,
         )
 
     async def aget_system_message(
@@ -891,6 +893,7 @@ class Agent:
         run_context: Optional[RunContext] = None,
         tools: Optional[List[Union[Function, dict]]] = None,
         add_session_state_to_context: Optional[bool] = None,
+        input: Optional[Any] = None,
     ) -> Optional[Message]:
         return await _messages.aget_system_message(
             self,
@@ -898,6 +901,7 @@ class Agent:
             run_context=run_context,
             tools=tools,
             add_session_state_to_context=add_session_state_to_context,
+            input=input,
         )
 
     def get_relevant_docs_from_knowledge(

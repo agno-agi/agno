@@ -783,9 +783,12 @@ class DecisionLogStore(LearningStore):
             )
 
     def _fetch_recent_rows(self, agent_id: Optional[str], limit: int, session_id: Optional[str] = None) -> List[Any]:
+        # Callers guard isinstance(self.db, BaseDb), so the call is sync here.
+        if not isinstance(self.db, BaseDb):
+            return []
         try:
             return (
-                self.db.get_learnings(  # type: ignore[union-attr]
+                self.db.get_learnings(
                     learning_type=self.learning_type,
                     agent_id=agent_id,
                     session_id=session_id,

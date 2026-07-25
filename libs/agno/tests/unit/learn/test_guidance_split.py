@@ -315,7 +315,8 @@ class TestManualDoor:
         assert captured["session_id"] == "s1"
         assert captured["agent_id"] == "agent-1"
 
-    async def test_acapture_hook_runs_aprocess(self) -> None:
+    async def test_acapture_hook_schedules_aprocess(self) -> None:
+        import asyncio
         from types import SimpleNamespace
 
         db = RecordingLearningDb()
@@ -333,6 +334,9 @@ class TestManualDoor:
             session=SimpleNamespace(session_id="s1"),
             user_id="u1",
         )
+        # Fire-and-forget: the capture runs as a background task off the
+        # response path; drain it before asserting.
+        await asyncio.gather(*machine._capture_tasks)
         assert captured["messages"] == ["m1"]
 
     def test_capture_hook_is_post_hooks_compatible(self) -> None:
@@ -344,7 +348,7 @@ class TestManualDoor:
         machine = LearningMachine(db=RecordingLearningDb(), user_memory=True)  # type: ignore[arg-type]
         hook = machine.capture_hook()
         params = set(inspect.signature(hook).parameters)
-        assert params <= {"run_output", "agent", "session", "user_id"}
+        assert params <= {"run_output", "agent", "session", "user_id", "run_context"}
         filtered = filter_hook_args(
             hook,
             {

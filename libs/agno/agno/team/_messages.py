@@ -345,6 +345,7 @@ def get_system_message(
     files: Optional[Sequence[File]] = None,
     tools: Optional[List[Union[Function, dict]]] = None,
     add_session_state_to_context: Optional[bool] = None,
+    input: Optional[Any] = None,
 ) -> Optional[Message]:
     """Get the system message for the team.
 
@@ -473,11 +474,14 @@ def get_system_message(
     # 2.3 Learning context: guidance + data, concatenated so the automatic door
     # renders exactly what the manual door's instructions() + build_context() would
     if team._learning is not None and team.add_learnings_to_context:
+        from agno.agent._messages import _learning_message_text
+
         learning_guidance = team._learning._framework_instructions()
         learning_context = team._learning.build_context(
             user_id=user_id,
             session_id=session.session_id if session else None,
             team_id=team.id,
+            message=_learning_message_text(input),
             run_context=run_context,
             metadata=run_context.metadata if run_context else None,
             dependencies=run_context.dependencies if run_context else None,
@@ -588,6 +592,7 @@ async def aget_system_message(
     files: Optional[Sequence[File]] = None,
     tools: Optional[List[Union[Function, dict]]] = None,
     add_session_state_to_context: Optional[bool] = None,
+    input: Optional[Any] = None,
 ) -> Optional[Message]:
     """Get the system message for the team."""
 
@@ -710,11 +715,14 @@ async def aget_system_message(
 
     # 2.3 Learning context (see the sync twin)
     if team._learning is not None and team.add_learnings_to_context:
+        from agno.agent._messages import _learning_message_text
+
         learning_guidance = team._learning._framework_instructions()
         learning_context = await team._learning.abuild_context(
             user_id=user_id,
             session_id=session.session_id if session else None,
             team_id=team.id,
+            message=_learning_message_text(input),
             run_context=run_context,
             metadata=run_context.metadata if run_context else None,
             dependencies=run_context.dependencies if run_context else None,
@@ -857,6 +865,7 @@ def _get_run_messages(
     system_message = team.get_system_message(
         session=session,
         run_context=run_context,
+        input=input_message,
         images=images,
         audio=audio,
         videos=videos,
@@ -992,6 +1001,7 @@ async def _aget_run_messages(
     system_message = await team.aget_system_message(
         session=session,
         run_context=run_context,
+        input=input_message,
         images=images,
         audio=audio,
         videos=videos,
