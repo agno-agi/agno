@@ -44,9 +44,4 @@ cd cookbook/examples/house_rules
 python house_rules.py
 ```
 
-The other three folders are `<example>.py`, which builds the agent and serves it, and
-`test.py`, which drives that same agent from the command line. They keep their SQLite stores
-in `tmp/` next to the script, which is why the commands are run from inside the folder.
-
-All three serve on port 7777, so run one at a time, or set `AGENT_OS_PORT=7801` to bring up a
-second one alongside. Each folder's `TEST_LOG.md` records what a real run produced.
+The other three folders are `<example>.py`, which builds the agent and serves it, and `test.py`, which runs that same agent from the command line.
