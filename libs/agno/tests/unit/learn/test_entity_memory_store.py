@@ -207,6 +207,22 @@ class TestRememberAbout:
         assert "user_id" in message
         assert db.rows == {}
 
+    def test_user_namespace_fails_closed_on_reads_and_forget(self, db: RecordingLearningDb) -> None:
+        # Alice's private entity must not be readable or archivable without a user_id.
+        store = EntityMemoryStore(config=EntityMemoryConfig(db=db, namespace="user"))  # type: ignore[arg-type]
+        store.remember_about(entity="secret project", entity_type="project", facts=["acme deal"], user_id="alice")
+
+        assert "user_id" in store.search_entities(query="acme")
+        assert store.search(query="acme") == []
+        assert store.list_entities() == []
+        assert "user_id" in store.forget(entity="secret project")
+        entity = store.get(entity_id="secret_project", entity_type="project", user_id="alice")
+        assert entity is not None and entity.archived_at is None
+
+    def test_blank_entity_name_is_rejected(self, store: EntityMemoryStore, db: RecordingLearningDb) -> None:
+        assert "Entity name is required" in store.remember_about(entity="   ", entity_type="person")
+        assert db.rows == {}
+
 
 class TestLinkEntities:
     def test_edge_written_on_both_rows_with_far_end_type(self, store: EntityMemoryStore) -> None:
@@ -242,6 +258,13 @@ class TestLinkEntities:
         await store.aremember_about(entity="radar", entity_type="project")
         message = await store.alink_entities(entity="radar", relation="owned_by", related_entity="Acme")
         assert "Linked" in message
+
+    def test_self_link_is_rejected(self, store: EntityMemoryStore) -> None:
+        store.remember_about(entity="radar", entity_type="project")
+        message = store.link_entities(entity="radar", relation="relates_to", related_entity="Radar")
+        assert "itself" in message
+        entity = store.get(entity_id="radar", entity_type="project")
+        assert entity is not None and entity.relationships == []
 
 
 class TestSearchEntities:

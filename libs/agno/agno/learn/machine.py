@@ -467,8 +467,9 @@ class LearningMachine:
         """Get learning tools to expose to the agent.
 
         Returns tools based on which stores are enabled:
-        - user_profile: update_user_memory
-        - entity_memory: search_entities, create_entity, update_entity, add_fact, etc.
+        - user_profile: update_profile
+        - user_memory: update_user_memory
+        - entity_memory: remember_about, link_entities, search_entities, forget
         - learned_knowledge: search_learnings, save_learning
 
         Args:

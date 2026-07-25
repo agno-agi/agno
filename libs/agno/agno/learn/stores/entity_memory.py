@@ -66,6 +66,13 @@ def _slugify(name: str) -> str:
     return slug or name.strip().lower()
 
 
+def _slugify_or_none(name: Optional[str]) -> Optional[str]:
+    """Slugify, returning None when the name carries no usable identity."""
+    if not name or not name.strip():
+        return None
+    return _slugify(name) or None
+
+
 def _normalize_fact_text(text: str) -> str:
     """Fold case and collapse whitespace for fact matching."""
     return re.sub(r"\s+", " ", text.strip().casefold())
@@ -574,6 +581,8 @@ class EntityMemoryStore(LearningStore):
         """
         if not self.db:
             return "Entity memory has no database configured; nothing was recorded."
+        if not _slugify_or_none(entity):
+            return "Entity name is required; nothing was recorded."
 
         effective_namespace = namespace or self.config.namespace
         if effective_namespace == "user" and not user_id:
@@ -632,6 +641,8 @@ class EntityMemoryStore(LearningStore):
         """Async version of remember_about."""
         if not self.db:
             return "Entity memory has no database configured; nothing was recorded."
+        if not _slugify_or_none(entity):
+            return "Entity name is required; nothing was recorded."
 
         effective_namespace = namespace or self.config.namespace
         if effective_namespace == "user" and not user_id:
@@ -786,12 +797,17 @@ class EntityMemoryStore(LearningStore):
             log_warning("EntityMemoryStore.link_entities: namespace='user' requires user_id")
             return "Entity memory needs a user_id for the 'user' namespace; nothing was recorded."
 
+        if not _slugify_or_none(entity) or not _slugify_or_none(related_entity):
+            return "Both entity names are required; nothing was recorded."
+
         source = self._resolve_or_create_minimal(
             entity, user_id=user_id, agent_id=agent_id, team_id=team_id, namespace=effective_namespace
         )
         target = self._resolve_or_create_minimal(
             related_entity, user_id=user_id, agent_id=agent_id, team_id=team_id, namespace=effective_namespace
         )
+        if source.entity_id == target.entity_id and source.entity_type == target.entity_type:
+            return f"Cannot link {source.entity_type}/{source.entity_id} to itself; nothing was recorded."
 
         self._write_edge(source=source, target=target, relation=relation)
 
@@ -827,12 +843,17 @@ class EntityMemoryStore(LearningStore):
             log_warning("EntityMemoryStore.alink_entities: namespace='user' requires user_id")
             return "Entity memory needs a user_id for the 'user' namespace; nothing was recorded."
 
+        if not _slugify_or_none(entity) or not _slugify_or_none(related_entity):
+            return "Both entity names are required; nothing was recorded."
+
         source = await self._aresolve_or_create_minimal(
             entity, user_id=user_id, agent_id=agent_id, team_id=team_id, namespace=effective_namespace
         )
         target = await self._aresolve_or_create_minimal(
             related_entity, user_id=user_id, agent_id=agent_id, team_id=team_id, namespace=effective_namespace
         )
+        if source.entity_id == target.entity_id and source.entity_type == target.entity_type:
+            return f"Cannot link {source.entity_type}/{source.entity_id} to itself; nothing was recorded."
 
         self._write_edge(source=source, target=target, relation=relation)
 
@@ -886,6 +907,9 @@ class EntityMemoryStore(LearningStore):
     ) -> str:
         """Search stored entities (or list them by recency) and format the results."""
         effective_namespace = namespace or self.config.namespace
+        if effective_namespace == "user" and not user_id:
+            log_warning("EntityMemoryStore.search_entities: namespace='user' requires user_id")
+            return "Entity memory needs a user_id for the 'user' namespace; nothing was searched."
 
         if query:
             results = self.search(
@@ -923,6 +947,9 @@ class EntityMemoryStore(LearningStore):
     ) -> str:
         """Async version of search_entities."""
         effective_namespace = namespace or self.config.namespace
+        if effective_namespace == "user" and not user_id:
+            log_warning("EntityMemoryStore.asearch_entities: namespace='user' requires user_id")
+            return "Entity memory needs a user_id for the 'user' namespace; nothing was searched."
 
         if query:
             results = await self.asearch(
@@ -1051,6 +1078,9 @@ class EntityMemoryStore(LearningStore):
             return "Entity memory has no database configured; nothing was changed."
 
         effective_namespace = namespace or self.config.namespace
+        if effective_namespace == "user" and not user_id:
+            log_warning("EntityMemoryStore.forget: namespace='user' requires user_id")
+            return "Entity memory needs a user_id for the 'user' namespace; nothing was changed."
         entity_obj = self._resolve(entity=entity, entity_type=None, user_id=user_id, namespace=effective_namespace)
         if entity_obj is None:
             return f"No entity found matching {entity!r}."
@@ -1083,6 +1113,9 @@ class EntityMemoryStore(LearningStore):
             return "Entity memory has no database configured; nothing was changed."
 
         effective_namespace = namespace or self.config.namespace
+        if effective_namespace == "user" and not user_id:
+            log_warning("EntityMemoryStore.aforget: namespace='user' requires user_id")
+            return "Entity memory needs a user_id for the 'user' namespace; nothing was changed."
         entity_obj = await self._aresolve(
             entity=entity, entity_type=None, user_id=user_id, namespace=effective_namespace
         )
@@ -1102,6 +1135,15 @@ class EntityMemoryStore(LearningStore):
                 return f"Failed to update {entity_obj.entity_type}/{entity_obj.entity_id}."
             self.entity_updated = True
         return result
+
+    def _retire(self, entity_obj: EntityMemory, fact: Dict[str, Any], superseded_by: str = "forgotten") -> None:
+        """Retire a fact dict in place, tolerating records without an id."""
+        fact_id = fact.get("id")
+        if fact_id:
+            entity_obj.retire_fact(fact_id, superseded_by=superseded_by)
+        else:
+            fact["superseded_at"] = _utc_now_iso()
+            fact["superseded_by"] = superseded_by
 
     def _apply_forget(self, entity_obj: EntityMemory, fact: Optional[str]) -> Tuple[str, bool]:
         """Apply forget in memory. Returns (message, should_save)."""
@@ -1126,7 +1168,7 @@ class EntityMemoryStore(LearningStore):
         exact = [f for f in live if isinstance(f, dict) and _normalize_fact_text(str(f.get("content", ""))) == needle]
         if exact:
             for f in exact:
-                entity_obj.retire_fact(f["id"], superseded_by="forgotten")
+                self._retire(entity_obj, f)
             entity_obj.updated_at = _utc_now_iso()
             return f"Retired fact on {label}: {exact[0].get('content')}", True
 
@@ -1140,7 +1182,7 @@ class EntityMemoryStore(LearningStore):
             )
         ]
         if len(contains) == 1:
-            entity_obj.retire_fact(contains[0]["id"], superseded_by="forgotten")
+            self._retire(entity_obj, contains[0])
             entity_obj.updated_at = _utc_now_iso()
             return f"Retired fact on {label}: {contains[0].get('content')}", True
         if len(contains) > 1:
@@ -1279,7 +1321,7 @@ class EntityMemoryStore(LearningStore):
                 namespace=namespace,
                 user_id=user_id if namespace == "user" else None,
             )
-            return rows or []
+            return self._order_rows(rows or [])
         except Exception as e:
             log_debug(f"EntityMemoryStore._get_rows_by_entity_id failed: {e}")
             return []
@@ -1305,10 +1347,22 @@ class EntityMemoryStore(LearningStore):
                     namespace=namespace,
                     user_id=user_id if namespace == "user" else None,
                 )
-            return rows or []
+            return self._order_rows(rows or [])
         except Exception as e:
             log_debug(f"EntityMemoryStore._aget_rows_by_entity_id failed: {e}")
             return []
+
+    @staticmethod
+    def _order_rows(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Order rows newest-first with a deterministic tie-break on the id.
+
+        Backend timestamps have second resolution, so same-second writes tie;
+        resolution must not flip between such rows across calls.
+        """
+        return sorted(
+            rows,
+            key=lambda r: (-(r.get("updated_at") or r.get("created_at") or 0), str(r.get("learning_id") or "")),
+        )
 
     # =========================================================================
     # Data API: get / list / search / delete
@@ -1410,6 +1464,9 @@ class EntityMemoryStore(LearningStore):
             return []
 
         effective_namespace = namespace or self.config.namespace
+        if effective_namespace == "user" and not user_id:
+            log_warning("EntityMemoryStore.list_entities: namespace='user' requires user_id")
+            return []
 
         try:
             results = self.db.get_learnings(
@@ -1437,6 +1494,9 @@ class EntityMemoryStore(LearningStore):
             return []
 
         effective_namespace = namespace or self.config.namespace
+        if effective_namespace == "user" and not user_id:
+            log_warning("EntityMemoryStore.alist_entities: namespace='user' requires user_id")
+            return []
 
         try:
             if isinstance(self.db, AsyncBaseDb):
@@ -1504,6 +1564,9 @@ class EntityMemoryStore(LearningStore):
             return []
 
         effective_namespace = namespace or self.config.namespace
+        if effective_namespace == "user" and not user_id:
+            log_warning("EntityMemoryStore.search: namespace='user' requires user_id")
+            return []
 
         try:
             rows = self.db.search_learnings(
@@ -1544,6 +1607,9 @@ class EntityMemoryStore(LearningStore):
             return []
 
         effective_namespace = namespace or self.config.namespace
+        if effective_namespace == "user" and not user_id:
+            log_warning("EntityMemoryStore.asearch: namespace='user' requires user_id")
+            return []
 
         try:
             if isinstance(self.db, AsyncBaseDb):

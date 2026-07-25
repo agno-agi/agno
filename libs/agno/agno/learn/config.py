@@ -374,6 +374,16 @@ class EntityMemoryConfig:
     additional_instructions: Optional[str] = None
     system_message: Optional[str] = None
 
+    def __post_init__(self) -> None:
+        # Fail where the mistake is made: a store built from this config would
+        # raise the same error, but only on first use inside a run.
+        if self.mode != LearningMode.AGENTIC:
+            raise ValueError(
+                f"Entity memory is AGENTIC-only: the agent records entities through its tools "
+                f"and there is no extraction pass. Remove mode={self.mode.value!r} or set "
+                f"LearningMode.AGENTIC."
+            )
+
     def __repr__(self) -> str:
         return f"EntityMemoryConfig(mode={self.mode.value}, namespace={self.namespace}, enable_agent_tools={self.enable_agent_tools})"
 
