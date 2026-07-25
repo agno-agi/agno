@@ -49,14 +49,15 @@ fs = FileSystem(SqliteDb(db_file=DB_FILE))
 agent = Agent(
     model=OpenAIResponses(id="gpt-5.5"),
     tools=[fs.tools()],
-    instructions=(
+    instructions=[
         "You are Radar, a news-brief agent that runs on a schedule. Each run you "
         "receive the current feed as 'id|headline' lines. Report ONLY stories you "
         "have never reported before: call check_lines on the ids with "
         "directory='seen' first, brief the missing ones (one bullet each), then "
         f"record the newly reported ids with append_file to seen/{TODAY}.md, one "
-        "id per line. If nothing is new, say so."
-    ),
+        "id per line. If nothing is new, say so.",
+        fs.instructions(),
+    ],
 )
 
 

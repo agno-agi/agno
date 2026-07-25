@@ -4,6 +4,17 @@ Tested 2026-07-24 against `gpt-5.5` (OpenAIResponses), agno 2.8.1 (source tree, 
 Re-run fresh at the final sweep (same date): every file in this folder PASS.
 Entries quote tool calls and printed state. Model prose varies run to run and is paraphrased rather than quoted.
 
+
+### Re-run 2026-07-25 — instructions composed explicitly
+
+`fs.tools()` no longer adds its instructions to the system prompt; every agent in this
+folder now passes `fs.instructions()` in its own instructions list. Re-tested against
+`gpt-5.5` (OpenAIResponses), agno 2.8.2 source tree, branch fix/filesystem-explicit-instructions.
+
+**shared_namespace.py — PASS.** Consumer tool surface printed `['read_file', 'list_files', 'search_content', 'check_lines']`. The recorder appended both decisions to `decisions/2026-07.md`; the read-only answerer, carrying `consumer_fs.instructions(read_only=True)`, called `list_files` then `read_file(path=decisions/2026-07.md, start_line=1, end_line=200)` and quoted the pgvector decision with its source line.
+
+---
+
 ### basic.py
 
 **Status:** PASS

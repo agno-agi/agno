@@ -4,7 +4,7 @@ Deduplicate work with a record log: the agent calls `check_lines` before it acts
 
 Neither of the other kinds of state can do this. User memory is LLM-curated, so it merges and rewrites what it stores, and a recurring job needs the record verbatim. Session state does not survive, and a scheduled agent gets a fresh session on every run.
 
-The toolkit's built-in instructions already teach the check-before-act protocol and the `seen/` convention. The demo prompts below spell it out as well, so the runs stay deterministic. In your own agent the instructions alone usually carry it.
+`fs.instructions()`, passed along with your own, teaches the check-before-act protocol and the `seen/` convention. The demo prompts below spell it out as well, so the runs stay deterministic. In your own agent the instructions alone usually carry it.
 
 ## Files
 

@@ -1,8 +1,9 @@
 """
 FileSystem - Basic
 ==================
-Give your agent a durable, private filesystem. You attach it with one line,
-and anything the agent writes stays available in every future run.
+Give your agent a durable, private filesystem. Attach its tools, pass its
+instructions along with your own, and anything the agent writes stays
+available in every future run.
 
 Run this file twice. Run 1 writes a note. Run 2 is a new process with no
 shared session, and it reads the note back.
@@ -26,7 +27,10 @@ fs = FileSystem(SqliteDb(db_file=DB_FILE))
 agent = Agent(
     model=OpenAIResponses(id="gpt-5.5"),
     tools=[fs.tools()],
-    instructions="You are a note-keeping assistant.",
+    instructions=[
+        "You are a note-keeping assistant.",
+        fs.instructions(),
+    ],
 )
 
 # ---------------------------------------------------------------------------

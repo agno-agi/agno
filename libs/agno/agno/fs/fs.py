@@ -5,14 +5,17 @@ a pluggable ``BaseFS`` backend, database by default. Use it for the agent's
 own working state: records of items already processed, decisions, progress
 checkpoints.
 
-Attach with one line, and the toolkit carries its own instructions:
+Attach the tools, and compose its instructions into your own:
 
     from agno.agent import Agent
     from agno.db.sqlite import SqliteDb
     from agno.fs import FileSystem
 
     fs = FileSystem(SqliteDb(db_file="agent.db"))
-    agent = Agent(tools=[fs.tools()], instructions="my instructions")
+    agent = Agent(
+        tools=[fs.tools()],
+        instructions=["my instructions", fs.instructions()],
+    )
 """
 
 import asyncio
@@ -44,44 +47,40 @@ backend with no namespace share this one store, which is the intended behavior
 but is rarely what a multi-tenant app wants (see the templated namespaces above).
 """
 
-_DEFAULT_INSTRUCTIONS = """You have your own private, durable filesystem you can use to
-persist files across sessions and runs. Use it for your working state: records of items you have processed,
-decisions, progress checkpoints, notes to your future self.
+_DEFAULT_INSTRUCTIONS = """You have your own private, durable filesystem you can use to persist files across \
+sessions and runs. Use it for your working state: records of items you have processed, decisions, progress \
+checkpoints, notes to your future self.
 
-For storing facts and memories about the user, prefer the user memory if provided and fallback to the filesystem if not.
-
-Conventions:
-- Paths are relative, like notes/decisions.md or seen/2026-07-24.md. Group
-  related files in directories.
-- To keep a record set (items already processed): store one record per line in
-  the seen/ directory, one file per date (seen/2026-07-24.md). Call
-  check_lines(lines, directory="seen") BEFORE acting, then record the new ones
-  with append_file(..., unique=True). check_lines matches exact whole lines, and
-  unique=True keeps the log free of duplicates if a run overlaps another one.
-- To correct or update part of a file, read it, then call replace_lines with the
-  line numbers you saw. Rewriting a whole file with write_file to change a few
-  lines wastes effort and risks losing the rest.
-- To find something in a large file, use search_content first: it reports the
-  line number of each match, which you can pass to read_file as start_line.
-- Store extracted facts and identifiers, not raw fetched payloads.
-- Never store secrets, passwords, or API keys.
-- Files have size limits. If a write is refused, start a new file in your
-  partition scheme (e.g. a new dated file), or delete only files you are certain
-  are obsolete, like a date partition older than you still need. Never overwrite
-  or delete a file of records to make room if you might still need those records:
-  dropping them means you will repeat work you already did. If nothing is safely
-  disposable, stop and report that storage is full rather than evicting history."""
-
-_READ_ONLY_INSTRUCTIONS = """You have read access to a durable filesystem.
-The files persist across sessions and runs.
-
-Use it to look up what you have recorded: items you have processed, decisions
-you made, notes you left. You cannot change these files - you have no tool to
-write, append, move, or delete.
+For storing facts and memories about the user, prefer the user memory if provided and fallback to the \
+filesystem if not.
 
 Conventions:
-- Paths are relative, like notes/decisions.md or seen/2026-07-24.md.
-- Use check_lines to see what is already recorded before acting."""
+  - Paths are relative, like notes/decisions.md or seen/2026-07-24.md. Group related files in directories.
+  - To keep a record set (items already processed): store one record per line in the seen/ directory, one \
+file per date (seen/2026-07-24.md). Call check_lines(lines, directory="seen") BEFORE acting, then record the \
+new ones with append_file(..., unique=True). check_lines matches exact whole lines, and unique=True keeps \
+the log free of duplicates if a run overlaps another one.
+  - To correct or update part of a file, read it, then call replace_lines with the line numbers you saw. \
+Rewriting a whole file with write_file to change a few lines wastes effort and risks losing the rest.
+  - To find something in a large file, use search_content first: it reports the line number of each match, \
+which you can pass to read_file as start_line.
+  - Store extracted facts and identifiers, not raw fetched payloads.
+  - Never store secrets, passwords, or API keys.
+  - Files have size limits. If a write is refused, start a new file in your partition scheme (e.g. a new \
+dated file), or delete only files you are certain are obsolete, like a date partition older than you still \
+need. Never overwrite or delete a file of records to make room if you might still need those records: \
+dropping them means you will repeat work you already did. If nothing is safely disposable, stop and report \
+that storage is full rather than evicting history."""
+
+_READ_ONLY_INSTRUCTIONS = """You have read access to a durable filesystem. The files persist across sessions \
+and runs.
+
+Use it to look up what you have recorded: items you have processed, decisions you made, notes you left. You \
+cannot change these files - you have no tool to write, append, move, or delete.
+
+Conventions:
+  - Paths are relative, like notes/decisions.md or seen/2026-07-24.md.
+  - Use check_lines to see what is already recorded before acting."""
 
 
 def _as_backend(source: Any) -> BaseFS:
@@ -447,15 +446,19 @@ class FileSystem:
     # ------------------------------------------------------------------
 
     def tools(self, *, read_only: bool = False, **kwargs) -> "Toolkit":
-        """Build the toolkit for this file store. ``Agent(tools=[fs.tools()])`` is the whole attach.
+        """Build the toolkit for this file store.
 
-        The toolkit carries its own instructions, so do not also pass the same
-        instance through the developer-instruction path (the block would render
-        twice). ``read_only=True`` registers only ``read_file``, ``list_files``,
-        ``search_content`` and ``check_lines``, and selects the read-only
-        instructions variant. That is the surface for a consumer agent that
-        consults another agent's namespace by shared name. ``**kwargs`` forwards to ``Toolkit``
-        (e.g. ``include_tools``, ``requires_confirmation_tools``).
+        ``Agent(tools=[fs.tools()], instructions=[..., fs.instructions()])`` is the
+        whole attach: the tools arrive with no instructions of their own, and the
+        system prompt stays the developer's to order and edit. Pass
+        ``add_instructions=True`` to have the toolkit carry them instead.
+
+        ``read_only=True`` registers only ``read_file``, ``list_files``,
+        ``search_content`` and ``check_lines``; pair it with
+        ``instructions(read_only=True)``. That is the surface for a consumer agent
+        that consults another agent's namespace by shared name. ``**kwargs``
+        forwards to ``Toolkit`` (e.g. ``include_tools``,
+        ``requires_confirmation_tools``).
         """
         from agno.fs.toolkit import FileSystemTools
 
@@ -463,7 +466,12 @@ class FileSystem:
 
     @staticmethod
     def instructions(read_only: bool = False) -> str:
-        """The instructions the toolkit ships (namespace-independent, usable with no instance)."""
+        """Usage guidance for these tools, to compose into the agent's instructions.
+
+        Namespace-independent, so it is equally callable on an instance
+        (``fs.instructions()``) and on the class, which is what a per-user tool
+        factory needs when no instance exists at module scope.
+        """
         if read_only:
             return _READ_ONLY_INSTRUCTIONS
         return _DEFAULT_INSTRUCTIONS
