@@ -45,6 +45,7 @@ librarian = Agent(
         f"The team decision log is {DECISION_LOG}. Read it before you answer.",
         "Answer only from the log, and quote the line you used including who decided it.",
         "If the log says nothing about the question, say so.",
+        fs.instructions(read_only=True),
     ],
 )
 
