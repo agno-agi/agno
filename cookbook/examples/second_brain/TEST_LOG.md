@@ -1,7 +1,7 @@
 # Test Log - second_brain
 
 Tested 2026-07-25 against `gpt-5.6` (via `model="openai:gpt-5.6"`, which resolves to OpenAIResponses),
-agno 2.8.2 (source tree at 164f9a6c1). Entries quote tool calls and printed state.
+agno 2.8.2 (source tree at 5e6185ea9). Entries quote tool calls and printed state.
 Model prose varies run to run and is paraphrased.
 
 ### test.py
@@ -28,7 +28,7 @@ The note body is model-written, so byte counts and wording vary run to run. What
 
 **Status:** PASS
 
-**Description:** Serving run. `python second_brain.py` now serves directly (the folder's `__main__.py` is gone): REST on `/`, MCP on `/mcp`. Verified over REST with three callers, and the MCP endpoint verified separately.
+**Description:** Serving run. `python second_brain.py` serves REST on `/` and MCP on `/mcp`. Verified over REST with three callers, and over MCP with a real `fastmcp.Client`.
 
 **Result:** `GET /config` reports `agents: [('second-brain', 'Second Brain')]`, the id MCP clients address. Three runs against `POST /agents/second-brain/runs`:
 
@@ -41,7 +41,9 @@ no user_id                -> • list_files -> "Error: this agent's files requir
                               "I couldn't access your note files because no user_id was provided."
 ```
 
-The second and third are the point: notes are per user, and the templated namespace `brain/{user_id}` fails closed rather than falling back to a shared store. `MCP initialize` at `/mcp` returns 200 with the AgentOS server info.
+The second and third are the point: notes are per user, and the templated namespace `brain/{user_id}` fails closed rather than falling back to a shared store.
+
+Over MCP the client sees the eight built-in AgentOS tools, and `run_agent` reaches the same brain. `run_agent(agent_id="second-brain", user_id="dana@example.com", ...)` both read the store and wrote a new decision that a later REST call read back. `user_id` is the load-bearing argument here: an MCP client that omits it gets the fail-closed error above rather than someone else's notes.
 
 `db_file` is relative, so run the CLI and the server from the example folder or they land in different stores.
 

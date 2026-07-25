@@ -42,5 +42,7 @@ if __name__ == "__main__":
     )
 
     print("\n--- Files in this user's brain ---\n")
-    for meta in notes.resolve(user_id=USER_ID).list():
-        print(f"  {meta.path}  ({meta.size_bytes} bytes)")
+    brain = notes.resolve(user_id=USER_ID)
+    for meta in brain.list():
+        print(f"  {meta.path}  ({meta.size_bytes} bytes)\n")
+        print(brain.read(meta.path))

@@ -59,7 +59,13 @@ async def remember(decision: str, user_id: Optional[str] = None) -> str:
     """Record a decision in the team log."""
     if user_id is None:
         return "Refused: this tool needs an authenticated caller."
-    line = f"- {decision} (decided by {user_id})"
+    # The log is one decision per line and the name is the end of the line, so the
+    # decision itself is collapsed to a single line: text a caller sends cannot
+    # become a second line wearing someone else's name.
+    text = " ".join(decision.split())
+    if not text:
+        return "Refused: a decision cannot be empty."
+    line = f"- {text} (decided by {user_id})"
     fs.append(DECISION_LOG, line, unique=True)
     return f"Logged: {line}"
 

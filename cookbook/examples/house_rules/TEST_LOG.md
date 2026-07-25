@@ -1,6 +1,6 @@
 # Test Log - house_rules
 
-Tested 2026-07-25 against `gpt-5.5` (OpenAIResponses), agno 2.8.2 (source tree at 164f9a6c1).
+Tested 2026-07-25 against `gpt-5.5` (OpenAIResponses), agno 2.8.2 (source tree at 5e6185ea9).
 Entries quote tool calls and printed state. Model prose varies run to run and is paraphrased.
 
 This example is a measurement, not a service: it has nothing to serve, so it stays one

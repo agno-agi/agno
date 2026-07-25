@@ -7,7 +7,10 @@ empty knowledge base, once after the rules have been inserted into it.
 
 Nothing changes between the two runs except the rows in the vector database, so the
 environment fingerprint is identical and the two pass rates are comparable. You will
-see 0.25 before and 1.00 after, plus a per-task diff of exactly what moved.
+see about 0.25 before and 1.00 after, plus a per-task diff of exactly what moved.
+
+Running this file measures both runs and exits: 32 live model calls, about 20
+seconds. There is no server here, so this folder is one file.
 """
 
 import asyncio
@@ -99,8 +102,8 @@ async def main() -> None:
     after = await arun_rollouts(env, k=4)
 
     print()
-    print("pass rate without the rules:", before.pass_rate)
-    print("pass rate with the rules:   ", after.pass_rate)
+    print(f"pass rate without the rules: {before.pass_rate:.2f}")
+    print(f"pass rate with the rules:    {after.pass_rate:.2f}")
     print()
     # diff() refuses to compare two runs whose env fingerprints differ, so a printed
     # diff is itself proof that the tasks, the scorer, and the prompt were held fixed.

@@ -9,14 +9,16 @@ Running this file serves the AgentOS on http://localhost:7777
 MCP Server on http://localhost:7777/mcp
 """
 
+import sqlite3
 from pathlib import Path
 
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIResponses
 from agno.os import AgentOS, MCPServerConfig
+from agno.run import RunStatus
 from agno.tools.sql import SQLTools
-from sqlalchemy import create_engine, text
+from sqlalchemy import create_engine, event, text
 
 # ---------------------------------------------------------------------------
 # The warehouse
@@ -45,6 +47,28 @@ if not WAREHOUSE.exists():
 # mode=ro is enforced by the SQLite driver, below the agent and below the SQL it
 # writes. A write on this engine raises "attempt to write a readonly database".
 warehouse = create_engine(f"sqlite:///file:{WAREHOUSE}?mode=ro&uri=true")
+
+# mode=ro covers the database this engine opened. The authorizer covers the other
+# doors into the file: ATTACH can re-open the same file read-write, and temp
+# tables are writes the read-only flag allows.
+SEALED = {
+    sqlite3.SQLITE_ATTACH,
+    sqlite3.SQLITE_DETACH,
+    sqlite3.SQLITE_CREATE_TEMP_TABLE,
+    sqlite3.SQLITE_CREATE_TEMP_VIEW,
+    sqlite3.SQLITE_CREATE_TEMP_TRIGGER,
+    sqlite3.SQLITE_CREATE_TEMP_INDEX,
+}
+
+
+@event.listens_for(warehouse, "connect")
+def seal_connection(connection, _record):
+    connection.set_authorizer(
+        lambda action, *_: (
+            sqlite3.SQLITE_DENY if action in SEALED else sqlite3.SQLITE_OK
+        )
+    )
+
 
 # ---------------------------------------------------------------------------
 # Create the Analyst
@@ -75,6 +99,10 @@ analyst = Agent(
 async def ask_metrics(question: str) -> str:
     """Ask a question about the company's live orders database."""
     run = await analyst.arun(question)
+    # A failed run carries the provider's error text, which is this process's
+    # business and not the caller's.
+    if run.status != RunStatus.completed:
+        return "The metrics desk could not answer that question."
     return run.content or ""
 
 

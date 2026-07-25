@@ -1,30 +1,29 @@
 # Agno Examples
 
-The numbered cookbooks teach primitives. This folder builds products: small, complete agents,
-each one doing something a chat app cannot do for you.
+The numbered cookbooks teach primitives. This folder showcases small, complete agents.
 
 ## The examples
 
-### [second_brain](./second_brain) — memory you own, behind your own MCP server
+### [second_brain](./second_brain) - memory you own, behind your own MCP server
 
 Durable notes in the agent's own filesystem, keyed per user, plus what it learns about how you
 work. Because it is an MCP server, Claude, ChatGPT and your own scripts all read and write the
 same brain. A chat app remembers you inside its walls; this store is yours and outlives any
 one vendor.
 
-### [metrics_desk](./metrics_desk) — your production database, answerable from any MCP client
+### [metrics_desk](./metrics_desk) - your production database, answerable from any MCP client
 
 The client sends a question, this process runs the SQL over a read-only connection, and only
 the answer crosses the wire. Your credentials and your rows never leave. Ask it to drop the
 table and the SQLite driver refuses, so the guarantee does not depend on the model behaving.
 
-### [team_brain](./team_brain) — one decision log the whole team writes into
+### [team_brain](./team_brain) - one decision log the whole team writes into
 
 Everyone points their AI apps at the same endpoint. The author of a decision is taken from the
 token the client authenticated with, so a caller cannot log a decision as someone else, and
 one teammate reads another's decisions back with the right name on them.
 
-### [house_rules](./house_rules) — what your rules are actually worth, measured
+### [house_rules](./house_rules) - what your rules are actually worth, measured
 
 The same agent routes the same four tickets twice: once against an empty knowledge base, once
 after your three routing rules have been inserted. Nothing else changes, so the two pass rates
@@ -57,9 +56,17 @@ python test.py
 python second_brain.py
 ```
 
-Every folder is the same two files. `<example>.py` builds the agent and serves it, `test.py`
-drives that same agent from the command line. Each folder writes its store to `tmp/` next to
-the script, which is why both commands are run from inside the folder. `house_rules` is a
-measurement rather than a service, so it is one script with nothing to serve.
+`house_rules` is a measurement rather than a service, so it is one script with nothing to
+serve and no `test.py`:
 
-Each folder's `TEST_LOG.md` records what a real run of both entry points produced.
+```bash
+cd cookbook/examples/house_rules
+python house_rules.py
+```
+
+The other three folders are `<example>.py`, which builds the agent and serves it, and
+`test.py`, which drives that same agent from the command line. They keep their SQLite stores
+in `tmp/` next to the script, which is why the commands are run from inside the folder.
+
+All three serve on port 7777, so run one at a time, or set `AGENT_OS_PORT=7801` to bring up a
+second one alongside. Each folder's `TEST_LOG.md` records what a real run produced.
