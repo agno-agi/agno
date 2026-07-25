@@ -78,6 +78,32 @@ def _normalize_fact_text(text: str) -> str:
     return re.sub(r"\s+", " ", text.strip().casefold())
 
 
+def _normalize_name(name: str) -> str:
+    """Fold case and collapse whitespace for name and alias matching."""
+    return re.sub(r"\s+", " ", name.strip().casefold())
+
+
+# The DB key is entity_{namespace}_{entity_type}_{entity_id}, so type drift
+# splits entities exactly like name drift: "person" on Monday and "people" on
+# Friday is two Sarahs. Fold case and singularize against this canonical list;
+# anything else passes through lowercased.
+_CANONICAL_ENTITY_TYPES = frozenset({"person", "project", "company", "system", "product"})
+_IRREGULAR_ENTITY_TYPES = {"people": "person", "persons": "person", "companies": "company"}
+
+
+def _normalize_entity_type(entity_type: Optional[str]) -> Optional[str]:
+    if entity_type is None or not entity_type.strip():
+        return entity_type
+    normalized = re.sub(r"\s+", "_", entity_type.strip().lower())
+    if normalized in _CANONICAL_ENTITY_TYPES:
+        return normalized
+    if normalized in _IRREGULAR_ENTITY_TYPES:
+        return _IRREGULAR_ENTITY_TYPES[normalized]
+    if normalized.endswith("s") and normalized[:-1] in _CANONICAL_ENTITY_TYPES:
+        return normalized[:-1]
+    return normalized
+
+
 # =============================================================================
 # Tool docstrings (shared between the sync and async tool variants)
 # =============================================================================
@@ -596,7 +622,7 @@ class EntityMemoryStore(LearningStore):
             namespace=effective_namespace,
         )
 
-        entity_obj, created, revived = self._apply_remember(
+        entity_obj, created, revived, stale_row_key = self._apply_remember(
             existing=existing,
             entity=entity,
             entity_type=entity_type,
@@ -619,6 +645,13 @@ class EntityMemoryStore(LearningStore):
         )
         if not saved:
             return f"Failed to record on {entity_obj.entity_type}/{entity_obj.entity_id}."
+
+        if stale_row_key:
+            # The new row is saved; drop the old-typed row so the entity is not doubled.
+            try:
+                self.db.delete_learning(id=stale_row_key)
+            except Exception as e:
+                log_warning(f"EntityMemoryStore.remember_about: failed to delete stale row {stale_row_key}: {e}")
 
         self.entity_updated = True
         return self._remember_message(
@@ -656,7 +689,7 @@ class EntityMemoryStore(LearningStore):
             namespace=effective_namespace,
         )
 
-        entity_obj, created, revived = self._apply_remember(
+        entity_obj, created, revived, stale_row_key = self._apply_remember(
             existing=existing,
             entity=entity,
             entity_type=entity_type,
@@ -680,6 +713,16 @@ class EntityMemoryStore(LearningStore):
         if not saved:
             return f"Failed to record on {entity_obj.entity_type}/{entity_obj.entity_id}."
 
+        if stale_row_key:
+            # The new row is saved; drop the old-typed row so the entity is not doubled.
+            try:
+                if isinstance(self.db, AsyncBaseDb):
+                    await self.db.delete_learning(id=stale_row_key)
+                else:
+                    self.db.delete_learning(id=stale_row_key)
+            except Exception as e:
+                log_warning(f"EntityMemoryStore.aremember_about: failed to delete stale row {stale_row_key}: {e}")
+
         self.entity_updated = True
         return self._remember_message(
             entity_obj, created=created, revived=revived, facts=facts or [], events=events or [], note=note
@@ -698,17 +741,25 @@ class EntityMemoryStore(LearningStore):
         agent_id: Optional[str],
         team_id: Optional[str],
         namespace: str,
-    ) -> Tuple[EntityMemory, bool, bool]:
-        """Create or merge the entity in memory. Returns (entity, created, revived)."""
+    ) -> Tuple[EntityMemory, bool, bool, Optional[str]]:
+        """Create or merge the entity in memory.
+
+        Returns (entity, created, revived, stale_row_key). stale_row_key is set
+        when the merge changed the entity's type (a minimal 'unknown' entity
+        acquiring its real type), so the caller must delete the old row after
+        saving the new one.
+        """
         now = _utc_now_iso()
         created = False
         revived = False
+        stale_row_key: Optional[str] = None
+        normalized_type = _normalize_entity_type(entity_type) or "unknown"
 
         if existing is None:
             created = True
             entity_obj = self.schema(
                 entity_id=_slugify(entity),
-                entity_type=entity_type,
+                entity_type=normalized_type,
                 name=entity.strip(),
                 description=description,
                 properties={},
@@ -726,6 +777,19 @@ class EntityMemoryStore(LearningStore):
             entity_obj = existing
             if description is not None:
                 entity_obj.description = description
+
+            # A minimal entity created by link_entities acquires its real type;
+            # the row key embeds the type, so the old row must be replaced.
+            if entity_obj.entity_type == "unknown" and normalized_type != "unknown":
+                stale_row_key = self._build_entity_db_id(entity_obj.entity_id, entity_obj.entity_type, namespace)
+                entity_obj.entity_type = normalized_type
+
+            # Remember the name variant this write arrived under.
+            incoming_name = entity.strip()
+            known_names = [entity_obj.name or ""] + list(getattr(entity_obj, "aliases", None) or [])
+            if incoming_name and all(_normalize_name(incoming_name) != _normalize_name(n) for n in known_names if n):
+                entity_obj.aliases = [*(getattr(entity_obj, "aliases", None) or []), incoming_name]
+
             if getattr(entity_obj, "archived_at", None):
                 entity_obj.archived_at = None
                 revived = True
@@ -744,7 +808,7 @@ class EntityMemoryStore(LearningStore):
             entity_obj.properties = {**(entity_obj.properties or {}), "note": note.strip()}
 
         entity_obj.updated_at = now
-        return entity_obj, created, revived
+        return entity_obj, created, revived, stale_row_key
 
     def _remember_message(
         self,
@@ -1213,14 +1277,15 @@ class EntityMemoryStore(LearningStore):
     ) -> Optional[EntityMemory]:
         """Resolve an entity by name within the namespace.
 
-        Matches the slugified name against stored entity ids. When entity_type is
-        given, that exact key is tried first; otherwise (and as a fallback) the id
-        is matched across types.
+        Deterministic, no LLM: normalized id (exact type first, then across
+        types), then exact name, then aliases. Matching is deliberately narrow -
+        a wrong merge has no unmerge.
         """
         slug = _slugify(entity)
+        normalized_type = _normalize_entity_type(entity_type)
 
-        if entity_type:
-            found = self.get(entity_id=slug, entity_type=entity_type, user_id=user_id, namespace=namespace)
+        if normalized_type:
+            found = self.get(entity_id=slug, entity_type=normalized_type, user_id=user_id, namespace=namespace)
             if found is not None:
                 return found
 
@@ -1229,7 +1294,9 @@ class EntityMemoryStore(LearningStore):
             parsed = self.schema.from_dict(row.get("content"))
             if parsed is not None:
                 return parsed
-        return None
+
+        candidates = self._name_candidates(entity=entity, user_id=user_id, namespace=namespace)
+        return self._match_name_or_alias(candidates=candidates, entity=entity)
 
     async def _aresolve(
         self,
@@ -1240,9 +1307,10 @@ class EntityMemoryStore(LearningStore):
     ) -> Optional[EntityMemory]:
         """Async version of _resolve."""
         slug = _slugify(entity)
+        normalized_type = _normalize_entity_type(entity_type)
 
-        if entity_type:
-            found = await self.aget(entity_id=slug, entity_type=entity_type, user_id=user_id, namespace=namespace)
+        if normalized_type:
+            found = await self.aget(entity_id=slug, entity_type=normalized_type, user_id=user_id, namespace=namespace)
             if found is not None:
                 return found
 
@@ -1250,6 +1318,108 @@ class EntityMemoryStore(LearningStore):
         for row in rows:
             parsed = self.schema.from_dict(row.get("content"))
             if parsed is not None:
+                return parsed
+
+        candidates = await self._aname_candidates(entity=entity, user_id=user_id, namespace=namespace)
+        return self._match_name_or_alias(candidates=candidates, entity=entity)
+
+    def _name_candidates(self, entity: str, user_id: Optional[str], namespace: str) -> List[Dict[str, Any]]:
+        """Fetch candidate rows for name/alias matching via the text query surface."""
+        if not self.db:
+            return []
+        try:
+            rows = self.db.search_learnings(
+                query=entity,
+                learning_type=self.learning_type,
+                namespace=namespace,
+                user_id=user_id if namespace == "user" else None,
+                limit=20,
+            )
+            return rows or []
+        except (NotImplementedError, AttributeError):
+            return self._get_recent_rows(user_id=user_id, namespace=namespace, limit=50)
+        except Exception as e:
+            log_debug(f"EntityMemoryStore._name_candidates failed: {e}")
+            return []
+
+    async def _aname_candidates(self, entity: str, user_id: Optional[str], namespace: str) -> List[Dict[str, Any]]:
+        """Async version of _name_candidates."""
+        if not self.db:
+            return []
+        try:
+            if isinstance(self.db, AsyncBaseDb):
+                rows = await self.db.search_learnings(
+                    query=entity,
+                    learning_type=self.learning_type,
+                    namespace=namespace,
+                    user_id=user_id if namespace == "user" else None,
+                    limit=20,
+                )
+            else:
+                rows = self.db.search_learnings(
+                    query=entity,
+                    learning_type=self.learning_type,
+                    namespace=namespace,
+                    user_id=user_id if namespace == "user" else None,
+                    limit=20,
+                )
+            return rows or []
+        except (NotImplementedError, AttributeError):
+            return await self._aget_recent_rows(user_id=user_id, namespace=namespace, limit=50)
+        except Exception as e:
+            log_debug(f"EntityMemoryStore._aname_candidates failed: {e}")
+            return []
+
+    def _get_recent_rows(self, user_id: Optional[str], namespace: str, limit: int) -> List[Dict[str, Any]]:
+        try:
+            rows = self.db.get_learnings(  # type: ignore[union-attr]
+                learning_type=self.learning_type,
+                namespace=namespace,
+                user_id=user_id if namespace == "user" else None,
+                limit=limit,
+            )
+            return rows or []
+        except Exception as e:
+            log_debug(f"EntityMemoryStore._get_recent_rows failed: {e}")
+            return []
+
+    async def _aget_recent_rows(self, user_id: Optional[str], namespace: str, limit: int) -> List[Dict[str, Any]]:
+        try:
+            if isinstance(self.db, AsyncBaseDb):
+                rows = await self.db.get_learnings(
+                    learning_type=self.learning_type,
+                    namespace=namespace,
+                    user_id=user_id if namespace == "user" else None,
+                    limit=limit,
+                )
+            else:
+                rows = self.db.get_learnings(  # type: ignore[union-attr]
+                    learning_type=self.learning_type,
+                    namespace=namespace,
+                    user_id=user_id if namespace == "user" else None,
+                    limit=limit,
+                )
+            return rows or []
+        except Exception as e:
+            log_debug(f"EntityMemoryStore._aget_recent_rows failed: {e}")
+            return []
+
+    def _match_name_or_alias(self, candidates: List[Dict[str, Any]], entity: str) -> Optional[EntityMemory]:
+        """Exact (normalized) name match first, then exact alias match."""
+        target = _normalize_name(entity)
+        parsed_candidates: List[EntityMemory] = []
+        for row in self._order_rows(candidates):
+            parsed = self.schema.from_dict(row.get("content"))
+            if parsed is not None:
+                parsed_candidates.append(parsed)
+
+        for parsed in parsed_candidates:
+            name = getattr(parsed, "name", None)
+            if name and _normalize_name(name) == target:
+                return parsed
+        for parsed in parsed_candidates:
+            aliases = getattr(parsed, "aliases", None) or []
+            if any(_normalize_name(str(alias)) == target for alias in aliases):
                 return parsed
         return None
 
@@ -1464,6 +1634,7 @@ class EntityMemoryStore(LearningStore):
             return []
 
         effective_namespace = namespace or self.config.namespace
+        entity_type = _normalize_entity_type(entity_type)
         if effective_namespace == "user" and not user_id:
             log_warning("EntityMemoryStore.list_entities: namespace='user' requires user_id")
             return []
@@ -1494,6 +1665,7 @@ class EntityMemoryStore(LearningStore):
             return []
 
         effective_namespace = namespace or self.config.namespace
+        entity_type = _normalize_entity_type(entity_type)
         if effective_namespace == "user" and not user_id:
             log_warning("EntityMemoryStore.alist_entities: namespace='user' requires user_id")
             return []
@@ -1564,6 +1736,7 @@ class EntityMemoryStore(LearningStore):
             return []
 
         effective_namespace = namespace or self.config.namespace
+        entity_type = _normalize_entity_type(entity_type)
         if effective_namespace == "user" and not user_id:
             log_warning("EntityMemoryStore.search: namespace='user' requires user_id")
             return []
@@ -1607,6 +1780,7 @@ class EntityMemoryStore(LearningStore):
             return []
 
         effective_namespace = namespace or self.config.namespace
+        entity_type = _normalize_entity_type(entity_type)
         if effective_namespace == "user" and not user_id:
             log_warning("EntityMemoryStore.asearch: namespace='user' requires user_id")
             return []

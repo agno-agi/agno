@@ -224,6 +224,102 @@ class TestRememberAbout:
         assert db.rows == {}
 
 
+class TestResolution:
+    def test_name_variants_merge_into_one_entity(self, store: EntityMemoryStore, db: RecordingLearningDb) -> None:
+        store.remember_about(entity="Sarah Chen", entity_type="person", facts=["designs radar"])
+        store.remember_about(entity="sarah chen", entity_type="person", facts=["prefers async"])
+        assert len(db.rows) == 1
+        entity = store.get(entity_id="sarah_chen", entity_type="person")
+        assert entity is not None
+        assert [f["content"] for f in entity.facts] == ["designs radar", "prefers async"]
+
+    def test_type_drift_merges(self, store: EntityMemoryStore, db: RecordingLearningDb) -> None:
+        store.remember_about(entity="Sarah Chen", entity_type="person", facts=["designs radar"])
+        store.remember_about(entity="Sarah Chen", entity_type="people", facts=["prefers async"])
+        store.remember_about(entity="Sarah Chen", entity_type="Person")
+        assert len(db.rows) == 1
+        entity = store.get(entity_id="sarah_chen", entity_type="person")
+        assert entity is not None
+        assert len(entity.facts) == 2
+
+    def test_type_is_normalized_on_create(self, store: EntityMemoryStore) -> None:
+        store.remember_about(entity="Acme", entity_type="Companies")
+        assert store.get(entity_id="acme", entity_type="company") is not None
+
+    def test_resolves_by_exact_name_when_id_differs(self, store: EntityMemoryStore, db: RecordingLearningDb) -> None:
+        # A row whose entity_id does not derive from its name (external writer).
+        db.upsert_learning(
+            id="entity_global_person_sc_001",
+            learning_type="entity_memory",
+            entity_id="sc_001",
+            entity_type="person",
+            namespace="global",
+            content={"entity_id": "sc_001", "entity_type": "person", "name": "Sarah Chen", "facts": []},
+        )
+        store.remember_about(entity="Sarah Chen", entity_type="person", facts=["works at Acme"])
+        assert len(db.rows) == 1  # merged, not duplicated
+        entity = store.get(entity_id="sc_001", entity_type="person")
+        assert entity is not None
+        assert [f["content"] for f in entity.facts] == ["works at Acme"]
+
+    def test_resolves_by_alias(self, store: EntityMemoryStore, db: RecordingLearningDb) -> None:
+        db.upsert_learning(
+            id="entity_global_project_radar",
+            learning_type="entity_memory",
+            entity_id="radar",
+            entity_type="project",
+            namespace="global",
+            content={
+                "entity_id": "radar",
+                "entity_type": "project",
+                "name": "radar",
+                "aliases": ["The Radar Initiative"],
+                "facts": [],
+            },
+        )
+        store.remember_about(entity="the radar initiative", entity_type="project", facts=["shipped v1"])
+        assert len(db.rows) == 1
+        entity = store.get(entity_id="radar", entity_type="project")
+        assert entity is not None
+        assert [f["content"] for f in entity.facts] == ["shipped v1"]
+
+    def test_incoming_name_variant_recorded_as_alias(self, store: EntityMemoryStore, db: RecordingLearningDb) -> None:
+        db.upsert_learning(
+            id="entity_global_person_sc_001",
+            learning_type="entity_memory",
+            entity_id="sc_001",
+            entity_type="person",
+            namespace="global",
+            content={"entity_id": "sc_001", "entity_type": "person", "name": "Sarah Chen", "facts": []},
+        )
+        # Resolves via name match; a genuinely different surface form would be an alias,
+        # but the same normalized name must NOT be duplicated in.
+        store.remember_about(entity="SARAH  CHEN", entity_type="person")
+        entity = store.get(entity_id="sc_001", entity_type="person")
+        assert entity is not None
+        assert entity.aliases == []
+
+    def test_unknown_type_upgraded_by_later_remember(self, store: EntityMemoryStore, db: RecordingLearningDb) -> None:
+        store.remember_about(entity="radar", entity_type="project")
+        store.link_entities(entity="radar", relation="uses", related_entity="Postgres")
+        assert store.get(entity_id="postgres", entity_type="unknown") is not None
+
+        store.remember_about(entity="Postgres", entity_type="system", facts=["v16 in prod"])
+
+        upgraded = store.get(entity_id="postgres", entity_type="system")
+        assert upgraded is not None
+        assert [f["content"] for f in upgraded.facts] == ["v16 in prod"]
+        assert upgraded.relationships  # the edge written while unknown survives
+        # The old-typed row is gone
+        assert store.get(entity_id="postgres", entity_type="unknown") is None
+
+    def test_no_fuzzy_merge(self, store: EntityMemoryStore, db: RecordingLearningDb) -> None:
+        # "Sarah" must NOT merge into "Sarah Chen" - a wrong merge has no unmerge.
+        store.remember_about(entity="Sarah Chen", entity_type="person")
+        store.remember_about(entity="Sarah", entity_type="person")
+        assert len(db.rows) == 2
+
+
 class TestLinkEntities:
     def test_edge_written_on_both_rows_with_far_end_type(self, store: EntityMemoryStore) -> None:
         store.remember_about(entity="Sarah Chen", entity_type="person")
@@ -370,11 +466,12 @@ class TestSearchRouting:
         spy = SpyDb()
         store = EntityMemoryStore(config=EntityMemoryConfig(db=spy))  # type: ignore[arg-type]
         store.remember_about(entity="radar", entity_type="project", facts=["db: Postgres"])
+        calls.clear()
         results = store.search(query="postgres")
         assert len(results) == 1
-        assert calls and calls[0]["query"] == "postgres"
-        assert calls[0]["learning_type"] == "entity_memory"
-        assert calls[0]["namespace"] == "global"
+        assert calls and calls[-1]["query"] == "postgres"
+        assert calls[-1]["learning_type"] == "entity_memory"
+        assert calls[-1]["namespace"] == "global"
 
     def test_search_crosses_slug_boundary_via_store(self, store: EntityMemoryStore) -> None:
         store.remember_about(entity="Sarah Chen", entity_type="person", facts=["designs radar"])

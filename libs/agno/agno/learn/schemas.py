@@ -592,6 +592,7 @@ class EntityMemory:
     properties: Dict[str, str] = field(
         default_factory=dict, metadata={"description": "Key-value properties (industry, tech_stack, etc)"}
     )
+    aliases: List[str] = field(default_factory=list, metadata={"description": "Other names this entity resolves from"})
 
     # Semantic memory (facts)
     facts: List[Dict[str, Any]] = field(default_factory=list)
