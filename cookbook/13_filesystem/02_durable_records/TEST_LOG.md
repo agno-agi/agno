@@ -4,6 +4,16 @@ Tested 2026-07-24 against `gpt-5.5` (OpenAIResponses), agno 2.8.1 (source tree, 
 Re-run fresh at the final sweep (same date): every file in this folder PASS.
 Entries quote tool calls and printed state. Model prose varies run to run and is paraphrased rather than quoted.
 
+### Re-run 2026-07-25 - instructions composed explicitly
+
+`fs.tools()` no longer adds its instructions to the system prompt; both agents in this
+folder now pass `fs.instructions()` in their own instructions list. Re-tested against
+`gpt-5.5` (OpenAIResponses), agno 2.8.2 source tree, branch fix/filesystem-explicit-instructions.
+
+**basic.py - PASS.** Pass 1 called `check_lines(lines=['TICKET-101', 'TICKET-102'], directory=seen)` on the empty store and appended both to `seen/2026-07-24.md`. Pass 2 called `check_lines` on all three ids and appended only `TICKET-103` with `unique=True`. Final log printed exactly `TICKET-101 / TICKET-102 / TICKET-103`, so the check-before-act protocol still lands from the composed block.
+
+---
+
 ### basic.py
 
 **Status:** PASS

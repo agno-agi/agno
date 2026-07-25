@@ -47,40 +47,36 @@ backend with no namespace share this one store, which is the intended behavior
 but is rarely what a multi-tenant app wants (see the templated namespaces above).
 """
 
-_DEFAULT_INSTRUCTIONS = """You have your own private, durable filesystem you can use to
-persist files across sessions and runs. Use it for your working state: records of items you have processed,
-decisions, progress checkpoints, notes to your future self.
+_DEFAULT_INSTRUCTIONS = """You have your own private, durable filesystem you can use to persist files across \
+sessions and runs. Use it for your working state: records of items you have processed, decisions, progress \
+checkpoints, notes to your future self.
 
-For storing facts and memories about the user, prefer the user memory if provided and fallback to the filesystem if not.
+For storing facts and memories about the user, prefer the user memory if provided and fallback to the \
+filesystem if not.
 
 Conventions:
-  - Paths are relative, like notes/decisions.md or seen/2026-07-24.md. Group
-    related files in directories.
-  - To keep a record set (items already processed): store one record per line in
-    the seen/ directory, one file per date (seen/2026-07-24.md). Call
-    check_lines(lines, directory="seen") BEFORE acting, then record the new ones
-    with append_file(..., unique=True). check_lines matches exact whole lines, and
-    unique=True keeps the log free of duplicates if a run overlaps another one.
-  - To correct or update part of a file, read it, then call replace_lines with the
-    line numbers you saw. Rewriting a whole file with write_file to change a few
-    lines wastes effort and risks losing the rest.
-  - To find something in a large file, use search_content first: it reports the
-    line number of each match, which you can pass to read_file as start_line.
+  - Paths are relative, like notes/decisions.md or seen/2026-07-24.md. Group related files in directories.
+  - To keep a record set (items already processed): store one record per line in the seen/ directory, one \
+file per date (seen/2026-07-24.md). Call check_lines(lines, directory="seen") BEFORE acting, then record the \
+new ones with append_file(..., unique=True). check_lines matches exact whole lines, and unique=True keeps \
+the log free of duplicates if a run overlaps another one.
+  - To correct or update part of a file, read it, then call replace_lines with the line numbers you saw. \
+Rewriting a whole file with write_file to change a few lines wastes effort and risks losing the rest.
+  - To find something in a large file, use search_content first: it reports the line number of each match, \
+which you can pass to read_file as start_line.
   - Store extracted facts and identifiers, not raw fetched payloads.
   - Never store secrets, passwords, or API keys.
-  - Files have size limits. If a write is refused, start a new file in your
-    partition scheme (e.g. a new dated file), or delete only files you are certain
-    are obsolete, like a date partition older than you still need. Never overwrite
-    or delete a file of records to make room if you might still need those records:
-    dropping them means you will repeat work you already did. If nothing is safely
-    disposable, stop and report that storage is full rather than evicting history."""
+  - Files have size limits. If a write is refused, start a new file in your partition scheme (e.g. a new \
+dated file), or delete only files you are certain are obsolete, like a date partition older than you still \
+need. Never overwrite or delete a file of records to make room if you might still need those records: \
+dropping them means you will repeat work you already did. If nothing is safely disposable, stop and report \
+that storage is full rather than evicting history."""
 
-_READ_ONLY_INSTRUCTIONS = """You have read access to a durable filesystem.
-The files persist across sessions and runs.
+_READ_ONLY_INSTRUCTIONS = """You have read access to a durable filesystem. The files persist across sessions \
+and runs.
 
-Use it to look up what you have recorded: items you have processed, decisions
-you made, notes you left. You cannot change these files - you have no tool to
-write, append, move, or delete.
+Use it to look up what you have recorded: items you have processed, decisions you made, notes you left. You \
+cannot change these files - you have no tool to write, append, move, or delete.
 
 Conventions:
   - Paths are relative, like notes/decisions.md or seen/2026-07-24.md.

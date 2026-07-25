@@ -154,18 +154,11 @@ class TestSurface:
 
 
 class TestInstructions:
-    def test_toolkit_holds_instructions_but_does_not_add_them(self, toolkit):
-        assert toolkit.add_instructions is False
-        assert toolkit.instructions == FileSystem.instructions()
-        assert 'check_lines(lines, directory="seen")' in toolkit.instructions
-
-    def test_add_instructions_is_opt_in(self, fs):
-        assert fs.tools(add_instructions=True).add_instructions is True
-
     def test_static_call_without_instance(self):
         text = FileSystem.instructions()
         assert text.startswith("You have your own private, durable filesystem")
         assert "Never store secrets, passwords, or API keys." in text
+        assert 'check_lines(lines, directory="seen")' in text
 
     def test_read_only_variant_names_no_write_tool(self, fs):
         text = FileSystem.instructions(read_only=True)
@@ -175,24 +168,22 @@ class TestInstructions:
         # and say the files cannot be changed.
         assert "read access" in text
         assert "cannot change these files" in text
-        tk = fs.tools(read_only=True)
-        assert tk.instructions == text
-        assert tk.add_instructions is False
+        assert fs.tools(read_only=True).instructions == text
 
     def test_namespace_never_in_instructions(self, fs):
         assert "radar" not in FileSystem.instructions()
         assert "namespace" not in FileSystem.instructions().lower()
         assert "namespace" not in FileSystem.instructions(read_only=True).lower()
 
-    def test_conventions_nest_under_one_bullet(self):
+    def test_every_bullet_is_one_line_and_nests(self):
         # Composed into an agent's instructions list, the whole block renders as a
-        # single "- {entry}" bullet, so every line under Conventions: is indented to
-        # stay beneath it.
+        # single "- {entry}" bullet. Each convention is therefore one unwrapped line,
+        # indented to stay beneath that bullet.
         for text in (FileSystem.instructions(), FileSystem.instructions(read_only=True)):
             body = text.split("Conventions:\n", 1)[1]
             for line in body.split("\n"):
                 if line:
-                    assert line.startswith("  "), line
+                    assert line.startswith("  - "), line
 
     def test_attached_toolkit_adds_nothing_to_the_system_prompt(self, fs):
         agent = Agent(tools=[fs.tools()])
