@@ -240,6 +240,7 @@ class AgentOS:
         workflows: Optional[List[Union[Workflow, WorkflowFactory]]] = None,
         knowledge: Optional[List[Knowledge]] = None,
         interfaces: Optional[List[BaseInterface]] = None,
+        remote_access: bool = False,
         a2a_interface: bool = False,
         authorization: bool = False,
         authorization_config: Optional[AuthorizationConfig] = None,
@@ -281,6 +282,11 @@ class AgentOS:
             workflows: List of workflows to include in the OS
             knowledge: List of knowledge bases to include in the OS
             interfaces: List of interfaces to include in the OS
+            remote_access: Whether to expose ALL local agents and teams for remote
+                execution via the RemoteAccess interface at /remote. Convenience for
+                mounting ``RemoteAccess(agents=<all local agents>, teams=<all local teams>)``;
+                pass an explicit ``RemoteAccess(...)`` in ``interfaces`` instead to expose
+                only a subset. Remote proxies and factories are never re-exposed.
             a2a_interface: Whether to expose the OS agents and teams in an A2A server
             config: Configuration file path or AgentOSConfig instance
             settings: API settings for the OS
@@ -329,6 +335,7 @@ class AgentOS:
         self.agents: Optional[List[Union[Agent, RemoteAgent, AgentProtocol, AgentFactory]]] = agents
         self.teams: Optional[List[Union[Team, RemoteTeam, TeamFactory]]] = teams
         self.workflows: Optional[List[Union[Workflow, WorkflowFactory]]] = workflows
+        self.remote_access = remote_access
         self.a2a_interface = a2a_interface
         self.knowledge = knowledge
         self.settings: AgnoAPISettings = settings or AgnoAPISettings()
@@ -642,13 +649,28 @@ class AgentOS:
         self._add_router(app, get_workflow_router(self, settings=self.settings))
         self._add_router(app, get_websocket_router(self, settings=self.settings))
 
-        # Add A2A interface if relevant
+        # Add RemoteAccess and A2A interfaces if relevant
+        has_remote_access_interface = False
         has_a2a_interface = False
         for interface in self.interfaces:
+            if not has_remote_access_interface and interface.__class__.__name__ == "RemoteAccess":
+                has_remote_access_interface = True
             if not has_a2a_interface and interface.__class__.__name__ == "A2A":
                 has_a2a_interface = True
             interface_router = interface.get_router()
             self._add_router(app, interface_router)
+        if self.remote_access and not has_remote_access_interface:
+            if self._agents or self._teams:
+                from agno.os.interfaces.remote_access import RemoteAccess
+
+                remote_access_interface = RemoteAccess(
+                    agents=self._agents or None,  # type: ignore[arg-type]
+                    teams=self._teams or None,  # type: ignore[arg-type]
+                )
+                self.interfaces.append(remote_access_interface)
+                self._add_router(app, remote_access_interface.get_router())
+            else:
+                log_warning("remote_access=True but there are no local agents or teams to expose")
         if self.a2a_interface and not has_a2a_interface:
             from agno.os.interfaces.a2a import A2A
 

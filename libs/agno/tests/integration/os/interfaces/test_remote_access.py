@@ -119,6 +119,53 @@ def test_non_opted_agent_is_not_reachable(test_client: TestClient):
     assert response.status_code == 200
 
 
+def test_remote_access_flag_mounts_interface(exposed_agent: Agent, exposed_team: Team):
+    """AgentOS(remote_access=True) exposes all local agents and teams at /remote."""
+    agent_os = AgentOS(
+        id="remote-access-flag-os",
+        agents=[exposed_agent],
+        teams=[exposed_team],
+        remote_access=True,
+        telemetry=False,
+    )
+    app = agent_os.get_app()
+
+    assert any(isinstance(interface, RemoteAccess) for interface in agent_os.interfaces)
+    client = TestClient(app)
+    assert [a["id"] for a in client.get("/remote/agents").json()] == ["exposed-agent"]
+    assert [t["id"] for t in client.get("/remote/teams").json()] == ["exposed-team"]
+
+
+def test_remote_access_flag_explicit_interface_takes_precedence(exposed_agent: Agent, internal_agent: Agent):
+    """An explicit RemoteAccess(...) in interfaces wins over the flag."""
+    internal_agent.deep_copy = lambda **kwargs: internal_agent
+    agent_os = AgentOS(
+        id="remote-access-precedence-os",
+        agents=[exposed_agent, internal_agent],
+        remote_access=True,
+        interfaces=[RemoteAccess(agents=[exposed_agent])],
+        telemetry=False,
+    )
+    client = TestClient(agent_os.get_app())
+
+    assert [a["id"] for a in client.get("/remote/agents").json()] == ["exposed-agent"]
+    assert client.get("/remote/agents/internal-agent").status_code == 404
+
+
+def test_remote_access_flag_excludes_remote_proxies():
+    """The flag only exposes local entities: an OS of proxies mounts nothing at /remote."""
+    agent_os = AgentOS(
+        id="remote-access-proxy-os",
+        agents=[RemoteAgent(base_url="http://localhost:59999", agent_id="proxied-agent")],
+        remote_access=True,
+        telemetry=False,
+    )
+    client = TestClient(agent_os.get_app())
+
+    assert not any(isinstance(interface, RemoteAccess) for interface in agent_os.interfaces)
+    assert client.get("/remote/agents").status_code == 404
+
+
 def test_agents_only_interface_has_no_team_routes(exposed_agent: Agent):
     agent_os = AgentOS(
         id="agents-only-os",
