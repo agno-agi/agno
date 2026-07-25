@@ -23,7 +23,9 @@ db = PostgresDb(db_url="postgresql+psycopg://ai:ai@localhost:5532/ai")
 # ALWAYS-mode stores: extraction runs after the response, no agent tools needed.
 # The manual door injects nothing: the machine needs its db AND its model
 # given explicitly (extraction is a model call).
-learning = LearningMachine(db=db, model=OpenAIResponses(id="gpt-5.5"), user_profile=True, user_memory=True)
+learning = LearningMachine(
+    db=db, model=OpenAIResponses(id="gpt-5.5"), user_profile=True, user_memory=True
+)
 
 USER_ID = "composer@example.com"
 
