@@ -49,6 +49,7 @@ curl http://localhost:7778/remote/agents/internal-agent   # 404 - not exposed
 
 ## Notes
 
+- `AgentOS(remote_access=True)` is a shortcut that exposes ALL local agents and teams at `/remote` (like `a2a_interface=True` does for A2A). Passing an explicit `RemoteAccess(...)` in `interfaces` takes precedence and is the way to expose only a subset — which is what `server.py` demonstrates.
 - RemoteAgent and RemoteTeam are async-only and talk exclusively to the `/remote/...` endpoints.
 - Session, memory, and knowledge proxies (`RemoteDb`, `RemoteKnowledge`) still use the remote server's main API.
 - Passing workflows to `RemoteAccess` logs an error and ignores them.
