@@ -52,7 +52,9 @@ def test_hitl_mode_warns_deprecated(caplog) -> None:
     assert any("HITL" in r.getMessage() and "deprecated" in r.getMessage() for r in caplog.records)
 
 
-def test_agentic_memory_collision_warns(caplog, tmp_path) -> None:
+def test_agentic_memory_collision_is_quiet(caplog, tmp_path) -> None:
+    """set_learning_machine runs on every run, so a guard that logs there logs
+    once per run. The collision is documented instead."""
     from agno.agent import Agent
     from agno.agent._init import set_learning_machine
     from agno.db.sqlite import SqliteDb
@@ -61,13 +63,7 @@ def test_agentic_memory_collision_warns(caplog, tmp_path) -> None:
     agent = Agent(db=db, learning=True, enable_agentic_memory=True)
     with caplog.at_level(logging.WARNING):
         set_learning_machine(agent)
-    assert any("update_user_memory" in r.getMessage() and "silently dropped" in r.getMessage() for r in caplog.records)
-
-    # No warning without the collision
-    caplog.clear()
-    agent2 = Agent(db=db, learning=True)
-    with caplog.at_level(logging.WARNING):
-        set_learning_machine(agent2)
+        set_learning_machine(agent)
     assert not any("silently dropped" in r.getMessage() for r in caplog.records)
 
 
