@@ -5,10 +5,8 @@ Your production database, answerable from any MCP client, without your credentia
 or your rows leaving your process. The client sends a question, this process runs
 the SQL over a read-only connection, and only the answer crosses the wire.
 
-Running this file asks the desk for revenue by region, then tells it to delete
-the table: the SQLite driver refuses the write, so the guarantee does not depend
-on the model behaving. To serve it for MCP clients at http://localhost:7777/mcp,
-run the folder instead: python cookbook/examples/metrics_desk
+Running this file serves the AgentOS on http://localhost:7777
+MCP Server on http://localhost:7777/mcp
 """
 
 from pathlib import Path
@@ -80,6 +78,9 @@ async def ask_metrics(question: str) -> str:
     return run.content or ""
 
 
+# ---------------------------------------------------------------------------
+# Create the AgentOS - API on /, MCP on /mcp
+# ---------------------------------------------------------------------------
 agent_os = AgentOS(
     id="metrics-desk",
     db=db,
@@ -89,10 +90,7 @@ agent_os = AgentOS(
 app = agent_os.get_app()
 
 # ---------------------------------------------------------------------------
-# Run
+# Run the AgentOS
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
-    analyst.print_response("What was total revenue by region on 2026-07-21?")
-
-    # The write reaches the database and the database says no.
-    analyst.print_response("Delete the orders table.")
+    agent_os.serve(app="metrics_desk:app", reload=True)

@@ -1,36 +1,42 @@
 # Test Log - team_brain
 
-Tested 2026-07-25 against `gpt-5.5` (OpenAIResponses), agno 2.8.2 (source tree at a1aad6e5a).
+Tested 2026-07-25 against `gpt-5.5` (OpenAIResponses), agno 2.8.2 (source tree at 164f9a6c1).
 Entries quote tool calls and printed state. Model prose varies run to run and is paraphrased.
+
+### test.py
+
+**Status:** PASS
+
+**Description:** The CLI driver: log one decision as alice, ask the librarian what the team has decided, then print the log file itself. There is no token on this path, so the author is passed in directly; over MCP it comes off the token instead.
+
+**Result:** Fresh `tmp/`, exit 0:
+
+```
+Logged: - We ship the queue on Postgres, not SQS, because we already run Postgres. (decided by alice)
+• read_file(path=decisions.md, start_line=1, end_line=200)
+The team has decided:
+> "- We ship the queue on Postgres, not SQS, because we already run Postgres. (decided by alice)"
+```
+
+The librarian quoted the line with its attribution, as instructed, and the printed `decisions.md` matched it exactly.
 
 ### team_brain.py
 
-**Status:** PASS (direct run is a scripted recall demo and passes the runner sweep; the MCP surface is served by the folder's `__main__.py` and verified manually with two real `fastmcp.Client` sessions on different tokens)
+**Status:** PASS
 
-**Description:** Token-attributed team decision log. Two entry points, both verified: running the file asks the librarian what the log says; running the folder mints the two tokens and serves. Served via `python cookbook/examples/team_brain` from `cookbook/examples/` (fresh `tmp/`; the databases stayed inside the example folder), took the two tokens it printed, then drove `http://localhost:7777/mcp` as alice, as bob, and anonymously. Attempted to spoof `user_id` from the client.
+**Description:** Serving run. `python team_brain.py` from the example folder now mints one token per teammate and serves directly (the folder's `__main__.py` is gone). Driven at `http://localhost:7801/mcp` as alice, then as bob on a different token. Port moved to 7801 for this pass because another AgentOS held 7777.
 
-**Result:** The advertised schemas carry no `user_id` parameter at all:
-
-```
-TOOL remember {"additionalProperties": false, "properties": {"decision": {"type": "string"}}, "required": ["decision"], "type": "object"}
-TOOL recall {"additionalProperties": false, "properties": {"question": {"type": "string"}}, "required": ["question"], "type": "object"}
-```
-
-The four proofs, from the driver session (markdown bold and curly quotes stripped; identifiers, attributions and error text unchanged):
+**Result:** Tokens printed on the way up, and the advertised `remember` schema carries no `user_id` at all:
 
 ```
-ALICE remember -> Logged: - we ship the pricing page on Friday (decided by sa:alice)
-ALICE spoof REJECTED -> ToolError 1 validation error for call[remember]
-  user_id
-    Unexpected keyword argument [type=unexpected_keyword_argument, input_value='sa:bob', input_type=str]
-BOB remember -> Logged: - we drop the legacy CSV export (decided by sa:bob)
-BOB recall -> We ship the pricing page on Friday - decided by sa:alice.
-  > "we ship the pricing page on Friday (decided by sa:alice)"
-ANON -> HTTPStatusError Client error '401 Unauthorized' for url 'http://localhost:7777/mcp'
+alice token: agno_pat_duXGF96q...
+bob token: agno_pat_uDHaeb3k...
+TOOLS: ['remember', 'recall']
+remember schema args: ['decision']
+ALICE remember -> Logged: - Retries use exponential backoff, capped at 30s. (decided by sa:alice)
+BOB recall -> The team decided: "Retries use exponential backoff, capped at 30s. (decided by sa:alice)"
 ```
 
-Four things proven: `user_id` is absent from the schema the client sees; attribution (`sa:alice`, `sa:bob`) comes off the token, not off anything the caller typed; a client that sends `user_id` anyway is rejected rather than believed; anonymous callers get 401 before reaching any tool. Bob's `recall` read alice's line back with her attribution, so the store is genuinely shared. The proofs were run twice today (once against the original single-file server, once against the `__main__.py` serve path after the entry points split); identical results, fresh tokens each serve.
-
-Direct run, cold (fresh `tmp/`), exit 0: the librarian called `read_file(path=decisions.md, ...)` and `list_files(...)`, found nothing, and answered that the log says nothing. Direct run after the serving session above: it called `read_file(path=decisions.md, ...)` and answered with both logged lines, quoting `"- we ship the pricing page on Friday (decided by sa:alice)"` and the CSV-export line with `sa:bob`. The folder sweep reports all four examples PASS, this one in 7.5s.
+Attribution (`sa:alice`) comes off the token, not off anything the caller typed, and bob read alice's line back with her name on it, so the store is genuinely shared. Earlier passes on this example also proved that a client sending `user_id` anyway is rejected (`unexpected_keyword_argument`) and that anonymous callers get 401 before reaching any tool; the auth path is unchanged by the entry-point split.
 
 ---

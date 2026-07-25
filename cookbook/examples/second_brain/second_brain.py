@@ -12,7 +12,6 @@ MCP Server on http://localhost:7777/mcp
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.fs import FileSystem
-from agno.learn import LearningMachine
 from agno.os import AgentOS
 
 # ---------------------------------------------------------------------------
@@ -29,7 +28,6 @@ second_brain = Agent(
     id="second-brain",
     name="Second Brain",
     model="openai:gpt-5.6",
-    learning=LearningMachine(user_profile=True, user_memory=True),
     tools=[notes.tools()],
     instructions=[
         "You're a second brain for: {user_id}.",
@@ -38,6 +36,7 @@ second_brain = Agent(
         "Answer according to their taste. In under 3 sentences unless they ask for more.",
         notes.instructions(),
     ],
+    enable_agentic_memory=True,
     add_history_to_context=True,
 )
 
