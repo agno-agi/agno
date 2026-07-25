@@ -5,9 +5,9 @@ Entries quote tool calls and printed state. Model prose varies run to run and is
 
 ### team_brain.py
 
-**Status:** PASS (server example: it serves until stopped, so the folder-wide runner sweep cannot complete it; verified manually with two real `fastmcp.Client` sessions on different tokens)
+**Status:** PASS (direct run is a scripted recall demo and passes the runner sweep; the MCP surface is served by the folder's `__main__.py` and verified manually with two real `fastmcp.Client` sessions on different tokens)
 
-**Description:** Token-attributed team decision log. Booted the server from this folder (fresh `tmp/`), took the two tokens it printed, then drove `http://localhost:7777/mcp` as alice, as bob, and anonymously. Attempted to spoof `user_id` from the client.
+**Description:** Token-attributed team decision log. Two entry points, both verified: running the file asks the librarian what the log says; running the folder mints the two tokens and serves. Served via `python cookbook/examples/team_brain` from `cookbook/examples/` (fresh `tmp/`; the databases stayed inside the example folder), took the two tokens it printed, then drove `http://localhost:7777/mcp` as alice, as bob, and anonymously. Attempted to spoof `user_id` from the client.
 
 **Result:** The advertised schemas carry no `user_id` parameter at all:
 
@@ -29,6 +29,8 @@ BOB recall -> We ship the pricing page on Friday - decided by sa:alice.
 ANON -> HTTPStatusError Client error '401 Unauthorized' for url 'http://localhost:7777/mcp'
 ```
 
-Four things proven: `user_id` is absent from the schema the client sees; attribution (`sa:alice`, `sa:bob`) comes off the token, not off anything the caller typed; a client that sends `user_id` anyway is rejected rather than believed; anonymous callers get 401 before reaching any tool. Bob's `recall` read alice's line back with her attribution, so the store is genuinely shared.
+Four things proven: `user_id` is absent from the schema the client sees; attribution (`sa:alice`, `sa:bob`) comes off the token, not off anything the caller typed; a client that sends `user_id` anyway is rejected rather than believed; anonymous callers get 401 before reaching any tool. Bob's `recall` read alice's line back with her attribution, so the store is genuinely shared. The proofs were run twice today (once against the original single-file server, once against the `__main__.py` serve path after the entry points split); identical results, fresh tokens each serve.
+
+Direct run, cold (fresh `tmp/`), exit 0: the librarian called `read_file(path=decisions.md, ...)` and `list_files(...)`, found nothing, and answered that the log says nothing. Direct run after the serving session above: it called `read_file(path=decisions.md, ...)` and answered with both logged lines, quoting `"- we ship the pricing page on Friday (decided by sa:alice)"` and the CSV-export line with `sa:bob`. The folder sweep reports all four examples PASS, this one in 7.5s.
 
 ---

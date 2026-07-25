@@ -12,18 +12,21 @@ To be fair about what you can do without this: a shared Notion, or a team wiki b
 
 From the repo root, with `OPENAI_API_KEY` set (the only key needed):
 
+Serve it by running the folder (the `__main__.py` pins the working directory to the example folder, so this works from the repo root or anywhere else):
+
 ```bash
-cd cookbook/examples/team_brain
-../../../.venvs/demo/bin/python team_brain.py
+.venvs/demo/bin/python cookbook/examples/team_brain
 ```
 
-Every run mints fresh tokens for `alice` and `bob` (revoking the previous ones) and prints them before serving:
+Every serve mints fresh tokens for `alice` and `bob` (revoking the previous ones) and prints them before listening:
 
 ```
 alice token: agno_pat_...
 bob token: agno_pat_...
 MCP endpoint: http://localhost:7777/mcp (send a token as a bearer header)
 ```
+
+Running the file directly instead asks the librarian what the log says. On a fresh store it honestly answers that nothing has been decided; after a serving session it quotes the log with attribution (observed: both decisions below, each with its `decided by` line).
 
 ## What you will see
 

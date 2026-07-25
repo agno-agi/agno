@@ -7,10 +7,10 @@ Claude Desktop, Cursor and your own apps all read and write the same brain.
 
 Running this file captures a decision in one session, then recalls it in a fresh
 session with no chat history. Run it twice: the second run answers from the notes
-and the profile the first run left behind. Pass --serve to start the MCP server.
+and the profile the first run left behind. To start the MCP server, run the
+folder instead: python cookbook/examples/second_brain
 """
 
-import sys
 from uuid import uuid4
 
 from agno.agent import Agent
@@ -58,26 +58,23 @@ app = agent_os.get_app()
 # Run
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
-    if "--serve" in sys.argv:
-        agent_os.serve(app="second_brain:app", reload=True)
-    else:
-        user_id = "ashpreet"
+    user_id = "ashpreet"
 
-        second_brain.print_response(
-            "I am building Harbor, a Postgres-backed job queue in Rust. I picked advisory "
-            "locks over SELECT FOR UPDATE SKIP LOCKED because our workers are long-lived. "
-            "I want terse answers, no bullet lists.",
-            user_id=user_id,
-            session_id=f"capture-{uuid4().hex[:8]}",
-        )
+    second_brain.print_response(
+        "I am building Harbor, a Postgres-backed job queue in Rust. I picked advisory "
+        "locks over SELECT FOR UPDATE SKIP LOCKED because our workers are long-lived. "
+        "I want terse answers, no bullet lists.",
+        user_id=user_id,
+        session_id=f"capture-{uuid4().hex[:8]}",
+    )
 
-        # A brand new session: nothing carries over except the notes and the profile.
-        second_brain.print_response(
-            "What did I decide about locking in Harbor, and why?",
-            user_id=user_id,
-            session_id=f"recall-{uuid4().hex[:8]}",
-        )
+    # A brand new session: nothing carries over except the notes and the profile.
+    second_brain.print_response(
+        "What did I decide about locking in Harbor, and why?",
+        user_id=user_id,
+        session_id=f"recall-{uuid4().hex[:8]}",
+    )
 
-        print("Files in this user's brain:")
-        for meta in notebook.resolve(user_id=user_id).list():
-            print(f"  {meta.path}  ({meta.size_bytes} bytes)")
+    print("Files in this user's brain:")
+    for meta in notebook.resolve(user_id=user_id).list():
+        print(f"  {meta.path}  ({meta.size_bytes} bytes)")

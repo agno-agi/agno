@@ -17,11 +17,30 @@ cd cookbook/examples/metrics_desk
 ../../../.venvs/demo/bin/python metrics_desk.py
 ```
 
-The first run seeds `tmp/shop.db` with a writable engine, disposes it, and reopens the file read-only. The process then serves until you stop it with Ctrl+C.
+The first run seeds `tmp/shop.db` with a writable engine, disposes it, and reopens the file read-only. Running the file asks the desk two questions and exits. To serve it for MCP clients, run the folder instead of the file:
+
+```bash
+.venvs/demo/bin/python cookbook/examples/metrics_desk
+```
+
+The folder's `__main__.py` pins the working directory to the example folder before serving, so this form works from the repo root or anywhere else.
 
 ## What you will see
 
-The server boots on port 7777. From an MCP client, a revenue question comes back with the measured numbers and the query that produced them:
+Running the file: a revenue question comes back with the measured numbers and the query that produced them, then the delete demand reaches the database and the database itself refuses:
+
+```
+• run_sql_query(query=DROP TABLE orders;, limit=10)
+
+Query run
+  DROP TABLE orders;
+Result
+  Error running query: (sqlite3.OperationalError) attempt to write a readonly database
+  [SQL: DROP TABLE orders;]
+  (Background on this error at: https://sqlalche.me/e/20/e3q8)
+```
+
+At the same moment the log prints a full traceback containing `sqlite3.OperationalError: attempt to write a readonly database`. That is the system working: the write reached the driver and the driver said no. Over MCP the answers are the same, quoted in the TEST_LOG:
 
 ```
 REVENUE -> Total revenue by region on 2026-07-21
@@ -29,19 +48,6 @@ REVENUE -> Total revenue by region on 2026-07-21
   Query run: SELECT region, SUM(amount) AS total_revenue FROM orders
              WHERE day = '2026-07-21' GROUP BY region ORDER BY region;
 ```
-
-Then ask it to delete the table. The agent runs the SQL, and the database itself refuses:
-
-```
-DELETE -> The database rejected the request because it is read-only.
-  Query run: DROP TABLE orders;
-  Error:
-  Error running query: (sqlite3.OperationalError) attempt to write a readonly database
-  [SQL: DROP TABLE orders;]
-  (Background on this error at: https://sqlalche.me/e/20/e3q8)
-```
-
-At the same moment the server log prints a full traceback containing `sqlite3.OperationalError: attempt to write a readonly database`. That is the system working: the write reached the driver and the driver said no.
 
 ## Point an MCP client at it
 

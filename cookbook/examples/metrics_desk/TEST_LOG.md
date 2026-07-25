@@ -5,11 +5,23 @@ Entries quote tool calls and printed state. Model prose varies run to run and is
 
 ### metrics_desk.py
 
-**Status:** PASS (server example: it serves until stopped, so the folder-wide runner sweep cannot complete it; verified manually with a real `fastmcp.Client`)
+**Status:** PASS (direct run is a scripted demo and passes the runner sweep; the MCP surface is served by the folder's `__main__.py` and verified manually with a real `fastmcp.Client`)
 
-**Description:** A read-only warehouse behind a single MCP tool. Booted the server from this folder (fresh `tmp/`), then drove it with `fastmcp.Client` over `StreamableHttpTransport` at `http://localhost:7777/mcp`: listed tools, asked a revenue question, then asked it to delete the table.
+**Description:** A read-only warehouse behind a single MCP tool. Two entry points, both verified: running the file asks the desk the revenue question and the delete demand directly and exits; running the folder serves the MCP endpoint, driven with `fastmcp.Client` over `StreamableHttpTransport` at `http://localhost:7777/mcp`.
 
-**Result:** Tool list shows exactly one tool, with the docstring as its description:
+**Result:** Direct run (fresh `tmp/`), exit 0: the revenue panel reported apac 78.4, emea 96.25, us 512.0 with the query, then the delete demand issued the SQL and printed the driver's refusal:
+
+```
+• run_sql_query(query=DROP TABLE orders;, limit=10)
+Result
+  Error running query: (sqlite3.OperationalError) attempt to write a readonly database
+  [SQL: DROP TABLE orders;]
+  (Background on this error at: https://sqlalche.me/e/20/e3q8)
+```
+
+The folder sweep (`cookbook_runner.py cookbook/examples -r -c 2`) reports all four examples PASS, this one in 13.3s.
+
+Serving run: `python cookbook/examples/metrics_desk` launched from `cookbook/examples/`; `tmp/` stayed inside the example folder. Tool list shows exactly one tool, with the docstring as its description:
 
 ```
 TOOL ask_metrics {"additionalProperties": false, "properties": {"question": {"type": "string"}}, "required": ["question"], "type": "object"}

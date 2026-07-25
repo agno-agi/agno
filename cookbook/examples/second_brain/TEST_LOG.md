@@ -15,7 +15,7 @@ Warm run, a new process: the capture session called `append_file(path=notes/harb
 
 The byte counts are model-dependent: the note body is written by the model, so sizes vary run to run (this pass observed 208 cold and 417 warm over one cold/warm pair; spec verification observed 211 and 367 for the same script). The invariant is the shape: the cold run writes the note, the warm run appends to it, and the file grows.
 
-`--serve` run, driven by a `fastmcp.Client` over `StreamableHttpTransport` at `http://localhost:7777/mcp`:
+Serving run: `python cookbook/examples/second_brain` (the folder's `__main__.py`, which pins cwd to the example folder and serves with reload on), launched from `cookbook/examples/` to exercise the folder/module name collision path. Driven by a `fastmcp.Client` over `StreamableHttpTransport` at `http://localhost:7777/mcp`; no stray `tmp/` appeared outside the example folder:
 
 ```
 TOOLS: ['get_agentos_config', 'run_agent', 'run_team', 'run_workflow',

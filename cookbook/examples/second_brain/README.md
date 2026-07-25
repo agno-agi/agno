@@ -17,11 +17,13 @@ cd cookbook/examples/second_brain
 ../../../.venvs/demo/bin/python second_brain.py
 ```
 
-Run it twice. The second run is a new process, so everything it recalls comes from the store the first run left in `tmp/second_brain.db`. To start the MCP server instead:
+Run it twice. The second run is a new process, so everything it recalls comes from the store the first run left in `tmp/second_brain.db`. To start the MCP server, run the folder instead of the file:
 
 ```bash
-../../../.venvs/demo/bin/python second_brain.py --serve
+.venvs/demo/bin/python cookbook/examples/second_brain
 ```
+
+The folder's `__main__.py` pins the working directory to the example folder before serving, so this form works from the repo root or anywhere else; `tmp/` always lands next to the script.
 
 ## What you will see
 
@@ -50,7 +52,7 @@ The exact byte counts vary run to run; the note body is model-written. What hold
 
 ## Point an MCP client at it
 
-With `--serve` running, the endpoint is `http://localhost:7777/mcp`. Client config:
+With the server running, the endpoint is `http://localhost:7777/mcp`. Client config:
 
 ```json
 {

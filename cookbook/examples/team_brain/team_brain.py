@@ -6,9 +6,10 @@ decisions into the same log and reads them back out of it. The author of a
 decision is taken from the token the client authenticated with, so a caller
 cannot log a decision as someone else.
 
-Run this, paste one of the printed tokens into an MCP client, and ask it to
-remember something. Then paste the other token into a second client and ask
-what was decided.
+Serve it by running the folder: python cookbook/examples/team_brain - it prints
+one token per teammate. Paste one token into an MCP client and ask it to
+remember something, then paste the other into a second client and ask what was
+decided. Running this file directly asks the librarian what the log says so far.
 """
 
 import time
@@ -103,10 +104,7 @@ agent_os = AgentOS(
 app = agent_os.get_app()
 
 # ---------------------------------------------------------------------------
-# Run: mint tokens, then serve
+# Run: ask the librarian what the log says
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
-    for teammate in ["alice", "bob"]:
-        print(f"{teammate} token: {issue_token(teammate)}")
-    print("MCP endpoint: http://localhost:7777/mcp (send a token as a bearer header)")
-    agent_os.serve(app="team_brain:app", port=7777)
+    librarian.print_response("What has the team decided so far?")
