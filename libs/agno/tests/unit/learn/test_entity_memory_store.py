@@ -65,6 +65,22 @@ class RecordingLearningDb:
     def delete_learning(self, id: str) -> bool:
         return self.rows.pop(id, None) is not None
 
+    def search_learnings(self, query: str, **kwargs: Any) -> List[Dict[str, Any]]:
+        import json
+
+        limit = kwargs.pop("limit", None)
+        kwargs.pop("workflow_id", None)
+        kwargs.pop("session_id", None)
+        kwargs.pop("agent_id", None)
+        kwargs.pop("team_id", None)
+        kwargs.pop("user_id", None)
+        candidates = self.get_learnings(**kwargs)
+        variants = {query.lower(), query.lower().replace(" ", "_"), query.lower().replace("_", " ")}
+        rows = [row for row in candidates if any(v in json.dumps(row.get("content", {})).lower() for v in variants)]
+        if limit is not None:
+            rows = rows[:limit]
+        return rows
+
 
 @pytest.fixture
 def db() -> RecordingLearningDb:
@@ -317,6 +333,89 @@ class TestForget:
         await store.aremember_about(entity="radar", entity_type="project")
         message = await store.aforget(entity="radar")
         assert "Archived" in message
+
+
+class TestSearchRouting:
+    def test_search_routes_through_search_learnings(self, db: RecordingLearningDb) -> None:
+        calls: List[Dict[str, Any]] = []
+
+        class SpyDb(RecordingLearningDb):
+            def search_learnings(self, query: str, **kwargs: Any) -> List[Dict[str, Any]]:
+                calls.append({"query": query, **kwargs})
+                return super().search_learnings(query, **kwargs)
+
+        spy = SpyDb()
+        store = EntityMemoryStore(config=EntityMemoryConfig(db=spy))  # type: ignore[arg-type]
+        store.remember_about(entity="radar", entity_type="project", facts=["db: Postgres"])
+        results = store.search(query="postgres")
+        assert len(results) == 1
+        assert calls and calls[0]["query"] == "postgres"
+        assert calls[0]["learning_type"] == "entity_memory"
+        assert calls[0]["namespace"] == "global"
+
+    def test_search_crosses_slug_boundary_via_store(self, store: EntityMemoryStore) -> None:
+        store.remember_about(entity="Sarah Chen", entity_type="person", facts=["designs radar"])
+        results = store.search(query="sarah chen")
+        assert [e.entity_id for e in results] == ["sarah_chen"]
+
+    def test_search_falls_back_on_not_implemented(self, caplog: pytest.LogCaptureFixture) -> None:
+        class NoSearchDb(RecordingLearningDb):
+            def search_learnings(self, query: str, **kwargs: Any) -> List[Dict[str, Any]]:
+                raise NotImplementedError
+
+        db = NoSearchDb()
+        store = EntityMemoryStore(config=EntityMemoryConfig(db=db))  # type: ignore[arg-type]
+        store.remember_about(entity="radar", entity_type="project", facts=["db: Postgres"])
+
+        import logging
+
+        with caplog.at_level(logging.WARNING):
+            results = store.search(query="postgres")
+            store.search(query="postgres")
+
+        assert [e.entity_id for e in results] == ["radar"]
+        degraded = [r for r in caplog.records if "no search_learnings implementation" in r.getMessage()]
+        assert len(degraded) == 1  # logged once, not per call
+
+    def test_search_fails_loudly_when_backend_errors(self) -> None:
+        class BrokenSearchDb(RecordingLearningDb):
+            def search_learnings(self, query: str, **kwargs: Any) -> List[Dict[str, Any]]:
+                raise RuntimeError("dialect error")
+
+        store = EntityMemoryStore(config=EntityMemoryConfig(db=BrokenSearchDb()))  # type: ignore[arg-type]
+        with pytest.raises(RuntimeError, match="dialect error"):
+            store.search(query="anything")
+
+    async def test_asearch_routes_and_falls_back(self, caplog: pytest.LogCaptureFixture) -> None:
+        class NoSearchDb(RecordingLearningDb):
+            def search_learnings(self, query: str, **kwargs: Any) -> List[Dict[str, Any]]:
+                raise NotImplementedError
+
+        db = NoSearchDb()
+        store = EntityMemoryStore(config=EntityMemoryConfig(db=db))  # type: ignore[arg-type]
+        await store.aremember_about(entity="radar", entity_type="project", facts=["db: Postgres"])
+        results = await store.asearch(query="postgres")
+        assert [e.entity_id for e in results] == ["radar"]
+
+    def test_search_finds_match_outside_recent_window_with_sqlite(self, tmp_path) -> None:
+        from agno.db.sqlite import SqliteDb
+
+        sqlite_db = SqliteDb(db_file=str(tmp_path / "entities.db"))
+        store = EntityMemoryStore(config=EntityMemoryConfig(db=sqlite_db))
+
+        store.remember_about(entity="needle", entity_type="project", facts=["the rare zanzibar detail"])
+        for i in range(60):
+            sqlite_db.upsert_learning(
+                id=f"entity_global_project_filler_{i}",
+                learning_type="entity_memory",
+                entity_id=f"filler_{i}",
+                entity_type="project",
+                namespace="global",
+                content={"entity_id": f"filler_{i}", "entity_type": "project", "facts": []},
+            )
+
+        results = store.search(query="zanzibar", limit=5)
+        assert [e.entity_id for e in results] == ["needle"]
 
 
 class TestDataApi:

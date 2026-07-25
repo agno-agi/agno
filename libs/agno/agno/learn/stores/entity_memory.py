@@ -167,6 +167,7 @@ class EntityMemoryStore(LearningStore):
     # State tracking (internal)
     entity_updated: bool = field(default=False, init=False)
     _schema: Any = field(default=None, init=False)
+    _degraded_search_logged: bool = field(default=False, init=False)
 
     def __post_init__(self):
         self._schema = self.config.schema or EntityMemory
@@ -1483,6 +1484,11 @@ class EntityMemoryStore(LearningStore):
     ) -> List[EntityMemory]:
         """Search for entities matching query.
 
+        Routes through the db's server-side search_learnings; falls back to the
+        client-side scan only when the backend does not implement it. Database
+        errors from the server-side path are raised, never swallowed - a broken
+        query must not present as an empty store.
+
         Args:
             query: Search query (matched against name, facts, events, etc.).
             entity_type: Filter by entity type.
@@ -1500,36 +1506,29 @@ class EntityMemoryStore(LearningStore):
         effective_namespace = namespace or self.config.namespace
 
         try:
-            results = self.db.get_learnings(
+            rows = self.db.search_learnings(
+                query=query,
                 learning_type=self.learning_type,
                 entity_type=entity_type,
                 namespace=effective_namespace,
                 user_id=user_id if effective_namespace == "user" else None,
-                limit=limit * 3,  # Over-fetch for filtering
+                # Headroom for the client-side archived filter below.
+                limit=limit if include_archived else limit * 2,
+            )
+        except (NotImplementedError, AttributeError):
+            self._log_degraded_search_once()
+            return self._search_client_side(
+                query=query,
+                entity_type=entity_type,
+                user_id=user_id,
+                namespace=effective_namespace,
+                limit=limit,
+                include_archived=include_archived,
             )
 
-            entities = []
-            query_lower = query.lower()
-
-            for result in results or []:  # type: ignore[union-attr]
-                content = result.get("content", {})
-                if self._matches_query(content=content, query=query_lower):
-                    entity = self.schema.from_dict(content)
-                    if entity is None:
-                        continue
-                    if not include_archived and getattr(entity, "archived_at", None):
-                        continue
-                    entities.append(entity)
-
-                if len(entities) >= limit:
-                    break
-
-            log_debug(f"EntityMemoryStore.search: found {len(entities)} entities for query: {query[:50]}...")
-            return entities
-
-        except Exception as e:
-            log_debug(f"EntityMemoryStore.search failed: {e}")
-            return []
+        entities = self._parse_rows(rows or [], limit=limit, include_archived=include_archived)
+        log_debug(f"EntityMemoryStore.search: found {len(entities)} entities for query: {query[:50]}")
+        return entities
 
     async def asearch(
         self,
@@ -1548,44 +1547,120 @@ class EntityMemoryStore(LearningStore):
 
         try:
             if isinstance(self.db, AsyncBaseDb):
+                rows = await self.db.search_learnings(
+                    query=query,
+                    learning_type=self.learning_type,
+                    entity_type=entity_type,
+                    namespace=effective_namespace,
+                    user_id=user_id if effective_namespace == "user" else None,
+                    limit=limit if include_archived else limit * 2,
+                )
+            else:
+                rows = self.db.search_learnings(
+                    query=query,
+                    learning_type=self.learning_type,
+                    entity_type=entity_type,
+                    namespace=effective_namespace,
+                    user_id=user_id if effective_namespace == "user" else None,
+                    limit=limit if include_archived else limit * 2,
+                )
+        except (NotImplementedError, AttributeError):
+            self._log_degraded_search_once()
+            return await self._asearch_client_side(
+                query=query,
+                entity_type=entity_type,
+                user_id=user_id,
+                namespace=effective_namespace,
+                limit=limit,
+                include_archived=include_archived,
+            )
+
+        entities = self._parse_rows(rows or [], limit=limit, include_archived=include_archived)
+        log_debug(f"EntityMemoryStore.asearch: found {len(entities)} entities for query: {query[:50]}")
+        return entities
+
+    def _log_degraded_search_once(self) -> None:
+        if not self._degraded_search_logged:
+            self._degraded_search_logged = True
+            log_warning(
+                "EntityMemoryStore: this db backend has no search_learnings implementation; "
+                "falling back to a client-side scan over the most recently updated rows. "
+                "Search quality degrades as the store grows."
+            )
+
+    def _search_client_side(
+        self,
+        query: str,
+        entity_type: Optional[str],
+        user_id: Optional[str],
+        namespace: str,
+        limit: int,
+        include_archived: bool,
+    ) -> List[EntityMemory]:
+        """Degraded fallback: over-fetch recent rows and substring-match in Python."""
+        try:
+            results = self.db.get_learnings(  # type: ignore[union-attr]
+                learning_type=self.learning_type,
+                entity_type=entity_type,
+                namespace=namespace,
+                user_id=user_id if namespace == "user" else None,
+                limit=limit * 3,
+            )
+        except Exception as e:
+            log_debug(f"EntityMemoryStore._search_client_side failed: {e}")
+            return []
+        return self._filter_rows_by_query(results or [], query=query, limit=limit, include_archived=include_archived)
+
+    async def _asearch_client_side(
+        self,
+        query: str,
+        entity_type: Optional[str],
+        user_id: Optional[str],
+        namespace: str,
+        limit: int,
+        include_archived: bool,
+    ) -> List[EntityMemory]:
+        """Async version of _search_client_side."""
+        try:
+            if isinstance(self.db, AsyncBaseDb):
                 results = await self.db.get_learnings(
                     learning_type=self.learning_type,
                     entity_type=entity_type,
-                    namespace=effective_namespace,
-                    user_id=user_id if effective_namespace == "user" else None,
+                    namespace=namespace,
+                    user_id=user_id if namespace == "user" else None,
                     limit=limit * 3,
                 )
             else:
-                results = self.db.get_learnings(
+                results = self.db.get_learnings(  # type: ignore[union-attr]
                     learning_type=self.learning_type,
                     entity_type=entity_type,
-                    namespace=effective_namespace,
-                    user_id=user_id if effective_namespace == "user" else None,
+                    namespace=namespace,
+                    user_id=user_id if namespace == "user" else None,
                     limit=limit * 3,
                 )
-
-            entities = []
-            query_lower = query.lower()
-
-            for result in results or []:
-                content = result.get("content", {})
-                if self._matches_query(content=content, query=query_lower):
-                    entity = self.schema.from_dict(content)
-                    if entity is None:
-                        continue
-                    if not include_archived and getattr(entity, "archived_at", None):
-                        continue
-                    entities.append(entity)
-
-                if len(entities) >= limit:
-                    break
-
-            log_debug(f"EntityMemoryStore.asearch: found {len(entities)} entities for query: {query[:50]}...")
-            return entities
-
         except Exception as e:
-            log_debug(f"EntityMemoryStore.asearch failed: {e}")
+            log_debug(f"EntityMemoryStore._asearch_client_side failed: {e}")
             return []
+        return self._filter_rows_by_query(results or [], query=query, limit=limit, include_archived=include_archived)
+
+    def _filter_rows_by_query(
+        self, rows: List[Dict[str, Any]], query: str, limit: int, include_archived: bool
+    ) -> List[EntityMemory]:
+        entities: List[EntityMemory] = []
+        query_lower = query.lower()
+        for row in rows:
+            content = row.get("content", {})
+            if not self._matches_query(content=content, query=query_lower):
+                continue
+            entity = self.schema.from_dict(content)
+            if entity is None:
+                continue
+            if not include_archived and getattr(entity, "archived_at", None):
+                continue
+            entities.append(entity)
+            if len(entities) >= limit:
+                break
+        return entities
 
     def _matches_query(self, content: Dict[str, Any], query: str) -> bool:
         """Check if entity content matches search query."""

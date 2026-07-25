@@ -64,6 +64,7 @@ class DecisionLogStore(LearningStore):
     # State tracking (internal)
     decisions_updated: bool = field(default=False, init=False)
     _schema: Any = field(default=None, init=False)
+    _degraded_search_logged: bool = field(default=False, init=False)
 
     def __post_init__(self):
         self._schema = self.config.schema or DecisionLog
@@ -710,6 +711,10 @@ class DecisionLogStore(LearningStore):
     ) -> List[DecisionLog]:
         """Search decisions with filters.
 
+        Text queries route through the db's server-side search_learnings; the
+        client-side scan is only the fallback for backends without it.
+        decision_type and days filters are applied client-side either way.
+
         Args:
             query: Text to search for.
             agent_id: Filter by agent.
@@ -728,62 +733,32 @@ class DecisionLogStore(LearningStore):
         if not isinstance(self.db, BaseDb):
             return []
 
-        try:
-            # Get all matching records
-            results = self.db.get_learnings(
-                learning_type=self.learning_type,
-                agent_id=agent_id,
-                limit=limit * 3,  # Over-fetch for filtering
-            )
+        # Headroom for the client-side decision_type/days filters below.
+        fetch_limit = limit * 3 if (decision_type or days) else limit
 
-            if not results:
-                return []
+        client_query: Optional[str] = None
+        if query:
+            try:
+                results = self.db.search_learnings(
+                    query=query,
+                    learning_type=self.learning_type,
+                    agent_id=agent_id,
+                    limit=fetch_limit,
+                )
+            except (NotImplementedError, AttributeError):
+                self._log_degraded_search_once()
+                results = self._fetch_recent_rows(agent_id=agent_id, limit=limit * 3)
+                client_query = query
+        else:
+            results = self._fetch_recent_rows(agent_id=agent_id, limit=fetch_limit)
 
-            decisions = []
-            cutoff_date = None
-            if days:
-                cutoff_date = datetime.now(timezone.utc) - timedelta(days=days)
-
-            for record in results:
-                content = record.get("content") if isinstance(record, dict) else None
-                if not content:
-                    continue
-
-                decision = from_dict_safe(DecisionLog, content)
-                if not decision:
-                    continue
-
-                # Apply filters
-                if decision_type and decision.decision_type != decision_type:
-                    continue
-
-                if cutoff_date and decision.created_at:
-                    try:
-                        created = datetime.fromisoformat(decision.created_at.replace("Z", "+00:00"))
-                        # Records written before this fix are naive; assume UTC.
-                        if created.tzinfo is None:
-                            created = created.replace(tzinfo=timezone.utc)
-                        if created < cutoff_date:
-                            continue
-                    except (ValueError, AttributeError):
-                        pass
-
-                if query:
-                    query_lower = query.lower()
-                    text = decision.to_text().lower()
-                    if query_lower not in text:
-                        continue
-
-                decisions.append(decision)
-
-                if len(decisions) >= limit:
-                    break
-
-            return decisions
-
-        except Exception as e:
-            log_debug(f"DecisionLogStore.search failed: {e}")
-            return []
+        return self._filter_decisions(
+            results or [],
+            query=client_query,
+            decision_type=decision_type,
+            days=days,
+            limit=limit,
+        )
 
     async def asearch(
         self,
@@ -798,67 +773,130 @@ class DecisionLogStore(LearningStore):
         if not self.db:
             return []
 
+        fetch_limit = limit * 3 if (decision_type or days) else limit
+
+        client_query: Optional[str] = None
+        if query:
+            try:
+                if isinstance(self.db, AsyncBaseDb):
+                    results = await self.db.search_learnings(
+                        query=query,
+                        learning_type=self.learning_type,
+                        agent_id=agent_id,
+                        limit=fetch_limit,
+                    )
+                else:
+                    results = self.db.search_learnings(
+                        query=query,
+                        learning_type=self.learning_type,
+                        agent_id=agent_id,
+                        limit=fetch_limit,
+                    )
+            except (NotImplementedError, AttributeError):
+                self._log_degraded_search_once()
+                results = await self._afetch_recent_rows(agent_id=agent_id, limit=limit * 3)
+                client_query = query
+        else:
+            results = await self._afetch_recent_rows(agent_id=agent_id, limit=fetch_limit)
+
+        return self._filter_decisions(
+            results or [],
+            query=client_query,
+            decision_type=decision_type,
+            days=days,
+            limit=limit,
+        )
+
+    def _log_degraded_search_once(self) -> None:
+        if not self._degraded_search_logged:
+            self._degraded_search_logged = True
+            log_warning(
+                "DecisionLogStore: this db backend has no search_learnings implementation; "
+                "falling back to a client-side scan over the most recently updated rows. "
+                "Search quality degrades as the store grows."
+            )
+
+    def _fetch_recent_rows(self, agent_id: Optional[str], limit: int) -> List[Any]:
+        try:
+            return (
+                self.db.get_learnings(  # type: ignore[union-attr]
+                    learning_type=self.learning_type,
+                    agent_id=agent_id,
+                    limit=limit,
+                )
+                or []
+            )
+        except Exception as e:
+            log_debug(f"DecisionLogStore._fetch_recent_rows failed: {e}")
+            return []
+
+    async def _afetch_recent_rows(self, agent_id: Optional[str], limit: int) -> List[Any]:
         try:
             if isinstance(self.db, AsyncBaseDb):
-                results = await self.db.get_learnings(
+                rows = await self.db.get_learnings(
                     learning_type=self.learning_type,
                     agent_id=agent_id,
-                    limit=limit * 3,
+                    limit=limit,
                 )
             else:
-                results = self.db.get_learnings(
+                rows = self.db.get_learnings(  # type: ignore[union-attr]
                     learning_type=self.learning_type,
                     agent_id=agent_id,
-                    limit=limit * 3,
+                    limit=limit,
                 )
-
-            if not results:
-                return []
-
-            decisions = []
-            cutoff_date = None
-            if days:
-                cutoff_date = datetime.now(timezone.utc) - timedelta(days=days)
-
-            for record in results:
-                content = record.get("content") if isinstance(record, dict) else None
-                if not content:
-                    continue
-
-                decision = from_dict_safe(DecisionLog, content)
-                if not decision:
-                    continue
-
-                if decision_type and decision.decision_type != decision_type:
-                    continue
-
-                if cutoff_date and decision.created_at:
-                    try:
-                        created = datetime.fromisoformat(decision.created_at.replace("Z", "+00:00"))
-                        # Records written before this fix are naive; assume UTC.
-                        if created.tzinfo is None:
-                            created = created.replace(tzinfo=timezone.utc)
-                        if created < cutoff_date:
-                            continue
-                    except (ValueError, AttributeError):
-                        pass
-
-                if query:
-                    query_lower = query.lower()
-                    text = decision.to_text().lower()
-                    if query_lower not in text:
-                        continue
-
-                decisions.append(decision)
-
-                if len(decisions) >= limit:
-                    break
-
-            return decisions
-
+            return rows or []
         except Exception as e:
-            log_debug(f"DecisionLogStore.asearch failed: {e}")
+            log_debug(f"DecisionLogStore._afetch_recent_rows failed: {e}")
             return []
+
+    def _filter_decisions(
+        self,
+        records: List[Any],
+        query: Optional[str],
+        decision_type: Optional[str],
+        days: Optional[int],
+        limit: int,
+    ) -> List[DecisionLog]:
+        decisions: List[DecisionLog] = []
+        cutoff_date = None
+        if days:
+            cutoff_date = datetime.now(timezone.utc) - timedelta(days=days)
+
+        for record in records:
+            content = record.get("content") if isinstance(record, dict) else None
+            if not content:
+                continue
+
+            decision = from_dict_safe(DecisionLog, content)
+            if not decision:
+                continue
+
+            if decision_type and decision.decision_type != decision_type:
+                continue
+
+            if cutoff_date and decision.created_at:
+                try:
+                    created = datetime.fromisoformat(decision.created_at.replace("Z", "+00:00"))
+                    # Records written before this fix are naive; assume UTC.
+                    if created.tzinfo is None:
+                        created = created.replace(tzinfo=timezone.utc)
+                    if created < cutoff_date:
+                        continue
+                except (ValueError, AttributeError):
+                    pass
+
+            if query:
+                query_lower = query.lower()
+                text = decision.to_text().lower()
+                if query_lower not in text:
+                    continue
+
+            decisions.append(decision)
+
+            if len(decisions) >= limit:
+                break
+
+        return decisions
 
     def get(self, decision_id: str) -> Optional[DecisionLog]:
         """Get a specific decision by ID."""

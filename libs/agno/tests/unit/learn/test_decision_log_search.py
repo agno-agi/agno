@@ -1,0 +1,119 @@
+"""Unit tests for DecisionLogStore search routing through search_learnings."""
+
+import logging
+from typing import Any, Dict, List
+
+import pytest
+
+from agno.db.base import BaseDb
+from agno.learn.config import DecisionLogConfig
+from agno.learn.schemas import DecisionLog
+from agno.learn.stores.decision_log import DecisionLogStore
+
+
+class FakeDecisionDb(BaseDb):
+    """Subclasses BaseDb (the sync search path requires a real BaseDb) but
+    only implements what DecisionLogStore touches."""
+
+    def __init__(self) -> None:  # noqa: D401 - do not call BaseDb.__init__
+        self.rows: List[Dict[str, Any]] = []
+        self.search_calls: List[Dict[str, Any]] = []
+
+    # --- what the store uses ---
+    def upsert_learning(self, id: str, **kwargs: Any) -> None:
+        self.rows.append({"learning_id": id, **kwargs})
+
+    def get_learnings(self, **kwargs: Any) -> List[Dict[str, Any]]:
+        limit = kwargs.get("limit")
+        rows = list(reversed(self.rows))
+        return rows[:limit] if limit else rows
+
+    def search_learnings(self, query: str, **kwargs: Any) -> List[Dict[str, Any]]:
+        import json
+
+        self.search_calls.append({"query": query, **kwargs})
+        rows = [row for row in reversed(self.rows) if query.lower() in json.dumps(row.get("content", {})).lower()]
+        limit = kwargs.get("limit")
+        return rows[:limit] if limit else rows
+
+    # --- abstract surface stubs ---
+    def __getattr__(self, name: str) -> Any:
+        raise AttributeError(name)
+
+
+# BaseDb is an ABC with many abstract methods; bypass instantiation checks.
+FakeDecisionDb.__abstractmethods__ = frozenset()
+
+
+def _store(db: FakeDecisionDb) -> DecisionLogStore:
+    return DecisionLogStore(config=DecisionLogConfig(db=db))
+
+
+def _log(store: DecisionLogStore, decision: str, decision_type: str = "tool_selection") -> None:
+    import uuid
+
+    store.save(decision=DecisionLog(id=f"dec_{uuid.uuid4().hex[:6]}", decision=decision, decision_type=decision_type))
+
+
+def test_query_routes_through_search_learnings() -> None:
+    db = FakeDecisionDb()
+    store = _store(db)
+    _log(store, "Chose Postgres over Dynamo")
+    _log(store, "Used web search for news")
+
+    results = store.search(query="postgres")
+    assert len(results) == 1
+    assert results[0].decision == "Chose Postgres over Dynamo"
+    assert db.search_calls and db.search_calls[0]["learning_type"] == "decision_log"
+
+
+def test_no_query_uses_listing_path() -> None:
+    db = FakeDecisionDb()
+    store = _store(db)
+    _log(store, "first")
+    _log(store, "second")
+
+    results = store.search()
+    assert len(results) == 2
+    assert db.search_calls == []
+
+
+def test_fallback_on_not_implemented_filters_client_side(caplog: pytest.LogCaptureFixture) -> None:
+    class NoSearchDb(FakeDecisionDb):
+        def search_learnings(self, query: str, **kwargs: Any) -> List[Dict[str, Any]]:
+            raise NotImplementedError
+
+    NoSearchDb.__abstractmethods__ = frozenset()
+    db = NoSearchDb()
+    store = _store(db)
+    _log(store, "Chose Postgres over Dynamo")
+    _log(store, "Used web search for news")
+
+    with caplog.at_level(logging.WARNING):
+        results = store.search(query="postgres")
+        store.search(query="postgres")
+
+    assert len(results) == 1
+    assert results[0].decision == "Chose Postgres over Dynamo"
+    degraded = [r for r in caplog.records if "no search_learnings implementation" in r.getMessage()]
+    assert len(degraded) == 1
+
+
+async def test_async_query_routes_through_search_learnings() -> None:
+    db = FakeDecisionDb()
+    store = _store(db)
+    _log(store, "Chose Postgres over Dynamo")
+
+    results = await store.asearch(query="postgres")
+    assert len(results) == 1
+
+
+def test_decision_type_filter_composes_with_query() -> None:
+    db = FakeDecisionDb()
+    store = _store(db)
+    _log(store, "Chose Postgres over Dynamo", decision_type="architecture")
+    _log(store, "Postgres connection retry", decision_type="tool_selection")
+
+    results = store.search(query="postgres", decision_type="architecture")
+    assert len(results) == 1
+    assert results[0].decision_type == "architecture"
