@@ -93,8 +93,10 @@ class FileSystemTools(Toolkit):
 
     Registers the full nine-tool surface, or the four read tools when
     ``read_only=True`` (the surface for a consumer agent that consults another
-    agent's namespace by shared name). Ships the matching FileSystem instructions
-    unless ``instructions`` is overridden. Tool errors are returned as
+    agent's namespace by shared name). Holds the matching FileSystem instructions,
+    which reach the system prompt only under ``add_instructions=True``; otherwise
+    compose ``FileSystem.instructions()`` into the agent's own instructions, and
+    the whole system prompt stays the developer's. Tool errors are returned as
     ``"Error: ..."`` strings, never raised. Writes are last-writer-wins by
     design, and there is no confirmation surface, because this is the agent's own
     private, quota-capped store (pass ``requires_confirmation_tools`` to opt in).
@@ -125,7 +127,7 @@ class FileSystemTools(Toolkit):
         fs: FileSystem,
         read_only: bool = False,
         instructions: Optional[str] = None,
-        add_instructions: bool = True,
+        add_instructions: bool = False,
         **kwargs,
     ):
         self.fs = fs
