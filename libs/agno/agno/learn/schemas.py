@@ -781,8 +781,15 @@ class EntityMemory:
                 return True
         return False
 
-    def get_context_text(self) -> str:
-        """Get entity as formatted string for prompts."""
+    def get_context_text(self, max_facts: Optional[int] = 10, max_events: Optional[int] = 5) -> str:
+        """Get entity as formatted string for prompts.
+
+        Bounded and honest: at most ``max_facts`` live facts (each with an
+        as-of date, so July's truth outranks March's) and the last
+        ``max_events`` events, with explicit truncation markers so a capped
+        render is never mistaken for the whole record. Relationships render in
+        full - they are one line each. Pass ``None`` to lift a cap.
+        """
         parts = []
 
         if self.name:
@@ -799,14 +806,33 @@ class EntityMemory:
 
         live = self.live_facts()
         if live:
-            facts_text = "\n".join(f"  - {f.get('content', f)}" for f in live)
-            parts.append(f"Facts:\n{facts_text}")
+            shown = live[:max_facts] if max_facts is not None else live
+            marker = f" ({len(shown)} of {len(live)} facts)" if len(shown) < len(live) else ""
+            fact_lines = []
+            for f in shown:
+                if isinstance(f, dict):
+                    as_of = str(f.get("updated_at") or f.get("created_at") or "")[:10]
+                    as_of_text = f" (as of {as_of})" if as_of else ""
+                    fact_lines.append(f"  - {f.get('content', f)}{as_of_text}")
+                else:
+                    fact_lines.append(f"  - {f}")
+            parts.append(f"Facts:{marker}\n" + "\n".join(fact_lines))
 
         if self.events:
-            events_text = "\n".join(
-                f"  - {e.get('content', e)}" + (f" ({e.get('date')})" if e.get("date") else "") for e in self.events
+            shown_events = self.events[-max_events:] if max_events is not None else self.events
+            marker = (
+                f" (last {len(shown_events)} of {len(self.events)} events)"
+                if len(shown_events) < len(self.events)
+                else ""
             )
-            parts.append(f"Events:\n{events_text}")
+            event_lines = []
+            for e in shown_events:
+                if isinstance(e, dict):
+                    date = f" ({e.get('date')})" if e.get("date") else ""
+                    event_lines.append(f"  - {e.get('content', e)}{date}")
+                else:
+                    event_lines.append(f"  - {e}")
+            parts.append(f"Events:{marker}\n" + "\n".join(event_lines))
 
         if self.relationships:
             rels_text = "\n".join(f"  - {r.get('relation')}: {r.get('entity_id')}" for r in self.relationships)

@@ -371,6 +371,16 @@ class EntityMemoryConfig:
     # a wrong supersession hides information the user gave us.
     supersession_threshold: float = 0.8
 
+    # Rendering bounds. The injected block always starts with a one-line-per-
+    # entity directory (name + type, newest first, archived excluded), followed
+    # by at most max_entities_in_context expanded entities, each rendering at
+    # most max_facts_per_entity live facts (with as-of dates) and the last
+    # max_events_per_entity events - with visible truncation markers.
+    max_entities_in_context: int = 5
+    max_entities_in_directory: int = 50
+    max_facts_per_entity: int = 10
+    max_events_per_entity: int = 5
+
     # Agent tools
     enable_agent_tools: bool = True
 

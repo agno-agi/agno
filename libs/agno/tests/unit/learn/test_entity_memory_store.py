@@ -398,8 +398,9 @@ class TestForget:
         message = store.forget(entity="radar")
         assert "Archived project/radar" in message
 
-        # Excluded from recall
-        assert store.recall(entity_id="radar", entity_type="project") is None
+        # Excluded from recall: neither expanded nor in the directory
+        recalled = store.recall(entity_id="radar", entity_type="project")
+        assert recalled == {"directory": [], "entities": []}
         # Still reachable via explicit search, marked archived
         result = store.search_entities(query="radar")
         assert "(archived)" in result
@@ -411,7 +412,8 @@ class TestForget:
         store.forget(entity="radar")
         message = store.remember_about(entity="radar", entity_type="project", facts=["back on"])
         assert "revived" in message
-        assert store.recall(entity_id="radar", entity_type="project") is not None
+        recalled = store.recall(entity_id="radar", entity_type="project")
+        assert recalled is not None and len(recalled["entities"]) == 1
 
     def test_forget_unknown_entity(self, store: EntityMemoryStore) -> None:
         assert "No entity found" in store.forget(entity="ghost")
@@ -611,6 +613,76 @@ class TestSearchRouting:
 
         results = store.search(query="zanzibar", limit=5)
         assert [e.entity_id for e in results] == ["needle"]
+
+
+class TestRenderingAndDirectory:
+    def test_rendering_is_bounded_and_honest(self, store: EntityMemoryStore) -> None:
+        store.remember_about(entity="radar", entity_type="project", facts=[f"fact number {i}" for i in range(200)])
+        entity = store.get(entity_id="radar", entity_type="project")
+        assert entity is not None
+
+        text = entity.get_context_text(max_facts=10, max_events=5)
+        assert "(10 of 200 facts)" in text
+        assert text.count("fact number") == 10
+        # Facts render with as-of dates
+        assert "(as of 20" in text
+
+    def test_events_render_last_n_with_marker(self, store: EntityMemoryStore) -> None:
+        store.remember_about(entity="radar", entity_type="project", events=[f"event {i}" for i in range(9)])
+        entity = store.get(entity_id="radar", entity_type="project")
+        assert entity is not None
+        text = entity.get_context_text(max_facts=10, max_events=3)
+        assert "(last 3 of 9 events)" in text
+        assert "event 8" in text and "event 0" not in text
+
+    def test_directory_always_in_recall_and_context(self, store: EntityMemoryStore) -> None:
+        store.remember_about(entity="radar", entity_type="project")
+        store.remember_about(entity="Sarah Chen", entity_type="person")
+
+        # No keyed lookup: recall still returns the directory
+        recalled = store.recall()
+        assert recalled is not None
+        assert [e.entity_id for e in recalled["directory"]] == ["sarah_chen", "radar"]
+        assert recalled["entities"] == []
+
+        context = store.build_context(data=recalled)
+        assert "Entity directory" in context
+        assert "- Sarah Chen (person)" in context
+        assert "- radar (project)" in context
+        assert "not listed there is not known" in context
+
+    def test_directory_excludes_archived(self, store: EntityMemoryStore) -> None:
+        store.remember_about(entity="radar", entity_type="project")
+        store.remember_about(entity="dead project", entity_type="project")
+        store.forget(entity="dead project")
+
+        recalled = store.recall()
+        assert recalled is not None
+        assert [e.entity_id for e in recalled["directory"]] == ["radar"]
+
+    def test_context_caps_expanded_entities(self, db: RecordingLearningDb) -> None:
+        store = EntityMemoryStore(config=EntityMemoryConfig(db=db, max_entities_in_context=2))  # type: ignore[arg-type]
+        entities = []
+        for i in range(4):
+            store.remember_about(entity=f"proj {i}", entity_type="project", facts=[f"about {i}"])
+            entities.append(store.get(entity_id=f"proj_{i}", entity_type="project"))
+
+        context = store.build_context(data={"directory": entities, "entities": entities})
+        # Directory lists all four; only two expand
+        assert context.count("- proj ") == 4
+        assert context.count("Facts:") == 2
+
+    def test_empty_store_context_offers_the_tools(self, store: EntityMemoryStore) -> None:
+        context = store.build_context(data=store.recall())
+        assert "remember_about" in context
+        assert "It is empty so far" in context
+
+    async def test_arecall_matches_recall(self, store: EntityMemoryStore) -> None:
+        await store.aremember_about(entity="radar", entity_type="project")
+        sync_result = store.recall()
+        async_result = await store.arecall()
+        assert sync_result is not None and async_result is not None
+        assert [e.entity_id for e in sync_result["directory"]] == [e.entity_id for e in async_result["directory"]]
 
 
 class TestDataApi:

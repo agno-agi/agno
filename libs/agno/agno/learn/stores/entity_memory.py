@@ -252,37 +252,49 @@ class EntityMemoryStore(LearningStore):
         namespace: Optional[str] = None,
         **kwargs,
     ) -> Optional[Any]:
-        """Retrieve entity memory from storage.
+        """Retrieve entity memory for context injection.
 
-        Archived entities are excluded from recall (they stay reachable via search).
+        Always returns the entity directory (name + type, newest first,
+        archived excluded) so the agent can see what exists and ground its
+        negatives - "not in the directory" is a fact, "substring didn't match"
+        is not. When a keyed lookup is requested (entity_id + entity_type), the
+        matching entity is returned expanded. Archived entities are excluded
+        from recall (they stay reachable via search).
 
         Args:
-            entity_id: The entity to retrieve (required with entity_type).
-            entity_type: The type of entity (required with entity_id).
+            entity_id: Optional entity to expand (with entity_type).
+            entity_type: The type of entity (with entity_id).
             user_id: User ID for "user" namespace scoping.
             namespace: Filter by namespace.
             **kwargs: Additional context (ignored).
 
         Returns:
-            Entity memory, or None if not found.
+            Dict with "directory" (all known entities, bounded) and "entities"
+            (the expanded ones), or None when the namespace cannot be read.
         """
-        if not entity_id or not entity_type:
-            return None
-
         effective_namespace = namespace or self.config.namespace
         if effective_namespace == "user" and not user_id:
             log_warning("EntityMemoryStore.recall: namespace='user' requires user_id")
             return None
 
-        entity = self.get(
-            entity_id=entity_id,
-            entity_type=entity_type,
+        directory = self.list_entities(
             user_id=user_id,
             namespace=effective_namespace,
+            limit=self.config.max_entities_in_directory,
         )
-        if entity is not None and getattr(entity, "archived_at", None):
-            return None
-        return entity
+
+        entities: List[EntityMemory] = []
+        if entity_id and entity_type:
+            entity = self.get(
+                entity_id=entity_id,
+                entity_type=entity_type,
+                user_id=user_id,
+                namespace=effective_namespace,
+            )
+            if entity is not None and not getattr(entity, "archived_at", None):
+                entities.append(entity)
+
+        return {"directory": directory, "entities": entities}
 
     async def arecall(
         self,
@@ -293,23 +305,29 @@ class EntityMemoryStore(LearningStore):
         **kwargs,
     ) -> Optional[Any]:
         """Async version of recall."""
-        if not entity_id or not entity_type:
-            return None
-
         effective_namespace = namespace or self.config.namespace
         if effective_namespace == "user" and not user_id:
             log_warning("EntityMemoryStore.arecall: namespace='user' requires user_id")
             return None
 
-        entity = await self.aget(
-            entity_id=entity_id,
-            entity_type=entity_type,
+        directory = await self.alist_entities(
             user_id=user_id,
             namespace=effective_namespace,
+            limit=self.config.max_entities_in_directory,
         )
-        if entity is not None and getattr(entity, "archived_at", None):
-            return None
-        return entity
+
+        entities: List[EntityMemory] = []
+        if entity_id and entity_type:
+            entity = await self.aget(
+                entity_id=entity_id,
+                entity_type=entity_type,
+                user_id=user_id,
+                namespace=effective_namespace,
+            )
+            if entity is not None and not getattr(entity, "archived_at", None):
+                entities.append(entity)
+
+        return {"directory": directory, "entities": entities}
 
     def process(self, messages: List[Any], **kwargs) -> None:
         """No-op: entity memory is AGENTIC-only, capture happens through the tools."""
@@ -322,20 +340,31 @@ class EntityMemoryStore(LearningStore):
     def build_context(self, data: Any) -> str:
         """Build context for the agent.
 
-        Formats entity memory for injection into the agent's system prompt.
+        Formats entity memory for injection into the agent's system prompt:
+        the entity directory first (always, when anything exists), then the
+        expanded entities, bounded by the config's rendering knobs.
 
         Args:
-            data: Entity memory data from recall() - single entity or list.
+            data: Data from recall() - the {"directory", "entities"} dict, or a
+                single entity / list of entities from direct calls.
 
         Returns:
             Context string to inject into the agent's system prompt.
         """
-        if not data:
+        directory: List[EntityMemory] = []
+        entities: List[Any] = []
+        if isinstance(data, dict) and "directory" in data:
+            directory = data.get("directory") or []
+            entities = data.get("entities") or []
+        elif data:
+            entities = data if isinstance(data, list) else [data]
+
+        if not directory and not entities:
             if self._should_expose_tools:
                 return dedent("""\
                     <entity_memory_system>
                     You have entity memory - a knowledge base about the people, companies,
-                    projects, systems and products relevant to your work.
+                    projects, systems and products relevant to your work. It is empty so far.
 
                     **Available Tools:**
                     - `remember_about`: Record facts, events, a description or a note pointer on an entity
@@ -351,25 +380,38 @@ class EntityMemoryStore(LearningStore):
                     </entity_memory_system>""")
             return ""
 
-        # Handle single entity or list
-        entities = data if isinstance(data, list) else [data]
-        if not entities:
-            return ""
+        sections: List[str] = []
 
-        formatted_parts = []
-        for entity in entities:
-            if hasattr(entity, "get_context_text"):
-                formatted_parts.append(entity.get_context_text())
-            else:
-                formatted_parts.append(self._format_entity_basic(entity=entity))
+        if directory:
+            cap = self.config.max_entities_in_directory
+            listed = directory[:cap]
+            lines = []
+            for entity in listed:
+                name = getattr(entity, "name", None) or getattr(entity, "entity_id", "?")
+                lines.append(f"- {name} ({getattr(entity, 'entity_type', '?')})")
+            header = "**Entity directory** (known entities, newest first"
+            header += f"; showing {len(listed)})" if len(listed) >= cap else ")"
+            sections.append(header + ":\n" + "\n".join(lines))
 
-        formatted = "\n\n---\n\n".join(formatted_parts)
+        shown_entities = entities[: self.config.max_entities_in_context]
+        if shown_entities:
+            formatted_parts = []
+            for entity in shown_entities:
+                if hasattr(entity, "get_context_text"):
+                    formatted_parts.append(
+                        entity.get_context_text(
+                            max_facts=self.config.max_facts_per_entity,
+                            max_events=self.config.max_events_per_entity,
+                        )
+                    )
+                else:
+                    formatted_parts.append(self._format_entity_basic(entity=entity))
+            sections.append("**Known information about relevant entities:**\n\n" + "\n\n---\n\n".join(formatted_parts))
 
-        context = dedent(f"""\
+        body = "\n\n".join(sections)
+        context = dedent("""\
             <entity_memory>
-            **Known information about relevant entities:**
-
-            {formatted}
+            {body}
 
             <entity_memory_guidelines>
             Use this knowledge naturally in your responses:
@@ -377,10 +419,9 @@ class EntityMemoryStore(LearningStore):
             - Treat this as background knowledge you simply have
             - Current conversation takes precedence if there's conflicting information
             - Record new substantive information with remember_about
+            - The directory is the full index: an entity not listed there is not known
             </entity_memory_guidelines>
-        """)
-
-        context += "</entity_memory>"
+            </entity_memory>""").format(body=body)
 
         return context
 
