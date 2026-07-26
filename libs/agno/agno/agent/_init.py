@@ -170,7 +170,18 @@ def set_learning_machine(agent: Agent) -> None:
             agent.learning.db = agent.db
         if agent.learning.model is None:
             agent.learning.model = agent.model
-        if agent.learning.knowledge is None and getattr(agent, "knowledge", None) is not None:
+        # Fill in a learned_knowledge store the developer asked for but whose
+        # knowledge base did not survive a to_dict/from_dict round trip. Gated
+        # on that store being wanted: the machine auto-enables learned_knowledge
+        # whenever it has a knowledge base, so copying unconditionally turned
+        # agent.knowledge into two extra tools - one of which writes into the
+        # user's production index - plus a competing guidance block, on
+        # machines that never asked for it.
+        if (
+            agent.learning.learned_knowledge
+            and agent.learning.knowledge is None
+            and getattr(agent, "knowledge", None) is not None
+        ):
             agent.learning.knowledge = agent.knowledge
         agent._learning = agent.learning
 

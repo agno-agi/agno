@@ -167,3 +167,56 @@ def test_the_automatic_door_is_quiet_because_the_agent_injects_its_model(caplog,
         machine.get_tools(user_id="composer@example.com")
 
     assert not any("LearningMachine has no model" in r.getMessage() for r in caplog.records)
+
+
+def test_agent_knowledge_does_not_conjure_a_learned_knowledge_store(tmp_path) -> None:
+    """`knowledge=` on the agent must not add stores the machine never asked for.
+
+    The copy exists to repair a round trip (from_dict cannot carry a knowledge
+    base). Unconditional, it turned any `Agent(knowledge=kb, learning=machine)`
+    into two extra tools - `save_learning` writes into the user's production
+    index - plus a second guidance block competing with the machine's own.
+    """
+    from agno.agent import Agent
+    from agno.db.sqlite import SqliteDb
+    from agno.learn import EntityMemoryConfig, LearningMode, UserMemoryConfig
+
+    class FakeKnowledge:
+        name = "kb"
+
+    machine = LearningMachine(
+        user_memory=UserMemoryConfig(mode=LearningMode.AGENTIC), entity_memory=EntityMemoryConfig()
+    )
+    agent = Agent(
+        model="openai:gpt-5.5",
+        db=SqliteDb(db_file=str(tmp_path / "a.db")),
+        knowledge=FakeKnowledge(),
+        learning=machine,
+        user_id="u1",
+    )
+    agent.initialize_agent()
+
+    assert sorted(machine.stores) == ["entity_memory", "user_memory"]
+    assert "save_learning" not in {t.__name__ for t in machine.get_tools(user_id="u1")}
+
+
+def test_a_wanted_learned_knowledge_store_still_gets_the_agents_knowledge(tmp_path) -> None:
+    from agno.agent import Agent
+    from agno.db.sqlite import SqliteDb
+    from agno.learn import LearningMode, UserMemoryConfig
+
+    class FakeKnowledge:
+        name = "kb"
+
+    machine = LearningMachine(user_memory=UserMemoryConfig(mode=LearningMode.AGENTIC), learned_knowledge=True)
+    agent = Agent(
+        model="openai:gpt-5.5",
+        db=SqliteDb(db_file=str(tmp_path / "b.db")),
+        knowledge=FakeKnowledge(),
+        learning=machine,
+        user_id="u1",
+    )
+    agent.initialize_agent()
+
+    assert machine.knowledge is not None
+    assert "learned_knowledge" in machine.stores
