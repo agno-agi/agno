@@ -313,3 +313,56 @@ async def test_async_far_edge_detach_reaches_an_async_db(tmp_path) -> None:
     assert quill is not None and rust is not None
     assert quill.relationships == []
     assert rust.relationships == []
+
+
+class TestAsyncEntityToolsAgainstARealAsyncDb:
+    """The sync helpers no-op against an AsyncBaseDb.
+
+    Every one of these passed against the in-memory fake while the real async
+    backend was broken - the fake is synchronous, so it cannot see the gap.
+    """
+
+    async def _store(self, tmp_path, name):
+        from agno.db.sqlite import AsyncSqliteDb
+        from agno.learn.config import LearningMode
+        from agno.learn.stores.entity_memory import EntityMemoryStore
+
+        db = AsyncSqliteDb(db_file=str(tmp_path / name))
+        return EntityMemoryStore(
+            config=EntityMemoryConfig(db=db, mode=LearningMode.AGENTIC, namespace="global")  # type: ignore[arg-type]
+        )
+
+    async def test_ambiguous_name_refuses(self, tmp_path) -> None:
+        store = await self._store(tmp_path, "a.db")
+        await store.aremember_about(entity="Harbor", entity_type="project", namespace="global")
+        await store.aremember_about(entity="Harbor", entity_type="company", namespace="global")
+
+        assert "matches more than one entity" in await store.aforget(entity="Harbor", namespace="global")
+        assert "matches more than one entity" in await store.alink_entities(
+            entity="Harbor", relation="uses", related_entity="Postgres", namespace="global"
+        )
+        project = await store.aget(entity_id="harbor", entity_type="project", namespace="global")
+        assert project is not None and not getattr(project, "archived_at", None)
+
+    async def test_qualified_name_reaches_either_entity(self, tmp_path) -> None:
+        store = await self._store(tmp_path, "b.db")
+        await store.aremember_about(entity="Harbor", entity_type="project", namespace="global")
+        await store.aremember_about(entity="Harbor", entity_type="company", namespace="global")
+
+        message = await store.alink_entities(
+            entity="project/Harbor", relation="uses", related_entity="Postgres", namespace="global"
+        )
+        assert "project/harbor" in message
+        assert "Archived company/harbor" in await store.aforget(entity="company/Harbor", namespace="global")
+
+        project = await store.aget(entity_id="harbor", entity_type="project", namespace="global")
+        company = await store.aget(entity_id="harbor", entity_type="company", namespace="global")
+        assert project is not None and company is not None
+        assert [r["entity_id"] for r in project.relationships] == ["postgres"]
+        assert getattr(company, "archived_at", None) and not getattr(project, "archived_at", None)
+
+    async def test_sibling_signal_reaches_the_async_write(self, tmp_path) -> None:
+        store = await self._store(tmp_path, "c.db")
+        await store.aremember_about(entity="Atlas", entity_type="system", namespace="global")
+        message = await store.aremember_about(entity="Atlas", entity_type="team", namespace="global")
+        assert "system/atlas already exists under this name" in message

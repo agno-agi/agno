@@ -532,7 +532,7 @@ class TestResolution:
             store.forget(entity="Harbor"),
         ):
             assert "matches more than one entity" in message
-            assert "project/harbor" in message and "company/harbor" in message
+            assert "project/Harbor" in message and "company/Harbor" in message
 
         project = store.get(entity_id="harbor", entity_type="project")
         company = store.get(entity_id="harbor", entity_type="company")

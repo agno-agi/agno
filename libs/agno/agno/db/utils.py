@@ -220,9 +220,14 @@ def learning_search_patterns(query: str) -> List[str]:
         return []
 
     variants = [stripped]
-    json_form = json.dumps(stripped, ensure_ascii=True)[1:-1]
-    if json_form != stripped:
-        variants.append(json_form)
+    # SQLite compares the JSON escape as literal text, and LIKE folds ASCII
+    # only, so "É" never matches a stored "é": searching CAFÉ for a
+    # stored Café found nothing. Emit the escape for both cases of every
+    # non-ASCII character so the fold happens before the escape does.
+    for cased in (stripped, stripped.lower(), stripped.upper()):
+        json_form = json.dumps(cased, ensure_ascii=True)[1:-1]
+        if json_form != cased and json_form not in variants:
+            variants.append(json_form)
 
     patterns: List[str] = []
     for variant in variants:

@@ -1223,7 +1223,7 @@ class EntityMemoryStore(LearningStore):
             duplicate_count=duplicate_count,
             siblings=self._same_name_siblings(
                 entity_obj,
-                self._get_rows_by_entity_id(
+                await self._aget_rows_by_entity_id(
                     entity_id=entity_obj.entity_id, user_id=user_id, namespace=effective_namespace
                 ),
             ),
@@ -1739,21 +1739,31 @@ class EntityMemoryStore(LearningStore):
             return "Both entity names are required; nothing was recorded."
 
         for endpoint in (entity, related_entity):
-            ambiguous = self._ambiguous_name(entity=endpoint, user_id=user_id, namespace=effective_namespace)
+            ambiguous = await self._aambiguous_name(entity=endpoint, user_id=user_id, namespace=effective_namespace)
             if ambiguous:
                 return ambiguous
-        entity, entity_qualifier = self._qualified(entity=entity, user_id=user_id, namespace=effective_namespace)
-        related_entity, related_qualifier = self._qualified(
+        entity, entity_qualifier = await self._aqualified(entity=entity, user_id=user_id, namespace=effective_namespace)
+        related_entity, related_qualifier = await self._aqualified(
             entity=related_entity, user_id=user_id, namespace=effective_namespace
         )
 
         async with self._write_lock():
             # Both ends are read-modify-written; see aremember_about.
             source = await self._aresolve_or_create_minimal(
-                entity, user_id=user_id, agent_id=agent_id, team_id=team_id, namespace=effective_namespace
+                entity,
+                user_id=user_id,
+                agent_id=agent_id,
+                team_id=team_id,
+                namespace=effective_namespace,
+                entity_type=entity_qualifier,
             )
             target = await self._aresolve_or_create_minimal(
-                related_entity, user_id=user_id, agent_id=agent_id, team_id=team_id, namespace=effective_namespace
+                related_entity,
+                user_id=user_id,
+                agent_id=agent_id,
+                team_id=team_id,
+                namespace=effective_namespace,
+                entity_type=related_qualifier,
             )
             if source.entity_id == target.entity_id and source.entity_type == target.entity_type:
                 return f"Cannot link {source.entity_type}/{source.entity_id} to itself; nothing was recorded."
@@ -2033,10 +2043,10 @@ class EntityMemoryStore(LearningStore):
             return "Entity memory needs a user_id for the 'user' namespace; nothing was changed."
         async with self._write_lock():
             # Read-modify-write; see aremember_about.
-            ambiguous = self._ambiguous_name(entity=entity, user_id=user_id, namespace=effective_namespace)
+            ambiguous = await self._aambiguous_name(entity=entity, user_id=user_id, namespace=effective_namespace)
             if ambiguous:
                 return ambiguous
-            entity, qualifier = self._qualified(entity=entity, user_id=user_id, namespace=effective_namespace)
+            entity, qualifier = await self._aqualified(entity=entity, user_id=user_id, namespace=effective_namespace)
             entity_obj = await self._aresolve(
                 entity=entity, entity_type=qualifier, user_id=user_id, namespace=effective_namespace
             )
@@ -2138,22 +2148,72 @@ class EntityMemoryStore(LearningStore):
         more = f"\n  ... and {len(live) - len(bounded)} more" if len(live) > len(bounded) else ""
         return f"No matching fact on {label}. Its live facts are:\n{listing}{more}", False, None
 
-    def _ambiguous_name(self, entity: str, user_id: Optional[str], namespace: str) -> Optional[str]:
-        """A refusal listing every type this name resolves to, or None.
+    def _name_rows(self, entity: str, user_id: Optional[str], namespace: str) -> List[Dict[str, Any]]:
+        """Every stored row this bare name could mean.
 
-        link_entities and forget carry no entity_type, and types are never
-        merged across, so a bare "Harbor" would silently pick whichever row
-        sorted first and leave the other permanently unaddressable.
+        Rows keyed by the slug, plus the exact-name and alias candidates
+        ``_resolve`` would reach - a row whose id was set by an external writer
+        ("harbor_co_001") is invisible to a slug-only lookup, so it used to
+        evade the ambiguity guard and be unreachable through the qualified form.
         """
-        name, qualifier = self._qualified(entity=entity, user_id=user_id, namespace=namespace)
-        if qualifier:
-            return None
-        rows = self._get_rows_by_entity_id(entity_id=_slugify(name), user_id=user_id, namespace=namespace)
+        name = _normalize_name(entity)
+        rows = list(self._get_rows_by_entity_id(entity_id=_slugify(entity), user_id=user_id, namespace=namespace))
+        seen = {row.get("learning_id") for row in rows}
+        for row in self._name_candidates(entity=entity, user_id=user_id, namespace=namespace):
+            if row.get("learning_id") in seen:
+                continue
+            parsed = self.schema.from_dict(row.get("content"))
+            if parsed is None:
+                continue
+            names = [getattr(parsed, "name", None) or ""] + list(getattr(parsed, "aliases", None) or [])
+            if any(candidate and _normalize_name(str(candidate)) == name for candidate in names):
+                rows.append(row)
+                seen.add(row.get("learning_id"))
+        return rows
+
+    async def _aname_rows(self, entity: str, user_id: Optional[str], namespace: str) -> List[Dict[str, Any]]:
+        """Async version of _name_rows."""
+        name = _normalize_name(entity)
+        rows = list(
+            await self._aget_rows_by_entity_id(entity_id=_slugify(entity), user_id=user_id, namespace=namespace)
+        )
+        seen = {row.get("learning_id") for row in rows}
+        for row in await self._aname_candidates(entity=entity, user_id=user_id, namespace=namespace):
+            if row.get("learning_id") in seen:
+                continue
+            parsed = self.schema.from_dict(row.get("content"))
+            if parsed is None:
+                continue
+            names = [getattr(parsed, "name", None) or ""] + list(getattr(parsed, "aliases", None) or [])
+            if any(candidate and _normalize_name(str(candidate)) == name for candidate in names):
+                rows.append(row)
+                seen.add(row.get("learning_id"))
+        return rows
+
+    @staticmethod
+    def _ambiguity_message(entity: str, rows: List[Dict[str, Any]]) -> Optional[str]:
+        """A refusal listing every type this name resolves to, or None."""
         types = sorted({str(row.get("entity_type")) for row in rows if row.get("entity_type")})
         if len(types) < 2:
             return None
-        listing = "\n".join(f"  - {t}/{_slugify(name)}" for t in types)
-        return f"{name!r} matches more than one entity; nothing was changed. Call again naming one of:\n{listing}"
+        listing = "\n".join(f"  - {t}/{entity}" for t in types)
+        return f"{entity!r} matches more than one entity; nothing was changed. Call again naming one of:\n{listing}"
+
+    def _ambiguous_name(self, entity: str, user_id: Optional[str], namespace: str) -> Optional[str]:
+        """link_entities and forget carry no entity_type, and types are never
+        merged across, so a bare "Harbor" would silently pick whichever row
+        sorted first and leave the other permanently unaddressable."""
+        name, qualifier = self._qualified(entity=entity, user_id=user_id, namespace=namespace)
+        if qualifier:
+            return None
+        return self._ambiguity_message(name, self._name_rows(entity=name, user_id=user_id, namespace=namespace))
+
+    async def _aambiguous_name(self, entity: str, user_id: Optional[str], namespace: str) -> Optional[str]:
+        """Async version of _ambiguous_name."""
+        name, qualifier = await self._aqualified(entity=entity, user_id=user_id, namespace=namespace)
+        if qualifier:
+            return None
+        return self._ambiguity_message(name, await self._aname_rows(entity=name, user_id=user_id, namespace=namespace))
 
     def _qualified(self, entity: str, user_id: Optional[str], namespace: str) -> Tuple[str, Optional[str]]:
         """Read back the "type/name" form the ambiguity reply asks for.
@@ -2164,9 +2224,16 @@ class EntityMemoryStore(LearningStore):
         remainder = entity.partition("/")[2]
         if not remainder:
             return entity, None
-        rows = self._get_rows_by_entity_id(entity_id=_slugify(remainder), user_id=user_id, namespace=namespace)
-        known = [str(r.get("entity_type")) for r in rows if r.get("entity_type")]
-        return _split_qualified_name(entity, known)
+        rows = self._name_rows(entity=remainder, user_id=user_id, namespace=namespace)
+        return _split_qualified_name(entity, [str(r.get("entity_type")) for r in rows if r.get("entity_type")])
+
+    async def _aqualified(self, entity: str, user_id: Optional[str], namespace: str) -> Tuple[str, Optional[str]]:
+        """Async version of _qualified."""
+        remainder = entity.partition("/")[2]
+        if not remainder:
+            return entity, None
+        rows = await self._aname_rows(entity=remainder, user_id=user_id, namespace=namespace)
+        return _split_qualified_name(entity, [str(r.get("entity_type")) for r in rows if r.get("entity_type")])
 
     def _forget_edge(
         self, entity_obj: EntityMemory, needle: str, label: str
@@ -2797,6 +2864,18 @@ class EntityMemoryStore(LearningStore):
             return [limit]
         return [limit * 2, limit * 8, limit * 32]
 
+    @staticmethod
+    def _verified_search_window(limit: int) -> List[int]:
+        """Fetch sizes to try when searching.
+
+        The db-side LIKE matches the whole serialized row, key names included,
+        so ordinary words ("name", "content", "events") match every row and a
+        fixed multiple of `limit` fills with rows that then fail value-only
+        verification - the real match, older, is never fetched. Escalate until
+        the verified count is met or the backend is exhausted.
+        """
+        return [limit * 3, limit * 12, limit * 48]
+
     def _parse_rows(self, rows: List[Dict[str, Any]], limit: int, include_archived: bool) -> List[EntityMemory]:
         entities: List[EntityMemory] = []
         for row in rows:
@@ -2859,15 +2938,20 @@ class EntityMemoryStore(LearningStore):
             )
 
         try:
-            rows = db.search_learnings(
-                query=query,
-                learning_type=self.learning_type,
-                entity_type=entity_type,
-                namespace=effective_namespace,
-                user_id=user_id if effective_namespace == "user" else None,
-                # Headroom for the client-side verification and archived filters.
-                limit=limit * 3,
-            )
+            entities: List[EntityMemory] = []
+            for fetch in self._verified_search_window(limit):
+                rows = db.search_learnings(
+                    query=query,
+                    learning_type=self.learning_type,
+                    entity_type=entity_type,
+                    namespace=effective_namespace,
+                    user_id=user_id if effective_namespace == "user" else None,
+                    limit=fetch,
+                )
+                rows = rows or []
+                entities = self._filter_rows_by_query(rows, query=query, limit=limit, include_archived=include_archived)
+                if len(entities) >= limit or len(rows) < fetch:
+                    break
         except NotImplementedError:
             self._log_degraded_search_once()
             return self._search_client_side(
@@ -2879,7 +2963,6 @@ class EntityMemoryStore(LearningStore):
                 include_archived=include_archived,
             )
 
-        entities = self._filter_rows_by_query(rows or [], query=query, limit=limit, include_archived=include_archived)
         log_debug(f"EntityMemoryStore.search: found {len(entities)} entities for query: {query[:50]}")
         return entities
 
@@ -2914,24 +2997,30 @@ class EntityMemoryStore(LearningStore):
             )
 
         try:
-            if isinstance(self.db, AsyncBaseDb):
-                rows = await self.db.search_learnings(
-                    query=query,
-                    learning_type=self.learning_type,
-                    entity_type=entity_type,
-                    namespace=effective_namespace,
-                    user_id=user_id if effective_namespace == "user" else None,
-                    limit=limit * 3,
-                )
-            else:
-                rows = self.db.search_learnings(
-                    query=query,
-                    learning_type=self.learning_type,
-                    entity_type=entity_type,
-                    namespace=effective_namespace,
-                    user_id=user_id if effective_namespace == "user" else None,
-                    limit=limit * 3,
-                )
+            entities: List[EntityMemory] = []
+            for fetch in self._verified_search_window(limit):
+                if isinstance(self.db, AsyncBaseDb):
+                    rows = await self.db.search_learnings(
+                        query=query,
+                        learning_type=self.learning_type,
+                        entity_type=entity_type,
+                        namespace=effective_namespace,
+                        user_id=user_id if effective_namespace == "user" else None,
+                        limit=fetch,
+                    )
+                else:
+                    rows = self.db.search_learnings(
+                        query=query,
+                        learning_type=self.learning_type,
+                        entity_type=entity_type,
+                        namespace=effective_namespace,
+                        user_id=user_id if effective_namespace == "user" else None,
+                        limit=fetch,
+                    )
+                rows = rows or []
+                entities = self._filter_rows_by_query(rows, query=query, limit=limit, include_archived=include_archived)
+                if len(entities) >= limit or len(rows) < fetch:
+                    break
         except NotImplementedError:
             self._log_degraded_search_once()
             return await self._asearch_client_side(
@@ -2943,7 +3032,6 @@ class EntityMemoryStore(LearningStore):
                 include_archived=include_archived,
             )
 
-        entities = self._filter_rows_by_query(rows or [], query=query, limit=limit, include_archived=include_archived)
         log_debug(f"EntityMemoryStore.asearch: found {len(entities)} entities for query: {query[:50]}")
         return entities
 
