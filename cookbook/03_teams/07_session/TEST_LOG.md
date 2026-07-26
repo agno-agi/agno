@@ -1252,3 +1252,15 @@ DEBUG *** Agent Run End: cbcd5600-c38b-42e8-8926-0f9097402ed6 ****
 
 ---
 
+
+---
+
+### nested_team_history_to_members.py
+
+**Status:** PASS
+
+**Description:** Nested team (Main Team → Research Team sub-team) with `add_team_history_to_members=True`. Verifies the sub-team receives its OWN prior history (team_id-filtered) across turns, not the root team leader's. Run against PR #8956 code, SQLite, gpt-5.5, sync + streaming.
+
+**Result:** Both turns delegated to `member_id=research_team` (the sub-team, not the leaf agent). Turn 1: Research Team reported "7 is the most likely sum when rolling two standard six-sided dice." Turn 2 ("What number did the Research Team research last time...?"): the sub-team correctly recalled "the number 7" and the exact fact, sourced from its own team_id-filtered history. Instrumented check confirmed `get_team_history_context(team_id="research_team")` fired on the delegation path.
+
+---

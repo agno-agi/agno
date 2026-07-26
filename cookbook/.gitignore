@@ -10,3 +10,7 @@ data_labeling/_*/data/generated/
 # rollout exports and saved baselines stay ignored via data/generated/
 !environments/_*/data/
 environments/_*/data/generated/
+
+# quickstart commits its small, versioned knowledge fixture.
+!00_quickstart/data/
+!00_quickstart/data/agno_overview.md
