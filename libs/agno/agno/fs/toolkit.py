@@ -23,9 +23,11 @@ genuinely needs both FileSystem and a local workspace, wrap one in a sub-agent.
 
 import asyncio
 import json
+from contextlib import AsyncExitStack, asynccontextmanager
 from datetime import datetime, timezone
 from fnmatch import fnmatch
-from typing import Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Union
+from weakref import WeakKeyDictionary
 
 # Real module-level imports, never TYPE_CHECKING-only: with postponed annotations a
 # deferred import does not fail loudly. get_type_hints raises during schema
@@ -37,7 +39,7 @@ from agno.fs.fs import FileSystem
 from agno.run import RunContext
 from agno.team.team import Team
 from agno.tools.toolkit import Toolkit
-from agno.utils.log import log_debug, log_error
+from agno.utils.log import log_debug, log_error, log_warning
 
 _MAX_DIR_ENTRIES = 200
 
@@ -91,8 +93,9 @@ def _format_with_line_numbers(text: str, start_line: int = 1) -> str:
 class FileSystemTools(Toolkit):
     """Toolkit over one ``FileSystem`` file store. Build it with ``FileSystem.tools()``.
 
-    Registers the full nine-tool surface, or the four read tools when
-    ``read_only=True`` (the surface for a consumer agent that consults another
+    Registers the notes seven by default (``allow_delete=True`` adds
+    ``delete_file``; ``include_tools`` selects explicitly from the whole
+    nine-tool surface), or the three read tools when ``read_only=True`` (the surface for a consumer agent that consults another
     agent's namespace by shared name). Holds the matching FileSystem instructions,
     which reach the system prompt only under ``add_instructions=True``; otherwise
     compose ``FileSystem.instructions()`` into the agent's own instructions, and
@@ -109,6 +112,7 @@ class FileSystemTools(Toolkit):
     agent genuinely needs both, wrap one in a sub-agent.
     """
 
+    # The whole surface, exported for callers that want everything explicitly.
     FULL_TOOLS: List[str] = [
         "read_file",
         "write_file",
@@ -120,22 +124,69 @@ class FileSystemTools(Toolkit):
         "move_file",
         "delete_file",
     ]
-    READ_ONLY_TOOLS: List[str] = ["read_file", "list_files", "search_content", "check_lines"]
+    # The default surface: the notes seven. check_lines (the batched record-set
+    # membership test) is requested by name via include_tools; delete_file (the
+    # one tool that can lose work) sits behind allow_delete=True.
+    DEFAULT_TOOLS: List[str] = [
+        "read_file",
+        "write_file",
+        "append_file",
+        "replace_lines",
+        "list_files",
+        "search_content",
+        "move_file",
+    ]
+    READ_ONLY_TOOLS: List[str] = ["read_file", "list_files", "search_content"]
+    # What a read-only toolkit may select from via include_tools.
+    _READ_CAPABLE_TOOLS: List[str] = ["read_file", "list_files", "search_content", "check_lines"]
 
     def __init__(
         self,
         fs: FileSystem,
         read_only: bool = False,
+        allow_delete: bool = False,
         instructions: Optional[str] = None,
         add_instructions: bool = False,
         **kwargs,
     ):
         self.fs = fs
         self.read_only = read_only
+        # Every mutating tool is a read-modify-write over one row, and a model's
+        # tool calls for one turn are gathered concurrently (models/base.py) -
+        # the path AgentOS REST and /mcp take. Two replace_lines on one note
+        # both read the pre-edit content and the second write wins, with both
+        # tool results reporting success. Same guard entity memory takes for
+        # its rows, and the same honesty: single process only.
+        self._write_locks: Any = WeakKeyDictionary()
+        if read_only and allow_delete:
+            raise ValueError("allow_delete=True contradicts read_only=True; pick one.")
         if instructions is None:
             instructions = FileSystem.instructions(read_only=read_only)
 
-        registered = self.READ_ONLY_TOOLS if read_only else self.FULL_TOOLS
+        if kwargs.get("include_tools") is not None:
+            # include_tools is a fully explicit whitelist over the whole
+            # (read-capable) surface: naming check_lines or delete_file there IS
+            # the opt-in for them.
+            registered = self._READ_CAPABLE_TOOLS if read_only else self.FULL_TOOLS
+        elif read_only:
+            registered = self.READ_ONLY_TOOLS
+        else:
+            registered = self.DEFAULT_TOOLS + (["delete_file"] if allow_delete else [])
+        if kwargs.get("exclude_tools"):
+            # Excluding a tool that exists but is not in this set (delete_file,
+            # which left the default) is a no-op, not an error - upgraders used
+            # exclude_tools=["delete_file"] as the safety idiom. A name that is
+            # no tool at all is still a typo, and swallowing it silently leaves
+            # a tool registered that the caller believed was gone - say so
+            # without breaking a call that otherwise resolves fine.
+            unknown = [name for name in kwargs["exclude_tools"] if name not in self.FULL_TOOLS]
+            if unknown:
+                log_warning(
+                    f"FileSystem.tools: exclude_tools names {unknown}, which are not FileSystem "
+                    f"tools - check the spelling, because nothing was excluded for them. "
+                    f"Available: {', '.join(self.FULL_TOOLS)}."
+                )
+            kwargs["exclude_tools"] = [name for name in kwargs["exclude_tools"] if name in registered]
         sync_tools = [getattr(self, name) for name in registered]
         async_tools = [(getattr(self, "a" + name), name) for name in registered]
 
@@ -166,14 +217,13 @@ class FileSystemTools(Toolkit):
         if e.scope == "file":
             return (
                 f"Error: {path} would be {e.current} bytes (limit {e.limit} per file). "
-                "Start a new file (for record logs, partition by date, e.g. seen/2026-07-24.md) "
-                "or delete files you no longer need."
+                "Split the topic into smaller files (or partition by date) and retry."
             )
         return (
             f"Error: storage is full ({e.current} of {e.limit} bytes). "
-            "Delete only files you are certain are obsolete (see list_files), such as an old date "
-            "partition, then retry. Do not overwrite or delete records you might still need to "
-            "make room; if nothing is safely disposable, stop and report that storage is full."
+            "Free space only if you have a tool for it and only from files you are certain are "
+            "obsolete (see list_files). Never overwrite or discard records you might still need "
+            "to make room; if nothing is safely disposable, stop and report that storage is full."
         )
 
     # ------------------------------------------------------------------
@@ -216,7 +266,7 @@ class FileSystemTools(Toolkit):
                     return (
                         f"Error: file too long to read whole ({len(contents)} chars, {total} lines; "
                         f"limit {_MAX_READ_CHARS} chars). Read a range with start_line/end_line, or "
-                        "use search_content first: it reports the line number of each match."
+                        "use search_content first: it reports each matching file's first-match line."
                     )
                 return _format_with_line_numbers(contents, start_line=1)
             start = start_line if start_line is not None else 1
@@ -363,8 +413,7 @@ class FileSystemTools(Toolkit):
         Each result gives the line number of the first match, so you can follow up with
         read_file(path, start_line=..., end_line=...) instead of reading the whole file.
         ``matches`` counts every occurrence in that file, while ``snippet`` shows only
-        the first. To check whether exact records are already stored, use check_lines
-        instead, since substring matches can mislead there.
+        the first.
 
         :param query: Substring to search for.
         :param directory: Directory to scope the search (default "." = everything).
@@ -480,7 +529,7 @@ class FileSystemTools(Toolkit):
         """Append lines to a file, creating it if needed.
 
         Line-oriented: appended content always starts on a fresh line and ends with a
-        newline. Keep one record per line (one URL, one ID) so check_lines can match
+        newline. Keep one record per line (one URL, one ID) so exact-line checks can match
         records exactly.
 
         :param path: File path, e.g. "seen/2026-07-24.md". Parent folders are implicit.
@@ -678,6 +727,42 @@ class FileSystemTools(Toolkit):
             self.check_lines, lines, directory, run_context=run_context, agent=agent, team=team
         )
 
+    def _lock_for(self, key: str) -> "asyncio.Lock":
+        """The lock for one file, per running event loop.
+
+        An asyncio.Lock binds to the loop that first awaits it, so the cache is
+        keyed weakly by loop: a second loop (a fresh asyncio.run, a worker
+        thread) gets its own locks instead of one bound to a closed loop.
+        """
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = None
+        if loop is None:
+            return asyncio.Lock()
+        per_loop = self._write_locks.get(loop)
+        if per_loop is None:
+            per_loop = {}
+            self._write_locks[loop] = per_loop
+        lock = per_loop.get(key)
+        if lock is None:
+            lock = asyncio.Lock()
+            per_loop[key] = lock
+        return lock
+
+    @asynccontextmanager
+    async def _locked(self, *paths: str):
+        """Hold the write lock for each named file, acquired in a stable order.
+
+        Sorted so two tool calls naming the same pair (move_file src/dst) cannot
+        deadlock by taking them in opposite orders.
+        """
+        namespace = getattr(self.fs, "namespace", "")
+        async with AsyncExitStack() as stack:
+            for key in sorted({f"{namespace}:{path}" for path in paths if path}):
+                await stack.enter_async_context(self._lock_for(key))
+            yield
+
     async def awrite_file(
         self,
         path: str,
@@ -689,9 +774,10 @@ class FileSystemTools(Toolkit):
         team: Optional[Team] = None,
     ) -> str:
         """Async variant of ``write_file``."""
-        return await asyncio.to_thread(
-            self.write_file, path, content, overwrite, run_context=run_context, agent=agent, team=team
-        )
+        async with self._locked(path):
+            return await asyncio.to_thread(
+                self.write_file, path, content, overwrite, run_context=run_context, agent=agent, team=team
+            )
 
     async def aappend_file(
         self,
@@ -704,9 +790,10 @@ class FileSystemTools(Toolkit):
         team: Optional[Team] = None,
     ) -> str:
         """Async variant of ``append_file``."""
-        return await asyncio.to_thread(
-            self.append_file, path, content, unique, run_context=run_context, agent=agent, team=team
-        )
+        async with self._locked(path):
+            return await asyncio.to_thread(
+                self.append_file, path, content, unique, run_context=run_context, agent=agent, team=team
+            )
 
     async def areplace_lines(
         self,
@@ -720,9 +807,17 @@ class FileSystemTools(Toolkit):
         team: Optional[Team] = None,
     ) -> str:
         """Async variant of ``replace_lines``."""
-        return await asyncio.to_thread(
-            self.replace_lines, path, start_line, end_line, content, run_context=run_context, agent=agent, team=team
-        )
+        async with self._locked(path):
+            return await asyncio.to_thread(
+                self.replace_lines,
+                path,
+                start_line,
+                end_line,
+                content,
+                run_context=run_context,
+                agent=agent,
+                team=team,
+            )
 
     async def amove_file(
         self,
@@ -735,9 +830,10 @@ class FileSystemTools(Toolkit):
         team: Optional[Team] = None,
     ) -> str:
         """Async variant of ``move_file``."""
-        return await asyncio.to_thread(
-            self.move_file, src, dst, overwrite, run_context=run_context, agent=agent, team=team
-        )
+        async with self._locked(src, dst):
+            return await asyncio.to_thread(
+                self.move_file, src, dst, overwrite, run_context=run_context, agent=agent, team=team
+            )
 
     async def adelete_file(
         self,
@@ -748,7 +844,8 @@ class FileSystemTools(Toolkit):
         team: Optional[Team] = None,
     ) -> str:
         """Async variant of ``delete_file``."""
-        return await asyncio.to_thread(self.delete_file, path, run_context=run_context, agent=agent, team=team)
+        async with self._locked(path):
+            return await asyncio.to_thread(self.delete_file, path, run_context=run_context, agent=agent, team=team)
 
 
 # The async twins delegate to their sync counterparts via asyncio.to_thread, so they
