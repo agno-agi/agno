@@ -521,6 +521,48 @@ class TestResolution:
         store.remember_about(entity="Radar", entity_type="person", facts=["role: staff engineer"])
         assert len(db.rows) == 2
 
+    def test_an_ambiguous_name_changes_nothing(self, store: EntityMemoryStore) -> None:
+        """link_entities and forget carry no entity_type, so a shared name
+        would silently pick one row and strand the other."""
+        store.remember_about(entity="Harbor", entity_type="project", facts=["the ingest rewrite"])
+        store.remember_about(entity="Harbor", entity_type="company", facts=["HQ Lisbon"])
+
+        for message in (
+            store.link_entities(entity="Harbor", relation="uses", related_entity="Postgres"),
+            store.forget(entity="Harbor"),
+        ):
+            assert "matches more than one entity" in message
+            assert "project/harbor" in message and "company/harbor" in message
+
+        project = store.get(entity_id="harbor", entity_type="project")
+        company = store.get(entity_id="harbor", entity_type="company")
+        assert project is not None and company is not None
+        assert project.relationships == [] and not getattr(company, "archived_at", None)
+
+    def test_a_qualified_name_reaches_either_entity(self, store: EntityMemoryStore) -> None:
+        store.remember_about(entity="Harbor", entity_type="project", facts=["the ingest rewrite"])
+        store.remember_about(entity="Harbor", entity_type="company", facts=["HQ Lisbon"])
+
+        assert "project/harbor" in store.link_entities(
+            entity="project/Harbor", relation="uses", related_entity="Postgres"
+        )
+        assert "Archived company/harbor" in store.forget(entity="company/Harbor")
+
+        project = store.get(entity_id="harbor", entity_type="project")
+        company = store.get(entity_id="harbor", entity_type="company")
+        assert project is not None and company is not None
+        assert [r["entity_id"] for r in project.relationships] == ["postgres"]
+        assert getattr(company, "archived_at", None)
+        assert not getattr(project, "archived_at", None)
+
+    async def test_async_ambiguous_name_changes_nothing(self, store: EntityMemoryStore) -> None:
+        await store.aremember_about(entity="Harbor", entity_type="project")
+        await store.aremember_about(entity="Harbor", entity_type="company")
+        assert "matches more than one entity" in await store.aforget(entity="Harbor")
+        assert "matches more than one entity" in await store.alink_entities(
+            entity="Harbor", relation="uses", related_entity="Postgres"
+        )
+
     def test_a_stale_relationship_can_be_retired(self, store: EntityMemoryStore) -> None:
         """A corrected link had no retirement path: stating the new one left
         both edges rendering, undated, forever."""

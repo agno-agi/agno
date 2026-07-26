@@ -170,6 +170,23 @@ def _blank_to_none(value: Optional[str]) -> Optional[str]:
     return value.strip() or None
 
 
+def _split_qualified_name(entity: str) -> Tuple[str, Optional[str]]:
+    """Split a "type/name" reference into (name, type).
+
+    Two entities can share a name under different types, and neither
+    link_entities nor forget carries an entity_type. The ambiguity replies tell
+    the model to name one as "project/Harbor", so both tools have to read it
+    back. A plain name is returned unchanged.
+    """
+    if "/" not in entity:
+        return entity, None
+    prefix, _, rest = entity.partition("/")
+    prefix, rest = prefix.strip(), rest.strip()
+    if not prefix or not rest:
+        return entity, None
+    return rest, prefix
+
+
 def _types_can_merge(incoming: Optional[str], existing: Optional[str]) -> bool:
     """Whether a name match across two entity types is the same thing.
 
@@ -224,8 +241,12 @@ Both ends are resolved by name. An end that is not known yet is created as a
 minimal entity, so it is safe to link first and describe later. The link is
 stored on both entities, so it is visible from either side.
 
+A link that stops being true is removed with forget, naming it the way it is
+rendered ("written_in -> Rust"); recording the new one does not retire the old.
+
 Args:
-    entity: Source entity name.
+    entity: Source entity name. If two entities share it, name one as
+        "project/Harbor" - the reply tells you when that is needed.
     relation: The relationship, a short verb phrase ("works_on", "owns", "uses").
     related_entity: Target entity name.
 
@@ -276,7 +297,8 @@ directory, stays findable via search_entities, and any later remember_about abou
 it revives it.
 
 Args:
-    entity: The entity's name.
+    entity: The entity's name. If two entities share it, name one as
+        "project/Harbor" - the reply tells you when that is needed.
     fact: The fact to retire, worded as closely as you can to how it was stored,
         or the relationship to remove ("works_on -> radar").
 
@@ -1645,6 +1667,11 @@ class EntityMemoryStore(LearningStore):
         if not _slugify_or_none(entity) or not _slugify_or_none(related_entity):
             return "Both entity names are required; nothing was recorded."
 
+        for endpoint in (entity, related_entity):
+            ambiguous = self._ambiguous_name(entity=endpoint, user_id=user_id, namespace=effective_namespace)
+            if ambiguous:
+                return ambiguous
+
         source = self._resolve_or_create_minimal(
             entity, user_id=user_id, agent_id=agent_id, team_id=team_id, namespace=effective_namespace
         )
@@ -1690,6 +1717,11 @@ class EntityMemoryStore(LearningStore):
 
         if not _slugify_or_none(entity) or not _slugify_or_none(related_entity):
             return "Both entity names are required; nothing was recorded."
+
+        for endpoint in (entity, related_entity):
+            ambiguous = self._ambiguous_name(entity=endpoint, user_id=user_id, namespace=effective_namespace)
+            if ambiguous:
+                return ambiguous
 
         async with self._write_lock():
             # Both ends are read-modify-written; see aremember_about.
@@ -1934,6 +1966,9 @@ class EntityMemoryStore(LearningStore):
         if effective_namespace == "user" and not user_id:
             log_warning("EntityMemoryStore.forget: namespace='user' requires user_id")
             return "Entity memory needs a user_id for the 'user' namespace; nothing was changed."
+        ambiguous = self._ambiguous_name(entity=entity, user_id=user_id, namespace=effective_namespace)
+        if ambiguous:
+            return ambiguous
         entity_obj = self._resolve(entity=entity, entity_type=None, user_id=user_id, namespace=effective_namespace)
         if entity_obj is None:
             return f"No entity found matching {entity!r}."
@@ -1971,6 +2006,9 @@ class EntityMemoryStore(LearningStore):
             return "Entity memory needs a user_id for the 'user' namespace; nothing was changed."
         async with self._write_lock():
             # Read-modify-write; see aremember_about.
+            ambiguous = self._ambiguous_name(entity=entity, user_id=user_id, namespace=effective_namespace)
+            if ambiguous:
+                return ambiguous
             entity_obj = await self._aresolve(
                 entity=entity, entity_type=None, user_id=user_id, namespace=effective_namespace
             )
@@ -2062,6 +2100,23 @@ class EntityMemoryStore(LearningStore):
         more = f"\n  ... and {len(live) - len(bounded)} more" if len(live) > len(bounded) else ""
         return f"No matching fact on {label}. Its live facts are:\n{listing}{more}", False
 
+    def _ambiguous_name(self, entity: str, user_id: Optional[str], namespace: str) -> Optional[str]:
+        """A refusal listing every type this name resolves to, or None.
+
+        link_entities and forget carry no entity_type, and types are never
+        merged across, so a bare "Harbor" would silently pick whichever row
+        sorted first and leave the other permanently unaddressable.
+        """
+        name, qualifier = _split_qualified_name(entity)
+        if qualifier:
+            return None
+        rows = self._get_rows_by_entity_id(entity_id=_slugify(name), user_id=user_id, namespace=namespace)
+        types = sorted({str(row.get("entity_type")) for row in rows if row.get("entity_type")})
+        if len(types) < 2:
+            return None
+        listing = "\n".join(f"  - {t}/{_slugify(name)}" for t in types)
+        return f"{name!r} matches more than one entity; nothing was changed. Call again naming one of:\n{listing}"
+
     def _forget_edge(self, entity_obj: EntityMemory, needle: str, label: str) -> Tuple[Optional[str], bool]:
         """Retire a relationship whose text the caller named.
 
@@ -2147,8 +2202,9 @@ class EntityMemoryStore(LearningStore):
         types), then exact name, then aliases. Matching is deliberately narrow -
         a wrong merge has no unmerge.
         """
+        entity, qualifier = _split_qualified_name(entity)
         slug = _slugify(entity)
-        normalized_type = _normalize_entity_type(entity_type)
+        normalized_type = _normalize_entity_type(qualifier or entity_type)
 
         if normalized_type:
             found = self.get(entity_id=slug, entity_type=normalized_type, user_id=user_id, namespace=namespace)
@@ -2172,8 +2228,9 @@ class EntityMemoryStore(LearningStore):
         namespace: str,
     ) -> Optional[EntityMemory]:
         """Async version of _resolve."""
+        entity, qualifier = _split_qualified_name(entity)
         slug = _slugify(entity)
-        normalized_type = _normalize_entity_type(entity_type)
+        normalized_type = _normalize_entity_type(qualifier or entity_type)
 
         if normalized_type:
             found = await self.aget(entity_id=slug, entity_type=normalized_type, user_id=user_id, namespace=namespace)
