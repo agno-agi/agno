@@ -725,3 +725,49 @@ class TestExcludeToolsTypos:
         names = set(fs.tools(exclude_tools=["move_file"]).functions)
         assert "move_file" not in names
         assert names == set(FileSystemTools.DEFAULT_TOOLS) - {"move_file"}
+
+
+class TestConcurrentEditsInOneTurn:
+    """A model's tool calls for one turn are gathered concurrently, and every
+    mutating fs tool is a read-modify-write. Without a per-file lock the second
+    write lands on the pre-edit content and one edit vanishes, with both tool
+    results reporting success."""
+
+    @pytest.mark.asyncio
+    async def test_two_replace_lines_on_one_note_both_land(self, tmp_path) -> None:
+        import asyncio
+
+        from agno.db.sqlite import SqliteDb
+        from agno.fs import FileSystem
+
+        fs = FileSystem(SqliteDb(db_file=str(tmp_path / "n.db")), namespace="brain")
+        tools = fs.tools()
+        fs.write("notes/radar.md", "line one\nline two\nline three\n")
+
+        await asyncio.gather(
+            tools.areplace_lines("notes/radar.md", 1, 1, "EDIT ONE"),
+            tools.areplace_lines("notes/radar.md", 3, 3, "EDIT THREE"),
+        )
+
+        content = fs.read("notes/radar.md")
+        assert "EDIT ONE" in content and "EDIT THREE" in content
+        assert "line two" in content
+
+    @pytest.mark.asyncio
+    async def test_an_append_beside_an_edit_survives(self, tmp_path) -> None:
+        import asyncio
+
+        from agno.db.sqlite import SqliteDb
+        from agno.fs import FileSystem
+
+        fs = FileSystem(SqliteDb(db_file=str(tmp_path / "m.db")), namespace="brain")
+        tools = fs.tools()
+        fs.write("notes/log.md", "start\n")
+
+        await asyncio.gather(
+            tools.aappend_file("notes/log.md", "appended"),
+            tools.areplace_lines("notes/log.md", 1, 1, "REPLACED"),
+        )
+
+        content = fs.read("notes/log.md")
+        assert "REPLACED" in content and "appended" in content

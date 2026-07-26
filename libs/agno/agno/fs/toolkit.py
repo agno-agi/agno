@@ -23,9 +23,11 @@ genuinely needs both FileSystem and a local workspace, wrap one in a sub-agent.
 
 import asyncio
 import json
+from contextlib import AsyncExitStack, asynccontextmanager
 from datetime import datetime, timezone
 from fnmatch import fnmatch
-from typing import Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Union
+from weakref import WeakKeyDictionary
 
 # Real module-level imports, never TYPE_CHECKING-only: with postponed annotations a
 # deferred import does not fail loudly. get_type_hints raises during schema
@@ -149,6 +151,13 @@ class FileSystemTools(Toolkit):
     ):
         self.fs = fs
         self.read_only = read_only
+        # Every mutating tool is a read-modify-write over one row, and a model's
+        # tool calls for one turn are gathered concurrently (models/base.py) -
+        # the path AgentOS REST and /mcp take. Two replace_lines on one note
+        # both read the pre-edit content and the second write wins, with both
+        # tool results reporting success. Same guard entity memory takes for
+        # its rows, and the same honesty: single process only.
+        self._write_locks: Any = WeakKeyDictionary()
         if read_only and allow_delete:
             raise ValueError("allow_delete=True contradicts read_only=True; pick one.")
         if instructions is None:
@@ -718,6 +727,42 @@ class FileSystemTools(Toolkit):
             self.check_lines, lines, directory, run_context=run_context, agent=agent, team=team
         )
 
+    def _lock_for(self, key: str) -> "asyncio.Lock":
+        """The lock for one file, per running event loop.
+
+        An asyncio.Lock binds to the loop that first awaits it, so the cache is
+        keyed weakly by loop: a second loop (a fresh asyncio.run, a worker
+        thread) gets its own locks instead of one bound to a closed loop.
+        """
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = None
+        if loop is None:
+            return asyncio.Lock()
+        per_loop = self._write_locks.get(loop)
+        if per_loop is None:
+            per_loop = {}
+            self._write_locks[loop] = per_loop
+        lock = per_loop.get(key)
+        if lock is None:
+            lock = asyncio.Lock()
+            per_loop[key] = lock
+        return lock
+
+    @asynccontextmanager
+    async def _locked(self, *paths: str):
+        """Hold the write lock for each named file, acquired in a stable order.
+
+        Sorted so two tool calls naming the same pair (move_file src/dst) cannot
+        deadlock by taking them in opposite orders.
+        """
+        namespace = getattr(self.fs, "namespace", "")
+        async with AsyncExitStack() as stack:
+            for key in sorted({f"{namespace}:{path}" for path in paths if path}):
+                await stack.enter_async_context(self._lock_for(key))
+            yield
+
     async def awrite_file(
         self,
         path: str,
@@ -729,9 +774,10 @@ class FileSystemTools(Toolkit):
         team: Optional[Team] = None,
     ) -> str:
         """Async variant of ``write_file``."""
-        return await asyncio.to_thread(
-            self.write_file, path, content, overwrite, run_context=run_context, agent=agent, team=team
-        )
+        async with self._locked(path):
+            return await asyncio.to_thread(
+                self.write_file, path, content, overwrite, run_context=run_context, agent=agent, team=team
+            )
 
     async def aappend_file(
         self,
@@ -744,9 +790,10 @@ class FileSystemTools(Toolkit):
         team: Optional[Team] = None,
     ) -> str:
         """Async variant of ``append_file``."""
-        return await asyncio.to_thread(
-            self.append_file, path, content, unique, run_context=run_context, agent=agent, team=team
-        )
+        async with self._locked(path):
+            return await asyncio.to_thread(
+                self.append_file, path, content, unique, run_context=run_context, agent=agent, team=team
+            )
 
     async def areplace_lines(
         self,
@@ -760,9 +807,17 @@ class FileSystemTools(Toolkit):
         team: Optional[Team] = None,
     ) -> str:
         """Async variant of ``replace_lines``."""
-        return await asyncio.to_thread(
-            self.replace_lines, path, start_line, end_line, content, run_context=run_context, agent=agent, team=team
-        )
+        async with self._locked(path):
+            return await asyncio.to_thread(
+                self.replace_lines,
+                path,
+                start_line,
+                end_line,
+                content,
+                run_context=run_context,
+                agent=agent,
+                team=team,
+            )
 
     async def amove_file(
         self,
@@ -775,9 +830,10 @@ class FileSystemTools(Toolkit):
         team: Optional[Team] = None,
     ) -> str:
         """Async variant of ``move_file``."""
-        return await asyncio.to_thread(
-            self.move_file, src, dst, overwrite, run_context=run_context, agent=agent, team=team
-        )
+        async with self._locked(src, dst):
+            return await asyncio.to_thread(
+                self.move_file, src, dst, overwrite, run_context=run_context, agent=agent, team=team
+            )
 
     async def adelete_file(
         self,
@@ -788,7 +844,8 @@ class FileSystemTools(Toolkit):
         team: Optional[Team] = None,
     ) -> str:
         """Async variant of ``delete_file``."""
-        return await asyncio.to_thread(self.delete_file, path, run_context=run_context, agent=agent, team=team)
+        async with self._locked(path):
+            return await asyncio.to_thread(self.delete_file, path, run_context=run_context, agent=agent, team=team)
 
 
 # The async twins delegate to their sync counterparts via asyncio.to_thread, so they
