@@ -64,17 +64,20 @@ def _utc_now_iso() -> str:
 def _slugify(name: str) -> str:
     """Derive a stable entity_id from a display name: lowercase, underscores.
 
-    Accented letters fold to their base letter first. Replacing them with the
-    separator instead would map Anna Müller and Anna Möller onto one id, and a
-    merge has no unmerge; folding also lets "Sofia Munoz" resolve to the
-    "Sofía Muñoz" already on file. Scripts with no ASCII form (CJK, Cyrillic)
-    fold to nothing and keep the lowered name as their id.
+    Accented letters fold to their base letter first, so Anna Müller and Anna
+    Möller keep distinct ids while "Sofia Munoz" still resolves to the
+    "Sofía Muñoz" already on file.
+
+    Letters that survive the fold are KEPT, whatever their script. Dropping
+    them meant a name only partly Latin lost the half that identified it -
+    "李 Ming" keyed to `ming` and merged with an unrelated Ming, the same
+    no-unmerge corruption the fold exists to prevent.
     """
     import unicodedata
 
     decomposed = unicodedata.normalize("NFKD", name.strip().lower())
     folded = "".join(ch for ch in decomposed if not unicodedata.combining(ch))
-    slug = re.sub(r"[^a-z0-9]+", "_", folded).strip("_")
+    slug = re.sub(r"[^\w]+", "_", folded, flags=re.UNICODE).strip("_")
     return slug or name.strip().lower()
 
 
@@ -135,6 +138,9 @@ def _message_terms(message: str, max_terms: int = 8) -> List[str]:
 # Friday is two Sarahs. Fold case and singularize against this canonical list;
 # anything else passes through lowercased.
 _CANONICAL_ENTITY_TYPES = frozenset({"person", "project", "company", "system", "product"})
+# The placeholder link_entities mints for an endpoint it has never been told
+# about; it is the one type that merges into a real one.
+_UNKNOWN_ENTITY_TYPE = "unknown"
 _IRREGULAR_ENTITY_TYPES = {"people": "person", "persons": "person", "companies": "company"}
 
 
@@ -165,19 +171,23 @@ def _blank_to_none(value: Optional[str]) -> Optional[str]:
 
 
 def _types_can_merge(incoming: Optional[str], existing: Optional[str]) -> bool:
-    """Whether a name match across two entity types is drift or a collision.
+    """Whether a name match across two entity types is the same thing.
 
-    Resolving by id across types is what folds a free-form type onto its
-    canonical one ("engineer" onto "person") and what upgrades a link's
-    ``unknown`` placeholder once the entity is described. Two *different
-    canonical* types are not drift: a project named Harbor and the company
-    Harbor are separate things, and merging them has no unmerge.
+    Only the ``unknown`` placeholder ``link_entities`` mints merges across
+    types - describing it later is what gives it a real type. Two named types
+    are two things: Atlas the system is not Atlas the team, and a merge has no
+    unmerge. Models coin types freely, so restricting this to a canonical list
+    left the common case (``team``, ``framework``, ``service``) merging.
+
+    Fragmenting is the recoverable failure here - both rows render, and the
+    write path says when a same-name sibling exists so the model can correct
+    itself.
     """
     incoming_type = _normalize_entity_type(incoming)
     existing_type = _normalize_entity_type(existing)
     if not incoming_type or not existing_type or incoming_type == existing_type:
         return True
-    return not (incoming_type in _CANONICAL_ENTITY_TYPES and existing_type in _CANONICAL_ENTITY_TYPES)
+    return _UNKNOWN_ENTITY_TYPE in (incoming_type, existing_type)
 
 
 # =============================================================================
@@ -255,19 +265,23 @@ supersede - a wrong supersession hides information the user gave us.
 """
 
 
-_FORGET_DOC = """Retire a fact from an entity, or archive the whole entity.
+_FORGET_DOC = """Retire a fact or a relationship from an entity, or archive the whole entity.
 
 With fact: retires the matching fact - it stops being recalled, nothing is deleted.
+A relationship is retired the same way, naming it as it is rendered
+("written_in -> Rust"): use this when a link is no longer true, because stating
+the new link does not remove the old one.
 Without fact: archives the entity. An archived entity leaves recall and the entity
 directory, stays findable via search_entities, and any later remember_about about
 it revives it.
 
 Args:
     entity: The entity's name.
-    fact: The fact to retire, worded as closely as you can to how it was stored.
+    fact: The fact to retire, worded as closely as you can to how it was stored,
+        or the relationship to remove ("works_on -> radar").
 
 Returns:
-    Confirmation of what was retired or archived.
+    Confirmation of what was retired, removed or archived.
 """
 
 
@@ -1056,6 +1070,12 @@ class EntityMemoryStore(LearningStore):
             note=note,
             superseded_count=superseded_count,
             duplicate_count=duplicate_count,
+            siblings=self._same_name_siblings(
+                entity_obj,
+                self._get_rows_by_entity_id(
+                    entity_id=entity_obj.entity_id, user_id=user_id, namespace=effective_namespace
+                ),
+            ),
         )
 
     async def aremember_about(
@@ -1173,6 +1193,12 @@ class EntityMemoryStore(LearningStore):
             note=note,
             superseded_count=superseded_count,
             duplicate_count=duplicate_count,
+            siblings=self._same_name_siblings(
+                entity_obj,
+                self._get_rows_by_entity_id(
+                    entity_id=entity_obj.entity_id, user_id=user_id, namespace=effective_namespace
+                ),
+            ),
         )
 
     def _novel_facts(self, existing: Optional[EntityMemory], facts: List[str]) -> Tuple[List[str], int]:
@@ -1462,7 +1488,7 @@ class EntityMemoryStore(LearningStore):
         created = False
         revived = False
         stale_row_key: Optional[str] = None
-        normalized_type = _normalize_entity_type(entity_type) or "unknown"
+        normalized_type = _normalize_entity_type(entity_type) or _UNKNOWN_ENTITY_TYPE
 
         if existing is None:
             created = True
@@ -1489,7 +1515,7 @@ class EntityMemoryStore(LearningStore):
 
             # A minimal entity created by link_entities acquires its real type;
             # the row key embeds the type, so the old row must be replaced.
-            if entity_obj.entity_type == "unknown" and normalized_type != "unknown":
+            if entity_obj.entity_type == _UNKNOWN_ENTITY_TYPE and normalized_type != _UNKNOWN_ENTITY_TYPE:
                 stale_row_key = self._build_entity_db_id(entity_obj.entity_id, entity_obj.entity_type, namespace)
                 entity_obj.entity_type = normalized_type
 
@@ -1552,6 +1578,7 @@ class EntityMemoryStore(LearningStore):
         note: Optional[str],
         superseded_count: int = 0,
         duplicate_count: int = 0,
+        siblings: Optional[List[str]] = None,
     ) -> str:
         label = f"{entity_obj.entity_type}/{entity_obj.entity_id}"
         verb = "Created" if created else "Updated"
@@ -1566,7 +1593,25 @@ class EntityMemoryStore(LearningStore):
         superseded_text = f" Superseded {superseded_count} earlier fact(s)." if superseded_count else ""
         duplicate_text = f" Skipped {duplicate_count} already-recorded fact(s)." if duplicate_count else ""
         revived_text = " The entity was archived and is now revived." if revived else ""
-        return f"{verb} {label}.{recorded}{superseded_text}{duplicate_text}{revived_text}"
+        # Types are never merged across, so a same-name sibling is a separate
+        # record the model may not have meant to create. Say so while it can
+        # still restate under the right type.
+        sibling_text = ""
+        if siblings:
+            sibling_text = (
+                f" Note: {', '.join(siblings)} already exists under this name - if you meant that one,"
+                " restate with its type."
+            )
+        return f"{verb} {label}.{recorded}{superseded_text}{duplicate_text}{revived_text}{sibling_text}"
+
+    def _same_name_siblings(self, entity_obj: EntityMemory, rows: List[Dict[str, Any]]) -> List[str]:
+        """Labels of rows sharing this entity's id under a different type."""
+        labels = []
+        for row in rows:
+            row_type = row.get("entity_type")
+            if row_type and row_type != entity_obj.entity_type:
+                labels.append(f"{row_type}/{entity_obj.entity_id}")
+        return labels
 
     # =========================================================================
     # Public write API: link_entities
@@ -2003,12 +2048,87 @@ class EntityMemoryStore(LearningStore):
                 False,
             )
 
+        # No fact matched: try the relationships. A correction that changes a
+        # relation ("written_in Rust" -> Go) has no other retirement path, and
+        # a stale edge renders forever, undated, next to the corrected one.
+        edge_message, edge_removed = self._forget_edge(entity_obj=entity_obj, needle=needle, label=label)
+        if edge_message is not None:
+            return edge_message, edge_removed
+
         if not live:
             return f"No matching fact on {label}. It has no live facts.", False
         bounded = live[:10]
         listing = "\n".join(f"  - {f.get('content') if isinstance(f, dict) else f}" for f in bounded)
         more = f"\n  ... and {len(live) - len(bounded)} more" if len(live) > len(bounded) else ""
         return f"No matching fact on {label}. Its live facts are:\n{listing}{more}", False
+
+    def _forget_edge(self, entity_obj: EntityMemory, needle: str, label: str) -> Tuple[Optional[str], bool]:
+        """Retire a relationship whose text the caller named.
+
+        Matched the way the model sees an edge rendered - "written_in -> Rust",
+        or either half alone. Returns (None, False) when nothing matches, so
+        the caller can fall through to its no-match reply.
+        """
+        edges = [r for r in (getattr(entity_obj, "relationships", None) or []) if isinstance(r, dict)]
+        matches = []
+        for edge in edges:
+            relation = _normalize_fact_text(str(edge.get("relation", "")))
+            target = _normalize_fact_text(str(edge.get("entity_id", "")))
+            rendered = _normalize_fact_text(f"{edge.get('relation', '')} {edge.get('entity_id', '')}")
+            if needle in (relation, target, rendered) or (
+                relation and target and relation in needle and target in needle
+            ):
+                matches.append(edge)
+        if not matches:
+            return None, False
+        if len(matches) > 1:
+            listing = "\n".join(f"  - {e.get('relation')} -> {e.get('entity_id')}" for e in matches)
+            return (
+                f"Multiple relationships on {label} match; nothing was removed. "
+                f"Call forget again naming one of:\n{listing}",
+                False,
+            )
+
+        edge = matches[0]
+        entity_obj.relationships = [r for r in edges if r is not edge]
+        entity_obj.updated_at = _utc_now_iso()
+        self._detach_far_edge(entity_obj=entity_obj, edge=edge)
+        return f"Removed relationship on {label}: {edge.get('relation')} -> {edge.get('entity_id')}", True
+
+    def _detach_far_edge(self, entity_obj: EntityMemory, edge: Dict[str, Any]) -> None:
+        """Drop the reciprocal edge, so the graph does not go one-sided.
+
+        Best effort: a far end that cannot be loaded or saved leaves a dangling
+        incoming edge, which renders as a name and misleads nobody.
+        """
+        far = self.get(
+            entity_id=str(edge.get("entity_id", "")),
+            entity_type=str(edge.get("entity_type", "")),
+            user_id=entity_obj.user_id,
+            namespace=entity_obj.namespace or self.config.namespace,
+        )
+        if far is None:
+            return
+        kept = [
+            r
+            for r in (getattr(far, "relationships", None) or [])
+            if not (
+                isinstance(r, dict)
+                and r.get("entity_id") == entity_obj.entity_id
+                and r.get("relation") == edge.get("relation")
+            )
+        ]
+        if len(kept) == len(far.relationships or []):
+            return
+        far.relationships = kept
+        far.updated_at = _utc_now_iso()
+        self._save_entity(
+            entity=far,
+            user_id=entity_obj.user_id,
+            agent_id=entity_obj.agent_id,
+            team_id=entity_obj.team_id,
+            namespace=far.namespace or self.config.namespace,
+        )
 
     # =========================================================================
     # Resolution (name -> stored entity)
@@ -2277,7 +2397,7 @@ class EntityMemoryStore(LearningStore):
         now = _utc_now_iso()
         return self.schema(
             entity_id=_slugify(entity),
-            entity_type="unknown",
+            entity_type=_UNKNOWN_ENTITY_TYPE,
             name=entity.strip(),
             properties={},
             facts=[],

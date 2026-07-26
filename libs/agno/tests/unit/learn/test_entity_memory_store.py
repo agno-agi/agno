@@ -521,13 +521,67 @@ class TestResolution:
         store.remember_about(entity="Radar", entity_type="person", facts=["role: staff engineer"])
         assert len(db.rows) == 2
 
-    def test_free_form_type_still_merges_onto_the_canonical_one(
+    def test_a_stale_relationship_can_be_retired(self, store: EntityMemoryStore) -> None:
+        """A corrected link had no retirement path: stating the new one left
+        both edges rendering, undated, forever."""
+        store.remember_about(entity="quill", entity_type="project")
+        store.link_entities(entity="quill", relation="written_in", related_entity="Rust")
+        store.link_entities(entity="quill", relation="written_in", related_entity="Go")
+
+        message = store.forget(entity="quill", fact="written_in -> Rust")
+        assert "Removed relationship" in message
+        quill = store.get(entity_id="quill", entity_type="project")
+        assert quill is not None
+        assert [(r["relation"], r["entity_id"]) for r in quill.relationships] == [("written_in", "go")]
+        # the reciprocal edge goes too, so the graph does not go one-sided
+        rust = store.get(entity_id="rust", entity_type="unknown")
+        assert rust is not None
+        assert rust.relationships == []
+
+    def test_an_ambiguous_relationship_retires_nothing(self, store: EntityMemoryStore) -> None:
+        store.remember_about(entity="quill", entity_type="project")
+        store.link_entities(entity="quill", relation="written_in", related_entity="Rust")
+        store.link_entities(entity="quill", relation="written_in", related_entity="Go")
+
+        message = store.forget(entity="quill", fact="written_in")
+        assert "Multiple relationships" in message
+        quill = store.get(entity_id="quill", entity_type="project")
+        assert quill is not None
+        assert len(quill.relationships) == 2
+
+    async def test_async_relationship_retirement(self, store: EntityMemoryStore) -> None:
+        await store.aremember_about(entity="tom", entity_type="person")
+        await store.alink_entities(entity="tom", relation="works_on", related_entity="radar")
+        assert "Removed relationship" in await store.aforget(entity="tom", fact="works_on -> radar")
+        tom = await store.aget(entity_id="tom", entity_type="person")
+        assert tom is not None
+        assert tom.relationships == []
+
+    def test_mixed_script_names_do_not_merge(self, store: EntityMemoryStore, db: RecordingLearningDb) -> None:
+        # Dropping the non-Latin half keyed "李 Ming" to `ming`.
+        store.remember_about(entity="李 Ming", entity_type="person", facts=["office: Shanghai"])
+        store.remember_about(entity="Ming", entity_type="person", facts=["office: London"])
+        assert len(db.rows) == 2
+
+    def test_two_named_types_are_two_entities(self, store: EntityMemoryStore, db: RecordingLearningDb) -> None:
+        """Only the ``unknown`` placeholder merges across types.
+
+        Restricting the split to a canonical list left the types models
+        actually coin - team, framework, service - merging into whatever row
+        happened to share the name, which has no unmerge.
+        """
+        store.remember_about(entity="Atlas", entity_type="system", facts=["the ingest system"])
+        message = store.remember_about(entity="Atlas", entity_type="team", facts=["the platform team"])
+        assert len(db.rows) == 2
+        # ...and the write says the sibling exists, so the model can correct itself.
+        assert "system/atlas already exists under this name" in message
+
+    def test_free_form_type_does_not_swallow_a_named_one(
         self, store: EntityMemoryStore, db: RecordingLearningDb
     ) -> None:
-        # "engineer" is type drift, not a second Sarah.
         store.remember_about(entity="Sarah Chen", entity_type="engineer", facts=["designs radar"])
         store.remember_about(entity="Sarah Chen", entity_type="person", facts=["prefers async"])
-        assert len(db.rows) == 1
+        assert len(db.rows) == 2
 
     def test_link_placeholder_still_upgrades_to_a_real_type(
         self, store: EntityMemoryStore, db: RecordingLearningDb
