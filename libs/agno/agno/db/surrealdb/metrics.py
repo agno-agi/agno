@@ -277,8 +277,12 @@ def calculate_date_metrics(date_to_process: date, sessions_data: dict) -> List[d
                 bucket["token_metrics"][field] += session_metrics.get(field, 0)
 
     current_time = datetime.now(timezone.utc)
-    completed = date_to_process < datetime.now(timezone.utc).date()
-    date_at_midnight = current_time.replace(hour=0, minute=0, second=0, microsecond=0)
+    completed = date_to_process < current_time.date()
+    # SurrealDB stores this as the record's ``date`` field, filtered on by
+    # get_metrics range queries. Must be date_to_process — the day this bucket
+    # aggregates — not current_time, or every backfilled day would be stamped
+    # as today and drop out of its own range query.
+    date_at_midnight = datetime.combine(date_to_process, datetime.min.time(), tzinfo=timezone.utc)
 
     records: List[dict] = []
     for user_id, bucket in per_user.items():

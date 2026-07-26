@@ -625,11 +625,14 @@ def get_agent_router(
         state_user_id = getattr(request.state, "user_id", None)
         if scoped_user_id is not None:
             user_id = scoped_user_id
-        elif state_user_id == INTERNAL_SCHEDULER_USER_ID and user_id:
-            # Internal service caller (scheduler executor): the form-field
-            # ``user_id`` was set by the executor to the schedule owner. Use
-            # it so the run, session, traces, and metrics are attributed to
-            # the owner, not to the service identity.
+        elif state_user_id == INTERNAL_SCHEDULER_USER_ID:
+            # Internal service caller (scheduler executor): the JWT sub is the
+            # ``__scheduler__`` sentinel identifying the *caller*, not the
+            # *owner*. The executor writes the schedule owner into the
+            # form-field ``user_id`` when the schedule has one; keep it as-is.
+            # For an unowned schedule (schedule.user_id is None) no form-field
+            # is set, so ``user_id`` stays None and the run is left unowned
+            # rather than being attributed to the ``__scheduler__`` sentinel.
             pass
         elif state_user_id is not None:
             if user_id and user_id != state_user_id:
