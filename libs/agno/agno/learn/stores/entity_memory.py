@@ -36,7 +36,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from os import getenv
 from textwrap import dedent
-from typing import Any, Callable, Dict, List, Optional, Tuple, Union, cast
+from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple, Union, cast
 from weakref import WeakKeyDictionary
 
 from agno.learn.config import EntityMemoryConfig, LearningMode
@@ -170,19 +170,25 @@ def _blank_to_none(value: Optional[str]) -> Optional[str]:
     return value.strip() or None
 
 
-def _split_qualified_name(entity: str) -> Tuple[str, Optional[str]]:
+def _split_qualified_name(entity: str, known_types: Sequence[str]) -> Tuple[str, Optional[str]]:
     """Split a "type/name" reference into (name, type).
 
     Two entities can share a name under different types, and neither
-    link_entities nor forget carries an entity_type. The ambiguity replies tell
-    the model to name one as "project/Harbor", so both tools have to read it
-    back. A plain name is returned unchanged.
+    link_entities nor forget carries an entity_type; the ambiguity replies tell
+    the model to name one as "project/Harbor", so both tools read it back.
+
+    Only a prefix that actually names one of the stored types counts. A name
+    containing a slash is far more likely to be a name - "AC/DC" is a band, not
+    a DC of type AC - and treating it as qualified sends resolution to a key
+    the write path never uses.
     """
     if "/" not in entity:
         return entity, None
     prefix, _, rest = entity.partition("/")
     prefix, rest = prefix.strip(), rest.strip()
     if not prefix or not rest:
+        return entity, None
+    if _normalize_entity_type(prefix) not in {_normalize_entity_type(t) for t in known_types}:
         return entity, None
     return rest, prefix
 
@@ -1671,12 +1677,26 @@ class EntityMemoryStore(LearningStore):
             ambiguous = self._ambiguous_name(entity=endpoint, user_id=user_id, namespace=effective_namespace)
             if ambiguous:
                 return ambiguous
+        entity, entity_qualifier = self._qualified(entity=entity, user_id=user_id, namespace=effective_namespace)
+        related_entity, related_qualifier = self._qualified(
+            entity=related_entity, user_id=user_id, namespace=effective_namespace
+        )
 
         source = self._resolve_or_create_minimal(
-            entity, user_id=user_id, agent_id=agent_id, team_id=team_id, namespace=effective_namespace
+            entity,
+            user_id=user_id,
+            agent_id=agent_id,
+            team_id=team_id,
+            namespace=effective_namespace,
+            entity_type=entity_qualifier,
         )
         target = self._resolve_or_create_minimal(
-            related_entity, user_id=user_id, agent_id=agent_id, team_id=team_id, namespace=effective_namespace
+            related_entity,
+            user_id=user_id,
+            agent_id=agent_id,
+            team_id=team_id,
+            namespace=effective_namespace,
+            entity_type=related_qualifier,
         )
         if source.entity_id == target.entity_id and source.entity_type == target.entity_type:
             return f"Cannot link {source.entity_type}/{source.entity_id} to itself; nothing was recorded."
@@ -1722,6 +1742,10 @@ class EntityMemoryStore(LearningStore):
             ambiguous = self._ambiguous_name(entity=endpoint, user_id=user_id, namespace=effective_namespace)
             if ambiguous:
                 return ambiguous
+        entity, entity_qualifier = self._qualified(entity=entity, user_id=user_id, namespace=effective_namespace)
+        related_entity, related_qualifier = self._qualified(
+            entity=related_entity, user_id=user_id, namespace=effective_namespace
+        )
 
         async with self._write_lock():
             # Both ends are read-modify-written; see aremember_about.
@@ -1969,11 +1993,12 @@ class EntityMemoryStore(LearningStore):
         ambiguous = self._ambiguous_name(entity=entity, user_id=user_id, namespace=effective_namespace)
         if ambiguous:
             return ambiguous
-        entity_obj = self._resolve(entity=entity, entity_type=None, user_id=user_id, namespace=effective_namespace)
+        entity, qualifier = self._qualified(entity=entity, user_id=user_id, namespace=effective_namespace)
+        entity_obj = self._resolve(entity=entity, entity_type=qualifier, user_id=user_id, namespace=effective_namespace)
         if entity_obj is None:
             return f"No entity found matching {entity!r}."
 
-        result, should_save = self._apply_forget(entity_obj=entity_obj, fact=fact)
+        result, should_save, detached = self._apply_forget(entity_obj=entity_obj, fact=fact)
         if should_save:
             saved = self._save_entity(
                 entity=entity_obj,
@@ -1984,6 +2009,8 @@ class EntityMemoryStore(LearningStore):
             )
             if not saved:
                 return f"Failed to update {entity_obj.entity_type}/{entity_obj.entity_id}."
+            if detached is not None:
+                self._detach_far_edge(entity_obj=entity_obj, edge=detached)
             self.entity_updated = True
         return result
 
@@ -2009,13 +2036,14 @@ class EntityMemoryStore(LearningStore):
             ambiguous = self._ambiguous_name(entity=entity, user_id=user_id, namespace=effective_namespace)
             if ambiguous:
                 return ambiguous
+            entity, qualifier = self._qualified(entity=entity, user_id=user_id, namespace=effective_namespace)
             entity_obj = await self._aresolve(
-                entity=entity, entity_type=None, user_id=user_id, namespace=effective_namespace
+                entity=entity, entity_type=qualifier, user_id=user_id, namespace=effective_namespace
             )
             if entity_obj is None:
                 return f"No entity found matching {entity!r}."
 
-            result, should_save = self._apply_forget(entity_obj=entity_obj, fact=fact)
+            result, should_save, detached = self._apply_forget(entity_obj=entity_obj, fact=fact)
             if should_save:
                 saved = await self._asave_entity(
                     entity=entity_obj,
@@ -2026,6 +2054,8 @@ class EntityMemoryStore(LearningStore):
                 )
                 if not saved:
                     return f"Failed to update {entity_obj.entity_type}/{entity_obj.entity_id}."
+                if detached is not None:
+                    await self._adetach_far_edge(entity_obj=entity_obj, edge=detached)
                 self.entity_updated = True
         return result
 
@@ -2038,20 +2068,27 @@ class EntityMemoryStore(LearningStore):
             fact["superseded_at"] = _utc_now_iso()
             fact["superseded_by"] = superseded_by
 
-    def _apply_forget(self, entity_obj: EntityMemory, fact: Optional[str]) -> Tuple[str, bool]:
-        """Apply forget in memory. Returns (message, should_save)."""
+    def _apply_forget(
+        self, entity_obj: EntityMemory, fact: Optional[str]
+    ) -> Tuple[str, bool, Optional[Dict[str, Any]]]:
+        """Apply forget in memory.
+
+        Returns (message, should_save, detached_edge). The far end of a removed
+        edge is written by the caller, which knows whether its db is async.
+        """
         label = f"{entity_obj.entity_type}/{entity_obj.entity_id}"
 
         # No fact: archive the entity.
         if fact is None or not fact.strip():
             if getattr(entity_obj, "archived_at", None):
-                return f"{label} is already archived.", False
+                return f"{label} is already archived.", False, None
             entity_obj.archived_at = _utc_now_iso()
             entity_obj.updated_at = _utc_now_iso()
             return (
                 f"Archived {label}. It will no longer be recalled; search_entities can still "
                 f"find it, and any new remember_about about it revives it.",
                 True,
+                None,
             )
 
         # Fact given: match against live fact content.
@@ -2063,7 +2100,7 @@ class EntityMemoryStore(LearningStore):
             for f in exact:
                 self._retire(entity_obj, f)
             entity_obj.updated_at = _utc_now_iso()
-            return f"Retired fact on {label}: {exact[0].get('content')}", True
+            return f"Retired fact on {label}: {exact[0].get('content')}", True, None
 
         contains = [
             f
@@ -2077,28 +2114,29 @@ class EntityMemoryStore(LearningStore):
         if len(contains) == 1:
             self._retire(entity_obj, contains[0])
             entity_obj.updated_at = _utc_now_iso()
-            return f"Retired fact on {label}: {contains[0].get('content')}", True
+            return f"Retired fact on {label}: {contains[0].get('content')}", True, None
         if len(contains) > 1:
             listing = "\n".join(f"  - {f.get('content')}" for f in contains)
             return (
                 f"Multiple facts on {label} match {fact!r}; nothing was retired. "
                 f"Call forget again with the exact wording of one of:\n{listing}",
                 False,
+                None,
             )
 
         # No fact matched: try the relationships. A correction that changes a
         # relation ("written_in Rust" -> Go) has no other retirement path, and
         # a stale edge renders forever, undated, next to the corrected one.
-        edge_message, edge_removed = self._forget_edge(entity_obj=entity_obj, needle=needle, label=label)
+        edge_message, edge_removed, detached = self._forget_edge(entity_obj=entity_obj, needle=needle, label=label)
         if edge_message is not None:
-            return edge_message, edge_removed
+            return edge_message, edge_removed, detached
 
         if not live:
-            return f"No matching fact on {label}. It has no live facts.", False
+            return f"No matching fact on {label}. It has no live facts.", False, None
         bounded = live[:10]
         listing = "\n".join(f"  - {f.get('content') if isinstance(f, dict) else f}" for f in bounded)
         more = f"\n  ... and {len(live) - len(bounded)} more" if len(live) > len(bounded) else ""
-        return f"No matching fact on {label}. Its live facts are:\n{listing}{more}", False
+        return f"No matching fact on {label}. Its live facts are:\n{listing}{more}", False, None
 
     def _ambiguous_name(self, entity: str, user_id: Optional[str], namespace: str) -> Optional[str]:
         """A refusal listing every type this name resolves to, or None.
@@ -2107,7 +2145,7 @@ class EntityMemoryStore(LearningStore):
         merged across, so a bare "Harbor" would silently pick whichever row
         sorted first and leave the other permanently unaddressable.
         """
-        name, qualifier = _split_qualified_name(entity)
+        name, qualifier = self._qualified(entity=entity, user_id=user_id, namespace=namespace)
         if qualifier:
             return None
         rows = self._get_rows_by_entity_id(entity_id=_slugify(name), user_id=user_id, namespace=namespace)
@@ -2117,7 +2155,22 @@ class EntityMemoryStore(LearningStore):
         listing = "\n".join(f"  - {t}/{_slugify(name)}" for t in types)
         return f"{name!r} matches more than one entity; nothing was changed. Call again naming one of:\n{listing}"
 
-    def _forget_edge(self, entity_obj: EntityMemory, needle: str, label: str) -> Tuple[Optional[str], bool]:
+    def _qualified(self, entity: str, user_id: Optional[str], namespace: str) -> Tuple[str, Optional[str]]:
+        """Read back the "type/name" form the ambiguity reply asks for.
+
+        A prefix only counts when it names one of the types actually stored
+        under the remainder, so an entity called "AC/DC" stays one name.
+        """
+        remainder = entity.partition("/")[2]
+        if not remainder:
+            return entity, None
+        rows = self._get_rows_by_entity_id(entity_id=_slugify(remainder), user_id=user_id, namespace=namespace)
+        known = [str(r.get("entity_type")) for r in rows if r.get("entity_type")]
+        return _split_qualified_name(entity, known)
+
+    def _forget_edge(
+        self, entity_obj: EntityMemory, needle: str, label: str
+    ) -> Tuple[Optional[str], bool, Optional[Dict[str, Any]]]:
         """Retire a relationship whose text the caller named.
 
         Matched the way the model sees an edge rendered - "written_in -> Rust",
@@ -2135,35 +2188,28 @@ class EntityMemoryStore(LearningStore):
             ):
                 matches.append(edge)
         if not matches:
-            return None, False
+            return None, False, None
         if len(matches) > 1:
             listing = "\n".join(f"  - {e.get('relation')} -> {e.get('entity_id')}" for e in matches)
             return (
                 f"Multiple relationships on {label} match; nothing was removed. "
                 f"Call forget again naming one of:\n{listing}",
                 False,
+                None,
             )
 
         edge = matches[0]
         entity_obj.relationships = [r for r in edges if r is not edge]
         entity_obj.updated_at = _utc_now_iso()
-        self._detach_far_edge(entity_obj=entity_obj, edge=edge)
-        return f"Removed relationship on {label}: {edge.get('relation')} -> {edge.get('entity_id')}", True
-
-    def _detach_far_edge(self, entity_obj: EntityMemory, edge: Dict[str, Any]) -> None:
-        """Drop the reciprocal edge, so the graph does not go one-sided.
-
-        Best effort: a far end that cannot be loaded or saved leaves a dangling
-        incoming edge, which renders as a name and misleads nobody.
-        """
-        far = self.get(
-            entity_id=str(edge.get("entity_id", "")),
-            entity_type=str(edge.get("entity_type", "")),
-            user_id=entity_obj.user_id,
-            namespace=entity_obj.namespace or self.config.namespace,
+        return (
+            f"Removed relationship on {label}: {edge.get('relation')} -> {edge.get('entity_id')}",
+            True,
+            edge,
         )
-        if far is None:
-            return
+
+    @staticmethod
+    def _without_reciprocal(far: EntityMemory, entity_obj: EntityMemory, edge: Dict[str, Any]) -> Optional[List[Any]]:
+        """The far end's edges minus the one pointing back, or None if absent."""
         kept = [
             r
             for r in (getattr(far, "relationships", None) or [])
@@ -2173,7 +2219,27 @@ class EntityMemoryStore(LearningStore):
                 and r.get("relation") == edge.get("relation")
             )
         ]
-        if len(kept) == len(far.relationships or []):
+        if len(kept) == len(getattr(far, "relationships", None) or []):
+            return None
+        return kept
+
+    def _detach_far_edge(self, entity_obj: EntityMemory, edge: Dict[str, Any]) -> None:
+        """Drop the reciprocal edge, so the graph does not go one-sided.
+
+        Best effort: a far end that cannot be loaded or saved leaves a dangling
+        incoming edge, which renders as a name and misleads nobody.
+        """
+        namespace = entity_obj.namespace or self.config.namespace
+        far = self.get(
+            entity_id=str(edge.get("entity_id", "")),
+            entity_type=str(edge.get("entity_type", "")),
+            user_id=entity_obj.user_id,
+            namespace=namespace,
+        )
+        if far is None:
+            return
+        kept = self._without_reciprocal(far=far, entity_obj=entity_obj, edge=edge)
+        if kept is None:
             return
         far.relationships = kept
         far.updated_at = _utc_now_iso()
@@ -2182,12 +2248,36 @@ class EntityMemoryStore(LearningStore):
             user_id=entity_obj.user_id,
             agent_id=entity_obj.agent_id,
             team_id=entity_obj.team_id,
-            namespace=far.namespace or self.config.namespace,
+            namespace=namespace,
         )
 
-    # =========================================================================
-    # Resolution (name -> stored entity)
-    # =========================================================================
+    async def _adetach_far_edge(self, entity_obj: EntityMemory, edge: Dict[str, Any]) -> None:
+        """Async version of _detach_far_edge.
+
+        The sync helpers no-op against an AsyncBaseDb, which left the far end
+        holding an edge the near end had already dropped.
+        """
+        namespace = entity_obj.namespace or self.config.namespace
+        far = await self.aget(
+            entity_id=str(edge.get("entity_id", "")),
+            entity_type=str(edge.get("entity_type", "")),
+            user_id=entity_obj.user_id,
+            namespace=namespace,
+        )
+        if far is None:
+            return
+        kept = self._without_reciprocal(far=far, entity_obj=entity_obj, edge=edge)
+        if kept is None:
+            return
+        far.relationships = kept
+        far.updated_at = _utc_now_iso()
+        await self._asave_entity(
+            entity=far,
+            user_id=entity_obj.user_id,
+            agent_id=entity_obj.agent_id,
+            team_id=entity_obj.team_id,
+            namespace=namespace,
+        )
 
     def _resolve(
         self,
@@ -2202,9 +2292,8 @@ class EntityMemoryStore(LearningStore):
         types), then exact name, then aliases. Matching is deliberately narrow -
         a wrong merge has no unmerge.
         """
-        entity, qualifier = _split_qualified_name(entity)
         slug = _slugify(entity)
-        normalized_type = _normalize_entity_type(qualifier or entity_type)
+        normalized_type = _normalize_entity_type(entity_type)
 
         if normalized_type:
             found = self.get(entity_id=slug, entity_type=normalized_type, user_id=user_id, namespace=namespace)
@@ -2228,9 +2317,8 @@ class EntityMemoryStore(LearningStore):
         namespace: str,
     ) -> Optional[EntityMemory]:
         """Async version of _resolve."""
-        entity, qualifier = _split_qualified_name(entity)
         slug = _slugify(entity)
-        normalized_type = _normalize_entity_type(qualifier or entity_type)
+        normalized_type = _normalize_entity_type(entity_type)
 
         if normalized_type:
             found = await self.aget(entity_id=slug, entity_type=normalized_type, user_id=user_id, namespace=namespace)
@@ -2418,9 +2506,10 @@ class EntityMemoryStore(LearningStore):
         agent_id: Optional[str],
         team_id: Optional[str],
         namespace: str,
+        entity_type: Optional[str] = None,
     ) -> EntityMemory:
         """Resolve an entity by name, creating a minimal 'unknown' entity if absent."""
-        found = self._resolve(entity=entity, entity_type=None, user_id=user_id, namespace=namespace)
+        found = self._resolve(entity=entity, entity_type=entity_type, user_id=user_id, namespace=namespace)
         if found is not None:
             return found
         return self._minimal_entity(
@@ -2434,9 +2523,10 @@ class EntityMemoryStore(LearningStore):
         agent_id: Optional[str],
         team_id: Optional[str],
         namespace: str,
+        entity_type: Optional[str] = None,
     ) -> EntityMemory:
         """Async version of _resolve_or_create_minimal."""
-        found = await self._aresolve(entity=entity, entity_type=None, user_id=user_id, namespace=namespace)
+        found = await self._aresolve(entity=entity, entity_type=entity_type, user_id=user_id, namespace=namespace)
         if found is not None:
             return found
         return self._minimal_entity(

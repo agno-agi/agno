@@ -555,6 +555,20 @@ class TestResolution:
         assert getattr(company, "archived_at", None)
         assert not getattr(project, "archived_at", None)
 
+    def test_a_slash_in_a_name_is_part_of_the_name(self, store: EntityMemoryStore, db: RecordingLearningDb) -> None:
+        """A prefix only qualifies when it names a stored type.
+
+        Reading every slash as "type/name" sent resolution to a key the write
+        path never used, so the second write created nothing and clobbered the
+        first entity's facts.
+        """
+        store.remember_about(entity="AC/DC", entity_type="company", facts=["a band"])
+        store.remember_about(entity="AC/DC", entity_type="company", facts=["still a band"])
+        assert len(db.rows) == 1
+        entity = store.get(entity_id="ac_dc", entity_type="company")
+        assert entity is not None
+        assert [f["content"] for f in entity.facts] == ["a band", "still a band"]
+
     async def test_async_ambiguous_name_changes_nothing(self, store: EntityMemoryStore) -> None:
         await store.aremember_about(entity="Harbor", entity_type="project")
         await store.aremember_about(entity="Harbor", entity_type="company")

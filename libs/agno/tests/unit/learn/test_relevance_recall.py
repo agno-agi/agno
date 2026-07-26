@@ -288,3 +288,28 @@ class TestRecallReachesTheAgent:
         )
         assert run_messages.system_message is not None
         assert "db: Postgres, over Dynamo" in str(run_messages.system_message.content)
+
+
+async def test_async_far_edge_detach_reaches_an_async_db(tmp_path) -> None:
+    """The sync helpers no-op against an AsyncBaseDb.
+
+    aforget dropped the near end's edge and left the far end holding a
+    reciprocal edge to a relationship that no longer exists.
+    """
+    from agno.db.sqlite import AsyncSqliteDb
+    from agno.learn.config import LearningMode
+    from agno.learn.stores.entity_memory import EntityMemoryStore
+
+    db = AsyncSqliteDb(db_file=str(tmp_path / "a.db"))
+    store = EntityMemoryStore(
+        config=EntityMemoryConfig(db=db, mode=LearningMode.AGENTIC, namespace="global")  # type: ignore[arg-type]
+    )
+    await store.aremember_about(entity="quill", entity_type="project", namespace="global")
+    await store.alink_entities(entity="quill", relation="written_in", related_entity="Rust", namespace="global")
+    await store.aforget(entity="quill", fact="written_in -> Rust", namespace="global")
+
+    quill = await store.aget(entity_id="quill", entity_type="project", namespace="global")
+    rust = await store.aget(entity_id="rust", entity_type="unknown", namespace="global")
+    assert quill is not None and rust is not None
+    assert quill.relationships == []
+    assert rust.relationships == []
