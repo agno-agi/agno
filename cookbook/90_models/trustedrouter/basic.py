@@ -32,7 +32,7 @@ if __name__ == "__main__":
     agent.print_response("write a two sentence horror story", stream=True)
 
     # --- Async ---
-    asyncio.run(agent.aprint_response("write a two sentence horror story"))
+    asyncio.run(agent.aprint_response("write a two sentence horror story", stream=True))
 
     # --- Async + Streaming ---
     asyncio.run(agent.aprint_response("write a two sentence horror story", stream=True))
