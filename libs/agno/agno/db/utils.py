@@ -227,14 +227,21 @@ def learning_search_patterns(query: str) -> List[str]:
     # \\uXXXX is six characters wide - and the caller's value-scoped Python
     # check (which casefolds) rejects whatever that lets through. Loose
     # prefilter, precise verification, which is what this pair is for.
+    #
+    # The wildcards are carried as a sentinel until after the separator
+    # collapse below, which would otherwise fold a run of them into one.
+    wildcard = "\x00"
     json_form = json.dumps(stripped, ensure_ascii=True)[1:-1]
     if json_form != stripped:
-        variants.append(re.sub(r"\\u[0-9a-fA-F]{4}", "______", json_form))
+        variants.append(re.sub(r"\\u[0-9a-fA-F]{4}", wildcard * 6, json_form))
 
     patterns: List[str] = []
     for variant in variants:
         escaped = variant.replace("\\", "\\\\").replace("%", "\\%")
-        crossed = re.sub(r"[\s]+", "_", escaped)
+        # Runs of spaces and underscores collapse to the single-char wildcard,
+        # so one pattern crosses the display-name/slug boundary in both
+        # directions ("sarah chen", "sarah_chen", "sarah__chen").
+        crossed = re.sub(r"[\s_]+", "_", escaped).replace(wildcard, "_")
         pattern = f"%{crossed}%"
         if pattern not in patterns:
             patterns.append(pattern)

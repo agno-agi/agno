@@ -1025,6 +1025,12 @@ class EntityMemoryStore(LearningStore):
             log_warning("EntityMemoryStore.remember_about: namespace='user' requires user_id")
             return "Entity memory needs a user_id for the 'user' namespace; nothing was recorded."
 
+        # The other three tools teach "project/Harbor" in their refusals and
+        # docstrings, and the model uses it here too. Slugging it whole minted
+        # project/project_harbor and stranded the correction on a phantom.
+        entity, qualifier = self._qualified(entity=entity, user_id=user_id, namespace=effective_namespace)
+        entity_type = qualifier or entity_type
+
         existing = self._resolve(
             entity=entity,
             entity_type=entity_type,
@@ -1137,6 +1143,10 @@ class EntityMemoryStore(LearningStore):
         if effective_namespace == "user" and not user_id:
             log_warning("EntityMemoryStore.aremember_about: namespace='user' requires user_id")
             return "Entity memory needs a user_id for the 'user' namespace; nothing was recorded."
+
+        # See the sync twin: the qualified form the other tools teach.
+        entity, qualifier = await self._aqualified(entity=entity, user_id=user_id, namespace=effective_namespace)
+        entity_type = qualifier or entity_type
 
         existing = await self._aresolve(
             entity=entity,
@@ -2141,6 +2151,14 @@ class EntityMemoryStore(LearningStore):
         if edge_message is not None:
             return edge_message, edge_removed, detached
 
+        # Then the events. The instructions route positions and opinions here,
+        # so a retraction ("that rumour was wrong") lands on the one store
+        # nothing could correct: the judge only ever sees live facts, and a
+        # contradicting event just appended beside the retracted one.
+        event_message, event_removed = self._forget_event(entity_obj=entity_obj, needle=needle, label=label)
+        if event_message is not None:
+            return event_message, event_removed, None
+
         if not live:
             return f"No matching fact on {label}. It has no live facts.", False, None
         bounded = live[:10]
@@ -2235,6 +2253,35 @@ class EntityMemoryStore(LearningStore):
         rows = await self._aname_rows(entity=remainder, user_id=user_id, namespace=namespace)
         return _split_qualified_name(entity, [str(r.get("entity_type")) for r in rows if r.get("entity_type")])
 
+    def _forget_event(self, entity_obj: EntityMemory, needle: str, label: str) -> Tuple[Optional[str], bool]:
+        """Retire an event the caller named, matched like a fact.
+
+        Returns (None, False) when nothing matches, so the caller falls through
+        to its no-match reply.
+        """
+        events = [e for e in (getattr(entity_obj, "events", None) or []) if isinstance(e, dict)]
+        exact = [e for e in events if _normalize_fact_text(str(e.get("content", ""))) == needle]
+        matches = exact or [
+            e
+            for e in events
+            if needle in _normalize_fact_text(str(e.get("content", "")))
+            or _normalize_fact_text(str(e.get("content", ""))) in needle
+        ]
+        if not matches:
+            return None, False
+        if len(matches) > 1 and not exact:
+            listing = "\n".join(f"  - {e.get('content')}" for e in matches)
+            return (
+                f"Multiple events on {label} match {needle!r}; nothing was retired. "
+                f"Call forget again with the exact wording of one of:\n{listing}",
+                False,
+            )
+
+        retired = matches[0]
+        entity_obj.events = [e for e in events if e is not retired]
+        entity_obj.updated_at = _utc_now_iso()
+        return f"Retired event on {label}: {retired.get('content')}", True
+
     def _forget_edge(
         self, entity_obj: EntityMemory, needle: str, label: str
     ) -> Tuple[Optional[str], bool, Optional[Dict[str, Any]]]:
@@ -2248,10 +2295,16 @@ class EntityMemoryStore(LearningStore):
         matches = []
         for edge in edges:
             relation = _normalize_fact_text(str(edge.get("relation", "")))
-            target = _normalize_fact_text(str(edge.get("entity_id", "")))
-            rendered = _normalize_fact_text(f"{edge.get('relation', '')} {edge.get('entity_id', '')}")
-            if needle in (relation, target, rendered) or (
-                relation and target and relation in needle and target in needle
+            # The context block renders the far end's DISPLAY name ("Sarah
+            # Chen") while the edge stores its slug, so match both - the
+            # docstring tells the model to name the edge as it is rendered,
+            # and every multi-word far end failed that instruction.
+            slug = _normalize_fact_text(str(edge.get("entity_id", "")))
+            spaced = _normalize_fact_text(str(edge.get("entity_id", "")).replace("_", " "))
+            targets = {t for t in (slug, spaced) if t}
+            rendered = {_normalize_fact_text(f"{edge.get('relation', '')} {target}") for target in targets}
+            if needle in ({relation} | targets | rendered) or (
+                relation and relation in needle and any(target in needle for target in targets)
             ):
                 matches.append(edge)
         if not matches:

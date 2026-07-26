@@ -1130,3 +1130,72 @@ class TestSearchWindowExhaustion:
             assert [e.entity_id for e in store.search(query=query, namespace="global")] == ["alpha"], query
         for query in ("café", "CAFÉ", "Café"):
             assert [e.entity_id for e in store.search(query=query, namespace="global")] == ["cafe"], query
+
+
+class TestRetirementReachesEveryStore:
+    """forget is the only retirement path the four-tool surface has.
+
+    Each rung below had no route at all: a retracted event could not be
+    removed (the agent archived whole people to suppress one), and an edge
+    could not be named the way the context block renders it.
+    """
+
+    def test_an_event_can_be_retired(self, store: EntityMemoryStore) -> None:
+        store.remember_about(
+            entity="Tom",
+            entity_type="person",
+            facts=["works in infra"],
+            events=["heard he is leaving for a competitor", "shipped the migration"],
+        )
+        assert "Retired event" in store.forget(entity="Tom", fact="heard he is leaving for a competitor")
+
+        tom = store.get(entity_id="tom", entity_type="person")
+        assert tom is not None
+        assert [e["content"] for e in tom.events] == ["shipped the migration"]
+        # the facts survive, and the entity was not archived to suppress it
+        assert [f["content"] for f in tom.live_facts()] == ["works in infra"]
+        assert not getattr(tom, "archived_at", None)
+
+    def test_an_ambiguous_event_retires_nothing(self, store: EntityMemoryStore) -> None:
+        store.remember_about(entity="Tom", entity_type="person", events=["review passed", "review passed again"])
+        assert "Multiple events" in store.forget(entity="Tom", fact="review")
+        tom = store.get(entity_id="tom", entity_type="person")
+        assert tom is not None and len(tom.events) == 2
+
+    def test_an_edge_retires_by_the_name_the_model_is_shown(self, store: EntityMemoryStore) -> None:
+        # The block renders the far end's display name; the edge stores a slug.
+        for form in ("owned_by -> Sarah Chen", "owned_by -> sarah_chen", "Sarah Chen"):
+            store.remember_about(entity="Sarah Chen", entity_type="person")
+            store.remember_about(entity="radar", entity_type="project")
+            store.link_entities(entity="radar", relation="owned_by", related_entity="Sarah Chen")
+            assert "Removed relationship" in store.forget(entity="radar", fact=form), form
+
+    async def test_async_event_retirement(self, store: EntityMemoryStore) -> None:
+        await store.aremember_about(entity="Tom", entity_type="person", events=["a rumour"])
+        assert "Retired event" in await store.aforget(entity="Tom", fact="a rumour")
+
+
+class TestQualifiedNameOnRememberAbout:
+    def test_remember_about_reads_the_form_the_other_tools_teach(
+        self, store: EntityMemoryStore, db: RecordingLearningDb
+    ) -> None:
+        """The refusals and docstrings teach "project/Harbor"; slugging it
+        whole minted project/project_harbor and stranded the correction."""
+        store.remember_about(entity="Harbor", entity_type="project", facts=["the ingest rewrite"])
+        store.remember_about(entity="Harbor", entity_type="company", facts=["HQ Lisbon"])
+
+        message = store.remember_about(entity="project/Harbor", entity_type="project", facts=["status: shipped"])
+        assert "project/harbor" in message
+        assert len(db.rows) == 2
+        project = store.get(entity_id="harbor", entity_type="project")
+        assert project is not None
+        assert [f["content"] for f in project.facts] == ["the ingest rewrite", "status: shipped"]
+
+    async def test_async_remember_about_reads_the_qualified_form(
+        self, store: EntityMemoryStore, db: RecordingLearningDb
+    ) -> None:
+        await store.aremember_about(entity="Harbor", entity_type="project")
+        await store.aremember_about(entity="Harbor", entity_type="company")
+        message = await store.aremember_about(entity="project/Harbor", entity_type="project", facts=["shipped"])
+        assert "project/harbor" in message
+        assert len(db.rows) == 2
