@@ -2,7 +2,7 @@ from typing import Any, Dict, List, Optional
 
 from agno.knowledge.document import Document
 from agno.knowledge.reranker.base import Reranker
-from agno.utils.log import logger
+from agno.utils.log import log_error, log_warning
 
 try:
     import litellm
@@ -53,7 +53,7 @@ class LiteLLMReranker(Reranker):
     def _extract_results(response: Any) -> List[Any]:
         """Extract results from LiteLLM rerank response."""
         try:
-            if hasattr(response, 'results'):
+            if hasattr(response, "results"):
                 return response.results
             return []
         except Exception:
@@ -77,7 +77,7 @@ class LiteLLMReranker(Reranker):
                     doc.reranking_score = score
                     ranked.append(doc)
                 except Exception as e:
-                    logger.warning(f"Failed processing rerank item: {e}")
+                    log_warning(f"Failed processing rerank item: {e}")
 
             ranked.sort(
                 key=lambda d: d.reranking_score if d.reranking_score is not None else float("-inf"),
@@ -87,12 +87,12 @@ class LiteLLMReranker(Reranker):
                 ranked = ranked[: self.top_n]
             return ranked
         except Exception as e:
-            logger.error(f"LiteLLM rerank error: {e}. Returning original documents")
+            log_error(f"LiteLLM rerank error: {e}. Returning original documents")
             return documents
 
-    def rerank(self, query: str, documents: List[Document]) -> List[Document]: 
+    def rerank(self, query: str, documents: List[Document]) -> List[Document]:
         try:
             return self._rerank(query=query, documents=documents)
         except Exception as e:
-            logger.error(f"Unexpected rerank error: {e}. Returning original documents")
+            log_error(f"Unexpected rerank error: {e}. Returning original documents")
             return documents

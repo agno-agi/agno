@@ -2,7 +2,7 @@ from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple
 
 from agno.knowledge.embedder.base import Embedder
-from agno.utils.log import logger
+from agno.utils.log import log_info, log_warning
 
 try:
     import litellm
@@ -59,7 +59,7 @@ class LiteLLMEmbedder(Embedder):
                 return response.data[0].embedding
             return []
         except Exception as e:
-            logger.warning(f"Failed to extract embedding: {e}")
+            log_warning(f"Failed to extract embedding: {e}")
             return []
 
     @staticmethod
@@ -70,7 +70,7 @@ class LiteLLMEmbedder(Embedder):
                 return response.usage.model_dump()
             return None
         except Exception as e:
-            logger.warning(f"Failed to extract usage: {e}")
+            log_warning(f"Failed to extract usage: {e}")
             return None
 
     def get_embedding(self, text: str) -> List[float]:
@@ -79,7 +79,7 @@ class LiteLLMEmbedder(Embedder):
             response = litellm.embedding(**request)
             return self._extract_embedding(response)
         except Exception as e:
-            logger.warning(f"LiteLLM embedding error: {e}")
+            log_warning(f"LiteLLM embedding error: {e}")
             return []
 
     def get_embedding_and_usage(self, text: str) -> Tuple[List[float], Optional[Dict]]:
@@ -90,7 +90,7 @@ class LiteLLMEmbedder(Embedder):
             usage = self._extract_usage(response)
             return embedding, usage
         except Exception as e:
-            logger.warning(f"LiteLLM embedding error: {e}")
+            log_warning(f"LiteLLM embedding error: {e}")
             return [], None
 
     async def async_get_embedding(self, text: str) -> List[float]:
@@ -99,7 +99,7 @@ class LiteLLMEmbedder(Embedder):
             response = await litellm.aembedding(**request)
             return self._extract_embedding(response)
         except Exception as e:
-            logger.warning(f"LiteLLM async embedding error: {e}")
+            log_warning(f"LiteLLM async embedding error: {e}")
             return []
 
     async def async_get_embedding_and_usage(self, text: str) -> Tuple[List[float], Optional[Dict]]:
@@ -110,7 +110,7 @@ class LiteLLMEmbedder(Embedder):
             usage = self._extract_usage(response)
             return embedding, usage
         except Exception as e:
-            logger.warning(f"LiteLLM async embedding error: {e}")
+            log_warning(f"LiteLLM async embedding error: {e}")
             return [], None
 
     async def async_get_embeddings_batch_and_usage(
@@ -123,7 +123,7 @@ class LiteLLMEmbedder(Embedder):
         all_embeddings: List[List[float]] = []
         all_usage: List[Optional[Dict]] = []
 
-        logger.info(
+        log_info(
             f"Getting embeddings and usage for {len(texts)} texts in batches of {self.batch_size} (LiteLLM async)"
         )
         for i in range(0, len(texts), self.batch_size):
@@ -140,7 +140,7 @@ class LiteLLMEmbedder(Embedder):
                 all_embeddings.extend(embeddings)
                 all_usage.extend([usage] * len(embeddings))
             except Exception as e:
-                logger.warning(f"LiteLLM batch embedding error: {e} - falling back to per item")
+                log_warning(f"LiteLLM batch embedding error: {e} - falling back to per item")
                 for t in batch:
                     emb, usage = await self.async_get_embedding_and_usage(t)
                     all_embeddings.append(emb)
