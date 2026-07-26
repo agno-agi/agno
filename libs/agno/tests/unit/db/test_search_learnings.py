@@ -39,12 +39,18 @@ class TestPatterns:
         assert learning_search_patterns("___") == []
         assert learning_search_patterns("% _ %") == []
 
-    def test_non_ascii_gets_json_escaped_variant(self) -> None:
+    def test_non_ascii_gets_a_wildcarded_escape_variant(self) -> None:
         patterns = learning_search_patterns("café")
         assert patterns[0] == "%café%"
-        # SQLite stores JSON with ensure_ascii escapes; the second pattern
-        # matches the stored form (backslash doubled for the ESCAPE clause).
-        assert patterns[1] == "%caf\\\\u00e9%"
+        # SQLite stores JSON with ensure_ascii escapes and LIKE folds ASCII
+        # only, so a literal \\u00e9 can never case-match a stored \\u00c9.
+        # The escape is six characters wide and carries a wildcard per
+        # character; the caller's value-scoped Python check casefolds and
+        # rejects whatever that lets through.
+        assert patterns[1] == "%caf______%"
+
+    def test_ascii_queries_get_no_wildcard_padding(self) -> None:
+        assert all("______" not in pattern for pattern in learning_search_patterns("sarah chen"))
 
 
 class TestBaseDefaults:
