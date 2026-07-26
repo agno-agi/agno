@@ -1,5 +1,6 @@
 import logging
 import time
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Union, cast
 from uuid import uuid4
 
@@ -7,20 +8,25 @@ from fastapi import APIRouter, Body, Depends, HTTPException, Path, Query, Reques
 
 from agno.db.base import AsyncBaseDb, BaseDb, SessionType
 from agno.db.utils import deserialize_session_by_type, resolve_session_type
+from agno.learn.schemas import Feedback
+from agno.learn.stores.feedback import build_feedback_id
 from agno.os.auth import get_auth_token_from_request, get_authentication_dependency
 from agno.os.middleware.user_scope import (
     enforce_owner_on_entity,
+    get_scoped_user_id,
     resolve_db_and_scope,
 )
 from agno.os.schema import (
     AgentSessionDetailSchema,
     BadRequestResponse,
+    CreateRunFeedbackRequest,
     CreateSessionRequest,
     DeleteSessionRequest,
     InternalServerErrorResponse,
     NotFoundResponse,
     PaginatedResponse,
     PaginationInfo,
+    RunFeedbackSchema,
     RunSchema,
     SessionSchema,
     SortOrder,
@@ -752,6 +758,175 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
         else:
             return RunSchema.from_dict(target_run)
 
+    @router.post(
+        "/sessions/{session_id}/runs/{run_id}/feedback",
+        response_model=RunFeedbackSchema,
+        status_code=201,
+        operation_id="create_run_feedback",
+        summary="Create Run Feedback",
+        description=(
+            "Review a run with a feedback signal (positive/negative) and an optional comment. "
+            "Feedback is keyed by run, so reviewing the same run again updates the existing "
+            "feedback (e.g. toggling positive to negative). Agents with feedback learning "
+            "enabled use this feedback to adapt their behavior in future runs."
+        ),
+        responses={
+            201: {"description": "Feedback recorded successfully"},
+            404: {"description": "Session or run not found", "model": NotFoundResponse},
+        },
+    )
+    async def create_run_feedback(
+        request: Request,
+        body: CreateRunFeedbackRequest,
+        session_id: str = Path(description="Session ID the run belongs to"),
+        run_id: str = Path(description="Run ID to give feedback on"),
+        user_id: Optional[str] = Query(default=None, description="User ID giving the feedback"),
+        db_id: Optional[str] = Query(default=None, description="Database ID to use"),
+        table: Optional[str] = Query(default=None, description="Table to use"),
+    ) -> RunFeedbackSchema:
+        db, effective_user_id = await resolve_db_and_scope(request, dbs, db_id, table, fallback_user_id=user_id)
+
+        if isinstance(db, RemoteDb):
+            raise HTTPException(status_code=501, detail="Run feedback not supported on remote DBs")
+
+        if isinstance(db, AsyncBaseDb):
+            session = await db.get_session(session_id=session_id, user_id=effective_user_id, deserialize=False)
+        else:
+            session = db.get_session(session_id=session_id, user_id=effective_user_id, deserialize=False)
+
+        if not session:
+            raise HTTPException(status_code=404, detail=f"Session with ID {session_id} not found")
+
+        target_run = None
+        for run in session.get("runs") or []:  # type: ignore
+            if run.get("run_id") == run_id:
+                target_run = run
+                break
+
+        if not target_run:
+            raise HTTPException(status_code=404, detail=f"Run with ID {run_id} not found in session {session_id}")
+
+        feedback_id = build_feedback_id(run_id)
+        now = datetime.now(timezone.utc).isoformat()
+
+        try:
+            if isinstance(db, AsyncBaseDb):
+                existing = await db.get_learning_by_id(feedback_id)
+            else:
+                existing = db.get_learning_by_id(feedback_id)
+
+            # Re-reviewing overwrites the existing entry, so it is a mutation.
+            if existing is not None:
+                _enforce_feedback_scope(request, existing, run_id=run_id, mutating=True)
+
+            existing_content = existing.get("content") if isinstance(existing, dict) else None
+            feedback = Feedback(
+                id=feedback_id,
+                signal=body.signal,
+                comment=body.comment,
+                context=_build_run_feedback_context(target_run),
+                run_id=run_id,
+                session_id=session_id,
+                user_id=effective_user_id or session.get("user_id"),  # type: ignore
+                agent_id=target_run.get("agent_id"),
+                team_id=target_run.get("team_id"),
+                created_at=existing_content.get("created_at") if existing_content else now,
+                updated_at=now if existing_content else None,
+            )
+
+            if isinstance(db, AsyncBaseDb):
+                await db.upsert_learning(
+                    id=feedback.id,
+                    learning_type="feedback",
+                    content=feedback.to_dict(),
+                    user_id=feedback.user_id,
+                    agent_id=feedback.agent_id,
+                    team_id=feedback.team_id,
+                    session_id=feedback.session_id,
+                )
+            else:
+                db.upsert_learning(
+                    id=feedback.id,
+                    learning_type="feedback",
+                    content=feedback.to_dict(),
+                    user_id=feedback.user_id,
+                    agent_id=feedback.agent_id,
+                    team_id=feedback.team_id,
+                    session_id=feedback.session_id,
+                )
+        except NotImplementedError:
+            raise HTTPException(status_code=501, detail="Run feedback not supported by the configured database")
+        except HTTPException:
+            raise  # e.g. the 403 owner guard above
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Failed to record run feedback: {e}")
+
+        return RunFeedbackSchema.from_feedback_dict(feedback.to_dict())
+
+    @router.get(
+        "/sessions/{session_id}/runs/{run_id}/feedback",
+        response_model=RunFeedbackSchema,
+        status_code=200,
+        operation_id="get_run_feedback",
+        summary="Get Run Feedback",
+        description="Retrieve the feedback given on a run, if any.",
+        responses={
+            200: {"description": "Feedback retrieved successfully"},
+            404: {"description": "No feedback found for the run", "model": NotFoundResponse},
+        },
+    )
+    async def get_run_feedback(
+        request: Request,
+        session_id: str = Path(description="Session ID the run belongs to"),
+        run_id: str = Path(description="Run ID to get feedback for"),
+        user_id: Optional[str] = Query(default=None, description="User ID to query feedback for"),
+        db_id: Optional[str] = Query(default=None, description="Database ID to query"),
+        table: Optional[str] = Query(default=None, description="Table to query"),
+    ) -> RunFeedbackSchema:
+        db, effective_user_id = await resolve_db_and_scope(request, dbs, db_id, table, fallback_user_id=user_id)
+
+        if isinstance(db, RemoteDb):
+            raise HTTPException(status_code=501, detail="Run feedback not supported on remote DBs")
+
+        record = await _get_run_feedback_record(db, request, session_id=session_id, run_id=run_id)
+        return RunFeedbackSchema.from_feedback_dict(record.get("content") or {})
+
+    @router.delete(
+        "/sessions/{session_id}/runs/{run_id}/feedback",
+        status_code=204,
+        operation_id="delete_run_feedback",
+        summary="Delete Run Feedback",
+        description="Remove the feedback given on a run (e.g. the user retracts their vote).",
+        responses={
+            204: {"description": "Feedback deleted successfully"},
+            404: {"description": "No feedback found for the run", "model": NotFoundResponse},
+        },
+    )
+    async def delete_run_feedback(
+        request: Request,
+        session_id: str = Path(description="Session ID the run belongs to"),
+        run_id: str = Path(description="Run ID to delete feedback for"),
+        user_id: Optional[str] = Query(default=None, description="User ID to delete feedback for"),
+        db_id: Optional[str] = Query(default=None, description="Database ID to use"),
+        table: Optional[str] = Query(default=None, description="Table to use"),
+    ) -> None:
+        db, effective_user_id = await resolve_db_and_scope(request, dbs, db_id, table, fallback_user_id=user_id)
+
+        if isinstance(db, RemoteDb):
+            raise HTTPException(status_code=501, detail="Run feedback not supported on remote DBs")
+
+        await _get_run_feedback_record(db, request, session_id=session_id, run_id=run_id, mutating=True)
+
+        try:
+            if isinstance(db, AsyncBaseDb):
+                await db.delete_learning(build_feedback_id(run_id))
+            else:
+                db.delete_learning(build_feedback_id(run_id))
+        except NotImplementedError:
+            raise HTTPException(status_code=501, detail="Run feedback not supported by the configured database")
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Failed to delete run feedback: {e}")
+
     @router.delete(
         "/sessions/{session_id}",
         status_code=204,
@@ -1133,3 +1308,66 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
             return WorkflowSessionDetailSchema.from_session(updated_session)  # type: ignore
 
     return router
+
+
+def _build_run_feedback_context(run: Dict[str, Any], max_length: int = 300) -> Optional[str]:
+    """Build a short snippet of the reviewed run so the feedback carries what it refers to."""
+    parts = []
+
+    run_input = run.get("input")
+    input_content = run_input.get("input_content") if isinstance(run_input, dict) else run_input
+    if input_content:
+        parts.append(f"User input: {str(input_content)[:max_length]}")
+
+    content = run.get("content")
+    if content:
+        parts.append(f"Agent response: {str(content)[:max_length]}")
+
+    return "\n".join(parts) if parts else None
+
+
+async def _get_run_feedback_record(
+    db: Union[BaseDb, AsyncBaseDb],
+    request: Request,
+    session_id: str,
+    run_id: str,
+    mutating: bool = False,
+) -> Dict[str, Any]:
+    """Fetch the feedback record for a run, raising 404 when absent or out of scope."""
+    try:
+        if isinstance(db, AsyncBaseDb):
+            record = await db.get_learning_by_id(build_feedback_id(run_id))
+        else:
+            record = db.get_learning_by_id(build_feedback_id(run_id))
+    except NotImplementedError:
+        raise HTTPException(status_code=501, detail="Run feedback not supported by the configured database")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to get run feedback: {e}")
+
+    if not record or record.get("session_id") != session_id:
+        raise HTTPException(status_code=404, detail=f"No feedback found for run {run_id}")
+
+    _enforce_feedback_scope(request, record, run_id=run_id, mutating=mutating)
+    return record
+
+
+def _enforce_feedback_scope(request: Request, record: Dict[str, Any], run_id: str, mutating: bool = False) -> None:
+    """Block cross-user access to feedback without leaking existence.
+
+    Mirrors the learnings router's ``_enforce_user_scope`` contract for the same table:
+    for a scoped (non-admin) caller, feedback with no owner (``user_id`` is null) stays
+    readable but is admin-only to overwrite or delete, and feedback owned by a different
+    user returns 404 (not 403) to avoid leaking which runs were reviewed.
+    """
+    scoped_user_id = get_scoped_user_id(request)
+    if scoped_user_id is None:
+        return
+    record_user_id = record.get("user_id")
+    if record_user_id is None:
+        if mutating:
+            raise HTTPException(
+                status_code=403, detail="Only admins can modify feedback that has no owner (user_id is null)"
+            )
+        return
+    if record_user_id != scoped_user_id:
+        raise HTTPException(status_code=404, detail=f"No feedback found for run {run_id}")

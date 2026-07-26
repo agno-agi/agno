@@ -19,6 +19,7 @@ from typing import Any, Callable, Dict, List, Optional, Union
 from agno.learn.config import (
     DecisionLogConfig,
     EntityMemoryConfig,
+    FeedbackConfig,
     LearnedKnowledgeConfig,
     LearningMode,
     SessionContextConfig,
@@ -47,6 +48,7 @@ EntityMemoryInput = Union[bool, EntityMemoryConfig, LearningStore, None]
 SessionContextInput = Union[bool, SessionContextConfig, LearningStore, None]
 LearnedKnowledgeInput = Union[bool, LearnedKnowledgeConfig, LearningStore, None]
 DecisionLogInput = Union[bool, DecisionLogConfig, LearningStore, None]
+FeedbackInput = Union[bool, FeedbackConfig, LearningStore, None]
 
 
 @dataclass
@@ -66,6 +68,7 @@ class LearningMachine:
         session_context: Enable session context. Accepts bool, Config, or Store.
         entity_memory: Enable entity memory. Accepts bool, Config, or Store.
         learned_knowledge: Enable learned knowledge. Auto-enabled when knowledge provided.
+        feedback: Enable behavioral feedback. Accepts bool, Config, or Store.
 
         namespace: Default namespace for entity_memory and learned_knowledge.
         custom_stores: Additional stores implementing LearningStore protocol.
@@ -83,6 +86,7 @@ class LearningMachine:
     entity_memory: EntityMemoryInput = False
     learned_knowledge: LearnedKnowledgeInput = False
     decision_log: DecisionLogInput = False
+    feedback: FeedbackInput = False
 
     # Namespace for entity_memory and learned_knowledge
     namespace: str = "global"
@@ -157,6 +161,13 @@ class LearningMachine:
                 store_type="decision_log",
             )
 
+        # Feedback
+        if self.feedback:
+            self._stores["feedback"] = self._resolve_store(
+                input_value=self.feedback,
+                store_type="feedback",
+            )
+
         # Custom stores
         if self.custom_stores:
             for name, store in self.custom_stores.items():
@@ -195,6 +206,8 @@ class LearningMachine:
             return self._create_learned_knowledge_store(config=input_value)
         elif store_type == "decision_log":
             return self._create_decision_log_store(config=input_value)
+        elif store_type == "feedback":
+            return self._create_feedback_store(config=input_value)
         else:
             raise ValueError(f"Unknown store type: {store_type}")
 
@@ -325,6 +338,24 @@ class LearningMachine:
 
         return DecisionLogStore(config=config, debug_mode=self.debug_mode)
 
+    def _create_feedback_store(self, config: Any) -> LearningStore:
+        """Create FeedbackStore with resolved config."""
+        from agno.learn.stores import FeedbackStore
+
+        if isinstance(config, FeedbackConfig):
+            if config.db is None:
+                config.db = self.db
+            if config.model is None:
+                config.model = self.model
+        else:
+            config = FeedbackConfig(
+                db=self.db,
+                model=self.model,
+                mode=LearningMode.ALWAYS,
+            )
+
+        return FeedbackStore(config=config, debug_mode=self.debug_mode)
+
     # =========================================================================
     # Store Accessors (Type-Safe)
     # =========================================================================
@@ -360,6 +391,11 @@ class LearningMachine:
         return self.stores.get("decision_log")
 
     @property
+    def feedback_store(self) -> Optional[LearningStore]:
+        """Get feedback store if enabled."""
+        return self.stores.get("feedback")
+
+    @property
     def was_updated(self) -> bool:
         """True if any store was updated in the last operation."""
         return any(getattr(store, "was_updated", False) for store in self.stores.values())
@@ -375,10 +411,24 @@ class LearningMachine:
             self.session_context,
             self.entity_memory,
             self.decision_log,
+            self.feedback,
         ):
             mode = getattr(cfg, "mode", None) or getattr(getattr(cfg, "config", None), "mode", None)
             if mode in modes_needing_history:
                 return True
+
+        # ALWAYS-mode feedback extraction reacts to the assistant's prior turn, so the
+        # extractor needs history in context (a bare feedback message like "too long" is
+        # meaningless without the response it refers to). feedback=True defaults to ALWAYS.
+        if self.feedback:
+            feedback_mode = (
+                getattr(self.feedback, "mode", None)
+                or getattr(getattr(self.feedback, "config", None), "mode", None)
+                or LearningMode.ALWAYS
+            )
+            if feedback_mode == LearningMode.ALWAYS:
+                return True
+
         return False
 
     # =========================================================================
@@ -765,6 +815,8 @@ class LearningMachine:
             d["learned_knowledge"] = True
         if self.decision_log:
             d["decision_log"] = True
+        if self.feedback:
+            d["feedback"] = True
         if self.namespace != "global":
             d["namespace"] = self.namespace
         if self.debug_mode:
@@ -784,6 +836,7 @@ class LearningMachine:
             entity_memory=data.get("entity_memory", False),
             learned_knowledge=data.get("learned_knowledge", False),
             decision_log=data.get("decision_log", False),
+            feedback=data.get("feedback", False),
             namespace=data.get("namespace", "global"),
             debug_mode=data.get("debug_mode", False),
         )
