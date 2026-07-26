@@ -98,8 +98,17 @@ class GmailContextProvider(ContextProvider):
         model: Model | None = None,
         read: bool = True,
         write: bool = False,
+        stream_sub_agent_events: bool = True,
     ) -> None:
-        super().__init__(id=id, name=name, mode=mode, model=model, read=read, write=write)
+        super().__init__(
+            id=id,
+            name=name,
+            mode=mode,
+            model=model,
+            read=read,
+            write=write,
+            stream_sub_agent_events=stream_sub_agent_events,
+        )
 
         # Store auth config for toolkit creation
         self._auth = auth
