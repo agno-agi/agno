@@ -45,10 +45,19 @@ def deserialize_from_dynamodb_item(item: Dict[str, Any]) -> Dict[str, Any]:
     data = {}
     for key, value in item.items():
         if "S" in value:
+            # ``serialize_to_dynamo_item`` only ``json.dumps`` dicts and lists;
+            # raw strings are stored verbatim in ``S``. Mirror that on read:
+            # accept JSON only when it decodes to a dict or list. Otherwise the
+            # string "42" would come back as int 42, "null" as None, "true" as
+            # True — silently corrupting string columns (notably ``user_id``,
+            # which then breaks isolation or fails row validation).
+            raw = value["S"]
             try:
-                data[key] = json.loads(value["S"])
+                decoded = json.loads(raw)
             except (json.JSONDecodeError, TypeError):
-                data[key] = value["S"]
+                data[key] = raw
+            else:
+                data[key] = decoded if isinstance(decoded, (dict, list)) else raw
         elif "N" in value:
             data[key] = float(value["N"]) if "." in value["N"] else int(value["N"])
         elif "BOOL" in value:
@@ -78,6 +87,7 @@ def serialize_knowledge_row(knowledge: KnowledgeRow) -> Dict[str, Any]:
             "size": getattr(knowledge, "size", None),
             "linked_to": getattr(knowledge, "linked_to", None),
             "access_count": getattr(knowledge, "access_count", None),
+            "user_id": getattr(knowledge, "user_id", None),
             "created_at": int(knowledge.created_at) if knowledge.created_at else None,
             "updated_at": int(knowledge.updated_at) if knowledge.updated_at else None,
         }

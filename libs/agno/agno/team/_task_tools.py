@@ -325,7 +325,12 @@ def _get_task_management_tools(
         )
         team_history_str = None
         if team.add_team_history_to_members and session:
-            team_history_str = session.get_team_history_context(num_runs=team.num_team_history_runs)
+            from agno.team.team import Team
+
+            member_team_id = member_agent.id if isinstance(member_agent, Team) else None
+            team_history_str = session.get_team_history_context(
+                team_id=member_team_id, num_runs=team.num_team_history_runs
+            )
 
         member_agent_task: Any = task_description
         if team_history_str or team_member_interactions_str:

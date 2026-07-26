@@ -83,7 +83,10 @@ def extract_event_context(event: dict) -> Dict[str, Any]:
     return {
         "message_text": event.get("text", ""),
         "channel_id": event.get("channel", ""),
-        "user": event.get("user", ""),
+        # Human sender ID (U.../W...) — empty for webhook/legacy bot messages
+        "user": event.get("user") or "",
+        # Bot sender ID (B...) — present on all bot-authored messages
+        "bot_id": event.get("bot_id") or "",
         # Prefer existing thread; fall back to message ts for new conversations
         "thread_id": event.get("thread_ts") or event.get("ts", ""),
         # User-scoped token for assistant.search.context workspace search
@@ -133,6 +136,16 @@ async def resolve_slack_user(async_client: Any, slack_user_id: str) -> Tuple[str
     except Exception as e:
         log_warning(f"Failed to resolve Slack user {slack_user_id}: {str(e)}")
         return (slack_user_id, None)
+
+
+async def resolve_slack_bot(async_client: Any, bot_id: str) -> Tuple[str, Optional[str]]:
+    try:
+        resp = await async_client.bots_info(bot=bot_id)
+        bot = resp.get("bot", {}) if resp else {}
+        return (bot_id, bot.get("name") or None)
+    except Exception as e:
+        log_warning(f"Failed to resolve Slack bot {bot_id}: {str(e)}")
+        return (bot_id, None)
 
 
 class BotNameResolver:

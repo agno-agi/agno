@@ -1702,6 +1702,131 @@ def test_get_team_history_empty(shared_db):
     assert len(history) == 0
 
 
+def test_get_team_history_filter_by_team_id(shared_db):
+    """Test that get_team_history with team_id returns only that team's runs"""
+    session_id = f"test_session_{uuid.uuid4()}"
+
+    from agno.run.agent import RunInput
+
+    runs = [
+        # Parent team run
+        TeamRunOutput(
+            team_id="parent_team",
+            run_id="parent_run",
+            status=RunStatus.completed,
+            parent_run_id=None,
+            input=RunInput(input_content="Parent query"),
+            content="Parent response",
+        ),
+        # Child sub-team run (has parent_run_id set)
+        TeamRunOutput(
+            team_id="child_team",
+            run_id="child_run",
+            status=RunStatus.completed,
+            parent_run_id="parent_run",
+            input=RunInput(input_content="Child query"),
+            content="Child response",
+        ),
+        # Member agent run (no team_id, has parent_run_id)
+        RunOutput(
+            run_id="agent_run",
+            agent_id="agent_1",
+            status=RunStatus.completed,
+            parent_run_id="parent_run",
+            input=RunInput(input_content="Agent query"),
+            content="Agent response",
+        ),
+    ]
+
+    team_session = create_session_with_runs(shared_db, session_id, runs)
+
+    # Default: parent_run_id is None → only the parent team run
+    history = team_session.get_team_history()
+    assert len(history) == 1
+    assert history[0] == ("Parent query", "Parent response")
+
+    # Filter by parent_team
+    history = team_session.get_team_history(team_id="parent_team")
+    assert len(history) == 1
+    assert history[0] == ("Parent query", "Parent response")
+
+    # Filter by child_team → should return the child's own run
+    history = team_session.get_team_history(team_id="child_team")
+    assert len(history) == 1
+    assert history[0] == ("Child query", "Child response")
+
+    # Filter by non-existent team_id
+    history = team_session.get_team_history(team_id="nonexistent")
+    assert len(history) == 0
+
+
+def test_get_team_history_team_id_with_num_runs(shared_db):
+    """Test that team_id filter works together with num_runs"""
+    session_id = f"test_session_{uuid.uuid4()}"
+
+    from agno.run.agent import RunInput
+
+    runs = [
+        TeamRunOutput(
+            team_id="child_team",
+            run_id=f"child_run_{i}",
+            status=RunStatus.completed,
+            parent_run_id="parent_run",
+            input=RunInput(input_content=f"Child query {i}"),
+            content=f"Child response {i}",
+        )
+        for i in range(5)
+    ]
+
+    team_session = create_session_with_runs(shared_db, session_id, runs)
+
+    # Get only last 2 runs for child_team
+    history = team_session.get_team_history(team_id="child_team", num_runs=2)
+    assert len(history) == 2
+    assert history[0][0] == "Child query 3"
+    assert history[1][0] == "Child query 4"
+
+
+def test_get_team_history_context_team_id(shared_db):
+    """Test that get_team_history_context respects team_id filter"""
+    session_id = f"test_session_{uuid.uuid4()}"
+
+    from agno.run.agent import RunInput
+
+    runs = [
+        TeamRunOutput(
+            team_id="parent_team",
+            run_id="parent_run",
+            status=RunStatus.completed,
+            parent_run_id=None,
+            input=RunInput(input_content="Parent query"),
+            content="Parent response",
+        ),
+        TeamRunOutput(
+            team_id="child_team",
+            run_id="child_run",
+            status=RunStatus.completed,
+            parent_run_id="parent_run",
+            input=RunInput(input_content="Child query"),
+            content="Child response",
+        ),
+    ]
+
+    team_session = create_session_with_runs(shared_db, session_id, runs)
+
+    # Default context → parent's history
+    context = team_session.get_team_history_context()
+    assert context is not None
+    assert "Parent query" in context
+    assert "Child query" not in context
+
+    # Context filtered by child_team → child's history
+    context = team_session.get_team_history_context(team_id="child_team")
+    assert context is not None
+    assert "Child query" in context
+    assert "Parent query" not in context
+
+
 # Tests for get_team_history_context()
 def test_get_team_history_context_basic(shared_db):
     """Test getting formatted team history context"""
