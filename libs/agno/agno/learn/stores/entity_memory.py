@@ -2269,6 +2269,9 @@ class EntityMemoryStore(LearningStore):
         ]
         if not matches:
             return None, False
+        # Several DIFFERENT events matching loosely is ambiguous; several exact
+        # copies of the same one is not - retire the set, or the reply says
+        # "Retired" while the event keeps rendering.
         if len(matches) > 1 and not exact:
             listing = "\n".join(f"  - {e.get('content')}" for e in matches)
             return (
@@ -2278,7 +2281,7 @@ class EntityMemoryStore(LearningStore):
             )
 
         retired = matches[0]
-        entity_obj.events = [e for e in events if e is not retired]
+        entity_obj.events = [e for e in events if e not in matches]
         entity_obj.updated_at = _utc_now_iso()
         return f"Retired event on {label}: {retired.get('content')}", True
 
@@ -2341,6 +2344,9 @@ class EntityMemoryStore(LearningStore):
                 isinstance(r, dict)
                 and r.get("entity_id") == entity_obj.entity_id
                 and r.get("relation") == edge.get("relation")
+                # Type too: project/Harbor and company/Harbor share a slug, and
+                # retiring one edge must not strip the other's reciprocal.
+                and r.get("entity_type") == entity_obj.entity_type
             )
         ]
         if len(kept) == len(getattr(far, "relationships", None) or []):

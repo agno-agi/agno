@@ -691,6 +691,18 @@ class EntityMemory:
 
         if content and content.strip():
             now = _utc_now_iso()
+            # Idempotent for the same day, like add_relationship: models
+            # re-state what they already recorded, and a duplicated event
+            # renders twice and retires ambiguously.
+            for existing in self.events:
+                if (
+                    isinstance(existing, dict)
+                    and existing.get("content") == content.strip()
+                    and existing.get("date") == date
+                ):
+                    existing["updated_at"] = now
+                    return str(existing.get("id", ""))
+
             event = {"id": event_id, "content": content.strip(), "created_at": now, "updated_at": now, **kwargs}
             if date:
                 event["date"] = date
@@ -717,12 +729,16 @@ class EntityMemory:
         # Idempotent: models re-assert links they already know, and an appended
         # duplicate cannot be retired - forget lists byte-identical candidates
         # no wording can tell apart. Touch the existing edge instead.
+        far_type = kwargs.get("entity_type")
         for existing in self.relationships:
             if (
                 isinstance(existing, dict)
                 and existing.get("entity_id") == related_entity_id
                 and existing.get("relation") == relation
                 and existing.get("direction") == direction
+                # entity_type is part of the identity: project/Harbor and
+                # company/Harbor share a slug and are different things.
+                and existing.get("entity_type") == far_type
             ):
                 existing["updated_at"] = now
                 existing.update(kwargs)
