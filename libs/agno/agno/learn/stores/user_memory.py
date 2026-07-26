@@ -1051,6 +1051,12 @@ class UserMemoryStore(LearningStore):
                 - Record only what the instruction says. Do not add surrounding
                   detail it did not ask for.\
             """)
+            # A configured capture policy still applies - the execute contract
+            # replaces the store's own gatekeeping, not the operator's. The tool
+            # path is the ONLY path in AGENTIC mode, so dropping it here made
+            # UserMemoryConfig(instructions=...) a no-op in the flagship mode.
+            if self.config.instructions:
+                capture_instructions += f"\n\n{self.config.instructions}\n"
 
         system_prompt += capture_instructions
 

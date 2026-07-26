@@ -236,3 +236,30 @@ def test_value_projection_and_variants_casefold() -> None:
 
     assert content_values_text({"facts": ["Ος"]}) == query_variants("ΟΣ")[0]
     assert query_variants("CAFÉ")[0] == "café"
+
+
+def test_recall_is_not_scoped_to_the_current_session(tmp_path) -> None:
+    """A decision log's value is cross-session.
+
+    recall() receives the run's session_id from LearningMachine, and forwarding
+    it into search() made the injected block say "No recent decisions logged" to
+    every new session while the store was full. search(session_id=...) still
+    scopes for explicit callers.
+    """
+    from agno.db.sqlite import SqliteDb
+    from agno.learn.config import DecisionLogConfig, LearningMode
+    from agno.learn.stores.decision_log import DecisionLogStore
+
+    store = DecisionLogStore(
+        config=DecisionLogConfig(db=SqliteDb(db_file=str(tmp_path / "d.db")), mode=LearningMode.AGENTIC)
+    )
+    log_decision = next(
+        t for t in store.get_tools(agent_id="a1", session_id="session-one") if t.__name__ == "log_decision"
+    )
+    log_decision(decision="Postgres over Dynamo", reasoning="advisory locks")
+
+    from_another_session = store.recall(agent_id="a1", session_id="session-two")
+    assert from_another_session and from_another_session[0].decision == "Postgres over Dynamo"
+
+    assert store.search(agent_id="a1", session_id="session-two") == []
+    assert len(store.search(agent_id="a1", session_id="session-one")) == 1

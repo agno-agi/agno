@@ -220,3 +220,26 @@ def test_a_wanted_learned_knowledge_store_still_gets_the_agents_knowledge(tmp_pa
 
     assert machine.knowledge is not None
     assert "learned_knowledge" in machine.stores
+
+
+def test_a_configured_capture_policy_survives_the_execute_contract(tmp_path) -> None:
+    """`instructions` is the capture-policy knob, and the tool path is the only
+    path AGENTIC mode takes. The execute contract replaces the store's own
+    gatekeeping, not the operator's policy."""
+    from agno.db.sqlite import SqliteDb
+    from agno.learn.config import LearningMode, UserMemoryConfig
+    from agno.learn.stores.user_memory import UserMemoryStore
+
+    store = UserMemoryStore(
+        config=UserMemoryConfig(
+            db=SqliteDb(db_file=str(tmp_path / "m.db")),
+            mode=LearningMode.AGENTIC,
+            instructions="House policy: never record salaries.",
+        )
+    )
+    instructed = store._get_system_message(existing_data=[], instructed=True).content
+    passive = store._get_system_message(existing_data=[], instructed=False).content
+
+    assert "House policy: never record salaries." in instructed
+    assert "House policy: never record salaries." in passive
+    assert "Carry out that" in instructed

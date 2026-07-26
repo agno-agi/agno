@@ -95,9 +95,15 @@ class DecisionLogStore(LearningStore):
     ) -> Optional[List[DecisionLog]]:
         """Retrieve recent decisions.
 
+        A decision log is worth having because it crosses sessions: the run's
+        session_id is accepted and deliberately NOT used as a filter, or the
+        injected block would say "No recent decisions logged" to every new
+        session while the store is full. Explicit callers scope with
+        search(session_id=...).
+
         Args:
             agent_id: Filter by agent (optional).
-            session_id: Filter by session (optional).
+            session_id: Accepted for the store protocol; not used as a filter.
             decision_type: Filter by decision type (optional).
             limit: Maximum number of decisions to return.
             days: Only return decisions from last N days.
@@ -108,7 +114,6 @@ class DecisionLogStore(LearningStore):
         """
         return self.search(
             agent_id=agent_id,
-            session_id=session_id,
             decision_type=decision_type,
             limit=limit,
             days=days,
@@ -126,7 +131,6 @@ class DecisionLogStore(LearningStore):
         """Async version of recall."""
         return await self.asearch(
             agent_id=agent_id,
-            session_id=session_id,
             decision_type=decision_type,
             limit=limit,
             days=days,
