@@ -34,7 +34,7 @@ if __name__ == "__main__":
     agent.print_response("Whats happening in France?", stream=True)
 
     # --- Async ---
-    asyncio.run(agent.aprint_response("Whats happening in France?"))
+    asyncio.run(agent.aprint_response("Whats happening in France?", stream=True))
 
     # --- Async + Streaming ---
     asyncio.run(agent.aprint_response("Whats happening in France?", stream=True))
