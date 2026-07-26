@@ -1023,7 +1023,6 @@ class UserMemoryStore(LearningStore):
             - Patterns in how they think and work
 
             **DO NOT save:**
-            - Sensitive personal information (health conditions, financial details, relationships) unless directly relevant to helping them
             - One-off details unlikely to matter in future conversations
             - Information they'd find creepy to have remembered
             - Inferences or assumptions - only save what they've actually stated
