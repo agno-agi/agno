@@ -1300,6 +1300,50 @@ class TestEdgeAndEventIdentity:
         assert project_harbor is not None and project_harbor.relationships == []
         assert company_harbor is not None and len(company_harbor.relationships) == 1
 
+    def test_a_relation_stated_from_both_sides_can_be_retired(self, store: EntityMemoryStore) -> None:
+        # The model states a symmetric relation from either end, so the row
+        # holds the same link twice - once outgoing, once incoming. Both render;
+        # a listing that prints only "relation -> far" offers the same string
+        # twice and no needle can pick one.
+        store.remember_about(entity="Alice", entity_type="person")
+        store.remember_about(entity="Bob", entity_type="person")
+        store.link_entities(entity="Alice", relation="pairs_with", related_entity="Bob")
+        store.link_entities(entity="Bob", relation="pairs_with", related_entity="Alice")
+
+        assert "Removed relationship" in store.forget(entity="Alice", fact="pairs_with -> Bob")
+        assert "Removed relationship" in store.forget(entity="Alice", fact="pairs_with <- Bob")
+        alice = store.get(entity_id="alice", entity_type="person")
+        bob = store.get(entity_id="bob", entity_type="person")
+        assert alice is not None and alice.relationships == []
+        assert bob is not None and bob.relationships == []
+
+    def test_a_far_end_name_that_extends_another_stays_retireable(self, store: EntityMemoryStore) -> None:
+        # "designed_by -> Sarah Chen" used to match the edge to `sarah` too, and
+        # the qualified form could not break the tie either, because
+        # "person/sarah" is a substring of "person/sarah_chen".
+        store.remember_about(entity="Sarah", entity_type="person")
+        store.remember_about(entity="Sarah Chen", entity_type="person")
+        store.remember_about(entity="radar", entity_type="project")
+        store.link_entities(entity="radar", relation="designed_by", related_entity="Sarah")
+        store.link_entities(entity="radar", relation="designed_by", related_entity="Sarah Chen")
+
+        refusal = store.forget(entity="radar", fact="designed_by -> Sarah Chen")
+        assert "Multiple relationships" in refusal
+        assert "Removed relationship" in store.forget(entity="radar", fact="designed_by -> person/sarah_chen")
+        radar = store.get(entity_id="radar", entity_type="project")
+        assert radar is not None
+        assert [r["entity_id"] for r in radar.relationships] == ["sarah"]
+
+    def test_an_accented_far_end_is_retireable_as_rendered(self, store: EntityMemoryStore) -> None:
+        # The block renders the display name; the edge stores the folded slug.
+        store.remember_about(entity="Harbor", entity_type="project")
+        store.remember_about(entity="Caf\u00e9 Noir", entity_type="company")
+        store.link_entities(entity="Harbor", relation="supplier_is", related_entity="Caf\u00e9 Noir")
+
+        assert "Removed relationship" in store.forget(entity="Harbor", fact="supplier_is -> Caf\u00e9 Noir")
+        harbor = store.get(entity_id="harbor", entity_type="project")
+        assert harbor is not None and harbor.relationships == []
+
     def test_restating_an_event_does_not_double_it(self, store: EntityMemoryStore) -> None:
         for _ in range(3):
             store.remember_about(entity="Tom", entity_type="person", events=["heard he is leaving"])

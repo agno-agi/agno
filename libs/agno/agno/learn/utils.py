@@ -82,6 +82,38 @@ def content_values_text(content: Any) -> str:
     return "\n".join(parts).casefold()
 
 
+def separator_folded(text: str) -> str:
+    """Collapse runs of space, underscore and hyphen to one space, casefolded.
+
+    The db-side pattern turns each separator run into the LIKE single-char
+    wildcard, which matches ANY separator. A verifier that enumerates uniform
+    rewrites cannot express mixed-separator text, so it threw away hits the
+    server had legitimately found: "end-to-end tests" stored and "end to end
+    tests" asked (or the reverse) verified as a miss, and the store answered
+    "no entities matching" for a fact it was holding. Folding both sides is
+    what the wildcard already means.
+
+    Newlines are left alone: they separate one stored value from the next, and
+    a match must not span two of them.
+    """
+    import re
+
+    return re.sub(r"[ \t\r\f\v_\-]+", " ", text.casefold())
+
+
+def values_match_query(content: Any, query: str) -> bool:
+    """Whether the content's VALUES contain the query, separator-insensitively.
+
+    The value-scoped half of the loose-prefilter/precise-verify pair: the
+    db-side ILIKE matches the whole serialized document, key names included,
+    so "facts" or "name" would otherwise match every row.
+    """
+    needle = separator_folded(query).strip()
+    if not needle:
+        return False
+    return needle in separator_folded(content_values_text(content))
+
+
 def query_variants(query: str) -> List[str]:
     """Lowercased query variants with word separators swapped.
 

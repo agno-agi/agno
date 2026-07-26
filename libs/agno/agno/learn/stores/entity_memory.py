@@ -42,7 +42,7 @@ from weakref import WeakKeyDictionary
 from agno.learn.config import EntityMemoryConfig, LearningMode
 from agno.learn.schemas import EntityMemory
 from agno.learn.stores.protocol import LearningStore
-from agno.learn.utils import build_learning_id, content_values_text, query_variants
+from agno.learn.utils import build_learning_id, values_match_query
 from agno.utils.log import (
     log_debug,
     log_info,
@@ -191,6 +191,36 @@ def _split_qualified_name(entity: str, known_types: Sequence[str]) -> Tuple[str,
     if _normalize_entity_type(prefix) not in {_normalize_entity_type(t) for t in known_types}:
         return entity, None
     return rest, prefix
+
+
+def _mentions(needle: str, term: str) -> bool:
+    """Whether ``needle`` names ``term`` as a whole word.
+
+    Plain containment let a longer far-end name swallow a shorter one:
+    "designed_by -> Sarah Chen" matched the edge to `sarah` as well, and the
+    qualified form the refusal then asks for could not break the tie either,
+    because "person/sarah" is itself a substring of "person/sarah_chen". The
+    link became unretireable, which is the one thing forget exists to prevent.
+    """
+    return re.search(r"(?<!\w)" + re.escape(term) + r"(?!\w)", needle) is not None
+
+
+def _slug_phrase_in(needle: str, term_slug: str) -> bool:
+    """Whether the needle names an entity whose slug is ``term_slug``.
+
+    The context block renders a far end's DISPLAY name, and a name is not
+    recoverable from its slug once the slug has folded an accent, a hyphen or
+    an ampersand: "supplier_is -> Café Noir" is the wording the docstring asks
+    for and `cafe_noir` is what the edge stores. Slugify both and compare on
+    token boundaries.
+    """
+    needle_tokens = [t for t in _slugify(needle).split("_") if t]
+    term_tokens = [t for t in term_slug.split("_") if t]
+    if not term_tokens or len(term_tokens) > len(needle_tokens):
+        return False
+    return any(
+        needle_tokens[i : i + len(term_tokens)] == term_tokens for i in range(len(needle_tokens) - len(term_tokens) + 1)
+    )
 
 
 def _types_can_merge(incoming: Optional[str], existing: Optional[str]) -> bool:
@@ -2297,6 +2327,7 @@ class EntityMemoryStore(LearningStore):
         edges = [r for r in (getattr(entity_obj, "relationships", None) or []) if isinstance(r, dict)]
         matches = []
         qualified_matches = []
+        directed_matches = []
         for edge in edges:
             relation = _normalize_fact_text(str(edge.get("relation", "")))
             # The context block renders the far end's DISPLAY name ("Sarah
@@ -2312,19 +2343,29 @@ class EntityMemoryStore(LearningStore):
             far_type = _normalize_fact_text(str(edge.get("entity_type", "")))
             qualified = {f"{far_type}/{t}" for t in plain} if far_type else set()
             targets = plain | qualified
+            arrow = "<-" if edge.get("direction") == "incoming" else "->"
             rendered = {_normalize_fact_text(f"{edge.get('relation', '')} {target}") for target in targets}
+            rendered |= {_normalize_fact_text(f"{edge.get('relation', '')} {arrow} {target}") for target in targets}
+            names_far_end = any(_mentions(needle, t) for t in targets) or _slug_phrase_in(needle, slug)
             if needle in ({relation} | targets | rendered) or (
-                relation and relation in needle and any(target in needle for target in targets)
+                relation and _mentions(needle, relation) and names_far_end
             ):
                 matches.append(edge)
-                if any(target in needle for target in qualified):
+                if any(_mentions(needle, t) for t in qualified):
                     qualified_matches.append(edge)
+                if arrow in needle:
+                    directed_matches.append(edge)
         if not matches:
             return None, False, None
         # A needle naming the far end's type picks that edge out of its
         # same-slug siblings; "works_on -> harbor" still matches both.
         if qualified_matches:
             matches = qualified_matches
+        # Same for the arrow: a relation asserted from both sides leaves two
+        # edges that differ only in direction, and the block renders them as
+        # "rel -> far" and "rel <- far". Naming one retires that one.
+        if directed_matches and len(directed_matches) < len(matches):
+            matches = [edge for edge in matches if edge in directed_matches]
         # Edges written before add_relationship became idempotent can be exact
         # duplicates: the listing below would offer two identical candidates
         # that no wording can tell apart, so retire the whole set instead.
@@ -2334,8 +2375,13 @@ class EntityMemoryStore(LearningStore):
         # one-sided.
         identical = {(e.get("relation"), e.get("entity_id"), e.get("entity_type"), e.get("direction")) for e in matches}
         if len(matches) > 1 and len(identical) > 1:
+            # Rendered the way the block renders them, direction included: two
+            # candidates printed identically ask the model to pick between the
+            # same string twice, and it never can.
             listing = "\n".join(
-                f"  - {e.get('relation')} -> {e.get('entity_type')}/{e.get('entity_id')}" for e in matches
+                f"  - {e.get('relation')} {'<-' if e.get('direction') == 'incoming' else '->'} "
+                f"{e.get('entity_type')}/{e.get('entity_id')}"
+                for e in matches
             )
             return (
                 f"Multiple relationships on {label} match; nothing was removed. "
@@ -2347,8 +2393,10 @@ class EntityMemoryStore(LearningStore):
         edge = matches[0]
         entity_obj.relationships = [r for r in edges if r not in matches]
         entity_obj.updated_at = _utc_now_iso()
+        arrow = "<-" if edge.get("direction") == "incoming" else "->"
         return (
-            f"Removed relationship on {label}: {edge.get('relation')} -> {edge.get('entity_type')}/{edge.get('entity_id')}",
+            f"Removed relationship on {label}: {edge.get('relation')} {arrow} "
+            f"{edge.get('entity_type')}/{edge.get('entity_id')}",
             True,
             edge,
         )
@@ -3246,11 +3294,11 @@ class EntityMemoryStore(LearningStore):
 
         The db-side ILIKE matches the whole serialized document, keys included;
         this value-scoped check verifies server hits (so "facts" or "name" do
-        not match every row) and drives the degraded client-side scan. Variants
-        with swapped word separators keep the server's slug-boundary crossing.
+        not match every row) and drives the degraded client-side scan. Both
+        sides fold their separators, which is what the server's single-char
+        wildcard already does.
         """
-        haystack = content_values_text(content)
-        return any(variant in haystack for variant in query_variants(query))
+        return values_match_query(content, query)
 
     def delete(
         self,

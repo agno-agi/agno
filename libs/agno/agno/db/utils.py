@@ -238,10 +238,13 @@ def learning_search_patterns(query: str) -> List[str]:
     patterns: List[str] = []
     for variant in variants:
         escaped = variant.replace("\\", "\\\\").replace("%", "\\%")
-        # Runs of spaces and underscores collapse to the single-char wildcard,
-        # so one pattern crosses the display-name/slug boundary in both
-        # directions ("sarah chen", "sarah_chen", "sarah__chen").
-        crossed = re.sub(r"[\s_]+", "_", escaped).replace(wildcard, "_")
+        # Runs of separators collapse to the single-char wildcard, so one
+        # pattern crosses the display-name/slug boundary in both directions
+        # ("sarah chen", "sarah_chen", "sarah__chen"). The hyphen is one of
+        # them: without it "multi-tenant" could never reach a stored "multi
+        # tenant", and the client-side verifier - which does fold hyphens -
+        # was already accepting what this pattern refused to fetch.
+        crossed = re.sub(r"[\s_\-]+", "_", escaped).replace(wildcard, "_")
         pattern = f"%{crossed}%"
         if pattern not in patterns:
             patterns.append(pattern)

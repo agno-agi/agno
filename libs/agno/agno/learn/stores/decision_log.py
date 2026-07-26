@@ -30,7 +30,7 @@ from typing import Any, Callable, List, Optional, Union
 from agno.learn.config import DecisionLogConfig, LearningMode
 from agno.learn.schemas import DecisionLog
 from agno.learn.stores.protocol import LearningStore
-from agno.learn.utils import content_values_text, from_dict_safe, query_variants, to_dict_safe
+from agno.learn.utils import from_dict_safe, to_dict_safe, values_match_query
 from agno.utils.log import (
     log_debug,
     log_warning,
@@ -857,8 +857,7 @@ class DecisionLogStore(LearningStore):
                 # Value-scoped verification: the db-side ILIKE matched the whole
                 # serialized document (keys included); this check keeps the match
                 # surface at the record's values, across every field.
-                haystack = content_values_text(content)
-                if not any(variant in haystack for variant in query_variants(query)):
+                if not values_match_query(content, query):
                     continue
 
             decisions.append(decision)
