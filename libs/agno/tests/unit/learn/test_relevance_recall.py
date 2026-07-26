@@ -366,3 +366,85 @@ class TestAsyncEntityToolsAgainstARealAsyncDb:
         await store.aremember_about(entity="Atlas", entity_type="system", namespace="global")
         message = await store.aremember_about(entity="Atlas", entity_type="team", namespace="global")
         assert "system/atlas already exists under this name" in message
+
+
+class TestTheSeamsThatBrokeBefore:
+    """Guards for the two seams whose absence is how this release's bugs shipped.
+
+    Both were found by mutation: the shipped code is correct, and every test
+    stayed green when it was broken.
+    """
+
+    def test_stored_entity_reaches_a_teams_system_message(self, tmp_path) -> None:
+        """The Team half of the write-only bug.
+
+        team/_messages.py threads the run input, the guidance block and the
+        message kwarg through three separate lines, and deleting any of them
+        left 1,679 tests green while Team recall died. Agents had a guard from
+        the first review pass; Teams did not.
+        """
+        from agno.db.sqlite import SqliteDb
+        from agno.learn import LearningMachine
+        from agno.models.openai import OpenAIResponses
+        from agno.run.base import RunContext
+        from agno.run.team import TeamRunOutput
+        from agno.session import TeamSession
+        from agno.team._messages import _get_run_messages
+        from agno.team.team import Team
+
+        db = SqliteDb(db_file=str(tmp_path / "team.db"))
+        machine = LearningMachine(db=db, entity_memory=True)
+        store = machine.entity_memory_store
+        assert store is not None
+        store.remember_about(entity="radar", entity_type="project", facts=["db: Postgres, over Dynamo"])
+
+        team = Team(members=[], db=db, learning=machine, model=OpenAIResponses(id="gpt-5.5"))
+        team._learning = machine
+        session = TeamSession(session_id="s1")
+        run_context = RunContext(run_id="r1", session_id="s1", user_id="u1")
+
+        run_messages = _get_run_messages(
+            team,
+            run_response=TeamRunOutput(run_id="r1", session_id="s1"),
+            run_context=run_context,
+            session=session,
+            input_message="what did we decide for radar?",
+        )
+        system = next(m for m in run_messages.messages if m.role == "system")
+        content = str(system.content)
+        assert "db: Postgres, over Dynamo" in content
+        assert "entity_memory_instructions" in content
+
+    @pytest.mark.asyncio
+    async def test_concurrent_writes_in_one_turn_all_land(self, tmp_path) -> None:
+        """The write lock, guarded against its own removal.
+
+        Every entity write is a read-modify-write over one JSON row, and a
+        model's tool calls for one turn are gathered concurrently - the path
+        AgentOS REST and /mcp take. Without the lock this loses 7 of 8 facts on
+        a real AsyncSqliteDb, and the fake db cannot see it because it aliases
+        the content dict.
+        """
+        import asyncio
+
+        from agno.db.sqlite import AsyncSqliteDb
+        from agno.learn.config import EntityMemoryConfig, LearningMode
+        from agno.learn.stores.entity_memory import EntityMemoryStore
+
+        db = AsyncSqliteDb(db_file=str(tmp_path / "concurrent.db"))
+        store = EntityMemoryStore(
+            config=EntityMemoryConfig(db=db, mode=LearningMode.AGENTIC, namespace="global")  # type: ignore[arg-type]
+        )
+        await store.aremember_about(entity="radar", entity_type="project", facts=["seed"], namespace="global")
+
+        await asyncio.gather(
+            *[
+                store.aremember_about(entity="radar", entity_type="project", facts=[f"fact {i}"], namespace="global")
+                for i in range(8)
+            ]
+        )
+
+        radar = await store.aget(entity_id="radar", entity_type="project", namespace="global")
+        assert radar is not None
+        stored = {f["content"] for f in radar.live_facts()}
+        assert stored == {"seed", *(f"fact {i}" for i in range(8))}
