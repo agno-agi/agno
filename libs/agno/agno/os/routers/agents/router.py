@@ -25,7 +25,7 @@ from agno.exceptions import InputCheckError, OutputCheckError, RunNotContinuable
 from agno.media import Audio, Image, Video
 from agno.media import File as FileMedia
 from agno.os.auth import (
-    INTERNAL_SERVICE_USER_ID,
+    INTERNAL_SCHEDULER_USER_ID,
     get_auth_token_from_request,
     get_authentication_dependency,
     require_approval_resolved,
@@ -626,11 +626,14 @@ def get_agent_router(
         state_user_id = getattr(request.state, "user_id", None)
         if scoped_user_id is not None:
             user_id = scoped_user_id
-        elif state_user_id == INTERNAL_SERVICE_USER_ID and user_id:
-            # Internal service caller (scheduler executor): the form-field
-            # ``user_id`` was set by the executor to the schedule owner. Use
-            # it so the run, session, traces, and metrics are attributed to
-            # the owner, not to the service identity.
+        elif state_user_id == INTERNAL_SCHEDULER_USER_ID:
+            # Internal service caller (scheduler executor): the JWT sub is the
+            # ``__scheduler__`` sentinel identifying the *caller*, not the
+            # *owner*. The executor writes the schedule owner into the
+            # form-field ``user_id`` when the schedule has one; keep it as-is.
+            # For an unowned schedule (schedule.user_id is None) no form-field
+            # is set, so ``user_id`` stays None and the run is left unowned
+            # rather than being attributed to the ``__scheduler__`` sentinel.
             pass
         elif state_user_id is not None:
             if user_id and user_id != state_user_id:
@@ -728,6 +731,14 @@ def get_agent_router(
                         continue
                 else:
                     raise HTTPException(status_code=400, detail="Unsupported file type")
+
+        # Merge media passed as JSON form fields (sent by AgnoClient, e.g. when a team
+        # delegates to this agent as a remote member) with media from uploaded files.
+        # Popped from kwargs since they are passed explicitly to the run methods below.
+        base64_images.extend(kwargs.pop("images", None) or [])
+        base64_audios.extend(kwargs.pop("audio", None) or [])
+        base64_videos.extend(kwargs.pop("videos", None) or [])
+        input_files.extend(kwargs.pop("files", None) or [])
 
         # Extract auth token for remote agents
         auth_token = get_auth_token_from_request(request)

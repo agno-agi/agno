@@ -1,5 +1,6 @@
 import asyncio
 import json
+import sys
 import tempfile
 from pathlib import Path
 
@@ -274,6 +275,21 @@ def test_list_files_with_glob_pattern():
         assert paths == ["a.py", "sub/b.py"]
 
 
+def test_list_files_does_not_return_traversal_matches_outside_root():
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        root = Path(tmp_dir)
+        workspace_root = root / "workspace"
+        outside_dir = root / "outside"
+        workspace_root.mkdir()
+        outside_dir.mkdir()
+        (outside_dir / "secret.txt").write_text("outside secret")
+        ws = Workspace(workspace_root)
+
+        result = json.loads(ws.list_files(pattern="../outside/*.txt"))
+
+        assert result["files"] == []
+
+
 def test_list_files_skips_default_excludes():
     with tempfile.TemporaryDirectory() as tmp_dir:
         ws = Workspace(tmp_dir)
@@ -382,6 +398,29 @@ def test_search_content_finds_matches():
         names = [m["file"] for m in result["files"]]
         assert "hello.txt" in names
         assert "other.py" in names
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX symlinks require admin on Windows")
+def test_search_content_skips_symlink_targets_outside_root():
+    """Test that search_content skips symlink targets outside root."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        root = Path(tmp_dir)
+        workspace_root = root / "workspace"
+        outside_dir = root / "outside"
+        workspace_root.mkdir()
+        outside_dir.mkdir()
+        secret = outside_dir / "secret.txt"
+        secret.write_text("outside needle")
+        try:
+            (workspace_root / "linked-secret.txt").symlink_to(secret)
+        except OSError:
+            pytest.skip("Symlink creation not permitted on this platform")
+        ws = Workspace(workspace_root)
+
+        result = json.loads(ws.search_content(query="needle"))
+
+        assert result["matches_found"] == 0
+        assert result["files"] == []
 
 
 def test_search_content_directory_scoping():

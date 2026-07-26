@@ -87,6 +87,42 @@ def test_workflow_run_events():
     assert json.loads(event.to_json(indent=None)) == expected_json_dict
 
 
+def test_workflow_completed_event_serializes_token_metrics():
+    from agno.models.metrics import RunMetrics
+    from agno.run.workflow import WorkflowCompletedEvent
+    from agno.workflow.types import StepMetrics, WorkflowMetrics
+
+    event = WorkflowCompletedEvent(
+        run_id="workflow-run",
+        metrics=WorkflowMetrics(
+            steps={
+                "research": StepMetrics(
+                    step_name="research",
+                    executor_type="agent",
+                    executor_name="Research Agent",
+                    metrics=RunMetrics(input_tokens=12, output_tokens=8, total_tokens=20),
+                )
+            },
+            duration=1.5,
+        ),
+    )
+
+    metrics = event.to_dict()["metrics"]
+
+    assert metrics["duration"] == 1.5
+    assert metrics["steps"]["research"]["metrics"] == {
+        "input_tokens": 12,
+        "output_tokens": 8,
+        "total_tokens": 20,
+    }
+
+    reconstructed = WorkflowCompletedEvent.from_dict(event.to_dict())
+
+    assert isinstance(reconstructed.metrics, WorkflowMetrics)
+    assert reconstructed.metrics.steps["research"].metrics is not None
+    assert reconstructed.metrics.steps["research"].metrics.total_tokens == 20
+
+
 def test_agent_session_state_in_run_output():
     """Test that RunOutput includes session_state field."""
     from agno.run.agent import RunOutput
@@ -211,6 +247,30 @@ def test_team_session_state_in_run_output():
     # Test deserialization
     reconstructed = TeamRunOutput.from_dict(team_dict)
     assert reconstructed.session_state == {"phase": "planning", "tasks": 3}
+
+
+def test_team_run_output_to_dict_accepts_serialized_media_dicts():
+    """Test that TeamRunOutput.to_dict() tolerates already-serialized dicts in media fields."""
+    from agno.run.team import TeamRunOutput
+
+    team_output = TeamRunOutput(
+        run_id="team_123",
+        images=[{"url": "https://example.com/image.png"}],
+        videos=[{"url": "https://example.com/video.mp4"}],
+        audio=[{"url": "https://example.com/audio.mp3"}],
+        files=[{"url": "https://example.com/report.pdf"}],
+        response_audio={"id": "audio_123", "content": "base64-audio"},
+        member_responses=[{"run_id": "member_123", "content": "done"}],
+    )
+
+    team_dict = team_output.to_dict()
+
+    assert team_dict["images"] == [{"url": "https://example.com/image.png"}]
+    assert team_dict["videos"] == [{"url": "https://example.com/video.mp4"}]
+    assert team_dict["audio"] == [{"url": "https://example.com/audio.mp3"}]
+    assert team_dict["files"] == [{"url": "https://example.com/report.pdf"}]
+    assert team_dict["response_audio"] == {"id": "audio_123", "content": "base64-audio"}
+    assert team_dict["member_responses"] == [{"run_id": "member_123", "content": "done"}]
 
 
 def test_team_session_state_in_completed_event():

@@ -50,7 +50,7 @@ async def lifespan(app, agent_os):
 agent_os = AgentOS(
     lifespan=lifespan,
     agents=[agent1],
-    enable_mcp_server=True,
+    mcp_server=True,
 )
 
 # Get our app.

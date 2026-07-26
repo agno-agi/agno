@@ -21,7 +21,7 @@ from agno.exceptions import InputCheckError, OutputCheckError, RunNotContinuable
 from agno.media import Audio, Image, Video
 from agno.media import File as FileMedia
 from agno.os.auth import (
-    INTERNAL_SERVICE_USER_ID,
+    INTERNAL_SCHEDULER_USER_ID,
     get_auth_token_from_request,
     get_authentication_dependency,
     require_approval_resolved,
@@ -60,8 +60,10 @@ from agno.os.utils import (
     resolve_team,
 )
 from agno.registry import Registry
+from agno.run.agent import RunOutput
 from agno.run.base import RunStatus
 from agno.run.team import RunErrorEvent as TeamRunErrorEvent
+from agno.run.team import TeamRunOutput
 from agno.team.factory import TeamFactory
 from agno.team.remote import RemoteTeam
 from agno.team.team import Team
@@ -70,6 +72,11 @@ from agno.utils.serialize import json_serializer
 
 if TYPE_CHECKING:
     from agno.os.app import AgentOS
+
+
+def _is_run_output_accumulator(chunk: Any) -> bool:
+    """Return True for accumulated run outputs that are not SSE events."""
+    return isinstance(chunk, (RunOutput, TeamRunOutput))
 
 
 async def team_response_streamer(
@@ -113,6 +120,8 @@ async def team_response_streamer(
             **kwargs,
         )
         async for run_response_chunk in run_response:
+            if _is_run_output_accumulator(run_response_chunk):
+                continue
             yield format_sse_event(run_response_chunk)  # type: ignore
     except (InputCheckError, OutputCheckError) as e:
         error_response = TeamRunErrorEvent(
@@ -423,6 +432,8 @@ async def team_continue_response_streamer(
             **kwargs,
         )
         async for run_response_chunk in continue_response:
+            if _is_run_output_accumulator(run_response_chunk):
+                continue
             yield format_sse_event(run_response_chunk)  # type: ignore
     except (InputCheckError, OutputCheckError) as e:
         error_response = TeamRunErrorEvent(
@@ -591,9 +602,11 @@ def get_team_router(
         state_user_id = getattr(request.state, "user_id", None)
         if scoped_user_id is not None:
             user_id = scoped_user_id
-        elif state_user_id == INTERNAL_SERVICE_USER_ID and user_id:
-            # Scheduler executor caller — trust the form-field owner. See
-            # the matching comment in ``agents/router.py``.
+        elif state_user_id == INTERNAL_SCHEDULER_USER_ID:
+            # Scheduler executor caller — trust the form-field owner, or leave
+            # user_id unset if the schedule itself was unowned (executor writes
+            # no form-field ``user_id`` in that case). See the matching comment
+            # in ``agents/router.py``.
             pass
         elif state_user_id is not None:
             if user_id and user_id != state_user_id:
@@ -687,6 +700,14 @@ def get_team_router(
                         document_files.append(document_file)
                 else:
                     raise HTTPException(status_code=400, detail="Unsupported file type")
+
+        # Merge media passed as JSON form fields (sent by AgnoClient, e.g. when this team
+        # is used as a remote member) with media from uploaded files.
+        # Popped from kwargs since they are passed explicitly to the run methods below.
+        base64_images.extend(kwargs.pop("images", None) or [])
+        base64_audios.extend(kwargs.pop("audio", None) or [])
+        base64_videos.extend(kwargs.pop("videos", None) or [])
+        document_files.extend(kwargs.pop("files", None) or [])
 
         # Extract auth token for remote teams
         auth_token = get_auth_token_from_request(request)

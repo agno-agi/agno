@@ -2,6 +2,8 @@
 
 from typing import Any
 
+from agno.db.schemas.mcp_oauth import MCP_OAUTH_TABLE_SCHEMAS
+
 try:
     from sqlalchemy.dialects.postgresql import JSONB
     from sqlalchemy.types import BigInteger, Boolean, Date, Integer, String, Text
@@ -252,10 +254,12 @@ SCHEDULE_TABLE_SCHEMA = {
     "next_run_at": {"type": BigInteger, "nullable": True, "index": True},
     "locked_by": {"type": String, "nullable": True},
     "locked_at": {"type": BigInteger, "nullable": True},
+    "user_id": {"type": String, "nullable": True, "index": True},
     "created_at": {"type": BigInteger, "nullable": False, "index": True},
     "updated_at": {"type": BigInteger, "nullable": True},
     "__composite_indexes__": [
         {"name": "enabled_next_run_at", "columns": ["enabled", "next_run_at"]},
+        {"name": "user_enabled_next_run_at", "columns": ["user_id", "enabled", "next_run_at"]},
     ],
 }
 
@@ -284,6 +288,7 @@ def _get_schedule_runs_table_schema(
         "input": {"type": JSONB, "nullable": True},
         "output": {"type": JSONB, "nullable": True},
         "requirements": {"type": JSONB, "nullable": True},
+        "user_id": {"type": String, "nullable": True, "index": True},
         "created_at": {"type": BigInteger, "nullable": False, "index": True},
     }
 
@@ -333,6 +338,25 @@ AUTH_TOKEN_TABLE_SCHEMA = {
     ],
 }
 
+SERVICE_ACCOUNT_TABLE_SCHEMA = {
+    "id": {"type": String, "primary_key": True, "nullable": False},
+    "name": {"type": String, "nullable": False},
+    # Ownership: the user this account belongs to (created_by is audit: who minted it).
+    # NULL means a workspace-level machine account with no owning user.
+    "user_id": {"type": String, "nullable": True},
+    "token_hash": {"type": String, "nullable": False, "unique": True, "index": True},
+    "token_prefix": {"type": String, "nullable": False},
+    "scopes": {"type": JSONB, "nullable": False},
+    "created_at": {"type": BigInteger, "nullable": False, "index": True},
+    "expires_at": {"type": BigInteger, "nullable": True},
+    "last_used_at": {"type": BigInteger, "nullable": True},
+    "revoked_at": {"type": BigInteger, "nullable": True},
+    "created_by": {"type": String, "nullable": True},
+    # Names are reusable after revocation (rotation keeps the same identity),
+    # so uniqueness only applies to active accounts.
+    "_partial_unique_indexes": [{"name": "uq_active_name", "columns": ["name"], "where": "revoked_at IS NULL"}],
+}
+
 
 def get_table_schema_definition(
     table_type: str,
@@ -373,6 +397,8 @@ def get_table_schema_definition(
         "schedules": SCHEDULE_TABLE_SCHEMA,
         "approvals": APPROVAL_TABLE_SCHEMA,
         "auth_tokens": AUTH_TOKEN_TABLE_SCHEMA,
+        "service_accounts": SERVICE_ACCOUNT_TABLE_SCHEMA,
+        **MCP_OAUTH_TABLE_SCHEMAS,
     }
 
     schema = schemas.get(table_type, {})

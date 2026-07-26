@@ -109,10 +109,9 @@ class TestScheduleCRUD:
         db.create_schedule(s1)
         db.create_schedule(s2)
 
-        # ``get_schedules`` returns ``(List[dict], total_count)``.
-        all_schedules, total = db.get_schedules()
-        assert total >= 2
+        all_schedules, total_count = db.get_schedules()
         assert len(all_schedules) >= 2
+        assert total_count >= 2
         ids = {s["id"] for s in all_schedules}
         assert s1["id"] in ids
         assert s2["id"] in ids
@@ -280,10 +279,9 @@ class TestScheduleRuns:
         db.create_schedule_run(r1)
         db.create_schedule_run(r2)
 
-        # ``get_schedule_runs`` returns ``(List[dict], total_count)``.
-        runs, total = db.get_schedule_runs(sched["id"])
-        assert total == 2
+        runs, total_count = db.get_schedule_runs(sched["id"])
         assert len(runs) == 2
+        assert total_count == 2
         run_ids = {r["id"] for r in runs}
         assert r1["id"] in run_ids
         assert r2["id"] in run_ids
@@ -292,9 +290,9 @@ class TestScheduleRuns:
         sched = _make_schedule()
         db.create_schedule(sched)
 
-        runs, total = db.get_schedule_runs(sched["id"])
+        runs, total_count = db.get_schedule_runs(sched["id"])
         assert runs == []
-        assert total == 0
+        assert total_count == 0
 
     def test_get_runs_with_limit(self, db):
         sched = _make_schedule()
@@ -303,10 +301,9 @@ class TestScheduleRuns:
         for i in range(5):
             db.create_schedule_run(_make_run(sched["id"], attempt=i + 1))
 
-        runs, total = db.get_schedule_runs(sched["id"], limit=3)
-        # ``total`` is the unpaginated count; the slice respects ``limit``.
-        assert total == 5
+        runs, total_count = db.get_schedule_runs(sched["id"], limit=3)
         assert len(runs) == 3
+        assert total_count == 5
 
     def test_get_run_not_found(self, db):
         result = db.get_schedule_run("nonexistent-run-id")
@@ -323,8 +320,7 @@ class TestScheduleRuns:
         db.create_schedule_run(r2)
 
         # Confirm runs exist
-        runs, total = db.get_schedule_runs(sched["id"])
-        assert total == 2
+        runs, _ = db.get_schedule_runs(sched["id"])
         assert len(runs) == 2
 
         # Delete the schedule
@@ -332,9 +328,7 @@ class TestScheduleRuns:
         assert db.get_schedule(sched["id"]) is None
 
         # Runs should also be gone
-        runs_after, total_after = db.get_schedule_runs(sched["id"])
-        assert runs_after == []
-        assert total_after == 0
+        assert db.get_schedule_runs(sched["id"]) == ([], 0)
         assert db.get_schedule_run(r1["id"]) is None
         assert db.get_schedule_run(r2["id"]) is None
 
@@ -387,8 +381,7 @@ class TestFullLifecycle:
         assert fetched["next_run_at"] == now + 7200
 
         # Verify run
-        runs, total = db.get_schedule_runs(sched["id"])
-        assert total == 1
+        runs, _ = db.get_schedule_runs(sched["id"])
         assert len(runs) == 1
         assert runs[0]["status"] == "success"
 

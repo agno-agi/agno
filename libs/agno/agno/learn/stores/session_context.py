@@ -560,6 +560,7 @@ class SessionContextStore(LearningStore):
         response = model_copy.response(
             messages=messages_for_model,
             tools=functions,
+            tool_call_limit=self.config.max_updates_per_run,
         )
 
         if run_metrics is not None and response.response_usage is not None:
@@ -629,6 +630,7 @@ class SessionContextStore(LearningStore):
         response = await model_copy.aresponse(
             messages=messages_for_model,
             tools=functions,
+            tool_call_limit=self.config.max_updates_per_run,
         )
 
         if run_metrics is not None and response.response_usage is not None:
@@ -872,6 +874,9 @@ class SessionContextStore(LearningStore):
 
                 func = Function.from_callable(tool, strict=True)
                 func.strict = True
+                # The save result is not consumed, so avoid a second model call for confirmation.
+                if func.name == "save_session_context":
+                    func.stop_after_tool_call = True
                 functions.append(func)
                 log_debug(f"Added function {func.name}")
             except Exception as e:

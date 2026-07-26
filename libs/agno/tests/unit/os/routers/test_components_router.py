@@ -216,6 +216,92 @@ class TestCreateComponent:
 
         assert response.status_code == 400
 
+    def test_create_team_persists_links_for_db_members(self, client, mock_db):
+        """Test create_component builds component links for DB-persisted members."""
+        mock_db.get_component.return_value = {"component_id": "member-agent", "current_version": 3}
+        mock_db.create_component_with_config.return_value = (
+            {"component_id": "my-team", "name": "My Team", "component_type": "team", "created_at": 1},
+            {"version": 1},
+        )
+
+        response = client.post(
+            "/components",
+            json={
+                "name": "My Team",
+                "component_type": "team",
+                "component_id": "my-team",
+                "config": {"id": "my-team", "members": [{"type": "agent", "agent_id": "member-agent"}]},
+            },
+        )
+
+        assert response.status_code == 201
+        links = mock_db.create_component_with_config.call_args.kwargs["links"]
+        assert links == [
+            {
+                "link_kind": "member",
+                "link_key": "member_0",
+                "child_component_id": "member-agent",
+                "child_version": 3,
+                "position": 0,
+                "meta": {"type": "agent"},
+            }
+        ]
+
+    def test_create_team_with_registry_member_succeeds_without_link(self, mock_db, settings):
+        """Test create_component allows a code-defined (registry) member with no link."""
+        from agno.agent.agent import Agent
+        from agno.registry import Registry
+
+        # Not a DB component, but registered with the AgentOS instance
+        mock_db.get_component.return_value = None
+        mock_db.create_component_with_config.return_value = (
+            {"component_id": "my-team", "name": "My Team", "component_type": "team", "created_at": 1},
+            {"version": 1},
+        )
+        registry = Registry(agents=[Agent(id="member-agent", name="Member Agent")])
+
+        app = FastAPI()
+        app.include_router(get_components_router(os_db=mock_db, settings=settings, registry=registry))
+        client = TestClient(app)
+
+        response = client.post(
+            "/components",
+            json={
+                "name": "My Team",
+                "component_type": "team",
+                "component_id": "my-team",
+                "config": {"id": "my-team", "members": [{"type": "agent", "agent_id": "member-agent"}]},
+            },
+        )
+
+        assert response.status_code == 201
+        assert mock_db.create_component_with_config.call_args.kwargs["links"] is None
+
+    def test_create_team_with_unresolved_member_returns_400(self, mock_db, settings):
+        """Test create_component surfaces members that resolve to neither db nor registry."""
+        from agno.registry import Registry
+
+        mock_db.get_component.return_value = None
+        registry = Registry(agents=[])
+
+        app = FastAPI()
+        app.include_router(get_components_router(os_db=mock_db, settings=settings, registry=registry))
+        client = TestClient(app)
+
+        response = client.post(
+            "/components",
+            json={
+                "name": "My Team",
+                "component_type": "team",
+                "component_id": "my-team",
+                "config": {"id": "my-team", "members": [{"type": "agent", "agent_id": "ghost-agent"}]},
+            },
+        )
+
+        assert response.status_code == 400
+        assert "ghost-agent" in response.json()["detail"]
+        mock_db.create_component_with_config.assert_not_called()
+
 
 # =============================================================================
 # Get Component Tests
