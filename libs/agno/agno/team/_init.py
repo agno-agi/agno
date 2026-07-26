@@ -633,13 +633,6 @@ def _set_learning_machine(team: "Team") -> None:
             team.learning.db = team.db
         if team.learning.model is None:
             team.learning.model = team.model
-        # Fill in a learned_knowledge store the developer asked for but whose
-        # knowledge base did not survive a to_dict/from_dict round trip. Gated
-        # on that store being wanted: the machine auto-enables learned_knowledge
-        # whenever it has a knowledge base, so copying unconditionally turned
-        # team.knowledge into two extra tools - one of which writes into the
-        # user's production index - plus a competing guidance block, on
-        # machines that never asked for it.
         if (
             team.learning.learned_knowledge
             and team.learning.knowledge is None
