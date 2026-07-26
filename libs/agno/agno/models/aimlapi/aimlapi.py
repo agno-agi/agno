@@ -45,17 +45,18 @@ class AIMLAPI(OpenAILike):
                 )
         return super()._get_client_params()
 
-    def _format_message(self, message: Message) -> Dict[str, Any]:
+    def _format_message(self, message: Message, compress_tool_results: bool = False) -> Dict[str, Any]:
         """
         Minimal additional formatter that only replaces None with empty string.
 
         Args:
             message (Message): The message to format.
+            compress_tool_results: Whether to compress tool results.
 
         Returns:
             Dict[str, Any]: The formatted message, where 'content = None' is replaced with the empty string.
         """
-        formatted: dict = super()._format_message(message)
+        formatted: dict = super()._format_message(message, compress_tool_results)
 
         formatted["content"] = "" if formatted.get("content") is None else formatted["content"]
 
