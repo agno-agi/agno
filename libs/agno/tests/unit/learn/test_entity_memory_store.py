@@ -82,6 +82,25 @@ class RecordingLearningDb:
         return rows
 
 
+class _SleepyJudge:
+    """Stands in for the supersession judge's provider round trip.
+
+    The await is the point: it is the suspension that lets an assistant turn's
+    gathered tool calls interleave inside a read-modify-write.
+    """
+
+    id = "sleepy-judge"
+
+    def response(self, messages: Any, tools: Any = None, **kwargs: Any) -> None:
+        return None
+
+    async def aresponse(self, messages: Any, tools: Any = None, **kwargs: Any) -> None:
+        import asyncio
+
+        await asyncio.sleep(0.01)
+        return None
+
+
 @pytest.fixture
 def db() -> RecordingLearningDb:
     return RecordingLearningDb()
@@ -377,20 +396,8 @@ class TestResolution:
         or any await on an async db - must not cost a sibling its write."""
         import asyncio
 
-        class SlowJudge:
-            """Stands in for the supersession judge's provider round trip."""
-
-            id = "slow-judge"
-
-            def response(self, messages: Any, tools: Any = None, **kwargs: Any) -> None:
-                return None
-
-            async def aresponse(self, messages: Any, tools: Any = None, **kwargs: Any) -> None:
-                await asyncio.sleep(0.01)
-                return None
-
         store = EntityMemoryStore(
-            config=EntityMemoryConfig(db=db, model=SlowJudge())  # type: ignore[arg-type]
+            config=EntityMemoryConfig(db=db, model=_SleepyJudge())  # type: ignore[arg-type]
         )
         await store.aremember_about(entity="radar", entity_type="project", facts=["db: Postgres"])
 
@@ -407,16 +414,63 @@ class TestResolution:
         assert [r["entity_id"] for r in entity.relationships] == ["postgres"]
 
     async def test_same_turn_calls_do_not_split_a_new_entity(self, db: RecordingLearningDb) -> None:
-        # remember_about mints person/sarah_chen while link_entities mints the
-        # unknown/ placeholder: concurrently, both used to survive as two rows.
+        """remember_about mints person/sarah_chen while link_entities mints the
+        unknown/ placeholder; concurrently, both used to survive as two rows.
+
+        The fake db never suspends, so the judge's await is what opens the
+        window - the store needs a model for this to discriminate.
+        """
         import asyncio
 
-        store = EntityMemoryStore(config=EntityMemoryConfig(db=db))  # type: ignore[arg-type]
+        store = EntityMemoryStore(
+            config=EntityMemoryConfig(db=db, model=_SleepyJudge())  # type: ignore[arg-type]
+        )
+        await store.aremember_about(entity="Sarah Chen", entity_type="person", facts=["joined radar"])
         await asyncio.gather(
-            store.aremember_about(entity="Sarah Chen", entity_type="person", facts=["joined radar"]),
+            store.aremember_about(entity="Sarah Chen", entity_type="person", facts=["leads radar"]),
             store.alink_entities(entity="Sarah Chen", relation="works_on", related_entity="apollo"),
         )
         assert sorted(r["entity_id"] for r in db.rows.values()) == ["apollo", "sarah_chen"]
+        entity = await store.aget(entity_id="sarah_chen", entity_type="person")
+        assert entity is not None
+        assert [f["content"] for f in entity.facts] == ["joined radar", "leads radar"]
+        assert [r["entity_id"] for r in entity.relationships] == ["apollo"]
+
+    async def test_same_fact_twice_in_one_turn_is_stored_once(self, db: RecordingLearningDb) -> None:
+        """The duplicate check has to run against the row the merge lands on.
+
+        Judged against the pre-lock snapshot, two siblings carrying the same
+        sentence both called it novel and both appended it.
+        """
+        import asyncio
+
+        store = EntityMemoryStore(
+            config=EntityMemoryConfig(db=db, model=_SleepyJudge())  # type: ignore[arg-type]
+        )
+        await store.aremember_about(entity="Sarah Chen", entity_type="person", facts=["joined radar in March"])
+        await asyncio.gather(
+            store.aremember_about(entity="Sarah Chen", entity_type="person", facts=["Sarah now leads radar"]),
+            store.aremember_about(entity="Sarah Chen", entity_type="person", facts=["Sarah now leads radar"]),
+        )
+        entity = await store.aget(entity_id="sarah_chen", entity_type="person")
+        assert entity is not None
+        assert [f["content"] for f in entity.facts] == ["joined radar in March", "Sarah now leads radar"]
+
+    def test_blank_description_and_note_do_not_wipe_stored_values(self, store: EntityMemoryStore) -> None:
+        # The model fills unused optional arguments with ""; the tool surface
+        # has no way to CLEAR a description, so "" cannot mean "clear it".
+        store.remember_about(
+            entity="radar", entity_type="project", description="The ingest rewrite", note="notes/radar.md"
+        )
+        store.remember_about(entity="radar", entity_type="project", description="", note="", facts=["shipped"])
+        entity = store.get(entity_id="radar", entity_type="project")
+        assert entity is not None
+        assert entity.description == "The ingest rewrite"
+        assert (entity.properties or {}).get("note") == "notes/radar.md"
+
+    def test_write_lock_outside_a_running_loop(self, store: EntityMemoryStore) -> None:
+        # The loop-keyed cache is weak, and None is not weak-referenceable.
+        assert store._write_lock() is not None
 
     def test_accented_names_do_not_collide(self, store: EntityMemoryStore, db: RecordingLearningDb) -> None:
         # Muller and Moller are two people; a slug that drops the accented

@@ -971,6 +971,13 @@ class EntityMemoryStore(LearningStore):
         if not _slugify_or_none(entity):
             return "Entity name is required; nothing was recorded."
 
+        # A blank optional argument means the model did not supply it, not that
+        # it wants the stored value cleared - the tool surface has no way to
+        # clear one, so treating "" as a value silently wipes a description or
+        # a note pointer that a previous turn wrote.
+        description = _blank_to_none(description)
+        note = _blank_to_none(note)
+
         effective_namespace = namespace or self.config.namespace
         if effective_namespace == "user" and not user_id:
             log_warning("EntityMemoryStore.remember_about: namespace='user' requires user_id")
@@ -997,6 +1004,7 @@ class EntityMemoryStore(LearningStore):
             user_id=user_id,
             namespace=effective_namespace,
         )
+        novel_facts, duplicate_count = self._novel_facts(existing=existing, facts=facts or [])
 
         entity_obj, created, revived, stale_row_key = self._apply_remember(
             existing=existing,
@@ -1070,6 +1078,13 @@ class EntityMemoryStore(LearningStore):
         if not _slugify_or_none(entity):
             return "Entity name is required; nothing was recorded."
 
+        # A blank optional argument means the model did not supply it, not that
+        # it wants the stored value cleared - the tool surface has no way to
+        # clear one, so treating "" as a value silently wipes a description or
+        # a note pointer that a previous turn wrote.
+        description = _blank_to_none(description)
+        note = _blank_to_none(note)
+
         effective_namespace = namespace or self.config.namespace
         if effective_namespace == "user" and not user_id:
             log_warning("EntityMemoryStore.aremember_about: namespace='user' requires user_id")
@@ -1097,6 +1112,11 @@ class EntityMemoryStore(LearningStore):
                 user_id=user_id,
                 namespace=effective_namespace,
             )
+            # Novelty has to be judged against the row we are about to merge
+            # onto, not the pre-lock snapshot: a sibling call carrying the same
+            # sentence would otherwise pass the duplicate check twice and
+            # append it twice.
+            novel_facts, duplicate_count = self._novel_facts(existing=existing, facts=facts or [])
 
             entity_obj, created, revived, stale_row_key = self._apply_remember(
                 existing=existing,
@@ -2063,7 +2083,10 @@ class EntityMemoryStore(LearningStore):
         try:
             loop = asyncio.get_running_loop()
         except RuntimeError:
-            loop = None
+            # No loop to key on (and nothing to serialize against either):
+            # a fresh lock is uncontended and correct. None cannot be a
+            # WeakKeyDictionary key.
+            return asyncio.Lock()
         lock = self._async_write_locks.get(loop)
         if lock is None:
             lock = asyncio.Lock()
