@@ -38,3 +38,21 @@ behavior note: the agent named the entity "radar project" (slug radar_project) r
 "radar" - consistent within the run, and resolution keeps later variants merged.
 
 ---
+
+### 03_visualize_the_graph.py
+
+**Status:** PASS
+
+**Description:** Builds a six-entity world through the four tools directly (no LLM, no API
+key), then renders both views from visualize.py. Verifies the visualizer reads real store
+rows and surfaces reciprocal edges, supersession and archive.
+
+**Result:** Terminal tree rendered all six entities. Radar showed "Shipped to production"
+live and "Blocked on security review" under **superseded** (struck through, not deleted);
+every link appeared on both ends (e.g. Sarah "--designs--> Radar" and Radar "<-- Sarah
+Chen designs"); Legacy Monolith rendered "(archived)" and stayed present. The HTML file
+(tmp/entity_graph.html) parsed to a valid payload of 6 nodes and 4 de-duplicated edges
+(each reciprocal pair drawn once). Ran against Postgres; the store-direct path means it is
+deterministic across runs.
+
+---

@@ -10,6 +10,24 @@ tools with resolution, supersession and relevance recall in the store.
   via supersession, and relevance recall in a fresh session.
 - `02_links_and_forget.py`: reciprocal links with one-hop names on recall,
   browsing by recency, and archive/revive with forget.
+- `03_visualize_the_graph.py`: builds a small world through the four tools and
+  renders it (terminal tree + interactive HTML), so links, supersession and
+  archive are visible at a glance. Deterministic, no API key.
+
+## Visualizing the graph
+
+`show_entity_graph` is an SDK helper (`agno.learn`). Point it at an agent, a
+`LearningMachine`, or an `EntityMemoryStore`:
+
+```python
+from agno.learn import show_entity_graph
+
+show_entity_graph(agent, namespace=NAMESPACE, html="tmp/graph.html")
+```
+
+It prints a rich tree (live facts, superseded facts struck through, links by
+name) and, with `html=`, writes a self-contained interactive graph. Reads
+through the store's own `list_entities`, so it works on sqlite and postgres.
 
 ## The four tools
 

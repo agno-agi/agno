@@ -39,6 +39,7 @@ from agno.learn.stores import (
     UserMemoryStore,
     UserProfileStore,
 )
+from agno.learn.visualize import render_html, render_terminal, show_entity_graph
 
 __all__ = [
     # Main class
@@ -68,4 +69,8 @@ __all__ = [
     "LearnedKnowledgeStore",
     "EntityMemoryStore",
     "DecisionLogStore",
+    # Visualization
+    "show_entity_graph",
+    "render_terminal",
+    "render_html",
 ]
