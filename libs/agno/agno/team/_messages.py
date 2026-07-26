@@ -52,6 +52,25 @@ from agno.utils.team import (
 from agno.utils.timer import Timer
 
 
+def _input_kwarg(method: Any, input_message: Any) -> Dict[str, Any]:
+    """``{"input": ...}`` only when the callee accepts it.
+
+    ``Team.get_system_message`` is a public extension point and this is the
+    bound method, so a subclass written against the pre-2.8.4 signature is what
+    actually runs. Passing the new kwarg unconditionally makes every run of
+    such a team fail.
+    """
+    import inspect
+
+    try:
+        parameters = inspect.signature(method).parameters
+    except (TypeError, ValueError):
+        return {}
+    if "input" in parameters or any(p.kind == p.VAR_KEYWORD for p in parameters.values()):
+        return {"input": input_message}
+    return {}
+
+
 def _get_tool_names(member: Any, async_mode: bool = False) -> List[str]:
     """Extract tool names from a member's tools list."""
     tool_names: List[str] = []
@@ -865,13 +884,13 @@ def _get_run_messages(
     system_message = team.get_system_message(
         session=session,
         run_context=run_context,
-        input=input_message,
         images=images,
         audio=audio,
         videos=videos,
         files=files,
         add_session_state_to_context=add_session_state_to_context,
         tools=tools,
+        **_input_kwarg(team.get_system_message, input_message),
     )
     if system_message is not None:
         run_messages.system_message = system_message
@@ -1001,13 +1020,13 @@ async def _aget_run_messages(
     system_message = await team.aget_system_message(
         session=session,
         run_context=run_context,
-        input=input_message,
         images=images,
         audio=audio,
         videos=videos,
         files=files,
         add_session_state_to_context=add_session_state_to_context,
         tools=tools,
+        **_input_kwarg(team.aget_system_message, input_message),
     )
     if system_message is not None:
         run_messages.system_message = system_message
