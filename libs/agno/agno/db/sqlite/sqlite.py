@@ -43,6 +43,7 @@ from agno.db.utils import (
     deserialize_session,
     deserialize_session_json_fields,
     deserialize_sessions,
+    learning_search_patterns,
     serialize_session_json_fields,
 )
 from agno.run.base import RunStatus
@@ -4546,6 +4547,69 @@ class SqliteDb(BaseDb):
         except Exception as e:
             log_debug(f"Error getting learnings: {e}")
             return []
+
+    def search_learnings(
+        self,
+        query: str,
+        learning_type: Optional[str] = None,
+        user_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
+        workflow_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+        namespace: Optional[str] = None,
+        entity_id: Optional[str] = None,
+        entity_type: Optional[str] = None,
+        limit: Optional[int] = None,
+    ) -> List[Dict[str, Any]]:
+        """Search learning records by text query. See BaseDb.search_learnings.
+
+        The query matches the content column case-insensitively in both its
+        space and underscore forms. Errors are raised, never swallowed.
+        """
+        try:
+            table = self._get_table(table_type="learnings")
+            if table is None:
+                return []
+
+            patterns = learning_search_patterns(query)
+            if not patterns:
+                return []
+
+            with self.Session() as sess:
+                stmt = select(table)
+
+                if learning_type is not None:
+                    stmt = stmt.where(table.c.learning_type == learning_type)
+                if user_id is not None:
+                    stmt = stmt.where(table.c.user_id == user_id)
+                if agent_id is not None:
+                    stmt = stmt.where(table.c.agent_id == agent_id)
+                if team_id is not None:
+                    stmt = stmt.where(table.c.team_id == team_id)
+                if workflow_id is not None:
+                    stmt = stmt.where(table.c.workflow_id == workflow_id)
+                if session_id is not None:
+                    stmt = stmt.where(table.c.session_id == session_id)
+                if namespace is not None:
+                    stmt = stmt.where(table.c.namespace == namespace)
+                if entity_id is not None:
+                    stmt = stmt.where(table.c.entity_id == entity_id)
+                if entity_type is not None:
+                    stmt = stmt.where(table.c.entity_type == entity_type)
+
+                stmt = stmt.where(or_(*[table.c.content.ilike(pattern, escape="\\") for pattern in patterns]))
+
+                stmt = stmt.order_by(table.c.updated_at.desc().nulls_last())
+                if limit is not None:
+                    stmt = stmt.limit(limit)
+
+                results = sess.execute(stmt).fetchall()
+                return [dict(row._mapping) for row in results]
+
+        except Exception as e:
+            log_error(f"Error searching learnings: {e}")
+            raise e
 
     def get_learning_by_id(self, id: str) -> Optional[Dict[str, Any]]:
         try:
