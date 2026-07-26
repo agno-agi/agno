@@ -213,3 +213,26 @@ def test_query_variants_keeps_the_query_itself() -> None:
     assert "end_to_end_tests" in query_variants("end-to-end tests")
     assert "sarah_chen" in query_variants("sarah chen")
     assert query_variants("   ") == []
+
+
+def test_search_patterns_wildcard_non_ascii_escapes() -> None:
+    """SQLite compares the JSON escape as literal text and LIKE folds ASCII
+    only, so no pre-cased whole-string variant reaches a mixed form like "Ος".
+    The escape carries a wildcard per character instead; the caller's
+    value-scoped Python check casefolds and rejects the slack.
+    """
+    from agno.db.utils import learning_search_patterns
+
+    patterns = learning_search_patterns("Ος")
+    assert any("______" in p for p in patterns), patterns
+    # the raw form is still offered, for Postgres where ::text is real characters
+    assert any("Ος" in p for p in patterns), patterns
+    # ASCII queries gain no wildcard padding
+    assert all("______" not in p for p in learning_search_patterns("sarah chen"))
+
+
+def test_value_projection_and_variants_casefold() -> None:
+    from agno.learn.utils import content_values_text, query_variants
+
+    assert content_values_text({"facts": ["Ος"]}) == query_variants("ΟΣ")[0]
+    assert query_variants("CAFÉ")[0] == "café"

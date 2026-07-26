@@ -220,19 +220,21 @@ def learning_search_patterns(query: str) -> List[str]:
         return []
 
     variants = [stripped]
-    # SQLite compares the JSON escape as literal text, and LIKE folds ASCII
-    # only, so "É" never matches a stored "é": searching CAFÉ for a
-    # stored Café found nothing. Emit the escape for both cases of every
-    # non-ASCII character so the fold happens before the escape does.
-    for cased in (stripped, stripped.lower(), stripped.upper()):
-        json_form = json.dumps(cased, ensure_ascii=True)[1:-1]
-        if json_form != cased and json_form not in variants:
-            variants.append(json_form)
+    # SQLite stores JSON with ensure_ascii escapes, and LIKE folds ASCII only,
+    # so an escape sequence never case-matches: a stored "Ος" is unreachable
+    # from "ΟΣ", "ος" or "οσ". No set of pre-cased whole-string variants covers
+    # the mixed forms, so the escape carries a wildcard per character instead -
+    # \\uXXXX is six characters wide - and the caller's value-scoped Python
+    # check (which casefolds) rejects whatever that lets through. Loose
+    # prefilter, precise verification, which is what this pair is for.
+    json_form = json.dumps(stripped, ensure_ascii=True)[1:-1]
+    if json_form != stripped:
+        variants.append(re.sub(r"\\u[0-9a-fA-F]{4}", "______", json_form))
 
     patterns: List[str] = []
     for variant in variants:
         escaped = variant.replace("\\", "\\\\").replace("%", "\\%")
-        crossed = re.sub(r"[\s_]+", "_", escaped)
+        crossed = re.sub(r"[\s]+", "_", escaped)
         pattern = f"%{crossed}%"
         if pattern not in patterns:
             patterns.append(pattern)

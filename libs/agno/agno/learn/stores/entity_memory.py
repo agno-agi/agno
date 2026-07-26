@@ -36,7 +36,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from os import getenv
 from textwrap import dedent
-from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple, Union, cast
+from typing import Any, Callable, Dict, Iterator, List, Optional, Sequence, Tuple, Union, cast
 from weakref import WeakKeyDictionary
 
 from agno.learn.config import EntityMemoryConfig, LearningMode
@@ -2865,16 +2865,21 @@ class EntityMemoryStore(LearningStore):
         return [limit * 2, limit * 8, limit * 32]
 
     @staticmethod
-    def _verified_search_window(limit: int) -> List[int]:
-        """Fetch sizes to try when searching.
+    def _verified_search_window(limit: int) -> Iterator[int]:
+        """Fetch sizes to try when searching, until the backend runs out.
 
         The db-side LIKE matches the whole serialized row, key names included,
-        so ordinary words ("name", "content", "events") match every row and a
-        fixed multiple of `limit` fills with rows that then fail value-only
-        verification - the real match, older, is never fetched. Escalate until
-        the verified count is met or the backend is exhausted.
+        so ordinary words ("name", "content", "events") match every row: a
+        fixed window fills with rows that then fail value-only verification and
+        the real match, older, is never fetched. Any finite ladder just moves
+        the threshold - at 48x a brain needs 481 key-name matches to hide a
+        fact - so this yields until the caller stops, which it does when the
+        backend returns a short page.
         """
-        return [limit * 3, limit * 12, limit * 48]
+        fetch = max(limit, 1) * 3
+        while True:
+            yield fetch
+            fetch *= 4
 
     def _parse_rows(self, rows: List[Dict[str, Any]], limit: int, include_archived: bool) -> List[EntityMemory]:
         entities: List[EntityMemory] = []

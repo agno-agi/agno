@@ -1007,8 +1007,14 @@ class UserMemoryStore(LearningStore):
             - Context that would be awkward to ask about again
             - Patterns in how they think and work
 
+            **ALWAYS save, whatever the topic:**
+            - Anything the user explicitly asks you to remember. An explicit request is
+              authorization: "keep this between us", "remember this privately" and
+              "don't share this" ask you to store it and hold it privately - they are
+              not reasons to store nothing. Save what they said, and only that.
+
             **DO NOT save:**
-            - Sensitive personal information (health conditions, financial details, relationships) unless directly relevant to helping them
+            - Sensitive personal information (health conditions, financial details, relationships) that you inferred or that came up incidentally, rather than being something they asked you to keep
             - One-off details unlikely to matter in future conversations
             - Information they'd find creepy to have remembered
             - Inferences or assumptions - only save what they've actually stated
@@ -1103,7 +1109,8 @@ class UserMemoryStore(LearningStore):
 
             - Quality over quantity: 5 great memories beat 20 mediocre ones
             - Durability matters: save information that will still be relevant next month
-            - Respect boundaries: when in doubt about whether to save something, don't
+            - Respect boundaries: when in doubt about whether to save something, don't -
+              unless they asked you to remember it, which settles the doubt
             - It's fine to do nothing if the conversation reveals nothing worth remembering\
         """)
 

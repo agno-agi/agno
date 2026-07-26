@@ -78,7 +78,8 @@ def content_values_text(content: Any) -> str:
             parts.append(str(node))
 
     walk(content)
-    return "\n".join(parts).lower()
+    # casefold, not lower: a stored "Ος" has to match a query of "ΟΣ".
+    return "\n".join(parts).casefold()
 
 
 def query_variants(query: str) -> List[str]:
@@ -96,7 +97,7 @@ def query_variants(query: str) -> List[str]:
     """
     import re
 
-    lowered = query.strip().lower()
+    lowered = query.strip().casefold()
     if not lowered:
         return []
     variants: List[str] = [lowered]

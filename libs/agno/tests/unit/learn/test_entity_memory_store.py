@@ -1087,3 +1087,46 @@ class TestDataApi:
     async def test_async_hard_delete(self, store: EntityMemoryStore) -> None:
         await store.aremember_about(entity="radar", entity_type="project")
         assert await store.adelete(entity_id="radar", entity_type="project") is True
+
+
+class TestSearchWindowExhaustion:
+    """The db-side LIKE matches key names, so ordinary words match every row.
+
+    Any finite ladder just moves the threshold at which a real, older match
+    becomes unreachable; the window has to run out with the backend.
+    """
+
+    def test_a_real_match_survives_hundreds_of_key_name_false_positives(self, tmp_path) -> None:
+        import time
+
+        from agno.db.sqlite import SqliteDb
+
+        db = SqliteDb(db_file=str(tmp_path / "crowd.db"))
+        store = EntityMemoryStore(
+            config=EntityMemoryConfig(db=db, mode=LearningMode.AGENTIC, namespace="global")  # type: ignore[arg-type]
+        )
+        store.remember_about(
+            entity="target", entity_type="project", facts=["the content marker lives here"], namespace="global"
+        )
+        time.sleep(1.1)  # so ORDER BY updated_at DESC really ranks the fillers first
+        for i in range(500):
+            store.remember_about(entity=f"other{i}", entity_type="project", facts=["x"], namespace="global")
+
+        # "content" is a JSON key on every row and a value on exactly one
+        hits = store.search(query="content", namespace="global", limit=10)
+        assert [e.entity_id for e in hits] == ["target"]
+
+    def test_mixed_case_unicode_in_a_fact_value_is_reachable(self, tmp_path) -> None:
+        from agno.db.sqlite import SqliteDb
+
+        db = SqliteDb(db_file=str(tmp_path / "unicode.db"))
+        store = EntityMemoryStore(
+            config=EntityMemoryConfig(db=db, mode=LearningMode.AGENTIC, namespace="global")  # type: ignore[arg-type]
+        )
+        store.remember_about(entity="Alpha", entity_type="project", facts=["Ος"], namespace="global")
+        store.remember_about(entity="Cafe", entity_type="company", facts=["Café Noir"], namespace="global")
+
+        for query in ("Ος", "ΟΣ", "ος", "οσ"):
+            assert [e.entity_id for e in store.search(query=query, namespace="global")] == ["alpha"], query
+        for query in ("café", "CAFÉ", "Café"):
+            assert [e.entity_id for e in store.search(query=query, namespace="global")] == ["cafe"], query
