@@ -394,7 +394,9 @@ agent = Agent(
 
 Captures knowledge about external entities: companies, projects, people, products, systems.
 
-**Supported modes:** ALWAYS, AGENTIC
+**Supported modes:** AGENTIC only. The agent records through four tools
+(`remember_about`, `link_entities`, `search_entities`, `forget`); there is no
+extraction pass, and any other mode raises.
 
 **Three types of entity data:**
 - **Facts** (semantic memory): Timeless truths - "Uses PostgreSQL"
@@ -426,7 +428,8 @@ agent.run("What database does Acme use?")
 
 Records decisions the agent makes, with reasoning and alternatives considered. Useful for auditing agent behavior and building feedback loops.
 
-**Supported modes:** ALWAYS, AGENTIC
+**Supported modes:** AGENTIC. The decision is the agent's to record, so it
+records it with `log_decision`.
 
 **Scope:** Per agent - stored and retrieved by `agent_id`.
 
