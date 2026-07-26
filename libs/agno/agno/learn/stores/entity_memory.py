@@ -1072,7 +1072,9 @@ class EntityMemoryStore(LearningStore):
         # The other three tools teach "project/Harbor" in their refusals and
         # docstrings, and the model uses it here too. Slugging it whole minted
         # project/project_harbor and stranded the correction on a phantom.
-        entity, qualifier = self._qualified(entity=entity, user_id=user_id, namespace=effective_namespace)
+        entity, qualifier = self._qualified(
+            entity=entity, user_id=user_id, namespace=effective_namespace, declared_type=entity_type
+        )
         entity_type = qualifier or entity_type
 
         existing = self._resolve(
@@ -1189,7 +1191,9 @@ class EntityMemoryStore(LearningStore):
             return "Entity memory needs a user_id for the 'user' namespace; nothing was recorded."
 
         # See the sync twin: the qualified form the other tools teach.
-        entity, qualifier = await self._aqualified(entity=entity, user_id=user_id, namespace=effective_namespace)
+        entity, qualifier = await self._aqualified(
+            entity=entity, user_id=user_id, namespace=effective_namespace, declared_type=entity_type
+        )
         entity_type = qualifier or entity_type
 
         existing = await self._aresolve(
@@ -2277,25 +2281,41 @@ class EntityMemoryStore(LearningStore):
             return None
         return self._ambiguity_message(name, await self._aname_rows(entity=name, user_id=user_id, namespace=namespace))
 
-    def _qualified(self, entity: str, user_id: Optional[str], namespace: str) -> Tuple[str, Optional[str]]:
+    def _qualified(
+        self, entity: str, user_id: Optional[str], namespace: str, declared_type: Optional[str] = None
+    ) -> Tuple[str, Optional[str]]:
         """Read back the "type/name" form the ambiguity reply asks for.
 
         A prefix only counts when it names one of the types actually stored
         under the remainder, so an entity called "AC/DC" stays one name.
+
+        remember_about is the one tool that declares its own entity_type, and
+        it passes it here: the first write under a qualified name has no row to
+        recognise the prefix from, so the whole string was slugged into a
+        phantom (project/Harbor -> project/project_harbor) that no later call
+        could reach.
         """
         remainder = entity.partition("/")[2]
         if not remainder:
             return entity, None
         rows = self._name_rows(entity=remainder, user_id=user_id, namespace=namespace)
-        return _split_qualified_name(entity, [str(r.get("entity_type")) for r in rows if r.get("entity_type")])
+        known = [str(r.get("entity_type")) for r in rows if r.get("entity_type")]
+        if declared_type:
+            known.append(declared_type)
+        return _split_qualified_name(entity, known)
 
-    async def _aqualified(self, entity: str, user_id: Optional[str], namespace: str) -> Tuple[str, Optional[str]]:
+    async def _aqualified(
+        self, entity: str, user_id: Optional[str], namespace: str, declared_type: Optional[str] = None
+    ) -> Tuple[str, Optional[str]]:
         """Async version of _qualified."""
         remainder = entity.partition("/")[2]
         if not remainder:
             return entity, None
         rows = await self._aname_rows(entity=remainder, user_id=user_id, namespace=namespace)
-        return _split_qualified_name(entity, [str(r.get("entity_type")) for r in rows if r.get("entity_type")])
+        known = [str(r.get("entity_type")) for r in rows if r.get("entity_type")]
+        if declared_type:
+            known.append(declared_type)
+        return _split_qualified_name(entity, known)
 
     def _forget_event(self, entity_obj: EntityMemory, needle: str, label: str) -> Tuple[Optional[str], bool]:
         """Retire an event the caller named, matched like a fact.

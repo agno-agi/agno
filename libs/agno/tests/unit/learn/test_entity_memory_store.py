@@ -1300,6 +1300,24 @@ class TestEdgeAndEventIdentity:
         assert project_harbor is not None and project_harbor.relationships == []
         assert company_harbor is not None and len(company_harbor.relationships) == 1
 
+    def test_remember_about_reads_its_own_qualified_form(self, store: EntityMemoryStore) -> None:
+        # remember_about is the only entity tool that declares its own type, so
+        # the first write under "project/Harbor" had no row to recognise the
+        # prefix from and slugged the whole string into project/project_harbor -
+        # a phantom no later call could reach.
+        store.remember_about(entity="Harbor", entity_type="company", facts=["in talks"])
+        store.remember_about(entity="project/Harbor", entity_type="project", facts=["ingest rewrite"])
+        store.remember_about(entity="Harbor", entity_type="project", facts=["due friday"])
+
+        rows = {(e.entity_type, e.entity_id) for e in store.list_entities(limit=10)}
+        assert rows == {("company", "harbor"), ("project", "harbor")}
+        harbor = store.get(entity_id="harbor", entity_type="project")
+        assert harbor is not None and len(harbor.live_facts()) == 2
+
+    def test_a_slash_in_a_name_is_still_a_name(self, store: EntityMemoryStore) -> None:
+        store.remember_about(entity="AC/DC", entity_type="company", facts=["a band"])
+        assert store.get(entity_id="ac_dc", entity_type="company") is not None
+
     def test_names_differing_only_by_a_naming_symbol_stay_apart(self, store: EntityMemoryStore) -> None:
         # C, C++ and C# all slugged to `c`, so one row ended up holding three
         # languages' facts under one name, and the two discarded names were
