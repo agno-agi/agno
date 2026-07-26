@@ -143,9 +143,23 @@ class LearningMachine:
 
     @property
     def stores(self) -> Dict[str, LearningStore]:
-        """All registered stores, keyed by name. Lazily initialized."""
+        """All registered stores, keyed by name. Lazily initialized.
+
+        Stores take the machine's model at construction, but the model usually
+        arrives *after* them: ``learning=`` hands over the agent's model during
+        Agent init, which is later than any earlier read of this property — a
+        test, an inspection, or the manual door. Backfill on access so a store
+        built before the model was bound picks it up, instead of keeping
+        ``model=None`` for the life of the process and silently declining to
+        capture.
+        """
         if self._stores is None:
             self._initialize_stores()
+        if self.model is not None:
+            for store in self._stores.values():  # type: ignore[union-attr]
+                config = getattr(store, "config", None)
+                if config is not None and getattr(config, "model", "unused") is None:
+                    config.model = self.model
         return self._stores  # type: ignore
 
     def _initialize_stores(self) -> None:
@@ -543,8 +557,13 @@ class LearningMachine:
         capture tools return "No model provided" and entity memory keeps every
         stated fact, both without saying so at the point of use.
         """
-        if self._missing_model_warned or self.model is not None:
+        if self._missing_model_warned:
             return
+        # Ask the stores, not the machine: `self.model is not None` was the
+        # earlier guard here, and it short-circuited exactly the case this
+        # check exists to catch — a machine whose model arrived after its
+        # stores did. `stores` now backfills those, so a store still without
+        # one means the machine genuinely has none.
         without = [name for name, store in self.stores.items() if getattr(store, "model", "unused") is None]
         if not without:
             return
