@@ -130,3 +130,40 @@ def test_the_three_first_tier_backends_implement_search() -> None:
 
     for backend in (SqliteDb, PostgresDb, AsyncPostgresDb):
         assert "search_learnings" in backend.__dict__, backend.__name__
+
+
+def test_manual_door_without_a_model_says_capture_is_off(caplog, tmp_path) -> None:
+    """The manual door injects nothing, so a hand-built machine keeps model=None.
+
+    Capture is a model call: the tools return "No model provided" and entity
+    memory retires nothing, while the guidance block promises the opposite.
+    """
+    from agno.db.sqlite import SqliteDb
+    from agno.learn.config import LearningMode, UserMemoryConfig
+
+    machine = LearningMachine(
+        db=SqliteDb(db_file=str(tmp_path / "a.db")),
+        user_memory=UserMemoryConfig(mode=LearningMode.AGENTIC),
+        entity_memory=True,
+    )
+    with caplog.at_level(logging.WARNING):
+        machine.get_tools(user_id="composer@example.com")
+        machine.get_tools(user_id="composer@example.com")
+
+    warnings = [r.getMessage() for r in caplog.records if "LearningMachine has no model" in r.getMessage()]
+    assert len(warnings) == 1, warnings
+    assert "user_memory" in warnings[0] and "entity_memory" in warnings[0]
+
+
+def test_the_automatic_door_is_quiet_because_the_agent_injects_its_model(caplog, tmp_path) -> None:
+    from agno.agent import Agent
+    from agno.db.sqlite import SqliteDb
+    from agno.learn.config import LearningMode, UserMemoryConfig
+
+    machine = LearningMachine(user_memory=UserMemoryConfig(mode=LearningMode.AGENTIC), entity_memory=True)
+    agent = Agent(model="openai:gpt-5.5", db=SqliteDb(db_file=str(tmp_path / "b.db")), learning=machine)
+    with caplog.at_level(logging.WARNING):
+        agent.initialize_agent()
+        machine.get_tools(user_id="composer@example.com")
+
+    assert not any("LearningMachine has no model" in r.getMessage() for r in caplog.records)

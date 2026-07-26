@@ -18,7 +18,9 @@ from agno.models.openai import OpenAIResponses
 db = PostgresDb(db_url="postgresql+psycopg://ai:ai@localhost:5532/ai")
 
 learning = LearningMachine(
-    db=db, user_memory=UserMemoryConfig(mode=LearningMode.AGENTIC)
+    db=db,
+    model=OpenAIResponses(id="gpt-5.5"),  # the manual door injects nothing
+    user_memory=UserMemoryConfig(mode=LearningMode.AGENTIC),
 )
 fs = FileSystem(db, namespace="composition-notes")
 

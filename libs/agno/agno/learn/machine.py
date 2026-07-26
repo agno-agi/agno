@@ -132,6 +132,7 @@ class LearningMachine:
     _placed_by_hand: bool = field(default=False, init=False)
     _double_render_warned: bool = field(default=False, init=False)
     _missing_user_id_warned: bool = field(default=False, init=False)
+    _missing_model_warned: bool = field(default=False, init=False)
     # Strong refs to fire-and-forget capture tasks (acapture_hook), so the event
     # loop cannot garbage-collect them mid-flight.
     _capture_tasks: set = field(default_factory=set, init=False)
@@ -534,6 +535,27 @@ class LearningMachine:
                 f"Pin Agent(user_id=...) or authenticate the request so a user id reaches the stores."
             )
 
+    def _warn_if_model_missing(self) -> None:
+        """Capture is a model call, and the manual door injects nothing.
+
+        ``learning=`` hands the agent's model to the machine; a hand-placed
+        machine keeps whatever it was constructed with. Without one, the
+        capture tools return "No model provided" and entity memory keeps every
+        stated fact, both without saying so at the point of use.
+        """
+        if self._missing_model_warned or self.model is not None:
+            return
+        without = [name for name, store in self.stores.items() if getattr(store, "model", "unused") is None]
+        if not without:
+            return
+        self._missing_model_warned = True
+        log_warning(
+            f"LearningMachine has no model, so these stores cannot capture: {', '.join(sorted(without))}. "
+            f"Their tools return 'No model provided', and entity memory records every stated fact without "
+            f"retiring the ones it contradicts. Pass model= to LearningMachine (the manual door injects "
+            f"nothing), or attach the machine with learning= so the agent's model is used."
+        )
+
     def _framework_instructions(self) -> str:
         """The guidance block, fetched by the automatic injection path.
 
@@ -665,6 +687,7 @@ class LearningMachine:
         """
         tools = []
         self._warn_if_user_id_missing(user_id)
+        self._warn_if_model_missing()
         context = {
             "user_id": user_id,
             "session_id": session_id,
@@ -697,6 +720,7 @@ class LearningMachine:
         """Async version of get_tools."""
         tools = []
         self._warn_if_user_id_missing(user_id)
+        self._warn_if_model_missing()
         context = {
             "user_id": user_id,
             "session_id": session_id,

@@ -24,8 +24,12 @@ surfaces yourself, the way FileSystem composes. Read this folder next to
 | `learning.instructions()` | the guidance block | `instructions=[...]` |
 | `learning.build_context(user_id=..., message=...)` | the recalled data | `additional_context` / a dependency |
 
-The manual door injects nothing - give the machine its `db` (and its
-`model`, for `capture_hook`'s ALWAYS extraction) explicitly.
+The manual door injects nothing - give the machine its `db` and its `model`
+explicitly. Every capture path is a model call: without one, `update_profile`
+and `update_user_memory` return "No model provided", `capture_hook`'s ALWAYS
+extraction stores nothing, and entity memory keeps every stated fact instead of
+retiring the ones it contradicts. `get_tools()` warns once when a store is in
+that state.
 
 The manual door is agentic by nature: with no `learning=` there is no
 automatic post-run extraction, and the tools are the capture mechanism.

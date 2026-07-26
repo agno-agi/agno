@@ -27,8 +27,11 @@ from agno.models.openai import OpenAIResponses
 
 db = PostgresDb(db_url="postgresql+psycopg://ai:ai@localhost:5532/ai")
 
+# The manual door injects nothing: without learning= nobody hands the machine
+# the agent's model, and capture is a model call.
 learning = LearningMachine(
     db=db,
+    model=OpenAIResponses(id="gpt-5.5"),
     user_memory=UserMemoryConfig(mode=LearningMode.AGENTIC),
     entity_memory=True,
 )
