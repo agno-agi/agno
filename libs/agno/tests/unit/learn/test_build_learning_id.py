@@ -4,6 +4,10 @@ The learning stores delegate their `_build_*_id` helpers here, so the REST creat
 can compute the same deterministic id and records reconcile with what the agent reads/writes.
 """
 
+import asyncio
+from unittest.mock import MagicMock
+
+from agno.learn.config import EntityMemoryConfig
 from agno.learn.stores.entity_memory import EntityMemoryStore
 from agno.learn.stores.session_context import SessionContextStore
 from agno.learn.stores.user_memory import UserMemoryStore
@@ -20,8 +24,8 @@ class TestBuildLearningId:
             build_learning_id("entity_memory", entity_id="acme", entity_type="company") == "entity_global_company_acme"
         )
         assert (
-            build_learning_id("entity_memory", entity_id="acme", entity_type="company", namespace="user")
-            == "entity_user_company_acme"
+            build_learning_id("entity_memory", entity_id="acme", entity_type="company", namespace="user", user_id="u1")
+            == "entity_user_u1_company_acme"
         )
 
     def test_missing_identity_fields_returns_none(self):
@@ -29,6 +33,7 @@ class TestBuildLearningId:
         assert build_learning_id("user_memory") is None
         assert build_learning_id("session_context") is None
         assert build_learning_id("entity_memory", entity_id="acme") is None  # needs entity_type too
+        assert build_learning_id("entity_memory", entity_id="acme", entity_type="company", namespace="user") is None
 
     def test_non_identity_types_return_none(self):
         assert build_learning_id("decision_log", user_id="u1") is None
@@ -67,3 +72,83 @@ class TestStoresDelegateToHelper:
         assert store._build_entity_db_id("acme", "company", "global") == build_learning_id(
             "entity_memory", entity_id="acme", entity_type="company", namespace="global"
         )
+        assert store._build_entity_db_id("acme", "company", "user", user_id="u1") == build_learning_id(
+            "entity_memory", entity_id="acme", entity_type="company", namespace="user", user_id="u1"
+        )
+
+
+class TestEntityMemoryTenantScopedIds:
+    def test_user_namespace_includes_user_id_in_entity_learning_id(self):
+        db = MagicMock()
+        db.get_learning_by_id.return_value = None
+        db.get_learning.return_value = None
+        store = EntityMemoryStore(config=EntityMemoryConfig(db=db, namespace="user"))
+
+        assert store.create_entity(entity_id="john_smith", entity_type="person", name="John Smith", user_id="user-a")
+        assert store.create_entity(entity_id="john_smith", entity_type="person", name="John Smith", user_id="user-b")
+
+        upsert_ids = [call.kwargs["id"] for call in db.upsert_learning.call_args_list]
+        assert upsert_ids == ["entity_user_user-a_person_john_smith", "entity_user_user-b_person_john_smith"]
+        assert len(set(upsert_ids)) == 2
+
+    def test_user_namespace_get_requires_user_id(self):
+        db = MagicMock()
+        store = EntityMemoryStore(config=EntityMemoryConfig(db=db, namespace="user"))
+
+        assert store.get(entity_id="john_smith", entity_type="person") is None
+        db.get_learning_by_id.assert_not_called()
+        db.get_learning.assert_not_called()
+
+    def test_user_namespace_search_requires_user_id(self):
+        db = MagicMock()
+        store = EntityMemoryStore(config=EntityMemoryConfig(db=db, namespace="user"))
+
+        assert store.search(query="john") == []
+        db.get_learnings.assert_not_called()
+
+    def test_user_namespace_async_get_and_search_require_user_id(self):
+        db = MagicMock()
+        store = EntityMemoryStore(config=EntityMemoryConfig(db=db, namespace="user"))
+
+        assert asyncio.run(store.aget(entity_id="john_smith", entity_type="person")) is None
+        assert asyncio.run(store.asearch(query="john")) == []
+        db.get_learning_by_id.assert_not_called()
+        db.get_learning.assert_not_called()
+        db.get_learnings.assert_not_called()
+
+    def test_user_namespace_get_prefers_scoped_id_over_legacy_filtered_lookup(self):
+        db = MagicMock()
+        scoped_entity = EntityMemoryStore().schema(
+            entity_id="john_smith", entity_type="person", name="Scoped John", user_id="user-a", namespace="user"
+        )
+        db.get_learning_by_id.return_value = {"content": scoped_entity.to_dict()}
+        db.get_learning.return_value = {
+            "content": {"entity_id": "john_smith", "entity_type": "person", "name": "Legacy John"}
+        }
+        store = EntityMemoryStore(config=EntityMemoryConfig(db=db, namespace="user"))
+
+        entity = store.get(entity_id="john_smith", entity_type="person", user_id="user-a")
+
+        assert entity is not None
+        assert entity.name == "Scoped John"
+        db.get_learning_by_id.assert_called_once_with("entity_user_user-a_person_john_smith")
+        db.get_learning.assert_not_called()
+
+    def test_user_namespace_mutation_without_user_id_does_not_read_or_write(self):
+        db = MagicMock()
+        store = EntityMemoryStore(config=EntityMemoryConfig(db=db, namespace="user"))
+
+        assert not store.update_entity(entity_id="john_smith", entity_type="person", name="John Smith")
+        db.get_learning_by_id.assert_not_called()
+        db.get_learning.assert_not_called()
+        db.upsert_learning.assert_not_called()
+
+    def test_saving_user_namespace_entity_does_not_delete_potentially_foreign_legacy_id(self):
+        db = MagicMock()
+        store = EntityMemoryStore(config=EntityMemoryConfig(db=db, namespace="user"))
+        entity = store.schema(entity_id="john_smith", entity_type="person", name="John Smith", user_id="user-a")
+
+        assert store._save_entity(entity=entity, user_id="user-a", namespace="user")
+
+        assert db.upsert_learning.call_args.kwargs["id"] == "entity_user_user-a_person_john_smith"
+        db.delete_learning.assert_not_called()
