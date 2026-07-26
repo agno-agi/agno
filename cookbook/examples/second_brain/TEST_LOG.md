@@ -89,3 +89,19 @@ Measured in-process against the real `/mcp` app: `run_agent` advertises an optio
 `user_id="claude-desktop"` wrote its session and its user memory under `claude-desktop`,
 not `owner`. Entities are global so they stay shared; profile and user memory fork per
 host. Unauthenticated `/mcp` is exactly where host models fill the field.
+
+## 2026-07-26 — four turns after the review fixes (fresh db, gpt-5.6)
+
+**Status:** PASS
+
+| Turn | Expected | Result |
+|---|---|---|
+| Decision + people + systems in one message | note written dated, entity indexed with a pointer, both links reciprocal | `write_file notes/quill.md` (`## 2026-07-26 - Concurrency control decision`), `remember_about(Quill, facts=["concurrency control: Postgres advisory locks... - see note"])`, `link_entities` twice |
+| "Priya has moved off Quill" | the old relationship retired, the new one recorded | `forget("Priya Raman", "runs -> Quill")` **removed the edge on both rows**, then `link_entities(Priya, works_on, Billing rewrite)`. Quill's row keeps only `backed_by -> postgresql` |
+| "Between us: the Nimbus renewal is shaky" | private memory, no shared entity | `update_user_memory(...)` only; no Nimbus entity exists in the store |
+| "What is the state of Quill, and why advisory locks?" | read the note, answer from it | `search_entities` → `read_file(notes/quill.md)` → answered with the reasoning, and volunteered that no replacement lead is recorded |
+
+The retirement turn is the one that mattered: on the pre-fix code the same call
+matched nothing it could act on, or matched two candidates it printed
+identically. Model behavior note: turn 2 rewrote the whole note with
+`write_file` rather than `replace_lines` - allowed, and the note stayed correct.
