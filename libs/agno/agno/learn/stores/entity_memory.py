@@ -3053,6 +3053,41 @@ class EntityMemoryStore(LearningStore):
             yield fetch
             fetch *= 4
 
+    def _anchored_hit(
+        self, query: str, entity_type: Optional[str], rows: List[Dict[str, Any]], include_archived: bool
+    ) -> List[EntityMemory]:
+        """The entity the query NAMES, ahead of the rows that merely mention it.
+
+        search_learnings orders by recency and has no ranking, so an entity
+        whose name appears in five newer entities' facts ("works on Harbor
+        ingest") fills the verified window with rows that all legitimately
+        match, and its own row - older - is never fetched. Both of recall's
+        routes then close at once: the directory caps at 50 as well.
+        """
+        found: List[EntityMemory] = []
+        for row in rows:
+            if entity_type and row.get("entity_type") != entity_type:
+                continue
+            entity = self.schema.from_dict(row.get("content"))
+            if entity is None:
+                continue
+            if not include_archived and getattr(entity, "archived_at", None):
+                continue
+            found.append(entity)
+        return found
+
+    @staticmethod
+    def _prepend_anchored(anchored: List[EntityMemory], rest: List[EntityMemory], limit: int) -> List[EntityMemory]:
+        merged = list(anchored)
+        seen = {(e.entity_id, e.entity_type) for e in merged}
+        for entity in rest:
+            key = (entity.entity_id, entity.entity_type)
+            if key in seen:
+                continue
+            seen.add(key)
+            merged.append(entity)
+        return merged[:limit]
+
     def _parse_rows(self, rows: List[Dict[str, Any]], limit: int, include_archived: bool) -> List[EntityMemory]:
         entities: List[EntityMemory] = []
         for row in rows:
@@ -3140,6 +3175,13 @@ class EntityMemoryStore(LearningStore):
                 include_archived=include_archived,
             )
 
+        anchored = self._anchored_hit(
+            query=query,
+            entity_type=entity_type,
+            rows=self._get_rows_by_entity_id(entity_id=_slugify(query), user_id=user_id, namespace=effective_namespace),
+            include_archived=include_archived,
+        )
+        entities = self._prepend_anchored(anchored, entities, limit)
         log_debug(f"EntityMemoryStore.search: found {len(entities)} entities for query: {query[:50]}")
         return entities
 
@@ -3209,6 +3251,15 @@ class EntityMemoryStore(LearningStore):
                 include_archived=include_archived,
             )
 
+        anchored = self._anchored_hit(
+            query=query,
+            entity_type=entity_type,
+            rows=await self._aget_rows_by_entity_id(
+                entity_id=_slugify(query), user_id=user_id, namespace=effective_namespace
+            ),
+            include_archived=include_archived,
+        )
+        entities = self._prepend_anchored(anchored, entities, limit)
         log_debug(f"EntityMemoryStore.asearch: found {len(entities)} entities for query: {query[:50]}")
         return entities
 

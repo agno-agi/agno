@@ -415,6 +415,40 @@ class TestTheSeamsThatBrokeBefore:
         assert "db: Postgres, over Dynamo" in content
         assert "entity_memory_instructions" in content
 
+    def test_the_entity_a_query_names_outranks_the_ones_that_mention_it(self, tmp_path) -> None:
+        """search_learnings orders by recency and does not rank.
+
+        Five newer entities whose facts merely mention "Harbor" filled the
+        verified window - they all legitimately match - and Harbor's own row,
+        older, was never fetched. Recall then injected the wrong entities and
+        search_entities confirmed them.
+        """
+        import time
+
+        from agno.db.sqlite import SqliteDb
+        from agno.learn.config import EntityMemoryConfig, LearningMode
+        from agno.learn.stores.entity_memory import EntityMemoryStore
+
+        store = EntityMemoryStore(
+            config=EntityMemoryConfig(  # type: ignore[arg-type]
+                db=SqliteDb(db_file=str(tmp_path / "rank.db")), mode=LearningMode.AGENTIC, namespace="global"
+            )
+        )
+        store.remember_about(entity="Harbor", entity_type="project", facts=["db: Postgres, over Dynamo"])
+        # Rows written in the same second do not order under updated_at DESC.
+        time.sleep(1.1)
+        for i in range(8):
+            store.remember_about(
+                entity=f"Person {i}", entity_type="person", facts=[f"works on Harbor ingest, shift {i}"]
+            )
+
+        hits = store.search(query="Harbor", namespace="global", limit=5)
+        assert hits and hits[0].entity_id == "harbor"
+
+        recalled = store.recall(message="where does Harbor stand?", namespace="global")
+        assert recalled is not None
+        assert "harbor" in [e.entity_id for e in recalled["entities"]]
+
     @pytest.mark.asyncio
     async def test_concurrent_writes_in_one_turn_all_land(self, tmp_path) -> None:
         """The write lock, guarded against its own removal.
