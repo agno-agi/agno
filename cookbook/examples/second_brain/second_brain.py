@@ -15,7 +15,13 @@ The stores split the work:
 
 Identity is pinned (user_id below): sessions do not thread over MCP and an
 unauthenticated /mcp call carries no user, so the personal brain names its
-owner once and every channel lands on the same brain.
+owner once and calls that name nobody land on the same brain.
+
+One caveat, measured rather than assumed: /mcp's run_agent takes an optional
+user_id, and a host that fills it wins over the pin - that run's profile and
+user memory go to whatever it sent. Entities are global, so the world half of
+the brain is shared either way. Run /mcp behind auth (the JWT subject then wins
+over both) if your client volunteers a user_id.
 
 Running this file serves the AgentOS on http://localhost:7777
 MCP Server on http://localhost:7777/mcp
@@ -94,6 +100,10 @@ second_brain = Agent(
     # The personal brain pins identity: every channel, MCP included, lands here.
     user_id="owner",
     add_history_to_context=True,
+    # A brain that cannot date its notes cannot tell July's truth from March's,
+    # and the instructions above ask for dated notes. Without this the agent has
+    # no clock and writes "Date not provided" until the first fact gives it one.
+    add_datetime_to_context=True,
 )
 
 # ---------------------------------------------------------------------------

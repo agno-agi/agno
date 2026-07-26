@@ -65,3 +65,27 @@ Capture session filed quill (advisory locks over SELECT FOR UPDATE SKIP LOCKED) 
 reasoning in notes/quill.md; a fresh recall session answered tersely and correctly
 ("advisory locks ... because Quill's workers are long-lived"). The shared brain listing
 shows both notes/harbor.md (with its dated updates) and notes/quill.md.
+
+## 2026-07-26 — add_datetime_to_context, cold-start proof
+
+**Status:** PASS
+
+The "**Date recorded:** Not provided" line above was the agent having no clock: the
+instructions ask for dated notes, and until an entity fact renders its "(as of ...)" date
+there is nothing in the prompt to date them with. Two prior runs produced headings like
+"## Date not provided - architecture".
+
+With `add_datetime_to_context=True` on the agent, a fresh db and one turn ("we picked
+Postgres over Dynamo for the radar ingest queue") produced `notes/radar-ingest-queue.md`
+with the heading `## 2026-07-26 - Postgres over Dynamo`. Dated on the first turn, with no
+entity in the store to borrow a date from.
+
+## 2026-07-26 — the pinned user_id does NOT survive an MCP client that fills it
+
+**Status:** FAIL (identity, deployment-shaped - see the note in second_brain.py)
+
+Measured in-process against the real `/mcp` app: `run_agent` advertises an optional
+`user_id`, and a value supplied there overrides `Agent(user_id="owner")`. One call with
+`user_id="claude-desktop"` wrote its session and its user memory under `claude-desktop`,
+not `owner`. Entities are global so they stay shared; profile and user memory fork per
+host. Unauthenticated `/mcp` is exactly where host models fill the field.
