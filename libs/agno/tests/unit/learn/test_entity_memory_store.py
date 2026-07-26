@@ -1300,6 +1300,29 @@ class TestEdgeAndEventIdentity:
         assert project_harbor is not None and project_harbor.relationships == []
         assert company_harbor is not None and len(company_harbor.relationships) == 1
 
+    def test_names_differing_only_by_a_naming_symbol_stay_apart(self, store: EntityMemoryStore) -> None:
+        # C, C++ and C# all slugged to `c`, so one row ended up holding three
+        # languages' facts under one name, and the two discarded names were
+        # written nowhere. A merge has no unmerge.
+        store.remember_about(entity="C++", entity_type="system", facts=["manual memory management"])
+        store.remember_about(entity="C#", entity_type="system", facts=["garbage collected"])
+        store.remember_about(entity="C", entity_type="system", facts=["no classes"])
+
+        rows = {e.entity_id: e for e in store.list_entities(entity_type="system", limit=10)}
+        assert sorted(rows) == ["c", "c_plus_plus", "c_sharp"]
+        assert [f["content"] for f in rows["c_sharp"].live_facts()] == ["garbage collected"]
+
+    def test_punctuation_variants_still_merge_and_keep_the_other_surface(self, store: EntityMemoryStore) -> None:
+        # The collapse is load-bearing for real merges; what it must not do is
+        # discard the name it merged.
+        store.remember_about(entity="Acme, Inc.", entity_type="company", facts=["vendor"])
+        store.remember_about(entity="Acme Inc", entity_type="company", facts=["renewal in march"])
+
+        rows = store.list_entities(entity_type="company", limit=10)
+        assert len(rows) == 1
+        assert rows[0].aliases == ["Acme Inc"]
+        assert len(rows[0].live_facts()) == 2
+
     def test_a_relation_stated_from_both_sides_can_be_retired(self, store: EntityMemoryStore) -> None:
         # The model states a symmetric relation from either end, so the row
         # holds the same link twice - once outgoing, once incoming. Both render;

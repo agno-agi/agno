@@ -61,6 +61,12 @@ def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
+# Symbols that name a thing rather than separate words. Without these, "C++"
+# and "C#" both key to `c` and merge into "C" - a wrong merge, and there is no
+# unmerge.
+_IDENTITY_SYMBOLS = {"++": "plus_plus", "+": "plus", "#": "sharp"}
+
+
 def _slugify(name: str) -> str:
     """Derive a stable entity_id from a display name: lowercase, underscores.
 
@@ -72,11 +78,19 @@ def _slugify(name: str) -> str:
     them meant a name only partly Latin lost the half that identified it -
     "李 Ming" keyed to `ming` and merged with an unrelated Ming, the same
     no-unmerge corruption the fold exists to prevent.
+
+    A few symbols carry identity rather than punctuation: C, C++ and C# are
+    three languages, and collapsing every non-word character made them one
+    entity holding all three's facts, with the discarded names written
+    nowhere. Those spell themselves out; the rest still collapse, so
+    "Acme, Inc." and "Acme Inc" stay one company.
     """
     import unicodedata
 
     decomposed = unicodedata.normalize("NFKD", name.strip().lower())
     folded = "".join(ch for ch in decomposed if not unicodedata.combining(ch))
+    for symbol, word in _IDENTITY_SYMBOLS.items():
+        folded = folded.replace(symbol, f"_{word}_")
     slug = re.sub(r"[^\w]+", "_", folded, flags=re.UNICODE).strip("_")
     return slug or name.strip().lower()
 
@@ -1587,16 +1601,16 @@ class EntityMemoryStore(LearningStore):
                 stale_row_key = self._build_entity_db_id(entity_obj.entity_id, entity_obj.entity_type, namespace)
                 entity_obj.entity_type = normalized_type
 
-            # Remember the name variant this write arrived under - but only a
-            # genuinely different surface (its slug is not already the entity id,
-            # so punctuation variants of the same name do not accumulate), and
-            # bounded so the list cannot grow without limit.
+            # Remember the name variant this write arrived under, bounded so the
+            # list cannot grow without limit. A name that differs from every one
+            # on file is kept even when it slugs to this same row: that is how a
+            # punctuation-only merge ("Acme, Inc." onto "Acme Inc") stays
+            # visible and searchable instead of being written nowhere.
             incoming_name = entity.strip()
             existing_aliases = list(getattr(entity_obj, "aliases", None) or [])
             known_names = [entity_obj.name or ""] + existing_aliases
             if (
                 incoming_name
-                and _slugify(incoming_name) != entity_obj.entity_id
                 and len(existing_aliases) < 8
                 and all(_normalize_name(incoming_name) != _normalize_name(n) for n in known_names if n)
             ):
