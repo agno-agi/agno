@@ -12,6 +12,7 @@ Examples for team workflows in context_management.
 
 - few_shot_learning.py - Demonstrates few shot learning.
 - filter_tool_calls_from_history.py - Demonstrates filter tool calls from history.
+- include_member_messages_in_history.py - Leader history includes stored member run messages.
 - introduction.py - Demonstrates introduction.
 - additional_context.py - Demonstrates additional_context and resolve_in_context.
 - custom_system_message.py - Demonstrates custom system message and system message role.
