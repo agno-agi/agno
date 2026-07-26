@@ -707,9 +707,14 @@ class TestExcludeToolsTypos:
     caller believes a tool is gone and it is still registered.
     """
 
-    def test_a_typo_raises(self, fs) -> None:
-        with pytest.raises(ValueError, match="not FileSystem tools"):
-            fs.tools(exclude_tools=["delete_fil"])
+    def test_a_typo_warns_and_excludes_nothing(self, fs, caplog) -> None:
+        import logging
+
+        with caplog.at_level(logging.WARNING):
+            toolkit = fs.tools(exclude_tools=["delete_fil"])
+        assert any("not FileSystem tools" in r.getMessage() for r in caplog.records)
+        # the call still resolves; nothing was excluded for the misspelled name
+        assert set(toolkit.functions) == set(FileSystemTools.DEFAULT_TOOLS)
 
     def test_excluding_a_tool_outside_this_set_is_a_no_op(self, fs) -> None:
         # delete_file left the default set in 2.8.4; the old safety idiom stays valid

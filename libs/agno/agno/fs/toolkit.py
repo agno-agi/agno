@@ -37,7 +37,7 @@ from agno.fs.fs import FileSystem
 from agno.run import RunContext
 from agno.team.team import Team
 from agno.tools.toolkit import Toolkit
-from agno.utils.log import log_debug, log_error
+from agno.utils.log import log_debug, log_error, log_warning
 
 _MAX_DIR_ENTRIES = 200
 
@@ -167,12 +167,14 @@ class FileSystemTools(Toolkit):
             # Excluding a tool that exists but is not in this set (delete_file,
             # which left the default) is a no-op, not an error - upgraders used
             # exclude_tools=["delete_file"] as the safety idiom. A name that is
-            # no tool at all is still a typo, and swallowing it would silently
-            # leave a tool registered that the caller believed was gone.
+            # no tool at all is still a typo, and swallowing it silently leaves
+            # a tool registered that the caller believed was gone - say so
+            # without breaking a call that otherwise resolves fine.
             unknown = [name for name in kwargs["exclude_tools"] if name not in self.FULL_TOOLS]
             if unknown:
-                raise ValueError(
-                    f"exclude_tools names {unknown} which are not FileSystem tools. "
+                log_warning(
+                    f"FileSystem.tools: exclude_tools names {unknown}, which are not FileSystem "
+                    f"tools - check the spelling, because nothing was excluded for them. "
                     f"Available: {', '.join(self.FULL_TOOLS)}."
                 )
             kwargs["exclude_tools"] = [name for name in kwargs["exclude_tools"] if name in registered]
