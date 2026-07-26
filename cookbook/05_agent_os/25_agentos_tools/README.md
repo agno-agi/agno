@@ -31,8 +31,12 @@ agent for a platform summary.
 
 ## Notes
 
-- Every tool is read-only. Schedule, approval and component management are
-  deliberately not exposed, so the toolkit is safe to reach from any frontend.
+- No tool mutates platform state; schedule, approval and component management
+  are deliberately not exposed. The one write is the metrics rollup refresh
+  inside `get_platform_metrics` (derived data, no user content). The tools read
+  the database directly, so AgentOS endpoint scopes do not apply — expose the
+  ops agent to operators, and trim surfaces with the enable flags for wider
+  audiences.
 - Sensitive payloads are never returned: span attributes, approval tool
   arguments and schedule run input/output can hold conversation content and are
   excluded from every tool result.

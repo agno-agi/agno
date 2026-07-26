@@ -1,4 +1,8 @@
-"""Integration tests for component-grouped trace stats, span stats and lazy metrics on AsyncPostgresDb"""
+"""Integration tests for component-grouped trace stats, span stats and lazy metrics on AsyncPostgresDb.
+
+Each test gets its own AsyncPostgresDb with a dedicated schema and engine, so it
+is immune to the shared test_schema teardown ordering issues.
+"""
 
 import time
 import uuid
@@ -6,10 +10,24 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Optional
 
 import pytest
+import pytest_asyncio
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import create_async_engine
 
 from agno.db.postgres import AsyncPostgresDb
 from agno.session.agent import AgentSession
 from agno.tracing.schemas import Span, Trace
+
+
+@pytest_asyncio.fixture
+async def stats_db():
+    schema = f"agentos_stats_{uuid.uuid4().hex[:8]}"
+    engine = create_async_engine("postgresql+psycopg_async://ai:ai@localhost:5532/ai")
+    db = AsyncPostgresDb(db_engine=engine, db_schema=schema)
+    yield db
+    async with engine.begin() as conn:
+        await conn.execute(text(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE'))
+    await engine.dispose()
 
 
 def _make_trace(
@@ -19,11 +37,12 @@ def _make_trace(
     duration_ms: int = 100,
     status: str = "OK",
     minutes_ago: int = 5,
+    name: str = "Agent.run",
 ) -> Trace:
     start = datetime.now(timezone.utc) - timedelta(minutes=minutes_ago)
     return Trace(
         trace_id=str(uuid.uuid4()),
-        name="Agent.run",
+        name=name,
         status=status,
         start_time=start,
         end_time=start + timedelta(milliseconds=duration_ms),
@@ -66,14 +85,12 @@ def _make_span(
 
 
 @pytest.mark.asyncio
-async def test_get_trace_stats_group_by_agent(async_postgres_db_real: AsyncPostgresDb):
-    await async_postgres_db_real.upsert_trace(_make_trace(agent_id="agent-1", session_id="s1", duration_ms=100))
-    await async_postgres_db_real.upsert_trace(
-        _make_trace(agent_id="agent-1", session_id="s2", duration_ms=300, status="ERROR")
-    )
-    await async_postgres_db_real.upsert_trace(_make_trace(session_id=None, user_id=None))
+async def test_get_trace_stats_group_by_agent(stats_db: AsyncPostgresDb):
+    await stats_db.upsert_trace(_make_trace(agent_id="agent-1", session_id="s1", duration_ms=100))
+    await stats_db.upsert_trace(_make_trace(agent_id="agent-1", session_id="s2", duration_ms=300, status="ERROR"))
+    await stats_db.upsert_trace(_make_trace(session_id=None, user_id=None))
 
-    rows, total = await async_postgres_db_real.get_trace_stats(group_by="agent")
+    rows, total = await stats_db.get_trace_stats(group_by="agent")
 
     assert total == 1
     top = rows[0]
@@ -85,10 +102,22 @@ async def test_get_trace_stats_group_by_agent(async_postgres_db_real: AsyncPostg
 
 
 @pytest.mark.asyncio
-async def test_get_trace_stats_default_shape_unchanged(async_postgres_db_real: AsyncPostgresDb):
-    await async_postgres_db_real.upsert_trace(_make_trace(agent_id="agent-1", session_id="session-1"))
+async def test_get_trace_stats_group_by_endpoint(stats_db: AsyncPostgresDb):
+    await stats_db.upsert_trace(_make_trace(agent_id="agent-1", session_id="s1"))
+    await stats_db.upsert_trace(_make_trace(session_id=None, user_id=None, name="tools/call run_agent"))
 
-    rows, total = await async_postgres_db_real.get_trace_stats()
+    rows, total = await stats_db.get_trace_stats(group_by="endpoint")
+
+    assert total == 1
+    assert rows[0]["name"] == "tools/call run_agent"
+    assert rows[0]["total_traces"] == 1
+
+
+@pytest.mark.asyncio
+async def test_get_trace_stats_default_shape_unchanged(stats_db: AsyncPostgresDb):
+    await stats_db.upsert_trace(_make_trace(agent_id="agent-1", session_id="session-1"))
+
+    rows, total = await stats_db.get_trace_stats()
 
     assert total == 1
     expected_keys = {
@@ -105,10 +134,10 @@ async def test_get_trace_stats_default_shape_unchanged(async_postgres_db_real: A
 
 
 @pytest.mark.asyncio
-async def test_get_span_stats(async_postgres_db_real: AsyncPostgresDb):
+async def test_get_span_stats(stats_db: AsyncPostgresDb):
     trace = _make_trace(agent_id="agent-1", session_id="s1")
-    await async_postgres_db_real.upsert_trace(trace)
-    await async_postgres_db_real.create_spans(
+    await stats_db.upsert_trace(trace)
+    await stats_db.create_spans(
         [
             _make_span(trace.trace_id, name="slow_tool", duration_ms=900),
             _make_span(trace.trace_id, name="slow_tool", duration_ms=1100),
@@ -116,7 +145,7 @@ async def test_get_span_stats(async_postgres_db_real: AsyncPostgresDb):
         ]
     )
 
-    rows, total = await async_postgres_db_real.get_span_stats(span_type="TOOL")
+    rows, total = await stats_db.get_span_stats(span_type="TOOL")
 
     assert total == 1
     assert rows[0]["name"] == "slow_tool"
@@ -127,19 +156,28 @@ async def test_get_span_stats(async_postgres_db_real: AsyncPostgresDb):
 
 
 @pytest.mark.asyncio
-async def test_get_metrics_refreshes_lazily(async_postgres_db_real: AsyncPostgresDb):
-    now = int(time.time())
-    session = AgentSession(
-        session_id=str(uuid.uuid4()),
-        agent_id="agent-1",
-        user_id="user-1",
-        created_at=now,
-        updated_at=now,
-    )
-    await async_postgres_db_real.upsert_session(session)
+async def test_get_metrics_refreshes_lazily_and_throttles(stats_db: AsyncPostgresDb):
+    async def seed_session(user_id: str) -> None:
+        now = int(time.time())
+        await stats_db.upsert_session(
+            AgentSession(
+                session_id=str(uuid.uuid4()), agent_id="agent-1", user_id=user_id, created_at=now, updated_at=now
+            )
+        )
+
+    await seed_session("user-1")
 
     # No calculate_metrics call: get_metrics must refresh on its own
-    rows, _ = await async_postgres_db_real.get_metrics()
-
+    rows, _ = await stats_db.get_metrics()
     assert len(rows) == 1
     assert rows[0]["agent_sessions_count"] == 1
+
+    # A second read within the throttle window must not recompute
+    await seed_session("user-2")
+    rows, _ = await stats_db.get_metrics()
+    assert rows[0]["agent_sessions_count"] == 1
+
+    # Expiring the throttle picks the new session up
+    stats_db._metrics_refreshed_at = 0.0
+    rows, _ = await stats_db.get_metrics()
+    assert rows[0]["agent_sessions_count"] == 2

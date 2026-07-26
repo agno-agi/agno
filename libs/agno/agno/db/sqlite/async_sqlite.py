@@ -151,6 +151,8 @@ class AsyncSqliteDb(AsyncBaseDb):
 
         # Initialize database session factory
         self.async_session_factory = async_sessionmaker(bind=self.db_engine, expire_on_commit=False)
+        # Zero means never refreshed; get_metrics uses this to refresh lazily, at most once per minute
+        self._metrics_refreshed_at: float = 0.0
 
     async def close(self) -> None:
         """Close database connections and dispose of the connection pool.
@@ -1749,6 +1751,9 @@ class AsyncSqliteDb(AsyncBaseDb):
             Exception: If an error occurs during metrics calculation.
         """
         try:
+            # Stamp first so failed runs are throttled too instead of retried on every read
+            self._metrics_refreshed_at = time.time()
+
             table = await self._get_table(table_type="metrics")
             if table is None:
                 return None
@@ -1817,6 +1822,9 @@ class AsyncSqliteDb(AsyncBaseDb):
     ) -> Tuple[List[dict], Optional[int]]:
         """Get all metrics matching the given date range.
 
+        Metrics are refreshed lazily, at most once per minute per process, so results
+        stay current even on deployments where nothing calls the refresh endpoint.
+
         Args:
             starting_date (Optional[date]): The starting date to filter metrics by.
             ending_date (Optional[date]): The ending date to filter metrics by.
@@ -1828,6 +1836,14 @@ class AsyncSqliteDb(AsyncBaseDb):
             Exception: If an error occurs during retrieval.
         """
         try:
+            # Refresh at most once per minute per process: recalculating the current
+            # day scans all of today's sessions, too costly for every read.
+            if time.time() - self._metrics_refreshed_at >= 60:
+                try:
+                    await self.calculate_metrics()
+                except Exception as e:
+                    log_warning(f"Could not refresh metrics before reading them: {str(e)}")
+
             table = await self._get_table(table_type="metrics")
             if table is None:
                 return [], None
@@ -2865,7 +2881,7 @@ class AsyncSqliteDb(AsyncBaseDb):
         limit: Optional[int] = 20,
         page: Optional[int] = 1,
         filter_expr: Optional[Dict[str, Any]] = None,
-        group_by: Literal["session", "agent", "team", "workflow"] = "session",
+        group_by: Literal["session", "agent", "team", "workflow", "endpoint"] = "session",
     ) -> tuple[List[Dict[str, Any]], int]:
         """Get trace statistics grouped by session or by component.
 
@@ -2882,8 +2898,10 @@ class AsyncSqliteDb(AsyncBaseDb):
             group_by: Grouping key. "session" (default) groups by session_id and keeps
                 the original output shape, ordered by last activity. "agent", "team" and
                 "workflow" group by the corresponding component id, add duration and
-                error aggregates, and are ordered by total_traces descending. Traces
-                without the grouping id are excluded. SQLite has no percentile function,
+                error aggregates, and are ordered by total_traces descending; traces
+                without the grouping id are excluded. "endpoint" groups traces that
+                carry no component id at all (HTTP/MCP entrypoint wrappers) by trace
+                name, with the same aggregates. SQLite has no percentile function,
                 so p95_duration_ms is always None.
 
         Returns:
@@ -2893,13 +2911,14 @@ class AsyncSqliteDb(AsyncBaseDb):
                 With a component grouping, each dict contains: <group>_id, total_traces,
                 total_sessions, avg_duration_ms, p95_duration_ms (always None),
                 max_duration_ms, error_traces (traces with status ERROR), first_trace_at,
-                last_trace_at.
+                last_trace_at. With group_by="endpoint", the grouping key is name
+                instead of <group>_id.
         """
-        if group_by not in ("session", "agent", "team", "workflow"):
-            raise ValueError(f"Invalid group_by value: {group_by!r}. Allowed: session, agent, team, workflow")
+        if group_by not in ("session", "agent", "team", "workflow", "endpoint"):
+            raise ValueError(f"Invalid group_by value: {group_by!r}. Allowed: session, agent, team, workflow, endpoint")
 
         try:
-            from sqlalchemy import case, distinct
+            from sqlalchemy import and_, case, distinct
 
             table = await self._get_table(table_type="traces")
             if table is None:
@@ -2924,14 +2943,26 @@ class AsyncSqliteDb(AsyncBaseDb):
                         .group_by(table.c.session_id)
                     )
                 else:
-                    group_column = {
-                        "agent": table.c.agent_id,
-                        "team": table.c.team_id,
-                        "workflow": table.c.workflow_id,
-                    }[group_by]
+                    if group_by == "endpoint":
+                        # Endpoint-level traces (HTTP/MCP entrypoint wrappers) carry no component ids
+                        group_column = table.c.name
+                        group_label = "name"
+                        group_filter = and_(
+                            table.c.agent_id.is_(None),
+                            table.c.team_id.is_(None),
+                            table.c.workflow_id.is_(None),
+                        )
+                    else:
+                        group_column = {
+                            "agent": table.c.agent_id,
+                            "team": table.c.team_id,
+                            "workflow": table.c.workflow_id,
+                        }[group_by]
+                        group_label = f"{group_by}_id"
+                        group_filter = group_column.isnot(None)  # Only traces attributed to the grouping component
                     base_stmt = (
                         select(
-                            group_column.label(f"{group_by}_id"),
+                            group_column.label(group_label),
                             func.count(table.c.trace_id).label("total_traces"),
                             func.count(distinct(table.c.session_id)).label("total_sessions"),
                             func.avg(table.c.duration_ms).label("avg_duration_ms"),
@@ -2940,7 +2971,7 @@ class AsyncSqliteDb(AsyncBaseDb):
                             func.min(table.c.created_at).label("first_trace_at"),
                             func.max(table.c.created_at).label("last_trace_at"),
                         )
-                        .where(group_column.isnot(None))  # Only traces attributed to the grouping component
+                        .where(group_filter)
                         .group_by(group_column)
                     )
 
@@ -3013,7 +3044,7 @@ class AsyncSqliteDb(AsyncBaseDb):
                     else:
                         stats_list.append(
                             {
-                                f"{group_by}_id": getattr(row, f"{group_by}_id"),
+                                group_label: getattr(row, group_label),
                                 "total_traces": row.total_traces,
                                 "total_sessions": row.total_sessions,
                                 "avg_duration_ms": round(float(row.avg_duration_ms), 1)

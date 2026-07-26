@@ -1,13 +1,32 @@
-"""Integration tests for component-grouped trace stats, span stats and lazy metrics on PostgresDb"""
+"""Integration tests for component-grouped trace stats, span stats and lazy metrics on PostgresDb.
+
+Each test gets its own PostgresDb with a dedicated schema and engine, so it is
+immune to the shared test_schema teardown ordering issues.
+"""
 
 import time
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Optional
 
+import pytest
+from sqlalchemy import create_engine, text
+
 from agno.db.postgres.postgres import PostgresDb
 from agno.session.agent import AgentSession
 from agno.tracing.schemas import Span, Trace
+
+
+@pytest.fixture
+def stats_db():
+    schema = f"agentos_stats_{uuid.uuid4().hex[:8]}"
+    engine = create_engine("postgresql+psycopg://ai:ai@localhost:5532/ai")
+    db = PostgresDb(db_engine=engine, db_schema=schema)
+    yield db
+    with engine.connect() as conn:
+        conn.execute(text(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE'))
+        conn.commit()
+    engine.dispose()
 
 
 def _make_trace(
@@ -19,11 +38,12 @@ def _make_trace(
     duration_ms: int = 100,
     status: str = "OK",
     minutes_ago: int = 5,
+    name: str = "Agent.run",
 ) -> Trace:
     start = datetime.now(timezone.utc) - timedelta(minutes=minutes_ago)
     return Trace(
         trace_id=str(uuid.uuid4()),
-        name="Agent.run",
+        name=name,
         status=status,
         start_time=start,
         end_time=start + timedelta(milliseconds=duration_ms),
@@ -66,11 +86,11 @@ def _make_span(
     )
 
 
-def test_get_trace_stats_default_shape_unchanged(postgres_db_real: PostgresDb):
-    postgres_db_real.upsert_trace(_make_trace(agent_id="agent-1", session_id="session-1"))
-    postgres_db_real.upsert_trace(_make_trace(agent_id="agent-2", session_id="session-2"))
+def test_get_trace_stats_default_shape_unchanged(stats_db: PostgresDb):
+    stats_db.upsert_trace(_make_trace(agent_id="agent-1", session_id="session-1"))
+    stats_db.upsert_trace(_make_trace(agent_id="agent-2", session_id="session-2"))
 
-    rows, total = postgres_db_real.get_trace_stats()
+    rows, total = stats_db.get_trace_stats()
 
     assert total == 2
     expected_keys = {
@@ -88,13 +108,13 @@ def test_get_trace_stats_default_shape_unchanged(postgres_db_real: PostgresDb):
         assert isinstance(row["first_trace_at"], datetime)
 
 
-def test_get_trace_stats_group_by_agent(postgres_db_real: PostgresDb):
-    postgres_db_real.upsert_trace(_make_trace(agent_id="agent-1", session_id="s1", duration_ms=100))
-    postgres_db_real.upsert_trace(_make_trace(agent_id="agent-1", session_id="s2", duration_ms=300, status="ERROR"))
-    postgres_db_real.upsert_trace(_make_trace(agent_id="agent-2", session_id="s3", duration_ms=50))
-    postgres_db_real.upsert_trace(_make_trace(session_id=None, user_id=None))  # endpoint-level, excluded
+def test_get_trace_stats_group_by_agent(stats_db: PostgresDb):
+    stats_db.upsert_trace(_make_trace(agent_id="agent-1", session_id="s1", duration_ms=100))
+    stats_db.upsert_trace(_make_trace(agent_id="agent-1", session_id="s2", duration_ms=300, status="ERROR"))
+    stats_db.upsert_trace(_make_trace(agent_id="agent-2", session_id="s3", duration_ms=50))
+    stats_db.upsert_trace(_make_trace(session_id=None, user_id=None))  # endpoint-level, excluded
 
-    rows, total = postgres_db_real.get_trace_stats(group_by="agent")
+    rows, total = stats_db.get_trace_stats(group_by="agent")
 
     assert total == 2
     top = rows[0]
@@ -108,23 +128,28 @@ def test_get_trace_stats_group_by_agent(postgres_db_real: PostgresDb):
     assert top["error_traces"] == 1
 
 
-def test_get_trace_stats_group_by_team_and_workflow(postgres_db_real: PostgresDb):
-    postgres_db_real.upsert_trace(_make_trace(team_id="team-1", session_id="s1"))
-    postgres_db_real.upsert_trace(_make_trace(workflow_id="wf-1", session_id="s2"))
+def test_get_trace_stats_group_by_team_workflow_endpoint(stats_db: PostgresDb):
+    stats_db.upsert_trace(_make_trace(team_id="team-1", session_id="s1"))
+    stats_db.upsert_trace(_make_trace(workflow_id="wf-1", session_id="s2"))
+    stats_db.upsert_trace(_make_trace(session_id=None, user_id=None, name="tools/call run_agent"))
 
-    team_rows, team_total = postgres_db_real.get_trace_stats(group_by="team")
-    workflow_rows, workflow_total = postgres_db_real.get_trace_stats(group_by="workflow")
+    team_rows, team_total = stats_db.get_trace_stats(group_by="team")
+    workflow_rows, workflow_total = stats_db.get_trace_stats(group_by="workflow")
+    endpoint_rows, endpoint_total = stats_db.get_trace_stats(group_by="endpoint")
 
     assert team_total == 1
     assert team_rows[0]["team_id"] == "team-1"
     assert workflow_total == 1
     assert workflow_rows[0]["workflow_id"] == "wf-1"
+    assert endpoint_total == 1
+    assert endpoint_rows[0]["name"] == "tools/call run_agent"
+    assert endpoint_rows[0]["total_traces"] == 1
 
 
-def test_get_span_stats_aggregates_and_extracts_span_type(postgres_db_real: PostgresDb):
+def test_get_span_stats_aggregates_and_extracts_span_type(stats_db: PostgresDb):
     trace = _make_trace(agent_id="agent-1", session_id="s1")
-    postgres_db_real.upsert_trace(trace)
-    postgres_db_real.create_spans(
+    stats_db.upsert_trace(trace)
+    stats_db.create_spans(
         [
             _make_span(trace.trace_id, name="slow_tool", duration_ms=900),
             _make_span(trace.trace_id, name="slow_tool", duration_ms=1100),
@@ -133,7 +158,7 @@ def test_get_span_stats_aggregates_and_extracts_span_type(postgres_db_real: Post
         ]
     )
 
-    rows, total = postgres_db_real.get_span_stats()
+    rows, total = stats_db.get_span_stats()
 
     assert total == 3
     by_name = {row["name"]: row for row in rows}
@@ -148,46 +173,64 @@ def test_get_span_stats_aggregates_and_extracts_span_type(postgres_db_real: Post
         assert "attributes" not in row
 
 
-def test_get_span_stats_filters_and_sorting(postgres_db_real: PostgresDb):
+def test_get_span_stats_filters_and_sorting(stats_db: PostgresDb):
     trace = _make_trace(agent_id="agent-1", session_id="s1")
     other = _make_trace(agent_id="agent-2", session_id="s2")
-    postgres_db_real.upsert_trace(trace)
-    postgres_db_real.upsert_trace(other)
-    postgres_db_real.create_spans(
+    stats_db.upsert_trace(trace)
+    stats_db.upsert_trace(other)
+    stats_db.create_spans(
         [
             _make_span(trace.trace_id, name="tool_a", duration_ms=1000),
             _make_span(trace.trace_id, name="tool_b", duration_ms=10),
             _make_span(other.trace_id, name="tool_c", duration_ms=10),
+            _make_span(trace.trace_id, name="old_tool", minutes_ago=120),
             _make_span(trace.trace_id, name="Model.invoke", span_type="LLM", duration_ms=500),
         ]
     )
 
-    tool_rows, tool_total = postgres_db_real.get_span_stats(span_type="TOOL", sort_by="p95_duration_ms")
-    assert tool_total == 3
+    tool_rows, tool_total = stats_db.get_span_stats(span_type="TOOL", sort_by="p95_duration_ms")
+    assert tool_total == 4
     assert tool_rows[0]["name"] == "tool_a"
 
-    agent_rows, agent_total = postgres_db_real.get_span_stats(agent_id="agent-1")
-    assert agent_total == 3
+    agent_rows, agent_total = stats_db.get_span_stats(agent_id="agent-1")
+    assert agent_total == 4
     assert "tool_c" not in {row["name"] for row in agent_rows}
 
+    # The span 120 minutes old must fall outside a 60-minute window
     start_time = datetime.now(timezone.utc) - timedelta(minutes=60)
-    windowed_rows, _ = postgres_db_real.get_span_stats(start_time=start_time)
-    assert {row["name"] for row in windowed_rows} == {"tool_a", "tool_b", "tool_c", "Model.invoke"}
+    windowed_rows, _ = stats_db.get_span_stats(start_time=start_time)
+    windowed_names = {row["name"] for row in windowed_rows}
+    assert "old_tool" not in windowed_names
+    assert windowed_names == {"tool_a", "tool_b", "tool_c", "Model.invoke"}
+
+    # And only it survives an end_time cap before the recent spans
+    end_time = datetime.now(timezone.utc) - timedelta(minutes=60)
+    capped_rows, _ = stats_db.get_span_stats(end_time=end_time)
+    assert {row["name"] for row in capped_rows} == {"old_tool"}
 
 
-def test_get_metrics_refreshes_lazily(postgres_db_real: PostgresDb):
-    now = int(time.time())
-    session = AgentSession(
-        session_id=str(uuid.uuid4()),
-        agent_id="agent-1",
-        user_id="user-1",
-        created_at=now,
-        updated_at=now,
-    )
-    postgres_db_real.upsert_session(session)
+def test_get_metrics_refreshes_lazily_and_throttles(stats_db: PostgresDb):
+    def seed_session(user_id: str) -> None:
+        now = int(time.time())
+        stats_db.upsert_session(
+            AgentSession(
+                session_id=str(uuid.uuid4()), agent_id="agent-1", user_id=user_id, created_at=now, updated_at=now
+            )
+        )
+
+    seed_session("user-1")
 
     # No calculate_metrics call: get_metrics must refresh on its own
-    rows, _ = postgres_db_real.get_metrics()
-
+    rows, _ = stats_db.get_metrics()
     assert len(rows) == 1
     assert rows[0]["agent_sessions_count"] == 1
+
+    # A second read within the throttle window must not recompute
+    seed_session("user-2")
+    rows, _ = stats_db.get_metrics()
+    assert rows[0]["agent_sessions_count"] == 1
+
+    # Expiring the throttle picks the new session up
+    stats_db._metrics_refreshed_at = 0.0
+    rows, _ = stats_db.get_metrics()
+    assert rows[0]["agent_sessions_count"] == 2

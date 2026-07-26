@@ -501,7 +501,7 @@ class BaseDb(ABC):
         limit: Optional[int] = 20,
         page: Optional[int] = 1,
         filter_expr: Optional[Dict[str, Any]] = None,
-        group_by: Literal["session", "agent", "team", "workflow"] = "session",
+        group_by: Literal["session", "agent", "team", "workflow", "endpoint"] = "session",
     ) -> tuple[List[Dict[str, Any]], int]:
         """Get trace statistics grouped by session or by component.
 
@@ -518,6 +518,8 @@ class BaseDb(ABC):
             group_by: Grouping key. "session" (default) groups by session_id and keeps
                 the original output shape. "agent", "team" and "workflow" group by the
                 corresponding component id and add duration and error aggregates.
+                "endpoint" groups traces that carry no component id at all (HTTP/MCP
+                entrypoint wrappers) by trace name, with the same aggregates.
                 Backends may support only the default "session" grouping.
 
         Returns:
@@ -529,6 +531,7 @@ class BaseDb(ABC):
                 total_sessions, avg_duration_ms, p95_duration_ms, max_duration_ms,
                 error_traces (traces with status ERROR), first_trace_at (datetime),
                 last_trace_at (datetime). Traces without the grouping id are excluded.
+                With group_by="endpoint", the grouping key is name instead of <group>_id.
 
         Raises:
             NotImplementedError: If the backend does not support the requested grouping.
@@ -1853,7 +1856,7 @@ class AsyncBaseDb(ABC):
         limit: Optional[int] = 20,
         page: Optional[int] = 1,
         filter_expr: Optional[Dict[str, Any]] = None,
-        group_by: Literal["session", "agent", "team", "workflow"] = "session",
+        group_by: Literal["session", "agent", "team", "workflow", "endpoint"] = "session",
     ) -> tuple[List[Dict[str, Any]], int]:
         """Get trace statistics grouped by session or by component.
 
@@ -1870,6 +1873,8 @@ class AsyncBaseDb(ABC):
             group_by: Grouping key. "session" (default) groups by session_id and keeps
                 the original output shape. "agent", "team" and "workflow" group by the
                 corresponding component id and add duration and error aggregates.
+                "endpoint" groups traces that carry no component id at all (HTTP/MCP
+                entrypoint wrappers) by trace name, with the same aggregates.
                 Backends may support only the default "session" grouping.
 
         Returns:
@@ -1881,6 +1886,7 @@ class AsyncBaseDb(ABC):
                 total_sessions, avg_duration_ms, p95_duration_ms, max_duration_ms,
                 error_traces (traces with status ERROR), first_trace_at (datetime),
                 last_trace_at (datetime). Traces without the grouping id are excluded.
+                With group_by="endpoint", the grouping key is name instead of <group>_id.
 
         Raises:
             NotImplementedError: If the backend does not support the requested grouping.

@@ -2323,7 +2323,7 @@ class ValkeyDb(BaseDb):
         limit: Optional[int] = 20,
         page: Optional[int] = 1,
         filter_expr: Optional[Dict[str, Any]] = None,
-        group_by: Literal["session", "agent", "team", "workflow"] = "session",
+        group_by: Literal["session", "agent", "team", "workflow", "endpoint"] = "session",
     ) -> tuple[List[Dict[str, Any]], int]:
         """Get trace statistics grouped by session.
 

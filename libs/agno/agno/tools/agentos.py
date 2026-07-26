@@ -28,10 +28,16 @@ Enable flags:
       backends) return a clear error payload at call time.
 
 Read-only:
-    * No tool mutates anything. Schedule, approval and component management are
-      deliberately not exposed, so the toolkit is safe to reach from any frontend.
+    * No tool mutates platform state. Schedule, approval and component management
+      are deliberately not exposed. The one write that does happen is the metrics
+      rollup refresh inside get_platform_metrics -- derived data, no user content.
     * Span attributes payloads, approval tool arguments and schedule run
       input/output are never returned -- they can hold full conversation content.
+    * The tools read the database directly, so AgentOS endpoint scopes do not
+      apply to them: anyone who can talk to the agent sees platform-wide
+      aggregates, and pending approvals include identifiers (user_id, tool_name,
+      session_id). Expose the agent carrying this toolkit to operators, and use
+      the enable flags to trim surfaces for wider audiences.
 """
 
 from __future__ import annotations
@@ -187,7 +193,14 @@ class AgentOSTools(Toolkit):
             return json.dumps({"error": str(e)})
 
     async def aget_platform_metrics(self, days: int = 7) -> str:
-        """Async variant of get_platform_metrics."""
+        """Get daily platform usage metrics: runs, sessions, users, tokens and model mix.
+
+        Args:
+            days (int): Number of days to include, counting back from today. Defaults to 7.
+
+        Returns:
+            str: JSON with {window_days, start_date, end_date, totals, model_mix, daily}.
+        """
         if not self._db_is_async:
             return await _run_sync(self.get_platform_metrics, days)
         try:
@@ -209,27 +222,27 @@ class AgentOSTools(Toolkit):
     # ------------------------------------------------------------------
 
     def get_run_activity(self, days: int = 7) -> str:
-        """Get per-agent, per-team and per-workflow run activity: run counts, latency and errors.
+        """Get per-agent, per-team, per-workflow and endpoint-level run activity: run counts, latency and errors.
 
         Args:
             days (int): Number of days to include, counting back from now. Defaults to 7.
 
         Returns:
-            str: JSON with {window_days, agents, teams, workflows, unattributed_traces, notes}.
-                Each component row carries total_traces, total_sessions, avg/p95/max duration
-                in ms and error_traces. Unattributed traces are endpoint-level wrappers
-                (e.g. MCP calls) not tied to a component.
+            str: JSON with {window_days, total_traces, agents, teams, workflows, endpoint_level, notes}.
+                Each row carries total_traces, total_sessions, avg/p95/max duration in ms
+                and error_traces. endpoint_level rows are traces with no component id
+                (HTTP/MCP entrypoint wrappers), grouped by trace name.
         """
         if self._db_is_async:
             return _async_db_error()
         try:
             start_time = _window_start(days)
             groupings: Dict[str, Tuple[List[Dict[str, Any]], int]] = {}
-            for group in ("agent", "team", "workflow"):
+            for group in ("agent", "team", "workflow", "endpoint"):
                 groupings[group] = self._sync_db().get_trace_stats(
                     group_by=group, start_time=start_time, limit=_GROUP_LIMIT
                 )
-            _, window_total = self._sync_db().get_traces(start_time=start_time, limit=1)
+            _, window_total = self._sync_db().get_traces(limit=1, filter_expr=_created_after_expr(start_time))
             return _format_run_activity(groupings, window_total, days)
         except NotImplementedError as e:
             return json.dumps({"error": f"Component-grouped trace stats are not supported by this database: {e}"})
@@ -238,17 +251,27 @@ class AgentOSTools(Toolkit):
             return json.dumps({"error": str(e)})
 
     async def aget_run_activity(self, days: int = 7) -> str:
-        """Async variant of get_run_activity."""
+        """Get per-agent, per-team, per-workflow and endpoint-level run activity: run counts, latency and errors.
+
+        Args:
+            days (int): Number of days to include, counting back from now. Defaults to 7.
+
+        Returns:
+            str: JSON with {window_days, total_traces, agents, teams, workflows, endpoint_level, notes}.
+                Each row carries total_traces, total_sessions, avg/p95/max duration in ms
+                and error_traces. endpoint_level rows are traces with no component id
+                (HTTP/MCP entrypoint wrappers), grouped by trace name.
+        """
         if not self._db_is_async:
             return await _run_sync(self.get_run_activity, days)
         try:
             start_time = _window_start(days)
             groupings: Dict[str, Tuple[List[Dict[str, Any]], int]] = {}
-            for group in ("agent", "team", "workflow"):
+            for group in ("agent", "team", "workflow", "endpoint"):
                 groupings[group] = await self._async_db().get_trace_stats(
                     group_by=group, start_time=start_time, limit=_GROUP_LIMIT
                 )
-            _, window_total = await self._async_db().get_traces(start_time=start_time, limit=1)
+            _, window_total = await self._async_db().get_traces(limit=1, filter_expr=_created_after_expr(start_time))
             return _format_run_activity(groupings, window_total, days)
         except NotImplementedError as e:
             return json.dumps({"error": f"Component-grouped trace stats are not supported by this database: {e}"})
@@ -294,7 +317,18 @@ class AgentOSTools(Toolkit):
             return json.dumps({"error": str(e)})
 
     async def aget_tool_activity(self, days: int = 7) -> str:
-        """Async variant of get_tool_activity."""
+        """Get tool and model call statistics: most-used and slowest tools, model call latency.
+
+        Aggregates span names, durations and status only -- never conversation content.
+
+        Args:
+            days (int): Number of days to include, counting back from now. Defaults to 7.
+
+        Returns:
+            str: JSON with {window_days, tools_most_used, tools_slowest, model_calls, notes}.
+                Each row carries total_calls, avg/p95/max duration in ms, error_count and
+                last_called_at. p95_duration_ms is null on backends without SQL percentiles.
+        """
         if not self._db_is_async:
             return await _run_sync(self.get_tool_activity, days)
         try:
@@ -334,7 +368,7 @@ class AgentOSTools(Toolkit):
         try:
             rows, total = cast(
                 Tuple[List[Dict[str, Any]], int],
-                self._sync_db().get_eval_runs(limit=limit, page=1, deserialize=False),
+                self._sync_db().get_eval_runs(limit=_clamp(limit, 1, 100), page=1, deserialize=False),
             )
             return _format_eval_history(rows, total)
         except Exception as e:
@@ -342,13 +376,21 @@ class AgentOSTools(Toolkit):
             return json.dumps({"error": str(e)})
 
     async def aget_eval_history(self, limit: int = 20) -> str:
-        """Async variant of get_eval_history."""
+        """Get recent eval runs normalized to PASS/FAIL, with the judge's reason on failures.
+
+        Args:
+            limit (int): Maximum number of eval runs to return, newest first. Defaults to 20.
+
+        Returns:
+            str: JSON with {eval_runs, count, total}. Accuracy evals report scores
+                (status SCORED), performance evals report run times (status MEASURED).
+        """
         if not self._db_is_async:
             return await _run_sync(self.get_eval_history, limit)
         try:
             rows, total = cast(
                 Tuple[List[Dict[str, Any]], int],
-                await self._async_db().get_eval_runs(limit=limit, page=1, deserialize=False),
+                await self._async_db().get_eval_runs(limit=_clamp(limit, 1, 100), page=1, deserialize=False),
             )
             return _format_eval_history(rows, total)
         except Exception as e:
@@ -372,7 +414,7 @@ class AgentOSTools(Toolkit):
         if self._db_is_async:
             return _async_db_error()
         try:
-            schedules, total = self._sync_db().get_schedules(limit=limit)
+            schedules, total = self._sync_db().get_schedules(limit=_clamp(limit, 1, 50))
             last_runs: Dict[str, Optional[Dict[str, Any]]] = {}
             for schedule in schedules:
                 runs, _ = self._sync_db().get_schedule_runs(schedule["id"], limit=1)
@@ -385,11 +427,19 @@ class AgentOSTools(Toolkit):
             return json.dumps({"error": str(e)})
 
     async def alist_schedules(self, limit: int = 20) -> str:
-        """Async variant of list_schedules."""
+        """List schedules with their cron expression, enabled state and last run outcome.
+
+        Args:
+            limit (int): Maximum number of schedules to return, newest first. Defaults to 20.
+
+        Returns:
+            str: JSON with {schedules, count, total}. Each schedule carries its
+                last_run status, timestamp and error if any.
+        """
         if not self._db_is_async:
             return await _run_sync(self.list_schedules, limit)
         try:
-            schedules, total = await self._async_db().get_schedules(limit=limit)
+            schedules, total = await self._async_db().get_schedules(limit=_clamp(limit, 1, 50))
             last_runs: Dict[str, Optional[Dict[str, Any]]] = {}
             for schedule in schedules:
                 runs, _ = await self._async_db().get_schedule_runs(schedule["id"], limit=1)
@@ -415,7 +465,7 @@ class AgentOSTools(Toolkit):
         if self._db_is_async:
             return _async_db_error()
         try:
-            runs, total = self._sync_db().get_schedule_runs(schedule_id, limit=limit)
+            runs, total = self._sync_db().get_schedule_runs(schedule_id, limit=_clamp(limit, 1, 100))
             return _format_schedule_history(schedule_id, runs, total)
         except NotImplementedError:
             return json.dumps({"error": "The scheduler is not supported by this database"})
@@ -424,11 +474,20 @@ class AgentOSTools(Toolkit):
             return json.dumps({"error": str(e)})
 
     async def aget_schedule_history(self, schedule_id: str, limit: int = 20) -> str:
-        """Async variant of get_schedule_history."""
+        """Get the run history of one schedule: outcome trend, not just the last run.
+
+        Args:
+            schedule_id (str): The id of the schedule (see list_schedules).
+            limit (int): Maximum number of runs to return, newest first. Defaults to 20.
+
+        Returns:
+            str: JSON with {schedule_id, summary, runs, count, total}. The summary
+                counts runs by status and carries the most recent failure.
+        """
         if not self._db_is_async:
             return await _run_sync(self.get_schedule_history, schedule_id, limit)
         try:
-            runs, total = await self._async_db().get_schedule_runs(schedule_id, limit=limit)
+            runs, total = await self._async_db().get_schedule_runs(schedule_id, limit=_clamp(limit, 1, 100))
             return _format_schedule_history(schedule_id, runs, total)
         except NotImplementedError:
             return json.dumps({"error": "The scheduler is not supported by this database"})
@@ -453,7 +512,7 @@ class AgentOSTools(Toolkit):
         if self._db_is_async:
             return json.dumps({"error": "Component listing is not supported by async databases"})
         try:
-            components, total = self._sync_db().list_components(limit=limit)
+            components, total = self._sync_db().list_components(limit=_clamp(limit, 1, 100))
             return _format_components(components, total)
         except NotImplementedError:
             return json.dumps({"error": "Component listing is not supported by this database"})
@@ -462,7 +521,15 @@ class AgentOSTools(Toolkit):
             return json.dumps({"error": str(e)})
 
     async def alist_platform_components(self, limit: int = 50) -> str:
-        """Async variant of list_platform_components."""
+        """List runtime-built components (agents, teams, workflows) persisted in the database.
+
+        Args:
+            limit (int): Maximum number of components to return, newest first. Defaults to 50.
+
+        Returns:
+            str: JSON with {components, count, total}. Each component carries its
+                type, name, description and current version.
+        """
         if self._db_is_async:
             return json.dumps({"error": "Component listing is not supported by async databases"})
         return await _run_sync(self.list_platform_components, limit)
@@ -493,7 +560,15 @@ class AgentOSTools(Toolkit):
             return json.dumps({"error": str(e)})
 
     async def alist_pending_approvals(self) -> str:
-        """Async variant of list_pending_approvals."""
+        """List human-in-the-loop approvals waiting on a human decision.
+
+        Tool arguments and approval context are not included -- they can hold
+        user conversation content.
+
+        Returns:
+            str: JSON with {approvals, count, total}. Each approval carries its
+                source, pause type, tool name, requester and expiry.
+        """
         if not self._db_is_async:
             return await _run_sync(self.list_pending_approvals)
         try:
@@ -565,13 +640,17 @@ def _async_db_error() -> str:
     )
 
 
+def _clamp(value: int, low: int, high: int) -> int:
+    return max(low, min(int(value), high))
+
+
 def _window_start(days: int) -> datetime:
-    return datetime.now(timezone.utc) - timedelta(days=max(int(days), 1))
+    return datetime.now(timezone.utc) - timedelta(days=_clamp(days, 1, 365))
 
 
 def _metrics_window(days: int) -> tuple[date, date]:
     end_date = datetime.now(timezone.utc).date()
-    start_date = end_date - timedelta(days=max(int(days), 1) - 1)
+    start_date = end_date - timedelta(days=_clamp(days, 1, 365) - 1)
     return start_date, end_date
 
 
@@ -642,29 +721,30 @@ def _format_platform_metrics(rows: List[Any], days: int, start_date: date, end_d
     return json.dumps(payload, default=str)
 
 
+def _created_after_expr(start_time: datetime) -> Dict[str, Any]:
+    return {"op": "GTE", "key": "created_at", "value": start_time.isoformat()}
+
+
 def _format_run_activity(groupings: Dict[str, Tuple[List[Dict[str, Any]], int]], window_total: int, days: int) -> str:
     notes: List[str] = []
     payload: Dict[str, Any] = {"window_days": days, "total_traces": window_total}
 
-    attributed = 0
-    truncated = False
-    for group, plural in (("agent", "agents"), ("team", "teams"), ("workflow", "workflows")):
+    for group, key in (
+        ("agent", "agents"),
+        ("team", "teams"),
+        ("workflow", "workflows"),
+        ("endpoint", "endpoint_level"),
+    ):
         rows, total_groups = groupings[group]
-        payload[plural] = rows
-        attributed += sum(int(row.get("total_traces", 0)) for row in rows)
+        payload[key] = rows
         if total_groups > len(rows):
-            truncated = True
-            notes.append(f"only the top {len(rows)} of {total_groups} {plural} are shown")
+            notes.append(f"only the top {len(rows)} of {total_groups} {key} groups are shown")
 
-    if truncated:
-        payload["unattributed_traces"] = None
-        notes.append("unattributed_traces cannot be computed because component rows were truncated")
-    else:
-        payload["unattributed_traces"] = max(window_total - attributed, 0)
-        notes.append(
-            "unattributed_traces are endpoint-level wrappers (e.g. MCP or API calls) not tied to a "
-            "single component; component rows already count the runs they wrap"
-        )
+    notes.append(
+        "endpoint_level rows are traces with no component id (HTTP/MCP entrypoint wrappers around "
+        "component runs); component tables exclude them, and a trace attributed to more than one "
+        "component appears under each, so the tables may not sum to total_traces"
+    )
     payload["notes"] = notes
     return json.dumps(payload, default=str)
 

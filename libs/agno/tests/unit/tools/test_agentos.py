@@ -252,6 +252,23 @@ class TestTraceStatsGroupBy:
 
         assert rows[0]["total_traces"] == 1
 
+    def test_group_by_endpoint(self, db):
+        db.upsert_trace(_make_trace(agent_id="agent-1", session_id="s1"))
+        endpoint_trace = _make_trace(session_id=None, user_id=None, duration_ms=40)
+        db.upsert_trace(endpoint_trace)
+        other_endpoint = _make_trace(session_id=None, user_id=None, duration_ms=60)
+        other_endpoint.name = "tools/list"
+        db.upsert_trace(other_endpoint)
+
+        rows, total = db.get_trace_stats(group_by="endpoint")
+
+        assert total == 2
+        by_name = {row["name"]: row for row in rows}
+        # Only traces with no component ids at all are endpoint-level
+        assert by_name["Agent.run"]["total_traces"] == 1
+        assert by_name["Agent.run"]["avg_duration_ms"] == 40.0
+        assert by_name["tools/list"]["total_traces"] == 1
+
 
 # ----------------------------------------------------------------------
 # Db layer: get_span_stats
@@ -350,7 +367,7 @@ class TestSpanStats:
 
 
 class TestGetRunActivity:
-    def test_reports_components_and_unattributed(self, db, toolkit):
+    def test_reports_components_and_endpoint_level(self, db, toolkit):
         db.upsert_trace(_make_trace(agent_id="agent-1", session_id="s1", duration_ms=100))
         db.upsert_trace(_make_trace(agent_id="agent-1", session_id="s2", duration_ms=300))
         db.upsert_trace(_make_trace(team_id="team-1", session_id="s3"))
@@ -359,18 +376,30 @@ class TestGetRunActivity:
         out = _loads(toolkit.get_run_activity(days=7))
 
         assert out["total_traces"] == 4
-        assert out["unattributed_traces"] == 1
         assert [(r["agent_id"], r["total_traces"]) for r in out["agents"]] == [("agent-1", 2)]
         assert [(r["team_id"], r["total_traces"]) for r in out["teams"]] == [("team-1", 1)]
         assert out["workflows"] == []
-        assert any("endpoint-level" in note for note in out["notes"])
+        assert [(r["name"], r["total_traces"]) for r in out["endpoint_level"]] == [("Agent.run", 1)]
+        assert any("endpoint_level" in note for note in out["notes"])
 
     def test_empty_platform(self, toolkit):
         out = _loads(toolkit.get_run_activity())
 
         assert out["total_traces"] == 0
         assert out["agents"] == []
-        assert out["unattributed_traces"] == 0
+        assert out["endpoint_level"] == []
+
+    def test_truncation_note(self, db, toolkit, monkeypatch):
+        import agno.tools.agentos as agentos_module
+
+        monkeypatch.setattr(agentos_module, "_GROUP_LIMIT", 1)
+        db.upsert_trace(_make_trace(agent_id="agent-1", session_id="s1"))
+        db.upsert_trace(_make_trace(agent_id="agent-2", session_id="s2"))
+
+        out = _loads(toolkit.get_run_activity())
+
+        assert len(out["agents"]) == 1
+        assert any("top 1 of 2 agents" in note for note in out["notes"])
 
 
 # ----------------------------------------------------------------------
@@ -398,6 +427,16 @@ class TestGetToolActivity:
         assert [r["name"] for r in out["model_calls"]] == ["Model.invoke"]
         # SQLite has no percentile support, the payload must say so
         assert any("p95" in note for note in out["notes"])
+
+    def test_truncation_note(self, db, toolkit):
+        trace = _make_trace(agent_id="agent-1", session_id="s1")
+        db.upsert_trace(trace)
+        db.create_spans([_make_span(trace.trace_id, name=f"tool_{i:02d}") for i in range(16)])
+
+        out = _loads(toolkit.get_tool_activity())
+
+        assert len(out["tools_most_used"]) == 15
+        assert any("top 15 of 16 tools" in note for note in out["notes"])
 
 
 # ----------------------------------------------------------------------
@@ -430,6 +469,49 @@ class TestGetPlatformMetrics:
 
         assert out["daily"] == []
         assert any("no metrics" in note for note in out["notes"])
+
+
+class TestLazyMetricsRefresh:
+    def _seed_session(self, db, agent_id="agent-1", user_id="user-1"):
+        from agno.session.agent import AgentSession
+
+        now = int(time.time())
+        db.upsert_session(
+            AgentSession(
+                session_id=str(uuid.uuid4()), agent_id=agent_id, user_id=user_id, created_at=now, updated_at=now
+            )
+        )
+
+    def test_get_metrics_refreshes_lazily(self, db):
+        self._seed_session(db)
+
+        # No calculate_metrics call: get_metrics must refresh on its own
+        rows, _ = db.get_metrics()
+
+        assert len(rows) == 1
+        assert rows[0]["agent_sessions_count"] == 1
+
+    def test_refresh_is_throttled(self, db):
+        self._seed_session(db)
+        rows, _ = db.get_metrics()
+        assert rows[0]["agent_sessions_count"] == 1
+
+        # A second read within the throttle window must not recompute
+        self._seed_session(db, user_id="user-2")
+        rows, _ = db.get_metrics()
+        assert rows[0]["agent_sessions_count"] == 1
+
+        # Expiring the throttle picks the new session up
+        db._metrics_refreshed_at = 0.0
+        rows, _ = db.get_metrics()
+        assert rows[0]["agent_sessions_count"] == 2
+
+    def test_explicit_calculate_stamps_the_throttle(self, db):
+        self._seed_session(db)
+
+        db.calculate_metrics()
+
+        assert db._metrics_refreshed_at > 0.0
 
 
 # ----------------------------------------------------------------------
@@ -682,6 +764,49 @@ class TestAsyncVariants:
 
         assert out["total_traces"] == 1
         assert out["agents"][0]["agent_id"] == "agent-1"
+
+    @pytest.mark.asyncio
+    async def test_async_trace_stats_aggregates(self, async_db):
+        await async_db.upsert_trace(_make_trace(agent_id="agent-1", session_id="s1", duration_ms=100))
+        await async_db.upsert_trace(_make_trace(agent_id="agent-1", session_id="s2", duration_ms=300, status="ERROR"))
+        await async_db.upsert_trace(_make_trace(session_id=None, user_id=None))
+
+        rows, total = await async_db.get_trace_stats(group_by="agent")
+
+        assert total == 1
+        top = rows[0]
+        assert top["agent_id"] == "agent-1"
+        assert top["total_traces"] == 2
+        assert top["total_sessions"] == 2
+        assert top["avg_duration_ms"] == 200.0
+        assert top["max_duration_ms"] == 300
+        assert top["error_traces"] == 1
+        assert top["p95_duration_ms"] is None
+
+        endpoint_rows, endpoint_total = await async_db.get_trace_stats(group_by="endpoint")
+        assert endpoint_total == 1
+        assert endpoint_rows[0]["name"] == "Agent.run"
+
+    @pytest.mark.asyncio
+    async def test_async_span_stats_aggregates(self, async_db):
+        trace = _make_trace(agent_id="agent-1", session_id="s1")
+        await async_db.upsert_trace(trace)
+        await async_db.create_spans(
+            [
+                _make_span(trace.trace_id, name="my_tool", duration_ms=100),
+                _make_span(trace.trace_id, name="my_tool", duration_ms=300, status_code="ERROR"),
+            ]
+        )
+
+        rows, total = await async_db.get_span_stats()
+
+        assert total == 1
+        assert rows[0]["name"] == "my_tool"
+        assert rows[0]["total_calls"] == 2
+        assert rows[0]["avg_duration_ms"] == 200.0
+        assert rows[0]["max_duration_ms"] == 300
+        assert rows[0]["error_count"] == 1
+        assert rows[0]["span_type"] == "TOOL"
 
     @pytest.mark.asyncio
     async def test_async_span_stats_path(self, async_db):
