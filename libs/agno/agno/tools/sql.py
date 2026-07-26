@@ -1,11 +1,12 @@
 import json
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, cast
 
 from agno.tools import Toolkit
 from agno.utils.log import log_debug, logger
 
 try:
     from sqlalchemy import Engine, create_engine
+    from sqlalchemy.engine import CursorResult
     from sqlalchemy.inspection import inspect
     from sqlalchemy.orm import Session, sessionmaker
     from sqlalchemy.sql.expression import text
@@ -145,7 +146,7 @@ class SQLTools(Toolkit):
         log_debug(f"Running sql |\n{sql}")
 
         with self.Session() as sess, sess.begin():
-            result = sess.execute(text(sql))
+            result = cast(CursorResult[Any], sess.execute(text(sql)))
 
             # DML (INSERT/UPDATE/DELETE) and DDL don't return rows — don't
             # try to fetch. The `sess.begin()` context still commits on
