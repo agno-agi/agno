@@ -196,3 +196,20 @@ def test_decision_type_filter_composes_with_query() -> None:
     results = store.search(query="postgres", decision_type="architecture")
     assert len(results) == 1
     assert results[0].decision_type == "architecture"
+
+
+def test_query_variants_keeps_the_query_itself() -> None:
+    """A mixed-separator query has no uniform-separator form.
+
+    The db matches "end-to-end tests" through the LIKE single-char wildcard;
+    a verifier that only knows "end to end tests" and "end_to_end_tests"
+    discards that hit and the store answers "No entities matching".
+    """
+    from agno.learn.utils import query_variants
+
+    assert "end-to-end tests" in query_variants("end-to-end tests")
+    assert "user_id column" in query_variants("user_id column")
+    # the separator-swapped forms are still generated
+    assert "end_to_end_tests" in query_variants("end-to-end tests")
+    assert "sarah_chen" in query_variants("sarah chen")
+    assert query_variants("   ") == []

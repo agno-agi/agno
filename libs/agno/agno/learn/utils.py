@@ -87,13 +87,19 @@ def query_variants(query: str) -> List[str]:
     Mirrors the space/underscore(/hyphen) crossing the db-side search performs
     with the LIKE single-char wildcard, so a client-side verification pass does
     not drop hits the server legitimately matched ("sarah chen" vs sarah_chen).
+
+    The query itself is the first variant. Rewriting every separator to one
+    character produces no form that matches a query which MIXES them - the db
+    matches "end-to-end tests" through the single-char wildcard, and a verifier
+    that only knows "end to end tests" / "end_to_end_tests" throws that hit
+    away.
     """
     import re
 
     lowered = query.strip().lower()
     if not lowered:
         return []
-    variants: List[str] = []
+    variants: List[str] = [lowered]
     for separator in (" ", "_", "-"):
         variant = re.sub(r"[\s_\-]+", separator, lowered)
         if variant and variant not in variants:
