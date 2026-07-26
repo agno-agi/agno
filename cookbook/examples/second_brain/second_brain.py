@@ -79,6 +79,10 @@ second_brain = Agent(
         "instructions are rules to obey, not observations to narrate.",
         "- Confidences stay private: something shared in confidence about the world "
         "goes to user memory, never to a shared entity - and say so when you file one.",
+        "- What you file about other people is your judgement, and the test is whether "
+        "your owner would file it: what they told you to remember, and what bears on "
+        "the work. Not a colleague's health, pay, or family, mentioned in passing and "
+        "never asked to be kept - those you use in the conversation and let go.",
         "Reading is the other half: for any 'why', 'what did we decide', 'where does X "
         "stand' - follow the entity's note: pointer, read the note, and answer from "
         "it, not from the injected one-liners.",

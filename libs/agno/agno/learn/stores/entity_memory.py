@@ -2492,6 +2492,10 @@ class EntityMemoryStore(LearningStore):
         if db is None:
             return []
         if not callable(getattr(db, "search_learnings", None)):
+            # Resolution, not just search: without the query surface an alias
+            # or an externally-keyed row stops resolving past this window and
+            # the write mints a duplicate. Say so where it happens.
+            self._log_degraded_search_once()
             return self._get_recent_rows(user_id=user_id, namespace=namespace, limit=50)
         try:
             rows: List[Dict[str, Any]] = []
@@ -2513,6 +2517,7 @@ class EntityMemoryStore(LearningStore):
                         rows.append(row)
             return rows
         except NotImplementedError:
+            self._log_degraded_search_once()
             return self._get_recent_rows(user_id=user_id, namespace=namespace, limit=50)
 
     async def _aname_candidates(self, entity: str, user_id: Optional[str], namespace: str) -> List[Dict[str, Any]]:
@@ -2520,6 +2525,8 @@ class EntityMemoryStore(LearningStore):
         if not self.db:
             return []
         if not callable(getattr(self.db, "search_learnings", None)):
+            # See the sync twin.
+            self._log_degraded_search_once()
             return await self._aget_recent_rows(user_id=user_id, namespace=namespace, limit=50)
         try:
             rows: List[Dict[str, Any]] = []
@@ -2548,6 +2555,7 @@ class EntityMemoryStore(LearningStore):
                         rows.append(row)
             return rows
         except NotImplementedError:
+            self._log_degraded_search_once()
             return await self._aget_recent_rows(user_id=user_id, namespace=namespace, limit=50)
 
     @staticmethod
@@ -3115,10 +3123,13 @@ class EntityMemoryStore(LearningStore):
         if not self._degraded_search_logged:
             self._degraded_search_logged = True
             log_warning(
-                "EntityMemoryStore: this db backend has no search_learnings implementation; "
-                "falling back to a client-side scan over the most recently updated rows - "
-                "fewer rows are considered and the match surface is narrower. "
-                "Search quality degrades as the store grows."
+                "EntityMemoryStore: this db backend has no search_learnings implementation. "
+                "Entity search and resolution fall back to a scan of the most recently "
+                "updated rows, so past roughly 50 entities an alias or an externally-keyed "
+                "row stops resolving and a SECOND entity is created for the same thing - "
+                "there is no unmerge. Search quality degrades from the same point. "
+                "SqliteDb, PostgresDb and AsyncPostgresDb implement the real query surface; "
+                "use one of those for a store you intend to grow."
             )
 
     def _search_client_side(

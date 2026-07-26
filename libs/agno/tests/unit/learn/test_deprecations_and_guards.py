@@ -89,3 +89,44 @@ def test_no_missing_user_id_warning_when_user_present_or_no_per_user_stores(capl
     with caplog.at_level(logging.WARNING):
         entity_only.get_tools(user_id=None)
     assert not any("no user_id" in r.getMessage() for r in caplog.records)
+
+
+def test_backend_without_search_warns_once_on_the_write_path(caplog, tmp_path) -> None:
+    """A backend with no search_learnings degrades RESOLUTION, not just search.
+
+    Past ~50 entities an alias stops resolving and the write mints a second
+    entity for the same thing, with no unmerge - so the warning has to reach
+    the write path, and has to name that consequence.
+    """
+    import asyncio
+
+    from agno.db.sqlite import AsyncSqliteDb
+    from agno.learn.config import EntityMemoryConfig, LearningMode
+    from agno.learn.stores.entity_memory import EntityMemoryStore
+
+    db = AsyncSqliteDb(db_file=str(tmp_path / "a.db"))
+    store = EntityMemoryStore(
+        config=EntityMemoryConfig(db=db, mode=LearningMode.AGENTIC, namespace="global")  # type: ignore[arg-type]
+    )
+
+    async def write_three() -> None:
+        for i in range(3):
+            await store.aremember_about(
+                entity=f"Thing {i}", entity_type="company", aliases=[f"T{i}"], namespace="global"
+            )
+
+    with caplog.at_level(logging.WARNING):
+        asyncio.run(write_three())
+
+    warnings = [r.getMessage() for r in caplog.records if "no search_learnings implementation" in r.getMessage()]
+    assert len(warnings) == 1, warnings
+    assert "SECOND entity" in warnings[0]
+    assert "SqliteDb, PostgresDb and AsyncPostgresDb" in warnings[0]
+
+
+def test_the_three_first_tier_backends_implement_search() -> None:
+    from agno.db.postgres import AsyncPostgresDb, PostgresDb
+    from agno.db.sqlite import SqliteDb
+
+    for backend in (SqliteDb, PostgresDb, AsyncPostgresDb):
+        assert "search_learnings" in backend.__dict__, backend.__name__
