@@ -27,6 +27,7 @@ from agno.workflow.types import (
     StepRequirement,
     StepType,
     UserInputField,
+    warn_session_state_param_deprecated,
 )
 
 WorkflowSteps = List[
@@ -563,7 +564,12 @@ class Router:
         except Exception:
             return False
 
-    def _route_steps(self, step_input: StepInput, session_state: Optional[Dict[str, Any]] = None) -> List[Step]:  # type: ignore[return-value]
+    def _route_steps(
+        self,
+        step_input: StepInput,
+        session_state: Optional[Dict[str, Any]] = None,
+        run_context: Optional[RunContext] = None,
+    ) -> List[Step]:  # type: ignore[return-value]
         """Route to the appropriate steps based on input."""
         # Handle CEL expression selector
         if isinstance(self.selector, str):
@@ -582,13 +588,17 @@ class Router:
 
         # Handle callable selector
         if callable(self.selector):
+            has_run_context = run_context is not None and self._selector_has_run_context_param()
             has_session_state = session_state is not None and self._selector_has_session_state_param()
             has_step_choices = self._selector_has_step_choices_param()
 
             # Build kwargs based on what parameters the selector accepts
             kwargs: Dict[str, Any] = {}
+            if has_run_context:
+                kwargs["run_context"] = run_context
             if has_session_state:
                 kwargs["session_state"] = session_state
+                warn_session_state_param_deprecated(self.selector, "Router selector functions")
             if has_step_choices:
                 kwargs["step_choices"] = self.steps
 
@@ -598,7 +608,12 @@ class Router:
 
         return []
 
-    async def _aroute_steps(self, step_input: StepInput, session_state: Optional[Dict[str, Any]] = None) -> List[Step]:  # type: ignore[return-value]
+    async def _aroute_steps(
+        self,
+        step_input: StepInput,
+        session_state: Optional[Dict[str, Any]] = None,
+        run_context: Optional[RunContext] = None,
+    ) -> List[Step]:  # type: ignore[return-value]
         """Async version of step routing."""
         # Handle CEL expression selector (CEL evaluation is synchronous)
         if isinstance(self.selector, str):
@@ -617,13 +632,17 @@ class Router:
 
         # Handle callable selector
         if callable(self.selector):
+            has_run_context = run_context is not None and self._selector_has_run_context_param()
             has_session_state = session_state is not None and self._selector_has_session_state_param()
             has_step_choices = self._selector_has_step_choices_param()
 
             # Build kwargs based on what parameters the selector accepts
             kwargs: Dict[str, Any] = {}
+            if has_run_context:
+                kwargs["run_context"] = run_context
             if has_session_state:
                 kwargs["session_state"] = session_state
+                warn_session_state_param_deprecated(self.selector, "Router selector functions")
             if has_step_choices:
                 kwargs["step_choices"] = self.steps
 
@@ -644,6 +663,17 @@ class Router:
         try:
             sig = inspect.signature(self.selector)
             return "session_state" in sig.parameters
+        except Exception:
+            return False
+
+    def _selector_has_run_context_param(self) -> bool:
+        """Check if the selector function has a run_context parameter."""
+        if not callable(self.selector):
+            return False
+
+        try:
+            sig = inspect.signature(self.selector)
+            return "run_context" in sig.parameters
         except Exception:
             return False
 
@@ -672,9 +702,11 @@ class Router:
 
         # Route to appropriate steps
         if run_context is not None and run_context.session_state is not None:
-            steps_to_execute = self._route_steps(step_input, session_state=run_context.session_state)
+            steps_to_execute = self._route_steps(
+                step_input, session_state=run_context.session_state, run_context=run_context
+            )
         else:
-            steps_to_execute = self._route_steps(step_input, session_state=session_state)
+            steps_to_execute = self._route_steps(step_input, session_state=session_state, run_context=run_context)
         log_debug(f"Router {self.name}: Selected {len(steps_to_execute)} steps to execute")
 
         if not steps_to_execute:
@@ -809,9 +841,11 @@ class Router:
 
         # Route to appropriate steps
         if run_context is not None and run_context.session_state is not None:
-            steps_to_execute = self._route_steps(step_input, session_state=run_context.session_state)
+            steps_to_execute = self._route_steps(
+                step_input, session_state=run_context.session_state, run_context=run_context
+            )
         else:
-            steps_to_execute = self._route_steps(step_input, session_state=session_state)
+            steps_to_execute = self._route_steps(step_input, session_state=session_state, run_context=run_context)
         log_debug(f"Router {self.name}: Selected {len(steps_to_execute)} steps to execute")
 
         if stream_events and workflow_run_response:
@@ -987,9 +1021,13 @@ class Router:
 
         # Route to appropriate steps
         if run_context is not None and run_context.session_state is not None:
-            steps_to_execute = await self._aroute_steps(step_input, session_state=run_context.session_state)
+            steps_to_execute = await self._aroute_steps(
+                step_input, session_state=run_context.session_state, run_context=run_context
+            )
         else:
-            steps_to_execute = await self._aroute_steps(step_input, session_state=session_state)
+            steps_to_execute = await self._aroute_steps(
+                step_input, session_state=session_state, run_context=run_context
+            )
         log_debug(f"Router {self.name} selected: {len(steps_to_execute)} steps to execute")
 
         if not steps_to_execute:
@@ -1128,9 +1166,13 @@ class Router:
 
         # Route to appropriate steps
         if run_context is not None and run_context.session_state is not None:
-            steps_to_execute = await self._aroute_steps(step_input, session_state=run_context.session_state)
+            steps_to_execute = await self._aroute_steps(
+                step_input, session_state=run_context.session_state, run_context=run_context
+            )
         else:
-            steps_to_execute = await self._aroute_steps(step_input, session_state=session_state)
+            steps_to_execute = await self._aroute_steps(
+                step_input, session_state=session_state, run_context=run_context
+            )
         log_debug(f"Router {self.name} selected: {len(steps_to_execute)} steps to execute")
 
         if stream_events and workflow_run_response:

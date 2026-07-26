@@ -794,13 +794,14 @@ class UserMemoryStore(LearningStore):
 
         messages_for_model = [
             self._get_system_message(existing_data=existing_data),
-            Message(role="user", content=conversation_text),
+            Message(role="user", content=f"Extract memories from this conversation:\n\n{conversation_text}"),
         ]
 
         model_copy = deepcopy(self.model)
         response = model_copy.response(
             messages=messages_for_model,
             tools=functions,
+            tool_call_limit=self.config.max_updates_per_run,
         )
 
         if run_metrics is not None and response.response_usage is not None:
@@ -855,13 +856,14 @@ class UserMemoryStore(LearningStore):
 
         messages_for_model = [
             self._get_system_message(existing_data=existing_data),
-            Message(role="user", content=conversation_text),
+            Message(role="user", content=f"Extract memories from this conversation:\n\n{conversation_text}"),
         ]
 
         model_copy = deepcopy(self.model)
         response = await model_copy.aresponse(
             messages=messages_for_model,
             tools=functions,
+            tool_call_limit=self.config.max_updates_per_run,
         )
 
         if run_metrics is not None and response.response_usage is not None:

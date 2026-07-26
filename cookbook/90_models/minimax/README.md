@@ -38,7 +38,7 @@ current catalog. As of writing:
 
 | Model id | Notes |
 | --- | --- |
-| `MiniMax-M3` | Latest flagship, 512K context, 128K max output, image input (default) |
+| `MiniMax-M3` | Latest flagship, 1M context, 128K max output, image input; $0.60/M input tokens, $2.40/M output tokens, $0.12/M cache-read tokens (default) |
 | `MiniMax-M2.7` | Previous flagship MoE (230B total / 10B active), 205k context |
 | `MiniMax-M2.7-highspeed` | Same weights as M2.7, ~1.6–1.7× throughput |
 
