@@ -1273,6 +1273,33 @@ class TestEdgeAndEventIdentity:
         assert alice is not None
         assert [r["entity_type"] for r in alice.relationships] == ["company"]
 
+    def test_forget_refuses_an_edge_naming_two_same_slug_far_ends(self, store: EntityMemoryStore) -> None:
+        # The mirror of the case above: the same-name pair is at the FAR end, so
+        # "works_on -> harbor" names two links. Retiring both while detaching one
+        # reciprocal left Alice pointing at neither and company/Harbor pointing
+        # back at her.
+        for entity_type in ("project", "company"):
+            store.remember_about(entity="Harbor", entity_type=entity_type)
+        store.remember_about(entity="Alice", entity_type="person")
+        store.link_entities(entity="Alice", relation="works_on", related_entity="project/Harbor")
+        store.link_entities(entity="Alice", relation="works_on", related_entity="company/Harbor")
+
+        refusal = store.forget(entity="Alice", fact="works_on -> harbor")
+        assert "Multiple relationships" in refusal
+        assert "works_on -> project/harbor" in refusal and "works_on -> company/harbor" in refusal
+        alice = store.get(entity_id="alice", entity_type="person")
+        assert alice is not None and len(alice.relationships) == 2
+
+        # The qualified form the refusal asks for retires exactly one.
+        assert "Removed relationship" in store.forget(entity="Alice", fact="works_on -> project/harbor")
+        alice = store.get(entity_id="alice", entity_type="person")
+        assert alice is not None
+        assert [r["entity_type"] for r in alice.relationships] == ["company"]
+        project_harbor = store.get(entity_id="harbor", entity_type="project")
+        company_harbor = store.get(entity_id="harbor", entity_type="company")
+        assert project_harbor is not None and project_harbor.relationships == []
+        assert company_harbor is not None and len(company_harbor.relationships) == 1
+
     def test_restating_an_event_does_not_double_it(self, store: EntityMemoryStore) -> None:
         for _ in range(3):
             store.remember_about(entity="Tom", entity_type="person", events=["heard he is leaving"])

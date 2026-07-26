@@ -2296,6 +2296,7 @@ class EntityMemoryStore(LearningStore):
         """
         edges = [r for r in (getattr(entity_obj, "relationships", None) or []) if isinstance(r, dict)]
         matches = []
+        qualified_matches = []
         for edge in edges:
             relation = _normalize_fact_text(str(edge.get("relation", "")))
             # The context block renders the far end's DISPLAY name ("Sarah
@@ -2304,20 +2305,38 @@ class EntityMemoryStore(LearningStore):
             # and every multi-word far end failed that instruction.
             slug = _normalize_fact_text(str(edge.get("entity_id", "")))
             spaced = _normalize_fact_text(str(edge.get("entity_id", "")).replace("_", " "))
-            targets = {t for t in (slug, spaced) if t}
+            plain = {t for t in (slug, spaced) if t}
+            # The far end can also be named in the qualified "project/Harbor"
+            # form the other tools teach, which is the only way to tell two
+            # same-slug far ends apart.
+            far_type = _normalize_fact_text(str(edge.get("entity_type", "")))
+            qualified = {f"{far_type}/{t}" for t in plain} if far_type else set()
+            targets = plain | qualified
             rendered = {_normalize_fact_text(f"{edge.get('relation', '')} {target}") for target in targets}
             if needle in ({relation} | targets | rendered) or (
                 relation and relation in needle and any(target in needle for target in targets)
             ):
                 matches.append(edge)
+                if any(target in needle for target in qualified):
+                    qualified_matches.append(edge)
         if not matches:
             return None, False, None
+        # A needle naming the far end's type picks that edge out of its
+        # same-slug siblings; "works_on -> harbor" still matches both.
+        if qualified_matches:
+            matches = qualified_matches
         # Edges written before add_relationship became idempotent can be exact
         # duplicates: the listing below would offer two identical candidates
         # that no wording can tell apart, so retire the whole set instead.
-        identical = {(e.get("relation"), e.get("entity_id"), e.get("direction")) for e in matches}
+        # entity_type is part of the identity here for the same reason it is in
+        # add_relationship - project/Harbor and company/Harbor are two links,
+        # and retiring both while detaching one reciprocal leaves the graph
+        # one-sided.
+        identical = {(e.get("relation"), e.get("entity_id"), e.get("entity_type"), e.get("direction")) for e in matches}
         if len(matches) > 1 and len(identical) > 1:
-            listing = "\n".join(f"  - {e.get('relation')} -> {e.get('entity_id')}" for e in matches)
+            listing = "\n".join(
+                f"  - {e.get('relation')} -> {e.get('entity_type')}/{e.get('entity_id')}" for e in matches
+            )
             return (
                 f"Multiple relationships on {label} match; nothing was removed. "
                 f"Call forget again naming one of:\n{listing}",
@@ -2329,7 +2348,7 @@ class EntityMemoryStore(LearningStore):
         entity_obj.relationships = [r for r in edges if r not in matches]
         entity_obj.updated_at = _utc_now_iso()
         return (
-            f"Removed relationship on {label}: {edge.get('relation')} -> {edge.get('entity_id')}",
+            f"Removed relationship on {label}: {edge.get('relation')} -> {edge.get('entity_type')}/{edge.get('entity_id')}",
             True,
             edge,
         )
