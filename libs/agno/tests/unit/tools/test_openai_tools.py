@@ -2,6 +2,7 @@
 
 from unittest.mock import patch
 
+import httpx
 import pytest
 
 pytest.importorskip("openai")
@@ -93,3 +94,52 @@ def test_transcribe_audio_does_not_leak_descriptors_in_a_loop(audio_file):
 
     assert len(opened) == 5
     assert all(handle.closed for handle in opened)
+
+
+def test_transcribe_audio_supports_unauthenticated_openai_compatible_server(audio_file, monkeypatch):
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    captured = {}
+
+    def handle_request(request: httpx.Request) -> httpx.Response:
+        captured["request"] = request
+        captured["body"] = request.read()
+        return httpx.Response(200, text="hello from FunASR", headers={"content-type": "text/plain"})
+
+    with httpx.Client(transport=httpx.MockTransport(handle_request)) as http_client:
+        tools = OpenAITools(
+            base_url="http://localhost:8000/v1",
+            transcription_model="sensevoice",
+            client_params={"http_client": http_client},
+            enable_image_generation=False,
+            enable_speech_generation=False,
+        )
+        result = tools.transcribe_audio(audio_file)
+
+    assert result == "hello from FunASR"
+    assert str(captured["request"].url) == "http://localhost:8000/v1/audio/transcriptions"
+    assert captured["request"].headers["authorization"] == "Bearer not-provided"
+    assert captured["request"].headers["content-type"].startswith("multipart/form-data;")
+    assert b'name="model"' in captured["body"]
+    assert b"sensevoice" in captured["body"]
+    assert b'filename="clip.wav"' in captured["body"]
+
+
+def test_transcribe_audio_passes_auth_and_custom_client_headers(audio_file):
+    tools = OpenAITools(
+        api_key="secret-key",
+        base_url="https://speech.example.com/v1",
+        client_params={"default_headers": {"X-Tenant": "demo"}},
+        enable_image_generation=False,
+        enable_speech_generation=False,
+    )
+
+    with patch("agno.tools.openai.OpenAIClient") as mock_client:
+        mock_client.return_value.audio.transcriptions.create.return_value = "authenticated transcript"
+        result = tools.transcribe_audio(audio_file)
+
+    assert result == "authenticated transcript"
+    mock_client.assert_called_once_with(
+        api_key="secret-key",
+        base_url="https://speech.example.com/v1",
+        default_headers={"X-Tenant": "demo"},
+    )

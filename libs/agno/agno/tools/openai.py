@@ -1,5 +1,5 @@
 from os import getenv
-from typing import Any, List, Literal, Optional, Union
+from typing import Any, Dict, List, Literal, Optional, Union
 from uuid import uuid4
 
 from agno.agent import Agent
@@ -37,6 +37,8 @@ class OpenAITools(Toolkit):
         image_quality (str, optional): Quality setting for image generation.
         image_size (str, optional): Size setting for image generation.
         image_style (str, optional): Style setting for image generation.
+        base_url (str, optional): Base URL for an OpenAI-compatible API.
+        client_params (dict, optional): Additional parameters passed to the OpenAI client.
     """
 
     def __init__(
@@ -54,11 +56,18 @@ class OpenAITools(Toolkit):
         image_quality: Optional[str] = None,
         image_size: Optional[Literal["256x256", "512x512", "1024x1024", "1792x1024", "1024x1792"]] = None,
         image_style: Optional[Literal["vivid", "natural"]] = None,
+        base_url: Optional[str] = None,
+        client_params: Optional[Dict[str, Any]] = None,
         **kwargs,
     ):
+        self.base_url = base_url
+        self.client_params = client_params or {}
         self.api_key = api_key or getenv("OPENAI_API_KEY")
         if not self.api_key:
-            raise ValueError("OPENAI_API_KEY not set. Please set the OPENAI_API_KEY environment variable.")
+            if self.base_url or self.client_params.get("base_url"):
+                self.api_key = "not-provided"
+            else:
+                raise ValueError("OPENAI_API_KEY not set. Please set the OPENAI_API_KEY environment variable.")
 
         self.transcription_model = transcription_model
         # Store TTS defaults
@@ -80,6 +89,13 @@ class OpenAITools(Toolkit):
 
         super().__init__(name="openai_tools", tools=tools, **kwargs)
 
+    def _get_client_params(self) -> Dict[str, Any]:
+        client_params: Dict[str, Any] = {"api_key": self.api_key}
+        if self.base_url is not None:
+            client_params["base_url"] = self.base_url
+        client_params.update(self.client_params)
+        return client_params
+
     def transcribe_audio(self, audio_path: str) -> str:
         """Transcribe audio file using OpenAI's Whisper API
         Args:
@@ -88,7 +104,7 @@ class OpenAITools(Toolkit):
         log_debug(f"Transcribing audio from {audio_path}")
         try:
             with open(audio_path, "rb") as audio_file:
-                transcript = OpenAIClient(api_key=self.api_key).audio.transcriptions.create(
+                transcript = OpenAIClient(**self._get_client_params()).audio.transcriptions.create(
                     model=self.transcription_model,
                     file=audio_file,
                     response_format="text",
@@ -121,13 +137,13 @@ class OpenAITools(Toolkit):
             # gpt-image-1 by default outputs a base64 encoded image but other models do not
             # so we add a response_format parameter to have consistent output.
             if self.image_model and self.image_model.startswith("gpt-image"):
-                response = OpenAIClient(api_key=self.api_key).images.generate(
+                response = OpenAIClient(**self._get_client_params()).images.generate(
                     model=self.image_model,
                     prompt=prompt,
                     **extra_params,  # type: ignore
                 )
             else:
-                response = OpenAIClient(api_key=self.api_key).images.generate(
+                response = OpenAIClient(**self._get_client_params()).images.generate(
                     model=self.image_model,
                     prompt=prompt,
                     response_format="b64_json",
@@ -175,7 +191,7 @@ class OpenAITools(Toolkit):
             text_input (str): The text to synthesize into speech.
         """
         try:
-            response = OpenAIClient(api_key=self.api_key).audio.speech.create(
+            response = OpenAIClient(**self._get_client_params()).audio.speech.create(
                 model=self.tts_model,
                 voice=self.tts_voice,
                 input=text_input,
