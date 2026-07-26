@@ -28,7 +28,7 @@ agent = Agent(
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
     # --- Sync ---
-    agent.print_response("Whats happening in France?")
+    agent.print_response("Whats happening in France?", stream=True)
 
     # --- Sync + Streaming ---
     agent.print_response("Whats happening in France?", stream=True)
