@@ -164,9 +164,17 @@ class FileSystemTools(Toolkit):
         else:
             registered = self.DEFAULT_TOOLS + (["delete_file"] if allow_delete else [])
         if kwargs.get("exclude_tools"):
-            # Excluding a tool that is not registered (e.g. delete_file, which
-            # left the default set) is a no-op, not an error - upgraders used
-            # exclude_tools=["delete_file"] as the safety idiom.
+            # Excluding a tool that exists but is not in this set (delete_file,
+            # which left the default) is a no-op, not an error - upgraders used
+            # exclude_tools=["delete_file"] as the safety idiom. A name that is
+            # no tool at all is still a typo, and swallowing it would silently
+            # leave a tool registered that the caller believed was gone.
+            unknown = [name for name in kwargs["exclude_tools"] if name not in self.FULL_TOOLS]
+            if unknown:
+                raise ValueError(
+                    f"exclude_tools names {unknown} which are not FileSystem tools. "
+                    f"Available: {', '.join(self.FULL_TOOLS)}."
+                )
             kwargs["exclude_tools"] = [name for name in kwargs["exclude_tools"] if name in registered]
         sync_tools = [getattr(self, name) for name in registered]
         async_tools = [(getattr(self, "a" + name), name) for name in registered]

@@ -2309,7 +2309,11 @@ class EntityMemoryStore(LearningStore):
                 matches.append(edge)
         if not matches:
             return None, False, None
-        if len(matches) > 1:
+        # Edges written before add_relationship became idempotent can be exact
+        # duplicates: the listing below would offer two identical candidates
+        # that no wording can tell apart, so retire the whole set instead.
+        identical = {(e.get("relation"), e.get("entity_id"), e.get("direction")) for e in matches}
+        if len(matches) > 1 and len(identical) > 1:
             listing = "\n".join(f"  - {e.get('relation')} -> {e.get('entity_id')}" for e in matches)
             return (
                 f"Multiple relationships on {label} match; nothing was removed. "
@@ -2319,7 +2323,7 @@ class EntityMemoryStore(LearningStore):
             )
 
         edge = matches[0]
-        entity_obj.relationships = [r for r in edges if r is not edge]
+        entity_obj.relationships = [r for r in edges if r not in matches]
         entity_obj.updated_at = _utc_now_iso()
         return (
             f"Removed relationship on {label}: {edge.get('relation')} -> {edge.get('entity_id')}",

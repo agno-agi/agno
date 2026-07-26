@@ -698,3 +698,25 @@ class TestReplaceLines:
 
     def test_not_in_the_read_only_surface(self, fs):
         assert "replace_lines" not in fs.tools(read_only=True).functions
+
+
+class TestExcludeToolsTypos:
+    """Tolerating an exclusion that left the default set is the upgrade idiom.
+
+    Tolerating a name that is no tool at all is a silent regression: the
+    caller believes a tool is gone and it is still registered.
+    """
+
+    def test_a_typo_raises(self, fs) -> None:
+        with pytest.raises(ValueError, match="not FileSystem tools"):
+            fs.tools(exclude_tools=["delete_fil"])
+
+    def test_excluding_a_tool_outside_this_set_is_a_no_op(self, fs) -> None:
+        # delete_file left the default set in 2.8.4; the old safety idiom stays valid
+        names = set(fs.tools(exclude_tools=["delete_file"]).functions)
+        assert names == set(FileSystemTools.DEFAULT_TOOLS)
+
+    def test_excluding_a_registered_tool_still_removes_it(self, fs) -> None:
+        names = set(fs.tools(exclude_tools=["move_file"]).functions)
+        assert "move_file" not in names
+        assert names == set(FileSystemTools.DEFAULT_TOOLS) - {"move_file"}

@@ -1199,3 +1199,50 @@ class TestQualifiedNameOnRememberAbout:
         message = await store.aremember_about(entity="project/Harbor", entity_type="project", facts=["shipped"])
         assert "project/harbor" in message
         assert len(db.rows) == 2
+
+
+class TestEdgesAreIdempotent:
+    """Models re-assert links they already know.
+
+    An appended duplicate could not be retired: forget listed byte-identical
+    candidates no wording could tell apart, while the far side's detach
+    removed every copy - so the graph went one-sided and stayed that way.
+    """
+
+    def test_relinking_does_not_double_the_edge(self, store: EntityMemoryStore) -> None:
+        store.remember_about(entity="radar", entity_type="project")
+        store.remember_about(entity="Sarah Chen", entity_type="person")
+        for _ in range(3):
+            store.link_entities(entity="radar", relation="owned_by", related_entity="Sarah Chen")
+
+        radar = store.get(entity_id="radar", entity_type="project")
+        sarah = store.get(entity_id="sarah_chen", entity_type="person")
+        assert radar is not None and sarah is not None
+        assert len(radar.relationships) == 1
+        assert len(sarah.relationships) == 1
+        assert "Removed relationship" in store.forget(entity="radar", fact="owned_by -> Sarah Chen")
+
+    def test_a_different_relation_to_the_same_target_stays_distinct(self, store: EntityMemoryStore) -> None:
+        store.remember_about(entity="radar", entity_type="project")
+        store.remember_about(entity="Sarah Chen", entity_type="person")
+        store.link_entities(entity="radar", relation="owned_by", related_entity="Sarah Chen")
+        store.link_entities(entity="radar", relation="designed_by", related_entity="Sarah Chen")
+
+        radar = store.get(entity_id="radar", entity_type="project")
+        assert radar is not None and len(radar.relationships) == 2
+        # ambiguous by target alone, and correctly refused
+        assert "Multiple relationships" in store.forget(entity="radar", fact="Sarah Chen")
+
+    def test_legacy_duplicate_edges_can_still_be_retired(self, store: EntityMemoryStore) -> None:
+        # A row written before add_relationship deduped carries exact copies.
+        store.remember_about(entity="radar", entity_type="project")
+        store.remember_about(entity="Sarah Chen", entity_type="person")
+        store.link_entities(entity="radar", relation="owned_by", related_entity="Sarah Chen")
+        radar = store.get(entity_id="radar", entity_type="project")
+        assert radar is not None
+        radar.relationships.append(dict(radar.relationships[0], id="dupe1234"))
+        store._save_entity(entity=radar, user_id=None, agent_id=None, team_id=None, namespace="global")
+
+        assert "Removed relationship" in store.forget(entity="radar", fact="owned_by -> Sarah Chen")
+        radar = store.get(entity_id="radar", entity_type="project")
+        assert radar is not None and radar.relationships == []
