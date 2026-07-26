@@ -26,7 +26,7 @@ agent = Agent(
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
     # --- Sync ---
-    agent.print_response("write a two sentence horror story")
+    agent.print_response("write a two sentence horror story", stream=True)
 
     # --- Sync + Streaming ---
     agent.print_response("write a two sentence horror story", stream=True)
