@@ -20,6 +20,11 @@ from agno.run.messages import RunMessages
 from agno.session import TeamSession
 from agno.utils.log import log_debug, log_warning
 
+# Keep strong references to fire-and-forget learning tasks until they complete.
+# asyncio only keeps weak references to tasks, so callers that intentionally do
+# not await the returned task still need a durable owner.
+_async_learning_tasks: set[asyncio.Task] = set()
+
 # ---------------------------------------------------------------------------
 # Memory
 # ---------------------------------------------------------------------------
@@ -253,28 +258,25 @@ def _start_learning_future(
     user_id: Optional[str],
     existing_future: Optional[Future] = None,
 ) -> Optional[Future]:
-    """Start learning extraction in background thread.
+    """Start learning extraction in a dedicated background thread (fire-and-forget).
 
-    Args:
-        team: The Team instance.
-        run_messages: The run messages containing conversation.
-        session: The team session.
-        user_id: The user ID for learning extraction.
-        existing_future: An existing future to cancel before starting a new one.
+    Uses the team's dedicated ``_learning_executor`` (max_workers=1) so that
+    learning tasks from consecutive runs are serialised in FIFO order.
 
-    Returns:
-        A new learning future if conditions are met, None otherwise.
+    The ``existing_future`` parameter is kept for API compatibility but no longer
+    used for cancellation — the dedicated executor guarantees ordering.
     """
-    if existing_future is not None and not existing_future.done():
-        existing_future.cancel()
-
     if team._learning is not None:
-        log_debug("Starting learning extraction in background thread.")
-        return team.background_executor.submit(
-            _process_learnings,
+        log_debug("Starting learning extraction in background thread (fire-and-forget).")
+        from agno.team._init import learning_executor
+
+        messages = list(run_messages.messages) if run_messages else []
+        session_id = session.session_id if session else None
+        return learning_executor(team).submit(
+            _process_learnings_with_messages,
             team,
-            run_messages=run_messages,
-            session=session,
+            messages=messages,
+            session_id=session_id,
             user_id=user_id,
         )
 
@@ -288,34 +290,79 @@ async def _astart_learning_task(
     user_id: Optional[str],
     existing_task: Optional[asyncio.Task[Optional[RunMetrics]]] = None,
 ) -> Optional[asyncio.Task[Optional[RunMetrics]]]:
-    """Start learning extraction as async task.
+    """Start learning extraction as an async fire-and-forget task.
 
-    Args:
-        team: The Team instance.
-        run_messages: The run messages containing conversation.
-        session: The team session.
-        user_id: The user ID for learning extraction.
-        existing_task: An existing task to cancel before starting a new one.
+    The task is guarded by ``team.learning_lock`` (an asyncio.Lock) so that
+    learning tasks from consecutive runs are serialised in FIFO order.
 
-    Returns:
-        A new learning task if conditions are met, None otherwise.
+    The ``existing_task`` parameter is kept for API compatibility but no longer
+    used for cancellation.
     """
-    if existing_task is not None and not existing_task.done():
-        existing_task.cancel()
-        try:
-            await existing_task
-        except asyncio.CancelledError:
-            pass
-
     if team._learning is not None:
-        log_debug("Starting learning extraction as async task.")
-        return asyncio.create_task(
-            _aprocess_learnings(
+        log_debug("Starting learning extraction as async task (fire-and-forget).")
+        messages = list(run_messages.messages) if run_messages else []
+        session_id = session.session_id if session else None
+        task = asyncio.create_task(
+            _aprocess_learnings_with_messages(
                 team,
-                run_messages=run_messages,
-                session=session,
+                messages=messages,
+                session_id=session_id,
                 user_id=user_id,
             )
         )
+        _async_learning_tasks.add(task)
+        task.add_done_callback(_async_learning_tasks.discard)
+        return task
 
     return None
+
+
+def _process_learnings_with_messages(
+    team: "Team",
+    messages: list,
+    session_id: Optional[str],
+    user_id: Optional[str],
+) -> None:
+    """Process learnings from pre-snapshot messages (runs in dedicated learning executor).
+
+    Fire-and-forget entry point. Takes a pre-snapshot list of messages instead
+    of a RunMessages object for thread safety.
+    """
+    if team._learning is None:
+        return
+
+    try:
+        team._learning.process(
+            messages=messages,
+            user_id=user_id,
+            session_id=session_id,
+            team_id=team.id,
+        )
+        log_debug("Learning extraction completed (fire-and-forget).")
+    except Exception as e:
+        log_warning(f"Error processing learnings: {str(e)}")
+
+
+async def _aprocess_learnings_with_messages(
+    team: "Team",
+    messages: list,
+    session_id: Optional[str],
+    user_id: Optional[str],
+) -> None:
+    """Async fire-and-forget learning with asyncio.Lock serialisation."""
+    if team._learning is None:
+        return
+
+    from agno.team._init import learning_lock
+
+    async with learning_lock(team):
+        try:
+            await team._learning.aprocess(
+                messages=messages,
+                user_id=user_id,
+                session_id=session_id,
+                team_id=team.id,
+            )
+            log_debug("Learning extraction completed (async fire-and-forget).")
+        except Exception as e:
+            log_warning(f"Error processing learnings: {str(e)}")

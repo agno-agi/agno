@@ -21,6 +21,11 @@ from agno.run.messages import RunMessages
 from agno.session import AgentSession
 from agno.utils.log import log_debug, log_warning
 
+# Keep strong references to fire-and-forget learning tasks until they complete.
+# asyncio only keeps weak references to tasks, so callers that intentionally do
+# not await the returned task still need a durable owner.
+_async_learning_tasks: set[Task] = set()
+
 # ---------------------------------------------------------------------------
 # Memory
 # ---------------------------------------------------------------------------
@@ -456,37 +461,42 @@ async def astart_learning_task(
     user_id: Optional[str],
     existing_task: Optional[Task] = None,
 ) -> Optional[Task]:
-    """Start learning extraction as async task.
+    """Start learning extraction as an async fire-and-forget task.
+
+    The task is guarded by ``agent.learning_lock`` (an asyncio.Lock) so that
+    learning tasks from consecutive runs are serialised in FIFO order,
+    preventing concurrent read-modify-write races on shared learning data.
+
+    The ``existing_task`` parameter is no longer used for cancellation — the
+    lock guarantees ordering.  It is kept for API compatibility.
 
     Args:
         agent: The Agent instance.
         run_messages: The run messages containing conversation.
         session: The agent session.
         user_id: The user ID for learning extraction.
-        existing_task: An existing task to cancel before starting a new one.
+        existing_task: Ignored (kept for API compatibility).
 
     Returns:
         A new learning task if conditions are met, None otherwise.
     """
-    # Cancel any existing task from a previous retry attempt
-    if existing_task is not None and not existing_task.done():
-        existing_task.cancel()
-        try:
-            await existing_task
-        except CancelledError:
-            pass
-
     # Create new task if learning is enabled
     if agent._learning is not None:
-        log_debug("Starting learning extraction as async task.")
-        return create_task(
-            aprocess_learnings(
+        log_debug("Starting learning extraction as async task (fire-and-forget).")
+        # Snapshot messages for safety (run_messages may be mutated after return)
+        messages = list(run_messages.messages) if run_messages else []
+        session_id = session.session_id if session else None
+        task = create_task(
+            _aprocess_learnings_with_messages(
                 agent,
-                run_messages=run_messages,
-                session=session,
+                messages=messages,
+                session_id=session_id,
                 user_id=user_id,
             )
         )
+        _async_learning_tasks.add(task)
+        task.add_done_callback(_async_learning_tasks.discard)
+        return task
 
     return None
 
@@ -498,31 +508,93 @@ def start_learning_future(
     user_id: Optional[str],
     existing_future: Optional[Future] = None,
 ) -> Optional[Future]:
-    """Start learning extraction in background thread.
+    """Start learning extraction in a dedicated background thread (fire-and-forget).
+
+    Uses the agent's dedicated ``_learning_executor`` (max_workers=1) so that
+    learning tasks from consecutive runs are serialised in FIFO order, preventing
+    concurrent read-modify-write races on shared learning data.
+
+    The ``existing_future`` parameter is no longer used for cancellation — the
+    dedicated executor guarantees ordering.  It is kept for API compatibility.
 
     Args:
         agent: The Agent instance.
         run_messages: The run messages containing conversation.
         session: The agent session.
         user_id: The user ID for learning extraction.
-        existing_future: An existing future to cancel before starting a new one.
+        existing_future: Ignored (kept for API compatibility).
 
     Returns:
         A new learning future if conditions are met, None otherwise.
     """
-    # Cancel any existing future from a previous retry attempt
-    if existing_future is not None and not existing_future.done():
-        existing_future.cancel()
-
     # Create new future if learning is enabled
     if agent._learning is not None:
-        log_debug("Starting learning extraction in background thread.")
-        return agent.background_executor.submit(
-            process_learnings,
+        log_debug("Starting learning extraction in background thread (fire-and-forget).")
+        # Snapshot messages list for thread safety
+        messages = list(run_messages.messages) if run_messages else []
+        session_id = session.session_id if session else None
+        return agent.learning_executor.submit(
+            _process_learnings_with_messages,
             agent,
-            run_messages=run_messages,
-            session=session,
+            messages=messages,
+            session_id=session_id,
             user_id=user_id,
         )
 
     return None
+
+
+def _process_learnings_with_messages(
+    agent: Agent,
+    messages: list,
+    session_id: Optional[str],
+    user_id: Optional[str],
+) -> None:
+    """Process learnings from pre-snapshot messages (runs in dedicated learning executor).
+
+    This is the fire-and-forget entry point. It takes a pre-snapshot list of
+    messages instead of a RunMessages object so it is safe to call after the
+    run has completed and the RunMessages may no longer be valid.
+    """
+    if agent._learning is None:
+        return
+
+    try:
+        agent._learning.process(
+            messages=messages,
+            user_id=user_id,
+            session_id=session_id,
+            agent_id=agent.id,
+            team_id=agent.team_id,
+        )
+        log_debug("Learning extraction completed (fire-and-forget).")
+    except Exception as e:
+        log_warning(f"Error processing learnings: {str(e)}")
+
+
+async def _aprocess_learnings_with_messages(
+    agent: Agent,
+    messages: list,
+    session_id: Optional[str],
+    user_id: Optional[str],
+) -> None:
+    """Async fire-and-forget learning with asyncio.Lock serialisation.
+
+    Acquires ``agent.learning_lock`` before processing so that concurrent
+    learning tasks from rapid-fire runs execute one at a time.
+    """
+    if agent._learning is None:
+        return
+
+    async with agent.learning_lock:
+        try:
+            await agent._learning.aprocess(
+                messages=messages,
+                user_id=user_id,
+                session_id=session_id,
+                agent_id=agent.id,
+                team_id=agent.team_id,
+            )
+            log_debug("Learning extraction completed (async fire-and-forget).")
+        except Exception as e:
+            log_warning(f"Error processing learnings: {str(e)}")
