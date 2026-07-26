@@ -87,6 +87,14 @@ class Skills:
         """
         return list(self._skills.keys())
 
+    def _has_any_scripts(self) -> bool:
+        """Return True if at least one loaded skill has scripts."""
+        return any(skill.scripts for skill in self._skills.values())
+
+    def _has_any_references(self) -> bool:
+        """Return True if at least one loaded skill has references."""
+        return any(skill.references for skill in self._skills.values())
+
     def get_system_prompt_snippet(self) -> str:
         """Generate a system prompt snippet with available skills metadata.
 
@@ -99,35 +107,84 @@ class Skills:
         if not self._skills:
             return ""
 
+        has_references = self._has_any_references()
+        has_scripts = self._has_any_scripts()
+
+        tool_descriptions = [
+            "`get_skill_instructions(skill_name)` - Load the full instructions for a skill",
+        ]
+        if has_references:
+            tool_descriptions.append(
+                "`get_skill_reference(skill_name, reference_path)` - Access specific documentation"
+            )
+        if has_scripts:
+            tool_descriptions.append("`get_skill_script(skill_name, script_path, execute=False)` - Read or run scripts")
+
+        workflow_steps = [
+            "**Browse**: Review the skill summaries below to understand what's available",
+            "**Load**: When a task matches a skill, call `get_skill_instructions(skill_name)` first",
+        ]
+        if has_references:
+            workflow_steps.append("**Reference**: Use `get_skill_reference` to access specific documentation as needed")
+        if has_scripts:
+            workflow_steps.append("**Scripts**: Use `get_skill_script` to read or execute scripts from a skill")
+
         lines = [
             "<skills_system>",
             "",
             "## What are Skills?",
             "Skills are packages of domain expertise that extend your capabilities. Each skill contains:",
             "- **Instructions**: Detailed guidance on when and how to apply the skill",
-            "- **Scripts**: Executable code templates you can use or adapt",
-            "- **References**: Supporting documentation (guides, cheatsheets, examples)",
-            "",
-            "## IMPORTANT: How to Use Skills",
-            "**Skill names are NOT callable functions.** You cannot call a skill directly by its name.",
-            "Instead, you MUST use the provided skill access tools:",
-            "",
-            "1. `get_skill_instructions(skill_name)` - Load the full instructions for a skill",
-            "2. `get_skill_reference(skill_name, reference_path)` - Access specific documentation",
-            "3. `get_skill_script(skill_name, script_path, execute=False)` - Read or run scripts",
-            "",
-            "## Progressive Discovery Workflow",
-            "1. **Browse**: Review the skill summaries below to understand what's available",
-            "2. **Load**: When a task matches a skill, call `get_skill_instructions(skill_name)` first",
-            "3. **Reference**: Use `get_skill_reference` to access specific documentation as needed",
-            "4. **Scripts**: Use `get_skill_script` to read or execute scripts from a skill",
-            "",
-            "**IMPORTANT**: References are documentation files (NOT executable). Only use `get_skill_script` when `<scripts>` lists actual script files. If `<scripts>none</scripts>`, do NOT call `get_skill_script`.",
-            "",
-            "This approach ensures you only load detailed instructions when actually needed.",
-            "",
-            "## Available Skills",
         ]
+        if has_scripts:
+            lines.append("- **Scripts**: Executable code templates you can use or adapt")
+        if has_references:
+            lines.append("- **References**: Supporting documentation (guides, cheatsheets, examples)")
+        lines.extend(
+            [
+                "",
+                "## IMPORTANT: How to Use Skills",
+                "**Skill names are NOT callable functions.** You cannot call a skill directly by its name.",
+                "Instead, you MUST use the provided skill access tools:",
+                "",
+            ]
+        )
+        for i, desc in enumerate(tool_descriptions, start=1):
+            lines.append(f"{i}. {desc}")
+        lines.append("")
+        lines.append("## Progressive Discovery Workflow")
+        for i, step in enumerate(workflow_steps, start=1):
+            lines.append(f"{i}. {step}")
+
+        lines.append("")
+        lines.append("This approach ensures you only load detailed instructions when actually needed.")
+
+        if has_references and has_scripts:
+            lines.append("")
+            lines.append(
+                "**IMPORTANT**: References are documentation files (NOT executable). "
+                "Only use `get_skill_script` when `<scripts>` lists actual script files. "
+                "If `<scripts>none</scripts>`, do NOT call `get_skill_script`."
+            )
+        elif has_references:
+            lines.append("")
+            lines.append("**IMPORTANT**: References are documentation files (NOT executable).")
+        elif has_scripts:
+            lines.append("")
+            lines.append(
+                "**IMPORTANT**: Only use `get_skill_script` when `<scripts>` lists actual script files. "
+                "If `<scripts>none</scripts>`, do NOT call `get_skill_script`."
+            )
+        elif not has_scripts and not has_references:
+            lines.append("")
+            lines.append(
+                "**IMPORTANT**: Loaded skills do not currently expose any references or scripts. "
+                "Only use `get_skill_instructions` unless the available skills metadata shows additional files."
+            )
+
+        lines.append("")
+        lines.append("## Available Skills")
+
         for skill in self._skills.values():
             lines.append("<skill>")
             lines.append(f"  <name>{skill.name}</name>")
@@ -141,6 +198,8 @@ class Skills:
             if skill.references:
                 ref_names = [r["name"] if isinstance(r, dict) else r for r in skill.references]
                 lines.append(f"  <references>{', '.join(ref_names)}</references>")
+            else:
+                lines.append("  <references>none</references>")
             lines.append("</skill>")
         lines.append("")
         lines.append("</skills_system>")
@@ -164,23 +223,25 @@ class Skills:
             )
         )
 
-        # Tool: get_skill_reference
-        tools.append(
-            Function(
-                name="get_skill_reference",
-                description="Load a reference document from a skill's references. Use this to access detailed documentation.",
-                entrypoint=self._get_skill_reference,
+        if self._has_any_references():
+            # Tool: get_skill_reference
+            tools.append(
+                Function(
+                    name="get_skill_reference",
+                    description="Load a reference document from a skill's references. Use this to access detailed documentation.",
+                    entrypoint=self._get_skill_reference,
+                )
             )
-        )
 
-        # Tool: get_skill_script
-        tools.append(
-            Function(
-                name="get_skill_script",
-                description="Read or execute a script from a skill. Set execute=True to run the script and get output, or execute=False (default) to read the script content.",
-                entrypoint=self._get_skill_script,
+        if self._has_any_scripts():
+            # Tool: get_skill_script
+            tools.append(
+                Function(
+                    name="get_skill_script",
+                    description="Read or execute a script from a skill. Set execute=True to run the script and get output, or execute=False (default) to read the script content.",
+                    entrypoint=self._get_skill_script,
+                )
             )
-        )
 
         return tools
 

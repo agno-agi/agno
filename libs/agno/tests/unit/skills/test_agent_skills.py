@@ -227,6 +227,15 @@ def test_get_system_prompt_shows_none_when_no_scripts(minimal_skill: Skill) -> N
     assert "<scripts>none</scripts>" in snippet
 
 
+def test_get_system_prompt_shows_none_when_no_references(minimal_skill: Skill) -> None:
+    """Test that system prompt shows <references>none</references> when skill has no references."""
+    loader = MockSkillLoader([minimal_skill])
+    skills = Skills(loaders=[loader])
+    snippet = skills.get_system_prompt_snippet()
+
+    assert "<references>none</references>" in snippet
+
+
 def test_get_system_prompt_includes_references(mock_loader: MockSkillLoader) -> None:
     """Test that system prompt includes references list."""
     skills = Skills(loaders=[mock_loader])
@@ -269,6 +278,16 @@ def test_get_tools_returns_three_functions(mock_loader: MockSkillLoader) -> None
     assert "get_skill_instructions" in tool_names
     assert "get_skill_reference" in tool_names
     assert "get_skill_script" in tool_names
+
+
+def test_get_tools_returns_only_instructions_when_no_scripts_or_references(minimal_skill: Skill) -> None:
+    """Test that only get_skill_instructions is exposed for SKILL.md-only skills."""
+    loader = MockSkillLoader([minimal_skill])
+    skills = Skills(loaders=[loader])
+    tools = skills.get_tools()
+
+    assert len(tools) == 1
+    assert tools[0].name == "get_skill_instructions"
 
 
 # --- Skill Instructions Tool Tests ---
@@ -560,3 +579,86 @@ def test_skill_script_execute_path_traversal_blocked(mock_loader: MockSkillLoade
 
     assert "error" in result
     assert "not found" in result["error"].lower()
+
+
+# --- Mixed-Case Tests (some skills have scripts/references, others don't) ---
+
+
+def test_mixed_skills_system_prompt_and_tools(sample_skill: Skill, minimal_skill: Skill) -> None:
+    """When mixing skills with and without scripts/references, system prompt shows
+    correct metadata for each skill and all three tools are exposed."""
+    loader = MockSkillLoader([sample_skill, minimal_skill])
+    skills = Skills(loaders=[loader])
+    snippet = skills.get_system_prompt_snippet()
+
+    assert "<name>test-skill</name>" in snippet
+    assert "<name>minimal-skill</name>" in snippet
+
+    assert "helper.py" in snippet
+    assert "<scripts>none</scripts>" in snippet
+    assert "guide.md" in snippet
+    assert "<references>none</references>" in snippet
+
+    assert "get_skill_script" in snippet
+    assert "get_skill_reference" in snippet
+
+    assert skills._has_any_scripts() is True
+    assert skills._has_any_references() is True
+
+    tool_names = {t.name for t in skills.get_tools()}
+    assert tool_names == {"get_skill_instructions", "get_skill_reference", "get_skill_script"}
+
+
+def test_mixed_scripts_only_and_refs_only_skills() -> None:
+    """A mix where one skill has scripts but no references and another has
+    references but no scripts — each block is rendered correctly and both tools exposed."""
+    scripts_only = Skill(
+        name="scripts-only-skill",
+        description="A skill with scripts but no references",
+        instructions="Use the scripts",
+        source_path="/scripts-only",
+        scripts=["run.sh"],
+        references=[],
+    )
+    refs_only = Skill(
+        name="refs-only-skill",
+        description="A skill with references but no scripts",
+        instructions="Read the references",
+        source_path="/refs-only",
+        scripts=[],
+        references=["readme.md"],
+    )
+
+    loader = MockSkillLoader([scripts_only, refs_only])
+    skills = Skills(loaders=[loader])
+    snippet = skills.get_system_prompt_snippet()
+
+    assert "<scripts>run.sh</scripts>" in snippet
+    assert "<references>readme.md</references>" in snippet
+    assert "<scripts>none</scripts>" in snippet
+    assert "<references>none</references>" in snippet
+
+    tool_names = {t.name for t in skills.get_tools()}
+    assert "get_skill_script" in tool_names
+    assert "get_skill_reference" in tool_names
+
+
+def test_no_skills_have_scripts_or_references(minimal_skill: Skill) -> None:
+    """When no loaded skill has scripts or references, helpers return False and
+    only get_skill_instructions is exposed."""
+    another_minimal = Skill(
+        name="another-minimal",
+        description="Also no assets",
+        instructions="Nothing here",
+        source_path="/other",
+    )
+    loader = MockSkillLoader([minimal_skill, another_minimal])
+    skills = Skills(loaders=[loader])
+
+    assert skills._has_any_scripts() is False
+    assert skills._has_any_references() is False
+
+    tool_names = {t.name for t in skills.get_tools()}
+    assert "get_skill_script" not in tool_names
+    assert "get_skill_reference" not in tool_names
+    assert "get_skill_instructions" in tool_names
