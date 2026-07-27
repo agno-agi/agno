@@ -21,10 +21,12 @@ cancellation carries client intent in, the event stream carries events out.
 """
 
 import asyncio
+import contextlib
 from typing import TYPE_CHECKING, Any, AsyncIterator, Dict, List, Optional, Tuple, Union
 
 from agno.os.event_streams.base import BaseEventStream
 from agno.run.base import RunStatus
+from agno.utils.log import log_warning
 
 _redis_available = True
 _redis_import_error: Optional[str] = None
@@ -129,7 +131,12 @@ class RedisEventStream(BaseEventStream):
         try:
             return RunStatus(value)
         except ValueError:
-            return None
+            # The key EXISTS but this replica cannot parse its value (e.g. a
+            # newer release added a RunStatus member). None means "unknown run"
+            # and routes resume to the DB fallback - wrong for a live run.
+            # Treat as active so tails keep working across version skew.
+            log_warning(f"Unknown run status value {value!r} for run {run_id}; treating as running")
+            return RunStatus.running
 
     def _ensure_refresher(self) -> None:
         if self._refresher_task is None or self._refresher_task.done():
@@ -169,7 +176,15 @@ class RedisEventStream(BaseEventStream):
             self._refresher_task = None
 
     async def complete_run(self, run_id: str, status: RunStatus) -> None:
-        self._active_runs.discard(run_id)
+        if status == RunStatus.paused:
+            # Paused is terminal-for-the-stream but resumable: keep refreshing
+            # its keys so the counter/stream survive until the approval, else
+            # a continue re-registers the counter at zero and reconnecting
+            # clients dedup away all post-approval events.
+            self._active_runs.add(run_id)
+            self._ensure_refresher()
+        else:
+            self._active_runs.discard(run_id)
         # Status first, then the sentinel: a tail woken by the sentinel must
         # observe the terminal status.
         pipe = self._redis.pipeline()
@@ -181,6 +196,7 @@ class RedisEventStream(BaseEventStream):
             approximate=True,
         )
         pipe.expire(self._stream_key(run_id), self._ttl)
+        pipe.expire(self._counter_key(run_id), self._ttl)
         await pipe.execute()
 
     async def cleanup_run(self, run_id: str) -> None:
@@ -285,12 +301,17 @@ class RedisEventStream(BaseEventStream):
 
         # Replay the buffered prefix, tracking the last stream id we saw
         entries = await self._redis.xrange(stream_key) or []
-        for entry_id, fields in entries:
+        for position, (entry_id, fields) in enumerate(entries):
             from_id = _to_str(entry_id) or from_id
             if fields is None:
                 continue
             if fields.get(b"terminal", fields.get("terminal")) is not None:
-                return
+                # A sentinel ends the tail only when NOTHING follows it:
+                # continue-runs append events behind a paused sentinel, so a
+                # mid-stream sentinel is stale by definition and is skipped
+                if position == len(entries) - 1:
+                    return
+                continue
             idx_raw = fields.get(b"idx", fields.get("idx"))
             if idx_raw is None:
                 continue
@@ -302,21 +323,44 @@ class RedisEventStream(BaseEventStream):
                     last_yielded = event_index
 
         # Live tail from the exact position the replay ended at
+        from redis.exceptions import ConnectionError as RedisConnectionError
+        from redis.exceptions import TimeoutError as RedisTimeoutError
+
         while True:
-            # redis-py types the XREAD response too loosely to destructure cleanly
-            response: Any = await self._redis.xread({stream_key: from_id}, block=self._block_ms, count=100)
+            try:
+                # redis-py types the XREAD response too loosely to destructure cleanly
+                response: Any = await self._redis.xread({stream_key: from_id}, block=self._block_ms, count=100)
+            except (RedisTimeoutError, RedisConnectionError):
+                # A client-level socket_timeout below block_ms (redis-py >= 8
+                # defaults Redis(...) to 5s) or a transient outage must not
+                # kill the tail: treat as an idle pass and re-check status.
+                response = None
             if not response:
                 # Idle: producer may have died without a sentinel, or the run
                 # may be unknown/terminal. Never block forever.
                 status = await self.get_run_status(run_id)
                 if status is None or status in _TERMINAL_STATUSES:
                     return
+                # Dead-producer bound: only the producing process refreshes the
+                # status key TTL (every ttl/3 via its refresher). A remaining
+                # TTL below one refresh window means at least two windows were
+                # missed - the producer is gone; do not wait for full expiry.
+                with contextlib.suppress(Exception):
+                    ttl_remaining = int(await self._redis.ttl(self._status_key(run_id)))
+                    if 0 <= ttl_remaining < self._ttl // _TTL_REFRESH_FRACTION:
+                        log_warning(f"Run {run_id}: status key TTL not refreshed (producer presumed dead); ending tail")
+                        return
                 continue
             for _stream, batch in response:
-                for entry_id, fields in batch:
+                for batch_position, (entry_id, fields) in enumerate(batch):
                     from_id = _to_str(entry_id) or from_id
                     if fields.get(b"terminal", fields.get("terminal")) is not None:
-                        return
+                        # Same positional rule as replay: only a batch-final
+                        # sentinel ends the tail (an instant continue can put
+                        # events behind a paused sentinel within one batch)
+                        if batch_position == len(batch) - 1:
+                            return
+                        continue
                     idx_raw = fields.get(b"idx", fields.get("idx"))
                     if idx_raw is None:
                         continue

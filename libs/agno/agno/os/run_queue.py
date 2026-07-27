@@ -57,8 +57,15 @@ def _apply_coordination(redis: Union[str, RedisCoordination]) -> None:
     from agno.run.cancellation_management.redis_cancellation_manager import RedisRunCancellationManager
 
     cancellation_wired = False
+    cancellation_prefix = (
+        f"{coordination.key_prefix}:run:cancellation:" if coordination.key_prefix else "agno:run:cancellation:"
+    )
     if isinstance(get_cancellation_manager(), InMemoryRunCancellationManager):
-        set_cancellation_manager(RedisRunCancellationManager(redis_client=sync_client, async_redis_client=async_client))
+        set_cancellation_manager(
+            RedisRunCancellationManager(
+                redis_client=sync_client, async_redis_client=async_client, key_prefix=cancellation_prefix
+            )
+        )
         cancellation_wired = True
         log_debug("Run queue coordination: Redis cancellation manager configured")
     else:
@@ -70,8 +77,9 @@ def _apply_coordination(redis: Union[str, RedisCoordination]) -> None:
     from agno.os.event_streams import InMemoryEventStream, RedisEventStream, get_event_stream, set_event_stream
 
     event_stream_wired = False
+    stream_prefix = f"{coordination.key_prefix}:os:events:" if coordination.key_prefix else "agno:os:events:"
     if isinstance(get_event_stream(), InMemoryEventStream):
-        set_event_stream(RedisEventStream(async_client))
+        set_event_stream(RedisEventStream(async_client, key_prefix=stream_prefix))
         event_stream_wired = True
         log_debug("Run queue coordination: Redis event stream configured")
     else:
