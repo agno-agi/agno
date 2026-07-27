@@ -1121,6 +1121,73 @@ def test_each_tenki_function_can_be_disabled() -> None:
 
     assert tools.get_functions() == {}
     assert tools.get_async_functions() == {}
+    assert isinstance(tools.instructions, str)
+    for tool_name in (
+        "run_code",
+        "run_shell_command",
+        "create_file",
+        "read_file",
+        "list_files",
+        "delete_file",
+        "change_directory",
+        "get_sandbox_status",
+        "terminate_sandbox",
+    ):
+        assert f"`{tool_name}`" not in tools.instructions
+
+
+def test_default_instructions_only_name_registered_functions() -> None:
+    tools = TenkiTools(
+        client=FakeClient(),
+        async_client=FakeAsyncClient(),
+        enable_run_code=False,
+        enable_terminate_sandbox=True,
+        exclude_tools=["delete_file"],
+    )
+
+    assert isinstance(tools.instructions, str)
+    assert "run_code" not in tools.get_functions()
+    assert "delete_file" not in tools.get_functions()
+    assert "`run_code`" not in tools.instructions
+    assert "`delete_file`" not in tools.instructions
+    assert "`read_file`" in tools.instructions
+    assert "`terminate_sandbox`" in tools.instructions
+
+
+def test_all_enables_every_tenki_function() -> None:
+    tools = TenkiTools(
+        client=FakeClient(),
+        async_client=FakeAsyncClient(),
+        enable_run_code=False,
+        enable_run_shell_command=False,
+        enable_create_file=False,
+        enable_read_file=False,
+        enable_list_files=False,
+        enable_delete_file=False,
+        enable_change_directory=False,
+        enable_get_sandbox_status=False,
+        enable_terminate_sandbox=False,
+        all=True,
+    )
+    expected_function_names = {
+        "run_code",
+        "run_shell_command",
+        "create_file",
+        "read_file",
+        "list_files",
+        "delete_file",
+        "change_directory",
+        "get_sandbox_status",
+        "terminate_sandbox",
+    }
+
+    assert set(tools.get_functions()) == expected_function_names
+    assert set(tools.get_async_functions()) == expected_function_names
+    assert tools.get_functions()["terminate_sandbox"].requires_confirmation is True
+    assert tools.get_async_functions()["terminate_sandbox"].requires_confirmation is True
+    assert isinstance(tools.instructions, str)
+    for tool_name in expected_function_names:
+        assert f"`{tool_name}`" in tools.instructions
 
 
 def test_terminate_sandbox_is_opt_in_and_requires_confirmation() -> None:
@@ -1356,13 +1423,17 @@ def test_remote_command_runner_terminates_the_user_process_group_on_timeout(tmp_
         f"pathlib.Path({str(child_pid_path)!r}).write_text(str(child.pid))\n"
     )
     child_pid = None
+    runner = BOUNDED_COMMAND_RUNNER.replace(
+        "os.killpg(process.pid, signal.SIGKILL)",
+        "raise PermissionError('must not signal an exited process group leader')",
+    )
 
     try:
         completed = subprocess.run(
             [
                 sys.executable,
                 "-c",
-                BOUNDED_COMMAND_RUNNER,
+                runner,
                 "python",
                 str(command_path),
                 str(tmp_path),
@@ -1380,6 +1451,7 @@ def test_remote_command_runner_terminates_the_user_process_group_on_timeout(tmp_
 
         assert collected["exit_code"] == 124
         assert collected["timed_out"] is True
+        assert completed.stderr == ""
         for _ in range(100):
             try:
                 os.kill(child_pid, 0)
@@ -1394,6 +1466,72 @@ def test_remote_command_runner_terminates_the_user_process_group_on_timeout(tmp_
                 os.kill(child_pid, signal.SIGKILL)
             except ProcessLookupError:
                 pass
+
+
+def test_remote_command_runner_tolerates_sigterm_permission_error(tmp_path) -> None:
+    command_path = tmp_path / "command.py"
+    command_path.write_text("import time\ntime.sleep(60)\n")
+    runner = BOUNDED_COMMAND_RUNNER.replace(
+        "os.killpg(process.pid, signal.SIGTERM)",
+        "raise PermissionError('simulated SIGTERM permission error')",
+    )
+
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            runner,
+            "python",
+            str(command_path),
+            str(tmp_path),
+            "100",
+            "0.2",
+            "0.1",
+        ],
+        capture_output=True,
+        text=True,
+        check=True,
+        timeout=5,
+    )
+    collected = json.loads(completed.stdout)
+
+    assert collected["exit_code"] == 124
+    assert collected["timed_out"] is True
+    assert completed.stderr == ""
+
+
+def test_remote_command_runner_falls_back_when_sigkill_is_denied(tmp_path) -> None:
+    command_path = tmp_path / "command.py"
+    command_path.write_text(
+        "import signal\nimport time\nsignal.signal(signal.SIGTERM, signal.SIG_IGN)\ntime.sleep(60)\n"
+    )
+    runner = BOUNDED_COMMAND_RUNNER.replace(
+        "os.killpg(process.pid, signal.SIGKILL)",
+        "raise PermissionError('simulated SIGKILL permission error')",
+    )
+
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            runner,
+            "python",
+            str(command_path),
+            str(tmp_path),
+            "100",
+            "0.2",
+            "0.1",
+        ],
+        capture_output=True,
+        text=True,
+        check=True,
+        timeout=5,
+    )
+    collected = json.loads(completed.stdout)
+
+    assert collected["exit_code"] == 124
+    assert collected["timed_out"] is True
+    assert completed.stderr == ""
 
 
 def test_read_file_uses_a_bounded_stream() -> None:

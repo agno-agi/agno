@@ -4,7 +4,6 @@ import hashlib
 import json
 import posixpath
 from os import getenv
-from textwrap import dedent
 from threading import Lock
 from time import sleep
 from typing import Any, Callable, Dict, Optional
@@ -82,19 +81,26 @@ timed_out = False
 def terminate_process_group():
     try:
         os.killpg(process.pid, signal.SIGTERM)
-    except ProcessLookupError:
+    except OSError:
         pass
     if process.poll() is None:
         try:
             process.wait(timeout=termination_grace)
         except subprocess.TimeoutExpired:
             pass
-    try:
-        os.killpg(process.pid, signal.SIGKILL)
-    except ProcessLookupError:
-        pass
     if process.poll() is None:
-        process.wait()
+        kill_sent = False
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
+            kill_sent = True
+        except OSError:
+            try:
+                process.kill()
+                kill_sent = True
+            except OSError:
+                pass
+        if kill_sent and process.poll() is None:
+            process.wait()
 
 try:
     exit_code = process.wait(timeout=timeout)
@@ -126,18 +132,36 @@ print(
 )
 """
 
-DEFAULT_INSTRUCTIONS = dedent(
-    """\
-    You have access to a persistent Tenki sandbox for remote code execution and file operations.
-    - Use `run_code` to execute Python code.
-    - Use `run_shell_command` for shell commands and package installation.
-    - Use `create_file`, `read_file`, `list_files`, and `delete_file` to manage sandbox files.
-    - Use `change_directory` to update the working directory used by subsequent tools.
-    - Use `get_sandbox_status` to inspect the active sandbox.
-    - Auto-created sandboxes have a bounded lifetime. If `terminate_sandbox` is available, use it only when the user
-      asks to end the persistent sandbox.
-    Always report actual command output and errors instead of claiming that unexecuted code works.
-    """
+TOOL_INSTRUCTION_LINES = (
+    ("run_code", "- Use `run_code` to execute Python code."),
+    ("run_shell_command", "- Use `run_shell_command` for shell commands and package installation."),
+    ("create_file", "- Use `create_file` to create or overwrite sandbox files."),
+    ("read_file", "- Use `read_file` to read sandbox files."),
+    ("list_files", "- Use `list_files` to list sandbox files and directories."),
+    ("delete_file", "- Use `delete_file` to delete sandbox files and directories."),
+    ("change_directory", "- Use `change_directory` to update the working directory used by subsequent tools."),
+    ("get_sandbox_status", "- Use `get_sandbox_status` to inspect the active sandbox."),
+    (
+        "terminate_sandbox",
+        "- Use `terminate_sandbox` only when the user asks to end the persistent sandbox.",
+    ),
+)
+
+
+def _build_default_instructions(enabled_tool_names: set[str]) -> str:
+    lines = ["You have access to a persistent Tenki sandbox for remote code execution and file operations."]
+    lines.extend(line for tool_name, line in TOOL_INSTRUCTION_LINES if tool_name in enabled_tool_names)
+    lines.extend(
+        [
+            "- Auto-created sandboxes have a bounded lifetime.",
+            "Always report actual command output and errors instead of claiming that unexecuted code works.",
+        ]
+    )
+    return "\n".join(lines)
+
+
+DEFAULT_INSTRUCTIONS = _build_default_instructions(
+    {tool_name for tool_name, _ in TOOL_INSTRUCTION_LINES if tool_name != "terminate_sandbox"}
 )
 
 
@@ -168,6 +192,7 @@ class TenkiTools(Toolkit):
         enable_change_directory: bool = True,
         enable_get_sandbox_status: bool = True,
         enable_terminate_sandbox: bool = False,
+        all: bool = False,
         allow_inbound: bool = False,
         allow_outbound: bool = True,
         sandbox_options: Optional[Dict[str, Any]] = None,
@@ -228,36 +253,58 @@ class TenkiTools(Toolkit):
                 "Auto-created Tenki sandboxes require a bounded max duration; set sandbox_max_duration or "
                 "sandbox_options['max_duration']"
             )
-        self.instructions = instructions or DEFAULT_INSTRUCTIONS
+        enabled_tool_names = {
+            tool_name
+            for tool_name, enabled in (
+                ("run_code", enable_run_code),
+                ("run_shell_command", enable_run_shell_command),
+                ("create_file", enable_create_file),
+                ("read_file", enable_read_file),
+                ("list_files", enable_list_files),
+                ("delete_file", enable_delete_file),
+                ("change_directory", enable_change_directory),
+                ("get_sandbox_status", enable_get_sandbox_status),
+                ("terminate_sandbox", enable_terminate_sandbox),
+            )
+            if all or enabled
+        }
+        registered_tool_names = enabled_tool_names.copy()
+        include_tools = kwargs.get("include_tools")
+        exclude_tools = kwargs.get("exclude_tools")
+        if include_tools is not None:
+            registered_tool_names.intersection_update(include_tools)
+        if exclude_tools is not None:
+            registered_tool_names.difference_update(exclude_tools)
+        self.instructions = instructions or _build_default_instructions(registered_tool_names)
 
         tools: list[Callable[..., Any]] = []
         async_tools: list[tuple[Callable[..., Any], str]] = []
-        if enable_run_code:
+        if "run_code" in enabled_tool_names:
             tools.append(self.run_code)
             async_tools.append((self.arun_code, "run_code"))
-        if enable_run_shell_command:
+        if "run_shell_command" in enabled_tool_names:
             tools.append(self.run_shell_command)
             async_tools.append((self.arun_shell_command, "run_shell_command"))
-        if enable_create_file:
+        if "create_file" in enabled_tool_names:
             tools.append(self.create_file)
             async_tools.append((self.acreate_file, "create_file"))
-        if enable_read_file:
+        if "read_file" in enabled_tool_names:
             tools.append(self.read_file)
             async_tools.append((self.aread_file, "read_file"))
-        if enable_list_files:
+        if "list_files" in enabled_tool_names:
             tools.append(self.list_files)
             async_tools.append((self.alist_files, "list_files"))
-        if enable_delete_file:
+        if "delete_file" in enabled_tool_names:
             tools.append(self.delete_file)
             async_tools.append((self.adelete_file, "delete_file"))
-        if enable_change_directory:
+        if "change_directory" in enabled_tool_names:
             tools.append(self.change_directory)
             async_tools.append((self.achange_directory, "change_directory"))
-        if enable_get_sandbox_status:
+        if "get_sandbox_status" in enabled_tool_names:
             tools.append(self.get_sandbox_status)
             async_tools.append((self.aget_sandbox_status, "get_sandbox_status"))
         requires_confirmation_tools = list(kwargs.pop("requires_confirmation_tools", None) or [])
-        if enable_terminate_sandbox:
+        if "terminate_sandbox" in enabled_tool_names:
             tools.append(self.terminate_sandbox)
             async_tools.append((self.aterminate_sandbox, "terminate_sandbox"))
             if "terminate_sandbox" not in requires_confirmation_tools:
