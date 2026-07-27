@@ -31,7 +31,10 @@ fs = FileSystem(db, namespace="assistant/{user_id}")
 agent = Agent(
     model=OpenAIResponses(id="gpt-5.5"),
     tools=[fs.tools()],
-    instructions="You are a project assistant. Keep your working notes in your files.",
+    instructions=[
+        "You are a project assistant. Keep your working notes in your files.",
+        fs.instructions(),
+    ],
 )
 
 # ---------------------------------------------------------------------------
