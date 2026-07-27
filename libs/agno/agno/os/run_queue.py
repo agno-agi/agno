@@ -136,6 +136,15 @@ def resolve_run_queue_store(config: RunQueueConfig, default_db: Any) -> Any:
     store = config.db if config.db is not None else default_db
     claim = getattr(store, "claim_run_job", None) if store is not None else None
     if callable(claim):
+        # Loud-degrade rule: the last place a weaker guarantee could pass
+        # quietly. Redis ticket durability is persistence-config-dependent.
+        if type(store).__name__ == "RedisDb":
+            log_warning(
+                "Run queue tickets are stored on Redis: acceptance durability depends on "
+                "Redis persistence configuration (use AOF appendfsync everysec/always for "
+                "Postgres-grade guarantees; default RDB snapshotting can lose recently "
+                "accepted jobs on a Redis crash)."
+            )
         if inspect.iscoroutinefunction(claim):
             return store
         return _SyncStoreAdapter(store)
