@@ -10,7 +10,7 @@ RunQueueConfig is the single place to configure background run execution:
 
 Run several replicas of this app behind a load balancer to see it work: start
 a background streaming run against one replica, then hit
-GET /agents/{agent_id}/runs/{run_id}/resume on another - events replay and
+POST /agents/{agent_id}/runs/{run_id}/resume on another - events replay and
 tail from Redis regardless of which replica executes the run.
 
 Granular overrides remain available for advanced setups: pass

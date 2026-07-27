@@ -244,4 +244,3 @@ class TestQueuedCancelWithoutRunResponse:
         # The event stream was marked CANCELLED, not COMPLETED
         assert mock_stream.complete_run.call_args is not None
         assert mock_stream.complete_run.call_args.args[1] == RunStatus.cancelled
-
