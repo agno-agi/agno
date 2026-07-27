@@ -28,8 +28,6 @@ Schemas:
 - LearnedKnowledge: Reusable knowledge/insights
 - EntityMemory: Third-party entity facts
 - DecisionLog: Decision logs
-- Feedback: Behavioral feedback (Phase 2)
-- InstructionUpdate: Self-improvement (Phase 3)
 """
 
 from dataclasses import asdict, dataclass, field, fields
@@ -594,6 +592,7 @@ class EntityMemory:
     properties: Dict[str, str] = field(
         default_factory=dict, metadata={"description": "Key-value properties (industry, tech_stack, etc)"}
     )
+    aliases: List[str] = field(default_factory=list, metadata={"description": "Other names this entity resolves from"})
 
     # Semantic memory (facts)
     facts: List[Dict[str, Any]] = field(default_factory=list)
@@ -614,6 +613,9 @@ class EntityMemory:
     team_id: Optional[str] = field(default=None, metadata={"internal": True})
     created_at: Optional[str] = field(default=None, metadata={"internal": True})
     updated_at: Optional[str] = field(default=None, metadata={"internal": True})
+    # Set when the entity is archived via forget(); archived entities are excluded
+    # from recall, rendering and the directory, but stay reachable by search.
+    archived_at: Optional[str] = field(default=None, metadata={"internal": True})
 
     @classmethod
     def from_dict(cls, data: Any) -> Optional["EntityMemory"]:
@@ -689,6 +691,18 @@ class EntityMemory:
 
         if content and content.strip():
             now = _utc_now_iso()
+            # Idempotent for the same day, like add_relationship: models
+            # re-state what they already recorded, and a duplicated event
+            # renders twice and retires ambiguously.
+            for existing in self.events:
+                if (
+                    isinstance(existing, dict)
+                    and existing.get("content") == content.strip()
+                    and existing.get("date") == date
+                ):
+                    existing["updated_at"] = now
+                    return str(existing.get("id", ""))
+
             event = {"id": event_id, "content": content.strip(), "created_at": now, "updated_at": now, **kwargs}
             if date:
                 event["date"] = date
@@ -710,9 +724,27 @@ class EntityMemory:
         """
         import uuid
 
-        rel_id = str(uuid.uuid4())[:8]
-
         now = _utc_now_iso()
+
+        # Idempotent: models re-assert links they already know, and an appended
+        # duplicate cannot be retired - forget lists byte-identical candidates
+        # no wording can tell apart. Touch the existing edge instead.
+        far_type = kwargs.get("entity_type")
+        for existing in self.relationships:
+            if (
+                isinstance(existing, dict)
+                and existing.get("entity_id") == related_entity_id
+                and existing.get("relation") == relation
+                and existing.get("direction") == direction
+                # entity_type is part of the identity: project/Harbor and
+                # company/Harbor share a slug and are different things.
+                and existing.get("entity_type") == far_type
+            ):
+                existing["updated_at"] = now
+                existing.update(kwargs)
+                return str(existing.get("id", ""))
+
+        rel_id = str(uuid.uuid4())[:8]
         self.relationships.append(
             {
                 "id": rel_id,
@@ -758,8 +790,44 @@ class EntityMemory:
         self.facts = [f for f in self.facts if not (isinstance(f, dict) and f.get("id") == fact_id)]
         return len(self.facts) < original_len
 
-    def get_context_text(self) -> str:
-        """Get entity as formatted string for prompts."""
+    def live_facts(self) -> List[Dict[str, Any]]:
+        """Facts that have not been superseded. Only these render."""
+        return [f for f in self.facts if not (isinstance(f, dict) and f.get("superseded_at"))]
+
+    def retire_fact(self, fact_id: str, superseded_by: str) -> bool:
+        """Mark a fact superseded without deleting it.
+
+        Args:
+            fact_id: The fact to retire.
+            superseded_by: What replaced it - a new fact's id, "forgotten", or
+                "superseded" when several new facts jointly replaced it.
+
+        Returns:
+            True if the fact was found and retired, False otherwise.
+        """
+        for fact in self.facts:
+            if isinstance(fact, dict) and fact.get("id") == fact_id and not fact.get("superseded_at"):
+                fact["superseded_at"] = _utc_now_iso()
+                fact["superseded_by"] = superseded_by
+                return True
+        return False
+
+    def get_context_text(
+        self,
+        max_facts: Optional[int] = 10,
+        max_events: Optional[int] = 5,
+        related_names: Optional[Dict[str, str]] = None,
+    ) -> str:
+        """Get entity as formatted string for prompts.
+
+        Bounded and honest: at most ``max_facts`` live facts (each with an
+        as-of date, so July's truth outranks March's) and the last
+        ``max_events`` events, with explicit truncation markers so a capped
+        render is never mistaken for the whole record. Relationships render in
+        full - they are one line each; ``related_names`` maps far-end entity
+        ids to display names (the one-hop expansion), falling back to the id.
+        Pass ``None`` to lift a cap.
+        """
         parts = []
 
         if self.name:
@@ -774,19 +842,58 @@ class EntityMemory:
             props = ", ".join(f"{k}: {v}" for k, v in self.properties.items())
             parts.append(f"Properties: {props}")
 
-        if self.facts:
-            facts_text = "\n".join(f"  - {f.get('content', f)}" for f in self.facts)
-            parts.append(f"Facts:\n{facts_text}")
+        live = self.live_facts()
+        if live:
+            # The NEWEST N facts render (in chronological order) - showing the
+            # oldest slice would date-stamp stale state as current.
+            if max_facts is None:
+                shown = live
+            elif max_facts <= 0:
+                shown = []
+            else:
+                shown = live[-max_facts:]
+            marker = f" (newest {len(shown)} of {len(live)} facts)" if len(shown) < len(live) else ""
+            fact_lines = []
+            for f in shown:
+                if isinstance(f, dict):
+                    as_of = str(f.get("updated_at") or f.get("created_at") or "")[:10]
+                    as_of_text = f" (as of {as_of})" if as_of else ""
+                    fact_lines.append(f"  - {f.get('content', f)}{as_of_text}")
+                else:
+                    fact_lines.append(f"  - {f}")
+            if shown:
+                parts.append(f"Facts:{marker}\n" + "\n".join(fact_lines))
 
         if self.events:
-            events_text = "\n".join(
-                f"  - {e.get('content', e)}" + (f" ({e.get('date')})" if e.get("date") else "") for e in self.events
+            if max_events is None:
+                shown_events = self.events
+            elif max_events <= 0:
+                shown_events = []
+            else:
+                shown_events = self.events[-max_events:]
+            marker = (
+                f" (last {len(shown_events)} of {len(self.events)} events)"
+                if len(shown_events) < len(self.events)
+                else ""
             )
-            parts.append(f"Events:\n{events_text}")
+            event_lines = []
+            for e in shown_events:
+                if isinstance(e, dict):
+                    date = f" ({e.get('date')})" if e.get("date") else ""
+                    event_lines.append(f"  - {e.get('content', e)}{date}")
+                else:
+                    event_lines.append(f"  - {e}")
+            if shown_events:
+                parts.append(f"Events:{marker}\n" + "\n".join(event_lines))
 
         if self.relationships:
-            rels_text = "\n".join(f"  - {r.get('relation')}: {r.get('entity_id')}" for r in self.relationships)
-            parts.append(f"Relationships:\n{rels_text}")
+            rel_lines = []
+            for r in self.relationships:
+                far_id = r.get("entity_id", "?")
+                far_label = (related_names or {}).get(far_id, far_id)
+                arrow = "->" if r.get("direction", "outgoing") == "outgoing" else "<-"
+                rel_lines.append(f"  - {r.get('relation')} {arrow} {far_label}")
+            parts.append("Relationships:\n" + "\n".join(rel_lines))
 
         return "\n\n".join(parts)
 
@@ -1054,109 +1161,3 @@ class DecisionLog:
 
 # Backwards compatibility alias
 Decision = DecisionLog
-
-
-# =============================================================================
-# Placeholder Schemas (Not yet implemented)
-# =============================================================================
-
-
-@dataclass
-class Feedback:
-    """Schema for Behavioral Feedback. (Phase 2)
-
-    Captures signals about what worked and what didn't.
-    """
-
-    signal: str  # thumbs_up, thumbs_down, correction, regeneration
-    learning: Optional[str] = None
-    context: Optional[str] = None
-    agent_id: Optional[str] = None
-    team_id: Optional[str] = None
-    created_at: Optional[str] = None
-
-    @classmethod
-    def from_dict(cls, data: Any) -> Optional["Feedback"]:
-        """Parse from dict/JSON, returning None on any failure."""
-        if data is None:
-            return None
-        if isinstance(data, cls):
-            return data
-
-        try:
-            parsed = _parse_json(data)
-            if not parsed:
-                log_debug(f"{cls.__name__}.from_dict: _parse_json returned None for data={_truncate_for_log(data)}")
-                return None
-
-            if not parsed.get("signal"):
-                log_debug(f"{cls.__name__}.from_dict: missing required field 'signal'")
-                return None
-
-            field_names = {f.name for f in fields(cls)}
-            kwargs = {k: v for k, v in parsed.items() if k in field_names}
-
-            return cls(**kwargs)
-        except Exception as e:
-            log_debug(f"{cls.__name__}.from_dict failed: {e}, data={_truncate_for_log(data)}")
-            return None
-
-    def to_dict(self) -> Dict[str, Any]:
-        """Convert to dict."""
-        try:
-            return asdict(self)
-        except Exception as e:
-            log_debug(f"{self.__class__.__name__}.to_dict failed: {e}")
-            return {}
-
-
-@dataclass
-class InstructionUpdate:
-    """Schema for Self-Improvement. (Phase 3)
-
-    Proposes updates to agent instructions based on feedback patterns.
-    """
-
-    current_instruction: str
-    proposed_instruction: str
-    reasoning: str
-    evidence: Optional[List[str]] = None
-    agent_id: Optional[str] = None
-    team_id: Optional[str] = None
-    created_at: Optional[str] = None
-
-    @classmethod
-    def from_dict(cls, data: Any) -> Optional["InstructionUpdate"]:
-        """Parse from dict/JSON, returning None on any failure."""
-        if data is None:
-            return None
-        if isinstance(data, cls):
-            return data
-
-        try:
-            parsed = _parse_json(data)
-            if not parsed:
-                log_debug(f"{cls.__name__}.from_dict: _parse_json returned None for data={_truncate_for_log(data)}")
-                return None
-
-            required = ["current_instruction", "proposed_instruction", "reasoning"]
-            missing = [k for k in required if not parsed.get(k)]
-            if missing:
-                log_debug(f"{cls.__name__}.from_dict: missing required fields {missing}")
-                return None
-
-            field_names = {f.name for f in fields(cls)}
-            kwargs = {k: v for k, v in parsed.items() if k in field_names}
-
-            return cls(**kwargs)
-        except Exception as e:
-            log_debug(f"{cls.__name__}.from_dict failed: {e}, data={_truncate_for_log(data)}")
-            return None
-
-    def to_dict(self) -> Dict[str, Any]:
-        """Convert to dict."""
-        try:
-            return asdict(self)
-        except Exception as e:
-            log_debug(f"{self.__class__.__name__}.to_dict failed: {e}")
-            return {}

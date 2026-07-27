@@ -1,5 +1,203 @@
 # Test Log: cookbook/00_quickstart
 
+## Latest Verification — 2026-07-23
+
+**Environment:** `.venvs/quickstart/bin/python` (Python 3.12.8)
+
+**Agno:** `2.8.0` from the regenerated quickstart lock
+
+**Base Commit:** `1e03b4ef3` plus the uncommitted quickstart overhaul
+
+**Model:** `gemini-3.6-flash`
+
+**Google SDK:** `google-genai==2.14.0`
+
+**Pre-flight:** Cookbook pattern checker passed 13 runnable files with zero
+violations. Ruff format/check, `compileall`, and `git diff --check` passed.
+Live tests used separate state under `tmp/quickstart/`.
+
+---
+
+### agent_with_tools.py
+
+**Status:** PASS
+
+**Description:** First-agent path with a least-privilege Yahoo Finance toolkit.
+
+**Result:** Gemini called the 4 enabled tools needed for the brief and returned
+a concise, timestamped market summary. No disabled YFinance tools were exposed.
+
+---
+
+### agent_with_structured_output.py
+
+**Status:** PASS
+
+**Description:** Typed `StockAnalysis` output with optional unavailable market
+fields, numeric bounds, and a `Literal` recommendation.
+
+**Result:** The run returned a valid `StockAnalysis`. Optional values,
+non-negative price constraints, ticker format, and the closed recommendation
+set all validated.
+
+---
+
+### agent_with_typed_input_output.py
+
+**Status:** PASS
+
+**Description:** End-to-end input and output validation.
+
+**Result:** Dict and Pydantic inputs both returned typed output. A malformed JSON
+string and invalid ticker (`!!!`) were rejected before a model call.
+
+---
+
+### agent_with_storage.py
+
+**Status:** PASS
+
+**Description:** Fixed-session conversation continuity in an isolated SQLite
+database.
+
+**Result:** Three turns shared prior context. A new Python process restored the
+same session and found 8 stored chat messages.
+
+---
+
+### agent_with_memory.py
+
+**Status:** PASS
+
+**Description:** User-level memory for interests and risk tolerance across
+distinct sessions.
+
+**Result:** Gemini stored two durable memories (AI/semiconductor interest and
+moderate risk tolerance). A different explicit session started with zero chat
+history, retrieved both memories, and used them to tailor its response.
+
+---
+
+### agent_with_state_management.py
+
+**Status:** PASS
+
+**Description:** Tool-managed watchlist state with a stable session ID.
+
+**Result:** The tools added NVDA, AAPL, and GOOGL; the price tool ran for all
+three. A separate Python process restored
+`{"watchlist": ["NVDA", "AAPL", "GOOGL"]}` from SQLite.
+
+---
+
+### agent_search_over_knowledge.py
+
+**Status:** PASS
+
+**Description:** Hybrid search over the versioned local Agno overview.
+
+**Result:** The file indexed successfully, the agent called
+`search_knowledge_base`, and the answer stayed within the retrieved source,
+including the current Gemini 3.6 example.
+
+---
+
+### agent_with_learning.py
+
+**Status:** PASS
+
+**Description:** Canonical `LearningMachine` learned knowledge across users.
+
+**Result:** The teaching run saved the rule separating cyclical inventory
+changes from structural demand. A different user triggered `search_learnings`
+and applied that rule in an NVDA/AMD comparison.
+
+---
+
+### agent_with_guardrails.py
+
+**Status:** PASS
+
+**Description:** Built-in PII and injection checks plus a custom spam guardrail.
+
+**Result:** Normal input completed. PII, prompt injection, and spam each returned
+`RunStatus.error` and printed `[BLOCKED]`; no blocked request was mislabeled
+`[OK]`.
+
+---
+
+### human_in_the_loop.py
+
+**Status:** PASS
+
+**Description:** Confirmation gate around a simulated publish action.
+
+**Result:** The run paused with one pending `publish_research_brief` call.
+Approval executed the tool and reported publication. A separate rejection run
+explicitly reported that publication was not finalized.
+
+---
+
+### multi_agent_team.py
+
+**Status:** PASS
+
+**Description:** Bull and bear analysts coordinated by a team leader.
+
+**Result:** Both members ran, the leader surfaced their disagreement and
+synthesized the evidence, and the follow-up comparison reused team context.
+
+---
+
+### sequential_workflow.py
+
+**Status:** PASS
+
+**Description:** Explicit Data Gathering → Analysis → Report Writing pipeline.
+
+**Result:** All three steps completed in order. The analyst flagged missing
+comparison data, and the writer produced a concise research outlook. End-to-end
+runtime was approximately 30 seconds.
+
+---
+
+### AgentOS
+
+**Status:** PASS
+
+**Description:** Full quickstart registry and live HTTP server.
+
+**Result:** Uvicorn started cleanly. `/health` returned `200` with status `ok`;
+`/config` returned 10 agents, 1 team, and 1 workflow. All 12 quick-prompt IDs
+resolved to registered components. Stable database IDs eliminated registry
+shadowing warnings.
+
+---
+
+## Latest Summary
+
+| # | File | Status |
+|:--|:-----|:-------|
+| 01 | `agent_with_tools.py` | PASS |
+| 02 | `agent_with_structured_output.py` | PASS |
+| 03 | `agent_with_typed_input_output.py` | PASS |
+| 04 | `agent_with_storage.py` | PASS |
+| 05 | `agent_with_memory.py` | PASS |
+| 06 | `agent_with_state_management.py` | PASS |
+| 07 | `agent_search_over_knowledge.py` | PASS |
+| 08 | `agent_with_learning.py` | PASS |
+| 09 | `agent_with_guardrails.py` | PASS |
+| 10 | `human_in_the_loop.py` | PASS |
+| 11 | `multi_agent_team.py` | PASS |
+| 12 | `sequential_workflow.py` | PASS |
+| — | `run.py` / AgentOS | PASS |
+
+**Result: 12/12 cookbooks PASS; AgentOS PASS**
+
+---
+
+## Historical Verification — 2026-05-19
+
 **Date:** 2026-05-19
 **Environment:** `.venvs/quickstart/bin/python` (Python 3.12.8)
 **Model:** `gemini-3.5-flash`
@@ -139,7 +337,7 @@
 
 ---
 
-## Summary
+## Historical Summary
 
 | # | File | Status |
 |:--|:-----|:-------|
