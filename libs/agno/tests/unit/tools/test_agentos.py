@@ -352,6 +352,24 @@ class TestSpanStats:
         assert total == 1
         assert rows[0]["name"] == "new_tool"
 
+    def test_paging_with_tied_name_groups_is_lossless(self, db):
+        trace = _make_trace(agent_id="agent-1")
+        db.upsert_trace(trace)
+        for i in range(20):
+            db.create_spans([_make_span(trace.trace_id, name="dup", span_type=f"KIND{i:02d}")])
+
+        seen = []
+        total = 0
+        for page in range(1, 24):
+            rows, total = db.get_span_stats(limit=3, page=page)
+            if not rows:
+                break
+            seen.extend((row["name"], row["span_type"]) for row in rows)
+
+        assert total == 20
+        assert len(seen) == 20
+        assert len(set(seen)) == 20
+
     def test_never_returns_attributes(self, db):
         self._seed(db)
 
@@ -575,6 +593,42 @@ class TestGetEvalHistory:
         assert by_id["eval-4"]["status"] == "SCORED"
         assert by_id["eval-4"]["avg_score"] == 8.5
 
+    def test_performance_eval_reports_run_time(self, db, toolkit):
+        from agno.eval.performance import PerformanceEval, PerformanceResult
+
+        # Seed through the writer's own shape so this breaks if it changes again
+        perf = PerformanceEval(func=lambda: None)
+        perf.result = PerformanceResult(run_times=[1.0, 3.0])
+        db.create_eval_run(
+            EvalRunRecord(
+                run_id="eval-perf",
+                eval_type=EvalType.PERFORMANCE,
+                eval_data=perf._parse_eval_run_data(),
+                agent_id="agent-1",
+                name="perf check",
+            )
+        )
+
+        out = _loads(toolkit.get_eval_history())
+
+        run = out["eval_runs"][0]
+        assert run["status"] == "MEASURED"
+        assert run["avg_run_time"] == pytest.approx(2.0)
+
+    def test_performance_eval_tolerates_flat_rows(self, db, toolkit):
+        db.create_eval_run(
+            EvalRunRecord(
+                run_id="eval-perf-flat",
+                eval_type=EvalType.PERFORMANCE,
+                eval_data={"avg_run_time": 1.5},
+                agent_id="agent-1",
+            )
+        )
+
+        out = _loads(toolkit.get_eval_history())
+
+        assert out["eval_runs"][0]["avg_run_time"] == 1.5
+
     def test_truncation_note(self, db, toolkit):
         for i in range(3):
             db.create_eval_run(
@@ -641,17 +695,117 @@ class TestSchedules:
         assert schedule["cron_expr"] == "0 9 * * *"
         assert schedule["last_run"]["status"] == "success"
 
-    def test_schedule_history_summary(self, db, toolkit):
+    def test_schedule_history_page_summary(self, db, toolkit):
         self._seed(db)
 
         out = _loads(toolkit.get_schedule_history("sched-1"))
 
-        assert out["summary"]["status_counts"] == {"success": 1, "failed": 1}
-        assert out["summary"]["last_failure"]["error"] == "endpoint timed out"
+        assert out["page_summary"]["status_counts"] == {"success": 1, "failed": 1}
+        assert out["page_summary"]["last_failure"]["error"] == "endpoint timed out"
         # Run input/output can hold conversation content and must not be exposed
         for run in out["runs"]:
             assert "input" not in run
             assert "output" not in run
+
+    def test_page_summary_is_scoped_to_the_page_and_says_so(self, db, toolkit):
+        schedule = Schedule(id="sched-1", name="hourly-digest", cron_expr="0 * * * *", endpoint="/agents/d/runs")
+        db.create_schedule(schedule.to_dict())
+        now = int(time.time())
+        # The only failure is the oldest run, outside the default page below
+        db.create_schedule_run(
+            ScheduleRun(
+                id="run-fail",
+                schedule_id="sched-1",
+                status="failed",
+                triggered_at=now - 1000,
+                error="boom",
+                created_at=now - 1000,
+            ).to_dict()
+        )
+        for i in range(9):
+            db.create_schedule_run(
+                ScheduleRun(
+                    id=f"run-ok-{i}",
+                    schedule_id="sched-1",
+                    status="success",
+                    triggered_at=now - 900 + i * 100,
+                    completed_at=now - 890 + i * 100,
+                    status_code=200,
+                    created_at=now - 900 + i * 100,
+                ).to_dict()
+            )
+
+        out = _loads(toolkit.get_schedule_history("sched-1", limit=3))
+
+        assert "summary" not in out
+        assert out["page_summary"]["status_counts"] == {"success": 3}
+        assert out["page_summary"]["last_failure"] is None
+        assert out["total"] == 10
+        assert any("page_summary covers only these 3 runs" in note for note in out["notes"])
+
+    def test_error_bodies_are_redacted_and_bounded(self, db, toolkit):
+        marker = "SECRET_PAYLOAD_MARKER ssn=123-45-6789"
+        schedule = Schedule(id="sched-1", name="daily-report", cron_expr="0 9 * * *", endpoint="/agents/r/runs")
+        db.create_schedule(schedule.to_dict())
+        now = int(time.time())
+        # An upstream 422 echoes the run input back in the response body
+        body = json.dumps({"detail": [{"loc": ["body", "user_id"], "input": marker}]}) + "x" * 5000
+        db.create_schedule_run(
+            ScheduleRun(
+                id="run-1",
+                schedule_id="sched-1",
+                status="failed",
+                triggered_at=now - 60,
+                status_code=422,
+                error=body,
+                created_at=now - 60,
+            ).to_dict()
+        )
+
+        history = toolkit.get_schedule_history("sched-1")
+        schedules = toolkit.list_schedules()
+
+        assert marker not in history
+        assert marker not in schedules
+        out = _loads(history)
+        assert out["runs"][0]["error"] == "HTTP 422"
+        assert out["page_summary"]["last_failure"]["error"] == "HTTP 422"
+        assert _loads(schedules)["schedules"][0]["last_run"]["error"] == "HTTP 422"
+        for run in out["runs"]:
+            assert run["error"] is None or len(run["error"]) <= 200
+
+    def test_framework_errors_keep_a_capped_first_line(self, db, toolkit):
+        schedule = Schedule(id="sched-1", name="daily-report", cron_expr="0 9 * * *", endpoint="/agents/r/runs")
+        db.create_schedule(schedule.to_dict())
+        now = int(time.time())
+        db.create_schedule_run(
+            ScheduleRun(
+                id="run-1",
+                schedule_id="sched-1",
+                status="failed",
+                triggered_at=now - 120,
+                error="Polling timed out after 300s for run abc\n" + "Traceback (most recent call last):\n" * 50,
+                created_at=now - 120,
+            ).to_dict()
+        )
+        db.create_schedule_run(
+            ScheduleRun(
+                id="run-2",
+                schedule_id="sched-1",
+                status="failed",
+                triggered_at=now - 60,
+                error="y" * 5000,
+                created_at=now - 60,
+            ).to_dict()
+        )
+
+        out = _loads(toolkit.get_schedule_history("sched-1"))
+
+        by_error = [run["error"] for run in out["runs"]]
+        assert "Polling timed out after 300s for run abc" in by_error
+        assert "y" * 200 in by_error
+        for error in by_error:
+            assert len(error) <= 200
 
     def test_unsupported_backend_returns_clear_error(self, db, toolkit, monkeypatch):
         def raise_not_implemented(*args: Any, **kwargs: Any):

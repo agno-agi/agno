@@ -1,7 +1,10 @@
 """AgentOSTools -- give agents a read-only ops view of the AgentOS they run on.
 
-Answers questions about usage, cost, latency, failures, schedules, eval history
-and runtime-built components by reading directly from the AgentOS database.
+Answers questions about usage, latency, failures, schedules, eval history and
+runtime-built components by reading directly from the AgentOS database.
+
+Cost is not reported: agno only records provider-supplied cost, which almost no
+provider returns, and it is not aggregated into the daily metrics rollup.
 
 Typical use:
     from agno.tools.agentos import AgentOSTools
@@ -33,6 +36,10 @@ Read-only:
       rollup refresh inside get_platform_metrics -- derived data, no user content.
     * Span attributes payloads, approval tool arguments and schedule run
       input/output are never returned -- they can hold full conversation content.
+    * Schedule run errors are redacted: an error that came with an HTTP status
+      code is reduced to ``HTTP <code>`` (upstream response bodies echo run
+      input back, e.g. via a 422), and framework-generated messages are capped
+      at their first line, 200 characters.
     * The tools read the database directly, so AgentOS endpoint scopes do not
       apply to them: anyone who can talk to the agent sees platform-wide
       aggregates, and pending approvals include identifiers (user_id, tool_name,
@@ -139,8 +146,10 @@ class AgentOSTools(Toolkit):
 
         instruction_lines = [
             "Answer operations questions about this AgentOS with the read-only platform tools.",
-            "Usage and cost: get_platform_metrics. Latency and errors per component: get_run_activity. "
+            "Usage and token totals: get_platform_metrics. Latency and errors per component: get_run_activity. "
             "Slow or failing tools and model calls: get_tool_activity.",
+            "No tool reports cost. If asked what something cost, say the platform does not track it "
+            "and give token totals instead -- never estimate cost from tokens.",
             "When a payload carries a truncation or sampling note, report it -- never present a sample "
             "as the whole picture.",
             "These tools are read-only. You cannot modify schedules, approvals or components.",
@@ -409,7 +418,8 @@ class AgentOSTools(Toolkit):
 
         Returns:
             str: JSON with {schedules, count, total}. Each schedule carries its
-                last_run status, timestamp and error if any.
+                last_run status, timestamp and a redacted error summary if any
+                (an HTTP status line or a capped framework message).
         """
         if self._db_is_async:
             return _async_db_error()
@@ -434,7 +444,8 @@ class AgentOSTools(Toolkit):
 
         Returns:
             str: JSON with {schedules, count, total}. Each schedule carries its
-                last_run status, timestamp and error if any.
+                last_run status, timestamp and a redacted error summary if any
+                (an HTTP status line or a capped framework message).
         """
         if not self._db_is_async:
             return await _run_sync(self.list_schedules, limit)
@@ -459,8 +470,11 @@ class AgentOSTools(Toolkit):
             limit (int): Maximum number of runs to return, newest first. Defaults to 20.
 
         Returns:
-            str: JSON with {schedule_id, summary, runs, count, total}. The summary
-                counts runs by status and carries the most recent failure.
+            str: JSON with {schedule_id, page_summary, runs, count, total}. The
+                page_summary counts the returned runs by status and carries their
+                most recent failure; it covers only the runs returned, not the
+                schedule's full history. Errors are redacted to an HTTP status
+                line or a capped framework message.
         """
         if self._db_is_async:
             return _async_db_error()
@@ -481,8 +495,11 @@ class AgentOSTools(Toolkit):
             limit (int): Maximum number of runs to return, newest first. Defaults to 20.
 
         Returns:
-            str: JSON with {schedule_id, summary, runs, count, total}. The summary
-                counts runs by status and carries the most recent failure.
+            str: JSON with {schedule_id, page_summary, runs, count, total}. The
+                page_summary counts the returned runs by status and carries their
+                most recent failure; it covers only the runs returned, not the
+                schedule's full history. Errors are redacted to an HTTP status
+                line or a capped framework message.
         """
         if not self._db_is_async:
             return await _run_sync(self.get_schedule_history, schedule_id, limit)
@@ -588,6 +605,7 @@ class AgentOSTools(Toolkit):
 _GROUP_LIMIT = 100
 _SPAN_LIMIT = 15
 _APPROVAL_LIMIT = 100
+_ERROR_SUMMARY_LIMIT = 200
 
 
 def _resolve_flags(
@@ -820,7 +838,10 @@ def _normalize_eval_run(record: Dict[str, Any]) -> Dict[str, Any]:
         normalized["avg_score"] = eval_data.get("avg_score")
     elif eval_type == "performance":
         normalized["status"] = "MEASURED"
-        normalized["avg_run_time"] = eval_data.get("avg_run_time")
+        run_times = eval_data.get("result")
+        if not isinstance(run_times, dict):
+            run_times = eval_data  # older rows stored the numbers at the top level
+        normalized["avg_run_time"] = run_times.get("avg_run_time")
     else:
         normalized["status"] = "UNKNOWN"
 
@@ -835,6 +856,25 @@ def _format_eval_history(rows: List[Any], total: int) -> str:
     return json.dumps(payload, default=str)
 
 
+def _summarize_run_error(run: Dict[str, Any]) -> Optional[str]:
+    """Reduce a stored schedule run error to a safe, bounded summary.
+
+    Errors that came with an HTTP status code are raw upstream response bodies,
+    which can echo the run input back (e.g. a 422 validation error), so the
+    body is dropped and only ``HTTP <code>`` is returned. Errors without a
+    status code are framework-generated (timeouts, cancellations, transport
+    failures) and are kept, first line only, capped at 200 characters.
+    """
+    error = run.get("error")
+    if error is None:
+        return None
+    status_code = run.get("status_code")
+    if status_code is not None:
+        return f"HTTP {status_code}"
+    lines = str(error).strip().splitlines()
+    return lines[0][:_ERROR_SUMMARY_LIMIT] if lines else None
+
+
 def _format_schedule_run(run: Dict[str, Any]) -> Dict[str, Any]:
     return {
         "status": run.get("status"),
@@ -842,7 +882,7 @@ def _format_schedule_run(run: Dict[str, Any]) -> Dict[str, Any]:
         "triggered_at": _epoch_to_iso(run.get("triggered_at")),
         "completed_at": _epoch_to_iso(run.get("completed_at")),
         "status_code": run.get("status_code"),
-        "error": run.get("error"),
+        "error": _summarize_run_error(run),
     }
 
 
@@ -882,13 +922,16 @@ def _format_schedule_history(schedule_id: str, runs: List[Dict[str, Any]], total
 
     payload: Dict[str, Any] = {
         "schedule_id": schedule_id,
-        "summary": {"status_counts": status_counts, "last_failure": last_failure},
+        "page_summary": {"status_counts": status_counts, "last_failure": last_failure},
         "runs": [_format_schedule_run(run) for run in runs],
         "count": len(runs),
         "total": total,
     }
     if total > len(runs):
-        payload["notes"] = [f"only the {len(runs)} most recent of {total} runs are shown"]
+        payload["notes"] = [
+            f"only the {len(runs)} most recent of {total} runs are shown",
+            f"page_summary covers only these {len(runs)} runs; older runs may hold failures it does not reflect",
+        ]
     return json.dumps(payload, default=str)
 
 

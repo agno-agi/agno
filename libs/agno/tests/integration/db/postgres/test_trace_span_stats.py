@@ -209,6 +209,26 @@ def test_get_span_stats_filters_and_sorting(stats_db: PostgresDb):
     assert {row["name"] for row in capped_rows} == {"old_tool"}
 
 
+def test_get_span_stats_paging_with_tied_name_groups_is_lossless(stats_db: PostgresDb):
+    trace = _make_trace(agent_id="agent-1", session_id="s1")
+    stats_db.upsert_trace(trace)
+    # 8 groups sharing one name, all tied on every aggregate: only the
+    # (name, span_type) ORDER BY tiebreak makes paging deterministic
+    stats_db.create_spans([_make_span(trace.trace_id, name="dup", span_type=f"KIND{i:02d}") for i in range(20)])
+
+    seen = []
+    total = 0
+    for page in range(1, 24):
+        rows, total = stats_db.get_span_stats(limit=3, page=page)
+        if not rows:
+            break
+        seen.extend((row["name"], row["span_type"]) for row in rows)
+
+    assert total == 20
+    assert len(seen) == 20
+    assert len(set(seen)) == 20
+
+
 def test_get_metrics_refreshes_lazily_and_throttles(stats_db: PostgresDb):
     def seed_session(user_id: str) -> None:
         now = int(time.time())

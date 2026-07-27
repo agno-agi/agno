@@ -3193,7 +3193,7 @@ class SqliteDb(BaseDb):
                 order_by = sort_col.asc() if sort_order == "asc" else sort_col.desc()
 
                 offset = (page - 1) * limit if page and limit else 0
-                paginated_stmt = stmt.order_by(order_by, table.c.name).limit(limit).offset(offset)
+                paginated_stmt = stmt.order_by(order_by, table.c.name, span_type_col).limit(limit).offset(offset)
 
                 results = sess.execute(paginated_stmt).fetchall()
 

@@ -156,6 +156,27 @@ async def test_get_span_stats(stats_db: AsyncPostgresDb):
 
 
 @pytest.mark.asyncio
+async def test_get_span_stats_paging_with_tied_name_groups_is_lossless(stats_db: AsyncPostgresDb):
+    trace = _make_trace(agent_id="agent-1", session_id="s1")
+    await stats_db.upsert_trace(trace)
+    # 8 groups sharing one name, all tied on every aggregate: only the
+    # (name, span_type) ORDER BY tiebreak makes paging deterministic
+    await stats_db.create_spans([_make_span(trace.trace_id, name="dup", span_type=f"KIND{i:02d}") for i in range(20)])
+
+    seen = []
+    total = 0
+    for page in range(1, 24):
+        rows, total = await stats_db.get_span_stats(limit=3, page=page)
+        if not rows:
+            break
+        seen.extend((row["name"], row["span_type"]) for row in rows)
+
+    assert total == 20
+    assert len(seen) == 20
+    assert len(set(seen)) == 20
+
+
+@pytest.mark.asyncio
 async def test_get_metrics_refreshes_lazily_and_throttles(stats_db: AsyncPostgresDb):
     async def seed_session(user_id: str) -> None:
         now = int(time.time())
