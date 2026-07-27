@@ -332,3 +332,30 @@ def test_effect_must_be_allow_or_deny_fail_closed():
     # canonical effects (any case) are accepted
     eng.add_scope("r", "agents:read", effect="DENY")
     assert eng.get_role_scopes("r") == [("agents:read", "deny")]
+
+
+def test_subject_named_like_a_role_inherits_nothing():
+    """A subject is never its own policy root.
+
+    JWT ``sub`` values are attacker-influenced in the no-IdP tier (the app mints them
+    from usernames/emails), and every shipped cookbook seeds guessable slugs. If the
+    subject string matched policy rows directly, registering as "admin" would grant
+    that role's policy with no assignment at all.
+    """
+    eng = _engine()
+    eng.set_role_scopes("admin", [("agent_os:admin", "allow")])
+    eng.set_role_scopes("viewer", [("agents:*:read", "allow")])
+
+    # subject collides with a role slug but holds no assignment
+    assert eng.roles_of("admin") == []
+    assert eng.check_scope("agent_os:admin", subject="admin") is False
+    assert eng.check_resource("agents", "secret-agent", "run", subject="admin") is False
+    assert eng.check_resource("agents", "public-agent", "read", subject="viewer") is False
+    assert eng.accessible_resource_ids("agents", "read", subject="viewer") == set()
+
+    # a real assignment still works, including when the subject shares the role's name
+    eng.assign("admin", "admin")
+    assert eng.check_scope("agent_os:admin", subject="admin") is True
+
+    # token-carried roles are still their own roots (unchanged behaviour)
+    assert eng.check_resource("agents", "public-agent", "read", roles=["viewer"]) is True
