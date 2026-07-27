@@ -1032,6 +1032,52 @@ class BaseDb(ABC):
         """
         raise NotImplementedError
 
+    def search_learnings(
+        self,
+        query: str,
+        learning_type: Optional[str] = None,
+        user_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
+        workflow_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+        namespace: Optional[str] = None,
+        entity_id: Optional[str] = None,
+        entity_type: Optional[str] = None,
+        limit: Optional[int] = None,
+    ) -> List[Dict[str, Any]]:
+        """Search learning records by text query, filtered server-side.
+
+        The query is matched case-insensitively against the stored content, in
+        both its space and underscore forms ("sarah chen" finds "sarah_chen").
+        Results are ordered by updated_at descending.
+
+        Backends without a server-side search implementation keep this default,
+        which raises NotImplementedError - callers fall back to their
+        client-side scan then. Implementations RAISE on database errors rather
+        than returning an empty list: a dialect-wrong query must never present
+        as an empty store.
+
+        Args:
+            query: Text to search for in the stored content.
+            learning_type: Filter by learning type.
+            user_id: Filter by user ID.
+            agent_id: Filter by agent ID.
+            team_id: Filter by team ID.
+            workflow_id: Filter by workflow ID. Note: upsert_learning does not
+                currently populate the workflow_id column, so this filter only
+                matches rows written by an external writer that sets it.
+            session_id: Filter by session ID.
+            namespace: Filter by namespace ('user', 'global', or custom).
+            entity_id: Filter by entity ID.
+            entity_type: Filter by entity type.
+            limit: Maximum number of records to return.
+
+        Returns:
+            List of matching learning records, most recently updated first.
+        """
+        raise NotImplementedError
+
     def get_learning_by_id(self, id: str) -> Optional[Dict[str, Any]]:
         """Retrieve a single learning record by its primary key.
 
@@ -1998,6 +2044,52 @@ class AsyncBaseDb(ABC):
 
         Returns:
             List of learning records.
+        """
+        raise NotImplementedError
+
+    async def search_learnings(
+        self,
+        query: str,
+        learning_type: Optional[str] = None,
+        user_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
+        workflow_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+        namespace: Optional[str] = None,
+        entity_id: Optional[str] = None,
+        entity_type: Optional[str] = None,
+        limit: Optional[int] = None,
+    ) -> List[Dict[str, Any]]:
+        """Async search learning records by text query, filtered server-side.
+
+        The query is matched case-insensitively against the stored content, in
+        both its space and underscore forms ("sarah chen" finds "sarah_chen").
+        Results are ordered by updated_at descending.
+
+        Backends without a server-side search implementation keep this default,
+        which raises NotImplementedError - callers fall back to their
+        client-side scan then. Implementations RAISE on database errors rather
+        than returning an empty list: a dialect-wrong query must never present
+        as an empty store.
+
+        Args:
+            query: Text to search for in the stored content.
+            learning_type: Filter by learning type.
+            user_id: Filter by user ID.
+            agent_id: Filter by agent ID.
+            team_id: Filter by team ID.
+            workflow_id: Filter by workflow ID. Note: upsert_learning does not
+                currently populate the workflow_id column, so this filter only
+                matches rows written by an external writer that sets it.
+            session_id: Filter by session ID.
+            namespace: Filter by namespace ('user', 'global', or custom).
+            entity_id: Filter by entity ID.
+            entity_type: Filter by entity type.
+            limit: Maximum number of records to return.
+
+        Returns:
+            List of matching learning records, most recently updated first.
         """
         raise NotImplementedError
 
