@@ -1,5 +1,8 @@
+import asyncio
 import json
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
+from time import sleep
 from types import SimpleNamespace
 from typing import Any
 
@@ -222,6 +225,18 @@ class FakeAsyncClient:
         return self.sandboxes[sandbox_id]
 
 
+class SlowFakeClient(FakeClient):
+    def create(self, **kwargs):
+        sleep(0.05)
+        return super().create(**kwargs)
+
+
+class SlowFakeAsyncClient(FakeAsyncClient):
+    async def create(self, **kwargs):
+        await asyncio.sleep(0.05)
+        return await super().create(**kwargs)
+
+
 def test_run_code_creates_a_session_and_returns_command_output() -> None:
     client = FakeClient()
     tools = TenkiTools(client=client, async_client=SimpleNamespace())
@@ -237,6 +252,7 @@ def test_run_code_creates_a_session_and_returns_command_output() -> None:
     }
     assert run_context.session_state == {
         "tenki_sandbox_id": "sandbox-1",
+        "tenki_sandbox_owned": True,
         "tenki_working_directory": "/home/tenki",
     }
 
@@ -255,6 +271,92 @@ def test_run_code_reuses_the_session_recorded_in_run_context() -> None:
     assert session_state["tenki_sandbox_id"] == "sandbox-1"
 
 
+def test_parallel_sync_calls_single_flight_sandbox_creation_per_session() -> None:
+    client = SlowFakeClient()
+    tools = TenkiTools(client=client, async_client=FakeAsyncClient())
+    first_context = RunContext(run_id="run-1", session_id="shared-session", session_state={})
+    second_context = RunContext(run_id="run-2", session_id="shared-session", session_state={})
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        results = list(
+            executor.map(
+                lambda item: tools.run_code(item[0], item[1]),
+                (
+                    (first_context, "print('first')"),
+                    (second_context, "print('second')"),
+                ),
+            )
+        )
+
+    assert len(results) == 2
+    assert client.created_ids == ["sandbox-1"]
+    assert first_context.session_state is not None
+    assert second_context.session_state is not None
+    assert first_context.session_state["tenki_sandbox_id"] == "sandbox-1"
+    assert second_context.session_state["tenki_sandbox_id"] == "sandbox-1"
+
+
+async def test_parallel_async_calls_single_flight_sandbox_creation_per_session() -> None:
+    async_client = SlowFakeAsyncClient()
+    tools = TenkiTools(client=FakeClient(), async_client=async_client)
+    first_context = RunContext(run_id="run-1", session_id="shared-session", session_state={})
+    second_context = RunContext(run_id="run-2", session_id="shared-session", session_state={})
+
+    results = await asyncio.gather(
+        tools.arun_code(first_context, "print('first')"),
+        tools.arun_code(second_context, "print('second')"),
+    )
+
+    assert len(results) == 2
+    assert async_client.created_ids == ["async-sandbox-1"]
+    assert first_context.session_state is not None
+    assert second_context.session_state is not None
+    assert first_context.session_state["tenki_sandbox_id"] == "async-sandbox-1"
+    assert second_context.session_state["tenki_sandbox_id"] == "async-sandbox-1"
+
+
+def test_losing_allocation_is_terminated(monkeypatch) -> None:
+    client = FakeClient()
+    winner = FakeSandbox("winner-sandbox")
+    client.sandboxes[winner.id] = winner
+    tools = TenkiTools(client=client, async_client=FakeAsyncClient())
+    run_context = RunContext(run_id="run-1", session_id="session-1", session_state={})
+
+    def register_winner(run_context, state, sandbox_id):
+        state["tenki_sandbox_id"] = winner.id
+        state["tenki_sandbox_owned"] = True
+        return winner.id
+
+    monkeypatch.setattr(tools, "_register_created_sandbox", register_winner)
+
+    tools.run_code(run_context, "print('winner')")
+
+    losing_sandbox = client.sandboxes["sandbox-1"]
+    assert losing_sandbox.close_calls == 1
+    assert winner.exec_calls
+
+
+async def test_async_losing_allocation_is_terminated(monkeypatch) -> None:
+    async_client = FakeAsyncClient()
+    winner = FakeAsyncSandbox("winner-sandbox")
+    async_client.sandboxes[winner.id] = winner
+    tools = TenkiTools(client=FakeClient(), async_client=async_client)
+    run_context = RunContext(run_id="run-1", session_id="session-1", session_state={})
+
+    def register_winner(run_context, state, sandbox_id):
+        state["tenki_sandbox_id"] = winner.id
+        state["tenki_sandbox_owned"] = True
+        return winner.id
+
+    monkeypatch.setattr(tools, "_register_created_sandbox", register_winner)
+
+    await tools.arun_code(run_context, "print('winner')")
+
+    losing_sandbox = async_client.sandboxes["async-sandbox-1"]
+    assert losing_sandbox.close_calls == 1
+    assert winner.exec_calls
+
+
 def test_new_sandboxes_disable_inbound_network_access_by_default() -> None:
     client = FakeClient()
     tools = TenkiTools(
@@ -270,10 +372,26 @@ def test_new_sandboxes_disable_inbound_network_access_by_default() -> None:
         {
             "allow_inbound": False,
             "allow_outbound": True,
+            "max_duration": 900,
             "name": "agno-example",
             "timeout": 180,
         }
     ]
+
+
+def test_sandbox_max_duration_can_be_overridden() -> None:
+    client = FakeClient()
+    tools = TenkiTools(
+        client=client,
+        async_client=FakeAsyncClient(),
+        sandbox_max_duration=300,
+        sandbox_options={"max_duration": 600},
+    )
+    run_context = RunContext(run_id="run-1", session_id="session-1", session_state={})
+
+    tools.run_code(run_context, "print('bounded sandbox')")
+
+    assert client.create_options[0]["max_duration"] == 600
 
 
 def test_workspace_resolution_is_delegated_to_the_sdk() -> None:
@@ -437,19 +555,65 @@ def test_auto_create_can_be_disabled() -> None:
     assert client.created_ids == []
 
 
-def test_get_sandbox_status_reports_session_details() -> None:
-    tools = TenkiTools(client=FakeClient(), async_client=FakeAsyncClient())
+def test_get_sandbox_status_does_not_create_a_sandbox() -> None:
+    client = FakeClient()
+    tools = TenkiTools(client=client, async_client=FakeAsyncClient())
     run_context = RunContext(run_id="run-1", session_id="session-1", session_state={})
 
     status = json.loads(tools.get_sandbox_status(run_context))
 
     assert status == {
         "status": "success",
-        "sandbox_id": "sandbox-1",
-        "name": "agno-tenki",
-        "state": "RUNNING",
+        "sandbox_id": None,
+        "name": None,
+        "state": "ABSENT",
+        "owned": False,
         "working_directory": "/home/tenki",
     }
+    assert client.created_ids == []
+    assert run_context.session_state == {}
+
+
+def test_get_sandbox_status_does_not_resume_a_paused_sandbox() -> None:
+    client = FakeClient()
+    sandbox = FakeSandbox("paused-sandbox")
+    sandbox.state = "PAUSED"
+    client.sandboxes[sandbox.id] = sandbox
+    tools = TenkiTools(client=client, async_client=FakeAsyncClient())
+    run_context = RunContext(
+        run_id="run-1",
+        session_id="session-1",
+        session_state={
+            "tenki_sandbox_id": sandbox.id,
+            "tenki_sandbox_owned": True,
+            "tenki_working_directory": "/home/tenki/project",
+        },
+    )
+
+    status = json.loads(tools.get_sandbox_status(run_context))
+
+    assert status == {
+        "status": "success",
+        "sandbox_id": "paused-sandbox",
+        "name": "agno-tenki",
+        "state": "PAUSED",
+        "owned": True,
+        "working_directory": "/home/tenki/project",
+    }
+    assert sandbox.resume_calls == 0
+    assert client.created_ids == []
+
+
+async def test_async_get_sandbox_status_does_not_create_a_sandbox() -> None:
+    async_client = FakeAsyncClient()
+    tools = TenkiTools(client=FakeClient(), async_client=async_client)
+    run_context = RunContext(run_id="run-1", session_id="session-1", session_state={})
+
+    status = json.loads(await tools.aget_sandbox_status(run_context))
+
+    assert status["state"] == "ABSENT"
+    assert async_client.created_ids == []
+    assert run_context.session_state == {}
 
 
 def test_terminate_sandbox_is_opt_in_and_requires_confirmation() -> None:
@@ -472,6 +636,7 @@ def test_terminate_sandbox_is_opt_in_and_requires_confirmation() -> None:
     session_state = run_context.session_state
     assert session_state is not None
     assert "tenki_sandbox_id" not in session_state
+    assert "tenki_sandbox_owned" not in session_state
 
 
 def test_terminate_sandbox_never_creates_or_resumes_a_sandbox() -> None:
@@ -544,6 +709,7 @@ async def test_async_terminate_uses_the_native_async_client() -> None:
     session_state = run_context.session_state
     assert session_state is not None
     assert "tenki_sandbox_id" not in session_state
+    assert "tenki_sandbox_owned" not in session_state
 
 
 def test_run_shell_command_preserves_failed_command_output() -> None:
@@ -558,6 +724,33 @@ def test_run_shell_command_preserves_failed_command_output() -> None:
         "stdout": "partial output\n",
         "stderr": "command failed\n",
     }
+
+
+def test_command_output_is_truncated_before_serialization() -> None:
+    tools = TenkiTools(
+        client=FakeClient(),
+        async_client=FakeAsyncClient(),
+        max_output_chars=10,
+    )
+
+    result = json.loads(
+        tools._format_command_result(
+            FakeCommandResult(
+                exit_code=1,
+                stdout_text="a" * 15,
+                stderr_text="b" * 12,
+            )
+        )
+    )
+
+    assert result["stdout"].startswith("a" * 10)
+    assert result["stderr"].startswith("b" * 10)
+    assert "[Output truncated after 10 characters; original length: 15.]" in result["stdout"]
+    assert "[Output truncated after 10 characters; original length: 12.]" in result["stderr"]
+    assert result["stdout_truncated"] is True
+    assert result["stderr_truncated"] is True
+    assert result["stdout_original_chars"] == 15
+    assert result["stderr_original_chars"] == 12
 
 
 def test_create_and_read_file_use_the_session_working_directory() -> None:

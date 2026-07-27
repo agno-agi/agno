@@ -9,36 +9,45 @@ Prerequisites:
    export TENKI_API_KEY=<your_api_key>
 4. Optionally select a workspace explicitly:
    export TENKI_WORKSPACE_ID=<your_workspace_id>
-5. Install the dependencies:
-   uv pip install "agno[tenki]" openai
+5. Set the model API key:
+   export OPENAI_API_KEY=<your_openai_api_key>
+6. Install the dependencies:
+   uv pip install "agno[tenki,sqlite]" openai
 
 The Tenki SDK determines the workspace from the API key automatically. Set TENKI_WORKSPACE_ID only when you need to
-override it explicitly.
+override it explicitly. The SQLite database persists the sandbox ID in Agent session state across calls that use the
+same session ID. Auto-created sandboxes are bounded to 15 minutes, and the optional termination tool requires
+confirmation.
 """
 
 from agno.agent import Agent
+from agno.db.sqlite import SqliteDb
 from agno.tools.tenki import TenkiTools
 
 # ---------------------------------------------------------------------------
 # Create Agent
 # ---------------------------------------------------------------------------
 
+tenki_tools = TenkiTools(
+    add_instructions=True,
+    enable_terminate_sandbox=True,
+    sandbox_options={
+        "name": "agno-tenki-example",
+        "max_duration": 900,
+        "metadata": {"created_by": "agno"},
+    },
+)
+
 agent = Agent(
     name="Coding Agent with Tenki tools",
-    tools=[
-        TenkiTools(
-            add_instructions=True,
-            sandbox_options={
-                "name": "agno-tenki-example",
-                "max_duration": 900,
-                "metadata": {"created_by": "agno"},
-            },
-        )
-    ],
+    session_id="tenki-tools-demo",
+    db=SqliteDb(db_file="tmp/tenki_tools.db"),
+    tools=[tenki_tools],
     instructions=[
         "Write clear Python code and execute it in the Tenki sandbox.",
         "Use the file tools when the task asks you to create or inspect files.",
         "Report the actual command output and explain any errors.",
+        "Keep the sandbox for follow-up calls unless the user explicitly asks you to terminate it.",
     ],
     markdown=True,
 )
