@@ -138,14 +138,46 @@ class NativePolicyEngine(PolicyEngine):
             stack.extend(self._direct_roles(node))
         return seen
 
+    def _is_role_name(self, name: str) -> bool:
+        """True if ``name`` is used as a ROLE: it carries policy, or something is
+        assigned to it. Two indexed point lookups, so this is cheap per decision."""
+        self._require_engine()
+        import sqlalchemy as sa
+
+        with self._engine.connect() as conn:
+            for table in (self._policy_tbl, self._group_tbl):
+                if conn.execute(sa.select(table.c.role).where(table.c.role == name).limit(1)).first() is not None:
+                    return True
+        return False
+
     def _subject_closure(self, subject: str) -> Set[str]:
         """Policy roots for a *subject*: only the roles it is (transitively) assigned.
 
-        Unlike :meth:`_closure` the subject itself is never a root, so a JWT ``sub``
-        that happens to equal a role slug ("admin", "viewer") cannot inherit that
-        role's policy without a real assignment. A subject genuinely assigned a role
-        of the same name still gets it -- that arrives via ``_direct_roles``.
+        Subjects and roles share one namespace in ``authz_grouping``: role inheritance
+        and a user's assignment are both written by :meth:`assign`, so an edge out of a
+        name cannot be attributed to one or the other. Two consequences, both handled
+        here, and neither reachable through :meth:`_closure` (which is for token-carried
+        roles, where the seed IS legitimately a role):
+
+        1. The subject is never a policy root, so a ``sub`` equal to a role slug cannot
+           pick up that role's own rows.
+        2. A ``sub`` equal to a name used as a role is refused outright. Otherwise the
+           traversal would follow that role's INHERITANCE edges and hand the caller
+           everything the role inherits -- ``sub="senior"`` collecting ``base``'s policy
+           with no assignment at all.
+
+        (2) fails closed: a real user whose id collides with a role name loses access
+        rather than gaining someone else's. Keep subject ids and role slugs disjoint
+        (emails or opaque ids for users) and the case never arises.
         """
+        if self._is_role_name(subject):
+            self._log.warning(
+                "authz: subject %r collides with a role name and was refused. Subject ids and role "
+                "slugs share one namespace, so this identity is ambiguous and is denied rather than "
+                "resolved. Rename the role or use opaque subject ids (e.g. emails).",
+                subject,
+            )
+            return set()
         principals: Set[str] = set()
         for role in self._direct_roles(subject):
             principals |= self._closure(role)
@@ -265,6 +297,21 @@ class NativePolicyEngine(PolicyEngine):
 
     def unassign(self, subject: str, role: str) -> None:
         self._persist_grouping(subject, role, add=False)
+
+    def replace_subject_roles(self, subject: str, role: str) -> None:
+        """Atomically make ``role`` the subject's only role.
+
+        One transaction, so there is no instant at which the subject holds zero roles
+        (a request in flight during a promote/demote would be denied) and no interleaving
+        in which two concurrent assigns each clear only the roles they saw and leave the
+        subject holding both. Doing it as read-then-unassign-then-assign gives both.
+        """
+        self._require_engine()
+        import sqlalchemy as sa
+
+        with self._engine.begin() as conn:
+            conn.execute(sa.delete(self._group_tbl).where(self._group_tbl.c.subject == subject))
+            conn.execute(sa.insert(self._group_tbl).values(subject=subject, role=role))
 
     def roles_of(self, subject: str) -> List[str]:
         return sorted(self._direct_roles(subject))

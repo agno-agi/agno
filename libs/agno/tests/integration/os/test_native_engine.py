@@ -353,9 +353,61 @@ def test_subject_named_like_a_role_inherits_nothing():
     assert eng.check_resource("agents", "public-agent", "read", subject="viewer") is False
     assert eng.accessible_resource_ids("agents", "read", subject="viewer") == set()
 
-    # a real assignment still works, including when the subject shares the role's name
-    eng.assign("admin", "admin")
-    assert eng.check_scope("agent_os:admin", subject="admin") is True
-
     # token-carried roles are still their own roots (unchanged behaviour)
     assert eng.check_resource("agents", "public-agent", "read", roles=["viewer"]) is True
+
+
+def test_subject_colliding_with_a_role_name_fails_closed():
+    """Subjects and roles share one namespace, so a colliding ``sub`` is ambiguous.
+
+    Role inheritance and a user's assignment are both written by ``assign``, so an
+    edge out of a name cannot be attributed to either. A subject that collides with
+    a role name is therefore refused rather than resolved -- otherwise the traversal
+    follows that role's INHERITANCE edges and hands over everything it inherits, even
+    though blocking the role's own rows (above) already succeeded.
+
+    Fail-closed means a user whose id collides loses access rather than gaining
+    someone else's; keep subject ids and role slugs disjoint.
+    """
+    eng = _engine()
+    eng.set_role_scopes("base", [("agents:*:read", "allow")])
+    eng.set_role_scopes("senior", [("agents:*:run", "allow")])
+    eng.assign("senior", "base")  # role inheritance: senior inherits base
+    eng.assign("dana", "senior")  # dana is a real member of senior
+
+    # the member gets both her own role's rows and the inherited ones
+    assert eng.check_resource("agents", "a1", "run", subject="dana") is True
+    assert eng.check_resource("agents", "a1", "read", subject="dana") is True
+
+    # impersonating the role name gets neither -- not its own rows, not the inherited ones
+    assert eng.check_resource("agents", "a1", "run", subject="senior") is False
+    assert eng.check_resource("agents", "a1", "read", subject="senior") is False
+    assert eng.check_resource("agents", "a1", "read", subject="base") is False
+
+    # a subject assigned a role of its own name is ambiguous too, so it fails closed
+    eng.assign("solo", "base")
+    eng.set_role_scopes("solo", [("agents:*:run", "allow")])
+    assert eng.check_resource("agents", "a1", "run", subject="solo") is False
+
+
+@pytest.mark.parametrize("has_members", [True, False])
+def test_roles_carrying_policy_are_never_impersonable(has_members):
+    """Every role that carries policy of its own is protected, members or not.
+
+    This is the shape every shipped cookbook seeds ("admin", "viewer", "member"),
+    and the one an attacker would guess.
+
+    Known residual: a PURE ALIAS role -- no policy rows of its own and nobody
+    assigned to it, existing only to inherit -- is byte-identical to a user with a
+    single assignment, so it cannot be told apart without a discriminator column on
+    authz_grouping. Such a role grants only what it inherits.
+    """
+    eng = _engine()
+    eng.set_role_scopes("admin", [("agent_os:admin", "allow")])
+    if has_members:
+        eng.assign("carol", "admin")
+
+    assert eng.check_scope("agent_os:admin", subject="admin") is False
+    assert eng.accessible_resource_ids("agents", "read", subject="admin") == set()
+    if has_members:
+        assert eng.check_scope("agent_os:admin", subject="carol") is True
