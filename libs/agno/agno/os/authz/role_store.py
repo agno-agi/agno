@@ -405,9 +405,17 @@ class ManagedRoleStore:
         before = self.roles_of(subject)
         if before == [role]:
             return  # already exactly this role; no change, no audit noise
-        for existing in before:
-            self._engine.unassign(subject, existing)
-        self._engine.assign(subject, role)
+        replace = getattr(self._engine, "replace_subject_roles", None)
+        if callable(replace):
+            # One transaction: no window where the subject holds nothing, and two
+            # concurrent assigns cannot each clear only what they saw and leave the
+            # subject holding both roles.
+            replace(subject, role)
+        else:
+            # Third-party PolicyEngine backends that don't offer an atomic replace.
+            for existing in before:
+                self._engine.unassign(subject, existing)
+            self._engine.assign(subject, role)
         self._emit(
             "user.assigned",
             subject,

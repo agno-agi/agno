@@ -358,3 +358,37 @@ def test_per_resource_grant_lists_only_that_resource():
     listing = client.get("/agents", headers={"Authorization": f"Bearer {_token('nick')}"})
     assert listing.status_code == 200
     assert {a["id"] for a in listing.json()} == {"research-agent"}
+
+
+def test_concurrent_assign_keeps_exactly_one_role():
+    """Regression: assign() must be atomic.
+
+    It was read-then-unassign-then-assign across three transactions. Two concurrent
+    assigns each cleared only the role their stale read had seen, so the subject ended
+    up durably holding BOTH -- a demote racing any other change silently left the user
+    with the privileged role they were supposed to lose. The same gap also left a window
+    with zero roles, denying requests in flight during any ordinary role change.
+    """
+    import threading
+
+    store = ManagedRoleStore(db_url=_db_url())
+    for role in ("base", "admin", "member"):
+        store.set_role_scopes(role, ["agents:*:read"])
+
+    for _ in range(25):
+        store.assign("bob", "base")  # neither contender equals the current role
+        barrier = threading.Barrier(2)
+
+        def assign_role(role):
+            barrier.wait()
+            store.assign("bob", role)
+
+        threads = [threading.Thread(target=assign_role, args=(r,)) for r in ("admin", "member")]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        roles = store.roles_of("bob")
+        assert len(roles) == 1, f"one role per subject violated: {roles}"
+        assert roles[0] in ("admin", "member")
