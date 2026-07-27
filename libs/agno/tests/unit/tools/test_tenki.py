@@ -1,6 +1,8 @@
 import asyncio
 import base64
 import json
+import os
+import signal
 import subprocess
 import sys
 from concurrent.futures import ThreadPoolExecutor
@@ -14,6 +16,10 @@ import pytest
 
 from agno.run import RunContext
 from agno.tools.tenki import BOUNDED_COMMAND_RUNNER, TenkiTools
+
+
+class SessionNotFoundError(Exception):
+    pass
 
 
 @dataclass
@@ -266,7 +272,10 @@ class FakeClient:
         return sandbox
 
     def get(self, sandbox_id: str):
-        return self.sandboxes[sandbox_id]
+        try:
+            return self.sandboxes[sandbox_id]
+        except KeyError as error:
+            raise SessionNotFoundError(sandbox_id) from error
 
     def list(self, *, workspace_id: str | None = None, tags: list[str] | None = None):
         self.list_options.append({"workspace_id": workspace_id, "tags": tags})
@@ -369,7 +378,10 @@ class FakeAsyncClient:
         return sandbox
 
     async def get(self, sandbox_id: str):
-        return self.sandboxes[sandbox_id]
+        try:
+            return self.sandboxes[sandbox_id]
+        except KeyError as error:
+            raise SessionNotFoundError(sandbox_id) from error
 
     async def list(self, *, workspace_id: str | None = None, tags: list[str] | None = None):
         self.list_options.append({"workspace_id": workspace_id, "tags": tags})
@@ -556,6 +568,89 @@ async def test_separate_async_toolkits_converge_on_one_server_claimed_sandbox() 
     assert second_context.session_state["tenki_sandbox_id"] == "async-sandbox-1"
 
 
+def test_claim_reconciliation_retries_until_created_sandbox_is_visible(monkeypatch) -> None:
+    client = FakeClient()
+    tools = TenkiTools(client=client, async_client=FakeAsyncClient())
+    run_context = RunContext(run_id="run-1", session_id="session-1", session_state={})
+    original_list = client.list
+    post_create_list_calls = 0
+
+    def eventually_consistent_list(*, workspace_id=None, tags=None):
+        nonlocal post_create_list_calls
+        if client.created_ids:
+            post_create_list_calls += 1
+            if post_create_list_calls < 3:
+                return []
+        return original_list(workspace_id=workspace_id, tags=tags)
+
+    monkeypatch.setattr(client, "list", eventually_consistent_list)
+    monkeypatch.setattr("agno.tools.tenki.CLAIM_RECONCILIATION_DELAYS", (0.0, 0.0, 0.0))
+
+    tools.run_code(run_context, "print('eventually visible')")
+
+    assert post_create_list_calls == 3
+    assert client.sandboxes["sandbox-1"].close_calls == 0
+    assert run_context.session_state is not None
+    assert run_context.session_state["tenki_sandbox_id"] == "sandbox-1"
+
+
+def test_claim_reconciliation_list_failure_keeps_healthy_created_sandbox(monkeypatch) -> None:
+    client = FakeClient()
+    tools = TenkiTools(client=client, async_client=FakeAsyncClient())
+    run_context = RunContext(run_id="run-1", session_id="session-1", session_state={})
+
+    def failing_list(*, workspace_id=None, tags=None):
+        if client.created_ids:
+            raise RuntimeError("temporary list failure")
+        return []
+
+    monkeypatch.setattr(client, "list", failing_list)
+    monkeypatch.setattr("agno.tools.tenki.CLAIM_RECONCILIATION_DELAYS", (0.0, 0.0))
+
+    result = json.loads(tools.run_code(run_context, "print('still usable')"))
+
+    assert result["status"] == "success"
+    assert client.sandboxes["sandbox-1"].close_calls == 0
+    assert run_context.session_state is not None
+    assert run_context.session_state["tenki_sandbox_id"] == "sandbox-1"
+
+
+def test_duplicate_cleanup_failure_does_not_discard_claim_winner(monkeypatch) -> None:
+    client = FakeClient()
+    tools = TenkiTools(client=client, async_client=FakeAsyncClient())
+    run_context = RunContext(run_id="run-1", session_id="shared-session", session_state={})
+    winner = FakeSandbox("sandbox-0", tags=[tools._claim_tag(run_context)])
+    client.sandboxes[winner.id] = winner
+    original_create = client.create
+    original_list = client.list
+
+    def create_with_failed_cleanup(**kwargs):
+        sandbox = original_create(**kwargs)
+
+        def fail_close() -> None:
+            sandbox.close_calls += 1
+            raise RuntimeError("temporary close failure")
+
+        sandbox.close = fail_close
+        return sandbox
+
+    def hide_winner_until_creation(*, workspace_id=None, tags=None):
+        if not client.created_ids:
+            return []
+        return original_list(workspace_id=workspace_id, tags=tags)
+
+    monkeypatch.setattr(client, "create", create_with_failed_cleanup)
+    monkeypatch.setattr(client, "list", hide_winner_until_creation)
+
+    result = json.loads(tools.run_code(run_context, "print('winner remains usable')"))
+
+    assert result["status"] == "success"
+    assert client.sandboxes["sandbox-1"].close_calls == 1
+    assert winner.exec_calls
+    assert run_context.session_state is not None
+    assert run_context.session_state["tenki_sandbox_id"] == winner.id
+
+
 def test_failed_readiness_terminates_registered_allocation_and_clears_state(monkeypatch) -> None:
     client = FakeClient()
     tools = TenkiTools(client=client, async_client=FakeAsyncClient())
@@ -656,6 +751,24 @@ def test_sandbox_max_duration_can_be_overridden() -> None:
     tools.run_code(run_context, "print('bounded sandbox')")
 
     assert client.create_options[0]["max_duration"] == 600
+
+
+def test_auto_created_sandboxes_require_a_bounded_lifetime() -> None:
+    with pytest.raises(ValueError, match="require a bounded max duration"):
+        TenkiTools(
+            client=FakeClient(),
+            async_client=FakeAsyncClient(),
+            sandbox_max_duration=None,
+        )
+
+    tools = TenkiTools(
+        client=FakeClient(),
+        async_client=FakeAsyncClient(),
+        auto_create_sandbox=False,
+        sandbox_max_duration=None,
+    )
+
+    assert tools.auto_create_sandbox is False
 
 
 def test_workspace_resolution_is_delegated_to_the_sdk() -> None:
@@ -762,6 +875,98 @@ def test_paused_session_sandbox_is_resumed_before_use() -> None:
     assert sandbox.exec_calls
 
 
+def test_failed_resume_replaces_an_owned_session_sandbox(monkeypatch) -> None:
+    client = FakeClient()
+    paused = FakeSandbox("paused-sandbox")
+    paused.state = "PAUSED"
+    client.sandboxes[paused.id] = paused
+    tools = TenkiTools(client=client, async_client=FakeAsyncClient())
+    run_context = RunContext(
+        run_id="run-1",
+        session_id="session-1",
+        session_state={
+            "tenki_sandbox_id": paused.id,
+            "tenki_sandbox_owned": True,
+        },
+    )
+
+    def fail_resume() -> None:
+        paused.resume_calls += 1
+        raise RuntimeError("resume failed")
+
+    monkeypatch.setattr(paused, "resume", fail_resume)
+
+    tools.run_code(run_context, "print('replacement')")
+
+    assert paused.resume_calls == 1
+    assert paused.close_calls == 1
+    assert client.created_ids == ["sandbox-1"]
+    assert run_context.session_state is not None
+    assert run_context.session_state["tenki_sandbox_id"] == "sandbox-1"
+
+
+async def test_async_failed_resume_replaces_an_owned_session_sandbox(monkeypatch) -> None:
+    async_client = FakeAsyncClient()
+    paused = FakeAsyncSandbox("paused-sandbox")
+    paused.state = "PAUSED"
+    async_client.sandboxes[paused.id] = paused
+    tools = TenkiTools(client=FakeClient(), async_client=async_client)
+    run_context = RunContext(
+        run_id="run-1",
+        session_id="session-1",
+        session_state={
+            "tenki_sandbox_id": paused.id,
+            "tenki_sandbox_owned": True,
+        },
+    )
+
+    async def fail_resume() -> None:
+        paused.resume_calls += 1
+        raise RuntimeError("resume failed")
+
+    monkeypatch.setattr(paused, "resume", fail_resume)
+
+    await tools.arun_code(run_context, "print('replacement')")
+
+    assert paused.resume_calls == 1
+    assert paused.close_calls == 1
+    assert async_client.created_ids == ["async-sandbox-1"]
+    assert run_context.session_state is not None
+    assert run_context.session_state["tenki_sandbox_id"] == "async-sandbox-1"
+
+
+def test_retryable_resume_failure_preserves_the_owned_sandbox(monkeypatch) -> None:
+    class RetryableResumeError(Exception):
+        retryable = True
+
+    client = FakeClient()
+    paused = FakeSandbox("paused-sandbox")
+    paused.state = "PAUSED"
+    client.sandboxes[paused.id] = paused
+    tools = TenkiTools(client=client, async_client=FakeAsyncClient())
+    run_context = RunContext(
+        run_id="run-1",
+        session_id="session-1",
+        session_state={
+            "tenki_sandbox_id": paused.id,
+            "tenki_sandbox_owned": True,
+        },
+    )
+
+    def fail_resume() -> None:
+        raise RetryableResumeError("temporary resume failure")
+
+    monkeypatch.setattr(paused, "resume", fail_resume)
+
+    with pytest.raises(RetryableResumeError, match="temporary resume failure"):
+        tools.run_code(run_context, "print('retry later')")
+
+    assert paused.close_calls == 0
+    assert client.created_ids == []
+    assert run_context.session_state is not None
+    assert run_context.session_state["tenki_sandbox_id"] == paused.id
+
+
 def test_terminated_session_sandbox_is_replaced_automatically() -> None:
     client = FakeClient()
     expired = FakeSandbox("expired-sandbox")
@@ -802,6 +1007,26 @@ def test_missing_session_sandbox_is_replaced_automatically() -> None:
     session_state = run_context.session_state
     assert session_state is not None
     assert session_state["tenki_sandbox_id"] == "sandbox-1"
+
+
+def test_unrelated_key_error_is_not_treated_as_a_missing_sandbox(monkeypatch) -> None:
+    client = FakeClient()
+    tools = TenkiTools(client=client, async_client=FakeAsyncClient())
+    run_context = RunContext(
+        run_id="run-1",
+        session_id="session-1",
+        session_state={"tenki_sandbox_id": "existing-sandbox"},
+    )
+
+    def fail_get(sandbox_id: str):
+        raise KeyError("unrelated SDK bug")
+
+    monkeypatch.setattr(client, "get", fail_get)
+
+    with pytest.raises(KeyError, match="unrelated SDK bug"):
+        tools.run_code(run_context, "print('must not replace')")
+
+    assert client.created_ids == []
 
 
 def test_auto_create_can_be_disabled() -> None:
@@ -880,6 +1105,24 @@ async def test_async_get_sandbox_status_does_not_create_a_sandbox() -> None:
     assert run_context.session_state == {}
 
 
+def test_each_tenki_function_can_be_disabled() -> None:
+    tools = TenkiTools(
+        client=FakeClient(),
+        async_client=FakeAsyncClient(),
+        enable_run_code=False,
+        enable_run_shell_command=False,
+        enable_create_file=False,
+        enable_read_file=False,
+        enable_list_files=False,
+        enable_delete_file=False,
+        enable_change_directory=False,
+        enable_get_sandbox_status=False,
+    )
+
+    assert tools.get_functions() == {}
+    assert tools.get_async_functions() == {}
+
+
 def test_terminate_sandbox_is_opt_in_and_requires_confirmation() -> None:
     client = FakeClient()
     default_tools = TenkiTools(client=FakeClient(), async_client=FakeAsyncClient())
@@ -935,6 +1178,27 @@ def test_terminate_sandbox_never_creates_or_resumes_a_sandbox() -> None:
     assert empty_client.created_ids == []
     assert paused.resume_calls == 0
     assert paused.close_calls == 1
+
+
+def test_terminating_a_pinned_sandbox_does_not_unpin_the_shared_toolkit() -> None:
+    client = FakeClient()
+    pinned = FakeSandbox("pinned-sandbox")
+    client.sandboxes[pinned.id] = pinned
+    tools = TenkiTools(
+        client=client,
+        async_client=FakeAsyncClient(),
+        sandbox_id=pinned.id,
+        enable_terminate_sandbox=True,
+    )
+    first_context = RunContext(run_id="run-1", session_id="session-1", session_state={})
+    second_context = RunContext(run_id="run-2", session_id="session-2", session_state={})
+
+    tools.terminate_sandbox(first_context)
+
+    assert tools.sandbox_id == pinned.id
+    with pytest.raises(RuntimeError, match="is in terminal state TERMINATED"):
+        tools.run_code(second_context, "print('must not auto-create')")
+    assert client.created_ids == []
 
 
 async def test_async_run_code_uses_the_native_async_client() -> None:
@@ -1034,6 +1298,8 @@ def test_remote_command_runner_drains_but_does_not_retain_unbounded_output(tmp_p
             str(command_path),
             str(tmp_path),
             "41",
+            "30",
+            "2",
         ],
         capture_output=True,
         text=True,
@@ -1048,6 +1314,88 @@ def test_remote_command_runner_drains_but_does_not_retain_unbounded_output(tmp_p
     assert len(base64.b64decode(collected["stderr"])) == 41
 
 
+def test_remote_command_runner_imports_files_from_the_working_directory(tmp_path) -> None:
+    (tmp_path / "helper.py").write_text("VALUE = 42\n")
+    command_directory = tmp_path / ".agno" / "commands" / "test"
+    command_directory.mkdir(parents=True)
+    command_path = command_directory / "command.py"
+    command_path.write_text("import helper\nprint(helper.VALUE)\n")
+
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            BOUNDED_COMMAND_RUNNER,
+            "python",
+            str(command_path),
+            str(tmp_path),
+            "100",
+            "30",
+            "2",
+        ],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    collected = json.loads(completed.stdout)
+
+    assert collected["exit_code"] == 0
+    assert base64.b64decode(collected["stdout"]).decode() == "42\n"
+    assert base64.b64decode(collected["stderr"]).decode() == ""
+
+
+def test_remote_command_runner_terminates_the_user_process_group_on_timeout(tmp_path) -> None:
+    child_pid_path = tmp_path / "child.pid"
+    command_path = tmp_path / "command.py"
+    command_path.write_text(
+        "import pathlib\n"
+        "import subprocess\n"
+        "import sys\n"
+        "import time\n"
+        "child = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)'])\n"
+        f"pathlib.Path({str(child_pid_path)!r}).write_text(str(child.pid))\n"
+    )
+    child_pid = None
+
+    try:
+        completed = subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                BOUNDED_COMMAND_RUNNER,
+                "python",
+                str(command_path),
+                str(tmp_path),
+                "100",
+                "0.2",
+                "0.1",
+            ],
+            capture_output=True,
+            text=True,
+            check=True,
+            timeout=5,
+        )
+        collected = json.loads(completed.stdout)
+        child_pid = int(child_pid_path.read_text())
+
+        assert collected["exit_code"] == 124
+        assert collected["timed_out"] is True
+        for _ in range(100):
+            try:
+                os.kill(child_pid, 0)
+            except ProcessLookupError:
+                break
+            sleep(0.01)
+        else:
+            pytest.fail(f"timed-out child process {child_pid} is still running")
+    finally:
+        if child_pid is not None:
+            try:
+                os.kill(child_pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+
+
 def test_read_file_uses_a_bounded_stream() -> None:
     client = FakeClient()
     tools = TenkiTools(client=client, async_client=FakeAsyncClient(), max_output_chars=10)
@@ -1057,9 +1405,9 @@ def test_read_file_uses_a_bounded_stream() -> None:
     content = tools.read_file(run_context, "large.txt")
 
     assert content.startswith("x" * 10)
-    assert "[File content truncated after 10 characters; original size: 100000 bytes.]" in content
+    assert "[File content truncated after 10 characters.]" in content
     sandbox = client.sandboxes["sandbox-1"]
-    assert sandbox.fs.read_stream_calls[-1]["length"] == 41
+    assert sandbox.fs.read_stream_calls[-1]["length"] == 42
 
 
 async def test_async_read_file_uses_a_bounded_stream() -> None:
@@ -1071,9 +1419,9 @@ async def test_async_read_file_uses_a_bounded_stream() -> None:
     content = await tools.aread_file(run_context, "large.txt")
 
     assert content.startswith("x" * 10)
-    assert "[File content truncated after 10 characters; original size: 100000 bytes.]" in content
+    assert "[File content truncated after 10 characters.]" in content
     sandbox = async_client.sandboxes["async-sandbox-1"]
-    assert sandbox.fs.read_stream_calls[-1]["length"] == 41
+    assert sandbox.fs.read_stream_calls[-1]["length"] == 42
 
 
 def test_create_and_read_file_use_the_session_working_directory() -> None:
@@ -1135,6 +1483,36 @@ def test_delete_file_cannot_delete_the_current_working_directory() -> None:
         tools.delete_file(run_context, ".")
 
     assert client.created_ids == []
+
+
+def test_delete_file_cannot_delete_an_ancestor_of_the_working_directory() -> None:
+    client = FakeClient()
+    tools = TenkiTools(client=client, async_client=FakeAsyncClient())
+    run_context = RunContext(run_id="run-1", session_id="session-1", session_state={})
+    tools.run_code(run_context, "print('create sandbox')")
+    sandbox = client.sandboxes["sandbox-1"]
+    sandbox.fs.directories.update({"/home/tenki/project", "/home/tenki/project/nested"})
+    tools.change_directory(run_context, "project/nested")
+
+    with pytest.raises(ValueError, match="Cannot delete the current Tenki working directory"):
+        tools.delete_file(run_context, "/home/tenki/project")
+
+    assert "/home/tenki/project/nested" in sandbox.fs.directories
+
+
+async def test_async_delete_file_cannot_delete_an_ancestor_of_the_working_directory() -> None:
+    async_client = FakeAsyncClient()
+    tools = TenkiTools(client=FakeClient(), async_client=async_client)
+    run_context = RunContext(run_id="run-1", session_id="session-1", session_state={})
+    await tools.arun_code(run_context, "print('create sandbox')")
+    sandbox = async_client.sandboxes["async-sandbox-1"]
+    sandbox.fs.directories.update({"/home/tenki/project", "/home/tenki/project/nested"})
+    await tools.achange_directory(run_context, "project/nested")
+
+    with pytest.raises(ValueError, match="Cannot delete the current Tenki working directory"):
+        await tools.adelete_file(run_context, "/home/tenki/project")
+
+    assert "/home/tenki/project/nested" in sandbox.fs.directories
 
 
 def test_change_directory_updates_the_cwd_used_by_commands() -> None:

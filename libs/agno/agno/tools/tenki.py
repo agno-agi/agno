@@ -6,6 +6,7 @@ import posixpath
 from os import getenv
 from textwrap import dedent
 from threading import Lock
+from time import sleep
 from typing import Any, Callable, Dict, Optional
 from uuid import uuid4
 from weakref import WeakKeyDictionary
@@ -18,6 +19,8 @@ from agno.utils.log import log_warning
 DEFAULT_WORKING_DIRECTORY = "/home/tenki"
 DEFAULT_MAX_OUTPUT_CHARS = 20_000
 DEFAULT_SANDBOX_MAX_DURATION = 900
+CLAIM_RECONCILIATION_DELAYS = (0.0, 0.05, 0.1, 0.2)
+COMMAND_TERMINATION_GRACE_SECONDS = 2
 CREATION_LOCK_STRIPES = 64
 MAX_UTF8_BYTES_PER_CHAR = 4
 READ_STREAM_CHUNK_BYTES = 64 * 1024
@@ -28,18 +31,32 @@ WORKING_DIRECTORY_STATE_KEY = "tenki_working_directory"
 BOUNDED_COMMAND_RUNNER = """\
 import base64
 import json
+import os
+import signal
 import subprocess
 import sys
 import threading
+import time
 
-mode, command_path, cwd, raw_limit = sys.argv[1:]
+mode, command_path, cwd, raw_limit, raw_timeout, raw_termination_grace = sys.argv[1:]
 limit = int(raw_limit)
+timeout = float(raw_timeout)
+termination_grace = float(raw_termination_grace)
 argv = (
     ["python3", command_path]
     if mode == "python"
     else ["bash", "-lc", 'command_path=$1; set --; source "$command_path"', "bash", command_path]
 )
-process = subprocess.Popen(argv, cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+env = os.environ.copy()
+env["PYTHONPATH"] = os.pathsep.join(part for part in (cwd, env.get("PYTHONPATH")) if part)
+process = subprocess.Popen(
+    argv,
+    cwd=cwd,
+    env=env,
+    start_new_session=True,
+    stdout=subprocess.PIPE,
+    stderr=subprocess.PIPE,
+)
 streams = (process.stdout, process.stderr)
 buffers = (bytearray(), bytearray())
 totals = [0, 0]
@@ -59,7 +76,39 @@ def drain(index):
 threads = [threading.Thread(target=drain, args=(index,)) for index in range(2)]
 for thread in threads:
     thread.start()
-exit_code = process.wait()
+deadline = time.monotonic() + timeout
+timed_out = False
+
+def terminate_process_group():
+    try:
+        os.killpg(process.pid, signal.SIGTERM)
+    except ProcessLookupError:
+        pass
+    if process.poll() is None:
+        try:
+            process.wait(timeout=termination_grace)
+        except subprocess.TimeoutExpired:
+            pass
+    try:
+        os.killpg(process.pid, signal.SIGKILL)
+    except ProcessLookupError:
+        pass
+    if process.poll() is None:
+        process.wait()
+
+try:
+    exit_code = process.wait(timeout=timeout)
+except subprocess.TimeoutExpired:
+    timed_out = True
+    terminate_process_group()
+    exit_code = 124
+if not timed_out:
+    for thread in threads:
+        thread.join(timeout=max(0, deadline - time.monotonic()))
+    if any(thread.is_alive() for thread in threads):
+        timed_out = True
+        terminate_process_group()
+        exit_code = 124
 for thread in threads:
     thread.join()
 
@@ -71,6 +120,7 @@ print(
             "stderr": base64.b64encode(buffers[1]).decode("ascii"),
             "stdout_bytes": totals[0],
             "stderr_bytes": totals[1],
+            "timed_out": timed_out,
         }
     )
 )
@@ -109,6 +159,14 @@ class TenkiTools(Toolkit):
         sandbox_max_duration: Optional[int] = DEFAULT_SANDBOX_MAX_DURATION,
         sandbox_id: Optional[str] = None,
         auto_create_sandbox: bool = True,
+        enable_run_code: bool = True,
+        enable_run_shell_command: bool = True,
+        enable_create_file: bool = True,
+        enable_read_file: bool = True,
+        enable_list_files: bool = True,
+        enable_delete_file: bool = True,
+        enable_change_directory: bool = True,
+        enable_get_sandbox_status: bool = True,
         enable_terminate_sandbox: bool = False,
         allow_inbound: bool = False,
         allow_outbound: bool = True,
@@ -137,6 +195,8 @@ class TenkiTools(Toolkit):
 
         assert client is not None
         assert async_client is not None
+        if command_timeout <= 0:
+            raise ValueError("command_timeout must be greater than zero")
         if max_output_chars is not None and max_output_chars <= 0:
             raise ValueError("max_output_chars must be greater than zero or None")
         if sandbox_max_duration is not None and sandbox_max_duration <= 0:
@@ -163,28 +223,39 @@ class TenkiTools(Toolkit):
             self.sandbox_options["workspace_id"] = workspace_id
         elif not self.sandbox_options.get("workspace_id") and getenv("TENKI_WORKSPACE_ID"):
             self.sandbox_options["workspace_id"] = getenv("TENKI_WORKSPACE_ID")
+        if auto_create_sandbox and sandbox_id is None and self.sandbox_options.get("max_duration") is None:
+            raise ValueError(
+                "Auto-created Tenki sandboxes require a bounded max duration; set sandbox_max_duration or "
+                "sandbox_options['max_duration']"
+            )
         self.instructions = instructions or DEFAULT_INSTRUCTIONS
 
-        tools: list[Callable[..., Any]] = [
-            self.run_code,
-            self.run_shell_command,
-            self.create_file,
-            self.read_file,
-            self.list_files,
-            self.delete_file,
-            self.change_directory,
-            self.get_sandbox_status,
-        ]
-        async_tools: list[tuple[Callable[..., Any], str]] = [
-            (self.arun_code, "run_code"),
-            (self.arun_shell_command, "run_shell_command"),
-            (self.acreate_file, "create_file"),
-            (self.aread_file, "read_file"),
-            (self.alist_files, "list_files"),
-            (self.adelete_file, "delete_file"),
-            (self.achange_directory, "change_directory"),
-            (self.aget_sandbox_status, "get_sandbox_status"),
-        ]
+        tools: list[Callable[..., Any]] = []
+        async_tools: list[tuple[Callable[..., Any], str]] = []
+        if enable_run_code:
+            tools.append(self.run_code)
+            async_tools.append((self.arun_code, "run_code"))
+        if enable_run_shell_command:
+            tools.append(self.run_shell_command)
+            async_tools.append((self.arun_shell_command, "run_shell_command"))
+        if enable_create_file:
+            tools.append(self.create_file)
+            async_tools.append((self.acreate_file, "create_file"))
+        if enable_read_file:
+            tools.append(self.read_file)
+            async_tools.append((self.aread_file, "read_file"))
+        if enable_list_files:
+            tools.append(self.list_files)
+            async_tools.append((self.alist_files, "list_files"))
+        if enable_delete_file:
+            tools.append(self.delete_file)
+            async_tools.append((self.adelete_file, "delete_file"))
+        if enable_change_directory:
+            tools.append(self.change_directory)
+            async_tools.append((self.achange_directory, "change_directory"))
+        if enable_get_sandbox_status:
+            tools.append(self.get_sandbox_status)
+            async_tools.append((self.aget_sandbox_status, "get_sandbox_status"))
         requires_confirmation_tools = list(kwargs.pop("requires_confirmation_tools", None) or [])
         if enable_terminate_sandbox:
             tools.append(self.terminate_sandbox)
@@ -278,6 +349,63 @@ class TenkiTools(Toolkit):
         sandboxes = await self._aclaimed_sandboxes(run_context)
         return min(sandboxes, key=lambda sandbox: sandbox.id) if sandboxes else None
 
+    def _reconcile_created_sandbox(self, run_context: RunContext, created_sandbox: Any) -> Any:
+        """Best-effort reconciliation after the created row reaches a read replica.
+
+        Tenki's list endpoint may be replica-backed, so a missing created row means the
+        result is too stale to arbitrate safely. Auto-created sandboxes always retain a
+        bounded lifetime as the cleanup backstop when reconciliation is inconclusive.
+        """
+        last_error: Optional[Exception] = None
+        for delay in CLAIM_RECONCILIATION_DELAYS:
+            if delay:
+                sleep(delay)
+            try:
+                sandboxes = self._claimed_sandboxes(run_context)
+            except Exception as error:
+                last_error = error
+                continue
+            if any(sandbox.id == created_sandbox.id for sandbox in sandboxes):
+                return min(sandboxes, key=lambda sandbox: sandbox.id)
+
+        if last_error is not None:
+            log_warning(
+                f"Could not reconcile Tenki sandbox claim after creating {created_sandbox.id}; "
+                f"continuing with the created sandbox: {last_error}"
+            )
+        else:
+            log_warning(
+                f"Tenki sandbox {created_sandbox.id} was not visible during claim reconciliation; "
+                "continuing with the created sandbox"
+            )
+        return created_sandbox
+
+    async def _areconcile_created_sandbox(self, run_context: RunContext, created_sandbox: Any) -> Any:
+        """Asynchronously reconcile a claim after the created row becomes visible."""
+        last_error: Optional[Exception] = None
+        for delay in CLAIM_RECONCILIATION_DELAYS:
+            if delay:
+                await asyncio.sleep(delay)
+            try:
+                sandboxes = await self._aclaimed_sandboxes(run_context)
+            except Exception as error:
+                last_error = error
+                continue
+            if any(sandbox.id == created_sandbox.id for sandbox in sandboxes):
+                return min(sandboxes, key=lambda sandbox: sandbox.id)
+
+        if last_error is not None:
+            log_warning(
+                f"Could not reconcile Tenki sandbox claim after creating {created_sandbox.id}; "
+                f"continuing with the created sandbox: {last_error}"
+            )
+        else:
+            log_warning(
+                f"Tenki sandbox {created_sandbox.id} was not visible during claim reconciliation; "
+                "continuing with the created sandbox"
+            )
+        return created_sandbox
+
     @staticmethod
     def _record_sandbox(state: Dict[str, Any], sandbox_id: str, *, owned: bool) -> None:
         state[SANDBOX_ID_STATE_KEY] = sandbox_id
@@ -305,8 +433,20 @@ class TenkiTools(Toolkit):
                 raise RuntimeError(f"Tenki sandbox {sandbox.id} is in terminal state {sandbox.state}")
             self._clear_sandbox_state(state, sandbox.id)
             return None
-        self._record_sandbox(state, sandbox.id, owned=self.sandbox_id is None)
-        return self._prepare_sandbox(sandbox)
+        owned = self.sandbox_id is None and state.get(SANDBOX_OWNED_STATE_KEY, True)
+        self._record_sandbox(state, sandbox.id, owned=owned)
+        try:
+            return self._prepare_sandbox(sandbox)
+        except Exception as error:
+            if not owned or getattr(error, "retryable", False):
+                raise
+            try:
+                sandbox.close()
+            except Exception as cleanup_error:
+                log_warning(f"Could not terminate unready Tenki sandbox {sandbox.id}: {cleanup_error}")
+            finally:
+                self._clear_sandbox_state(state, sandbox.id)
+            return None
 
     async def _aget_reusable_sandbox(self, run_context: RunContext) -> Optional[Any]:
         state = self._session_state(run_context)
@@ -330,8 +470,20 @@ class TenkiTools(Toolkit):
                 raise RuntimeError(f"Tenki sandbox {sandbox.id} is in terminal state {sandbox.state}")
             self._clear_sandbox_state(state, sandbox.id)
             return None
-        self._record_sandbox(state, sandbox.id, owned=self.sandbox_id is None)
-        return await self._aprepare_sandbox(sandbox)
+        owned = self.sandbox_id is None and state.get(SANDBOX_OWNED_STATE_KEY, True)
+        self._record_sandbox(state, sandbox.id, owned=owned)
+        try:
+            return await self._aprepare_sandbox(sandbox)
+        except Exception as error:
+            if not owned or getattr(error, "retryable", False):
+                raise
+            try:
+                await sandbox.close()
+            except Exception as cleanup_error:
+                log_warning(f"Could not terminate unready Tenki sandbox {sandbox.id}: {cleanup_error}")
+            finally:
+                self._clear_sandbox_state(state, sandbox.id)
+            return None
 
     def _get_or_create_sandbox(self, run_context: RunContext) -> Any:
         sandbox = self._get_reusable_sandbox(run_context)
@@ -349,11 +501,7 @@ class TenkiTools(Toolkit):
             self._record_sandbox(state, sandbox.id, owned=True)
             state[WORKING_DIRECTORY_STATE_KEY] = DEFAULT_WORKING_DIRECTORY
             try:
-                winner = self._find_claimed_sandbox(run_context) or sandbox
-                if winner.id != sandbox.id:
-                    sandbox.close()
-                    self._record_sandbox(state, winner.id, owned=True)
-                return self._prepare_sandbox(winner)
+                sandbox = self._prepare_sandbox(sandbox)
             except Exception:
                 if state.get(SANDBOX_ID_STATE_KEY) == sandbox.id:
                     try:
@@ -363,6 +511,15 @@ class TenkiTools(Toolkit):
                     finally:
                         self._clear_sandbox_state(state, sandbox.id)
                 raise
+            winner = self._reconcile_created_sandbox(run_context, sandbox)
+            if winner.id != sandbox.id:
+                self._record_sandbox(state, winner.id, owned=True)
+                try:
+                    sandbox.close()
+                except Exception as cleanup_error:
+                    log_warning(f"Could not terminate duplicate Tenki sandbox {sandbox.id}: {cleanup_error}")
+                return self._prepare_sandbox(winner)
+            return sandbox
 
     async def _aget_or_create_sandbox(self, run_context: RunContext) -> Any:
         sandbox = await self._aget_reusable_sandbox(run_context)
@@ -380,11 +537,7 @@ class TenkiTools(Toolkit):
             self._record_sandbox(state, sandbox.id, owned=True)
             state[WORKING_DIRECTORY_STATE_KEY] = DEFAULT_WORKING_DIRECTORY
             try:
-                winner = await self._afind_claimed_sandbox(run_context) or sandbox
-                if winner.id != sandbox.id:
-                    await sandbox.close()
-                    self._record_sandbox(state, winner.id, owned=True)
-                return await self._aprepare_sandbox(winner)
+                sandbox = await self._aprepare_sandbox(sandbox)
             except Exception:
                 if state.get(SANDBOX_ID_STATE_KEY) == sandbox.id:
                     try:
@@ -394,6 +547,15 @@ class TenkiTools(Toolkit):
                     finally:
                         self._clear_sandbox_state(state, sandbox.id)
                 raise
+            winner = await self._areconcile_created_sandbox(run_context, sandbox)
+            if winner.id != sandbox.id:
+                self._record_sandbox(state, winner.id, owned=True)
+                try:
+                    await sandbox.close()
+                except Exception as cleanup_error:
+                    log_warning(f"Could not terminate duplicate Tenki sandbox {sandbox.id}: {cleanup_error}")
+                return await self._aprepare_sandbox(winner)
+            return sandbox
 
     def _get_existing_sandbox(self, run_context: RunContext) -> Any:
         state = self._session_state(run_context)
@@ -447,7 +609,8 @@ class TenkiTools(Toolkit):
 
     @staticmethod
     def _is_missing_sandbox_error(error: Exception) -> bool:
-        return isinstance(error, KeyError) or error.__class__.__name__ == "SessionNotFoundError"
+        # Avoid importing the optional Tenki dependency when clients are injected in tests.
+        return error.__class__.__name__ == "SessionNotFoundError"
 
     def _truncate_command_output(self, text: str) -> tuple[str, bool]:
         if self.max_output_chars is None or len(text) <= self.max_output_chars:
@@ -475,16 +638,26 @@ class TenkiTools(Toolkit):
             payload["stderr_original_chars"] = len(result.stderr_text)
         return json.dumps(payload)
 
-    def _decode_bounded_output(self, data: bytes, total_bytes: int, label: str = "Output") -> tuple[str, bool]:
+    def _decode_bounded_output(
+        self,
+        data: bytes,
+        total_bytes: Optional[int],
+        label: str = "Output",
+        *,
+        was_truncated: bool = False,
+    ) -> tuple[str, bool]:
         text = data.decode("utf-8", errors="replace")
         if self.max_output_chars is None:
             return text, False
-        truncated = total_bytes > len(data) or len(text) > self.max_output_chars
+        truncated = (
+            was_truncated or (total_bytes is not None and total_bytes > len(data)) or len(text) > self.max_output_chars
+        )
         if not truncated:
             return text, False
+        original_size = f"; original size: {total_bytes} bytes" if total_bytes is not None else ""
         return (
             f"{text[: self.max_output_chars]}\n"
-            f"[{label} truncated after {self.max_output_chars} characters; original size: {total_bytes} bytes.]",
+            f"[{label} truncated after {self.max_output_chars} characters{original_size}.]",
             True,
         )
 
@@ -506,6 +679,8 @@ class TenkiTools(Toolkit):
         if stderr_truncated:
             payload["stderr_truncated"] = True
             payload["stderr_original_bytes"] = int(collected["stderr_bytes"])
+        if collected.get("timed_out"):
+            payload["timed_out"] = True
         return json.dumps(payload)
 
     def _command_capture_bytes(self) -> int:
@@ -528,8 +703,10 @@ class TenkiTools(Toolkit):
                 command_path,
                 working_directory,
                 str(self._command_capture_bytes()),
+                str(self.command_timeout),
+                str(COMMAND_TERMINATION_GRACE_SECONDS),
                 cwd=working_directory,
-                timeout=self.command_timeout,
+                timeout=self.command_timeout + COMMAND_TERMINATION_GRACE_SECONDS + 1,
             )
             if not result.ok:
                 return self._format_command_result(result)
@@ -559,8 +736,10 @@ class TenkiTools(Toolkit):
                 command_path,
                 working_directory,
                 str(self._command_capture_bytes()),
+                str(self.command_timeout),
+                str(COMMAND_TERMINATION_GRACE_SECONDS),
                 cwd=working_directory,
-                timeout=self.command_timeout,
+                timeout=self.command_timeout + COMMAND_TERMINATION_GRACE_SECONDS + 1,
             )
             if not result.ok:
                 return self._format_command_result(result)
@@ -578,8 +757,8 @@ class TenkiTools(Toolkit):
     def _read_bounded_text(self, filesystem: Any, path: str, label: str = "File content") -> str:
         if self.max_output_chars is None:
             return filesystem.read_text(path)
-        file_info = filesystem.stat(path)
-        read_length = min(file_info.size, self._command_capture_bytes())
+        capture_bytes = self._command_capture_bytes()
+        read_length = capture_bytes + 1
         data = bytearray()
         for chunk in filesystem.read_stream(
             path,
@@ -590,14 +769,20 @@ class TenkiTools(Toolkit):
             if remaining <= 0:
                 break
             data.extend(chunk[:remaining])
-        text, _ = self._decode_bounded_output(bytes(data), file_info.size, label)
+        was_truncated = len(data) > capture_bytes
+        text, _ = self._decode_bounded_output(
+            bytes(data[:capture_bytes]),
+            None,
+            label,
+            was_truncated=was_truncated,
+        )
         return text
 
     async def _aread_bounded_text(self, filesystem: Any, path: str, label: str = "File content") -> str:
         if self.max_output_chars is None:
             return await filesystem.read_text(path)
-        file_info = await filesystem.stat(path)
-        read_length = min(file_info.size, self._command_capture_bytes())
+        capture_bytes = self._command_capture_bytes()
+        read_length = capture_bytes + 1
         data = bytearray()
         async for chunk in filesystem.read_stream(
             path,
@@ -608,7 +793,13 @@ class TenkiTools(Toolkit):
             if remaining <= 0:
                 break
             data.extend(chunk[:remaining])
-        text, _ = self._decode_bounded_output(bytes(data), file_info.size, label)
+        was_truncated = len(data) > capture_bytes
+        text, _ = self._decode_bounded_output(
+            bytes(data[:capture_bytes]),
+            None,
+            label,
+            was_truncated=was_truncated,
+        )
         return text
 
     @staticmethod
@@ -660,7 +851,7 @@ class TenkiTools(Toolkit):
         """Create or overwrite a text file in the Tenki sandbox.
 
         Args:
-            path: File path relative to the current working directory.
+            path: File path relative to the current working directory, or an absolute path within /home/tenki.
             content: Text content to write.
         """
         resolved_path = self._resolve_path(run_context, path)
@@ -675,7 +866,7 @@ class TenkiTools(Toolkit):
         """Create or overwrite a text file asynchronously in the Tenki sandbox.
 
         Args:
-            path: File path relative to the current working directory.
+            path: File path relative to the current working directory, or an absolute path within /home/tenki.
             content: Text content to write.
         """
         resolved_path = self._resolve_path(run_context, path)
@@ -690,7 +881,7 @@ class TenkiTools(Toolkit):
         """Read a text file from the Tenki sandbox.
 
         Args:
-            path: File path relative to the current working directory.
+            path: File path relative to the current working directory, or an absolute path within /home/tenki.
         """
         resolved_path = self._resolve_path(run_context, path)
         sandbox = self._get_or_create_sandbox(run_context)
@@ -700,7 +891,7 @@ class TenkiTools(Toolkit):
         """Read a text file asynchronously from the Tenki sandbox.
 
         Args:
-            path: File path relative to the current working directory.
+            path: File path relative to the current working directory, or an absolute path within /home/tenki.
         """
         resolved_path = self._resolve_path(run_context, path)
         sandbox = await self._aget_or_create_sandbox(run_context)
@@ -722,7 +913,7 @@ class TenkiTools(Toolkit):
         """List files in a Tenki sandbox directory.
 
         Args:
-            path: Directory path relative to the current working directory.
+            path: Directory path relative to the current working directory, or an absolute path within /home/tenki.
             include_hidden: Include hidden directory entries.
         """
         resolved_path = self._resolve_path(run_context, path)
@@ -740,7 +931,7 @@ class TenkiTools(Toolkit):
         """List files asynchronously in a Tenki sandbox directory.
 
         Args:
-            path: Directory path relative to the current working directory.
+            path: Directory path relative to the current working directory, or an absolute path within /home/tenki.
             include_hidden: Include hidden directory entries.
         """
         resolved_path = self._resolve_path(run_context, path)
@@ -758,10 +949,11 @@ class TenkiTools(Toolkit):
         """Delete a file or directory from the Tenki sandbox.
 
         Args:
-            path: Path relative to the current working directory.
+            path: Path relative to the current working directory, or an absolute path within /home/tenki.
         """
         resolved_path = self._resolve_path(run_context, path)
-        if resolved_path == self._session_state(run_context)[WORKING_DIRECTORY_STATE_KEY]:
+        working_directory = self._session_state(run_context)[WORKING_DIRECTORY_STATE_KEY]
+        if posixpath.commonpath([resolved_path, working_directory]) == resolved_path:
             raise ValueError("Cannot delete the current Tenki working directory")
         sandbox = self._get_or_create_sandbox(run_context)
         sandbox.fs.remove(resolved_path, recursive=True)
@@ -771,10 +963,11 @@ class TenkiTools(Toolkit):
         """Delete a file or directory asynchronously from the Tenki sandbox.
 
         Args:
-            path: Path relative to the current working directory.
+            path: Path relative to the current working directory, or an absolute path within /home/tenki.
         """
         resolved_path = self._resolve_path(run_context, path)
-        if resolved_path == self._session_state(run_context)[WORKING_DIRECTORY_STATE_KEY]:
+        working_directory = self._session_state(run_context)[WORKING_DIRECTORY_STATE_KEY]
+        if posixpath.commonpath([resolved_path, working_directory]) == resolved_path:
             raise ValueError("Cannot delete the current Tenki working directory")
         sandbox = await self._aget_or_create_sandbox(run_context)
         await sandbox.fs.remove(resolved_path, recursive=True)
@@ -784,7 +977,7 @@ class TenkiTools(Toolkit):
         """Change the working directory used by subsequent Tenki tools.
 
         Args:
-            path: Directory path relative to the current working directory.
+            path: Directory path relative to the current working directory, or an absolute path within /home/tenki.
         """
         resolved_path = self._resolve_path(run_context, path)
         sandbox = self._get_or_create_sandbox(run_context)
@@ -798,7 +991,7 @@ class TenkiTools(Toolkit):
         """Change the working directory asynchronously for subsequent Tenki tools.
 
         Args:
-            path: Directory path relative to the current working directory.
+            path: Directory path relative to the current working directory, or an absolute path within /home/tenki.
         """
         resolved_path = self._resolve_path(run_context, path)
         sandbox = await self._aget_or_create_sandbox(run_context)
@@ -880,8 +1073,6 @@ class TenkiTools(Toolkit):
             sandbox.close()
         state = self._session_state(run_context)
         self._clear_sandbox_state(state, sandbox.id)
-        if self.sandbox_id == sandbox.id:
-            self.sandbox_id = None
         return json.dumps({"status": "success", "sandbox_id": sandbox.id, "state": sandbox.state})
 
     async def aterminate_sandbox(self, run_context: RunContext) -> str:
@@ -891,6 +1082,4 @@ class TenkiTools(Toolkit):
             await sandbox.close()
         state = self._session_state(run_context)
         self._clear_sandbox_state(state, sandbox.id)
-        if self.sandbox_id == sandbox.id:
-            self.sandbox_id = None
         return json.dumps({"status": "success", "sandbox_id": sandbox.id, "state": sandbox.state})
