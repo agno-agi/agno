@@ -401,7 +401,7 @@ class TestNonStreamingRoutes:
     async def test_mixed_files_categorized_correctly(self):
         agent_mock = make_agent_mock()
         mock_slack = make_slack_mock(token="xoxb-test")
-        mock_httpx = make_httpx_mock([b"csv-data", b"img-data", b"zip-data"])
+        mock_httpx = make_httpx_mock([b"csv-data", b"img-data", b"mystery-data"])
 
         with (
             patch("agno.os.interfaces.slack.router.verify_slack_signature", return_value=True),
@@ -417,7 +417,7 @@ class TestNonStreamingRoutes:
                 [
                     {"id": "F5", "name": "data.csv", "mimetype": "text/csv"},
                     {"id": "F6", "name": "pic.jpg", "mimetype": "image/jpeg"},
-                    {"id": "F7", "name": "bundle.zip", "mimetype": "application/zip"},
+                    {"id": "F7", "name": "mystery.xyz", "mimetype": "application/x-mystery"},
                 ]
             )
             resp = make_signed_request(client, body)
@@ -435,7 +435,7 @@ class TestNonStreamingRoutes:
     async def test_non_whitelisted_mime_type_passes_none(self):
         agent_mock = make_agent_mock()
         mock_slack = make_slack_mock(token="xoxb-test")
-        mock_httpx = make_httpx_mock(b"zipdata")
+        mock_httpx = make_httpx_mock(b"mysterydata")
 
         with (
             patch("agno.os.interfaces.slack.router.verify_slack_signature", return_value=True),
@@ -447,14 +447,14 @@ class TestNonStreamingRoutes:
             from fastapi.testclient import TestClient
 
             client = TestClient(app)
-            body = slack_event_with_files([{"id": "F1", "name": "archive.zip", "mimetype": "application/zip"}])
+            body = slack_event_with_files([{"id": "F1", "name": "mystery.xyz", "mimetype": "application/x-mystery"}])
             resp = make_signed_request(client, body)
 
         assert resp.status_code == 200
         await wait_for_call(agent_mock.arun)
         uploaded_file = agent_mock.arun.call_args.kwargs["files"][0]
         assert uploaded_file.mime_type is None
-        assert uploaded_file.content == b"zipdata"
+        assert uploaded_file.content == b"mysterydata"
 
     @pytest.mark.asyncio
     async def test_non_streaming_clears_status_after_response(self):
