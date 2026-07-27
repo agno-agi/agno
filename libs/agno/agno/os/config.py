@@ -132,6 +132,10 @@ class AuthorizationConfig(BaseModel):
     algorithm: Optional[str] = None
     verify_audience: Optional[bool] = None
     audience: Optional[str] = None
+    # Expected token issuer (the ``iss`` claim). When set, a token minted by anyone
+    # else is rejected even if its signature verifies -- pin this whenever more than
+    # one IdP can produce tokens your verification keys accept.
+    issuer: Optional[str] = None
     admin_scope: Optional[str] = None
     # Pluggable authorization strategy. When None, AgentOS uses scope-based RBAC
     # (JWT/PAT scopes, no external dependency). Supply an AuthorizationProvider to
