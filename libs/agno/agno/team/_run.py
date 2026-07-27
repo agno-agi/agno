@@ -7663,6 +7663,7 @@ async def _acontinue_run_background_stream(
 
         slot_cm = background_run_slot(run_id=_run_id)
         slot_held = False
+        producer_terminal: Optional[RunStatus] = None
         try:
             await slot_cm.__aenter__()
             slot_held = True
@@ -7713,12 +7714,21 @@ async def _acontinue_run_background_stream(
 
         except RunCancelledException:
             # Cancelled while waiting for a slot — execution never started, so
-            # persist CANCELLED and deregister the run here.
+            # persist CANCELLED and deregister the run here. HITL continues may
+            # arrive with run_response=None (router passes only run_id): load
+            # the run from the session so the cancel is never silently skipped.
             log_info(f"Background continue-run stream {_run_id} cancelled while waiting for a slot")
+            producer_terminal = RunStatus.cancelled
             try:
-                if run_response is not None:
-                    run_response.status = RunStatus.cancelled
-                    await apersist_run_transition(team, "team", session_id, run_response, user_id=user_id)
+                cancelled_run = run_response
+                if cancelled_run is None:
+                    # HITL continues arrive with run_response=None: load the
+                    # run so the terminal persist is never silently skipped
+                    lookup_session = await _aread_or_create_session(team, session_id=session_id, user_id=user_id)
+                    cancelled_run = lookup_session.get_run(_run_id)
+                if cancelled_run is not None:
+                    cancelled_run.status = RunStatus.cancelled
+                    await apersist_run_transition(team, "team", session_id, cancelled_run, user_id=user_id)
             except Exception:
                 log_error(
                     f"Failed to persist cancelled state for background continue-run stream {_run_id}",
@@ -7727,11 +7737,18 @@ async def _acontinue_run_background_stream(
             await acleanup_run(_run_id)
         except Exception:
             log_error(f"Background continue-run stream {_run_id} failed", exc_info=True)
-            # Persist ERROR status
+            producer_terminal = RunStatus.error
+            # Persist ERROR status (loading from session when run_response is None)
             try:
-                if run_response is not None:
-                    run_response.status = RunStatus.error
-                    await apersist_run_transition(team, "team", session_id, run_response, user_id=user_id)
+                errored_run = run_response
+                if errored_run is None:
+                    # HITL continues arrive with run_response=None: load the
+                    # run so the terminal persist is never silently skipped
+                    lookup_session = await _aread_or_create_session(team, session_id=session_id, user_id=user_id)
+                    errored_run = lookup_session.get_run(_run_id)
+                if errored_run is not None:
+                    errored_run.status = RunStatus.error
+                    await apersist_run_transition(team, "team", session_id, errored_run, user_id=user_id)
             except Exception:
                 log_error(
                     f"Failed to persist error state for background continue-run stream {_run_id}",
@@ -7751,7 +7768,12 @@ async def _acontinue_run_background_stream(
             # Mark run terminal in the event stream and wake all tails
             # (shielded to survive task cancellation)
             try:
-                final_status = (run_response.status if run_response else None) or RunStatus.completed
+                # producer_terminal wins: with run_response=None the old fallback
+                # marked a cancelled/errored run COMPLETED, so /resume lied
+                # about a run that never executed
+                final_status = (
+                    producer_terminal or (run_response.status if run_response else None) or RunStatus.completed
+                )
                 await asyncio.shield(event_stream.complete_run(_run_id, final_status))
             except (Exception, asyncio.CancelledError):
                 log_warning(f"Failed to mark continue-run {_run_id} as completed in event stream")

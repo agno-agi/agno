@@ -172,11 +172,11 @@ class UserMemoryStore(LearningStore):
         )
 
     def build_context(self, data: Any) -> str:
-        """Build context for the agent.
+        """Build the DATA context for the agent.
 
         Formats memories data for injection into the agent's system prompt.
-        Designed to enable natural, personalized responses without meta-commentary
-        about memory systems.
+        Data only - the how-to-use guidance lives in instructions(); the
+        automatic path concatenates the two at the injection site.
 
         Args:
             data: Memories data from recall().
@@ -184,22 +184,13 @@ class UserMemoryStore(LearningStore):
         Returns:
             Context string to inject into the agent's system prompt.
         """
-        # Build tool documentation based on what's enabled
-        tool_docs = self._build_tool_documentation()
+        empty_block = dedent("""\
+            <user_memory>
+            No memories saved about this user yet.
+            </user_memory>""")
 
         if not data:
-            if self._should_expose_tools:
-                return (
-                    dedent("""\
-                    <user_memory>
-                    No memories saved about this user yet.
-
-                    """)
-                    + tool_docs
-                    + dedent("""
-                    </user_memory>""")
-                )
-            return ""
+            return empty_block if self._should_expose_tools else ""
 
         # Build memories section
         memories_text = None
@@ -209,18 +200,7 @@ class UserMemoryStore(LearningStore):
             memories_text = "\n".join(f"- {m.get('content', str(m))}" for m in data.memories)
 
         if not memories_text:
-            if self._should_expose_tools:
-                return (
-                    dedent("""\
-                    <user_memory>
-                    No memories saved about this user yet.
-
-                    """)
-                    + tool_docs
-                    + dedent("""
-                    </user_memory>""")
-                )
-            return ""
+            return empty_block if self._should_expose_tools else ""
 
         context = "<user_memory>\n"
         context += memories_text + "\n"
@@ -236,21 +216,22 @@ class UserMemoryStore(LearningStore):
             - Use memories to calibrate tone, depth, and examples without announcing it
             </memory_application_guidelines>""")
 
-        if self._should_expose_tools:
-            context += (
-                dedent("""
-
-            <memory_updates>
-
-            """)
-                + tool_docs
-                + dedent("""
-            </memory_updates>""")
-            )
-
         context += "\n</user_memory>"
 
         return context
+
+    def instructions(self) -> str:
+        """Agent-facing guidance for this store: when to save user memories.
+
+        Guidance only - the recalled data lives in build_context(). Empty when
+        no tools are exposed (ALWAYS mode captures without agent involvement).
+        """
+        if not self._should_expose_tools:
+            return ""
+        tool_docs = self._build_tool_documentation()
+        if not tool_docs:
+            return ""
+        return f"<user_memory_instructions>\n{tool_docs}\n</user_memory_instructions>"
 
     def _build_tool_documentation(self) -> str:
         """Build documentation for available memory tools.
@@ -750,6 +731,7 @@ class UserMemoryStore(LearningStore):
         user_id: str,
         agent_id: Optional[str] = None,
         team_id: Optional[str] = None,
+        instructed: bool = False,
         run_metrics: Optional["RunMetrics"] = None,
     ) -> str:
         """Extract memories from messages and save.
@@ -793,7 +775,7 @@ class UserMemoryStore(LearningStore):
         functions = self._build_functions_for_model(tools=tools)
 
         messages_for_model = [
-            self._get_system_message(existing_data=existing_data),
+            self._get_system_message(existing_data=existing_data, instructed=instructed),
             Message(role="user", content=f"Extract memories from this conversation:\n\n{conversation_text}"),
         ]
 
@@ -822,6 +804,7 @@ class UserMemoryStore(LearningStore):
         user_id: str,
         agent_id: Optional[str] = None,
         team_id: Optional[str] = None,
+        instructed: bool = False,
         run_metrics: Optional["RunMetrics"] = None,
     ) -> str:
         """Async version of extract_and_save."""
@@ -855,7 +838,7 @@ class UserMemoryStore(LearningStore):
         functions = self._build_functions_for_model(tools=tools)
 
         messages_for_model = [
-            self._get_system_message(existing_data=existing_data),
+            self._get_system_message(existing_data=existing_data, instructed=instructed),
             Message(role="user", content=f"Extract memories from this conversation:\n\n{conversation_text}"),
         ]
 
@@ -908,6 +891,7 @@ class UserMemoryStore(LearningStore):
             user_id=user_id,
             agent_id=agent_id,
             team_id=team_id,
+            instructed=True,
         )
 
     async def arun_memories_update(
@@ -926,6 +910,7 @@ class UserMemoryStore(LearningStore):
             user_id=user_id,
             agent_id=agent_id,
             team_id=team_id,
+            instructed=True,
         )
 
     # =========================================================================
@@ -981,8 +966,19 @@ class UserMemoryStore(LearningStore):
     def _get_system_message(
         self,
         existing_data: List[dict],
+        instructed: bool = False,
     ) -> "Message":
-        """Build system message for memory extraction."""
+        """Build system message for memory extraction.
+
+        Args:
+            existing_data: The user's current memories.
+            instructed: True when an agent called update_user_memory with an
+                explicit task. The decision to store has already been made, by
+                the agent that has the conversation and its instructions; this
+                store's job is then to execute it, not to re-judge it. What to
+                capture and what to leave alone belongs in the calling agent's
+                instructions, where the context to decide it exists.
+        """
         from agno.models.message import Message
 
         if self.config.system_message is not None:
@@ -1027,13 +1023,39 @@ class UserMemoryStore(LearningStore):
             - Patterns in how they think and work
 
             **DO NOT save:**
-            - Sensitive personal information (health conditions, financial details, relationships) unless directly relevant to helping them
             - One-off details unlikely to matter in future conversations
             - Information they'd find creepy to have remembered
             - Inferences or assumptions - only save what they've actually stated
             - Duplicates of existing memories (update instead)
             - Trivial preferences that don't affect interactions\
         """)
+
+        if instructed:
+            # An agent called update_user_memory with a task. It had the
+            # conversation and its own instructions; it decided. Re-judging
+            # here is how an explicit "remember this privately" ended up
+            # stored as nothing.
+            capture_instructions = dedent("""\
+                ## What To Capture
+
+                An agent has instructed you to record something. Carry out that
+                instruction: save what it asked you to save, worded as given.
+
+                - Do not second-guess whether the information is worth keeping,
+                  sensitive, or awkward - that judgement was already made by the
+                  agent holding the conversation, under its own instructions.
+                - Do still avoid duplicates: prefer update_memory over add_memory
+                  when the instruction revises something already stored, and
+                  remove what it asks you to remove.
+                - Record only what the instruction says. Do not add surrounding
+                  detail it did not ask for.\
+            """)
+            # A configured capture policy still applies - the execute contract
+            # replaces the store's own gatekeeping, not the operator's. The tool
+            # path is the ONLY path in AGENTIC mode, so dropping it here made
+            # UserMemoryConfig(instructions=...) a no-op in the flagship mode.
+            if self.config.instructions:
+                capture_instructions += f"\n\n{self.config.instructions}\n"
 
         system_prompt += capture_instructions
 
@@ -1098,7 +1120,8 @@ class UserMemoryStore(LearningStore):
             system_prompt += "- `clear_all_memories`: Reset all memories (use rarely)\n"
 
         # Examples
-        system_prompt += dedent("""
+        system_prompt += (
+            dedent("""
             ## Examples
 
             **Example 1: New user introduction**
@@ -1125,6 +1148,14 @@ class UserMemoryStore(LearningStore):
             - Respect boundaries: when in doubt about whether to save something, don't
             - It's fine to do nothing if the conversation reveals nothing worth remembering\
         """)
+            if not instructed
+            else dedent("""
+            ## Final Guidance
+
+            - Carry out the instruction; do not weigh whether it should have been given
+            - Prefer updating an existing memory over adding a near-duplicate\
+        """)
+        )
 
         if self.config.additional_instructions:
             system_prompt += f"\n\n{self.config.additional_instructions}"
