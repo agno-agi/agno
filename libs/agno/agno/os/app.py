@@ -1242,10 +1242,25 @@ class AgentOS:
             log_debug("Registry router not enabled: requires a registry to be provided to AgentOS")
             routers.append(_get_disabled_feature_router("/registry", "Registry", "registry"))
 
+        # Managed-roles admin API (/authz). Registered HERE, with the other built-in
+        # routers, so it lands ahead of the MCP catch-all mount added just below. A
+        # router included after get_app() returns sits behind that mount and 404s --
+        # which is what the previously documented "app.include_router(get_roles_router(...))"
+        # step did on any OS with mcp_server=True. Configuring a role store is already
+        # the deliberate opt-in (and, per the check in _add_auth_middleware, it cannot
+        # be set without authorization=True), so no extra flag gates this.
+        authz_config = self.authorization_config
+        role_store = getattr(authz_config, "role_store", None) if authz_config is not None else None
+        if role_store is not None:
+            from agno.os.authz.role_router import get_roles_router
+
+            routers.append(get_roles_router(role_store, user_store=getattr(authz_config, "user_store", None)))
+
         for router in routers:
             self._add_router(fastapi_app, router)
 
-        # Mount MCP if needed
+        # Mount MCP if needed. This is a catch-all Mount at "", so it must stay LAST:
+        # anything registered after it is unreachable.
         if self.mcp_server:
             self._mount_mcp_app(fastapi_app)
 
