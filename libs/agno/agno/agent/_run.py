@@ -508,6 +508,7 @@ def _run(
                     session=agent_session,
                     user_id=user_id,
                     existing_future=learning_future,
+                    run_context=run_context,
                 )
 
                 # Start cultural knowledge creation in background thread
@@ -920,6 +921,7 @@ def _run_stream(
                     session=agent_session,
                     user_id=user_id,
                     existing_future=learning_future,
+                    run_context=run_context,
                 )
 
                 # Start cultural knowledge creation in background thread
@@ -1646,6 +1648,7 @@ async def _arun(
                     session=agent_session,
                     user_id=user_id,
                     existing_task=learning_task,
+                    run_context=run_context,
                 )
 
                 # Start cultural knowledge creation as a background task (runs concurrently with the main execution)
@@ -2328,6 +2331,7 @@ async def _arun_stream(
                     session=agent_session,
                     user_id=user_id,
                     existing_task=learning_task,
+                    run_context=run_context,
                 )
 
                 # Start cultural knowledge creation as a background task (runs concurrently with the main execution)
