@@ -1,4 +1,5 @@
 import asyncio
+import contextlib
 import warnings
 from contextlib import asynccontextmanager
 from functools import partial
@@ -130,7 +131,18 @@ async def _drain_cancel_persist_tasks(timeout: float = 30.0) -> None:
             return
         remaining = deadline - asyncio.get_running_loop().time()
         if remaining <= 0:
-            log_warning(f"Timed out draining {len(pending)} cancel-persist task(s) before database shutdown")
+            # Cancel stragglers NOW, while the pool is still open, so their
+            # CancelledError handlers can persist a terminal status. Without
+            # this they are cancelled at loop teardown - AFTER _close_databases
+            # - and their persists silently hit a closed pool.
+            log_warning(
+                f"Drain timeout: cancelling {len(pending)} background task(s) so terminal "
+                "statuses persist before database shutdown"
+            )
+            for task in pending:
+                task.cancel()
+            with contextlib.suppress(Exception):
+                await asyncio.wait(pending, timeout=5.0)
             return
         await asyncio.wait(pending, timeout=remaining)
 
