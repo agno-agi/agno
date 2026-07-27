@@ -94,3 +94,59 @@ def test_normal_user_without_role_still_denied(client_and_store):
     client, _ = client_and_store
     status = _get_run(client, _user_token("nobody"))
     assert status == 403, f"normal user with no role should be denied at the gate (got {status})"
+
+
+def test_service_account_pat_passes_the_resource_gate_under_managed_roles(tmp_path):
+    """Regression: a PAT must still run agents when a managed-role provider is configured.
+
+    A service account is a first-party machine credential whose PAT scopes ARE its ACL;
+    it has no subject or role in the directory. The route gate admits it on scope math,
+    but the per-resource gate delegated to the configured provider, which looked up
+    ``sa:<name>`` in the role store, found nothing, and 403'd -- so every PAT-gated route
+    (and every MCP tool call) broke the moment managed roles were switched on.
+    """
+    from unittest.mock import AsyncMock, patch
+
+    from agno.db.sqlite import SqliteDb
+    from agno.os.middleware import JWTMiddleware
+
+    def _mock_run_output():
+        return type("MockRunOutput", (), {"to_dict": lambda self: {"content": "ok", "run_id": "test_run_1"}})()
+
+    db = SqliteDb(db_file=str(tmp_path / "pat_managed_roles.db"))
+    agent = Agent(id="research-agent", name="Research Agent", db=db)
+    agent.deep_copy = lambda **kwargs: agent
+
+    store = ManagedRoleStore(db_url=f"sqlite:///{tmp_path / 'roles.db'}")
+    store.set_role_scopes("viewer", ["agents:*:read"])  # no role mentions the PAT principal
+    store.set_role_scopes("os-admin", ["agent_os:admin"])
+    store.assign("human-admin", "os-admin")  # the human who mints the PAT is a directory user
+
+    agent_os = AgentOS(id=OS_ID, agents=[agent], db=db)
+    app = agent_os.get_app()
+    app.state.authorization_provider = store.provider
+    app.add_middleware(JWTMiddleware, verification_keys=[SECRET], algorithm="HS256", authorization=True)
+    client = TestClient(app)
+
+    admin_jwt = jwt.encode(
+        {"sub": "human-admin", "scopes": ["agent_os:admin"], "exp": datetime.now(UTC) + timedelta(hours=1)},
+        SECRET,
+        algorithm="HS256",
+    )
+    minted = client.post(
+        "/service-accounts",
+        headers={"Authorization": f"Bearer {admin_jwt}"},
+        json={"name": "claude-code", "scopes": [{"scope": "agents:*:run"}, {"scope": "agents:*:read"}]},
+    )
+    assert minted.status_code == 201, minted.text
+    pat = minted.json()["token"]
+
+    with patch.object(agent, "arun", new_callable=AsyncMock) as mock_arun:
+        mock_arun.return_value = _mock_run_output()
+        run = client.post(
+            "/agents/research-agent/runs",
+            headers={"Authorization": f"Bearer {pat}"},
+            data={"message": "hello", "stream": "false"},
+        )
+    assert run.status_code == 200, run.text
+    assert mock_arun.call_args.kwargs["user_id"] == "sa:claude-code"
