@@ -9,10 +9,18 @@ Prerequisites:
    export TENKI_API_KEY=<your_api_key>
 4. Optionally select a workspace explicitly:
    export TENKI_WORKSPACE_ID=<your_workspace_id>
-5. Set the model API key:
+5. Set one model provider API key:
+   # OpenAI (used by the default Agent model)
    export OPENAI_API_KEY=<your_openai_api_key>
+   # Anthropic (configure model=Claude(...) on Agent)
+   export ANTHROPIC_API_KEY=<your_anthropic_api_key>
+   # Google Gemini (configure model=Gemini(...) on Agent)
+   export GOOGLE_API_KEY=<your_google_api_key>
+   # Groq (configure model=Groq(...) on Agent)
+   export GROQ_API_KEY=<your_groq_api_key>
 6. Install the dependencies:
-   uv pip install "agno[tenki,sqlite]" openai
+   uv pip install "agno[tenki,sqlite,openai]"
+   Replace openai with anthropic, google, or groq when using that provider.
 
 The Tenki SDK determines the workspace from the API key automatically. Set TENKI_WORKSPACE_ID only when you need to
 override it explicitly. The SQLite database persists the sandbox ID in Agent session state across calls that use the
