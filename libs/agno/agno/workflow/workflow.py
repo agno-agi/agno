@@ -4217,13 +4217,24 @@ class Workflow:
                     await _persist_status_fresh()
 
                     if self.agent is not None:
-                        await self._aexecute_workflow_agent(
+                        agent_result = await self._aexecute_workflow_agent(
                             user_input=input,  # type: ignore
                             execution_input=inputs,
                             run_context=run_context,
                             stream=False,
                             **kwargs,
                         )
+                        # Safety net: the polled 202 run_id must reach a
+                        # terminal state even if an internal path persisted the
+                        # answer under a different run id
+                        if getattr(agent_result, "run_id", None) != workflow_run_response.run_id:
+                            workflow_run_response.status = getattr(agent_result, "status", None) or RunStatus.completed
+                            workflow_run_response.content = getattr(agent_result, "content", None)
+                            workflow_session.upsert_run(run=workflow_run_response)
+                            if self._has_async_db():
+                                await self.asave_session(session=workflow_session)
+                            else:
+                                self.save_session(session=workflow_session)
                     else:
                         await self._aexecute(
                             session_id=session_id,
@@ -5134,8 +5145,10 @@ class Workflow:
 
         # Handle direct answer case (no workflow execution)
         if not workflow_executed:
-            # Create a new workflow run output for the direct answer
-            run_id = str(uuid4())
+            # Persist the direct answer under the CALLER'S run identity: a
+            # background 202's run_id must reach a terminal state under that
+            # same id, or pollers wait on RUNNING forever.
+            run_id = run_context.run_id or str(uuid4())
             workflow_run_response = WorkflowRunOutput(
                 run_id=run_id,
                 input=execution_input.input,
@@ -5539,8 +5552,10 @@ class Workflow:
 
         # Handle direct answer case (no workflow execution)
         if not workflow_executed:
-            # Create a new workflow run output for the direct answer
-            run_id = str(uuid4())
+            # Persist the direct answer under the CALLER'S run identity: a
+            # background 202's run_id must reach a terminal state under that
+            # same id, or pollers wait on RUNNING forever.
+            run_id = run_context.run_id or str(uuid4())
             workflow_run_response = WorkflowRunOutput(
                 run_id=run_id,
                 input=execution_input.input,
@@ -7963,10 +7978,11 @@ class Workflow:
         if session is None:
             raise ValueError(f"Could not find session with id {session_id}")
 
-        # Update run status to running and persist immediately so that any
-        # reload (page refresh, another process) sees the run as RUNNING rather
-        # than the stale PAUSED state. This mirrors _arun_background_stream_ws.
-        run_response.status = RunStatus.running
+        # Persist immediately so any reload sees fresh state rather than stale
+        # PAUSED. Foreground continues execute now (RUNNING); background
+        # continues first wait for a concurrency slot (PENDING-means-queued -
+        # the slot holder transitions to RUNNING when execution actually starts).
+        run_response.status = RunStatus.pending if background else RunStatus.running
         run_response.error_requirements = None
         session.upsert_run(run=run_response)
         if self._has_async_db():
@@ -9446,6 +9462,14 @@ class Workflow:
             try:
                 await slot_cm.__aenter__()
                 slot_held = True
+
+                # Transition to RUNNING now that a slot is held (PENDING while queued)
+                workflow_run_response.status = RunStatus.running
+                session.upsert_run(run=workflow_run_response)
+                if self._has_async_db():
+                    await self.asave_session(session=session)
+                else:
+                    self.save_session(session=session)
 
                 async for _event in self._acontinue_execute_stream(
                     session=session,

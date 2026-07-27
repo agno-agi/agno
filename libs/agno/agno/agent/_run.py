@@ -511,6 +511,7 @@ def _run(
                     session=agent_session,
                     user_id=user_id,
                     existing_future=learning_future,
+                    run_context=run_context,
                 )
 
                 # Start cultural knowledge creation in background thread
@@ -923,6 +924,7 @@ def _run_stream(
                     session=agent_session,
                     user_id=user_id,
                     existing_future=learning_future,
+                    run_context=run_context,
                 )
 
                 # Start cultural knowledge creation in background thread
@@ -1649,6 +1651,7 @@ async def _arun(
                     session=agent_session,
                     user_id=user_id,
                     existing_task=learning_task,
+                    run_context=run_context,
                 )
 
                 # Start cultural knowledge creation as a background task (runs concurrently with the main execution)
@@ -2390,6 +2393,7 @@ async def _arun_stream(
                     session=agent_session,
                     user_id=user_id,
                     existing_task=learning_task,
+                    run_context=run_context,
                 )
 
                 # Start cultural knowledge creation as a background task (runs concurrently with the main execution)
@@ -4449,6 +4453,7 @@ async def _acontinue_run_background_stream(
 
         slot_cm = background_run_slot(run_id=_run_id)
         slot_held = False
+        producer_terminal: Optional[RunStatus] = None
         try:
             await slot_cm.__aenter__()
             slot_held = True
@@ -4502,13 +4507,17 @@ async def _acontinue_run_background_stream(
 
         except RunCancelledException:
             # Cancelled while waiting for a slot — execution never started, so
-            # persist CANCELLED and deregister the run here.
+            # persist CANCELLED and deregister the run here. HITL continues may
+            # arrive with run_response=None (router passes only run_id): load
+            # the run from the session so the cancel is never silently skipped.
             log_info(f"Background continue-run stream {_run_id} cancelled while waiting for a slot")
+            producer_terminal = RunStatus.cancelled
             try:
-                if run_response:
-                    run_response.status = RunStatus.cancelled
-                    fresh_session = await aread_or_create_session(agent, session_id=session_id, user_id=user_id)
-                    fresh_session.upsert_run(run=run_response)
+                fresh_session = await aread_or_create_session(agent, session_id=session_id, user_id=user_id)
+                cancelled_run = run_response or cast(Optional[RunOutput], fresh_session.get_run(_run_id))
+                if cancelled_run is not None:
+                    cancelled_run.status = RunStatus.cancelled
+                    fresh_session.upsert_run(run=cancelled_run)
                     await asave_session(agent, session=fresh_session)
             except Exception:
                 log_error(
@@ -4517,12 +4526,14 @@ async def _acontinue_run_background_stream(
             await acleanup_run(_run_id)
         except Exception:
             log_error(f"Background continue-run stream {_run_id} failed", exc_info=True)
-            # Persist ERROR status
+            producer_terminal = RunStatus.error
+            # Persist ERROR status (loading from session when run_response is None)
             try:
-                if run_response:
-                    run_response.status = RunStatus.error
-                    fresh_session = await aread_or_create_session(agent, session_id=session_id, user_id=user_id)
-                    fresh_session.upsert_run(run=run_response)
+                fresh_session = await aread_or_create_session(agent, session_id=session_id, user_id=user_id)
+                errored_run = run_response or cast(Optional[RunOutput], fresh_session.get_run(_run_id))
+                if errored_run is not None:
+                    errored_run.status = RunStatus.error
+                    fresh_session.upsert_run(run=errored_run)
                     await asave_session(agent, session=fresh_session)
             except Exception:
                 log_error(f"Failed to persist error state for background continue-run stream {_run_id}", exc_info=True)
@@ -4540,7 +4551,12 @@ async def _acontinue_run_background_stream(
             # Mark run terminal in the event stream and wake all tails
             # (shielded to survive task cancellation)
             try:
-                final_status = (run_response.status if run_response else None) or RunStatus.completed
+                # producer_terminal wins: with run_response=None the old fallback
+                # marked a cancelled/errored run COMPLETED, so /resume lied
+                # about a run that never executed
+                final_status = (
+                    producer_terminal or (run_response.status if run_response else None) or RunStatus.completed
+                )
                 await asyncio.shield(event_stream.complete_run(_run_id, final_status))
             except (Exception, asyncio.CancelledError):
                 log_warning(f"Failed to mark continue-run {_run_id} as completed in event stream")

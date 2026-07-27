@@ -52,6 +52,25 @@ from agno.utils.team import (
 from agno.utils.timer import Timer
 
 
+def _input_kwarg(method: Any, input_message: Any) -> Dict[str, Any]:
+    """``{"input": ...}`` only when the callee accepts it.
+
+    ``Team.get_system_message`` is a public extension point and this is the
+    bound method, so a subclass written against the pre-2.8.4 signature is what
+    actually runs. Passing the new kwarg unconditionally makes every run of
+    such a team fail.
+    """
+    import inspect
+
+    try:
+        parameters = inspect.signature(method).parameters
+    except (TypeError, ValueError):
+        return {}
+    if "input" in parameters or any(p.kind == p.VAR_KEYWORD for p in parameters.values()):
+        return {"input": input_message}
+    return {}
+
+
 def _get_tool_names(member: Any, async_mode: bool = False) -> List[str]:
     """Extract tool names from a member's tools list."""
     tool_names: List[str] = []
@@ -345,6 +364,7 @@ def get_system_message(
     files: Optional[Sequence[File]] = None,
     tools: Optional[List[Union[Function, dict]]] = None,
     add_session_state_to_context: Optional[bool] = None,
+    input: Optional[Any] = None,
 ) -> Optional[Message]:
     """Get the system message for the team.
 
@@ -470,15 +490,25 @@ def get_system_message(
     # 2.2 Identity sections: description, role, instructions
     system_message_content += _build_identity_sections(team, instructions)
 
-    # 2.3 Learning context (user profile, user memory, session context)
+    # 2.3 Learning context: guidance + data, concatenated so the automatic door
+    # renders exactly what the manual door's instructions() + build_context() would
     if team._learning is not None and team.add_learnings_to_context:
+        from agno.agent._messages import _learning_message_text
+
+        learning_guidance = team._learning._framework_instructions()
         learning_context = team._learning.build_context(
             user_id=user_id,
             session_id=session.session_id if session else None,
             team_id=team.id,
+            message=_learning_message_text(input),
+            run_context=run_context,
+            metadata=run_context.metadata if run_context else None,
+            dependencies=run_context.dependencies if run_context else None,
+            session_state=run_context.session_state if run_context else None,
         )
-        if learning_context:
-            system_message_content += learning_context + "\n"
+        learning_block = "\n".join(part for part in (learning_guidance, learning_context) if part)
+        if learning_block:
+            system_message_content += learning_block + "\n"
 
     # 2.4 Knowledge base instructions
     if team.knowledge is not None and team.search_knowledge and team.add_search_knowledge_instructions:
@@ -581,6 +611,7 @@ async def aget_system_message(
     files: Optional[Sequence[File]] = None,
     tools: Optional[List[Union[Function, dict]]] = None,
     add_session_state_to_context: Optional[bool] = None,
+    input: Optional[Any] = None,
 ) -> Optional[Message]:
     """Get the system message for the team."""
 
@@ -701,15 +732,24 @@ async def aget_system_message(
     # 2.2 Identity sections: description, role, instructions
     system_message_content += _build_identity_sections(team, instructions)
 
-    # 2.3 Learning context (user profile, user memory, session context)
+    # 2.3 Learning context (see the sync twin)
     if team._learning is not None and team.add_learnings_to_context:
+        from agno.agent._messages import _learning_message_text
+
+        learning_guidance = team._learning._framework_instructions()
         learning_context = await team._learning.abuild_context(
             user_id=user_id,
             session_id=session.session_id if session else None,
             team_id=team.id,
+            message=_learning_message_text(input),
+            run_context=run_context,
+            metadata=run_context.metadata if run_context else None,
+            dependencies=run_context.dependencies if run_context else None,
+            session_state=run_context.session_state if run_context else None,
         )
-        if learning_context:
-            system_message_content += learning_context + "\n"
+        learning_block = "\n".join(part for part in (learning_guidance, learning_context) if part)
+        if learning_block:
+            system_message_content += learning_block + "\n"
 
     # 2.4 Knowledge base instructions
     if team.knowledge is not None and team.search_knowledge and team.add_search_knowledge_instructions:
@@ -850,6 +890,7 @@ def _get_run_messages(
         files=files,
         add_session_state_to_context=add_session_state_to_context,
         tools=tools,
+        **_input_kwarg(team.get_system_message, input_message),
     )
     if system_message is not None:
         run_messages.system_message = system_message
@@ -985,6 +1026,7 @@ async def _aget_run_messages(
         files=files,
         add_session_state_to_context=add_session_state_to_context,
         tools=tools,
+        **_input_kwarg(team.aget_system_message, input_message),
     )
     if system_message is not None:
         run_messages.system_message = system_message
