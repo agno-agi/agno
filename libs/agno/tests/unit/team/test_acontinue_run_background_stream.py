@@ -188,3 +188,56 @@ class TestAcontinueRunBackgroundStream:
         # SSE subscribers must be signaled even on failure (call_count covers either
         # direct await or asyncio.shield-wrapped await)
         assert mock_ssm.complete.call_count >= 1
+
+
+class TestQueuedCancelWithoutRunResponse:
+    @pytest.mark.asyncio
+    async def test_cancel_of_hitl_continue_persists_cancelled_not_completed(self):
+        """HITL continues arrive with run_response=None. Cancelling one while
+        queued must persist CANCELLED (loaded from the session) and mark the
+        buffer CANCELLED - never COMPLETED for a run that never executed."""
+        from agno.exceptions import RunCancelledException
+        from agno.run import RunStatus
+        from agno.team._run import _acontinue_run_background_stream
+
+        team = MagicMock()
+        run_context = MagicMock()
+
+        session_run = MagicMock()
+        session_run.status = RunStatus.paused
+        team_session = MagicMock()
+        team_session.get_run.return_value = session_run
+
+        with (
+            patch("agno.team._run.background_run_slot") as mock_slot,
+            patch(
+                "agno.team._storage._aread_or_create_session",
+                new_callable=AsyncMock,
+                return_value=team_session,
+            ),
+            patch("agno.team._storage._update_metadata"),
+            patch("agno.team._session.asave_session", new_callable=AsyncMock) as mock_save,
+            patch("agno.os.managers.event_buffer") as mock_eb,
+            patch("agno.os.managers.sse_subscriber_manager") as mock_ssm,
+            patch("agno.team._run.acleanup_run", new_callable=AsyncMock),
+        ):
+            mock_slot.return_value.__aenter__ = AsyncMock(side_effect=RunCancelledException("r-1"))
+            mock_slot.return_value.__aexit__ = AsyncMock()
+            mock_ssm.publish = AsyncMock()
+            mock_ssm.complete = AsyncMock()
+
+            collected = []
+            async for chunk in _acontinue_run_background_stream(
+                team,
+                run_context=run_context,
+                session_id="s-1",
+                run_id="r-1",
+            ):
+                collected.append(chunk)
+
+        # The session run (loaded by run_id) was persisted as CANCELLED
+        assert session_run.status == RunStatus.cancelled
+        assert mock_save.await_count >= 1
+        # The event buffer was marked CANCELLED, not COMPLETED
+        assert mock_eb.set_run_completed.call_args is not None
+        assert mock_eb.set_run_completed.call_args.args[1] == RunStatus.cancelled

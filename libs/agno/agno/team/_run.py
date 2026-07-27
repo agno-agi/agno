@@ -7683,6 +7683,7 @@ async def _acontinue_run_background_stream(
 
         slot_cm = background_run_slot(run_id=_run_id)
         slot_held = False
+        producer_terminal: Optional[RunStatus] = None
         try:
             await slot_cm.__aenter__()
             slot_held = True
@@ -7744,12 +7745,16 @@ async def _acontinue_run_background_stream(
 
         except RunCancelledException:
             # Cancelled while waiting for a slot — execution never started, so
-            # persist CANCELLED and deregister the run here.
+            # persist CANCELLED and deregister the run here. HITL continues may
+            # arrive with run_response=None (router passes only run_id): load
+            # the run from the session so the cancel is never silently skipped.
             log_info(f"Background continue-run stream {_run_id} cancelled while waiting for a slot")
+            producer_terminal = RunStatus.cancelled
             try:
-                if run_response is not None:
-                    run_response.status = RunStatus.cancelled
-                    team_session.upsert_run(run_response=run_response)
+                cancelled_run = run_response if run_response is not None else team_session.get_run(_run_id)
+                if cancelled_run is not None:
+                    cancelled_run.status = RunStatus.cancelled
+                    team_session.upsert_run(run_response=cancelled_run)
                     await asave_session(team, session=team_session)
             except Exception:
                 log_error(
@@ -7759,11 +7764,13 @@ async def _acontinue_run_background_stream(
             await acleanup_run(_run_id)
         except Exception:
             log_error(f"Background continue-run stream {_run_id} failed", exc_info=True)
-            # Persist ERROR status
+            producer_terminal = RunStatus.error
+            # Persist ERROR status (loading from session when run_response is None)
             try:
-                if run_response is not None:
-                    run_response.status = RunStatus.error
-                    team_session.upsert_run(run_response=run_response)
+                errored_run = run_response if run_response is not None else team_session.get_run(_run_id)
+                if errored_run is not None:
+                    errored_run.status = RunStatus.error
+                    team_session.upsert_run(run_response=errored_run)
                     await asave_session(team, session=team_session)
             except Exception:
                 log_error(
@@ -7783,7 +7790,12 @@ async def _acontinue_run_background_stream(
 
             # Mark run completed in event buffer
             try:
-                final_status = (run_response.status if run_response else None) or RunStatus.completed
+                # producer_terminal wins: with run_response=None the old fallback
+                # marked a cancelled/errored run COMPLETED in the buffer, so
+                # /resume lied about a run that never executed
+                final_status = (
+                    producer_terminal or (run_response.status if run_response else None) or RunStatus.completed
+                )
                 event_buffer.set_run_completed(_run_id, final_status)
             except Exception:
                 log_warning(f"Failed to mark continue-run {_run_id} as completed in event buffer")
