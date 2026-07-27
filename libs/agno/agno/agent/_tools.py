@@ -170,6 +170,7 @@ def get_tools(
             user_id=user_id,
             session_id=session.session_id if session else None,
             agent_id=agent.id,
+            run_context=run_context,
         )
         agent_tools.extend(learning_tools)
 
@@ -302,6 +303,7 @@ async def aget_tools(
             user_id=user_id,
             session_id=session.session_id if session else None,
             agent_id=agent.id,
+            run_context=run_context,
         )
         agent_tools.extend(learning_tools)
 

@@ -44,3 +44,13 @@ folder now passes `fs.instructions()` in its own instructions list. Re-tested ag
 **Result:** Consumer tool surface printed exactly `['read_file', 'list_files', 'search_content', 'check_lines']`, with no write, append, move or delete. The recorder appended both decisions in one `append_file` call. The consumer answered via `list_files(directory=., ...)` then `read_file(path=decisions/2026-07.md, ...)`, finding the file without being told its path, and reported pgvector as approved for production. Note that read_only constrains the tool surface only: the same FileSystem object still exposes `write()` from Python.
 
 ---
+
+## 2026-07-26 — corrections after the default flip
+
+`read_only=True` is now three tools, not four: `check_lines` left every default
+set and is reachable only through `include_tools`. Both entries above record a
+consumer surface of `['read_file', 'list_files', 'search_content', 'check_lines']`,
+which is what the pre-flip code printed; `shared_namespace.py` itself was updated
+and says "three read tools". Re-verified against the current code:
+`FileSystem(db, namespace=...).tools(read_only=True)` yields exactly
+`['read_file', 'list_files', 'search_content']`.

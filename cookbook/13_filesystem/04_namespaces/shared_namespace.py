@@ -3,7 +3,7 @@ Namespaces - Sharing One Store
 ==============================
 Two agents share files by attaching the same namespace by name. The producer
 gets the full tool surface. The consumer gets tools(read_only=True) and the
-matching instructions(read_only=True), which is four read tools, so it can
+matching instructions(read_only=True), which is three read tools, so it can
 consult the records but holds no tool that could change them.
 
 This example has a recorder agent write decisions and an answering agent look
