@@ -1,11 +1,13 @@
 import json
 import os
-from fnmatch import fnmatch
 from pathlib import Path
 from typing import Any, List, Optional, Tuple
 
+from agno.exceptions import PathSecurityError
 from agno.tools import Toolkit
+from agno.tools._local_file_utils import DEFAULT_EXCLUDE_PATTERNS, path_matches_exclude
 from agno.utils.log import log_debug, log_error
+from agno.utils.path_safety import safe_join_relative_path
 
 TEXT_EXTENSIONS = {
     ".md",
@@ -28,68 +30,6 @@ TEXT_EXTENSIONS = {
     ".log",
     ".rst",
 }
-
-DEFAULT_EXCLUDE_PATTERNS = [
-    # Environments and secrets
-    ".venv",
-    "venv",
-    ".env*",
-    "*.env",
-    # Version control
-    ".git",
-    ".hg",
-    ".svn",
-    # Python caches and build artifacts
-    "__pycache__",
-    ".mypy_cache",
-    ".ruff_cache",
-    ".pytest_cache",
-    ".tox",
-    ".nox",
-    ".ipynb_checkpoints",
-    "dist",
-    "build",
-    "*.egg-info",
-    # JavaScript and TypeScript
-    "node_modules",
-    ".next",
-    ".turbo",
-    ".nuxt",
-    ".svelte-kit",
-    ".docusaurus",
-    ".parcel-cache",
-    ".nyc_output",
-    "*.tsbuildinfo",
-    ".serverless",
-    # JVM (Java, Kotlin, Android, Gradle)
-    ".gradle",
-    ".kotlin",
-    "*.class",
-    # Dart and Flutter
-    ".dart_tool",
-    ".flutter-plugins",
-    ".flutter-plugins-dependencies",
-    # Swift and Xcode
-    ".build",
-    "xcuserdata",
-    "*.xcuserstate",
-    # Ruby
-    ".bundle",
-    "*.gem",
-    ".yardoc",
-    # Elixir
-    "_build",
-    ".elixir_ls",
-    # .NET / Visual Studio
-    ".vs",
-    # Infrastructure as Code (state files hidden by default for security)
-    ".terraform",
-    "*.tfstate",
-    "*.tfstate.*",
-    ".terragrunt-cache",
-    # OS artifacts
-    ".DS_Store",
-]
 
 
 def _format_size(size: int) -> str:
@@ -122,8 +62,9 @@ class FileTools(Toolkit):
     """Toolkit for read/write access to a local directory tree.
 
     By default, results from ``list_files``, ``search_files``, and ``search_content``
-    skip common noise directories (``.venv``, ``.git``, ``__pycache__``,
-    ``node_modules``, etc.). See ``DEFAULT_EXCLUDE_PATTERNS`` for the full list.
+    skip common noise directories (``.venv``, ``.venvs``, ``.context``,
+    ``.git``, ``__pycache__``, ``node_modules``, etc.). See
+    ``DEFAULT_EXCLUDE_PATTERNS`` for the full list.
 
     To customize:
     - Pass ``exclude_patterns=[...]`` with your own list of fnmatch-style patterns.
@@ -188,13 +129,7 @@ class FileTools(Toolkit):
 
     def _is_excluded(self, path: Path) -> bool:
         """Return True if any component of ``path`` (relative to ``base_dir``) matches an exclude pattern."""
-        if not self.exclude_patterns:
-            return False
-        try:
-            rel = path.relative_to(self.base_dir)
-        except ValueError:
-            return False
-        return any(fnmatch(part, pattern) for part in rel.parts for pattern in self.exclude_patterns)
+        return path_matches_exclude(path, self.base_dir, self.exclude_patterns)
 
     def check_escape(self, relative_path: str) -> Tuple[bool, Path]:
         """Check if the file path is within the base directory.
@@ -333,27 +268,30 @@ class FileTools(Toolkit):
             log_error(f"Error removing {file_name}: {str(e)}")
             return f"Error removing file: {e}"
 
-    def list_files(self, **kwargs) -> str:
+    def list_files(self, directory: str = ".") -> str:
         """Returns a list of files in directory
         :param directory: (Optional) name of directory to list.
 
         :return: The contents of the file if successful, otherwise returns an error message.
         """
-        directory = kwargs.get("directory", ".")
         try:
-            log_debug(f"Reading files in : {self.base_dir}/{directory}")
-            safe, d = self.check_escape(directory)
-            if safe:
-                return json.dumps(
-                    [
-                        str(file_path.relative_to(self.base_dir))
-                        for file_path in d.iterdir()
-                        if not self._is_excluded(file_path)
-                    ],
-                    indent=4,
-                )
-            else:
-                return "{}"
+            d = self.base_dir
+            if directory:
+                safe, d = self.check_escape(directory)
+                if not safe:
+                    return "{}"
+            log_debug(f"Reading files in : {d}")
+            files = []
+            for file_path in d.iterdir():
+                rel_path = file_path.relative_to(self.base_dir).as_posix()
+                try:
+                    safe_join_relative_path(self.base_dir, rel_path)
+                except PathSecurityError:
+                    continue
+                if self._is_excluded(file_path):
+                    continue
+                files.append(rel_path)
+            return json.dumps(files, indent=4)
         except Exception as e:
             log_error(f"Error reading files: {str(e)}")
             return f"Error reading files: {e}"
@@ -369,7 +307,14 @@ class FileTools(Toolkit):
                 return "Error: Pattern cannot be empty"
 
             log_debug(f"Searching files in {self.base_dir} with pattern {pattern}")
-            matching_files = [p for p in self.base_dir.glob(pattern) if not self._is_excluded(p)]
+            matching_files = []
+            for p in self.base_dir.glob(pattern):
+                try:
+                    safe_join_relative_path(self.base_dir, p.relative_to(self.base_dir).as_posix())
+                except PathSecurityError:
+                    continue
+                if not self._is_excluded(p):
+                    matching_files.append(p)
             result = None
             if self.expose_base_directory:
                 file_paths = [str(file_path) for file_path in matching_files]
@@ -380,7 +325,7 @@ class FileTools(Toolkit):
                     "files": file_paths,
                 }
             else:
-                file_paths = [str(file_path.relative_to(self.base_dir)) for file_path in matching_files]
+                file_paths = [file_path.relative_to(self.base_dir).as_posix() for file_path in matching_files]
 
                 result = {
                     "pattern": pattern,
@@ -435,6 +380,10 @@ class FileTools(Toolkit):
                         walk_done = True
                         break
                     file_path = Path(dirpath) / filename
+                    try:
+                        safe_join_relative_path(self.base_dir, file_path.relative_to(self.base_dir).as_posix())
+                    except PathSecurityError:
+                        continue
                     if self._is_excluded(file_path):
                         continue
                     if file_path.suffix.lower() not in TEXT_EXTENSIONS:
@@ -451,7 +400,7 @@ class FileTools(Toolkit):
                         continue
 
                     if lower_query in content.lower():
-                        rel_path = str(file_path.relative_to(self.base_dir))
+                        rel_path = file_path.relative_to(self.base_dir).as_posix()
                         snippet = _extract_snippet(content, query)
                         matches.append(
                             {

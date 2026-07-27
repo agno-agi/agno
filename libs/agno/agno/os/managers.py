@@ -5,14 +5,16 @@ This module provides various manager classes for AgentOS:
 - WebSocketManager: WebSocket connection management for real-time streaming
 - EventsBuffer: Event buffering for agent/team/workflow reconnection support
 - WebSocketHandler: Handler for sending events over WebSocket connections
+- SSESubscriberManager: Subscriber management for SSE-based reconnection
 
 These managers are used by agents, teams, and workflows for background WebSocket execution.
 """
 
+import asyncio
 import json
 from dataclasses import dataclass
 from time import time
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 from starlette.websockets import WebSocket
 
@@ -213,6 +215,7 @@ class EventsBuffer:
         """
         # Store all event types (WorkflowRunOutputEvent, RunOutputEvent, TeamRunOutputEvent)
         self.events: Dict[str, List[Union[WorkflowRunOutputEvent, RunOutputEvent, TeamRunOutputEvent]]] = {}
+        self._next_index: Dict[str, int] = {}  # monotonic event index counter per run
         self.run_metadata: Dict[str, Dict[str, Any]] = {}  # {run_id: {status, last_updated, etc}}
         self.max_events_per_run = max_events_per_run
         self.cleanup_interval = cleanup_interval
@@ -223,6 +226,7 @@ class EventsBuffer:
 
         if run_id not in self.events:
             self.events[run_id] = []
+            self._next_index[run_id] = 0
             self.run_metadata[run_id] = {
                 "status": RunStatus.running,
                 "created_at": current_time,
@@ -232,8 +236,9 @@ class EventsBuffer:
         self.events[run_id].append(event)
         self.run_metadata[run_id]["last_updated"] = current_time
 
-        # Get the index of the event we just added (before potential trimming)
-        event_index = len(self.events[run_id]) - 1
+        # Monotonic counter — to survive buffer trims
+        event_index = self._next_index[run_id]
+        self._next_index[run_id] += 1
 
         # Keep buffer size under control - trim oldest events if exceeded
         if len(self.events[run_id]) > self.max_events_per_run:
@@ -244,34 +249,59 @@ class EventsBuffer:
 
     def get_events(
         self, run_id: str, last_event_index: Optional[int] = None
-    ) -> List[Union[WorkflowRunOutputEvent, RunOutputEvent, TeamRunOutputEvent]]:
+    ) -> List[Tuple[int, Union[WorkflowRunOutputEvent, RunOutputEvent, TeamRunOutputEvent]]]:
         """
         Get events since the last received event index.
 
         Args:
             run_id: The run ID (agent/team/workflow)
-            last_event_index: Index of last event received by client (0-based)
+            last_event_index: Monotonic index of last event received by client (0-based)
 
         Returns:
-            List of events since last_event_index, or all events if None
+            List of (monotonic_index, event) tuples since last_event_index, or all if None
         """
         events = self.events.get(run_id, [])
+        if not events:
+            return []
+
+        # The buffer may have been trimmed, so list positions don't match event indices.
+        # first_index is the monotonic index of the oldest event still in the buffer.
+        next_idx = self._next_index.get(run_id, len(events))
+        first_index = next_idx - len(events)
 
         if last_event_index is None:
-            # Client has no events, send all
-            return events
+            # Client has no events, send all with their real indices
+            return [(first_index + i, e) for i, e in enumerate(events)]
 
-        # Client has events up to last_event_index, send new ones
-        # last_event_index is 0-based, so we want events starting from index + 1
-        if last_event_index >= len(events) - 1:
+        # Client wants events after last_event_index
+        start_index = last_event_index + 1
+
+        if start_index >= next_idx:
             # Client is caught up
             return []
 
-        return events[last_event_index + 1 :]
+        if start_index <= first_index:
+            # Client is behind the buffer — return everything we have
+            return [(first_index + i, e) for i, e in enumerate(events)]
+
+        # Convert monotonic index to list position
+        list_offset = start_index - first_index
+        return [(start_index + i, e) for i, e in enumerate(events[list_offset:])]
 
     def get_event_count(self, run_id: str) -> int:
         """Get the current number of events for a run"""
         return len(self.events.get(run_id, []))
+
+    def get_last_index(self, run_id: str) -> int:
+        """Get the monotonic index of the last event added for a run.
+
+        Returns -1 if no events have been added for this run.
+        Unlike get_event_count(), this survives buffer trims.
+        """
+        next_idx = self._next_index.get(run_id)
+        if next_idx is None or next_idx == 0:
+            return -1
+        return next_idx - 1
 
     def set_run_completed(self, run_id: str, status: RunStatus) -> None:
         """Mark a run as completed/cancelled/error for future cleanup"""
@@ -287,6 +317,7 @@ class EventsBuffer:
         """Remove buffer for a completed run (called after retention period)"""
         if run_id in self.events:
             del self.events[run_id]
+        self._next_index.pop(run_id, None)
         if run_id in self.run_metadata:
             del self.run_metadata[run_id]
         log_debug(f"Cleaned up event buffer for run {run_id}")
@@ -315,6 +346,56 @@ class EventsBuffer:
         return metadata["status"] if metadata else None
 
 
+class SSESubscriberManager:
+    """
+    Manages asyncio.Queue subscribers for SSE-based reconnection.
+
+    When a client reconnects to a still-running agent/team via the /resume SSE endpoint,
+    it registers a Queue here. The response streamer pushes SSE-formatted events to all
+    registered queues. A None sentinel signals run completion.
+    """
+
+    def __init__(self) -> None:
+        self._subscribers: Dict[str, List[asyncio.Queue[Optional[tuple[int, str]]]]] = {}
+
+    def subscribe(self, run_id: str) -> "asyncio.Queue[Optional[tuple[int, str]]]":
+        """Register a new subscriber queue for a run. Returns the queue."""
+        if run_id not in self._subscribers:
+            self._subscribers[run_id] = []
+        queue: asyncio.Queue[Optional[tuple[int, str]]] = asyncio.Queue()
+        self._subscribers[run_id].append(queue)
+        log_debug(f"SSE subscriber registered for run {run_id}")
+        return queue
+
+    def unsubscribe(self, run_id: str, queue: "asyncio.Queue[Optional[tuple[int, str]]]") -> None:
+        """Remove a subscriber queue."""
+        if run_id in self._subscribers:
+            try:
+                self._subscribers[run_id].remove(queue)
+            except ValueError:
+                pass
+            if not self._subscribers[run_id]:
+                del self._subscribers[run_id]
+
+    async def publish(self, run_id: str, event_index: int, sse_data: str) -> None:
+        """Push an (event_index, sse_data) tuple to all subscriber queues for a run."""
+        subscribers = list(self._subscribers.get(run_id, []))
+        for queue in subscribers:
+            try:
+                await queue.put((event_index, sse_data))
+            except Exception:
+                pass
+
+    async def complete(self, run_id: str) -> None:
+        """Signal all subscribers that the run is done by pushing None sentinel."""
+        subscribers = list(self._subscribers.get(run_id, []))
+        for queue in subscribers:
+            try:
+                await queue.put(None)
+            except Exception:
+                pass
+
+
 # Global manager instances
 websocket_manager = WebSocketManager(
     active_connections={},
@@ -324,3 +405,5 @@ event_buffer = EventsBuffer(
     max_events_per_run=10000,  # Keep last 10000 events per run
     cleanup_interval=1800,  # Clean up completed runs after 30 minutes
 )
+
+sse_subscriber_manager = SSESubscriberManager()

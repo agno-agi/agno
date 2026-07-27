@@ -6,22 +6,86 @@ import json
 import re
 from enum import Enum
 from os import getenv
-from typing import Any, Dict, Iterable, List, Optional, Union
+from typing import TYPE_CHECKING, Any, Dict, Iterable, List, Optional, Union
 
-import jwt
 from fastapi import Request, Response
 from fastapi.responses import JSONResponse
-from jwt import PyJWK
 from starlette.middleware.base import BaseHTTPMiddleware
 
-from agno.os.auth import INTERNAL_SERVICE_SCOPES
+from agno.os.auth import INTERNAL_SERVICE_SCOPES, build_insufficient_permissions_detail
 from agno.os.scopes import (
     AgentOSScope,
-    get_accessible_resource_ids,
+    check_route_scopes,
     get_default_scope_mappings,
+    get_required_scopes_for_route,
     has_required_scopes,
 )
+from agno.os.service_accounts import SERVICE_ACCOUNT_PRINCIPAL_PREFIX, authenticate_service_account_request
+from agno.os.service_accounts import TOKEN_PREFIX as SERVICE_ACCOUNT_TOKEN_PREFIX
 from agno.utils.log import log_debug, log_warning
+
+if TYPE_CHECKING:
+    from jwt import PyJWK
+
+    from agno.os.service_accounts import ServiceAccountVerifier
+
+# The user_id the internal scheduler token authenticates as. Reserved: a JWT must never
+# be allowed to claim it (see is_reserved_principal).
+INTERNAL_SCHEDULER_USER_ID = "__scheduler__"
+
+# Private request.state marker set only by this middleware once it has decided a request's
+# auth. The mount short-circuit reads THIS, not the public request.state.authenticated
+# flag, so no other middleware can trip it.
+_AUTH_COMPLETE_ATTR = "_agno_auth_complete"
+
+
+# The built-in MCP OAuth server mints request identities as ``__oauth__:<client_id>``.
+# A double-underscore sentinel (like ``__scheduler__``), not a bare ``oauth:`` prefix, so
+# it can never collide with a real IdP subject -- ``oauth:`` could match a hand-namespaced
+# customer sub and 401 it. Single source of truth: the built-in AS mints with this exact
+# constant (agno.os.mcp_auth_builtin imports it), so the minting and the reserved-guard
+# below cannot drift.
+MCP_OAUTH_PRINCIPAL_PREFIX = "__oauth__:"
+
+# Server-assigned identity namespaces a human JWT must never claim as its subject.
+# Service accounts live in ``sa:``, the scheduler is ``__scheduler__``, and the built-in
+# MCP OAuth server assigns ``__oauth__:`` to its connected clients.
+RESERVED_PRINCIPAL_PREFIXES = (SERVICE_ACCOUNT_PRINCIPAL_PREFIX, MCP_OAUTH_PRINCIPAL_PREFIX)
+
+
+def is_reserved_principal(user_id: Any) -> bool:
+    """Whether a JWT subject is trying to claim a system-reserved identity.
+
+    Service-account principals live in the ``sa:`` namespace, the scheduler runs as
+    ``__scheduler__``, and MCP-OAuth clients live in ``__oauth__:``; all are first-party
+    identities the server assigns, never something a human JWT should present. Copying
+    such a ``sub`` into ``request.state.user_id`` would let any JWT holder impersonate
+    that principal in run attribution, session-ownership checks, and audit trails.
+    Callers reject the token instead.
+    """
+    return isinstance(user_id, str) and (
+        user_id.startswith(RESERVED_PRINCIPAL_PREFIXES) or user_id == INTERNAL_SCHEDULER_USER_ID
+    )
+
+
+def resolve_expected_audience(
+    *,
+    verify_audience: bool,
+    audience: Optional[Union[str, Iterable[str]]],
+    os_id: Optional[str],
+) -> Optional[Union[str, Iterable[str]]]:
+    """The expected JWT audience for ``JWTValidator.validate_token``.
+
+    The configured audience, falling back to the AgentOS id, and only when audience
+    verification is enabled. Single source of this rule so every JWT-verifying surface --
+    the parent ``AuthMiddleware`` (REST), the MCP ``JWTBearerTokenVerifier``, and the
+    WebSocket auth path -- resolves it identically. (The MCP copy once lacked the fallback,
+    enforcing ``verify_audience=True`` on REST but not ``/mcp``; keeping it here stops that
+    class of drift recurring across the three call sites.)
+    """
+    if not verify_audience:
+        return None
+    return audience or os_id
 
 
 class TokenSource(str, Enum):
@@ -109,8 +173,8 @@ class JWTValidator:
         if env_key and env_key not in self.verification_keys:
             self.verification_keys.append(env_key)
 
-        # JWKS configuration - load keys from JWKS file or environment variable
-        self.jwks_keys: Dict[str, PyJWK] = {}  # kid -> PyJWK mapping
+        # JWKS configuration - load keys from JWKS file or environment variable.
+        self.jwks_keys: "Dict[str, PyJWK]" = {}
 
         # Try jwks_file parameter first
         if jwks_file:
@@ -153,6 +217,8 @@ class JWTValidator:
         Args:
             jwks_data: Parsed JWKS dictionary with "keys" array
         """
+        from jwt import PyJWK
+
         keys = jwks_data.get("keys", [])
         if not keys:
             log_warning("JWKS contains no keys")
@@ -188,6 +254,8 @@ class JWTValidator:
             jwt.ExpiredSignatureError: If token has expired
             jwt.InvalidTokenError: If token is invalid
         """
+        import jwt
+
         decode_options: Dict[str, Any] = {}
         decode_kwargs: Dict[str, Any] = {
             "algorithms": [self.algorithm],
@@ -308,9 +376,86 @@ class JWTValidator:
         }
 
 
-class JWTMiddleware(BaseHTTPMiddleware):
+def jwt_kwargs_have_key_source(kwargs: Dict[str, Any]) -> bool:
+    """Whether ``add_middleware`` kwargs carry a JWT key source (or disable validation).
+
+    AgentOS installs this same middleware class as the general auth layer for
+    security-key / service-account-only deployments, constructed without any JWT
+    source. Callers that scan ``app.user_middleware`` (``/info`` auth-mode detection,
+    WebSocket config resolution) must use this predicate to tell a JWT-validating
+    instance from the plain auth layer, so the two checks cannot drift.
     """
-    JWT Authentication Middleware with optional RBAC (Role-Based Access Control).
+    return bool(
+        kwargs.get("verification_keys")
+        or kwargs.get("jwks_file")
+        or kwargs.get("secret_key")
+        or kwargs.get("validate") is False
+    )
+
+
+def build_jwt_middleware_kwargs(
+    authorization_config: Optional[Any],
+    *,
+    authorization: bool,
+    service_account_verifier: Optional[Any] = None,
+    excluded_route_paths: Optional[List[str]] = None,
+) -> Dict[str, Any]:
+    """JWTMiddleware kwargs derived from an ``AuthorizationConfig``, in one place.
+
+    Both the REST app wiring (``agno.os.app``) and the mounted MCP app
+    (``agno.os.mcp.get_mcp_server``) construct their middleware from this builder, so
+    the two surfaces cannot drift: a token accepted on one is accepted with identical
+    constraints (audience, admin scope, user isolation) on the other.
+
+    Optional flags are only included when set, so the middleware's own defaults keep
+    applying to manual ``app.add_middleware(JWTMiddleware, ...)`` setups.
+    """
+    algorithm = "RS256"
+    verification_keys = None
+    jwks_file = None
+    verify_audience = False
+    audience = None
+    admin_scope: Optional[str] = None
+    user_isolation = False
+
+    if authorization_config:
+        algorithm = authorization_config.algorithm or "RS256"
+        verification_keys = authorization_config.verification_keys
+        jwks_file = authorization_config.jwks_file
+        verify_audience = authorization_config.verify_audience or False
+        audience = authorization_config.audience
+        admin_scope = authorization_config.admin_scope
+        user_isolation = authorization_config.user_isolation
+
+    kwargs: Dict[str, Any] = {
+        "verification_keys": verification_keys,
+        "jwks_file": jwks_file,
+        "algorithm": algorithm,
+        "authorization": authorization,
+        "verify_audience": verify_audience,
+        "excluded_route_paths": excluded_route_paths,
+    }
+    if audience:
+        kwargs["audience"] = audience
+    if admin_scope:
+        kwargs["admin_scope"] = admin_scope
+    if user_isolation:
+        kwargs["user_isolation"] = True
+    if service_account_verifier is not None:
+        kwargs["service_account_verifier"] = service_account_verifier
+    return kwargs
+
+
+class AuthMiddleware(BaseHTTPMiddleware):
+    """
+    The AgentOS authentication middleware: JWTs, service-account tokens (agno_pat_...),
+    the internal service token, and the OS security key -- with optional RBAC
+    (Role-Based Access Control) for JWTs.
+
+    AgentOS installs one instance of this middleware on the parent app in every
+    authenticated deployment mode; it covers the REST routes, the mounted /mcp app,
+    and anything else served by the app. ``JWTMiddleware`` is an alias kept for the
+    manual ``app.add_middleware(JWTMiddleware, ...)`` setup path.
 
     This middleware:
     1. Extracts JWT token from Authorization header or cookies
@@ -322,7 +467,9 @@ class JWTMiddleware(BaseHTTPMiddleware):
     7. Returns 401 for invalid tokens, 403 for insufficient scopes
 
     RBAC is opt-in: Only enabled when authorization=True or scope_mappings are provided.
-    Without authorization enabled, the middleware only extracts and validates JWT tokens.
+    Without authorization enabled, the middleware only extracts and validates JWT tokens —
+    endpoints return 200 regardless of scopes. Pass `authorization=True` (or set it via
+    AgentOS(authorization=True)) to enforce the default scope map.
 
     Audience Verification:
     - The `aud` claim in JWT tokens should contain the AgentOS ID
@@ -407,6 +554,9 @@ class JWTMiddleware(BaseHTTPMiddleware):
         scope_mappings: Optional[Dict[str, List[str]]] = None,
         excluded_route_paths: Optional[List[str]] = None,
         admin_scope: Optional[str] = None,
+        user_isolation: bool = False,
+        service_account_verifier: Optional["ServiceAccountVerifier"] = None,
+        security_key: Optional[str] = None,
     ):
         """
         Initialize the JWT middleware.
@@ -448,6 +598,22 @@ class JWTMiddleware(BaseHTTPMiddleware):
                            Format: {"POST /agents/*/runs": ["agents:run"], "GET /public": []}
             excluded_route_paths: List of route paths to exclude from JWT/RBAC checks
             admin_scope: The scope that grants admin access (default: "agent_os:admin")
+            service_account_verifier: Verifier for service account tokens (agno_pat_...).
+                When set (or available on app.state.service_account_verifier), bearer
+                tokens with the agno_pat_ prefix authenticate as service accounts
+                instead of JWTs: user_id is the account principal (sa:<name>) and
+                scopes are the account's stored scopes. Service account scopes are
+                first-party ACL data, so they are enforced against the scope mappings
+                even when authorization is disabled. Service account requests carry no
+                request.state.claims/token - factory trusted-claims consumers must
+                treat those as optional.
+            user_isolation: Opt in to per-user data isolation (default False).
+                When True, route handlers wrap the DB in a per-request scoped
+                adapter and enforce session/run ownership on non-admin callers.
+                When False (the default) JWT and RBAC still apply but
+                ownership/scoping gates stay dormant — preserves backwards
+                compatibility with deployments that handle isolation in their
+                own application layer.
 
         Note:
             - At least one verification key or JWKS file must be provided if validate=True
@@ -465,16 +631,30 @@ class JWTMiddleware(BaseHTTPMiddleware):
             if secret_key not in all_verification_keys:
                 all_verification_keys.append(secret_key)
 
-        # Create the JWT validator (handles key loading and token validation)
-        self.validator = JWTValidator(
-            verification_keys=all_verification_keys if all_verification_keys else None,
-            jwks_file=jwks_file,
-            algorithm=algorithm,
-            validate=validate,
-            scopes_claim=scopes_claim,
-            user_id_claim=user_id_claim,
-            session_id_claim=session_id_claim,
-            audience_claim=audience_claim,
+        # JWT is optional: AgentOS installs this middleware as the single auth layer
+        # in every authenticated mode, so security-key / service-account-only
+        # deployments construct it with no JWT source at all. The validator is only
+        # built (and only required) when a JWT source is configured.
+        self._jwt_configured = bool(
+            all_verification_keys
+            or jwks_file
+            or not validate
+            or getenv("JWT_VERIFICATION_KEY")
+            or getenv("JWT_JWKS_FILE")
+        )
+        self.validator: Optional[JWTValidator] = (
+            JWTValidator(
+                verification_keys=all_verification_keys if all_verification_keys else None,
+                jwks_file=jwks_file,
+                algorithm=algorithm,
+                validate=validate,
+                scopes_claim=scopes_claim,
+                user_id_claim=user_id_claim,
+                session_id_claim=session_id_claim,
+                audience_claim=audience_claim,
+            )
+            if self._jwt_configured
+            else None
         )
 
         # Store config for easy access
@@ -511,10 +691,50 @@ class JWTMiddleware(BaseHTTPMiddleware):
         else:
             self.scope_mappings = scope_mappings or {}
 
+        # Service account scopes are enforced even when authorization is disabled
+        # (they are this instance's own ACL data, not third-party claims), so keep
+        # a fully merged scope map regardless of the authorization flag.
+        self.service_account_scope_mappings = get_default_scope_mappings()
+        if scope_mappings is not None:
+            self.service_account_scope_mappings.update(scope_mappings)
+
+        self.service_account_verifier = service_account_verifier
+        # Static credential for non-JWT deployments (OS_SECURITY_KEY). Only consulted
+        # when no JWT source is configured -- JWT takes precedence, matching
+        # get_effective_auth_mode.
+        self.security_key = security_key
+
+        # An auth middleware with no credential source authenticates nothing and
+        # silently authorizes everyone -- almost always a misconfiguration (a typo'd
+        # key path, a forgotten security key). Fail loudly. Internal AgentOS wiring
+        # only installs this middleware once a credential exists, so this guards the
+        # manual app.add_middleware(JWTMiddleware, ...) path.
+        if not self._jwt_configured and not self.security_key and self.service_account_verifier is None:
+            raise ValueError(
+                "AuthMiddleware requires at least one credential source: a JWT verification key or "
+                "JWKS file (verification_keys / jwks_file / JWT_VERIFICATION_KEY / JWT_JWKS_FILE), "
+                "validate=False, a security_key, or a service_account_verifier."
+            )
+
+        # authorization=True means "enforce RBAC on JWTs", which is impossible without a way
+        # to verify a JWT. Switched on with no JWT source, every JWT and every anonymous
+        # request falls through unauthenticated (dispatch has no key to check), silently
+        # serving an OPEN instance under a config that explicitly asked for enforcement. A
+        # service_account_verifier does NOT satisfy this: PAT scopes are enforced
+        # independently of this flag. Fail closed. (For service-account-only enforcement,
+        # use a db without authorization=True.)
+        if self.authorization and not self._jwt_configured:
+            raise ValueError(
+                "authorization=True requires a JWT verification source (verification_keys, jwks_file, "
+                "JWT_VERIFICATION_KEY, or JWT_JWKS_FILE; or validate=False for unverified dev mode). "
+                "Without one, JWT and anonymous requests are not authenticated and RBAC is not enforced."
+            )
+
         self.excluded_route_paths = (
             excluded_route_paths if excluded_route_paths is not None else self._get_default_excluded_routes()
         )
         self.admin_scope = admin_scope or AgentOSScope.ADMIN.value
+        self.user_isolation = user_isolation
 
     def _get_default_excluded_routes(self) -> List[str]:
         """Get default routes that should be excluded from RBAC checks."""
@@ -577,31 +797,56 @@ class JWTMiddleware(BaseHTTPMiddleware):
             List of required scopes. Empty list [] means no scopes required (allow access).
             Routes not in scope_mappings also return [], allowing access.
         """
-        route_key = f"{method} {path}"
+        return get_required_scopes_for_route(self.scope_mappings, method, path)
 
-        # First, try exact match
-        if route_key in self.scope_mappings:
-            return self.scope_mappings[route_key]
+    def _check_scopes(
+        self,
+        request: Request,
+        method: str,
+        path: str,
+        scopes: List[str],
+        origin: Optional[str],
+        cors_allowed_origins: Optional[List[str]],
+        scope_mappings: Optional[Dict[str, List[str]]] = None,
+    ) -> Optional[JSONResponse]:
+        """
+        Shared RBAC check used by every credential type (JWTs, the internal service
+        token, and service account tokens).
 
-        # Then try pattern matching
-        for pattern, scopes in self.scope_mappings.items():
-            pattern_method, pattern_path = pattern.split(" ", 1)
+        Sets request.state.required_scopes and, for listing endpoints where the caller
+        only holds per-resource scopes, request.state.accessible_resource_ids.
 
-            # Check if method matches
-            if pattern_method != method:
-                continue
+        Returns:
+            An error response when access is denied, None when access is allowed.
+        """
+        mappings = scope_mappings if scope_mappings is not None else self.scope_mappings
+        result = check_route_scopes(scopes, mappings, method, path, admin_scope=self.admin_scope)
 
-            # Convert pattern to fnmatch pattern (replace {param} with *)
-            # This handles both /agents/* and /agents/{agent_id} style patterns
-            normalized_pattern = pattern_path
-            if "{" in normalized_pattern:
-                # Replace {param} with * for pattern matching
-                normalized_pattern = re.sub(r"\{[^}]+\}", "*", normalized_pattern)
+        request.state.required_scopes = result.required_scopes
+        if result.accessible_resource_ids is not None:
+            request.state.accessible_resource_ids = result.accessible_resource_ids
+            if result.accessible_resource_ids:
+                log_debug(f"Caller has specific resource scopes. Accessible IDs: {result.accessible_resource_ids}")
+            else:
+                log_debug("Caller has no matching resource scopes. Will return empty list.")
 
-            if fnmatch.fnmatch(path, normalized_pattern):
-                return scopes
+        if not result.allowed:
+            log_warning(
+                f"Insufficient scopes for {method} {path}. Required: {result.required_scopes}, User has: {scopes}"
+            )
+            return self._create_error_response(
+                403,
+                "Insufficient permissions",
+                origin,
+                cors_allowed_origins,
+                required_scopes=result.required_scopes,
+            )
 
-        return []
+        if result.required_scopes:
+            log_debug(f"Scope check passed for {method} {path}. User scopes: {scopes}")
+        else:
+            log_debug(f"No scopes required for {method} {path}")
+        return None
 
     def _extract_token_from_header(self, request: Request) -> Optional[str]:
         """Extract JWT token from Authorization header."""
@@ -638,8 +883,11 @@ class JWTMiddleware(BaseHTTPMiddleware):
         detail: str,
         origin: Optional[str] = None,
         cors_allowed_origins: Optional[List[str]] = None,
+        required_scopes: Optional[List[str]] = None,
     ) -> JSONResponse:
         """Create an error response with CORS headers."""
+        if required_scopes:
+            detail = build_insufficient_permissions_detail(required_scopes)
         response = JSONResponse(status_code=status_code, content={"detail": detail})
 
         # Add CORS headers to the error response
@@ -663,6 +911,26 @@ class JWTMiddleware(BaseHTTPMiddleware):
 
     async def dispatch(self, request: Request, call_next) -> Response:
         """Process the request: extract JWT, validate, and check RBAC scopes."""
+        import jwt
+
+        # Ensure the JWT auth config is accessible on app.state for WebSocket
+        # endpoints (which don't flow through this middleware) and any other
+        # components that need it outside the middleware chain. This handles
+        # both built-in (AgentOS authorization=True) and manual
+        # (app.add_middleware(JWTMiddleware, ...)) setup paths.
+        #
+        # All these values must be cached together: resolve_ws_jwt_config
+        # returns early once it sees ``jwt_validator``, so without the
+        # companion fields a manual-setup WebSocket connection arriving after
+        # the first HTTP request would silently drop verify_audience, the
+        # custom admin scope, and the user_isolation flag.
+        if self.validator is not None and not getattr(request.app.state, "jwt_validator", None):
+            request.app.state.jwt_validator = self.validator
+            request.app.state.jwt_verify_audience = self.verify_audience
+            request.app.state.jwt_audience = self.audience
+            request.app.state.admin_scope = self.admin_scope
+            request.app.state.user_isolation_enabled = self.user_isolation
+
         path = request.url.path
         method = request.method
 
@@ -674,6 +942,16 @@ class JWTMiddleware(BaseHTTPMiddleware):
         if self._is_route_excluded(path):
             return await call_next(request)
 
+        # Already authenticated by an OUTER instance of THIS middleware in a manually
+        # composed app (e.g. AuthMiddleware installed on both a parent app and a mounted
+        # sub-app): request.state is shared through the mount, so re-verifying would only
+        # repeat the identical checks (and the DB lookup for a service account). We key off
+        # a private marker this middleware sets itself -- never the public
+        # request.state.authenticated flag, which any other middleware could set -- so an
+        # unrelated middleware cannot short-circuit our checks by flipping that flag.
+        if getattr(request.state, _AUTH_COMPLETE_ATTR, False):
+            return await call_next(request)
+
         # Get origin and CORS allowed origins for error responses
         origin = request.headers.get("origin")
         cors_allowed_origins = getattr(request.app.state, "cors_allowed_origins", None)
@@ -681,46 +959,80 @@ class JWTMiddleware(BaseHTTPMiddleware):
         # Get agent_os_id from app state for audience verification
         agent_os_id = getattr(request.app.state, "agent_os_id", None)
 
-        # Extract JWT token
+        # Extract the bearer credential (JWT, service-account PAT, internal token,
+        # or the OS security key -- this middleware is the single auth layer).
         token = self._extract_token(request)
         if not token:
-            error_msg = self._get_missing_token_error_message()
+            if not self._jwt_configured and not self.security_key:
+                # Open instance with only a service-account verifier: PATs are
+                # verified when presented, anonymous requests pass (mirrors REST).
+                return await call_next(request)
+            error_msg = (
+                self._get_missing_token_error_message() if self._jwt_configured else "Authorization header required"
+            )
             return self._create_error_response(401, error_msg, origin, cors_allowed_origins)
+
+        # Service account tokens (agno_pat_...) are first-party opaque credentials
+        # verified against the AgentOS database rather than decoded as JWTs.
+        if token.startswith(SERVICE_ACCOUNT_TOKEN_PREFIX):
+            return await self._dispatch_service_account(
+                request, token, method, path, origin, cors_allowed_origins, call_next
+            )
 
         # Check for internal service token (used by scheduler executor)
         internal_token = getattr(request.app.state, "internal_service_token", None)
         if internal_token and hmac.compare_digest(token, internal_token):
             request.state.authenticated = True
-            request.state.user_id = "__scheduler__"
+            setattr(request.state, _AUTH_COMPLETE_ATTR, True)
+            request.state.user_id = INTERNAL_SCHEDULER_USER_ID
             request.state.session_id = None
             internal_scopes = list(INTERNAL_SERVICE_SCOPES)
             request.state.scopes = internal_scopes
             request.state.authorization_enabled = self.authorization or False
+            request.state.admin_scope = self.admin_scope
+            request.state.user_isolation_enabled = self.user_isolation
 
-            # Enforce RBAC for internal token (do not skip scope checks)
+            # Enforce RBAC for internal token (do not skip scope checks). Deliberately
+            # the strict check, not _check_scopes: the GET-listing fallback would turn
+            # an insufficient-scope 403 into a silent empty listing, masking scope
+            # misconfiguration for a credential that has no per-resource scopes.
             if self.authorization:
                 required_scopes = self._get_required_scopes(method, path)
-                if required_scopes:
-                    if not has_required_scopes(
-                        internal_scopes,
-                        required_scopes,
-                        admin_scope=self.admin_scope,
-                    ):
-                        log_warning(
-                            f"Internal service token denied for {method} {path}. "
-                            f"Required: {required_scopes}, Token has: {internal_scopes}"
-                        )
-                        return self._create_error_response(
-                            403, "Insufficient permissions", origin, cors_allowed_origins
-                        )
+                if required_scopes and not has_required_scopes(
+                    internal_scopes,
+                    required_scopes,
+                    admin_scope=self.admin_scope,
+                ):
+                    log_warning(
+                        f"Internal service token denied for {method} {path}. "
+                        f"Required: {required_scopes}, Token has: {internal_scopes}"
+                    )
+                    return self._create_error_response(
+                        403,
+                        "Insufficient permissions",
+                        origin,
+                        cors_allowed_origins,
+                        required_scopes=required_scopes,
+                    )
 
             return await call_next(request)
 
+        # No JWT source configured: security-key mode (static comparison, mirroring
+        # the REST dependency's detail strings) or open mode (nothing to check).
+        if not self._jwt_configured:
+            if not self.security_key:
+                return await call_next(request)
+            if hmac.compare_digest(token, self.security_key):
+                request.state.authenticated = True
+                setattr(request.state, _AUTH_COMPLETE_ATTR, True)
+                return await call_next(request)
+            return self._create_error_response(401, "Invalid authentication token", origin, cors_allowed_origins)
+
         try:
             # Validate token and extract claims (with audience verification if configured)
-            expected_audience = None
-            if self.verify_audience:
-                expected_audience = self.audience or agent_os_id
+            expected_audience = resolve_expected_audience(
+                verify_audience=self.verify_audience, audience=self.audience, os_id=agent_os_id
+            )
             payload: Dict[str, Any] = self.validator.validate_token(token, expected_audience)  # type: ignore
 
             # Extract standard claims and store in request.state
@@ -728,6 +1040,14 @@ class JWTMiddleware(BaseHTTPMiddleware):
             session_id = payload.get(self.session_id_claim)
             scopes = payload.get(self.scopes_claim, [])
             audience = payload.get(self.audience_claim)
+
+            # A JWT must not be able to claim a service-account (sa:...) or scheduler
+            # (__scheduler__) identity as its subject: nothing downstream re-checks this,
+            # so an accepted reserved sub would let the holder impersonate that principal
+            # in attribution, session ownership, and audit. Reject, don't silently rewrite.
+            if is_reserved_principal(user_id):
+                log_warning(f"Rejected JWT claiming a reserved principal via {self.user_id_claim}: {user_id!r}")
+                return self._create_error_response(401, "Invalid token subject", origin, cors_allowed_origins)
 
             # Ensure scopes is a list
             if isinstance(scopes, str):
@@ -740,8 +1060,16 @@ class JWTMiddleware(BaseHTTPMiddleware):
             request.state.user_id = user_id
             request.state.session_id = session_id
             request.state.scopes = scopes
+            request.state.claims = payload  # Full decoded JWT for factory ctx.trusted.claims
             request.state.audience = audience
             request.state.authorization_enabled = self.authorization or False
+            # Expose admin scope so downstream helpers (e.g. get_scoped_user_id)
+            # honour custom admin scopes configured via JWTMiddleware(admin_scope=...).
+            request.state.admin_scope = self.admin_scope
+            # Per-user isolation is opt-in. get_scoped_user_id short-circuits
+            # to None when this is False, so the DB wrapper and route-level
+            # ownership gates stay dormant.
+            request.state.user_isolation_enabled = self.user_isolation
 
             # Extract dependencies claims
             dependencies = {}
@@ -767,64 +1095,15 @@ class JWTMiddleware(BaseHTTPMiddleware):
 
             # RBAC scope checking (only if enabled)
             if self.authorization:
-                # Extract resource type and ID from path
-                resource_type = None
-                resource_id = None
-
-                if "/agents" in path:
-                    resource_type = "agents"
-                elif "/teams" in path:
-                    resource_type = "teams"
-                elif "/workflows" in path:
-                    resource_type = "workflows"
-
-                if resource_type:
-                    resource_id = self._extract_resource_id_from_path(path, resource_type)
-
-                required_scopes = self._get_required_scopes(method, path)
-
-                # Empty list [] means no scopes required (allow access)
-                if required_scopes:
-                    # Use the scope validation system
-                    has_access = has_required_scopes(
-                        scopes,
-                        required_scopes,
-                        resource_type=resource_type,
-                        resource_id=resource_id,
-                        admin_scope=self.admin_scope,
-                    )
-
-                    # Special handling for listing endpoints (no resource_id)
-                    if not has_access and not resource_id and resource_type:
-                        # For listing endpoints, always allow access but store accessible IDs for filtering
-                        # This allows endpoints to return filtered results (including empty list) instead of 403
-                        accessible_ids = get_accessible_resource_ids(
-                            scopes, resource_type, admin_scope=self.admin_scope
-                        )
-                        has_access = True  # Always allow listing endpoints
-                        request.state.accessible_resource_ids = accessible_ids
-
-                        if accessible_ids:
-                            log_debug(f"User has specific {resource_type} scopes. Accessible IDs: {accessible_ids}")
-                        else:
-                            log_debug(f"User has no {resource_type} scopes. Will return empty list.")
-
-                    if not has_access:
-                        log_warning(
-                            f"Insufficient scopes for {method} {path}. Required: {required_scopes}, User has: {scopes}"
-                        )
-                        return self._create_error_response(
-                            403, "Insufficient permissions", origin, cors_allowed_origins
-                        )
-
-                    log_debug(f"Scope check passed for {method} {path}. User scopes: {scopes}")
-                else:
-                    log_debug(f"No scopes required for {method} {path}")
+                error_response = self._check_scopes(request, method, path, scopes, origin, cors_allowed_origins)
+                if error_response is not None:
+                    return error_response
 
             log_debug(f"JWT decoded successfully for user: {user_id}")
 
             request.state.token = token
             request.state.authenticated = True
+            setattr(request.state, _AUTH_COMPLETE_ATTR, True)
 
         except jwt.InvalidAudienceError as e:
             log_warning(f"Invalid token audience - expected: {expected_audience}: {str(e)}")
@@ -851,6 +1130,75 @@ class JWTMiddleware(BaseHTTPMiddleware):
             request.state.authenticated = False
             request.state.token = token
 
+        # validate=False decode-failure fall-through: a token was present but could not be
+        # decoded (this mode skips signature verification, so only a structurally-malformed
+        # token lands here). The success path sets the completion marker and runs _check_scopes;
+        # its ABSENCE identifies this fall-through. Treat the caller as authenticated-but-empty
+        # -- no identity, no claims, no scopes -- identical to a valid token carrying no ``sub``
+        # and no scopes, so a malformed token is never more permissive than such a token. When
+        # RBAC is on, run the SAME scope gate the success path runs; without it, routes gated
+        # only by the middleware's own _check_scopes (memory, knowledge, sessions, metrics, ...)
+        # would skip enforcement, while the state below only covers the downstream route/tool
+        # gates (runs, MCP). ``user_id`` is pinned to None (matching the no-``sub`` success path)
+        # so the user-isolation layer scopes queries by owner rather than reading a stale id.
+        if not getattr(request.state, _AUTH_COMPLETE_ATTR, False):
+            request.state.authorization_enabled = self.authorization or False
+            request.state.scopes = []
+            request.state.user_id = None
+            request.state.admin_scope = self.admin_scope
+            request.state.user_isolation_enabled = self.user_isolation
+            if self.authorization:
+                error_response = self._check_scopes(request, method, path, [], origin, cors_allowed_origins)
+                if error_response is not None:
+                    return error_response
+
+        return await call_next(request)
+
+    async def _dispatch_service_account(
+        self,
+        request: Request,
+        token: str,
+        method: str,
+        path: str,
+        origin: Optional[str],
+        cors_allowed_origins: Optional[List[str]],
+        call_next,
+    ) -> Response:
+        """
+        Authenticate a service account token (agno_pat_...) and enforce its scopes.
+
+        Verification failures all return the same 401 detail - the precise reason
+        (unknown, revoked, expired) is only logged server-side. Scope enforcement
+        always runs, regardless of the authorization flag: unlike JWT claims, service
+        account scopes are ACL data owned by this AgentOS instance.
+        """
+        verifier = self.service_account_verifier or getattr(request.app.state, "service_account_verifier", None)
+        if verifier is None:
+            return self._create_error_response(
+                401, "Service accounts are not enabled on this AgentOS instance", origin, cors_allowed_origins
+            )
+
+        error = await authenticate_service_account_request(
+            request,
+            token,
+            verifier=verifier,
+            scope_mappings=self.service_account_scope_mappings,
+            admin_scope=self.admin_scope,
+            user_isolation=self.user_isolation,
+        )
+        if error is not None:
+            status_code, detail, required_scopes = error
+            if status_code == 403:
+                log_warning(
+                    f"Insufficient scopes for {method} {path}. "
+                    f"Required: {required_scopes}, User has: {getattr(request.state, 'scopes', [])}"
+                )
+                return self._create_error_response(
+                    403, detail, origin, cors_allowed_origins, required_scopes=required_scopes
+                )
+            return self._create_error_response(status_code, detail, origin, cors_allowed_origins)
+
+        setattr(request.state, _AUTH_COMPLETE_ATTR, True)
         return await call_next(request)
 
     def _extract_token(self, request: Request) -> Optional[str]:
@@ -866,3 +1214,8 @@ class JWTMiddleware(BaseHTTPMiddleware):
                 return token
             return self._extract_token_from_cookie(request)
         return None
+
+
+# Backwards-compatible alias: the middleware began life as a JWT-only layer and the
+# manual setup path (app.add_middleware(JWTMiddleware, ...)) is public API.
+JWTMiddleware = AuthMiddleware

@@ -1,7 +1,12 @@
-from typing import Any, Dict, List, Optional, Union
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union
 from uuid import uuid4
 
 from pydantic import BaseModel
+
+if TYPE_CHECKING:
+    from agno.team.factory import TeamFactory
 
 from agno.agent import Agent
 from agno.os.routers.agents.schema import AgentResponse
@@ -37,9 +42,31 @@ class TeamResponse(BaseModel):
     members: Optional[List[Union[AgentResponse, "TeamResponse"]]] = None
     metadata: Optional[Dict[str, Any]] = None
     input_schema: Optional[Dict[str, Any]] = None
+    is_factory: bool = False
+    factory_input_schema: Optional[Dict[str, Any]] = None
     is_component: bool = False
     current_version: Optional[int] = None
     stage: Optional[str] = None
+
+    @classmethod
+    def from_factory(cls, factory: TeamFactory) -> TeamResponse:
+        """Create a TeamResponse from a TeamFactory for /config discovery."""
+        factory_input_schema = None
+        if factory.input_schema is not None:
+            try:
+                factory_input_schema = factory.input_schema.model_json_schema()
+            except Exception:
+                pass
+
+        return cls(
+            id=factory.id,
+            name=factory.name,
+            description=factory.description,
+            db_id=factory.db.id if factory.db else None,
+            is_factory=True,
+            input_schema=factory_input_schema,
+            factory_input_schema=factory_input_schema,
+        )
 
     @classmethod
     async def from_team(

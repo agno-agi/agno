@@ -1,6 +1,7 @@
 from agno.utils.gemini import (
     convert_schema,
     format_function_definitions,
+    inject_agno_client_header,
     needs_conversion,
     prepare_response_schema,
 )
@@ -686,3 +687,54 @@ def test_convert_schema_property_without_type_has_title():
     assert "value" in result.properties
     # Value property should have title even though it doesn't have a type
     assert result.properties["value"].title == "Value"
+
+
+# ---------------------------------------------------------------------------
+# inject_agno_client_header
+# ---------------------------------------------------------------------------
+
+
+def test_inject_header_into_empty_params():
+    """Adds http_options.headers with x-goog-api-client when none exist."""
+    from agno import __version__ as agno_version
+
+    result = inject_agno_client_header({})
+    assert result["http_options"]["headers"]["x-goog-api-client"] == f"agno/{agno_version}"
+
+
+def test_inject_header_preserves_existing_headers():
+    """Existing custom headers should be preserved alongside the new one."""
+    from agno import __version__ as agno_version
+
+    params = {"http_options": {"headers": {"custom-header": "value"}}}
+    result = inject_agno_client_header(params)
+    assert result["http_options"]["headers"]["custom-header"] == "value"
+    assert result["http_options"]["headers"]["x-goog-api-client"] == f"agno/{agno_version}"
+
+
+def test_inject_header_preserves_other_http_options():
+    """Other http_options keys (e.g., timeout) should be preserved."""
+    from agno import __version__ as agno_version
+
+    params = {"http_options": {"timeout": 30000}}
+    result = inject_agno_client_header(params)
+    assert result["http_options"]["timeout"] == 30000
+    assert result["http_options"]["headers"]["x-goog-api-client"] == f"agno/{agno_version}"
+
+
+def test_inject_header_preserves_other_client_params():
+    """Other client_params keys (e.g., api_key) should be preserved."""
+    params = {"api_key": "test-key", "vertexai": False}
+    result = inject_agno_client_header(params)
+    assert result["api_key"] == "test-key"
+    assert result["vertexai"] is False
+    assert "x-goog-api-client" in result["http_options"]["headers"]
+
+
+def test_inject_header_overrides_existing_x_goog_api_client():
+    """If an x-goog-api-client header is already set, it should be overwritten."""
+    from agno import __version__ as agno_version
+
+    params = {"http_options": {"headers": {"x-goog-api-client": "stale/0.0.0"}}}
+    result = inject_agno_client_header(params)
+    assert result["http_options"]["headers"]["x-goog-api-client"] == f"agno/{agno_version}"

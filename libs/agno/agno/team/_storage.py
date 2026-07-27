@@ -25,7 +25,7 @@ from agno.db.utils import resolve_db_from_config
 from agno.metrics import RunMetrics, SessionMetrics
 from agno.models.base import Model
 from agno.models.message import Message
-from agno.models.utils import get_model
+from agno.models.utils import resolve_model
 from agno.registry.registry import Registry
 from agno.run.agent import RunOutput
 from agno.run.team import (
@@ -56,7 +56,7 @@ from agno.utils.string import generate_id_from_name
 
 
 def get_run_output(
-    team: "Team", run_id: str, session_id: Optional[str] = None
+    team: "Team", run_id: str, session_id: Optional[str] = None, user_id: Optional[str] = None
 ) -> Optional[Union[TeamRunOutput, RunOutput]]:
     """
     Get a RunOutput or TeamRunOutput from the database.  Handles cached sessions.
@@ -64,16 +64,17 @@ def get_run_output(
     Args:
         run_id (str): The run_id to load from storage.
         session_id (Optional[str]): The session_id to load from storage.
+        user_id (Optional[str]): The user_id to scope the session lookup.
     """
     if not session_id and not team.session_id:
         raise Exception("No session_id provided")
 
     session_id_to_load = session_id or team.session_id
-    return get_run_output_util(cast(Any, team), run_id=run_id, session_id=session_id_to_load)
+    return get_run_output_util(cast(Any, team), run_id=run_id, session_id=session_id_to_load, user_id=user_id)
 
 
 async def aget_run_output(
-    team: "Team", run_id: str, session_id: Optional[str] = None
+    team: "Team", run_id: str, session_id: Optional[str] = None, user_id: Optional[str] = None
 ) -> Optional[Union[TeamRunOutput, RunOutput]]:
     """
     Get a RunOutput or TeamRunOutput from the database.  Handles cached sessions.
@@ -81,12 +82,13 @@ async def aget_run_output(
     Args:
         run_id (str): The run_id to load from storage.
         session_id (Optional[str]): The session_id to load from storage.
+        user_id (Optional[str]): The user_id to scope the session lookup.
     """
     if not session_id and not team.session_id:
         raise Exception("No session_id provided")
 
     session_id_to_load = session_id or team.session_id
-    return await aget_run_output_util(cast(Any, team), run_id=run_id, session_id=session_id_to_load)
+    return await aget_run_output_util(cast(Any, team), run_id=run_id, session_id=session_id_to_load, user_id=user_id)
 
 
 def get_last_run_output(team: "Team", session_id: Optional[str] = None) -> Optional[TeamRunOutput]:
@@ -518,9 +520,14 @@ def to_dict(team: "Team") -> Dict[str, Any]:
         config["add_dependencies_to_context"] = team.add_dependencies_to_context
 
     # --- Knowledge settings ---
-    # TODO: implement knowledge serialization
-    # if team.knowledge is not None:
-    #     config["knowledge"] = team.knowledge.to_dict()
+    # Knowledge is a non-serializable object (it holds live db/vector_db connections),
+    # so we store a reference by name and resolve it from the registry on load.
+    if team.knowledge is not None:
+        knowledge_name = getattr(team.knowledge, "name", None)
+        if knowledge_name is not None:
+            config["knowledge"] = {"name": knowledge_name}
+        else:
+            log_warning("Team knowledge has no name; it cannot be referenced from the registry and will not be saved.")
     if team.knowledge_filters is not None:
         config["knowledge_filters"] = team.knowledge_filters
     if team.enable_agentic_knowledge_filters:
@@ -742,11 +749,7 @@ def from_dict(
 
     # --- Handle Model reconstruction ---
     if "model" in config:
-        model_data = config["model"]
-        if isinstance(model_data, dict) and "id" in model_data:
-            config["model"] = get_model(f"{model_data['provider']}:{model_data['id']}")
-        elif isinstance(model_data, str):
-            config["model"] = get_model(model_data)
+        config["model"] = resolve_model(config["model"], registry)
 
     # --- Handle Members reconstruction ---
     members: Optional[List[Union[Agent, "Team"]]] = None
@@ -758,25 +761,34 @@ def from_dict(
         for member_data in config["members"]:
             member_type = member_data.get("type")
             if member_type == "agent":
+                agent_id = member_data["agent_id"]
                 # TODO: Make sure to pass the correct version to get_agent_by_id. Right now its returning the latest version.
-                if db is None:
-                    log_warning(f"Cannot load member agent {member_data['agent_id']}: db is None")
-                    continue
-                agent = get_agent_by_id(id=member_data["agent_id"], db=db, registry=registry)
-                if agent:
+                agent = get_agent_by_id(id=agent_id, db=db, registry=registry) if db is not None else None
+                # Fall back to a code-defined agent registered in the registry.
+                # These are legitimately not persisted as DB components (e.g. agents
+                # passed to AgentOS(agents=[...])), so a DB lookup returns nothing.
+                # Deep copy so the shared registry singleton isn't mutated when the
+                # owning team runs (initialize_team sets team_id/_team on members).
+                if agent is None and registry is not None:
+                    registered_agent = registry.get_agent(agent_id)
+                    agent = registered_agent.deep_copy() if registered_agent is not None else None
+                if agent is not None:
                     members.append(agent)
                 else:
-                    log_warning(f"Agent not found: {member_data['agent_id']}")
+                    log_warning(f"Team member agent not found in db or registry: {agent_id}")
             elif member_type == "team":
                 # Handle nested teams as members
-                if db is None:
-                    log_warning(f"Cannot load member team {member_data['team_id']}: db is None")
-                    continue
-                nested_team = get_team_by_id(id=member_data["team_id"], db=db, registry=registry)
-                if nested_team:
+                team_id = member_data["team_id"]
+                nested_team = get_team_by_id(id=team_id, db=db, registry=registry) if db is not None else None
+                # Fall back to a code-defined team registered in the registry.
+                # Deep copy so the shared registry singleton isn't mutated on run.
+                if nested_team is None and registry is not None:
+                    registered_team = registry.get_team(team_id)
+                    nested_team = registered_team.deep_copy() if registered_team is not None else None
+                if nested_team is not None:
                     members.append(nested_team)
                 else:
-                    log_warning(f"Team not found: {member_data['team_id']}")
+                    log_warning(f"Team member team not found in db or registry: {team_id}")
 
     # --- Handle reasoning_model reconstruction ---
     # TODO: implement reasoning model deserialization
@@ -851,10 +863,16 @@ def from_dict(
     #     config["session_summary_manager"] = SessionSummaryManager.from_dict(config["session_summary_manager"])
 
     # --- Handle Knowledge reconstruction ---
-    # TODO: implement knowledge deserialization
-    # if "knowledge" in config and isinstance(config["knowledge"], dict):
-    #     from agno.knowledge import Knowledge
-    #     config["knowledge"] = Knowledge.from_dict(config["knowledge"])
+    # Knowledge is stored as a reference by name and resolved from the registry,
+    # since it holds live db/vector_db connections that cannot be serialized.
+    if "knowledge" in config and isinstance(config["knowledge"], dict):
+        knowledge_name = config["knowledge"].get("name")
+        resolved_knowledge = registry.get_knowledge(knowledge_name) if (registry and knowledge_name) else None
+        if resolved_knowledge is not None:
+            config["knowledge"] = resolved_knowledge
+        else:
+            log_warning(f"Knowledge '{knowledge_name}' not found in registry, skipping.")
+            del config["knowledge"]
 
     # --- Handle CompressionManager reconstruction ---
     # TODO: implement compression manager deserialization
@@ -920,7 +938,7 @@ def from_dict(
             dependencies=config.get("dependencies"),
             add_dependencies_to_context=config.get("add_dependencies_to_context", False),
             # --- Knowledge settings ---
-            # knowledge=config.get("knowledge"),  # TODO
+            knowledge=config.get("knowledge"),
             knowledge_filters=config.get("knowledge_filters"),
             enable_agentic_knowledge_filters=config.get("enable_agentic_knowledge_filters", False),
             add_knowledge_to_context=config.get("add_knowledge_to_context", False),
@@ -1100,8 +1118,10 @@ def _hydrate_from_graph(
     if team.db is None:
         team.db = db
 
-    # Hydrate members from graph children
-    team.members = []
+    # Hydrate members directly from the already-loaded graph children. This
+    # reuses the preloaded nested graphs and avoids extra DB round-trips for
+    # members that are persisted DB components.
+    graph_members: Dict[str, Union[Agent, "Team"]] = {}
     for child in graph.get("children", []):
         child_graph = child.get("graph")
         if child_graph is None:
@@ -1119,12 +1139,36 @@ def _hydrate_from_graph(
             agent.id = child_graph["component"]["component_id"]
             if agent.db is None:
                 agent.db = db
-            team.members.append(agent)
+            graph_members[agent.id] = agent
         elif member_type == "team":
             # Recursively hydrate nested teams from the already-loaded child graph
             nested_team = _hydrate_from_graph(cls, child_graph, db=db, registry=registry)
-            if nested_team:
-                team.members.append(nested_team)
+            if nested_team is not None and nested_team.id is not None:
+                graph_members[nested_team.id] = nested_team
+
+    # Merge the graph-hydrated members with the members already resolved by
+    # from_dict. from_dict resolves members that are NOT DB components (e.g.
+    # code-defined agents from the registry), which have no graph child. We
+    # must not drop those. When a graph child exists for a member, prefer it
+    # (its nested graph is already loaded). Order follows the config members,
+    # with any graph-only children appended afterwards.
+    resolved_members = team.members if isinstance(team.members, list) else []
+    if graph_members:
+        merged: List[Union[Agent, "Team"]] = []
+        seen = set()
+        for member in resolved_members:
+            member_id = getattr(member, "id", None)
+            if member_id is not None and member_id in graph_members:
+                merged.append(graph_members[member_id])
+                seen.add(member_id)
+            else:
+                merged.append(member)
+                if member_id is not None:
+                    seen.add(member_id)
+        for graph_member_id, graph_member in graph_members.items():
+            if graph_member_id not in seen:
+                merged.append(graph_member)
+        team.members = merged
 
     return team
 

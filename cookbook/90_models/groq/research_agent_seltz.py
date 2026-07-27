@@ -18,7 +18,7 @@ if not tmp.exists():
 
 agent = Agent(
     model=Groq(id="llama-3.3-70b-versatile"),
-    tools=[SeltzTools(max_documents=10, show_results=True)],
+    tools=[SeltzTools(max_results=10, show_results=True)],
     description="You are an advanced AI researcher writing a report on a topic.",
     instructions=[
         "For the provided topic, run 3 different searches.",
