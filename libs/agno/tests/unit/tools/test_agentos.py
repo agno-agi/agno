@@ -892,15 +892,21 @@ class TestPendingApprovals:
 
 
 class TestErrorPaths:
-    def test_db_failure_returns_error_payload(self, db, toolkit, monkeypatch):
+    def test_db_failure_returns_generic_error_without_leaking_detail(self, db, toolkit, monkeypatch):
+        # Raw exception text can carry SQL fragments, table and column names. These
+        # tools read the db with no endpoint scopes, so the detail must not reach
+        # whoever talks to the agent -- it is logged instead.
         def fail(*args: Any, **kwargs: Any):
-            raise RuntimeError("db exploded")
+            raise RuntimeError("db exploded: SELECT secret_col FROM secret_table")
 
         monkeypatch.setattr(db, "get_eval_runs", fail)
 
         out = _loads(toolkit.get_eval_history())
 
-        assert "db exploded" in out["error"]
+        assert "error" in out
+        assert "secret_table" not in out["error"]
+        assert "db exploded" not in out["error"]
+        assert "Failed to get eval history" in out["error"]
 
 
 # ----------------------------------------------------------------------
