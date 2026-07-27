@@ -1,7 +1,11 @@
 import asyncio
+import base64
 import json
+import subprocess
+import sys
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
+from threading import Barrier, Lock
 from time import sleep
 from types import SimpleNamespace
 from typing import Any
@@ -9,7 +13,7 @@ from typing import Any
 import pytest
 
 from agno.run import RunContext
-from agno.tools.tenki import TenkiTools
+from agno.tools.tenki import BOUNDED_COMMAND_RUNNER, TenkiTools
 
 
 @dataclass
@@ -27,6 +31,7 @@ class FakeFileSystem:
     def __init__(self) -> None:
         self.files: dict[str, str] = {}
         self.directories: set[str] = {"/home/tenki"}
+        self.read_stream_calls: list[dict[str, Any]] = []
 
     def mkdir(self, path: str, *, recursive: bool = True) -> None:
         if path == "/home/tenki":
@@ -39,11 +44,27 @@ class FakeFileSystem:
     def read_text(self, path: str) -> str:
         return self.files[path]
 
+    def read_stream(self, path: str, *, offset: int = 0, length: int = 0, chunk_bytes: int = 0):
+        self.read_stream_calls.append(
+            {
+                "path": path,
+                "offset": offset,
+                "length": length,
+                "chunk_bytes": chunk_bytes,
+            }
+        )
+        data = self.files[path].encode()[offset:]
+        if length:
+            data = data[:length]
+        size = chunk_bytes or len(data) or 1
+        for index in range(0, len(data), size):
+            yield data[index : index + size]
+
     def stat(self, path: str):
         if path in self.directories:
-            return SimpleNamespace(path=path, is_dir=True)
+            return SimpleNamespace(path=path, is_dir=True, size=0)
         if path in self.files:
-            return SimpleNamespace(path=path, is_dir=False)
+            return SimpleNamespace(path=path, is_dir=False, size=len(self.files[path].encode()))
         raise FileNotFoundError(path)
 
     def list(self, path: str, *, include_hidden: bool = False):
@@ -66,6 +87,15 @@ class FakeFileSystem:
         return entries
 
     def remove(self, path: str, *, recursive: bool = True) -> None:
+        if recursive and path in self.directories:
+            prefix = f"{path.rstrip('/')}/"
+            self.files = {
+                file_path: content for file_path, content in self.files.items() if not file_path.startswith(prefix)
+            }
+            self.directories = {
+                directory for directory in self.directories if directory != path and not directory.startswith(prefix)
+            }
+            return
         del self.files[path]
 
 
@@ -73,6 +103,7 @@ class FakeAsyncFileSystem:
     def __init__(self) -> None:
         self.files: dict[str, str] = {}
         self.directories: set[str] = {"/home/tenki"}
+        self.read_stream_calls: list[dict[str, Any]] = []
 
     async def mkdir(self, path: str, *, recursive: bool = True) -> None:
         if path == "/home/tenki":
@@ -85,11 +116,27 @@ class FakeAsyncFileSystem:
     async def read_text(self, path: str) -> str:
         return self.files[path]
 
+    async def read_stream(self, path: str, *, offset: int = 0, length: int = 0, chunk_bytes: int = 0):
+        self.read_stream_calls.append(
+            {
+                "path": path,
+                "offset": offset,
+                "length": length,
+                "chunk_bytes": chunk_bytes,
+            }
+        )
+        data = self.files[path].encode()[offset:]
+        if length:
+            data = data[:length]
+        size = chunk_bytes or len(data) or 1
+        for index in range(0, len(data), size):
+            yield data[index : index + size]
+
     async def stat(self, path: str):
         if path in self.directories:
-            return SimpleNamespace(path=path, is_dir=True)
+            return SimpleNamespace(path=path, is_dir=True, size=0)
         if path in self.files:
-            return SimpleNamespace(path=path, is_dir=False)
+            return SimpleNamespace(path=path, is_dir=False, size=len(self.files[path].encode()))
         raise FileNotFoundError(path)
 
     async def list(self, path: str, *, include_hidden: bool = False):
@@ -112,23 +159,59 @@ class FakeAsyncFileSystem:
         return entries
 
     async def remove(self, path: str, *, recursive: bool = True) -> None:
+        if recursive and path in self.directories:
+            prefix = f"{path.rstrip('/')}/"
+            self.files = {
+                file_path: content for file_path, content in self.files.items() if not file_path.startswith(prefix)
+            }
+            self.directories = {
+                directory for directory in self.directories if directory != path and not directory.startswith(prefix)
+            }
+            return
         del self.files[path]
 
 
 class FakeSandbox:
-    def __init__(self, sandbox_id: str = "sandbox-1") -> None:
+    def __init__(
+        self,
+        sandbox_id: str = "sandbox-1",
+        *,
+        tags: list[str] | None = None,
+        python_result: FakeCommandResult | None = None,
+        shell_result: FakeCommandResult | None = None,
+    ) -> None:
         self.id = sandbox_id
         self.state = "RUNNING"
-        self.info = SimpleNamespace(name="agno-tenki")
+        self.info = SimpleNamespace(name="agno-tenki", tags=tuple(tags or ()))
         self.fs = FakeFileSystem()
         self.exec_calls: list[tuple[tuple[Any, ...], dict[str, Any]]] = []
         self.resume_calls = 0
         self.wait_ready_calls: list[float] = []
         self.close_calls = 0
+        self.python_result = python_result or FakeCommandResult()
+        self.shell_result = shell_result or FakeCommandResult(
+            exit_code=2,
+            stdout_text="partial output\n",
+            stderr_text="command failed\n",
+        )
 
     def exec(self, *args, **kwargs):
         self.exec_calls.append((args, kwargs))
-        return FakeCommandResult()
+        if len(args) >= 7 and args[:2] == ("python3", "-c"):
+            mode = args[3]
+            result = self.python_result if mode == "python" else self.shell_result
+            limit = int(args[6])
+            stdout = result.stdout_text.encode()
+            stderr = result.stderr_text.encode()
+            payload = {
+                "exit_code": result.exit_code,
+                "stdout": base64.b64encode(stdout if limit < 0 else stdout[:limit]).decode(),
+                "stderr": base64.b64encode(stderr if limit < 0 else stderr[:limit]).decode(),
+                "stdout_bytes": len(stdout),
+                "stderr_bytes": len(stderr),
+            }
+            return FakeCommandResult(stdout_text=json.dumps(payload))
+        return self.python_result
 
     def shell(self, command: str, **kwargs):
         return FakeCommandResult(exit_code=2, stdout_text="partial output\n", stderr_text="command failed\n")
@@ -147,12 +230,21 @@ class FakeSandbox:
 
 
 class FakeClient:
-    def __init__(self, identity=None) -> None:
+    def __init__(
+        self,
+        identity=None,
+        *,
+        python_result: FakeCommandResult | None = None,
+        shell_result: FakeCommandResult | None = None,
+    ) -> None:
         self.sandboxes: dict[str, FakeSandbox] = {}
         self.created_ids: list[str] = []
         self.create_options: list[dict[str, Any]] = []
+        self.list_options: list[dict[str, Any]] = []
         self.identity = identity or SimpleNamespace(owner_type="SERVICE", owner_id="service-1", workspaces=())
         self.who_am_i_calls = 0
+        self.python_result = python_result
+        self.shell_result = shell_result
 
     def who_am_i(self):
         self.who_am_i_calls += 1
@@ -161,7 +253,14 @@ class FakeClient:
     def create(self, **kwargs):
         self.create_options.append(kwargs)
         sandbox_id = f"sandbox-{len(self.created_ids) + 1}"
-        sandbox = FakeSandbox(sandbox_id)
+        sandbox = FakeSandbox(
+            sandbox_id,
+            tags=kwargs.get("tags"),
+            python_result=self.python_result,
+            shell_result=self.shell_result,
+        )
+        if kwargs.get("wait") is False:
+            sandbox.state = "CREATING"
         self.sandboxes[sandbox_id] = sandbox
         self.created_ids.append(sandbox_id)
         return sandbox
@@ -169,21 +268,53 @@ class FakeClient:
     def get(self, sandbox_id: str):
         return self.sandboxes[sandbox_id]
 
+    def list(self, *, workspace_id: str | None = None, tags: list[str] | None = None):
+        self.list_options.append({"workspace_id": workspace_id, "tags": tags})
+        requested_tags = set(tags or ())
+        return [sandbox for sandbox in self.sandboxes.values() if requested_tags.issubset(set(sandbox.info.tags))]
+
 
 class FakeAsyncSandbox:
-    def __init__(self, sandbox_id: str = "async-sandbox-1") -> None:
+    def __init__(
+        self,
+        sandbox_id: str = "async-sandbox-1",
+        *,
+        tags: list[str] | None = None,
+        python_result: FakeCommandResult | None = None,
+        shell_result: FakeCommandResult | None = None,
+    ) -> None:
         self.id = sandbox_id
         self.state = "RUNNING"
-        self.info = SimpleNamespace(name="agno-tenki")
+        self.info = SimpleNamespace(name="agno-tenki", tags=tuple(tags or ()))
         self.fs = FakeAsyncFileSystem()
         self.exec_calls: list[tuple[tuple[Any, ...], dict[str, Any]]] = []
         self.resume_calls = 0
         self.wait_ready_calls: list[float] = []
         self.close_calls = 0
+        self.python_result = python_result or FakeCommandResult(stdout_text="hello async\n")
+        self.shell_result = shell_result or FakeCommandResult(
+            exit_code=2,
+            stdout_text="partial output\n",
+            stderr_text="command failed\n",
+        )
 
     async def exec(self, *args, **kwargs):
         self.exec_calls.append((args, kwargs))
-        return FakeCommandResult(stdout_text="hello async\n")
+        if len(args) >= 7 and args[:2] == ("python3", "-c"):
+            mode = args[3]
+            result = self.python_result if mode == "python" else self.shell_result
+            limit = int(args[6])
+            stdout = result.stdout_text.encode()
+            stderr = result.stderr_text.encode()
+            payload = {
+                "exit_code": result.exit_code,
+                "stdout": base64.b64encode(stdout if limit < 0 else stdout[:limit]).decode(),
+                "stderr": base64.b64encode(stderr if limit < 0 else stderr[:limit]).decode(),
+                "stdout_bytes": len(stdout),
+                "stderr_bytes": len(stderr),
+            }
+            return FakeCommandResult(stdout_text=json.dumps(payload))
+        return self.python_result
 
     async def shell(self, command: str, **kwargs):
         return FakeCommandResult(exit_code=2, stdout_text="partial output\n", stderr_text="command failed\n")
@@ -202,12 +333,21 @@ class FakeAsyncSandbox:
 
 
 class FakeAsyncClient:
-    def __init__(self, identity=None) -> None:
+    def __init__(
+        self,
+        identity=None,
+        *,
+        python_result: FakeCommandResult | None = None,
+        shell_result: FakeCommandResult | None = None,
+    ) -> None:
         self.sandboxes: dict[str, FakeAsyncSandbox] = {}
         self.created_ids: list[str] = []
         self.create_options: list[dict[str, Any]] = []
+        self.list_options: list[dict[str, Any]] = []
         self.identity = identity or SimpleNamespace(owner_type="SERVICE", owner_id="service-1", workspaces=())
         self.who_am_i_calls = 0
+        self.python_result = python_result
+        self.shell_result = shell_result
 
     async def who_am_i(self):
         self.who_am_i_calls += 1
@@ -216,13 +356,25 @@ class FakeAsyncClient:
     async def create(self, **kwargs):
         self.create_options.append(kwargs)
         sandbox_id = f"async-sandbox-{len(self.created_ids) + 1}"
-        sandbox = FakeAsyncSandbox(sandbox_id)
+        sandbox = FakeAsyncSandbox(
+            sandbox_id,
+            tags=kwargs.get("tags"),
+            python_result=self.python_result,
+            shell_result=self.shell_result,
+        )
+        if kwargs.get("wait") is False:
+            sandbox.state = "CREATING"
         self.sandboxes[sandbox_id] = sandbox
         self.created_ids.append(sandbox_id)
         return sandbox
 
     async def get(self, sandbox_id: str):
         return self.sandboxes[sandbox_id]
+
+    async def list(self, *, workspace_id: str | None = None, tags: list[str] | None = None):
+        self.list_options.append({"workspace_id": workspace_id, "tags": tags})
+        requested_tags = set(tags or ())
+        return [sandbox for sandbox in self.sandboxes.values() if requested_tags.issubset(set(sandbox.info.tags))]
 
 
 class SlowFakeClient(FakeClient):
@@ -235,6 +387,42 @@ class SlowFakeAsyncClient(FakeAsyncClient):
     async def create(self, **kwargs):
         await asyncio.sleep(0.05)
         return await super().create(**kwargs)
+
+
+class CoordinatedFakeClient(FakeClient):
+    def __init__(self) -> None:
+        super().__init__()
+        self.create_barrier = Barrier(2)
+        self._create_lock = Lock()
+
+    def create(self, **kwargs):
+        with self._create_lock:
+            sandbox = super().create(**kwargs)
+        self.create_barrier.wait()
+        return sandbox
+
+    def list(self, *, workspace_id: str | None = None, tags: list[str] | None = None):
+        if len(self.created_ids) < 2:
+            return []
+        return super().list(workspace_id=workspace_id, tags=tags)
+
+
+class CoordinatedFakeAsyncClient(FakeAsyncClient):
+    def __init__(self) -> None:
+        super().__init__()
+        self.created_event = asyncio.Event()
+
+    async def create(self, **kwargs):
+        sandbox = await super().create(**kwargs)
+        if len(self.created_ids) == 2:
+            self.created_event.set()
+        await self.created_event.wait()
+        return sandbox
+
+    async def list(self, *, workspace_id: str | None = None, tags: list[str] | None = None):
+        if len(self.created_ids) < 2:
+            return []
+        return await super().list(workspace_id=workspace_id, tags=tags)
 
 
 def test_run_code_creates_a_session_and_returns_command_output() -> None:
@@ -315,46 +503,120 @@ async def test_parallel_async_calls_single_flight_sandbox_creation_per_session()
     assert second_context.session_state["tenki_sandbox_id"] == "async-sandbox-1"
 
 
-def test_losing_allocation_is_terminated(monkeypatch) -> None:
+def test_separate_toolkits_converge_on_one_server_claimed_sandbox() -> None:
+    client = CoordinatedFakeClient()
+    first_tools = TenkiTools(client=client, async_client=FakeAsyncClient())
+    second_tools = TenkiTools(client=client, async_client=FakeAsyncClient())
+    first_context = RunContext(run_id="run-1", session_id="shared-session", session_state={})
+    second_context = RunContext(run_id="run-2", session_id="shared-session", session_state={})
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        results = list(
+            executor.map(
+                lambda item: item[0].run_code(item[1], "print('shared')"),
+                (
+                    (first_tools, first_context),
+                    (second_tools, second_context),
+                ),
+            )
+        )
+
+    assert len(results) == 2
+    assert client.created_ids == ["sandbox-1", "sandbox-2"]
+    assert client.sandboxes["sandbox-1"].close_calls == 0
+    assert client.sandboxes["sandbox-2"].close_calls == 1
+    assert first_context.session_state is not None
+    assert second_context.session_state is not None
+    assert first_context.session_state["tenki_sandbox_id"] == "sandbox-1"
+    assert second_context.session_state["tenki_sandbox_id"] == "sandbox-1"
+    claim_tags = [set(options["tags"]) for options in client.create_options]
+    assert claim_tags[0] == claim_tags[1]
+    assert any(tag.startswith("agno-session:") for tag in claim_tags[0])
+
+
+async def test_separate_async_toolkits_converge_on_one_server_claimed_sandbox() -> None:
+    async_client = CoordinatedFakeAsyncClient()
+    first_tools = TenkiTools(client=FakeClient(), async_client=async_client)
+    second_tools = TenkiTools(client=FakeClient(), async_client=async_client)
+    first_context = RunContext(run_id="run-1", session_id="shared-session", session_state={})
+    second_context = RunContext(run_id="run-2", session_id="shared-session", session_state={})
+
+    results = await asyncio.gather(
+        first_tools.arun_code(first_context, "print('shared')"),
+        second_tools.arun_code(second_context, "print('shared')"),
+    )
+
+    assert len(results) == 2
+    assert async_client.created_ids == ["async-sandbox-1", "async-sandbox-2"]
+    assert async_client.sandboxes["async-sandbox-1"].close_calls == 0
+    assert async_client.sandboxes["async-sandbox-2"].close_calls == 1
+    assert first_context.session_state is not None
+    assert second_context.session_state is not None
+    assert first_context.session_state["tenki_sandbox_id"] == "async-sandbox-1"
+    assert second_context.session_state["tenki_sandbox_id"] == "async-sandbox-1"
+
+
+def test_failed_readiness_terminates_registered_allocation_and_clears_state(monkeypatch) -> None:
     client = FakeClient()
-    winner = FakeSandbox("winner-sandbox")
-    client.sandboxes[winner.id] = winner
     tools = TenkiTools(client=client, async_client=FakeAsyncClient())
     run_context = RunContext(run_id="run-1", session_id="session-1", session_state={})
+    registered_ids = []
 
-    def register_winner(run_context, state, sandbox_id):
-        state["tenki_sandbox_id"] = winner.id
-        state["tenki_sandbox_owned"] = True
-        return winner.id
+    def fail_readiness(sandbox):
+        assert run_context.session_state is not None
+        registered_ids.append(run_context.session_state["tenki_sandbox_id"])
+        raise TimeoutError("sandbox readiness timed out")
 
-    monkeypatch.setattr(tools, "_register_created_sandbox", register_winner)
+    monkeypatch.setattr(tools, "_prepare_sandbox", fail_readiness)
 
-    tools.run_code(run_context, "print('winner')")
+    with pytest.raises(TimeoutError, match="sandbox readiness timed out"):
+        tools.run_code(run_context, "print('never runs')")
 
-    losing_sandbox = client.sandboxes["sandbox-1"]
-    assert losing_sandbox.close_calls == 1
-    assert winner.exec_calls
+    assert registered_ids == ["sandbox-1"]
+    assert client.create_options[0]["wait"] is False
+    assert client.sandboxes["sandbox-1"].close_calls == 1
+    assert run_context.session_state is not None
+    assert "tenki_sandbox_id" not in run_context.session_state
+    assert "tenki_sandbox_owned" not in run_context.session_state
 
 
-async def test_async_losing_allocation_is_terminated(monkeypatch) -> None:
+async def test_async_failed_readiness_terminates_registered_allocation_and_clears_state(monkeypatch) -> None:
     async_client = FakeAsyncClient()
-    winner = FakeAsyncSandbox("winner-sandbox")
-    async_client.sandboxes[winner.id] = winner
     tools = TenkiTools(client=FakeClient(), async_client=async_client)
     run_context = RunContext(run_id="run-1", session_id="session-1", session_state={})
+    registered_ids = []
 
-    def register_winner(run_context, state, sandbox_id):
-        state["tenki_sandbox_id"] = winner.id
-        state["tenki_sandbox_owned"] = True
-        return winner.id
+    async def fail_readiness(sandbox):
+        assert run_context.session_state is not None
+        registered_ids.append(run_context.session_state["tenki_sandbox_id"])
+        raise TimeoutError("sandbox readiness timed out")
 
-    monkeypatch.setattr(tools, "_register_created_sandbox", register_winner)
+    monkeypatch.setattr(tools, "_aprepare_sandbox", fail_readiness)
 
-    await tools.arun_code(run_context, "print('winner')")
+    with pytest.raises(TimeoutError, match="sandbox readiness timed out"):
+        await tools.arun_code(run_context, "print('never runs')")
 
-    losing_sandbox = async_client.sandboxes["async-sandbox-1"]
-    assert losing_sandbox.close_calls == 1
-    assert winner.exec_calls
+    assert registered_ids == ["async-sandbox-1"]
+    assert async_client.create_options[0]["wait"] is False
+    assert async_client.sandboxes["async-sandbox-1"].close_calls == 1
+    assert run_context.session_state is not None
+    assert "tenki_sandbox_id" not in run_context.session_state
+    assert "tenki_sandbox_owned" not in run_context.session_state
+
+
+def test_creation_lock_storage_is_fixed_size() -> None:
+    tools = TenkiTools(client=FakeClient(), async_client=FakeAsyncClient())
+
+    for index in range(1_000):
+        run_context = RunContext(
+            run_id=f"run-{index}",
+            session_id=f"session-{index}",
+            session_state={},
+        )
+        tools._creation_lock(run_context)
+
+    assert len(tools._creation_locks) == 64
+    assert not hasattr(tools, "_session_sandbox_ids")
 
 
 def test_new_sandboxes_disable_inbound_network_access_by_default() -> None:
@@ -374,7 +636,9 @@ def test_new_sandboxes_disable_inbound_network_access_by_default() -> None:
             "allow_outbound": True,
             "max_duration": 900,
             "name": "agno-example",
+            "tags": [tools._claim_tag(run_context)],
             "timeout": 180,
+            "wait": False,
         }
     ]
 
@@ -726,31 +990,90 @@ def test_run_shell_command_preserves_failed_command_output() -> None:
     }
 
 
-def test_command_output_is_truncated_before_serialization() -> None:
+def test_command_output_is_bounded_during_remote_collection() -> None:
+    client = FakeClient(
+        python_result=FakeCommandResult(
+            exit_code=1,
+            stdout_text="a" * 100_000,
+            stderr_text="b" * 80_000,
+        )
+    )
     tools = TenkiTools(
-        client=FakeClient(),
+        client=client,
         async_client=FakeAsyncClient(),
         max_output_chars=10,
     )
+    run_context = RunContext(run_id="run-1", session_id="session-1", session_state={})
 
-    result = json.loads(
-        tools._format_command_result(
-            FakeCommandResult(
-                exit_code=1,
-                stdout_text="a" * 15,
-                stderr_text="b" * 12,
-            )
-        )
-    )
+    result = json.loads(tools.run_code(run_context, "print('noisy')"))
 
     assert result["stdout"].startswith("a" * 10)
     assert result["stderr"].startswith("b" * 10)
-    assert "[Output truncated after 10 characters; original length: 15.]" in result["stdout"]
-    assert "[Output truncated after 10 characters; original length: 12.]" in result["stderr"]
+    assert "[Output truncated after 10 characters; original size: 100000 bytes.]" in result["stdout"]
+    assert "[Output truncated after 10 characters; original size: 80000 bytes.]" in result["stderr"]
     assert result["stdout_truncated"] is True
     assert result["stderr_truncated"] is True
-    assert result["stdout_original_chars"] == 15
-    assert result["stderr_original_chars"] == 12
+    assert result["stdout_original_bytes"] == 100_000
+    assert result["stderr_original_bytes"] == 80_000
+    sandbox = client.sandboxes["sandbox-1"]
+    assert sandbox.exec_calls[0][0][6] == "41"
+
+
+def test_remote_command_runner_drains_but_does_not_retain_unbounded_output(tmp_path) -> None:
+    command_path = tmp_path / "command.py"
+    command_path.write_text(
+        "import sys\nsys.stdout.write('a' * 100_000)\nsys.stderr.write('b' * 80_000)\nraise SystemExit(7)\n"
+    )
+
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            BOUNDED_COMMAND_RUNNER,
+            "python",
+            str(command_path),
+            str(tmp_path),
+            "41",
+        ],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    collected = json.loads(completed.stdout)
+
+    assert collected["exit_code"] == 7
+    assert collected["stdout_bytes"] == 100_000
+    assert collected["stderr_bytes"] == 80_000
+    assert len(base64.b64decode(collected["stdout"])) == 41
+    assert len(base64.b64decode(collected["stderr"])) == 41
+
+
+def test_read_file_uses_a_bounded_stream() -> None:
+    client = FakeClient()
+    tools = TenkiTools(client=client, async_client=FakeAsyncClient(), max_output_chars=10)
+    run_context = RunContext(run_id="run-1", session_id="session-1", session_state={})
+    tools.create_file(run_context, "large.txt", "x" * 100_000)
+
+    content = tools.read_file(run_context, "large.txt")
+
+    assert content.startswith("x" * 10)
+    assert "[File content truncated after 10 characters; original size: 100000 bytes.]" in content
+    sandbox = client.sandboxes["sandbox-1"]
+    assert sandbox.fs.read_stream_calls[-1]["length"] == 41
+
+
+async def test_async_read_file_uses_a_bounded_stream() -> None:
+    async_client = FakeAsyncClient()
+    tools = TenkiTools(client=FakeClient(), async_client=async_client, max_output_chars=10)
+    run_context = RunContext(run_id="run-1", session_id="session-1", session_state={})
+    await tools.acreate_file(run_context, "large.txt", "x" * 100_000)
+
+    content = await tools.aread_file(run_context, "large.txt")
+
+    assert content.startswith("x" * 10)
+    assert "[File content truncated after 10 characters; original size: 100000 bytes.]" in content
+    sandbox = async_client.sandboxes["async-sandbox-1"]
+    assert sandbox.fs.read_stream_calls[-1]["length"] == 41
 
 
 def test_create_and_read_file_use_the_session_working_directory() -> None:

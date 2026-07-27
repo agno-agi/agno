@@ -1,21 +1,80 @@
 import asyncio
+import base64
+import hashlib
 import json
 import posixpath
 from os import getenv
 from textwrap import dedent
 from threading import Lock
 from typing import Any, Callable, Dict, Optional
+from uuid import uuid4
+from weakref import WeakKeyDictionary
 
 from agno.run import RunContext
 from agno.tools import Toolkit
 from agno.utils.code_execution import prepare_python_code
+from agno.utils.log import log_warning
 
 DEFAULT_WORKING_DIRECTORY = "/home/tenki"
 DEFAULT_MAX_OUTPUT_CHARS = 20_000
 DEFAULT_SANDBOX_MAX_DURATION = 900
+CREATION_LOCK_STRIPES = 64
+MAX_UTF8_BYTES_PER_CHAR = 4
+READ_STREAM_CHUNK_BYTES = 64 * 1024
 SANDBOX_ID_STATE_KEY = "tenki_sandbox_id"
 SANDBOX_OWNED_STATE_KEY = "tenki_sandbox_owned"
 WORKING_DIRECTORY_STATE_KEY = "tenki_working_directory"
+
+BOUNDED_COMMAND_RUNNER = """\
+import base64
+import json
+import subprocess
+import sys
+import threading
+
+mode, command_path, cwd, raw_limit = sys.argv[1:]
+limit = int(raw_limit)
+argv = (
+    ["python3", command_path]
+    if mode == "python"
+    else ["bash", "-lc", 'command_path=$1; set --; source "$command_path"', "bash", command_path]
+)
+process = subprocess.Popen(argv, cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+streams = (process.stdout, process.stderr)
+buffers = (bytearray(), bytearray())
+totals = [0, 0]
+
+def drain(index):
+    stream = streams[index]
+    while True:
+        chunk = stream.read(65536)
+        if not chunk:
+            return
+        totals[index] += len(chunk)
+        if limit < 0:
+            buffers[index].extend(chunk)
+        elif len(buffers[index]) < limit:
+            buffers[index].extend(chunk[: limit - len(buffers[index])])
+
+threads = [threading.Thread(target=drain, args=(index,)) for index in range(2)]
+for thread in threads:
+    thread.start()
+exit_code = process.wait()
+for thread in threads:
+    thread.join()
+
+print(
+    json.dumps(
+        {
+            "exit_code": exit_code,
+            "stdout": base64.b64encode(buffers[0]).decode("ascii"),
+            "stderr": base64.b64encode(buffers[1]).decode("ascii"),
+            "stdout_bytes": totals[0],
+            "stderr_bytes": totals[1],
+        }
+    )
+)
+"""
 
 DEFAULT_INSTRUCTIONS = dedent(
     """\
@@ -90,10 +149,8 @@ class TenkiTools(Toolkit):
         self.sandbox_id = sandbox_id
         self.auto_create_sandbox = auto_create_sandbox
         self._creation_locks_guard = Lock()
-        self._registration_lock = Lock()
-        self._sync_creation_locks: Dict[tuple[Optional[str], str], Any] = {}
-        self._async_creation_locks: Dict[tuple[Optional[str], str, int], asyncio.Lock] = {}
-        self._session_sandbox_ids: Dict[tuple[Optional[str], str], str] = {}
+        self._creation_locks = tuple(Lock() for _ in range(CREATION_LOCK_STRIPES))
+        self._async_creation_locks_by_loop: WeakKeyDictionary[Any, tuple[asyncio.Lock, ...]] = WeakKeyDictionary()
         self.sandbox_options: Dict[str, Any] = {
             "allow_inbound": allow_inbound,
             "allow_outbound": allow_outbound,
@@ -157,97 +214,124 @@ class TenkiTools(Toolkit):
     def _session_key(run_context: RunContext) -> tuple[Optional[str], str]:
         return run_context.user_id, run_context.session_id
 
-    def _sync_creation_lock(self, run_context: RunContext) -> Any:
-        key = self._session_key(run_context)
-        with self._creation_locks_guard:
-            return self._sync_creation_locks.setdefault(key, Lock())
+    def _creation_lock(self, run_context: RunContext) -> Any:
+        return self._creation_locks[hash(self._session_key(run_context)) % CREATION_LOCK_STRIPES]
 
     def _async_creation_lock(self, run_context: RunContext) -> asyncio.Lock:
-        session_key = self._session_key(run_context)
-        key = (*session_key, id(asyncio.get_running_loop()))
+        loop = asyncio.get_running_loop()
         with self._creation_locks_guard:
-            return self._async_creation_locks.setdefault(key, asyncio.Lock())
+            locks = self._async_creation_locks_by_loop.get(loop)
+            if locks is None:
+                locks = tuple(asyncio.Lock() for _ in range(CREATION_LOCK_STRIPES))
+                self._async_creation_locks_by_loop[loop] = locks
+        return locks[hash(self._session_key(run_context)) % CREATION_LOCK_STRIPES]
 
-    def _registered_sandbox_id(self, run_context: RunContext) -> Optional[str]:
-        with self._registration_lock:
-            return self._session_sandbox_ids.get(self._session_key(run_context))
-
-    def _remember_sandbox(self, run_context: RunContext, sandbox_id: str) -> None:
-        with self._registration_lock:
-            self._session_sandbox_ids[self._session_key(run_context)] = sandbox_id
-
-    def _clear_sandbox_state(self, run_context: RunContext, state: Dict[str, Any]) -> None:
-        sandbox_id = state.pop(SANDBOX_ID_STATE_KEY, None)
-        state.pop(SANDBOX_OWNED_STATE_KEY, None)
-        if self.sandbox_id:
+    @staticmethod
+    def _clear_sandbox_state(state: Dict[str, Any], expected_sandbox_id: Optional[str] = None) -> None:
+        if expected_sandbox_id is not None and state.get(SANDBOX_ID_STATE_KEY) != expected_sandbox_id:
             return
-        with self._registration_lock:
-            key = self._session_key(run_context)
-            registered_id = self._session_sandbox_ids.get(key)
-            if sandbox_id is None or registered_id == sandbox_id:
-                self._session_sandbox_ids.pop(key, None)
+        state.pop(SANDBOX_ID_STATE_KEY, None)
+        state.pop(SANDBOX_OWNED_STATE_KEY, None)
+
+    def _claim_tag(self, run_context: RunContext) -> str:
+        user_id, session_id = self._session_key(run_context)
+        digest = hashlib.sha256(f"{user_id or ''}\0{session_id}".encode()).hexdigest()[:19]
+        return f"agno-session:{digest}"
+
+    def _create_options(self, run_context: RunContext) -> Dict[str, Any]:
+        options = dict(self.sandbox_options)
+        tags = list(options.get("tags") or [])
+        claim_tag = self._claim_tag(run_context)
+        if claim_tag not in tags:
+            tags.append(claim_tag)
+        options["tags"] = tags
+        options["wait"] = False
+        return options
+
+    def _claimed_sandboxes(self, run_context: RunContext) -> list[Any]:
+        list_options: Dict[str, Any] = {"tags": [self._claim_tag(run_context)]}
+        workspace_id = self.sandbox_options.get("workspace_id")
+        if workspace_id:
+            list_options["workspace_id"] = workspace_id
+        return [
+            sandbox
+            for sandbox in self.client.list(**list_options)
+            if sandbox.state not in {"TERMINATING", "TERMINATED", "USER_SHUTDOWN"}
+        ]
+
+    async def _aclaimed_sandboxes(self, run_context: RunContext) -> list[Any]:
+        list_options: Dict[str, Any] = {"tags": [self._claim_tag(run_context)]}
+        workspace_id = self.sandbox_options.get("workspace_id")
+        if workspace_id:
+            list_options["workspace_id"] = workspace_id
+        return [
+            sandbox
+            for sandbox in await self.async_client.list(**list_options)
+            if sandbox.state not in {"TERMINATING", "TERMINATED", "USER_SHUTDOWN"}
+        ]
+
+    def _find_claimed_sandbox(self, run_context: RunContext) -> Optional[Any]:
+        sandboxes = self._claimed_sandboxes(run_context)
+        return min(sandboxes, key=lambda sandbox: sandbox.id) if sandboxes else None
+
+    async def _afind_claimed_sandbox(self, run_context: RunContext) -> Optional[Any]:
+        sandboxes = await self._aclaimed_sandboxes(run_context)
+        return min(sandboxes, key=lambda sandbox: sandbox.id) if sandboxes else None
+
+    @staticmethod
+    def _record_sandbox(state: Dict[str, Any], sandbox_id: str, *, owned: bool) -> None:
+        state[SANDBOX_ID_STATE_KEY] = sandbox_id
+        state[SANDBOX_OWNED_STATE_KEY] = owned
 
     def _get_reusable_sandbox(self, run_context: RunContext) -> Optional[Any]:
         state = self._session_state(run_context)
-        sandbox_id = self.sandbox_id or state.get(SANDBOX_ID_STATE_KEY) or self._registered_sandbox_id(run_context)
-        if not sandbox_id:
-            return None
-        try:
-            sandbox = self.client.get(sandbox_id)
-        except Exception as error:
-            if self.sandbox_id or not self._is_missing_sandbox_error(error):
-                raise
-            self._clear_sandbox_state(run_context, state)
-            return None
+        sandbox_id = self.sandbox_id or state.get(SANDBOX_ID_STATE_KEY)
+        if sandbox_id:
+            try:
+                sandbox = self.client.get(sandbox_id)
+            except Exception as error:
+                if self.sandbox_id or not self._is_missing_sandbox_error(error):
+                    raise
+                self._clear_sandbox_state(state, sandbox_id)
+                sandbox = self._find_claimed_sandbox(run_context)
+                if sandbox is None:
+                    return None
+        else:
+            sandbox = self._find_claimed_sandbox(run_context)
+            if sandbox is None:
+                return None
         if sandbox.state in {"TERMINATING", "TERMINATED", "USER_SHUTDOWN"}:
             if self.sandbox_id:
                 raise RuntimeError(f"Tenki sandbox {sandbox.id} is in terminal state {sandbox.state}")
-            self._clear_sandbox_state(run_context, state)
+            self._clear_sandbox_state(state, sandbox.id)
             return None
-        state[SANDBOX_ID_STATE_KEY] = sandbox.id
-        state.setdefault(SANDBOX_OWNED_STATE_KEY, self.sandbox_id is None)
-        if not self.sandbox_id:
-            self._remember_sandbox(run_context, sandbox.id)
+        self._record_sandbox(state, sandbox.id, owned=self.sandbox_id is None)
         return self._prepare_sandbox(sandbox)
 
     async def _aget_reusable_sandbox(self, run_context: RunContext) -> Optional[Any]:
         state = self._session_state(run_context)
-        sandbox_id = self.sandbox_id or state.get(SANDBOX_ID_STATE_KEY) or self._registered_sandbox_id(run_context)
-        if not sandbox_id:
-            return None
-        try:
-            sandbox = await self.async_client.get(sandbox_id)
-        except Exception as error:
-            if self.sandbox_id or not self._is_missing_sandbox_error(error):
-                raise
-            self._clear_sandbox_state(run_context, state)
-            return None
+        sandbox_id = self.sandbox_id or state.get(SANDBOX_ID_STATE_KEY)
+        if sandbox_id:
+            try:
+                sandbox = await self.async_client.get(sandbox_id)
+            except Exception as error:
+                if self.sandbox_id or not self._is_missing_sandbox_error(error):
+                    raise
+                self._clear_sandbox_state(state, sandbox_id)
+                sandbox = await self._afind_claimed_sandbox(run_context)
+                if sandbox is None:
+                    return None
+        else:
+            sandbox = await self._afind_claimed_sandbox(run_context)
+            if sandbox is None:
+                return None
         if sandbox.state in {"TERMINATING", "TERMINATED", "USER_SHUTDOWN"}:
             if self.sandbox_id:
                 raise RuntimeError(f"Tenki sandbox {sandbox.id} is in terminal state {sandbox.state}")
-            self._clear_sandbox_state(run_context, state)
+            self._clear_sandbox_state(state, sandbox.id)
             return None
-        state[SANDBOX_ID_STATE_KEY] = sandbox.id
-        state.setdefault(SANDBOX_OWNED_STATE_KEY, self.sandbox_id is None)
-        if not self.sandbox_id:
-            self._remember_sandbox(run_context, sandbox.id)
+        self._record_sandbox(state, sandbox.id, owned=self.sandbox_id is None)
         return await self._aprepare_sandbox(sandbox)
-
-    def _register_created_sandbox(
-        self, run_context: RunContext, state: Dict[str, Any], sandbox_id: str
-    ) -> Optional[str]:
-        with self._registration_lock:
-            key = self._session_key(run_context)
-            existing_id = state.get(SANDBOX_ID_STATE_KEY) or self._session_sandbox_ids.get(key)
-            if existing_id:
-                state[SANDBOX_ID_STATE_KEY] = existing_id
-                state[SANDBOX_OWNED_STATE_KEY] = True
-                return existing_id
-            self._session_sandbox_ids[key] = sandbox_id
-            state[SANDBOX_ID_STATE_KEY] = sandbox_id
-            state[SANDBOX_OWNED_STATE_KEY] = True
-            state[WORKING_DIRECTORY_STATE_KEY] = DEFAULT_WORKING_DIRECTORY
-            return None
 
     def _get_or_create_sandbox(self, run_context: RunContext) -> Any:
         sandbox = self._get_reusable_sandbox(run_context)
@@ -256,17 +340,29 @@ class TenkiTools(Toolkit):
         if not self.auto_create_sandbox:
             raise RuntimeError("No Tenki sandbox is associated with this session and auto-creation is disabled")
 
-        with self._sync_creation_lock(run_context):
+        with self._creation_lock(run_context):
             sandbox = self._get_reusable_sandbox(run_context)
             if sandbox is not None:
                 return sandbox
-            sandbox = self.client.create(**self.sandbox_options)
+            sandbox = self.client.create(**self._create_options(run_context))
             state = self._session_state(run_context)
-            winning_id = self._register_created_sandbox(run_context, state, sandbox.id)
-            if winning_id is not None:
-                sandbox.close()
-                return self._prepare_sandbox(self.client.get(winning_id))
-            return self._prepare_sandbox(sandbox)
+            self._record_sandbox(state, sandbox.id, owned=True)
+            state[WORKING_DIRECTORY_STATE_KEY] = DEFAULT_WORKING_DIRECTORY
+            try:
+                winner = self._find_claimed_sandbox(run_context) or sandbox
+                if winner.id != sandbox.id:
+                    sandbox.close()
+                    self._record_sandbox(state, winner.id, owned=True)
+                return self._prepare_sandbox(winner)
+            except Exception:
+                if state.get(SANDBOX_ID_STATE_KEY) == sandbox.id:
+                    try:
+                        sandbox.close()
+                    except Exception as cleanup_error:
+                        log_warning(f"Could not terminate unready Tenki sandbox {sandbox.id}: {cleanup_error}")
+                    finally:
+                        self._clear_sandbox_state(state, sandbox.id)
+                raise
 
     async def _aget_or_create_sandbox(self, run_context: RunContext) -> Any:
         sandbox = await self._aget_reusable_sandbox(run_context)
@@ -279,37 +375,59 @@ class TenkiTools(Toolkit):
             sandbox = await self._aget_reusable_sandbox(run_context)
             if sandbox is not None:
                 return sandbox
-            sandbox = await self.async_client.create(**self.sandbox_options)
+            sandbox = await self.async_client.create(**self._create_options(run_context))
             state = self._session_state(run_context)
-            winning_id = self._register_created_sandbox(run_context, state, sandbox.id)
-            if winning_id is not None:
-                await sandbox.close()
-                return await self._aprepare_sandbox(await self.async_client.get(winning_id))
-            return await self._aprepare_sandbox(sandbox)
+            self._record_sandbox(state, sandbox.id, owned=True)
+            state[WORKING_DIRECTORY_STATE_KEY] = DEFAULT_WORKING_DIRECTORY
+            try:
+                winner = await self._afind_claimed_sandbox(run_context) or sandbox
+                if winner.id != sandbox.id:
+                    await sandbox.close()
+                    self._record_sandbox(state, winner.id, owned=True)
+                return await self._aprepare_sandbox(winner)
+            except Exception:
+                if state.get(SANDBOX_ID_STATE_KEY) == sandbox.id:
+                    try:
+                        await sandbox.close()
+                    except Exception as cleanup_error:
+                        log_warning(f"Could not terminate unready Tenki sandbox {sandbox.id}: {cleanup_error}")
+                    finally:
+                        self._clear_sandbox_state(state, sandbox.id)
+                raise
 
     def _get_existing_sandbox(self, run_context: RunContext) -> Any:
         state = self._session_state(run_context)
-        sandbox_id = self.sandbox_id or state.get(SANDBOX_ID_STATE_KEY) or self._registered_sandbox_id(run_context)
+        sandbox_id = self.sandbox_id or state.get(SANDBOX_ID_STATE_KEY)
+        if not sandbox_id and not self.sandbox_id:
+            sandbox = self._find_claimed_sandbox(run_context)
+            if sandbox is not None:
+                self._record_sandbox(state, sandbox.id, owned=True)
+                return sandbox
         if not sandbox_id:
             raise RuntimeError("No Tenki sandbox is associated with this session")
         try:
             return self.client.get(sandbox_id)
         except Exception as error:
             if not self.sandbox_id and self._is_missing_sandbox_error(error):
-                self._clear_sandbox_state(run_context, state)
+                self._clear_sandbox_state(state, sandbox_id)
                 raise RuntimeError("No Tenki sandbox is associated with this session") from error
             raise
 
     async def _aget_existing_sandbox(self, run_context: RunContext) -> Any:
         state = self._session_state(run_context)
-        sandbox_id = self.sandbox_id or state.get(SANDBOX_ID_STATE_KEY) or self._registered_sandbox_id(run_context)
+        sandbox_id = self.sandbox_id or state.get(SANDBOX_ID_STATE_KEY)
+        if not sandbox_id and not self.sandbox_id:
+            sandbox = await self._afind_claimed_sandbox(run_context)
+            if sandbox is not None:
+                self._record_sandbox(state, sandbox.id, owned=True)
+                return sandbox
         if not sandbox_id:
             raise RuntimeError("No Tenki sandbox is associated with this session")
         try:
             return await self.async_client.get(sandbox_id)
         except Exception as error:
             if not self.sandbox_id and self._is_missing_sandbox_error(error):
-                self._clear_sandbox_state(run_context, state)
+                self._clear_sandbox_state(state, sandbox_id)
                 raise RuntimeError("No Tenki sandbox is associated with this session") from error
             raise
 
@@ -357,6 +475,142 @@ class TenkiTools(Toolkit):
             payload["stderr_original_chars"] = len(result.stderr_text)
         return json.dumps(payload)
 
+    def _decode_bounded_output(self, data: bytes, total_bytes: int, label: str = "Output") -> tuple[str, bool]:
+        text = data.decode("utf-8", errors="replace")
+        if self.max_output_chars is None:
+            return text, False
+        truncated = total_bytes > len(data) or len(text) > self.max_output_chars
+        if not truncated:
+            return text, False
+        return (
+            f"{text[: self.max_output_chars]}\n"
+            f"[{label} truncated after {self.max_output_chars} characters; original size: {total_bytes} bytes.]",
+            True,
+        )
+
+    def _format_collected_command_result(self, collected: Dict[str, Any]) -> str:
+        stdout_bytes = base64.b64decode(collected["stdout"])
+        stderr_bytes = base64.b64decode(collected["stderr"])
+        stdout, stdout_truncated = self._decode_bounded_output(stdout_bytes, int(collected["stdout_bytes"]))
+        stderr, stderr_truncated = self._decode_bounded_output(stderr_bytes, int(collected["stderr_bytes"]))
+        exit_code = int(collected["exit_code"])
+        payload = {
+            "status": "success" if exit_code == 0 else "error",
+            "exit_code": exit_code,
+            "stdout": stdout,
+            "stderr": stderr,
+        }
+        if stdout_truncated:
+            payload["stdout_truncated"] = True
+            payload["stdout_original_bytes"] = int(collected["stdout_bytes"])
+        if stderr_truncated:
+            payload["stderr_truncated"] = True
+            payload["stderr_original_bytes"] = int(collected["stderr_bytes"])
+        return json.dumps(payload)
+
+    def _command_capture_bytes(self) -> int:
+        if self.max_output_chars is None:
+            return -1
+        return self.max_output_chars * MAX_UTF8_BYTES_PER_CHAR + 1
+
+    def _run_bounded_command(self, sandbox: Any, run_context: RunContext, *, mode: str, content: str) -> str:
+        command_directory = posixpath.join(DEFAULT_WORKING_DIRECTORY, ".agno", "commands", uuid4().hex)
+        command_path = posixpath.join(command_directory, "command.py" if mode == "python" else "command.sh")
+        working_directory = self._session_state(run_context)[WORKING_DIRECTORY_STATE_KEY]
+        sandbox.fs.mkdir(command_directory, recursive=True)
+        sandbox.fs.write_text(command_path, content)
+        try:
+            result = sandbox.exec(
+                "python3",
+                "-c",
+                BOUNDED_COMMAND_RUNNER,
+                mode,
+                command_path,
+                working_directory,
+                str(self._command_capture_bytes()),
+                cwd=working_directory,
+                timeout=self.command_timeout,
+            )
+            if not result.ok:
+                return self._format_command_result(result)
+            try:
+                collected = json.loads(result.stdout_text)
+            except (json.JSONDecodeError, TypeError):
+                return self._format_command_result(result)
+            return self._format_collected_command_result(collected)
+        finally:
+            try:
+                sandbox.fs.remove(command_directory, recursive=True)
+            except Exception as error:
+                log_warning(f"Could not remove temporary Tenki command directory {command_directory}: {error}")
+
+    async def _arun_bounded_command(self, sandbox: Any, run_context: RunContext, *, mode: str, content: str) -> str:
+        command_directory = posixpath.join(DEFAULT_WORKING_DIRECTORY, ".agno", "commands", uuid4().hex)
+        command_path = posixpath.join(command_directory, "command.py" if mode == "python" else "command.sh")
+        working_directory = self._session_state(run_context)[WORKING_DIRECTORY_STATE_KEY]
+        await sandbox.fs.mkdir(command_directory, recursive=True)
+        await sandbox.fs.write_text(command_path, content)
+        try:
+            result = await sandbox.exec(
+                "python3",
+                "-c",
+                BOUNDED_COMMAND_RUNNER,
+                mode,
+                command_path,
+                working_directory,
+                str(self._command_capture_bytes()),
+                cwd=working_directory,
+                timeout=self.command_timeout,
+            )
+            if not result.ok:
+                return self._format_command_result(result)
+            try:
+                collected = json.loads(result.stdout_text)
+            except (json.JSONDecodeError, TypeError):
+                return self._format_command_result(result)
+            return self._format_collected_command_result(collected)
+        finally:
+            try:
+                await sandbox.fs.remove(command_directory, recursive=True)
+            except Exception as error:
+                log_warning(f"Could not remove temporary Tenki command directory {command_directory}: {error}")
+
+    def _read_bounded_text(self, filesystem: Any, path: str, label: str = "File content") -> str:
+        if self.max_output_chars is None:
+            return filesystem.read_text(path)
+        file_info = filesystem.stat(path)
+        read_length = min(file_info.size, self._command_capture_bytes())
+        data = bytearray()
+        for chunk in filesystem.read_stream(
+            path,
+            length=read_length,
+            chunk_bytes=min(READ_STREAM_CHUNK_BYTES, max(read_length, 1)),
+        ):
+            remaining = read_length - len(data)
+            if remaining <= 0:
+                break
+            data.extend(chunk[:remaining])
+        text, _ = self._decode_bounded_output(bytes(data), file_info.size, label)
+        return text
+
+    async def _aread_bounded_text(self, filesystem: Any, path: str, label: str = "File content") -> str:
+        if self.max_output_chars is None:
+            return await filesystem.read_text(path)
+        file_info = await filesystem.stat(path)
+        read_length = min(file_info.size, self._command_capture_bytes())
+        data = bytearray()
+        async for chunk in filesystem.read_stream(
+            path,
+            length=read_length,
+            chunk_bytes=min(READ_STREAM_CHUNK_BYTES, max(read_length, 1)),
+        ):
+            remaining = read_length - len(data)
+            if remaining <= 0:
+                break
+            data.extend(chunk[:remaining])
+        text, _ = self._decode_bounded_output(bytes(data), file_info.size, label)
+        return text
+
     @staticmethod
     def _resolve_path(run_context: RunContext, path: str) -> str:
         state = TenkiTools._session_state(run_context)
@@ -373,14 +627,7 @@ class TenkiTools(Toolkit):
             code: Python code to execute.
         """
         sandbox = self._get_or_create_sandbox(run_context)
-        result = sandbox.exec(
-            "python3",
-            "-c",
-            prepare_python_code(code),
-            cwd=self._session_state(run_context)[WORKING_DIRECTORY_STATE_KEY],
-            timeout=self.command_timeout,
-        )
-        return self._format_command_result(result)
+        return self._run_bounded_command(sandbox, run_context, mode="python", content=prepare_python_code(code))
 
     async def arun_code(self, run_context: RunContext, code: str) -> str:
         """Execute Python code asynchronously in the Tenki sandbox and return its output.
@@ -389,14 +636,7 @@ class TenkiTools(Toolkit):
             code: Python code to execute.
         """
         sandbox = await self._aget_or_create_sandbox(run_context)
-        result = await sandbox.exec(
-            "python3",
-            "-c",
-            prepare_python_code(code),
-            cwd=self._session_state(run_context)[WORKING_DIRECTORY_STATE_KEY],
-            timeout=self.command_timeout,
-        )
-        return self._format_command_result(result)
+        return await self._arun_bounded_command(sandbox, run_context, mode="python", content=prepare_python_code(code))
 
     def run_shell_command(self, run_context: RunContext, command: str) -> str:
         """Execute a Bash command in the Tenki sandbox and return its output.
@@ -405,12 +645,7 @@ class TenkiTools(Toolkit):
             command: Bash command to execute.
         """
         sandbox = self._get_or_create_sandbox(run_context)
-        result = sandbox.shell(
-            command,
-            cwd=self._session_state(run_context)[WORKING_DIRECTORY_STATE_KEY],
-            timeout=self.command_timeout,
-        )
-        return self._format_command_result(result)
+        return self._run_bounded_command(sandbox, run_context, mode="shell", content=command)
 
     async def arun_shell_command(self, run_context: RunContext, command: str) -> str:
         """Execute a Bash command asynchronously in the Tenki sandbox and return its output.
@@ -419,12 +654,7 @@ class TenkiTools(Toolkit):
             command: Bash command to execute.
         """
         sandbox = await self._aget_or_create_sandbox(run_context)
-        result = await sandbox.shell(
-            command,
-            cwd=self._session_state(run_context)[WORKING_DIRECTORY_STATE_KEY],
-            timeout=self.command_timeout,
-        )
-        return self._format_command_result(result)
+        return await self._arun_bounded_command(sandbox, run_context, mode="shell", content=command)
 
     def create_file(self, run_context: RunContext, path: str, content: str) -> str:
         """Create or overwrite a text file in the Tenki sandbox.
@@ -464,7 +694,7 @@ class TenkiTools(Toolkit):
         """
         resolved_path = self._resolve_path(run_context, path)
         sandbox = self._get_or_create_sandbox(run_context)
-        return sandbox.fs.read_text(resolved_path)
+        return self._read_bounded_text(sandbox.fs, resolved_path)
 
     async def aread_file(self, run_context: RunContext, path: str) -> str:
         """Read a text file asynchronously from the Tenki sandbox.
@@ -474,7 +704,7 @@ class TenkiTools(Toolkit):
         """
         resolved_path = self._resolve_path(run_context, path)
         sandbox = await self._aget_or_create_sandbox(run_context)
-        return await sandbox.fs.read_text(resolved_path)
+        return await self._aread_bounded_text(sandbox.fs, resolved_path)
 
     @staticmethod
     def _file_info(file_info: Any) -> Dict[str, Any]:
@@ -599,7 +829,7 @@ class TenkiTools(Toolkit):
                 "state": sandbox.state,
                 "owned": state.get(
                     SANDBOX_OWNED_STATE_KEY,
-                    self.sandbox_id is None and self._registered_sandbox_id(run_context) == sandbox.id,
+                    False,
                 ),
                 "working_directory": state.get(WORKING_DIRECTORY_STATE_KEY, DEFAULT_WORKING_DIRECTORY),
             }
@@ -607,7 +837,7 @@ class TenkiTools(Toolkit):
 
     def _get_sandbox_for_status(self, run_context: RunContext) -> Optional[Any]:
         state = run_context.session_state or {}
-        sandbox_id = self.sandbox_id or state.get(SANDBOX_ID_STATE_KEY) or self._registered_sandbox_id(run_context)
+        sandbox_id = self.sandbox_id or state.get(SANDBOX_ID_STATE_KEY)
         if not sandbox_id:
             return None
         try:
@@ -616,12 +846,12 @@ class TenkiTools(Toolkit):
             if not self._is_missing_sandbox_error(error):
                 raise
             if not self.sandbox_id:
-                self._clear_sandbox_state(run_context, run_context.session_state or {})
+                self._clear_sandbox_state(run_context.session_state or {}, sandbox_id)
             return None
 
     async def _aget_sandbox_for_status(self, run_context: RunContext) -> Optional[Any]:
         state = run_context.session_state or {}
-        sandbox_id = self.sandbox_id or state.get(SANDBOX_ID_STATE_KEY) or self._registered_sandbox_id(run_context)
+        sandbox_id = self.sandbox_id or state.get(SANDBOX_ID_STATE_KEY)
         if not sandbox_id:
             return None
         try:
@@ -630,7 +860,7 @@ class TenkiTools(Toolkit):
             if not self._is_missing_sandbox_error(error):
                 raise
             if not self.sandbox_id:
-                self._clear_sandbox_state(run_context, run_context.session_state or {})
+                self._clear_sandbox_state(run_context.session_state or {}, sandbox_id)
             return None
 
     def get_sandbox_status(self, run_context: RunContext) -> str:
@@ -649,7 +879,7 @@ class TenkiTools(Toolkit):
         if sandbox.state not in {"TERMINATING", "TERMINATED", "USER_SHUTDOWN"}:
             sandbox.close()
         state = self._session_state(run_context)
-        self._clear_sandbox_state(run_context, state)
+        self._clear_sandbox_state(state, sandbox.id)
         if self.sandbox_id == sandbox.id:
             self.sandbox_id = None
         return json.dumps({"status": "success", "sandbox_id": sandbox.id, "state": sandbox.state})
@@ -660,7 +890,7 @@ class TenkiTools(Toolkit):
         if sandbox.state not in {"TERMINATING", "TERMINATED", "USER_SHUTDOWN"}:
             await sandbox.close()
         state = self._session_state(run_context)
-        self._clear_sandbox_state(run_context, state)
+        self._clear_sandbox_state(state, sandbox.id)
         if self.sandbox_id == sandbox.id:
             self.sandbox_id = None
         return json.dumps({"status": "success", "sandbox_id": sandbox.id, "state": sandbox.state})
