@@ -364,7 +364,15 @@ async def _resume_stream_generator(
     3. Not in buffer: fall back to database replay
     """
     event_stream = get_event_stream()
-    buffer_status = await event_stream.get_run_status(run_id)
+    try:
+        buffer_status = await event_stream.get_run_status(run_id)
+    except Exception as e:
+        # Network-backed streams can fail here; headers are already sent, so
+        # the only honest signal is an SSE error frame (never a silent close,
+        # and never a quiet fall-through to the DB path)
+        log_error(f"Resume: event stream status probe failed for run {run_id}: {e}")
+        yield f'event: error\ndata: {{"event": "error", "error": "event stream unavailable: {str(e)[:200]}"}}\n\n'
+        return
 
     if buffer_status is None:
         # PATH 3: Not in buffer -- fall back to database
@@ -379,7 +387,9 @@ async def _resume_stream_generator(
                 meta: dict = {
                     "event": "replay",
                     "run_id": run_id,
-                    "status": run_output.status.value if run_output.status else "unknown",
+                    "status": run_output.status.value
+                    if hasattr(run_output.status, "value")
+                    else (run_output.status or "unknown"),
                     "total_events": len(run_output.events),
                     "message": "Run completed. Replaying all events from database.",
                 }
@@ -397,7 +407,9 @@ async def _resume_stream_generator(
                 meta = {
                     "event": "replay",
                     "run_id": run_id,
-                    "status": run_output.status.value if run_output.status else "unknown",
+                    "status": run_output.status.value
+                    if hasattr(run_output.status, "value")
+                    else (run_output.status or "unknown"),
                     "total_events": 0,
                     "message": "Run completed but no events stored.",
                 }
@@ -479,6 +491,14 @@ async def _resume_stream_generator(
         try:
             async for tail_item in event_stream.tail(run_id, last_event_index=last_replayed_index):
                 await tail_queue.put(tail_item)
+        except Exception as e:
+            # A tail that DIES must not look like a tail that FINISHED: emit an
+            # error frame so the client can distinguish and reconnect
+            log_error(f"Resume tail failed for run {run_id}: {e}")
+            with contextlib.suppress(Exception):
+                await tail_queue.put(
+                    (-1, f'event: error\ndata: {{"event": "error", "error": "stream tail failed: {str(e)[:200]}"}}\n\n')
+                )
         finally:
             await tail_queue.put(None)
 
@@ -498,7 +518,10 @@ async def _resume_stream_generator(
             yield sse_data
     finally:
         pump_task.cancel()
-        with contextlib.suppress(asyncio.CancelledError):
+        # Suppress everything, not just CancelledError: an exception re-raised
+        # here reaches the ASGI layer on a response whose headers are already
+        # sent (the pump has already surfaced it as an error frame)
+        with contextlib.suppress(BaseException):
             await pump_task
 
 
