@@ -351,9 +351,12 @@ class EventsBuffer:
         runs_to_cleanup = []
 
         for run_id, metadata in self.run_metadata.items():
-            # Terminal-for-the-buffer states, including paused: the buffer is a
-            # cache, and resume for a reaped paused run falls back to the DB
-            if metadata["status"] in [RunStatus.completed, RunStatus.error, RunStatus.cancelled, RunStatus.paused]:
+            # NOT paused: reaping a paused run drops _next_index, so the
+            # continue-run's re-register restarts the counter at zero and
+            # reconnecting clients (holding the RunPaused index) dedup away
+            # every post-approval event. Paused runs keep their buffer until
+            # they reach a truly-final state.
+            if metadata["status"] in [RunStatus.completed, RunStatus.error, RunStatus.cancelled]:
                 completed_at = metadata.get("completed_at", metadata["last_updated"])
                 if current_time - completed_at > self.cleanup_interval:
                     runs_to_cleanup.append(run_id)
