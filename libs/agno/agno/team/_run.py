@@ -7725,7 +7725,7 @@ async def _acontinue_run_background_stream(
                     # HITL continues arrive with run_response=None: load the
                     # run so the terminal persist is never silently skipped
                     lookup_session = await _aread_or_create_session(team, session_id=session_id, user_id=user_id)
-                    cancelled_run = lookup_session.get_run(_run_id)
+                    cancelled_run = cast(Optional[TeamRunOutput], lookup_session.get_run(_run_id))
                 if cancelled_run is not None:
                     cancelled_run.status = RunStatus.cancelled
                     await apersist_run_transition(team, "team", session_id, cancelled_run, user_id=user_id)
@@ -7745,7 +7745,7 @@ async def _acontinue_run_background_stream(
                     # HITL continues arrive with run_response=None: load the
                     # run so the terminal persist is never silently skipped
                     lookup_session = await _aread_or_create_session(team, session_id=session_id, user_id=user_id)
-                    errored_run = lookup_session.get_run(_run_id)
+                    errored_run = cast(Optional[TeamRunOutput], lookup_session.get_run(_run_id))
                 if errored_run is not None:
                     errored_run.status = RunStatus.error
                     await apersist_run_transition(team, "team", session_id, errored_run, user_id=user_id)
