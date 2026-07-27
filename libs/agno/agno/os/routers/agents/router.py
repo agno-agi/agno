@@ -363,6 +363,14 @@ async def queued_run_tail_streamer(run_id: str) -> AsyncGenerator:
         try:
             async for tail_item in event_stream.tail(run_id):
                 await tail_queue.put(tail_item)
+        except Exception as e:
+            # A tail that DIES must not look like a tail that FINISHED: emit an
+            # error frame so the client can distinguish and reconnect
+            log_error(f"Queued stream tail failed for run {run_id}: {e}")
+            with contextlib.suppress(Exception):
+                await tail_queue.put(
+                    (-1, f'event: error\ndata: {{"event": "error", "error": "stream tail failed: {str(e)[:200]}"}}\n\n')
+                )
         finally:
             await tail_queue.put(None)
 
