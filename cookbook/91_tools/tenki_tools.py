@@ -7,14 +7,13 @@ Prerequisites:
 2. Create a Tenki API key: https://tenki.cloud/docs/sandbox/sdk
 3. Set the API key:
    export TENKI_API_KEY=<your_api_key>
-4. If your account has multiple workspaces or projects, select them explicitly:
+4. Optionally select a workspace explicitly:
    export TENKI_WORKSPACE_ID=<your_workspace_id>
-   export TENKI_PROJECT_ID=<your_project_id>
 5. Install the dependencies:
    uv pip install "agno[tenki]" openai
 
-TenkiTools automatically selects an accessible workspace and project. Set the optional scope variables to choose a
-specific workspace or project when multiple are available.
+The Tenki SDK determines the workspace from the API key automatically. Set TENKI_WORKSPACE_ID only when you need to
+override it explicitly.
 """
 
 from agno.agent import Agent

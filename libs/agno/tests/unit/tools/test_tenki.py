@@ -276,36 +276,32 @@ def test_new_sandboxes_disable_inbound_network_access_by_default() -> None:
     ]
 
 
-def test_single_workspace_and_project_are_selected_automatically() -> None:
+def test_workspace_resolution_is_delegated_to_the_sdk() -> None:
     identity = SimpleNamespace(
         owner_type="USER",
         owner_id="user-1",
         workspaces=(
-            SimpleNamespace(
-                id="workspace-1",
-                name="Acme",
-                projects=(SimpleNamespace(id="project-1", name="Backend"),),
-            ),
+            SimpleNamespace(id="workspace-2", name="Beta"),
+            SimpleNamespace(id="workspace-1", name="Acme"),
         ),
     )
     client = FakeClient(identity)
     tools = TenkiTools(client=client, async_client=FakeAsyncClient())
     run_context = RunContext(run_id="run-1", session_id="session-1", session_state={})
 
-    tools.run_code(run_context, "print('automatic scope')")
+    tools.run_code(run_context, "print('sdk scope')")
 
-    assert client.who_am_i_calls == 1
-    assert client.create_options[0]["workspace_id"] == "workspace-1"
-    assert client.create_options[0]["project_id"] == "project-1"
+    assert client.who_am_i_calls == 0
+    assert "workspace_id" not in client.create_options[0]
 
 
-def test_explicit_project_id_skips_scope_discovery() -> None:
+def test_explicit_workspace_id_is_passed_to_the_sdk(monkeypatch) -> None:
+    monkeypatch.setenv("TENKI_WORKSPACE_ID", "workspace-from-env")
     client = FakeClient()
     tools = TenkiTools(
         client=client,
         async_client=FakeAsyncClient(),
         workspace_id="workspace-1",
-        project_id="project-1",
     )
     run_context = RunContext(run_id="run-1", session_id="session-1", session_state={})
 
@@ -313,12 +309,10 @@ def test_explicit_project_id_skips_scope_discovery() -> None:
 
     assert client.who_am_i_calls == 0
     assert client.create_options[0]["workspace_id"] == "workspace-1"
-    assert client.create_options[0]["project_id"] == "project-1"
 
 
-def test_scope_ids_fall_back_to_environment_variables(monkeypatch) -> None:
+def test_workspace_id_falls_back_to_environment_variable(monkeypatch) -> None:
     monkeypatch.setenv("TENKI_WORKSPACE_ID", "workspace-from-env")
-    monkeypatch.setenv("TENKI_PROJECT_ID", "project-from-env")
     client = FakeClient()
     tools = TenkiTools(client=client, async_client=FakeAsyncClient())
     run_context = RunContext(run_id="run-1", session_id="session-1", session_state={})
@@ -327,83 +321,26 @@ def test_scope_ids_fall_back_to_environment_variables(monkeypatch) -> None:
 
     assert client.who_am_i_calls == 0
     assert client.create_options[0]["workspace_id"] == "workspace-from-env"
-    assert client.create_options[0]["project_id"] == "project-from-env"
-
-
-def test_multiple_workspaces_fall_back_to_the_first_workspace() -> None:
-    identity = SimpleNamespace(
-        owner_type="USER",
-        owner_id="user-1",
-        workspaces=(
-            SimpleNamespace(
-                id="workspace-2",
-                name="Beta",
-                projects=(SimpleNamespace(id="project-2", name="Frontend"),),
-            ),
-            SimpleNamespace(
-                id="workspace-1",
-                name="Acme",
-                projects=(SimpleNamespace(id="project-1", name="Backend"),),
-            ),
-        ),
-    )
-    client = FakeClient(identity)
-    tools = TenkiTools(client=client, async_client=FakeAsyncClient())
-    run_context = RunContext(run_id="run-1", session_id="session-1", session_state={})
-
-    tools.run_code(run_context, "print('fallback workspace')")
-
-    assert client.create_options[0]["workspace_id"] == "workspace-1"
-    assert client.create_options[0]["project_id"] == "project-1"
-
-
-def test_multiple_projects_fall_back_to_the_first_project() -> None:
-    identity = SimpleNamespace(
-        owner_type="WORKSPACE",
-        owner_id="workspace-1",
-        workspaces=(
-            SimpleNamespace(
-                id="workspace-1",
-                name="Acme",
-                projects=(
-                    SimpleNamespace(id="project-2", name="Frontend"),
-                    SimpleNamespace(id="project-1", name="Backend"),
-                ),
-            ),
-        ),
-    )
-    client = FakeClient(identity)
-    tools = TenkiTools(client=client, async_client=FakeAsyncClient())
-    run_context = RunContext(run_id="run-1", session_id="session-1", session_state={})
-
-    tools.run_code(run_context, "print('fallback project')")
-
-    assert client.create_options[0]["workspace_id"] == "workspace-1"
-    assert client.create_options[0]["project_id"] == "project-1"
 
 
 @pytest.mark.asyncio
-async def test_async_single_workspace_and_project_are_selected_automatically() -> None:
+async def test_async_workspace_resolution_is_delegated_to_the_sdk() -> None:
     identity = SimpleNamespace(
         owner_type="USER",
         owner_id="user-1",
         workspaces=(
-            SimpleNamespace(
-                id="workspace-1",
-                name="Acme",
-                projects=(SimpleNamespace(id="project-1", name="Backend"),),
-            ),
+            SimpleNamespace(id="workspace-2", name="Beta"),
+            SimpleNamespace(id="workspace-1", name="Acme"),
         ),
     )
     async_client = FakeAsyncClient(identity)
     tools = TenkiTools(client=FakeClient(), async_client=async_client)
     run_context = RunContext(run_id="run-1", session_id="session-1", session_state={})
 
-    await tools.arun_code(run_context, "print('automatic async scope')")
+    await tools.arun_code(run_context, "print('async sdk scope')")
 
-    assert async_client.who_am_i_calls == 1
-    assert async_client.create_options[0]["workspace_id"] == "workspace-1"
-    assert async_client.create_options[0]["project_id"] == "project-1"
+    assert async_client.who_am_i_calls == 0
+    assert "workspace_id" not in async_client.create_options[0]
 
 
 def test_explicit_sandbox_id_is_reused_without_creating_a_sandbox() -> None:

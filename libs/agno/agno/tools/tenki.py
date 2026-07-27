@@ -7,7 +7,6 @@ from typing import Any, Callable, Dict, Optional
 from agno.run import RunContext
 from agno.tools import Toolkit
 from agno.utils.code_execution import prepare_python_code
-from agno.utils.log import log_warning
 
 DEFAULT_WORKING_DIRECTORY = "/home/tenki"
 SANDBOX_ID_STATE_KEY = "tenki_sandbox_id"
@@ -34,7 +33,6 @@ class TenkiTools(Toolkit):
         auth_token: Optional[str] = None,
         base_url: Optional[str] = None,
         workspace_id: Optional[str] = None,
-        project_id: Optional[str] = None,
         timeout: int = 180,
         command_timeout: int = 30,
         sandbox_id: Optional[str] = None,
@@ -51,11 +49,10 @@ class TenkiTools(Toolkit):
     ) -> None:
         if client is None or async_client is None:
             try:
-                from tenki_sandbox import AsyncClient, Client
+                from tenki import AsyncClient, Client
             except ImportError:
                 raise ImportError(
-                    "`tenki-sandbox` not installed. Please install it with `pip install tenki-sandbox` "
-                    "using Python 3.10 or newer."
+                    "`tenki` not installed. Please install it with `pip install tenki` using Python 3.10 or newer."
                 )
 
             client_options: Dict[str, Any] = {"timeout": timeout}
@@ -84,10 +81,6 @@ class TenkiTools(Toolkit):
             self.sandbox_options["workspace_id"] = workspace_id
         elif not self.sandbox_options.get("workspace_id") and getenv("TENKI_WORKSPACE_ID"):
             self.sandbox_options["workspace_id"] = getenv("TENKI_WORKSPACE_ID")
-        if project_id is not None:
-            self.sandbox_options["project_id"] = project_id
-        elif not self.sandbox_options.get("project_id") and getenv("TENKI_PROJECT_ID"):
-            self.sandbox_options["project_id"] = getenv("TENKI_PROJECT_ID")
         self.instructions = instructions or DEFAULT_INSTRUCTIONS
 
         tools: list[Callable[..., Any]] = [
@@ -135,67 +128,6 @@ class TenkiTools(Toolkit):
         run_context.session_state.setdefault(WORKING_DIRECTORY_STATE_KEY, DEFAULT_WORKING_DIRECTORY)
         return run_context.session_state
 
-    @staticmethod
-    def _scope_choices(scopes: Any) -> str:
-        return ", ".join(f"{scope.name} ({scope.id})" for scope in scopes)
-
-    @classmethod
-    def _resolve_sandbox_scope(cls, sandbox_options: Dict[str, Any], identity: Any) -> Dict[str, Any]:
-        options = dict(sandbox_options)
-        if options.get("project_id") or str(getattr(identity, "owner_type", "")).upper() == "SERVICE":
-            return options
-
-        workspaces = sorted(getattr(identity, "workspaces", ()) or (), key=lambda item: item.id)
-        if not workspaces:
-            raise ValueError(
-                "No accessible Tenki workspace was found. Set workspace_id or TENKI_WORKSPACE_ID explicitly."
-            )
-
-        workspace_id = options.get("workspace_id")
-        if workspace_id:
-            matching_workspace = next((item for item in workspaces if item.id == workspace_id), None)
-            if matching_workspace is None:
-                raise ValueError(
-                    f"Tenki workspace {workspace_id!r} is not accessible. Set workspace_id or TENKI_WORKSPACE_ID "
-                    f"to one of: {cls._scope_choices(workspaces) or 'none'}"
-                )
-            workspace: Any = matching_workspace
-        else:
-            workspace = workspaces[0]
-            options["workspace_id"] = workspace.id
-            if len(workspaces) > 1:
-                log_warning(
-                    f"Multiple Tenki workspaces are available; using {workspace.name} ({workspace.id}). "
-                    "Set workspace_id or TENKI_WORKSPACE_ID to choose another workspace."
-                )
-
-        projects = sorted(getattr(workspace, "projects", ()) or (), key=lambda item: item.id)
-        if not projects:
-            raise ValueError(
-                f"No Tenki project was found in workspace {workspace.name} ({workspace.id}). "
-                "Set project_id or TENKI_PROJECT_ID explicitly."
-            )
-
-        project = projects[0]
-        options["project_id"] = project.id
-        if len(projects) > 1:
-            log_warning(
-                f"Multiple Tenki projects are available in {workspace.name} ({workspace.id}); "
-                f"using {project.name} ({project.id}). Set project_id or TENKI_PROJECT_ID to choose another project."
-            )
-        return options
-
-    def _sandbox_create_options(self) -> Dict[str, Any]:
-        if not self.sandbox_options.get("project_id"):
-            self.sandbox_options = self._resolve_sandbox_scope(self.sandbox_options, self.client.who_am_i())
-        return self.sandbox_options
-
-    async def _asandbox_create_options(self) -> Dict[str, Any]:
-        if not self.sandbox_options.get("project_id"):
-            identity = await self.async_client.who_am_i()
-            self.sandbox_options = self._resolve_sandbox_scope(self.sandbox_options, identity)
-        return self.sandbox_options
-
     def _get_or_create_sandbox(self, run_context: RunContext) -> Any:
         state = self._session_state(run_context)
         sandbox_id = self.sandbox_id or state.get(SANDBOX_ID_STATE_KEY)
@@ -216,7 +148,7 @@ class TenkiTools(Toolkit):
                     return self._prepare_sandbox(sandbox)
         if not self.auto_create_sandbox:
             raise RuntimeError("No Tenki sandbox is associated with this session and auto-creation is disabled")
-        sandbox = self.client.create(**self._sandbox_create_options())
+        sandbox = self.client.create(**self.sandbox_options)
         state[SANDBOX_ID_STATE_KEY] = sandbox.id
         state[WORKING_DIRECTORY_STATE_KEY] = DEFAULT_WORKING_DIRECTORY
         return self._prepare_sandbox(sandbox)
@@ -241,7 +173,7 @@ class TenkiTools(Toolkit):
                     return await self._aprepare_sandbox(sandbox)
         if not self.auto_create_sandbox:
             raise RuntimeError("No Tenki sandbox is associated with this session and auto-creation is disabled")
-        sandbox = await self.async_client.create(**await self._asandbox_create_options())
+        sandbox = await self.async_client.create(**self.sandbox_options)
         state[SANDBOX_ID_STATE_KEY] = sandbox.id
         state[WORKING_DIRECTORY_STATE_KEY] = DEFAULT_WORKING_DIRECTORY
         return await self._aprepare_sandbox(sandbox)
