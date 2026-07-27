@@ -1,13 +1,14 @@
 import json
 import subprocess
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from typing import Dict, List, Optional
 
 from agno.exceptions import PathSecurityError
 from agno.skills.errors import SkillValidationError
 from agno.skills.loaders.base import SkillLoader
 from agno.skills.skill import Skill
-from agno.skills.utils import read_file_safe, run_script
+from agno.skills.utils import materialize_skill_contents, read_file_safe, run_script
 from agno.tools.function import Function
 from agno.utils.log import log_debug, log_warning
 from agno.utils.path_safety import safe_join_relative_path
@@ -250,6 +251,17 @@ class Skills:
                 }
             )
 
+        if skill.source_path is None:
+            # Content-carrying: the membership check above proved the filename is declared, and
+            # Skill.__post_init__ proved every declared filename has content, so this cannot miss.
+            return json.dumps(
+                {
+                    "skill_name": skill_name,
+                    "reference_path": reference_path,
+                    "content": (skill.reference_contents or {})[reference_path],
+                }
+            )
+
         # Validate and resolve path to prevent path traversal attacks
         refs_dir = Path(skill.source_path) / "references"
         try:
@@ -326,6 +338,15 @@ class Skills:
                 }
             )
 
+        if skill.source_path is None:
+            return self._content_skill_script(
+                skill=skill,
+                script_path=script_path,
+                execute=execute,
+                args=args,
+                timeout=timeout,
+            )
+
         # Validate and resolve path to prevent path traversal attacks
         scripts_dir = Path(skill.source_path) / "scripts"
         try:
@@ -359,12 +380,112 @@ class Skills:
                 )
 
         # Execute mode: run the script
+        return self._execute_script(
+            skill_name=skill_name,
+            script_path=script_path,
+            script_file=script_file,
+            cwd=Path(skill.source_path),
+            args=args,
+            timeout=timeout,
+        )
+
+    def _content_skill_script(
+        self,
+        *,
+        skill: Skill,
+        script_path: str,
+        execute: bool,
+        args: Optional[List[str]],
+        timeout: int,
+    ) -> str:
+        """Read or execute a script whose content the skill carries instead of a source_path.
+
+        The caller has already checked that ``script_path`` is one of the skill's declared
+        scripts, and Skill.__post_init__ has already checked that every declared script has
+        content, so the lookup below cannot miss.
+
+        Args:
+            skill: The content-carrying skill.
+            script_path: The filename of the script.
+            execute: If True, execute the script. If False, return content.
+            args: Optional list of arguments to pass to the script (only used if execute=True).
+            timeout: Maximum execution time in seconds (only used if execute=True).
+
+        Returns:
+            A JSON string with either the script content or execution results.
+        """
+        if not execute:
+            return json.dumps(
+                {
+                    "skill_name": skill.name,
+                    "script_path": script_path,
+                    "content": (skill.script_contents or {})[script_path],
+                }
+            )
+
+        # Executing needs a real file to hand the interpreter, so the skill's files are written to
+        # a temporary directory shaped like a skill folder and thrown away once the script exits.
+        with TemporaryDirectory(prefix="agno-skill-") as temp_dir:
+            # Resolved, so the script path and the cwd agree the way they do for a path-backed
+            # skill, whose source_path LocalSkills has already resolved.
+            skill_dir = Path(temp_dir).resolve()
+            try:
+                materialize_skill_contents(skill, skill_dir)
+                script_file = safe_join_relative_path(skill_dir / "scripts", script_path)
+            except PathSecurityError:
+                return json.dumps(
+                    {
+                        "error": f"Invalid script path: '{script_path}'",
+                        "skill_name": skill.name,
+                    }
+                )
+            except OSError as e:
+                return json.dumps(
+                    {
+                        "error": f"Error writing skill files: {e}",
+                        "skill_name": skill.name,
+                        "script_path": script_path,
+                    }
+                )
+
+            return self._execute_script(
+                skill_name=skill.name,
+                script_path=script_path,
+                script_file=script_file,
+                cwd=skill_dir,
+                args=args,
+                timeout=timeout,
+            )
+
+    def _execute_script(
+        self,
+        *,
+        skill_name: str,
+        script_path: str,
+        script_file: Path,
+        cwd: Path,
+        args: Optional[List[str]],
+        timeout: int,
+    ) -> str:
+        """Run a resolved script file and serialize the result.
+
+        Args:
+            skill_name: The name of the skill the script belongs to.
+            script_path: The filename of the script, for the response payload.
+            script_file: The resolved path of the script to run.
+            cwd: Working directory for the script.
+            args: Optional list of arguments to pass to the script.
+            timeout: Maximum execution time in seconds.
+
+        Returns:
+            A JSON string with the execution results, or an error.
+        """
         try:
             result = run_script(
                 script_path=script_file,
                 args=args,
                 timeout=timeout,
-                cwd=Path(skill.source_path),
+                cwd=cwd,
             )
             return json.dumps(
                 {

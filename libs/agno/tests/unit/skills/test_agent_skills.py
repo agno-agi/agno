@@ -488,6 +488,102 @@ def test_skill_script_read_missing_path(mock_loader: MockSkillLoader) -> None:
     assert result["available_scripts"] == ["helper.py", "runner.sh"]
 
 
+# --- Content-Carrying Skill Tests ---
+
+
+def test_content_skill_instructions(content_skill: Skill) -> None:
+    """Test that a content-carrying skill serves instructions and its filename lists."""
+    skills = Skills(loaders=[MockSkillLoader([content_skill])])
+    result = json.loads(skills._get_skill_instructions("content-skill"))
+
+    assert result["skill_name"] == "content-skill"
+    assert "Follow these instructions" in result["instructions"]
+    assert result["available_scripts"] == ["hello.py", "sibling.py"]
+    assert result["available_references"] == ["guide.md"]
+
+
+def test_content_skill_reference_served_from_contents(content_skill: Skill) -> None:
+    """Test that a reference is served from reference_contents, with no filesystem access."""
+    skills = Skills(loaders=[MockSkillLoader([content_skill])])
+    result = json.loads(skills._get_skill_reference("content-skill", "guide.md"))
+
+    assert result["skill_name"] == "content-skill"
+    assert result["reference_path"] == "guide.md"
+    assert result["content"] == "# Guide\n\nThis is a reference guide."
+
+
+def test_content_skill_reference_not_declared(content_skill: Skill) -> None:
+    """Test that an undeclared reference is rejected the same way as for a path-backed skill."""
+    skills = Skills(loaders=[MockSkillLoader([content_skill])])
+    result = json.loads(skills._get_skill_reference("content-skill", "nonexistent.md"))
+
+    assert "error" in result
+    assert "not found" in result["error"].lower()
+    assert result["available_references"] == ["guide.md"]
+
+
+def test_content_skill_script_read_served_from_contents(content_skill: Skill) -> None:
+    """Test that a script read is served from script_contents, with no filesystem access."""
+    skills = Skills(loaders=[MockSkillLoader([content_skill])])
+    result = json.loads(skills._get_skill_script("content-skill", "hello.py"))
+
+    assert result["skill_name"] == "content-skill"
+    assert result["script_path"] == "hello.py"
+    assert "hello from content" in result["content"]
+
+
+def test_content_skill_script_execute(content_skill: Skill) -> None:
+    """Test that a script from a content-carrying skill executes."""
+    skills = Skills(loaders=[MockSkillLoader([content_skill])])
+    result = json.loads(skills._get_skill_script("content-skill", "hello.py", execute=True))
+
+    assert "error" not in result
+    assert "hello from content" in result["stdout"]
+    assert result["returncode"] == 0
+
+
+def test_content_skill_script_execute_sees_sibling_files(content_skill: Skill) -> None:
+    """Test that execution materializes the skill's other files alongside the one it runs."""
+    content_skill.scripts.append("list_dir.py")
+    assert content_skill.script_contents is not None
+    content_skill.script_contents["list_dir.py"] = (
+        '#!/usr/bin/env python3\nimport os\nprint(sorted(os.listdir("scripts")), sorted(os.listdir("references")))\n'
+    )
+
+    skills = Skills(loaders=[MockSkillLoader([content_skill])])
+    result = json.loads(skills._get_skill_script("content-skill", "list_dir.py", execute=True))
+
+    assert "error" not in result
+    assert "sibling.py" in result["stdout"]
+    assert "guide.md" in result["stdout"]
+
+
+def test_content_skill_script_execute_cleans_up(content_skill: Skill) -> None:
+    """Test that the temporary directory a script ran from does not outlive the call."""
+    content_skill.scripts.append("print_cwd.py")
+    assert content_skill.script_contents is not None
+    content_skill.script_contents["print_cwd.py"] = "#!/usr/bin/env python3\nimport os\nprint(os.getcwd())\n"
+
+    skills = Skills(loaders=[MockSkillLoader([content_skill])])
+    result = json.loads(skills._get_skill_script("content-skill", "print_cwd.py", execute=True))
+
+    assert "error" not in result
+    assert not Path(result["stdout"].strip()).exists()
+
+
+def test_content_skill_script_execute_timeout(content_skill: Skill) -> None:
+    """Test that a content-carrying skill's script honours the timeout."""
+    content_skill.scripts.append("sleep.py")
+    assert content_skill.script_contents is not None
+    content_skill.script_contents["sleep.py"] = "#!/usr/bin/env python3\nimport time\ntime.sleep(30)\n"
+
+    skills = Skills(loaders=[MockSkillLoader([content_skill])])
+    result = json.loads(skills._get_skill_script("content-skill", "sleep.py", execute=True, timeout=1))
+
+    assert "error" in result
+    assert "timed out" in result["error"].lower()
+
+
 # --- Error Handling Tests ---
 
 
