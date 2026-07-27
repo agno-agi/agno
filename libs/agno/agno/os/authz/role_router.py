@@ -1,14 +1,28 @@
 """HTTP management API for :class:`ManagedRoleStore` — the governance product surface.
 
 Admin-only REST API to create roles, set their permissions (in agno scope terms,
-with allow/deny), and grant or revoke them at runtime. Mount it on your AgentOS:
+with allow/deny), and grant or revoke them at runtime.
+
+With ``AuthorizationConfig(role_store=...)`` you do not mount this yourself: AgentOS
+registers it at ``/authz`` for you (add a ``user_store`` to also get ``/authz/users``).
 
     from agno.os.authz.role_store import ManagedRoleStore
-    from agno.os.authz.role_router import get_roles_router
 
     roles = ManagedRoleStore(db_url="postgresql+psycopg://...")
-    app = agent_os.get_app()
-    app.include_router(get_roles_router(roles))
+    agent_os = AgentOS(agents=[...], authorization=True,
+                       authorization_config=AuthorizationConfig(role_store=roles, ...))
+    app = agent_os.get_app()   # /authz is already served
+
+It is registered alongside the other built-in routers, which is what keeps it ahead
+of the MCP catch-all mount. That ordering matters: a router included AFTER
+``get_app()`` sits behind that mount, where every call 404s.
+
+That caveat still applies to the multi-plane setup, which composes providers instead
+of naming a store (``authorization_provider=[ScopeAuthorizationProvider(), roles.provider]``)
+and so has no ``role_store`` for AgentOS to find. Mount it yourself there -- and if you
+also run ``mcp_server=True``, mount it before the MCP app is added or it will 404:
+
+    app.include_router(get_roles_router(roles, user_store=users))
 
 Response shapes mirror the agno cloud RBAC API so a frontend can reuse its
 integration: roles are objects (slug/name/description/is_default/created_at/

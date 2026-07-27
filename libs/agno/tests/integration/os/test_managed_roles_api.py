@@ -282,3 +282,69 @@ def test_create_role_metadata_only_then_add_scopes(client_and_store):
     assert [s["raw"] for s in client.get("/authz/roles/support", headers=_auth("alice")).json()["scopes"]] == [
         "sessions:read"
     ]
+
+
+def test_authz_api_is_served_with_the_mcp_server_enabled(tmp_path):
+    """Regression: /authz must survive mcp_server=True.
+
+    The MCP app mounts at "" -- a catch-all that matches every path -- and Starlette
+    takes the first matching route. The admin API used to be documented as
+    ``app.include_router(get_roles_router(store))`` AFTER ``get_app()``, which put it
+    behind that mount, so every /authz call 404'd on any OS running an MCP server.
+    It is now registered with the other built-in routers, ahead of the mount.
+    """
+    from agno.agent import Agent
+    from agno.db.in_memory import InMemoryDb
+    from agno.os import AgentOS
+    from agno.os.authz.role_store import ManagedRoleStore
+    from agno.os.config import AuthorizationConfig
+
+    store = ManagedRoleStore(db_url=f"sqlite:///{tmp_path / 'roles.db'}")
+    store.set_role_scopes("admin", ["agent_os:admin"])
+    store.assign("alice", "admin")
+
+    agent_os = AgentOS(
+        id=OS_ID,
+        agents=[Agent(id="a1", name="A", db=InMemoryDb())],
+        authorization=True,
+        mcp_server=True,
+        authorization_config=AuthorizationConfig(
+            verification_keys=[SECRET],
+            algorithm="HS256",
+            verify_audience=True,
+            audience=OS_ID,
+            role_store=store,
+        ),
+    )
+    app = agent_os.get_app()  # no manual include_router: the router is built in
+    headers = {"Authorization": f"Bearer {_token('alice')}"}
+
+    with TestClient(app) as client:  # context manager so the MCP lifespan runs
+        assert client.get("/authz/roles", headers=headers).status_code == 200
+        assert client.get("/agents", headers=headers).status_code == 200
+        # and the MCP transport still answers on the same app
+        mcp_response = client.post(
+            "/mcp",
+            headers={**headers, "Content-Type": "application/json", "Accept": "application/json, text/event-stream"},
+            json={
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {
+                    "protocolVersion": "2024-11-05",
+                    "capabilities": {},
+                    "clientInfo": {"name": "t", "version": "1"},
+                },
+            },
+        )
+        assert mcp_response.status_code == 200
+
+
+def test_no_authz_routes_without_a_role_store():
+    """The admin API appears only when a role store is configured."""
+    from agno.agent import Agent
+    from agno.db.in_memory import InMemoryDb
+    from agno.os import AgentOS
+
+    app = AgentOS(id="plain-os", agents=[Agent(id="a1", name="A", db=InMemoryDb())]).get_app()
+    assert not any(getattr(route, "path", "").startswith("/authz") for route in app.router.routes)
