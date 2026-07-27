@@ -15,6 +15,51 @@ from agno.tools.function import Function
 
 from .conftest import MockSkillLoader
 
+# The exact snippet produced by the `mock_loader_multiple` fixture (sample_skill, then
+# minimal_skill). Pinned verbatim so any edit to the preamble or the per-skill block is a
+# deliberate update here, not an accidental prompt change: this text ships in every request's
+# system message, so changing it also busts provider-side prompt caches for every user.
+EXPECTED_SYSTEM_PROMPT_SNIPPET = """<skills_system>
+
+## What are Skills?
+Skills are packages of domain expertise that extend your capabilities. Each skill contains:
+- **Instructions**: Detailed guidance on when and how to apply the skill
+- **Scripts**: Executable code templates you can use or adapt
+- **References**: Supporting documentation (guides, cheatsheets, examples)
+
+## IMPORTANT: How to Use Skills
+**Skill names are NOT callable functions.** You cannot call a skill directly by its name.
+Instead, you MUST use the provided skill access tools:
+
+1. `get_skill_instructions(skill_name)` - Load the full instructions for a skill
+2. `get_skill_reference(skill_name, reference_path)` - Access specific documentation
+3. `get_skill_script(skill_name, script_path, execute=False)` - Read or run scripts
+
+## Progressive Discovery Workflow
+1. **Browse**: Review the skill summaries below to understand what's available
+2. **Load**: When a task matches a skill, call `get_skill_instructions(skill_name)` first
+3. **Reference**: Use `get_skill_reference` to access specific documentation as needed
+4. **Scripts**: Use `get_skill_script` to read or execute scripts from a skill
+
+**IMPORTANT**: References are documentation files (NOT executable). Only use `get_skill_script` when `<scripts>` lists actual script files. If `<scripts>none</scripts>`, do NOT call `get_skill_script`.
+
+This approach ensures you only load detailed instructions when actually needed.
+
+## Available Skills
+<skill>
+  <name>test-skill</name>
+  <description>A test skill for unit testing</description>
+  <scripts>helper.py, runner.sh</scripts>
+  <references>guide.md, api-docs.md</references>
+</skill>
+<skill>
+  <name>minimal-skill</name>
+  <description>A minimal skill</description>
+  <scripts>none</scripts>
+</skill>
+
+</skills_system>"""
+
 # --- Initialization Tests ---
 
 
@@ -171,6 +216,13 @@ def test_duplicate_skill_name_overwrites(sample_skill: Skill) -> None:
 
 
 # --- System Prompt Tests ---
+
+
+def test_get_system_prompt_snippet_matches_golden(mock_loader_multiple: MockSkillLoader) -> None:
+    """Test that the snippet matches its pinned text exactly."""
+    skills = Skills(loaders=[mock_loader_multiple])
+
+    assert skills.get_system_prompt_snippet() == EXPECTED_SYSTEM_PROMPT_SNIPPET
 
 
 def test_get_system_prompt_snippet_format(mock_loader: MockSkillLoader) -> None:
