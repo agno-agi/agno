@@ -197,9 +197,9 @@ class AgentOSTools(Toolkit):
                 log_warning(f"Could not refresh metrics: {e}")
             rows, _ = self._sync_db().get_metrics(starting_date=start_date, ending_date=end_date)
             return _format_platform_metrics(rows, days, start_date, end_date)
-        except Exception as e:
+        except Exception:
             logger.exception("Failed to get platform metrics")
-            return json.dumps({"error": str(e)})
+            return _tool_error("Failed to get platform metrics")
 
     async def aget_platform_metrics(self, days: int = 7) -> str:
         """Get daily platform usage metrics: runs, sessions, users, tokens and model mix.
@@ -222,9 +222,9 @@ class AgentOSTools(Toolkit):
                 log_warning(f"Could not refresh metrics: {e}")
             rows, _ = await self._async_db().get_metrics(starting_date=start_date, ending_date=end_date)
             return _format_platform_metrics(rows, days, start_date, end_date)
-        except Exception as e:
+        except Exception:
             logger.exception("Failed to get platform metrics")
-            return json.dumps({"error": str(e)})
+            return _tool_error("Failed to get platform metrics")
 
     # ------------------------------------------------------------------
     # Run activity (traces grouped by component)
@@ -255,9 +255,9 @@ class AgentOSTools(Toolkit):
             return _format_run_activity(groupings, window_total, days)
         except NotImplementedError as e:
             return json.dumps({"error": f"Component-grouped trace stats are not supported by this database: {e}"})
-        except Exception as e:
+        except Exception:
             logger.exception("Failed to get run activity")
-            return json.dumps({"error": str(e)})
+            return _tool_error("Failed to get run activity")
 
     async def aget_run_activity(self, days: int = 7) -> str:
         """Get per-agent, per-team, per-workflow and endpoint-level run activity: run counts, latency and errors.
@@ -284,9 +284,9 @@ class AgentOSTools(Toolkit):
             return _format_run_activity(groupings, window_total, days)
         except NotImplementedError as e:
             return json.dumps({"error": f"Component-grouped trace stats are not supported by this database: {e}"})
-        except Exception as e:
+        except Exception:
             logger.exception("Failed to get run activity")
-            return json.dumps({"error": str(e)})
+            return _tool_error("Failed to get run activity")
 
     # ------------------------------------------------------------------
     # Tool activity (span aggregates)
@@ -321,9 +321,9 @@ class AgentOSTools(Toolkit):
             return _format_tool_activity(tools_most_used, tools_slowest, tools_total, model_calls, models_total, days)
         except NotImplementedError:
             return json.dumps({"error": "Span statistics are not supported by this database"})
-        except Exception as e:
+        except Exception:
             logger.exception("Failed to get tool activity")
-            return json.dumps({"error": str(e)})
+            return _tool_error("Failed to get tool activity")
 
     async def aget_tool_activity(self, days: int = 7) -> str:
         """Get tool and model call statistics: most-used and slowest tools, model call latency.
@@ -354,9 +354,9 @@ class AgentOSTools(Toolkit):
             return _format_tool_activity(tools_most_used, tools_slowest, tools_total, model_calls, models_total, days)
         except NotImplementedError:
             return json.dumps({"error": "Span statistics are not supported by this database"})
-        except Exception as e:
+        except Exception:
             logger.exception("Failed to get tool activity")
-            return json.dumps({"error": str(e)})
+            return _tool_error("Failed to get tool activity")
 
     # ------------------------------------------------------------------
     # Eval history
@@ -380,9 +380,9 @@ class AgentOSTools(Toolkit):
                 self._sync_db().get_eval_runs(limit=_clamp(limit, 1, 100), page=1, deserialize=False),
             )
             return _format_eval_history(rows, total)
-        except Exception as e:
+        except Exception:
             logger.exception("Failed to get eval history")
-            return json.dumps({"error": str(e)})
+            return _tool_error("Failed to get eval history")
 
     async def aget_eval_history(self, limit: int = 20) -> str:
         """Get recent eval runs normalized to PASS/FAIL, with the judge's reason on failures.
@@ -402,9 +402,9 @@ class AgentOSTools(Toolkit):
                 await self._async_db().get_eval_runs(limit=_clamp(limit, 1, 100), page=1, deserialize=False),
             )
             return _format_eval_history(rows, total)
-        except Exception as e:
+        except Exception:
             logger.exception("Failed to get eval history")
-            return json.dumps({"error": str(e)})
+            return _tool_error("Failed to get eval history")
 
     # ------------------------------------------------------------------
     # Schedules
@@ -432,9 +432,9 @@ class AgentOSTools(Toolkit):
             return _format_schedules(schedules, total, last_runs)
         except NotImplementedError:
             return json.dumps({"error": "The scheduler is not supported by this database"})
-        except Exception as e:
+        except Exception:
             logger.exception("Failed to list schedules")
-            return json.dumps({"error": str(e)})
+            return _tool_error("Failed to list schedules")
 
     async def alist_schedules(self, limit: int = 20) -> str:
         """List schedules with their cron expression, enabled state and last run outcome.
@@ -458,9 +458,9 @@ class AgentOSTools(Toolkit):
             return _format_schedules(schedules, total, last_runs)
         except NotImplementedError:
             return json.dumps({"error": "The scheduler is not supported by this database"})
-        except Exception as e:
+        except Exception:
             logger.exception("Failed to list schedules")
-            return json.dumps({"error": str(e)})
+            return _tool_error("Failed to list schedules")
 
     def get_schedule_history(self, schedule_id: str, limit: int = 20) -> str:
         """Get the run history of one schedule: outcome trend, not just the last run.
@@ -483,9 +483,9 @@ class AgentOSTools(Toolkit):
             return _format_schedule_history(schedule_id, runs, total)
         except NotImplementedError:
             return json.dumps({"error": "The scheduler is not supported by this database"})
-        except Exception as e:
+        except Exception:
             logger.exception("Failed to get schedule history")
-            return json.dumps({"error": str(e)})
+            return _tool_error("Failed to get schedule history")
 
     async def aget_schedule_history(self, schedule_id: str, limit: int = 20) -> str:
         """Get the run history of one schedule: outcome trend, not just the last run.
@@ -508,9 +508,9 @@ class AgentOSTools(Toolkit):
             return _format_schedule_history(schedule_id, runs, total)
         except NotImplementedError:
             return json.dumps({"error": "The scheduler is not supported by this database"})
-        except Exception as e:
+        except Exception:
             logger.exception("Failed to get schedule history")
-            return json.dumps({"error": str(e)})
+            return _tool_error("Failed to get schedule history")
 
     # ------------------------------------------------------------------
     # Components
@@ -533,9 +533,9 @@ class AgentOSTools(Toolkit):
             return _format_components(components, total)
         except NotImplementedError:
             return json.dumps({"error": "Component listing is not supported by this database"})
-        except Exception as e:
+        except Exception:
             logger.exception("Failed to list platform components")
-            return json.dumps({"error": str(e)})
+            return _tool_error("Failed to list platform components")
 
     async def alist_platform_components(self, limit: int = 50) -> str:
         """List runtime-built components (agents, teams, workflows) persisted in the database.
@@ -572,9 +572,9 @@ class AgentOSTools(Toolkit):
             return _format_pending_approvals(approvals, total)
         except NotImplementedError:
             return json.dumps({"error": "Approvals are not supported by this database"})
-        except Exception as e:
+        except Exception:
             logger.exception("Failed to list pending approvals")
-            return json.dumps({"error": str(e)})
+            return _tool_error("Failed to list pending approvals")
 
     async def alist_pending_approvals(self) -> str:
         """List human-in-the-loop approvals waiting on a human decision.
@@ -593,9 +593,9 @@ class AgentOSTools(Toolkit):
             return _format_pending_approvals(approvals, total)
         except NotImplementedError:
             return json.dumps({"error": "Approvals are not supported by this database"})
-        except Exception as e:
+        except Exception:
             logger.exception("Failed to list pending approvals")
-            return json.dumps({"error": str(e)})
+            return _tool_error("Failed to list pending approvals")
 
 
 # ----------------------------------------------------------------------
@@ -656,6 +656,17 @@ def _async_db_error() -> str:
             "async execution path (arun / AgentOS server) so the async tool variants are used."
         }
     )
+
+
+def _tool_error(context: str) -> str:
+    """Generic error payload for the agent.
+
+    The exception detail is logged (logger.exception) but never returned. These
+    tools read the database directly with no endpoint scopes, so raw exception
+    text -- SQL fragments, table or column names -- must not reach whoever talks
+    to the agent.
+    """
+    return json.dumps({"error": f"{context}. The error has been logged."})
 
 
 def _clamp(value: int, low: int, high: int) -> int:
