@@ -152,6 +152,8 @@ class JWTValidator:
         user_id_claim: str = "sub",
         session_id_claim: str = "session_id",
         audience_claim: str = "aud",
+        issuer: Optional[str] = None,
+        issuer_claim: str = "iss",
         leeway: int = 10,
     ):
         """
@@ -168,6 +170,10 @@ class JWTValidator:
             user_id_claim: JWT claim name for user ID (default: "sub").
             session_id_claim: JWT claim name for session ID (default: "session_id").
             audience_claim: JWT claim name for audience (default: "aud").
+            issuer: Expected token issuer. When set, a token whose issuer claim does
+                    not match exactly is rejected. Pin this whenever more than one
+                    IdP can mint tokens your keys verify.
+            issuer_claim: JWT claim name for issuer (default: "iss").
             leeway: Seconds of leeway for clock skew tolerance (default: 10).
         """
         self.algorithm = algorithm
@@ -176,6 +182,8 @@ class JWTValidator:
         self.user_id_claim = user_id_claim
         self.session_id_claim = session_id_claim
         self.audience_claim = audience_claim
+        self.issuer = issuer
+        self.issuer_claim = issuer_claim
         self.leeway = leeway
 
         # Build list of verification keys
@@ -365,6 +373,21 @@ class JWTValidator:
                     f"Invalid audience. Expected one of: {expected_audiences}, got: {token_audiences}"
                 )
 
+        # Verify the issuer when one is pinned. Signature validity alone does not say
+        # WHO minted the token: a deployment that trusts several keys (multi-IdP, or a
+        # JWKS with more than one signer) will happily verify a token from any of them,
+        # so a caller who can obtain a token from a second trusted issuer could otherwise
+        # present it here. Pinning makes that a hard rejection.
+        if self.issuer:
+            token_issuer = payload.get(self.issuer_claim)
+            if token_issuer is None:
+                raise jwt.InvalidTokenError(
+                    f'Token is missing the "{self.issuer_claim}" claim. '
+                    f"Issuer verification requires this claim to be present in the token."
+                )
+            if token_issuer != self.issuer:
+                raise jwt.InvalidIssuerError(f"Invalid issuer. Expected: {self.issuer}, got: {token_issuer}")
+
         return payload
 
     def extract_claims(self, payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -430,6 +453,7 @@ def build_jwt_middleware_kwargs(
     jwks_file = None
     verify_audience = False
     audience = None
+    issuer = None
     admin_scope: Optional[str] = None
     user_isolation = False
 
@@ -439,6 +463,7 @@ def build_jwt_middleware_kwargs(
         jwks_file = authorization_config.jwks_file
         verify_audience = authorization_config.verify_audience or False
         audience = authorization_config.audience
+        issuer = authorization_config.issuer
         admin_scope = authorization_config.admin_scope
         user_isolation = authorization_config.user_isolation
 
@@ -452,6 +477,8 @@ def build_jwt_middleware_kwargs(
     }
     if audience:
         kwargs["audience"] = audience
+    if issuer:
+        kwargs["issuer"] = issuer
     if admin_scope:
         kwargs["admin_scope"] = admin_scope
     if user_isolation:
@@ -564,6 +591,7 @@ class AuthMiddleware(BaseHTTPMiddleware):
         audience_claim: str = "aud",
         audience: Optional[Union[str, Iterable[str]]] = None,
         verify_audience: bool = False,
+        issuer: Optional[str] = None,
         dependencies_claims: Optional[List[str]] = None,
         session_state_claims: Optional[List[str]] = None,
         scope_mappings: Optional[Dict[str, List[str]]] = None,
@@ -667,6 +695,7 @@ class AuthMiddleware(BaseHTTPMiddleware):
                 user_id_claim=user_id_claim,
                 session_id_claim=session_id_claim,
                 audience_claim=audience_claim,
+                issuer=issuer,
             )
             if self._jwt_configured
             else None
@@ -683,6 +712,7 @@ class AuthMiddleware(BaseHTTPMiddleware):
         self.session_id_claim = session_id_claim
         self.audience_claim = audience_claim
         self.verify_audience = verify_audience
+        self.issuer = issuer
         self.dependencies_claims: List[str] = dependencies_claims or []
         self.session_state_claims: List[str] = session_state_claims or []
 

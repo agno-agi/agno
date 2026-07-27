@@ -1431,6 +1431,7 @@ class AgentOS:
                 verification_keys=verification_keys,
                 jwks_file=jwks_file,
                 algorithm=algorithm,
+                issuer=middleware_kwargs.get("issuer"),
             )
         # Expose audience config + admin scope on app.state so WebSocket auth
         # (which does not flow through HTTP middleware) can honour them.
