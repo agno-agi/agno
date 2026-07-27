@@ -8,9 +8,11 @@ import pytest
 
 from agno.skills.agent_skills import Skills
 from agno.skills.errors import SkillError, SkillValidationError
+from agno.skills.executor import LocalSkillExecutor, SkillExecutor
 from agno.skills.loaders.base import SkillLoader
 from agno.skills.loaders.local import LocalSkills
 from agno.skills.skill import Skill
+from agno.skills.utils import ScriptResult
 from agno.tools.function import Function
 
 from .conftest import MockSkillLoader
@@ -672,6 +674,74 @@ def test_content_skill_script_execute_timeout(content_skill: Skill) -> None:
 
     assert "error" in result
     assert "timed out" in result["error"].lower()
+
+
+# --- Executor Tests ---
+
+
+class StubExecutor(SkillExecutor):
+    """An executor that records its call and returns a canned result instead of running anything."""
+
+    def __init__(self) -> None:
+        self.calls: List[dict] = []
+
+    def run(
+        self,
+        script_path: Path,
+        *,
+        args: Optional[List[str]] = None,
+        timeout: int = 30,
+        cwd: Optional[Path] = None,
+    ) -> ScriptResult:
+        self.calls.append({"script_path": script_path, "args": args, "timeout": timeout, "cwd": cwd})
+        return ScriptResult(stdout="stubbed", stderr="", returncode=0)
+
+
+def test_executor_defaults_to_local(mock_loader: MockSkillLoader) -> None:
+    """Test that Skills runs scripts locally unless given another executor."""
+    skills = Skills(loaders=[mock_loader])
+
+    assert isinstance(skills.executor, LocalSkillExecutor)
+
+
+def test_executor_used_for_path_backed_skill(temp_skill_dir: Path) -> None:
+    """Test that a path-backed skill's script execution is routed through the executor."""
+    executor = StubExecutor()
+    skills = Skills(loaders=[LocalSkills(str(temp_skill_dir))], executor=executor)
+
+    result = json.loads(skills._get_skill_script("test-skill", "helper.py", execute=True, args=["x"], timeout=7))
+
+    assert result["stdout"] == "stubbed"
+    assert len(executor.calls) == 1
+    assert executor.calls[0]["script_path"] == temp_skill_dir / "scripts" / "helper.py"
+    assert executor.calls[0]["cwd"] == temp_skill_dir
+    assert executor.calls[0]["args"] == ["x"]
+    assert executor.calls[0]["timeout"] == 7
+
+
+def test_executor_used_for_content_carrying_skill(content_skill: Skill) -> None:
+    """Test that a content-carrying skill's script execution is routed through the executor."""
+    executor = StubExecutor()
+    skills = Skills(loaders=[MockSkillLoader([content_skill])], executor=executor)
+
+    result = json.loads(skills._get_skill_script("content-skill", "hello.py", execute=True))
+
+    assert result["stdout"] == "stubbed"
+    assert len(executor.calls) == 1
+    # The executor is handed the materialized file, inside the temporary skill directory.
+    assert executor.calls[0]["script_path"].name == "hello.py"
+    assert executor.calls[0]["script_path"].parent == executor.calls[0]["cwd"] / "scripts"
+
+
+def test_executor_not_used_for_script_read(temp_skill_dir: Path) -> None:
+    """Test that reading a script does not go through the executor."""
+    executor = StubExecutor()
+    skills = Skills(loaders=[LocalSkills(str(temp_skill_dir))], executor=executor)
+
+    result = json.loads(skills._get_skill_script("test-skill", "helper.py"))
+
+    assert "Helper script" in result["content"]
+    assert executor.calls == []
 
 
 # --- Error Handling Tests ---

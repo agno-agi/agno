@@ -6,9 +6,10 @@ from typing import Dict, List, Literal, Optional
 
 from agno.exceptions import PathSecurityError
 from agno.skills.errors import SkillError, SkillValidationError
+from agno.skills.executor import LocalSkillExecutor, SkillExecutor
 from agno.skills.loaders.base import SkillLoader
 from agno.skills.skill import Skill
-from agno.skills.utils import materialize_skill_contents, read_file_safe, run_script
+from agno.skills.utils import materialize_skill_contents, read_file_safe
 from agno.tools.function import Function
 from agno.utils.log import log_debug, log_warning
 from agno.utils.path_safety import safe_join_relative_path
@@ -27,18 +28,22 @@ class Skills:
         loaders: List of SkillLoader instances to load skills from.
         on_duplicate: What to do when two loaders provide the same skill name. "warn" (default)
             keeps the last one loaded and logs a warning; "raise" rejects the collision.
+        executor: Runs a skill's scripts. Defaults to LocalSkillExecutor, which runs them as
+            subprocesses on this host.
     """
 
     def __init__(
         self,
         loaders: List[SkillLoader],
         on_duplicate: Literal["warn", "raise"] = "warn",
+        executor: Optional[SkillExecutor] = None,
     ):
         if on_duplicate not in ("warn", "raise"):
             raise ValueError(f"Invalid on_duplicate {on_duplicate!r}: expected 'warn' or 'raise'")
 
         self.loaders = loaders
         self.on_duplicate = on_duplicate
+        self.executor = executor if executor is not None else LocalSkillExecutor()
         self._skills: Dict[str, Skill] = {}
         self._load_skills()
 
@@ -500,8 +505,8 @@ class Skills:
             A JSON string with the execution results, or an error.
         """
         try:
-            result = run_script(
-                script_path=script_file,
+            result = self.executor.run(
+                script_file,
                 args=args,
                 timeout=timeout,
                 cwd=cwd,
