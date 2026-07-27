@@ -15,12 +15,11 @@ without any circular object wiring.
 Run with: python cookbook/05_agent_os/contacts/server.py
 """
 
-from agno.agent import Agent
+from agno.agent import Agent, RemoteAgent
 from agno.contacts import Contact
 from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIResponses
 from agno.os import AgentOS
-from agno.os.interfaces.remote_access import RemoteAccess
 from agno.team.team import Team
 from agno.tools.github import GithubTools
 from agno.tools.websearch import WebSearchTools
