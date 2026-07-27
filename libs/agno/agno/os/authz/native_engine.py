@@ -138,6 +138,19 @@ class NativePolicyEngine(PolicyEngine):
             stack.extend(self._direct_roles(node))
         return seen
 
+    def _subject_closure(self, subject: str) -> Set[str]:
+        """Policy roots for a *subject*: only the roles it is (transitively) assigned.
+
+        Unlike :meth:`_closure` the subject itself is never a root, so a JWT ``sub``
+        that happens to equal a role slug ("admin", "viewer") cannot inherit that
+        role's policy without a real assignment. A subject genuinely assigned a role
+        of the same name still gets it -- that arrives via ``_direct_roles``.
+        """
+        principals: Set[str] = set()
+        for role in self._direct_roles(subject):
+            principals |= self._closure(role)
+        return principals
+
     def _policies_for(self, principals: Set[str]) -> List[_PolicyRow]:
         """All (role, resource, action, effect) rows whose role is in ``principals``."""
         if not principals:
@@ -257,11 +270,17 @@ class NativePolicyEngine(PolicyEngine):
         return sorted(self._direct_roles(subject))
 
     # --- decisions -------------------------------------------------------
-    def _allowed_for_root(self, root: str, request_resource: str, request_action: str) -> bool:
+    def _allowed_for_root(
+        self, root: str, request_resource: str, request_action: str, *, is_subject: bool = False
+    ) -> bool:
         """deny-overrides within one identity root: allowed iff some grant in the
-        root's closure matches and allows, and none matches and denies."""
+        root's closure matches and allows, and none matches and denies.
+
+        ``is_subject`` marks ``root`` as a subject id rather than a role, so it is
+        resolved through its assignments only (see :meth:`_subject_closure`)."""
         allow = deny = False
-        for _role, resource, action, effect in self._policies_for(self._closure(root)):
+        principals = self._subject_closure(root) if is_subject else self._closure(root)
+        for _role, resource, action, effect in self._policies_for(principals):
             if action != "*" and action != request_action:
                 continue
             if not resource_matches(resource, request_resource):
@@ -278,7 +297,7 @@ class NativePolicyEngine(PolicyEngine):
         if roles:
             decision = any(self._allowed_for_root(role, resource, action) for role in roles)
         elif subject:
-            decision = self._allowed_for_root(subject, resource, action)
+            decision = self._allowed_for_root(subject, resource, action, is_subject=True)
         else:
             decision = False
         if self._log.isEnabledFor(logging.INFO):
@@ -308,11 +327,14 @@ class NativePolicyEngine(PolicyEngine):
         return self._enforce(resource, action, subject, roles)
 
     def _principals_for(self, subject: Optional[str], roles: Optional[List[str]]) -> Set[str]:
-        roots = list(roles) if roles else ([subject] if subject else [])
-        principals: Set[str] = set()
-        for root in roots:
-            principals |= self._closure(root)
-        return principals
+        """Mirrors :meth:`_enforce`: token-carried roles are their own policy roots,
+        while a subject resolves only through its assignments."""
+        if roles:
+            principals: Set[str] = set()
+            for role in roles:
+                principals |= self._closure(role)
+            return principals
+        return self._subject_closure(subject) if subject else set()
 
     def accessible_resource_ids(
         self,
