@@ -42,6 +42,10 @@ class RedisCoordination:
     url: Optional[str] = None
     sync_client: Optional[Any] = None
     async_client: Optional[Any] = None
+    # Namespace for all coordination keys (event stream + cancellation). Set a
+    # per-deployment value when multiple AgentOS deployments share one Redis -
+    # with the default, they would read each other's runs by run_id.
+    key_prefix: Optional[str] = None
 
     def __post_init__(self) -> None:
         if self.url is None and (self.sync_client is None or self.async_client is None):

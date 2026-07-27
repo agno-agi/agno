@@ -253,3 +253,73 @@ class TestEventCountParity:
         assert await stream.get_event_count("r1") == 2
         await stream.complete_run("r1", RunStatus.completed)
         assert await stream.get_event_count("r1") == 2
+
+
+class TestTailResilience:
+    @pytest.mark.asyncio
+    async def test_tail_survives_client_socket_timeout(self):
+        """A client-level socket timeout below block_ms (redis-py >= 8 defaults
+        Redis(...) to 5s) must be treated as an idle pass, not kill the tail."""
+        from redis.exceptions import TimeoutError as RedisTimeoutError
+
+        s = RedisEventStream(fakeredis.FakeAsyncRedis(), block_ms=100)
+        await s.register_run("r1", RunStatus.running)
+
+        real_xread = s._redis.xread
+        fail_once = {"n": 2}
+
+        async def flaky_xread(*args, **kwargs):
+            if fail_once["n"] > 0:
+                fail_once["n"] -= 1
+                raise RedisTimeoutError("socket timeout")
+            return await real_xread(*args, **kwargs)
+
+        s._redis.xread = flaky_xread
+        try:
+            received = []
+
+            async def consume():
+                async for idx, _sse in s.tail("r1"):
+                    received.append(idx)
+
+            task = asyncio.create_task(consume())
+            await asyncio.sleep(0.3)  # survive the two injected timeouts
+            await s.add_event("r1", make_event("r1", "a"))
+            await asyncio.sleep(0.3)
+            await s.complete_run("r1", RunStatus.completed)
+            await asyncio.wait_for(task, timeout=5)
+            assert received == [0]
+        finally:
+            await s.aclose()
+
+    @pytest.mark.asyncio
+    async def test_stale_paused_sentinel_does_not_end_resumed_tail(self, stream):
+        """A HITL pause writes a sentinel; the continue appends behind it. A
+        tail attached after the continue must skip the stale sentinel and keep
+        streaming, ending only at the run's actual terminal state."""
+        await stream.register_run("r1", RunStatus.running)
+        await stream.add_event("r1", make_event("r1", "before-pause"))
+        await stream.complete_run("r1", RunStatus.paused)
+
+        # Continue: status back to running, more events behind the sentinel
+        await stream.set_run_status("r1", RunStatus.running)
+        await stream.add_event("r1", make_event("r1", "after-approval"))
+        await stream.complete_run("r1", RunStatus.completed)
+
+        received = [idx async for idx, _sse in stream.tail("r1")]
+        assert received == [0, 1], "post-approval events must not be lost to the stale sentinel"
+
+    @pytest.mark.asyncio
+    async def test_unknown_status_value_reads_as_running_not_missing(self, stream):
+        await stream.register_run("r1", RunStatus.running)
+        await stream._redis.set(stream._status_key("r1"), "SOME_FUTURE_STATUS")
+        assert await stream.get_run_status("r1") == RunStatus.running
+
+    @pytest.mark.asyncio
+    async def test_paused_run_stays_on_ttl_refresher(self, stream):
+        await stream.register_run("r1", RunStatus.running)
+        await stream.add_event("r1", make_event("r1", "a"))
+        await stream.complete_run("r1", RunStatus.paused)
+        assert "r1" in stream._active_runs, "paused runs must keep their keys refreshed until the approval"
+        await stream.complete_run("r1", RunStatus.completed)
+        assert "r1" not in stream._active_runs
