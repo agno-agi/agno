@@ -117,7 +117,10 @@ class Agent:
     # --- Agent Memory ---
     # Memory manager to use for this agent
     memory_manager: Optional[MemoryManager] = None
-    # Enable the agent to manage memories of the user
+    # Enable the agent to manage memories of the user.
+    # Do not combine with a LearningMachine that has a user_memory store: both
+    # register a tool named update_user_memory, tool parsing keeps the first
+    # name it sees, and the learning store's tool is dropped without a word.
     enable_agentic_memory: bool = False
     # If True, the agent creates/updates user memories at the end of runs
     update_memory_on_run: bool = False
@@ -886,6 +889,7 @@ class Agent:
         run_context: Optional[RunContext] = None,
         tools: Optional[List[Union[Function, dict]]] = None,
         add_session_state_to_context: Optional[bool] = None,
+        input: Optional[Any] = None,
     ) -> Optional[Message]:
         return _messages.get_system_message(
             self,
@@ -893,6 +897,7 @@ class Agent:
             run_context=run_context,
             tools=tools,
             add_session_state_to_context=add_session_state_to_context,
+            input=input,
         )
 
     async def aget_system_message(
@@ -901,6 +906,7 @@ class Agent:
         run_context: Optional[RunContext] = None,
         tools: Optional[List[Union[Function, dict]]] = None,
         add_session_state_to_context: Optional[bool] = None,
+        input: Optional[Any] = None,
     ) -> Optional[Message]:
         return await _messages.aget_system_message(
             self,
@@ -908,6 +914,7 @@ class Agent:
             run_context=run_context,
             tools=tools,
             add_session_state_to_context=add_session_state_to_context,
+            input=input,
         )
 
     def get_relevant_docs_from_knowledge(
