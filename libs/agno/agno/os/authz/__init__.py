@@ -22,6 +22,7 @@ from agno.os.authz.native_engine import NativePolicyEngine
 from agno.os.authz.provider import AuthorizationContext, AuthorizationProvider
 from agno.os.authz.role_store import ManagedRoleStore
 from agno.os.authz.scope_provider import ScopeAuthorizationProvider
+from agno.os.authz.user_store import ManagedUserStore
 
 __all__ = [
     "AuthorizationContext",
@@ -31,6 +32,9 @@ __all__ = [
     # provider, native default engine). get_roles_router lives in role_router and
     # is imported directly to keep this package import FastAPI-free.
     "ManagedRoleStore",
+    # The credential-less user directory (the no-IdP tier). Dependency-free like
+    # ManagedRoleStore, so it belongs on the same package seam.
+    "ManagedUserStore",
     "PolicyEngine",
     "ScopeEntry",
     "EngineAuthorizationProvider",
