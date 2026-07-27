@@ -2,10 +2,10 @@ import json
 import subprocess
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from typing import Dict, List, Optional
+from typing import Dict, List, Literal, Optional
 
 from agno.exceptions import PathSecurityError
-from agno.skills.errors import SkillValidationError
+from agno.skills.errors import SkillError, SkillValidationError
 from agno.skills.loaders.base import SkillLoader
 from agno.skills.skill import Skill
 from agno.skills.utils import materialize_skill_contents, read_file_safe, run_script
@@ -25,40 +25,59 @@ class Skills:
 
     Args:
         loaders: List of SkillLoader instances to load skills from.
+        on_duplicate: What to do when two loaders provide the same skill name. "warn" (default)
+            keeps the last one loaded and logs a warning; "raise" rejects the collision.
     """
 
-    def __init__(self, loaders: List[SkillLoader]):
+    def __init__(
+        self,
+        loaders: List[SkillLoader],
+        on_duplicate: Literal["warn", "raise"] = "warn",
+    ):
+        if on_duplicate not in ("warn", "raise"):
+            raise ValueError(f"Invalid on_duplicate {on_duplicate!r}: expected 'warn' or 'raise'")
+
         self.loaders = loaders
+        self.on_duplicate = on_duplicate
         self._skills: Dict[str, Skill] = {}
         self._load_skills()
 
     def _load_skills(self) -> None:
-        """Load skills from all loaders.
+        """Load skills from all loaders, replacing the current mapping in one step.
 
         Raises:
             SkillValidationError: If any skill fails validation.
+            SkillError: If on_duplicate is "raise" and two loaders provide the same skill name.
         """
+        new_skills: Dict[str, Skill] = {}
         for loader in self.loaders:
             try:
-                skills = loader.load()
-                for skill in skills:
-                    if skill.name in self._skills:
-                        log_warning(f"Duplicate skill name '{skill.name}', overwriting with newer version")
-                    self._skills[skill.name] = skill
+                loaded = loader.load()
             except SkillValidationError:
                 raise  # Re-raise validation errors as hard failures
             except Exception as e:
                 log_warning(f"Error loading skills from {loader}: {str(e)}")
+                continue
 
+            for skill in loaded:
+                if skill.name in new_skills:
+                    if self.on_duplicate == "raise":
+                        raise SkillError(f"Duplicate skill name '{skill.name}' from loader {loader}")
+                    log_warning(f"Duplicate skill name '{skill.name}', overwriting with newer version")
+                new_skills[skill.name] = skill
+
+        # Swap once, at the end: a reader during a reload sees the previous mapping rather than an
+        # empty or half-filled one.
+        self._skills = new_skills
         log_debug(f"Loaded {len(self._skills)} total skills")
 
     def reload(self) -> None:
-        """Reload skills from all loaders, clearing existing skills.
+        """Reload skills from all loaders, replacing the existing skills.
 
         Raises:
             SkillValidationError: If any skill fails validation.
+            SkillError: If on_duplicate is "raise" and two loaders provide the same skill name.
         """
-        self._skills.clear()
         self._load_skills()
 
     def get_skill(self, name: str) -> Optional[Skill]:

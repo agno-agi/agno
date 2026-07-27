@@ -2,12 +2,12 @@
 
 import json
 from pathlib import Path
-from typing import List
+from typing import List, Optional
 
 import pytest
 
 from agno.skills.agent_skills import Skills
-from agno.skills.errors import SkillValidationError
+from agno.skills.errors import SkillError, SkillValidationError
 from agno.skills.loaders.base import SkillLoader
 from agno.skills.loaders.local import LocalSkills
 from agno.skills.skill import Skill
@@ -93,7 +93,7 @@ def test_skills_loaded_on_init(mock_loader: MockSkillLoader) -> None:
 
 
 def test_reload_clears_and_reloads(sample_skill: Skill) -> None:
-    """Test that reload() clears existing skills and reloads."""
+    """Test that reload() replaces the existing skills with what the loaders now return."""
     from .conftest import MockSkillLoader
 
     loader = MockSkillLoader([sample_skill])
@@ -112,10 +112,100 @@ def test_reload_clears_and_reloads(sample_skill: Skill) -> None:
     )
     loader._skills = [new_skill]
 
-    # Reload should clear and reload
+    # Reload should replace the mapping
     skills.reload()
     assert "new-skill" in skills._skills
     assert "test-skill" not in skills._skills
+
+
+class PeekingLoader(SkillLoader):
+    """A loader that records the Skills mapping as it looked while the loader was running."""
+
+    def __init__(self, skills: List[Skill]):
+        self._skills = skills
+        self.observed: Optional[Skills] = None
+        self.names_seen_while_loading: List[List[str]] = []
+
+    def load(self) -> List[Skill]:
+        if self.observed is not None:
+            self.names_seen_while_loading.append(self.observed.get_skill_names())
+        return self._skills
+
+
+def test_reload_never_exposes_empty_skill_set(sample_skill: Skill, minimal_skill: Skill) -> None:
+    """Test that a reader running during a reload sees the old skills, never an empty set."""
+    loader = PeekingLoader([sample_skill])
+    skills = Skills(loaders=[loader])
+
+    # Only observe from here, so the initial (genuinely empty) load is not counted.
+    loader.observed = skills
+    loader._skills = [sample_skill, minimal_skill]
+    skills.reload()
+
+    assert loader.names_seen_while_loading == [["test-skill"]]
+    assert skills.get_skill_names() == ["test-skill", "minimal-skill"]
+
+
+def test_reload_twice_never_exposes_empty_skill_set(sample_skill: Skill, minimal_skill: Skill) -> None:
+    """Test that the second reload also sees a populated mapping, not leftovers from the first."""
+    loader = PeekingLoader([sample_skill])
+    skills = Skills(loaders=[loader])
+    loader.observed = skills
+
+    skills.reload()
+    loader._skills = [minimal_skill]
+    skills.reload()
+
+    assert loader.names_seen_while_loading == [["test-skill"], ["test-skill"]]
+    assert skills.get_skill_names() == ["minimal-skill"]
+
+
+# --- Duplicate Name Tests ---
+
+
+def _duplicate_loaders() -> List[MockSkillLoader]:
+    return [
+        MockSkillLoader([Skill(name="duplicate", description="First", instructions="First", source_path="/path1")]),
+        MockSkillLoader([Skill(name="duplicate", description="Second", instructions="Second", source_path="/path2")]),
+    ]
+
+
+def test_on_duplicate_warn_keeps_last(sample_skill: Skill) -> None:
+    """Test that on_duplicate='warn' keeps the last loaded skill, matching the default."""
+    skills = Skills(loaders=_duplicate_loaders(), on_duplicate="warn")
+
+    assert [s.description for s in skills.get_all_skills()] == ["Second"]
+
+
+def test_on_duplicate_raise_names_skill_and_loader() -> None:
+    """Test that on_duplicate='raise' rejects the collision, naming the skill and the loader."""
+    loaders = _duplicate_loaders()
+
+    with pytest.raises(SkillError) as exc_info:
+        Skills(loaders=loaders, on_duplicate="raise")
+
+    message = str(exc_info.value)
+    assert "duplicate" in message
+    assert repr(loaders[1]) in message
+
+
+def test_on_duplicate_raise_on_reload() -> None:
+    """Test that on_duplicate='raise' still rejects a collision introduced by a reload."""
+    loaders = _duplicate_loaders()
+    loaders[1]._skills = []
+    skills = Skills(loaders=loaders, on_duplicate="raise")
+
+    loaders[1]._skills = [Skill(name="duplicate", description="Second", instructions="s", source_path="/p2")]
+    with pytest.raises(SkillError):
+        skills.reload()
+
+
+def test_on_duplicate_rejects_unknown_value(mock_loader: MockSkillLoader) -> None:
+    """Test that an unrecognized on_duplicate value is rejected instead of silently ignored."""
+    with pytest.raises(ValueError) as exc_info:
+        Skills(loaders=[mock_loader], on_duplicate="ignore")  # type: ignore[arg-type]
+
+    assert "on_duplicate" in str(exc_info.value)
 
 
 # --- Retrieval Tests ---
