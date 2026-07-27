@@ -1313,6 +1313,24 @@ class AgentOS:
         # the parent app), so the mounted sub-app carries no auth code of its own.
         security_key = self.settings.os_security_key if self.settings else None
         jwt_env_configured = bool(getenv("JWT_VERIFICATION_KEY") or getenv("JWT_JWKS_FILE"))
+        # An authz plane with the enforcement flag off is the most dangerous shape this
+        # config can take: the provider is seeded but nothing consults it, so an OS the
+        # author believes is governed by roles serves every route to anonymous callers.
+        # Fail at construction rather than shipping a silently open instance.
+        cfg = self.authorization_config
+        if (
+            cfg is not None
+            and not self.authorization
+            and (
+                getattr(cfg, "role_store", None) is not None or getattr(cfg, "authorization_provider", None) is not None
+            )
+        ):
+            raise ValueError(
+                "AuthorizationConfig(role_store=... / authorization_provider=...) requires "
+                "AgentOS(authorization=True). Without it the authorization plane is never "
+                "enforced and every route is served unauthenticated. Set authorization=True, "
+                "or drop the provider if you intended an open instance."
+            )
         if self.authorization:
             # Set authorization_enabled flag on settings so security key validation is skipped
             self.settings.authorization_enabled = True
