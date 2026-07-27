@@ -1,7 +1,7 @@
 from abc import ABC, abstractmethod
 from datetime import date, datetime
 from enum import Enum
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Set, Tuple, Union
+from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional, Set, Tuple, Union
 from uuid import uuid4
 
 if TYPE_CHECKING:
@@ -501,8 +501,9 @@ class BaseDb(ABC):
         limit: Optional[int] = 20,
         page: Optional[int] = 1,
         filter_expr: Optional[Dict[str, Any]] = None,
+        group_by: Literal["session", "agent", "team", "workflow", "endpoint"] = "session",
     ) -> tuple[List[Dict[str, Any]], int]:
-        """Get trace statistics grouped by session.
+        """Get trace statistics grouped by session or by component.
 
         Args:
             user_id: Filter by user ID.
@@ -511,14 +512,29 @@ class BaseDb(ABC):
             workflow_id: Filter by workflow ID.
             start_time: Filter sessions with traces created after this datetime.
             end_time: Filter sessions with traces created before this datetime.
-            limit: Maximum number of sessions to return per page.
+            limit: Maximum number of groups to return per page.
             page: Page number (1-indexed).
             filter_expr: Advanced filter expression dict (from FilterExpr.to_dict()).
+            group_by: Grouping key. "session" (default) groups by session_id and keeps
+                the original output shape. "agent", "team" and "workflow" group by the
+                corresponding component id and add duration and error aggregates.
+                "endpoint" groups traces that carry no component id at all (HTTP/MCP
+                entrypoint wrappers) by trace name, with the same aggregates.
+                Backends may support only the default "session" grouping.
 
         Returns:
-            tuple[List[Dict], int]: Tuple of (list of session stats dicts, total count).
-                Each dict contains: session_id, user_id, agent_id, team_id, total_traces,
-                first_trace_at (datetime), last_trace_at (datetime).
+            tuple[List[Dict], int]: Tuple of (list of stats dicts, total count).
+                With group_by="session", each dict contains: session_id, user_id,
+                agent_id, team_id, workflow_id, total_traces, first_trace_at (datetime),
+                last_trace_at (datetime).
+                With a component grouping, each dict contains: <group>_id, total_traces,
+                total_sessions, avg_duration_ms, p95_duration_ms, max_duration_ms,
+                error_traces (traces with status ERROR), first_trace_at (datetime),
+                last_trace_at (datetime). Traces without the grouping id are excluded.
+                With group_by="endpoint", the grouping key is name instead of <group>_id.
+
+        Raises:
+            NotImplementedError: If the backend does not support the requested grouping.
         """
         raise NotImplementedError
 
@@ -569,6 +585,47 @@ class BaseDb(ABC):
 
         Returns:
             List[Span]: List of matching spans.
+        """
+        raise NotImplementedError
+
+    # This method is optional. Override in subclasses that support SQL-side span aggregation.
+    def get_span_stats(
+        self,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
+        workflow_id: Optional[str] = None,
+        start_time: Optional[datetime] = None,
+        end_time: Optional[datetime] = None,
+        name: Optional[str] = None,
+        span_type: Optional[str] = None,
+        limit: Optional[int] = 20,
+        page: Optional[int] = 1,
+        sort_by: str = "total_calls",
+        sort_order: str = "desc",
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        """Get span statistics aggregated by span name.
+
+        Aggregates over span names, durations and status only. Never reads span
+        attributes payloads, which can hold full conversation content.
+
+        Args:
+            agent_id: Only include spans belonging to traces of this agent.
+            team_id: Only include spans belonging to traces of this team.
+            workflow_id: Only include spans belonging to traces of this workflow.
+            start_time: Only include spans starting after this datetime.
+            end_time: Only include spans starting before this datetime.
+            name: Filter by exact span name.
+            span_type: Filter by span type (e.g. AGENT, LLM, TOOL, CHAIN).
+            limit: Maximum number of groups to return per page.
+            page: Page number (1-indexed).
+            sort_by: Aggregate to sort by: total_calls, avg_duration_ms,
+                p95_duration_ms, max_duration_ms, error_count or last_called_at.
+            sort_order: "asc" or "desc".
+
+        Returns:
+            Tuple[List[Dict], int]: Tuple of (list of stats dicts, total count of groups).
+                Each dict contains: name, span_type, total_calls, avg_duration_ms,
+                p95_duration_ms, max_duration_ms, error_count, last_called_at (datetime).
         """
         raise NotImplementedError
 
@@ -1799,8 +1856,9 @@ class AsyncBaseDb(ABC):
         limit: Optional[int] = 20,
         page: Optional[int] = 1,
         filter_expr: Optional[Dict[str, Any]] = None,
+        group_by: Literal["session", "agent", "team", "workflow", "endpoint"] = "session",
     ) -> tuple[List[Dict[str, Any]], int]:
-        """Get trace statistics grouped by session.
+        """Get trace statistics grouped by session or by component.
 
         Args:
             user_id: Filter by user ID.
@@ -1809,14 +1867,29 @@ class AsyncBaseDb(ABC):
             workflow_id: Filter by workflow ID.
             start_time: Filter sessions with traces created after this datetime.
             end_time: Filter sessions with traces created before this datetime.
-            limit: Maximum number of sessions to return per page.
+            limit: Maximum number of groups to return per page.
             page: Page number (1-indexed).
             filter_expr: Advanced filter expression dict (from FilterExpr.to_dict()).
+            group_by: Grouping key. "session" (default) groups by session_id and keeps
+                the original output shape. "agent", "team" and "workflow" group by the
+                corresponding component id and add duration and error aggregates.
+                "endpoint" groups traces that carry no component id at all (HTTP/MCP
+                entrypoint wrappers) by trace name, with the same aggregates.
+                Backends may support only the default "session" grouping.
 
         Returns:
-            tuple[List[Dict], int]: Tuple of (list of session stats dicts, total count).
-                Each dict contains: session_id, user_id, agent_id, team_id, total_traces,
-                first_trace_at (datetime), last_trace_at (datetime).
+            tuple[List[Dict], int]: Tuple of (list of stats dicts, total count).
+                With group_by="session", each dict contains: session_id, user_id,
+                agent_id, team_id, workflow_id, total_traces, first_trace_at (datetime),
+                last_trace_at (datetime).
+                With a component grouping, each dict contains: <group>_id, total_traces,
+                total_sessions, avg_duration_ms, p95_duration_ms, max_duration_ms,
+                error_traces (traces with status ERROR), first_trace_at (datetime),
+                last_trace_at (datetime). Traces without the grouping id are excluded.
+                With group_by="endpoint", the grouping key is name instead of <group>_id.
+
+        Raises:
+            NotImplementedError: If the backend does not support the requested grouping.
         """
         raise NotImplementedError
 
@@ -1867,6 +1940,47 @@ class AsyncBaseDb(ABC):
 
         Returns:
             List[Span]: List of matching spans.
+        """
+        raise NotImplementedError
+
+    # This method is optional. Override in subclasses that support SQL-side span aggregation.
+    async def get_span_stats(
+        self,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
+        workflow_id: Optional[str] = None,
+        start_time: Optional[datetime] = None,
+        end_time: Optional[datetime] = None,
+        name: Optional[str] = None,
+        span_type: Optional[str] = None,
+        limit: Optional[int] = 20,
+        page: Optional[int] = 1,
+        sort_by: str = "total_calls",
+        sort_order: str = "desc",
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        """Get span statistics aggregated by span name.
+
+        Aggregates over span names, durations and status only. Never reads span
+        attributes payloads, which can hold full conversation content.
+
+        Args:
+            agent_id: Only include spans belonging to traces of this agent.
+            team_id: Only include spans belonging to traces of this team.
+            workflow_id: Only include spans belonging to traces of this workflow.
+            start_time: Only include spans starting after this datetime.
+            end_time: Only include spans starting before this datetime.
+            name: Filter by exact span name.
+            span_type: Filter by span type (e.g. AGENT, LLM, TOOL, CHAIN).
+            limit: Maximum number of groups to return per page.
+            page: Page number (1-indexed).
+            sort_by: Aggregate to sort by: total_calls, avg_duration_ms,
+                p95_duration_ms, max_duration_ms, error_count or last_called_at.
+            sort_order: "asc" or "desc".
+
+        Returns:
+            Tuple[List[Dict], int]: Tuple of (list of stats dicts, total count of groups).
+                Each dict contains: name, span_type, total_calls, avg_duration_ms,
+                p95_duration_ms, max_duration_ms, error_count, last_called_at (datetime).
         """
         raise NotImplementedError
 
