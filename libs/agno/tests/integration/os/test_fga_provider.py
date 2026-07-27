@@ -55,12 +55,14 @@ def test_check_maps_to_a_relationship_query():
 
 
 def test_accessible_ids_maps_to_list_objects():
-    fga = InMemoryFGA({
-        ("user:alice", "read", "agents:a1"),
-        ("user:alice", "read", "agents:a2"),
-        ("user:alice", "run", "agents:a1"),  # different relation, excluded for read
-        ("user:bob", "read", "agents:a3"),
-    })
+    fga = InMemoryFGA(
+        {
+            ("user:alice", "read", "agents:a1"),
+            ("user:alice", "read", "agents:a2"),
+            ("user:alice", "run", "agents:a1"),  # different relation, excluded for read
+            ("user:bob", "read", "agents:a3"),
+        }
+    )
     prov = FGAAuthorizationProvider(fga)
     assert prov.accessible_resource_ids(_ctx("alice", "agents", None, "read")) == {"a1", "a2"}
     assert prov.accessible_resource_ids(_ctx("alice", "agents", None, "run")) == {"a1"}
@@ -95,7 +97,8 @@ def test_authorize_route_abstains_on_non_resource_routes():
 def _token(sub: str) -> str:
     return jwt.encode(
         {"sub": sub, "aud": OS_ID, "scopes": [], "exp": datetime.now(UTC) + timedelta(hours=1)},
-        SECRET, algorithm="HS256",
+        SECRET,
+        algorithm="HS256",
     )
 
 
@@ -106,10 +109,12 @@ def _auth(sub: str) -> dict:
 def test_fga_gates_a_real_agentos_per_resource():
     """End to end: relationships in the FGA store decide who can run which agent,
     with FGA composed alongside the scope provider on one OS."""
-    fga = InMemoryFGA({
-        ("user:alice", "run", "agents:research-agent"),   # alice may run research-agent
-        ("user:alice", "read", "agents:research-agent"),
-    })
+    fga = InMemoryFGA(
+        {
+            ("user:alice", "run", "agents:research-agent"),  # alice may run research-agent
+            ("user:alice", "read", "agents:research-agent"),
+        }
+    )
     research = Agent(id="research-agent", name="Research Agent", db=InMemoryDb())
     other = Agent(id="other-agent", name="Other Agent", db=InMemoryDb())
     agent_os = AgentOS(

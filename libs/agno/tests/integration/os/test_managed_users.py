@@ -28,7 +28,12 @@ class _CapturingSink(AuditSink):
 
 
 def _token(sub: str, **claims) -> str:
-    payload = {"sub": sub, "aud": OS_ID, "scopes": claims.pop("scopes", []), "exp": datetime.now(UTC) + timedelta(hours=1)}
+    payload = {
+        "sub": sub,
+        "aud": OS_ID,
+        "scopes": claims.pop("scopes", []),
+        "exp": datetime.now(UTC) + timedelta(hours=1),
+    }
     payload.update(claims)
     return jwt.encode(payload, SECRET, algorithm="HS256")
 
