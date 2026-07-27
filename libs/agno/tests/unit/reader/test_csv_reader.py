@@ -67,6 +67,17 @@ def test_read_path(csv_reader, csv_file):
     assert documents[3].content == expected_content_4
 
 
+def test_read_str_path(csv_reader, csv_file):
+    documents = csv_reader.read(str(csv_file))
+
+    assert len(documents) == 4
+    assert documents[0].name == "test"
+    assert documents[0].content == "name, age, city"
+    assert documents[1].content == "John, 30, New York"
+    assert documents[2].content == "Jane, 25, San Francisco"
+    assert documents[3].content == "Bob, 40, Chicago"
+
+
 def test_read_file_object(csv_reader):
     file_obj = io.BytesIO(SAMPLE_CSV.encode("utf-8"))
     file_obj.name = "memory.csv"
@@ -112,6 +123,12 @@ def test_read_nonexistent_file(csv_reader, temp_dir):
         csv_reader.read(nonexistent_path)
 
 
+def test_read_nonexistent_str_path(csv_reader, temp_dir):
+    nonexistent_path = temp_dir / "nonexistent.csv"
+    with pytest.raises(FileNotFoundError, match="Could not find file"):
+        csv_reader.read(str(nonexistent_path))
+
+
 def test_read_with_chunking(csv_reader, csv_file):
     def mock_chunk(doc):
         return [
@@ -144,6 +161,25 @@ async def test_async_read_path(csv_reader, csv_file):
     assert documents[1].content == "John, 30, New York"
     assert documents[2].content == "Jane, 25, San Francisco"
     assert documents[3].content == "Bob, 40, Chicago"
+
+
+@pytest.mark.asyncio
+async def test_async_read_str_path(csv_reader, csv_file):
+    documents = await csv_reader.async_read(str(csv_file))
+
+    assert len(documents) == 4
+    assert documents[0].name == "test"
+    assert documents[0].content == "name, age, city"
+    assert documents[1].content == "John, 30, New York"
+    assert documents[2].content == "Jane, 25, San Francisco"
+    assert documents[3].content == "Bob, 40, Chicago"
+
+
+@pytest.mark.asyncio
+async def test_async_read_nonexistent_str_path(csv_reader, temp_dir):
+    nonexistent_path = temp_dir / "nonexistent.csv"
+    with pytest.raises(FileNotFoundError, match="Could not find file"):
+        await csv_reader.async_read(str(nonexistent_path))
 
 
 @pytest.fixture
@@ -321,3 +357,17 @@ async def test_async_read_path_with_custom_encoding(temp_dir):
     content = documents[0].content
     assert "José" in content
     assert "São Paulo" in content
+
+
+def test_default_chunking_strategy_is_not_shared_between_instances():
+    """Each CSVReader() created without an explicit chunking_strategy must get
+    its own RowChunking instance, not a shared mutable default constructed
+    once at import time."""
+    reader_a = CSVReader()
+    reader_b = CSVReader()
+
+    assert reader_a.chunking_strategy is not reader_b.chunking_strategy
+
+    reader_a.chunking_strategy.skip_header = True
+
+    assert reader_b.chunking_strategy.skip_header is False

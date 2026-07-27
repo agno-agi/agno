@@ -14,7 +14,6 @@ from agno.models.cerebras import Cerebras
 reasoning_agent = Agent(
     model=Cerebras(id="llama-3.3-70b"),
     reasoning=True,
-    debug_mode=True,
     markdown=True,
 )
 
