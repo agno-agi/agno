@@ -72,6 +72,30 @@ def test_init_invalid_model_raises():
         SmallestTools(api_key="test_key", model="lightning")
 
 
+def test_init_default_base_url():
+    """Test that base_url defaults to the standard Smallest AI TTS endpoint."""
+    tools = SmallestTools(api_key="test_key")
+    assert tools.base_url == SMALLEST_TTS_URL
+
+
+def test_init_custom_base_url(mock_agent):
+    """Test that a custom base_url is used for text-to-speech requests."""
+    custom_url = "https://self-hosted.example.com/tts"
+    tools = SmallestTools(api_key="test_key", base_url=custom_url)
+    assert tools.base_url == custom_url
+
+    mock_response = MagicMock()
+    mock_response.content = b"audio data"
+    mock_response.headers = {"content-type": "audio/wav"}
+    mock_response.raise_for_status.return_value = None
+
+    with patch("agno.tools.smallest.httpx.post", return_value=mock_response) as mock_post:
+        tools.text_to_speech(mock_agent, "Hello world")
+
+    args, _ = mock_post.call_args
+    assert args[0] == custom_url
+
+
 def test_feature_registration(smallest_tools):
     """Test that the expected tools are registered."""
     assert "get_voices" in smallest_tools.functions
@@ -89,6 +113,7 @@ def test_text_to_speech_success(smallest_tools, mock_agent):
     """Test successful text-to-speech generation."""
     mock_response = MagicMock()
     mock_response.content = b"audio data"
+    mock_response.headers = {"content-type": "audio/wav"}
     mock_response.raise_for_status.return_value = None
 
     with patch("agno.tools.smallest.httpx.post", return_value=mock_response) as mock_post:
@@ -118,6 +143,7 @@ def test_text_to_speech_voice_override(smallest_tools, mock_agent):
     """Test text-to-speech with a per-call voice override."""
     mock_response = MagicMock()
     mock_response.content = b"audio data"
+    mock_response.headers = {"content-type": "audio/wav"}
     mock_response.raise_for_status.return_value = None
 
     with patch("agno.tools.smallest.httpx.post", return_value=mock_response) as mock_post:
@@ -131,6 +157,7 @@ def test_text_to_speech_language_param(mock_agent):
     """Test that language defaults to en and can be overridden."""
     mock_response = MagicMock()
     mock_response.content = b"audio data"
+    mock_response.headers = {"content-type": "audio/wav"}
     mock_response.raise_for_status.return_value = None
 
     with patch("agno.tools.smallest.httpx.post", return_value=mock_response) as mock_post:
@@ -150,6 +177,7 @@ def test_text_to_speech_mp3_mime_type(mock_agent):
     tools = SmallestTools(api_key="test_key", output_format="mp3")
     mock_response = MagicMock()
     mock_response.content = b"audio data"
+    mock_response.headers = {"content-type": "audio/mpeg"}
     mock_response.raise_for_status.return_value = None
 
     with patch("agno.tools.smallest.httpx.post", return_value=mock_response) as mock_post:
@@ -166,6 +194,7 @@ def test_text_to_speech_saves_to_target_directory(mock_agent, tmp_path):
     tools = SmallestTools(api_key="test_key", target_directory=str(target_dir))
     mock_response = MagicMock()
     mock_response.content = b"audio data"
+    mock_response.headers = {"content-type": "audio/wav"}
     mock_response.raise_for_status.return_value = None
 
     with patch("agno.tools.smallest.httpx.post", return_value=mock_response):
@@ -182,6 +211,7 @@ def test_text_to_speech_saves_multiple_times_without_overwriting(mock_agent, tmp
     tools = SmallestTools(api_key="test_key", target_directory=str(target_dir))
     mock_response = MagicMock()
     mock_response.content = b"audio data"
+    mock_response.headers = {"content-type": "audio/wav"}
     mock_response.raise_for_status.return_value = None
 
     with patch("agno.tools.smallest.httpx.post", return_value=mock_response):
@@ -198,6 +228,22 @@ def test_text_to_speech_error(smallest_tools, mock_agent):
     error_response = httpx.Response(401, json={"error": "unauthorized"}, request=request)
 
     with patch("agno.tools.smallest.httpx.post", return_value=error_response):
+        result = smallest_tools.text_to_speech(mock_agent, "Hello world")
+
+    assert isinstance(result, ToolResult)
+    assert "Error" in result.content
+    assert not result.audios
+
+
+def test_text_to_speech_unexpected_content_type(smallest_tools, mock_agent):
+    """Test that a non-audio 200 response (e.g. a JSON error body) is treated as an error."""
+    mock_response = MagicMock()
+    mock_response.content = b'{"error": "invalid voice_id"}'
+    mock_response.text = '{"error": "invalid voice_id"}'
+    mock_response.headers = {"content-type": "application/json"}
+    mock_response.raise_for_status.return_value = None
+
+    with patch("agno.tools.smallest.httpx.post", return_value=mock_response):
         result = smallest_tools.text_to_speech(mock_agent, "Hello world")
 
     assert isinstance(result, ToolResult)

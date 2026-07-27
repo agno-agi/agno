@@ -47,10 +47,11 @@ class SmallestTools(Toolkit):
         speed: float = 1.0,
         output_format: SmallestOutputFormat = "wav",
         target_directory: Optional[str] = None,
+        base_url: str = SMALLEST_TTS_URL,
         enable_get_voices: bool = True,
         enable_text_to_speech: bool = True,
         all: bool = False,
-        timeout: int = 30,
+        timeout: float = 30,
         **kwargs,
     ):
         self.api_key = api_key or getenv("SMALLEST_API_KEY")
@@ -67,6 +68,8 @@ class SmallestTools(Toolkit):
         self.speed = speed
         self.output_format = output_format
         self.target_directory = target_directory
+        self.base_url = base_url
+        self.timeout = timeout
 
         if self.target_directory:
             target_path = Path(self.target_directory)
@@ -78,7 +81,7 @@ class SmallestTools(Toolkit):
         if all or enable_text_to_speech:
             tools.append(self.text_to_speech)
 
-        super().__init__(name="smallest_tools", tools=tools, timeout=timeout, **kwargs)
+        super().__init__(name="smallest_tools", tools=tools, **kwargs)
 
     def _headers(self) -> Dict[str, str]:
         return {
@@ -135,7 +138,7 @@ class SmallestTools(Toolkit):
             log_error(f"Failed to fetch voices: {str(e)}")
             return f"Error: {e}"
 
-    def _process_audio(self, audio_data: bytes) -> bytes:
+    def _save_audio(self, audio_data: bytes) -> bytes:
         # Save to disk if target_directory exists
         if self.target_directory:
             output_filename = f"{uuid4()}.{self.output_format}"
@@ -173,7 +176,7 @@ class SmallestTools(Toolkit):
             }
 
             response = httpx.post(
-                SMALLEST_TTS_URL,
+                self.base_url,
                 headers={
                     **self._headers(),
                     "Content-Type": "application/json",
@@ -184,7 +187,11 @@ class SmallestTools(Toolkit):
             )
             response.raise_for_status()
 
-            audio_data = self._process_audio(response.content)
+            content_type = response.headers.get("content-type", "")
+            if "audio" not in content_type and "octet-stream" not in content_type:
+                raise ValueError(f"Expected audio response but got content-type '{content_type}': {response.text}")
+
+            audio_data = self._save_audio(response.content)
 
             audio_artifact = Audio(
                 id=str(uuid4()),
