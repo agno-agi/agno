@@ -277,9 +277,7 @@ def test_managed_roles_enforce_on_rest_gate_via_shortcut(tmp_path):
 
     # read allowed, run denied — same subject, same (empty-scope) token
     assert client.get("/agents/research-agent", headers=_auth("bob")).status_code == 200
-    assert (
-        client.post("/agents/research-agent/runs", headers=_auth("bob"), data={"message": "hi"}).status_code == 403
-    )
+    assert client.post("/agents/research-agent/runs", headers=_auth("bob"), data={"message": "hi"}).status_code == 403
 
 
 def test_role_store_and_provider_are_mutually_exclusive():
@@ -309,3 +307,54 @@ def test_role_store_without_any_db_fails_loud_at_wiring():
     )
     with pytest.raises(ValueError, match="needs a SQL database"):
         agent_os.get_app()
+
+
+def test_deny_override_is_not_leaked_by_the_list_endpoint():
+    """Regression: a per-resource deny must be carved out of GET /agents, not just
+    the per-resource gate.
+
+    The deny-aware ``filter_accessible`` was previously dead on the request path:
+    the route gate cached an allow-only ``accessible_resource_ids`` of ``{"*"}`` on
+    ``request.state`` and the listing short-circuited on it, so ``GET /agents/{id}``
+    correctly 403'd while ``GET /agents`` still returned the denied agent's full
+    response body. This drives real HTTP so the whole pipeline is covered.
+    """
+    store = ManagedRoleStore(db_url=_db_url())
+    store.set_role_scopes("analyst", [("agents:*:read", "allow"), ("agents:other-agent:read", "deny")])
+    store.assign("bob", "analyst")
+    client = _build(store)
+    headers = {"Authorization": f"Bearer {_token('bob')}"}
+
+    # the per-resource gate denies the excluded agent...
+    assert client.get("/agents/other-agent", headers=headers).status_code == 403
+    assert client.get("/agents/research-agent", headers=headers).status_code == 200
+
+    # ...and the listing must agree, rather than disclosing it
+    listing = client.get("/agents", headers=headers)
+    assert listing.status_code == 200
+    assert {a["id"] for a in listing.json()} == {"research-agent"}
+
+
+def test_wildcard_allow_without_denies_still_lists_everything():
+    """The narrowing added for deny-overrides must not over-filter the common case."""
+    store = ManagedRoleStore(db_url=_db_url())
+    store.set_role_scopes("reader", ["agents:*:read"])
+    store.assign("ana", "reader")
+    client = _build(store)
+
+    listing = client.get("/agents", headers={"Authorization": f"Bearer {_token('ana')}"})
+    assert listing.status_code == 200
+    assert {a["id"] for a in listing.json()} == {"research-agent", "other-agent"}
+
+
+def test_per_resource_grant_lists_only_that_resource():
+    """A caller holding only a concrete per-resource scope (the path that populates
+    the request-state id cache) still sees exactly their one agent."""
+    store = ManagedRoleStore(db_url=_db_url())
+    store.set_role_scopes("narrow", ["agents:research-agent:read"])
+    store.assign("nick", "narrow")
+    client = _build(store)
+
+    listing = client.get("/agents", headers={"Authorization": f"Bearer {_token('nick')}"})
+    assert listing.status_code == 200
+    assert {a["id"] for a in listing.json()} == {"research-agent"}

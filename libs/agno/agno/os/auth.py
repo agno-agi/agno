@@ -54,6 +54,21 @@ def resolve_authorization_provider(app_or_request: Any) -> AuthorizationProvider
     return _default_authorization_provider()
 
 
+def _provider_for(request: Any) -> AuthorizationProvider:
+    """The provider that decides for *this caller*.
+
+    Service accounts authenticate with a PAT whose scopes ARE their ACL: they are
+    first-party machine credentials, not directory users, so they have no subject or
+    role in a managed store. Routing them through a configured provider would deny
+    every request (the store has no row for ``sa:<name>``) even though the route gate
+    already admitted them on scope math -- so PAT callers are always evaluated by the
+    scope provider, exactly as they were before the provider seam existed.
+    """
+    if getattr(request.state, "service_account_name", None) is not None:
+        return _default_authorization_provider()
+    return resolve_authorization_provider(request)
+
+
 def _authorization_context(
     request: Request,
     *,
@@ -464,17 +479,17 @@ def filter_resources_by_access(request: Request, resources: List, resource_type:
         >>> filter_resources_by_access(request, agents, "agents")
         [Agent(id="agent-1"), Agent(id="agent-2"), Agent(id="agent-3")]
     """
-    # When the route gate cached an accessible-id set on request.state (the caller
-    # holds only per-resource scopes on a GET listing), honour it directly so the
-    # listing matches the gate decision — same behaviour as before the seam.
+    # The route gate may have cached an accessible-id set on request.state (the caller
+    # holds only per-resource scopes on a GET listing). Use it to NARROW the candidates,
+    # never as the final answer: that set is built from allow rows alone, so returning
+    # it directly would drop a provider's deny-overrides and leak an explicitly-denied
+    # resource into the listing while the per-resource gate still 403s it.
     cached_ids = getattr(request.state, "accessible_resource_ids", None)
-    if cached_ids is not None:
-        if "*" in cached_ids:
-            return resources
-        return [r for r in resources if getattr(r, "id", None) in cached_ids]
+    if cached_ids is not None and "*" not in cached_ids:
+        resources = [r for r in resources if getattr(r, "id", None) in cached_ids]
 
-    # Otherwise delegate to the provider, which may filter more richly than a plain
-    # id-set membership test (e.g. deny-overrides for managed roles).
+    # The provider is the authority: it may filter more richly than a plain id-set
+    # membership test (e.g. deny-overrides for managed roles).
     provider = resolve_authorization_provider(request)
     ctx = _authorization_context(request, resource_type=resource_type)
     return provider.filter_accessible(ctx, resources)
@@ -517,14 +532,13 @@ def check_resource_access(request: Request, resource_id: str, resource_type: str
     if getattr(request.state, "is_internal_service", False):
         return True
 
-    provider = resolve_authorization_provider(request)
     ctx = _authorization_context(
         request,
         resource_type=resource_type,
         resource_id=resource_id,
         action=action,
     )
-    return provider.check(ctx)
+    return _provider_for(request).check(ctx)
 
 
 def require_resource_access(resource_type: str, action: str, resource_id_param: str):
