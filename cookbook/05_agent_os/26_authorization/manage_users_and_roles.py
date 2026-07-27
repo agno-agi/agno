@@ -170,13 +170,13 @@ research_agent = Agent(
     db=db,
 )
 
-# The console's heist game (console.html -> 🏴 Heist) breaks into this one. It is
+# The console's heist game (console.html -> Heist tab) breaks into this one. It is
 # guarded by explicit DENY scopes on the "intern" role the game sets up, so the
 # lesson is deny-overrides: a wildcard allow can't open it, only removing the deny.
 vault_agent = Agent(
     id="vault-agent",
     name="The Vault",
-    description="🏦 An impenetrable vault. Reads are forbidden. Runs are unthinkable. The flag sleeps inside.",
+    description="An impenetrable vault. Reads are forbidden. Runs are unthinkable. The flag sleeps inside.",
     model=OpenAIResponses(id="gpt-5.5"),
     db=db,
     instructions=(
