@@ -633,6 +633,12 @@ def _set_learning_machine(team: "Team") -> None:
             team.learning.db = team.db
         if team.learning.model is None:
             team.learning.model = team.model
+        if (
+            team.learning.learned_knowledge
+            and team.learning.knowledge is None
+            and getattr(team, "knowledge", None) is not None
+        ):
+            team.learning.knowledge = team.knowledge
         team._learning = team.learning
 
         # PROPOSE/HITL modes need chat history for multi-turn confirmation
