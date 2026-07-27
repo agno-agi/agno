@@ -41,6 +41,36 @@ mode, command_path, cwd, raw_limit, raw_timeout, raw_termination_grace = sys.arg
 limit = int(raw_limit)
 timeout = float(raw_timeout)
 termination_grace = float(raw_termination_grace)
+
+# Keep a live session leader until command status and inherited output pipes are settled. This prevents the process
+# group ID from being recycled before descendant cleanup when the user command exits before its children.
+supervisor_source = r'''
+import os
+import signal
+import subprocess
+import sys
+import time
+
+mode, command_path, cwd, raw_status_fd = sys.argv[1:]
+status_fd = int(raw_status_fd)
+force_kill_requested = False
+release_requested = False
+
+def keep_group_leader_alive(_signum, _frame):
+    pass
+
+def request_force_kill(_signum, _frame):
+    global force_kill_requested
+    force_kill_requested = True
+
+def request_release(_signum, _frame):
+    global release_requested
+    release_requested = True
+
+# Caught signals reset to their defaults when the user command is exec'd, while the supervisor keeps these handlers.
+signal.signal(signal.SIGTERM, keep_group_leader_alive)
+signal.signal(signal.SIGUSR1, request_force_kill)
+signal.signal(signal.SIGUSR2, request_release)
 argv = (
     ["python3", command_path]
     if mode == "python"
@@ -48,22 +78,69 @@ argv = (
 )
 env = os.environ.copy()
 env["PYTHONPATH"] = os.pathsep.join(part for part in (cwd, env.get("PYTHONPATH")) if part)
+command = subprocess.Popen(argv, cwd=cwd, env=env)
+
+while True:
+    try:
+        returncode = command.wait(timeout=0.05)
+        break
+    except subprocess.TimeoutExpired:
+        if force_kill_requested:
+            try:
+                command.kill()
+            except OSError:
+                pass
+            force_kill_requested = False
+
+try:
+    os.write(status_fd, f"{returncode}\\n".encode())
+except OSError:
+    pass
+finally:
+    try:
+        os.close(status_fd)
+    except OSError:
+        pass
+
+for standard_fd in (1, 2):
+    try:
+        os.close(standard_fd)
+    except OSError:
+        pass
+
+while not release_requested:
+    time.sleep(0.05)
+'''
+
+status_read_fd, status_write_fd = os.pipe()
 process = subprocess.Popen(
-    argv,
-    cwd=cwd,
-    env=env,
+    [
+        sys.executable,
+        "-c",
+        supervisor_source,
+        mode,
+        command_path,
+        cwd,
+        str(status_write_fd),
+    ],
     start_new_session=True,
     stdout=subprocess.PIPE,
     stderr=subprocess.PIPE,
+    pass_fds=(status_write_fd,),
 )
+os.close(status_write_fd)
 streams = (process.stdout, process.stderr)
 buffers = (bytearray(), bytearray())
 totals = [0, 0]
+command_exit_code = [None]
 
 def drain(index):
     stream = streams[index]
     while True:
-        chunk = stream.read(65536)
+        try:
+            chunk = os.read(stream.fileno(), 65536)
+        except OSError:
+            return
         if not chunk:
             return
         totals[index] += len(chunk)
@@ -72,51 +149,94 @@ def drain(index):
         elif len(buffers[index]) < limit:
             buffers[index].extend(chunk[: limit - len(buffers[index])])
 
-threads = [threading.Thread(target=drain, args=(index,)) for index in range(2)]
+
+def read_command_status():
+    try:
+        raw_status = os.read(status_read_fd, 64)
+        if raw_status:
+            try:
+                command_exit_code[0] = int(raw_status.decode().strip())
+            except ValueError:
+                pass
+    except OSError:
+        pass
+    finally:
+        try:
+            os.close(status_read_fd)
+        except OSError:
+            pass
+
+
+threads = [
+    threading.Thread(target=drain, args=(0,), daemon=True),
+    threading.Thread(target=drain, args=(1,), daemon=True),
+    threading.Thread(target=read_command_status, daemon=True),
+]
+# Bounded joins plus daemon readers ensure signaling failures cannot prevent the runner from flushing its JSON result.
 for thread in threads:
     thread.start()
 deadline = time.monotonic() + timeout
 timed_out = False
 
+
+def shutdown_complete():
+    return not any(thread.is_alive() for thread in threads)
+
+
+def wait_for_shutdown(shutdown_deadline):
+    for thread in threads:
+        thread.join(timeout=max(0, shutdown_deadline - time.monotonic()))
+    return shutdown_complete()
+
+
+def stop_supervisor(stop_deadline):
+    try:
+        os.kill(process.pid, signal.SIGUSR2)
+    except OSError:
+        pass
+    remaining = max(0, stop_deadline - time.monotonic())
+    try:
+        return process.wait(timeout=remaining)
+    except subprocess.TimeoutExpired:
+        try:
+            os.kill(process.pid, signal.SIGKILL)
+        except OSError:
+            pass
+        remaining = max(0, stop_deadline - time.monotonic())
+        try:
+            return process.wait(timeout=remaining)
+        except subprocess.TimeoutExpired:
+            return None
+
+
 def terminate_process_group():
+    cleanup_deadline = time.monotonic() + termination_grace
     try:
         os.killpg(process.pid, signal.SIGTERM)
     except OSError:
         pass
-    if process.poll() is None:
-        try:
-            process.wait(timeout=termination_grace)
-        except subprocess.TimeoutExpired:
-            pass
-    if process.poll() is None:
-        kill_sent = False
+    # Share one cleanup budget between graceful termination and forced escalation so the outer SDK timeout remains valid.
+    wait_for_shutdown(time.monotonic() + (termination_grace / 2))
+    if not shutdown_complete():
         try:
             os.killpg(process.pid, signal.SIGKILL)
-            kill_sent = True
         except OSError:
             try:
-                process.kill()
-                kill_sent = True
+                os.kill(process.pid, signal.SIGUSR1)
             except OSError:
                 pass
-        if kill_sent and process.poll() is None:
-            process.wait()
+        wait_for_shutdown(cleanup_deadline)
+    stop_supervisor(cleanup_deadline)
 
-try:
-    exit_code = process.wait(timeout=timeout)
-except subprocess.TimeoutExpired:
+if not wait_for_shutdown(deadline):
     timed_out = True
     terminate_process_group()
     exit_code = 124
-if not timed_out:
-    for thread in threads:
-        thread.join(timeout=max(0, deadline - time.monotonic()))
-    if any(thread.is_alive() for thread in threads):
-        timed_out = True
-        terminate_process_group()
-        exit_code = 124
-for thread in threads:
-    thread.join()
+else:
+    supervisor_exit_code = stop_supervisor(time.monotonic() + termination_grace)
+    exit_code = command_exit_code[0] if command_exit_code[0] is not None else supervisor_exit_code
+    if exit_code is None:
+        exit_code = 1
 
 print(
     json.dumps(
@@ -128,7 +248,8 @@ print(
             "stderr_bytes": totals[1],
             "timed_out": timed_out,
         }
-    )
+    ),
+    flush=True,
 )
 """
 
@@ -158,11 +279,6 @@ def _build_default_instructions(enabled_tool_names: set[str]) -> str:
         ]
     )
     return "\n".join(lines)
-
-
-DEFAULT_INSTRUCTIONS = _build_default_instructions(
-    {tool_name for tool_name, _ in TOOL_INSTRUCTION_LINES if tool_name != "terminate_sandbox"}
-)
 
 
 class TenkiTools(Toolkit):

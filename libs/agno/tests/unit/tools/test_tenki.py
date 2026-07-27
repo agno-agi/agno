@@ -7,6 +7,7 @@ import subprocess
 import sys
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
+from pathlib import Path
 from threading import Barrier, Lock
 from time import sleep
 from types import SimpleNamespace
@@ -1411,6 +1412,37 @@ def test_remote_command_runner_imports_files_from_the_working_directory(tmp_path
     assert base64.b64decode(collected["stderr"]).decode() == ""
 
 
+def _write_sigterm_ignoring_descendant_command(tmp_path: Path) -> tuple[Path, Path]:
+    child_pid_path = tmp_path / "child.pid"
+    child_ready_path = tmp_path / "child.ready"
+    command_path = tmp_path / "command.py"
+    child_code = (
+        "import pathlib\n"
+        "import signal\n"
+        "import time\n"
+        "signal.signal(signal.SIGTERM, signal.SIG_IGN)\n"
+        f"pathlib.Path({str(child_ready_path)!r}).write_text('ready')\n"
+        "time.sleep(60)\n"
+    )
+    command_path.write_text(
+        "import pathlib\n"
+        "import subprocess\n"
+        "import sys\n"
+        "import time\n"
+        f"child = subprocess.Popen([sys.executable, '-c', {child_code!r}])\n"
+        f"ready_path = pathlib.Path({str(child_ready_path)!r})\n"
+        "for _ in range(100):\n"
+        "    if ready_path.exists():\n"
+        "        break\n"
+        "    time.sleep(0.01)\n"
+        "else:\n"
+        "    raise RuntimeError('child did not become ready')\n"
+        f"pathlib.Path({str(child_pid_path)!r}).write_text(str(child.pid))\n"
+        "print('done', flush=True)\n"
+    )
+    return command_path, child_pid_path
+
+
 def test_remote_command_runner_terminates_the_user_process_group_on_timeout(tmp_path) -> None:
     child_pid_path = tmp_path / "child.pid"
     command_path = tmp_path / "command.py"
@@ -1461,6 +1493,99 @@ def test_remote_command_runner_terminates_the_user_process_group_on_timeout(tmp_
         else:
             pytest.fail(f"timed-out child process {child_pid} is still running")
     finally:
+        if child_pid is not None:
+            try:
+                os.kill(child_pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+
+
+def test_remote_command_runner_terminates_sigterm_ignoring_descendant_after_leader_exits(tmp_path) -> None:
+    command_path, child_pid_path = _write_sigterm_ignoring_descendant_command(tmp_path)
+    child_pid = None
+
+    try:
+        completed = subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                BOUNDED_COMMAND_RUNNER,
+                "python",
+                str(command_path),
+                str(tmp_path),
+                "100",
+                "1",
+                "0.2",
+            ],
+            capture_output=True,
+            text=True,
+            check=True,
+            timeout=5,
+        )
+        collected = json.loads(completed.stdout)
+        child_pid = int(child_pid_path.read_text())
+
+        assert collected["exit_code"] == 124
+        assert collected["timed_out"] is True
+        assert base64.b64decode(collected["stdout"]).decode() == "done\n"
+        assert completed.stderr == ""
+        for _ in range(100):
+            try:
+                os.kill(child_pid, 0)
+            except ProcessLookupError:
+                break
+            sleep(0.01)
+        else:
+            pytest.fail(f"SIGTERM-ignoring child process {child_pid} is still running")
+    finally:
+        if child_pid is None and child_pid_path.exists():
+            child_pid = int(child_pid_path.read_text())
+        if child_pid is not None:
+            try:
+                os.kill(child_pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+
+
+def test_remote_command_runner_returns_when_process_group_signals_are_denied(tmp_path) -> None:
+    command_path, child_pid_path = _write_sigterm_ignoring_descendant_command(tmp_path)
+    child_pid = None
+    runner = BOUNDED_COMMAND_RUNNER.replace(
+        "os.killpg(process.pid, signal.SIGTERM)",
+        "raise PermissionError('simulated SIGTERM permission error')",
+    ).replace(
+        "os.killpg(process.pid, signal.SIGKILL)",
+        "raise PermissionError('simulated SIGKILL permission error')",
+    )
+
+    try:
+        completed = subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                runner,
+                "python",
+                str(command_path),
+                str(tmp_path),
+                "100",
+                "1",
+                "0.2",
+            ],
+            capture_output=True,
+            text=True,
+            check=True,
+            timeout=5,
+        )
+        collected = json.loads(completed.stdout)
+        child_pid = int(child_pid_path.read_text())
+
+        assert collected["exit_code"] == 124
+        assert collected["timed_out"] is True
+        assert base64.b64decode(collected["stdout"]).decode() == "done\n"
+        assert completed.stderr == ""
+    finally:
+        if child_pid is None and child_pid_path.exists():
+            child_pid = int(child_pid_path.read_text())
         if child_pid is not None:
             try:
                 os.kill(child_pid, signal.SIGKILL)
