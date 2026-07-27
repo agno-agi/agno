@@ -450,13 +450,16 @@ class AgentOS:
         # run_queue.redis wires the cross-container transports; the explicit
         # event_stream parameter below is applied after and wins by ordering.
         self.run_queue = run_queue
-        if run_queue is not None:
-            apply_run_queue_config(run_queue)
 
-        # Event stream for background run events. None keeps the in-memory
-        # default (or whatever an earlier set_event_stream() call configured).
+        # Event stream FIRST: the coordination wiring below only fills in-memory
+        # defaults and warns on asymmetric transports - it must see the user's
+        # explicit stream, or the one split-Redis config it exists to catch
+        # (custom stream on Redis A, wired cancellation on Redis B) never warns.
         if event_stream is not None:
             set_event_stream(event_stream)
+
+        if run_queue is not None:
+            apply_run_queue_config(run_queue)
 
         # Scheduler configuration
         self._scheduler_enabled = scheduler
