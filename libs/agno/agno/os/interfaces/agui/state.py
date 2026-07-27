@@ -40,6 +40,8 @@ class StreamState:
     # Run context
     thread_id: str = ""
     run_id: str = ""
+    team_id: Optional[str] = None
+    team_mode: Optional[str] = None
     run_state: Optional[Dict[str, Any]] = None
 
     def open_text_message(self) -> str:
