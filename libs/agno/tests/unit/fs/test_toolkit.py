@@ -46,13 +46,19 @@ def toolkit(fs) -> FileSystemTools:
     return fs.tools()
 
 
+@pytest.fixture
+def full_toolkit(fs) -> FileSystemTools:
+    # The whole nine-tool surface, selected explicitly.
+    return fs.tools(include_tools=FileSystemTools.FULL_TOOLS)
+
+
 class TestSchemas:
     """The empty-schema regression (spec D1): every schema must be non-empty AND
     name every documented parameter AND lack the framework-injected ones."""
 
     @pytest.mark.parametrize("tool_name", list(EXPECTED_TOOL_PARAMS.keys()))
-    def test_schema_names_documented_params_and_lacks_injected(self, toolkit, tool_name):
-        function = toolkit.functions[tool_name]
+    def test_schema_names_documented_params_and_lacks_injected(self, full_toolkit, tool_name):
+        function = full_toolkit.functions[tool_name]
         function.process_entrypoint()
         properties = function.parameters.get("properties", {})
         assert list(properties.keys()) == EXPECTED_TOOL_PARAMS[tool_name]
@@ -62,8 +68,8 @@ class TestSchemas:
             assert prop.get("description"), "every model-facing parameter carries its docstring description"
 
     @pytest.mark.parametrize("tool_name", list(EXPECTED_TOOL_PARAMS.keys()))
-    def test_async_schema_names_documented_params(self, toolkit, tool_name):
-        function = toolkit.async_functions[tool_name]
+    def test_async_schema_names_documented_params(self, full_toolkit, tool_name):
+        function = full_toolkit.async_functions[tool_name]
         function.process_entrypoint()
         properties = function.parameters.get("properties", {})
         assert list(properties.keys()) == EXPECTED_TOOL_PARAMS[tool_name]
@@ -74,9 +80,9 @@ class TestSchemas:
             assert prop.get("description"), "every async parameter carries its docstring description"
 
     @pytest.mark.parametrize("tool_name", list(EXPECTED_TOOL_PARAMS.keys()))
-    def test_async_description_matches_sync(self, toolkit, tool_name):
-        sync_fn = toolkit.functions[tool_name]
-        async_fn = toolkit.async_functions[tool_name]
+    def test_async_description_matches_sync(self, full_toolkit, tool_name):
+        sync_fn = full_toolkit.functions[tool_name]
+        async_fn = full_toolkit.async_functions[tool_name]
         sync_fn.process_entrypoint()
         async_fn.process_entrypoint()
         assert async_fn.description == sync_fn.description
@@ -130,19 +136,45 @@ class TestWorkspaceParity:
         assert toolkit.requires_confirmation_tools == []
 
     def test_confirmation_opt_in_via_kwargs(self, fs):
-        tk = fs.tools(requires_confirmation_tools=["delete_file"])
+        tk = fs.tools(allow_delete=True, requires_confirmation_tools=["delete_file"])
         assert tk.functions["delete_file"].requires_confirmation is True
 
 
 class TestSurface:
-    def test_full_surface_registers_nine_sync_and_async(self, toolkit):
-        assert list(toolkit.functions.keys()) == FileSystemTools.FULL_TOOLS
-        assert list(toolkit.async_functions.keys()) == FileSystemTools.FULL_TOOLS
+    def test_default_surface_is_the_notes_seven(self, toolkit):
+        assert list(toolkit.functions.keys()) == FileSystemTools.DEFAULT_TOOLS
+        assert list(toolkit.async_functions.keys()) == FileSystemTools.DEFAULT_TOOLS
+        assert len(FileSystemTools.DEFAULT_TOOLS) == 7
+        assert "check_lines" not in toolkit.functions
+        assert "delete_file" not in toolkit.functions
 
-    def test_read_only_registers_exactly_four(self, fs):
+    def test_allow_delete_adds_delete_file(self, fs):
+        tk = fs.tools(allow_delete=True)
+        assert list(tk.functions.keys()) == FileSystemTools.DEFAULT_TOOLS + ["delete_file"]
+
+    def test_read_only_registers_exactly_three(self, fs):
         tk = fs.tools(read_only=True)
         assert list(tk.functions.keys()) == FileSystemTools.READ_ONLY_TOOLS
         assert list(tk.async_functions.keys()) == FileSystemTools.READ_ONLY_TOOLS
+        assert len(FileSystemTools.READ_ONLY_TOOLS) == 3
+
+    def test_check_lines_reachable_via_include_tools(self, fs):
+        tk = fs.tools(include_tools=FileSystemTools.DEFAULT_TOOLS + ["check_lines"])
+        assert "check_lines" in tk.functions
+        read_tk = fs.tools(read_only=True, include_tools=["read_file", "check_lines"])
+        assert set(read_tk.functions.keys()) == {"read_file", "check_lines"}
+
+    def test_include_tools_cannot_reach_write_tools_when_read_only(self, fs):
+        with pytest.raises(ValueError):
+            fs.tools(read_only=True, include_tools=["write_file"])
+
+    def test_read_only_with_allow_delete_raises(self, fs):
+        with pytest.raises(ValueError):
+            fs.tools(read_only=True, allow_delete=True)
+
+    def test_full_tools_stays_exported_as_the_whole_surface(self, fs):
+        tk = fs.tools(include_tools=FileSystemTools.FULL_TOOLS)
+        assert list(tk.functions.keys()) == FileSystemTools.FULL_TOOLS
 
     def test_toolkit_name(self, toolkit):
         assert toolkit.name == "filesystem"
@@ -158,7 +190,14 @@ class TestInstructions:
         text = FileSystem.instructions()
         assert text.startswith("You have your own private, durable filesystem")
         assert "Never store secrets, passwords, or API keys." in text
-        assert 'check_lines(lines, directory="seen")' in text
+        assert "replace_lines" in text
+        assert "move_file" in text and "archive/" in text
+        # The record-set/seen-directory conventions moved to the durable-records
+        # cookbook, and the user-memory steer is gone: this text is the notes
+        # contract, nothing else.
+        assert "check_lines" not in text
+        assert "seen/" not in text
+        assert "user memory" not in text
 
     def test_read_only_variant_names_no_write_tool(self, fs):
         text = FileSystem.instructions(read_only=True)
@@ -256,8 +295,7 @@ class TestErrorStringsVerbatim:
         result = toolkit.write_file("a.md", "0123456789x")
         assert result == (
             "Error: a.md would be 11 bytes (limit 10 per file). "
-            "Start a new file (for record logs, partition by date, e.g. seen/2026-07-24.md) "
-            "or delete files you no longer need."
+            "Split the topic into smaller files (or partition by date) and retry."
         )
 
     def test_quota_namespace_string(self, tmp_path):
@@ -266,10 +304,10 @@ class TestErrorStringsVerbatim:
         toolkit.write_file("a.md", "123456")
         result = toolkit.write_file("b.md", "78901")
         assert result == (
-            "Error: storage is full (6 of 10 bytes). Delete only files you are certain are obsolete "
-            "(see list_files), such as an old date partition, then retry. Do not overwrite or delete "
-            "records you might still need to make room; if nothing is safely disposable, stop and "
-            "report that storage is full."
+            "Error: storage is full (6 of 10 bytes). Free space only if you have a tool for it and "
+            "only from files you are certain are obsolete (see list_files). Never overwrite or "
+            "discard records you might still need to make room; if nothing is safely disposable, "
+            "stop and report that storage is full."
         )
 
     def test_check_lines_count_string(self, toolkit):
@@ -660,3 +698,76 @@ class TestReplaceLines:
 
     def test_not_in_the_read_only_surface(self, fs):
         assert "replace_lines" not in fs.tools(read_only=True).functions
+
+
+class TestExcludeToolsTypos:
+    """Tolerating an exclusion that left the default set is the upgrade idiom.
+
+    Tolerating a name that is no tool at all is a silent regression: the
+    caller believes a tool is gone and it is still registered.
+    """
+
+    def test_a_typo_warns_and_excludes_nothing(self, fs, caplog) -> None:
+        import logging
+
+        with caplog.at_level(logging.WARNING):
+            toolkit = fs.tools(exclude_tools=["delete_fil"])
+        assert any("not FileSystem tools" in r.getMessage() for r in caplog.records)
+        # the call still resolves; nothing was excluded for the misspelled name
+        assert set(toolkit.functions) == set(FileSystemTools.DEFAULT_TOOLS)
+
+    def test_excluding_a_tool_outside_this_set_is_a_no_op(self, fs) -> None:
+        # delete_file left the default set in 2.8.4; the old safety idiom stays valid
+        names = set(fs.tools(exclude_tools=["delete_file"]).functions)
+        assert names == set(FileSystemTools.DEFAULT_TOOLS)
+
+    def test_excluding_a_registered_tool_still_removes_it(self, fs) -> None:
+        names = set(fs.tools(exclude_tools=["move_file"]).functions)
+        assert "move_file" not in names
+        assert names == set(FileSystemTools.DEFAULT_TOOLS) - {"move_file"}
+
+
+class TestConcurrentEditsInOneTurn:
+    """A model's tool calls for one turn are gathered concurrently, and every
+    mutating fs tool is a read-modify-write. Without a per-file lock the second
+    write lands on the pre-edit content and one edit vanishes, with both tool
+    results reporting success."""
+
+    @pytest.mark.asyncio
+    async def test_two_replace_lines_on_one_note_both_land(self, tmp_path) -> None:
+        import asyncio
+
+        from agno.db.sqlite import SqliteDb
+        from agno.fs import FileSystem
+
+        fs = FileSystem(SqliteDb(db_file=str(tmp_path / "n.db")), namespace="brain")
+        tools = fs.tools()
+        fs.write("notes/radar.md", "line one\nline two\nline three\n")
+
+        await asyncio.gather(
+            tools.areplace_lines("notes/radar.md", 1, 1, "EDIT ONE"),
+            tools.areplace_lines("notes/radar.md", 3, 3, "EDIT THREE"),
+        )
+
+        content = fs.read("notes/radar.md")
+        assert "EDIT ONE" in content and "EDIT THREE" in content
+        assert "line two" in content
+
+    @pytest.mark.asyncio
+    async def test_an_append_beside_an_edit_survives(self, tmp_path) -> None:
+        import asyncio
+
+        from agno.db.sqlite import SqliteDb
+        from agno.fs import FileSystem
+
+        fs = FileSystem(SqliteDb(db_file=str(tmp_path / "m.db")), namespace="brain")
+        tools = fs.tools()
+        fs.write("notes/log.md", "start\n")
+
+        await asyncio.gather(
+            tools.aappend_file("notes/log.md", "appended"),
+            tools.areplace_lines("notes/log.md", 1, 1, "REPLACED"),
+        )
+
+        content = fs.read("notes/log.md")
+        assert "REPLACED" in content and "appended" in content

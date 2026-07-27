@@ -229,6 +229,10 @@ class SessionContextStore(LearningStore):
             </session_context>\
         """)
 
+    def instructions(self) -> str:
+        """Session context is system-managed (ALWAYS-only, no tools): no guidance."""
+        return ""
+
     def get_tools(self, **kwargs) -> List[Callable]:
         """Session context has no agent tools (system-managed only)."""
         return []
