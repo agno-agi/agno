@@ -809,6 +809,7 @@ async def stream_a2a_response(
         return
 
     # Build from completion_event if available, otherwise use accumulated content
+    final_metadata: Optional[Dict[str, Any]] = None
     if completion_event:
         final_content = completion_event.content if completion_event.content else accumulated_content
 
@@ -872,7 +873,7 @@ async def stream_a2a_response(
             )
 
         # Handle all other data as Message metadata
-        final_metadata: Dict[str, Any] = {}
+        final_metadata = {}
         if hasattr(completion_event, "metrics") and completion_event.metrics:  # type: ignore
             final_metadata["metrics"] = completion_event.metrics.to_dict()  # type: ignore
         if hasattr(completion_event, "metadata") and completion_event.metadata:
@@ -905,6 +906,7 @@ async def stream_a2a_response(
         status=TaskStatus(state=TaskState.completed),
         history=[final_message],
         artifacts=artifacts if artifacts else None,
+        metadata=final_metadata if final_metadata else None,
     )
     response = SendStreamingMessageSuccessResponse(id=request_id, result=task)
     yield f"event: Task\ndata: {json.dumps(response.model_dump(exclude_none=True))}\n\n"

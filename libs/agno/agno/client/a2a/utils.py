@@ -155,8 +155,32 @@ async def map_stream_events_to_run_events(
                 agent_id=agent_id,
             )
 
+        elif event.event_type == "completed" and event.is_final:
+            # A "status-update" reporting completion arrives before the "task" event
+            # that carries the final message parts and Task-level metadata - do not
+            # stop the loop here, or that metadata is silently dropped. Failed/canceled
+            # status-updates fall through to the is_final branch below and still break
+            # immediately, since agno's own server always follows them with a "task"
+            # event too, but other A2A servers may not guarantee that for failures.
+            continue
+
+        elif event.event_type == "task":
+            # The authoritative terminal event per the A2A spec - carries the final
+            # message parts and any Task-level metadata (see continue branch above).
+            final_content = event.content if event.content else accumulated_content
+            yield RunCompletedEvent(
+                content=final_content,
+                metadata=event.metadata,
+                run_id=run_id,
+                session_id=session_id,
+                agent_id=agent_id,
+            )
+            break  # Stream complete
+
         elif event.is_final:
-            # Use content from final event or accumulated content
+            # Reached for failed/canceled status-updates (or non-agno servers that
+            # never send a "task" event) - preserve the original behaviour of
+            # stopping immediately rather than waiting indefinitely for one.
             final_content = event.content if event.content else accumulated_content
             yield RunCompletedEvent(
                 content=final_content,
@@ -265,8 +289,28 @@ async def map_stream_events_to_team_run_events(
                 team_id=team_id,
             )
 
+        elif event.event_type == "completed" and event.is_final:
+            # See matching comment in map_stream_events_to_run_events - do not stop
+            # the loop on a completed status-update, or Task-level metadata carried
+            # by the following "task" event is silently dropped.
+            continue
+
+        elif event.event_type == "task":
+            # The authoritative terminal event per the A2A spec - carries the final
+            # message parts and any Task-level metadata (see continue branch above).
+            final_content = event.content if event.content else accumulated_content
+            yield TeamRunCompletedEvent(
+                content=final_content,
+                metadata=event.metadata,
+                run_id=run_id,
+                session_id=session_id,
+                team_id=team_id,
+            )
+            break  # Stream complete
+
         elif event.is_final:
-            # Use content from final event or accumulated content
+            # Failed/canceled status-updates, or non-agno servers that never send
+            # a "task" event - preserve original behaviour of stopping immediately.
             final_content = event.content if event.content else accumulated_content
             yield TeamRunCompletedEvent(
                 content=final_content,
