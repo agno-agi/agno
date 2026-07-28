@@ -133,7 +133,7 @@ def resolve_queue_store(config: QueueConfig, default_db: Any) -> Any:
     """Resolve the queue store for a durable QueueConfig.
 
     Preference order: config.db override, then the AgentOS db (zero extra
-    infrastructure). The store must implement the run-queue contract
+    infrastructure). The store must implement the queue contract
     (claim_job etc. — the Postgres adapters do; see
     agno.queue.store.InMemoryQueueStore for the contract reference).
     Sync stores (e.g. the sync PostgresDb) are wrapped so their contract
@@ -148,7 +148,7 @@ def resolve_queue_store(config: QueueConfig, default_db: Any) -> Any:
         # quietly. Redis ticket durability is persistence-config-dependent.
         if type(store).__name__ == "RedisDb":
             log_warning(
-                "Run queue tickets are stored on Redis: acceptance durability depends on "
+                "Job queue tickets are stored on Redis: acceptance durability depends on "
                 "Redis persistence configuration (use AOF appendfsync everysec/always for "
                 "Postgres-grade guarantees; default RDB snapshotting can lose recently "
                 "accepted jobs on a Redis crash)."
@@ -166,7 +166,7 @@ def resolve_queue_store(config: QueueConfig, default_db: Any) -> Any:
 
 
 class QueueWorker:
-    """Claims and executes durable run-queue jobs.
+    """Claims and executes durable queue jobs.
 
     One worker per AgentOS replica. SKIP LOCKED claiming arbitrates between
     replicas with zero coordination. The worker also:
@@ -247,10 +247,10 @@ class QueueWorker:
                 await self._sweep_exhausted()
                 await self._claim_burst()
                 # Retention: delete old terminal jobs about once an hour
-                if _time.time() - last_cleanup > 3600 and callable(getattr(self.store, "cleanup_run_jobs", None)):
-                    removed = await self.store.cleanup_run_jobs(self.config.retention_seconds)
+                if _time.time() - last_cleanup > 3600 and callable(getattr(self.store, "cleanup_jobs", None)):
+                    removed = await self.store.cleanup_jobs(self.config.retention_seconds)
                     if removed:
-                        log_info(f"Run queue retention: removed {removed} old terminal jobs")
+                        log_info(f"Job queue retention: removed {removed} old terminal jobs")
                     last_cleanup = _time.time()
                 await asyncio.sleep(self.config.poll_interval)
             except asyncio.CancelledError:
