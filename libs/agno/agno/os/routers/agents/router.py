@@ -789,7 +789,7 @@ def get_agent_router(
                         job, max_depth=queue_worker.config.max_queue_depth
                     )
                     if enqueue_result["reason"] == "queue_full":
-                        raise HTTPException(status_code=429, detail="Run queue is full")
+                        raise HTTPException(status_code=429, detail="Job queue is full")
                     if enqueue_result["reason"] == "duplicate":
                         existing = enqueue_result["job"]
                         if existing is None:
