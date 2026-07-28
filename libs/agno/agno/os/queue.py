@@ -338,22 +338,32 @@ class QueueWorker:
         await event_stream.set_run_status(job_id, RunStatus.running)
 
         final_output: Any = None
+        is_workflow = job.get("component_type") == "workflow"
         try:
-            async for event in component.arun(
+            arun_kwargs: Dict[str, Any] = dict(
                 input=payload.get("input"),
                 session_id=job["session_id"],
                 user_id=job.get("user_id"),
                 run_id=job_id,
                 stream=True,
                 stream_events=payload.get("stream_events", True),
-                yield_run_output=True,
                 **(payload.get("kwargs") or {}),
-            ):
+            )
+            if not is_workflow:
+                # Workflow streams do not support yield_run_output; the final
+                # output is loaded from the run row after the stream ends
+                arun_kwargs["yield_run_output"] = True
+            async for event in component.arun(**arun_kwargs):
                 if hasattr(event, "status") and hasattr(event, "run_id") and not hasattr(event, "event"):
                     final_output = event  # the terminal RunOutput
                     continue
                 with contextlib.suppress(Exception):
                     await event_stream.add_event(job_id, event)
+            if final_output is None and is_workflow:
+                with contextlib.suppress(Exception):
+                    final_output = await component.aget_run_output(
+                        job_id, job["session_id"], user_id=job.get("user_id")
+                    )
         finally:
             status = getattr(final_output, "status", None) or RunStatus.error
             with contextlib.suppress(Exception):
