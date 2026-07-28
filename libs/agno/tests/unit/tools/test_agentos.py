@@ -7,7 +7,7 @@ full db read path is exercised, not mocked.
 import json
 import time
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Any, Dict, Optional
 
 import pytest
@@ -488,6 +488,29 @@ class TestGetPlatformMetrics:
         assert out["daily"] == []
         assert any("no metrics" in note for note in out["notes"])
 
+    @pytest.mark.parametrize(
+        "given, expected",
+        [(0, 1), (-1, 1), (1.9, 1), (999, 365), (365.9, 365)],
+    )
+    def test_reported_window_is_the_window_queried(self, toolkit, given, expected):
+        """A clamped window must be reported as clamped, or rates computed from it are wrong."""
+        metrics = _loads(toolkit.get_platform_metrics(days=given))
+        activity = _loads(toolkit.get_run_activity(days=given))
+        tools = _loads(toolkit.get_tool_activity(days=given))
+
+        assert metrics["window_days"] == expected
+        assert activity["window_days"] == expected
+        assert tools["window_days"] == expected
+        # The window reported must match the date range actually queried
+        spanned = (date.fromisoformat(metrics["end_date"]) - date.fromisoformat(metrics["start_date"])).days + 1
+        assert spanned == expected
+
+    def test_non_numeric_window_reports_an_error_not_a_number(self, toolkit):
+        out = _loads(toolkit.get_platform_metrics(days="last week"))
+
+        assert "error" in out
+        assert "window_days" not in out
+
 
 class TestLazyMetricsRefresh:
     def _seed_session(self, db, agent_id="agent-1", user_id="user-1"):
@@ -530,6 +553,20 @@ class TestLazyMetricsRefresh:
         db.calculate_metrics()
 
         assert db._metrics_refreshed_at > 0.0
+
+    def test_metrics_tool_does_not_bypass_the_throttle(self, db, toolkit):
+        self._seed_session(db)
+        calls = []
+        original = type(db).calculate_metrics
+        type(db).calculate_metrics = lambda self, *a, **k: (calls.append(1), original(self, *a, **k))[1]
+        try:
+            for _ in range(3):
+                toolkit.get_platform_metrics(days=1)
+        finally:
+            type(db).calculate_metrics = original
+
+        # The tool must not refresh on its own; the db throttle governs
+        assert len(calls) == 1
 
 
 # ----------------------------------------------------------------------
@@ -773,6 +810,33 @@ class TestSchedules:
         assert _loads(schedules)["schedules"][0]["last_run"]["error"] == "HTTP 422"
         for run in out["runs"]:
             assert run["error"] is None or len(run["error"]) <= 200
+
+    def test_failed_run_keeps_the_scheduler_s_own_diagnosis(self, db, toolkit):
+        """A run that fails is still polled successfully, so its error rides on a 200.
+
+        Redacting whenever a status code is present would turn the one answer this
+        tool exists to give into "HTTP 200", which reads like success.
+        """
+        schedule = Schedule(id="sched-1", name="daily-report", cron_expr="0 9 * * *", endpoint="/agents/r/runs")
+        db.create_schedule(schedule.to_dict())
+        now = int(time.time())
+        diagnosis = "Run failed with status ERROR: tool 'send_email' raised ConnectionError"
+        db.create_schedule_run(
+            ScheduleRun(
+                id="run-1",
+                schedule_id="sched-1",
+                status="failed",
+                triggered_at=now - 60,
+                status_code=200,
+                error=diagnosis,
+                created_at=now - 60,
+            ).to_dict()
+        )
+
+        out = _loads(toolkit.get_schedule_history("sched-1"))
+
+        assert out["runs"][0]["error"] == diagnosis
+        assert _loads(toolkit.list_schedules())["schedules"][0]["last_run"]["error"] == diagnosis
 
     def test_framework_errors_keep_a_capped_first_line(self, db, toolkit):
         schedule = Schedule(id="sched-1", name="daily-report", cron_expr="0 9 * * *", endpoint="/agents/r/runs")
