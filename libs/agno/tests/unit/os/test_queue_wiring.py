@@ -98,39 +98,39 @@ class TestApplyQueueConfig:
 class TestSyncStoreAdapter:
     @pytest.mark.asyncio
     async def test_sync_store_methods_become_awaitable(self):
-        from agno.os.run_queue import resolve_run_queue_store
-        from agno.run.queue import RunQueueConfig
+        from agno.os.queue import resolve_queue_store
+        from agno.queue.config import QueueConfig
 
         class SyncStore:
-            def claim_run_job(self, worker_id, lock_grace_seconds=60):
+            def claim_job(self, worker_id, lock_grace_seconds=60):
                 return {"id": "r1", "worker": worker_id}
 
-            def count_queued_run_jobs(self):
+            def count_queued_jobs(self):
                 return 3
 
-        store = resolve_run_queue_store(RunQueueConfig(durable=True), SyncStore())
-        claimed = await store.claim_run_job("w1")
+        store = resolve_queue_store(QueueConfig(durable=True), SyncStore())
+        claimed = await store.claim_job("w1")
         assert claimed == {"id": "r1", "worker": "w1"}
-        assert await store.count_queued_run_jobs() == 3
+        assert await store.count_queued_jobs() == 3
 
     @pytest.mark.asyncio
     async def test_async_store_passes_through_unwrapped(self):
-        from agno.os.run_queue import resolve_run_queue_store
-        from agno.run.queue import RunQueueConfig
-        from agno.run.queue_store import InMemoryRunQueueStore
+        from agno.os.queue import resolve_queue_store
+        from agno.queue.config import QueueConfig
+        from agno.queue.store import InMemoryQueueStore
 
-        native = InMemoryRunQueueStore()
-        assert resolve_run_queue_store(RunQueueConfig(durable=True), native) is native
+        native = InMemoryQueueStore()
+        assert resolve_queue_store(QueueConfig(durable=True), native) is native
 
     @pytest.mark.asyncio
     async def test_durable_with_nonconforming_store_hard_fails(self):
         """durable=True is a durability promise: a db that cannot honor it must
         raise at startup, never silently degrade to an in-memory queue."""
-        from agno.os.run_queue import resolve_run_queue_store
-        from agno.run.queue import RunQueueConfig
+        from agno.os.queue import resolve_queue_store
+        from agno.queue.config import QueueConfig
 
         class NotAQueueStore:
             pass
 
         with pytest.raises(ValueError, match="durable"):
-            resolve_run_queue_store(RunQueueConfig(durable=True), NotAQueueStore())
+            resolve_queue_store(QueueConfig(durable=True), NotAQueueStore())

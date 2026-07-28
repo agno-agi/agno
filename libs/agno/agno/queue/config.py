@@ -1,6 +1,6 @@
-"""Configuration for the AgentOS run queue.
+"""Configuration for the AgentOS job queue.
 
-Background runs (``background=True``) execute through a run queue: submissions
+Background runs (``background=True``) execute through a job queue: submissions
 are accepted immediately (PENDING), execute under a concurrency cap, and wait
 in line when the cap is reached. ``QueueConfig`` is the single place to
 configure this subsystem.
@@ -106,4 +106,4 @@ class QueueConfig:
 
     def __post_init__(self) -> None:
         if self.db is not None and not self.durable:
-            raise ValueError("RunQueueConfig.db requires durable=True (a queue store implies a durable queue)")
+            raise ValueError("QueueConfig.db requires durable=True (a queue store implies a durable queue)")

@@ -45,7 +45,7 @@ from agno.os.config import (
 )
 from agno.os.event_streams import BaseEventStream, set_event_stream
 from agno.os.interfaces.base import BaseInterface
-from agno.os.queue import apply_queue_config
+from agno.os.queue import apply_queue_config, queue_lifespan
 from agno.os.router import get_base_router, get_info_router, get_websocket_router
 from agno.os.routers.agents import get_agent_router
 from agno.os.routers.approvals import get_approval_router
@@ -65,7 +65,6 @@ from agno.os.routers.session import get_session_router
 from agno.os.routers.teams import get_team_router
 from agno.os.routers.traces import get_traces_router
 from agno.os.routers.workflows import get_workflow_router
-from agno.os.queue import apply_queue_config, run_queue_lifespan
 from agno.os.settings import AgnoAPISettings
 from agno.os.utils import (
     _generate_knowledge_id,
@@ -446,7 +445,7 @@ class AgentOS:
         # If True, run agent/team hooks as FastAPI background tasks
         self.run_hooks_in_background = run_hooks_in_background
 
-        # Run queue configuration. None keeps the process defaults (env var or
+        # Job queue configuration. None keeps the process defaults (env var or
         # library default for the concurrency cap, in-memory transports).
         # queue.redis wires the cross-container transports; the explicit
         # event_stream parameter below is applied after and wins by ordering.
@@ -1100,9 +1099,9 @@ class AgentOS:
             if self._scheduler_enabled and self.db is not None:
                 lifespans.append(partial(scheduler_lifespan, agent_os=self))
 
-            # The durable run queue worker (after db so tables exist)
-            if self.run_queue is not None and self.run_queue.durable:
-                lifespans.append(partial(run_queue_lifespan, agent_os=self))
+            # The durable job queue worker (after db so tables exist)
+            if self.queue is not None and self.queue.durable:
+                lifespans.append(partial(queue_lifespan, agent_os=self))
 
             # The httpx client cleanup lifespan (should be last to close after other lifespans)
             lifespans.append(http_client_lifespan)
@@ -1144,9 +1143,9 @@ class AgentOS:
             if self._scheduler_enabled and self.db is not None:
                 lifespans.append(partial(scheduler_lifespan, agent_os=self))
 
-            # The durable run queue worker (after db so tables exist)
-            if self.run_queue is not None and self.run_queue.durable:
-                lifespans.append(partial(run_queue_lifespan, agent_os=self))
+            # The durable job queue worker (after db so tables exist)
+            if self.queue is not None and self.queue.durable:
+                lifespans.append(partial(queue_lifespan, agent_os=self))
 
             # The httpx client cleanup lifespan (should be last to close after other lifespans)
             lifespans.append(http_client_lifespan)
