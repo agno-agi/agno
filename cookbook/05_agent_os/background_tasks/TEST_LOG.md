@@ -67,7 +67,7 @@
 
 ---
 
-### durable_run_queue.py
+### durable_queue.py
 
 **Status:** PASS (live end-to-end, real Postgres)
 **Tier:** untagged
