@@ -1,6 +1,6 @@
 import time
 from datetime import date, datetime, timedelta, timezone
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Sequence, Set, Tuple, Union, cast
+from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional, Sequence, Set, Tuple, Union, cast
 from uuid import uuid4
 
 if TYPE_CHECKING:
@@ -36,7 +36,7 @@ from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.utils.string import sanitize_postgres_string, sanitize_postgres_strings
 
 try:
-    from sqlalchemy import ForeignKey, Index, String, Table, UniqueConstraint, and_, case, func, or_, update
+    from sqlalchemy import ForeignKey, Index, String, Table, UniqueConstraint, and_, case, distinct, func, or_, update
     from sqlalchemy.dialects import postgresql
     from sqlalchemy.dialects.postgresql import TIMESTAMP
     from sqlalchemy.exc import ProgrammingError
@@ -153,6 +153,8 @@ class AsyncPostgresDb(AsyncBaseDb):
             bind=self.db_engine,
             expire_on_commit=False,
         )
+        # Zero means never refreshed; get_metrics uses this to refresh lazily, at most once per minute
+        self._metrics_refreshed_at: float = 0.0
 
     async def close(self) -> None:
         """Close database connections and dispose of the connection pool.
@@ -1744,6 +1746,9 @@ class AsyncPostgresDb(AsyncBaseDb):
             Exception: If an error occurs during metrics calculation.
         """
         try:
+            # Stamp first so failed runs are throttled too instead of retried on every read
+            self._metrics_refreshed_at = time.time()
+
             table = await self._get_table(table_type="metrics", create_table_if_not_found=True)
             if table is None:
                 return None
@@ -1811,6 +1816,9 @@ class AsyncPostgresDb(AsyncBaseDb):
     ) -> Tuple[List[dict], Optional[int]]:
         """Get all metrics matching the given date range.
 
+        Metrics are refreshed lazily, at most once per minute per process, so results
+        stay current even on deployments where nothing calls the refresh endpoint.
+
         Args:
             starting_date (Optional[date]): The starting date to filter metrics by.
             ending_date (Optional[date]): The ending date to filter metrics by.
@@ -1822,6 +1830,14 @@ class AsyncPostgresDb(AsyncBaseDb):
             Exception: If an error occurs during retrieval.
         """
         try:
+            # Refresh at most once per minute per process: recalculating the current
+            # day scans all of today's sessions, too costly for every read.
+            if time.time() - self._metrics_refreshed_at >= 60:
+                try:
+                    await self.calculate_metrics()
+                except Exception as e:
+                    log_warning(f"Could not refresh metrics before reading them: {str(e)}")
+
             table = await self._get_table(table_type="metrics", create_table_if_not_found=True)
             if table is None:
                 return [], None
@@ -2682,8 +2698,9 @@ class AsyncPostgresDb(AsyncBaseDb):
         limit: Optional[int] = 20,
         page: Optional[int] = 1,
         filter_expr: Optional[Dict[str, Any]] = None,
+        group_by: Literal["session", "agent", "team", "workflow", "endpoint"] = "session",
     ) -> tuple[List[Dict[str, Any]], int]:
-        """Get trace statistics grouped by session.
+        """Get trace statistics grouped by session or by component.
 
         Args:
             user_id: Filter by user ID.
@@ -2692,36 +2709,84 @@ class AsyncPostgresDb(AsyncBaseDb):
             workflow_id: Filter by workflow ID.
             start_time: Filter sessions with traces created after this datetime.
             end_time: Filter sessions with traces created before this datetime.
-            limit: Maximum number of sessions to return per page.
+            limit: Maximum number of groups to return per page.
             page: Page number (1-indexed).
             filter_expr: Advanced filter expression dict (from FilterExpr.to_dict()).
+            group_by: Grouping key. "session" (default) groups by session_id and keeps
+                the original output shape, ordered by last activity. "agent", "team" and
+                "workflow" group by the corresponding component id, add duration and
+                error aggregates, and are ordered by total_traces descending; traces
+                without the grouping id are excluded. "endpoint" groups traces that
+                carry no component id at all (HTTP/MCP entrypoint wrappers) by trace
+                name, with the same aggregates.
 
         Returns:
-            tuple[List[Dict], int]: Tuple of (list of session stats dicts, total count).
-                Each dict contains: session_id, user_id, agent_id, team_id, total_traces,
-                workflow_id, first_trace_at, last_trace_at.
+            tuple[List[Dict], int]: Tuple of (list of stats dicts, total count).
+                With group_by="session", each dict contains: session_id, user_id,
+                agent_id, team_id, workflow_id, total_traces, first_trace_at, last_trace_at.
+                With a component grouping, each dict contains: <group>_id, total_traces,
+                total_sessions, avg_duration_ms, p95_duration_ms, max_duration_ms,
+                error_traces (traces with status ERROR), first_trace_at, last_trace_at.
+                With group_by="endpoint", the grouping key is name instead of <group>_id.
         """
+        if group_by not in ("session", "agent", "team", "workflow", "endpoint"):
+            raise ValueError(f"Invalid group_by value: {group_by!r}. Allowed: session, agent, team, workflow, endpoint")
+
         try:
             table = await self._get_table(table_type="traces")
             if table is None:
                 return [], 0
 
             async with self.async_session_factory() as sess:
-                # Build base query grouped by session_id
-                base_stmt = (
-                    select(
-                        table.c.session_id,
-                        func.max(table.c.user_id).label("user_id"),
-                        func.max(table.c.agent_id).label("agent_id"),
-                        func.max(table.c.team_id).label("team_id"),
-                        func.max(table.c.workflow_id).label("workflow_id"),
-                        func.count(table.c.trace_id).label("total_traces"),
-                        func.min(table.c.created_at).label("first_trace_at"),
-                        func.max(table.c.created_at).label("last_trace_at"),
+                if group_by == "session":
+                    # Build base query grouped by session_id
+                    base_stmt = (
+                        select(
+                            table.c.session_id,
+                            func.max(table.c.user_id).label("user_id"),
+                            func.max(table.c.agent_id).label("agent_id"),
+                            func.max(table.c.team_id).label("team_id"),
+                            func.max(table.c.workflow_id).label("workflow_id"),
+                            func.count(table.c.trace_id).label("total_traces"),
+                            func.min(table.c.created_at).label("first_trace_at"),
+                            func.max(table.c.created_at).label("last_trace_at"),
+                        )
+                        .where(table.c.session_id.isnot(None))  # Only sessions with session_id
+                        .group_by(table.c.session_id)
                     )
-                    .where(table.c.session_id.isnot(None))  # Only sessions with session_id
-                    .group_by(table.c.session_id)
-                )
+                else:
+                    if group_by == "endpoint":
+                        # Endpoint-level traces (HTTP/MCP entrypoint wrappers) carry no component ids
+                        group_column = table.c.name
+                        group_label = "name"
+                        group_filter = and_(
+                            table.c.agent_id.is_(None),
+                            table.c.team_id.is_(None),
+                            table.c.workflow_id.is_(None),
+                        )
+                    else:
+                        group_column = {
+                            "agent": table.c.agent_id,
+                            "team": table.c.team_id,
+                            "workflow": table.c.workflow_id,
+                        }[group_by]
+                        group_label = f"{group_by}_id"
+                        group_filter = group_column.isnot(None)  # Only traces attributed to the grouping component
+                    base_stmt = (
+                        select(
+                            group_column.label(group_label),
+                            func.count(table.c.trace_id).label("total_traces"),
+                            func.count(distinct(table.c.session_id)).label("total_sessions"),
+                            func.avg(table.c.duration_ms).label("avg_duration_ms"),
+                            func.percentile_cont(0.95).within_group(table.c.duration_ms).label("p95_duration_ms"),
+                            func.max(table.c.duration_ms).label("max_duration_ms"),
+                            func.sum(case((table.c.status == "ERROR", 1), else_=0)).label("error_traces"),
+                            func.min(table.c.created_at).label("first_trace_at"),
+                            func.max(table.c.created_at).label("last_trace_at"),
+                        )
+                        .where(group_filter)
+                        .group_by(group_column)
+                    )
 
                 # Apply filters
                 if user_id is not None:
@@ -2753,13 +2818,18 @@ class AsyncPostgresDb(AsyncBaseDb):
                     except (KeyError, TypeError) as e:
                         raise ValueError(f"Invalid filter expression: {e}") from e
 
-                # Get total count of sessions
+                # Get total count of groups
                 count_stmt = select(func.count()).select_from(base_stmt.alias())
                 total_count = await sess.scalar(count_stmt) or 0
 
                 # Apply pagination and ordering
                 offset = (page - 1) * limit if page and limit else 0
-                paginated_stmt = base_stmt.order_by(func.max(table.c.created_at).desc()).limit(limit).offset(offset)
+                order_by: List[Any] = (
+                    [func.max(table.c.created_at).desc()]
+                    if group_by == "session"
+                    else [func.count(table.c.trace_id).desc(), group_column]
+                )
+                paginated_stmt = base_stmt.order_by(*order_by).limit(limit).offset(offset)
 
                 result = await sess.execute(paginated_stmt)
                 results = result.fetchall()
@@ -2767,26 +2837,41 @@ class AsyncPostgresDb(AsyncBaseDb):
                 # Convert to list of dicts with datetime objects
                 stats_list = []
                 for row in results:
-                    # Convert ISO strings to datetime objects
-                    first_trace_at_str = row.first_trace_at
-                    last_trace_at_str = row.last_trace_at
-
                     # Parse ISO format strings to datetime objects
-                    first_trace_at = datetime.fromisoformat(first_trace_at_str.replace("Z", "+00:00"))
-                    last_trace_at = datetime.fromisoformat(last_trace_at_str.replace("Z", "+00:00"))
+                    first_trace_at = datetime.fromisoformat(row.first_trace_at.replace("Z", "+00:00"))
+                    last_trace_at = datetime.fromisoformat(row.last_trace_at.replace("Z", "+00:00"))
 
-                    stats_list.append(
-                        {
-                            "session_id": row.session_id,
-                            "user_id": row.user_id,
-                            "agent_id": row.agent_id,
-                            "team_id": row.team_id,
-                            "workflow_id": row.workflow_id,
-                            "total_traces": row.total_traces,
-                            "first_trace_at": first_trace_at,
-                            "last_trace_at": last_trace_at,
-                        }
-                    )
+                    if group_by == "session":
+                        stats_list.append(
+                            {
+                                "session_id": row.session_id,
+                                "user_id": row.user_id,
+                                "agent_id": row.agent_id,
+                                "team_id": row.team_id,
+                                "workflow_id": row.workflow_id,
+                                "total_traces": row.total_traces,
+                                "first_trace_at": first_trace_at,
+                                "last_trace_at": last_trace_at,
+                            }
+                        )
+                    else:
+                        stats_list.append(
+                            {
+                                group_label: getattr(row, group_label),
+                                "total_traces": row.total_traces,
+                                "total_sessions": row.total_sessions,
+                                "avg_duration_ms": round(float(row.avg_duration_ms), 1)
+                                if row.avg_duration_ms is not None
+                                else None,
+                                "p95_duration_ms": round(float(row.p95_duration_ms), 1)
+                                if row.p95_duration_ms is not None
+                                else None,
+                                "max_duration_ms": row.max_duration_ms,
+                                "error_traces": row.error_traces,
+                                "first_trace_at": first_trace_at,
+                                "last_trace_at": last_trace_at,
+                            }
+                        )
 
                 return stats_list, total_count
 
@@ -2921,6 +3006,151 @@ class AsyncPostgresDb(AsyncBaseDb):
         except Exception as e:
             log_error(f"Error getting spans: {str(e)}")
             return []
+
+    async def get_span_stats(
+        self,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
+        workflow_id: Optional[str] = None,
+        start_time: Optional[datetime] = None,
+        end_time: Optional[datetime] = None,
+        name: Optional[str] = None,
+        span_type: Optional[str] = None,
+        limit: Optional[int] = 20,
+        page: Optional[int] = 1,
+        sort_by: str = "total_calls",
+        sort_order: str = "desc",
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        """Get span statistics aggregated SQL-side by span name and span type.
+
+        Only span names, durations and status are aggregated. The span attributes
+        payload, which can hold full conversation content, is never selected — the
+        single "openinference.span.kind" key is extracted in SQL as the span type.
+
+        Args:
+            agent_id: Only include spans belonging to traces of this agent.
+            team_id: Only include spans belonging to traces of this team.
+            workflow_id: Only include spans belonging to traces of this workflow.
+            start_time: Only include spans starting after this datetime.
+            end_time: Only include spans starting before this datetime.
+            name: Filter by exact span name.
+            span_type: Filter by span type (e.g. AGENT, LLM, TOOL, CHAIN).
+            limit: Maximum number of groups to return per page.
+            page: Page number (1-indexed).
+            sort_by: Aggregate to sort by: total_calls, avg_duration_ms,
+                p95_duration_ms, max_duration_ms, error_count or last_called_at.
+            sort_order: "asc" or "desc".
+
+        Returns:
+            Tuple[List[Dict], int]: Tuple of (list of stats dicts, total count of groups).
+                Each dict contains: name, span_type, total_calls, avg_duration_ms,
+                p95_duration_ms, max_duration_ms, error_count, last_called_at (datetime).
+        """
+        try:
+            table = await self._get_table(table_type="spans")
+            if table is None:
+                log_debug("Spans table not found")
+                return [], 0
+
+            span_type_col = table.c.attributes["openinference.span.kind"].astext
+
+            total_calls_col = func.count(table.c.span_id)
+            avg_duration_col = func.avg(table.c.duration_ms)
+            p95_duration_col = func.percentile_cont(0.95).within_group(table.c.duration_ms)
+            max_duration_col = func.max(table.c.duration_ms)
+            error_count_col = func.sum(case((table.c.status_code == "ERROR", 1), else_=0))
+            last_called_at_col = func.max(table.c.start_time)
+
+            async with self.async_session_factory() as sess:
+                stmt = select(
+                    table.c.name,
+                    span_type_col.label("span_type"),
+                    total_calls_col.label("total_calls"),
+                    avg_duration_col.label("avg_duration_ms"),
+                    p95_duration_col.label("p95_duration_ms"),
+                    max_duration_col.label("max_duration_ms"),
+                    error_count_col.label("error_count"),
+                    last_called_at_col.label("last_called_at"),
+                ).group_by(table.c.name, span_type_col)
+
+                # Component filters live on the traces table
+                if agent_id or team_id or workflow_id:
+                    traces_table = await self._get_table(table_type="traces")
+                    if traces_table is None:
+                        log_debug("Traces table not found")
+                        return [], 0
+                    stmt = stmt.select_from(table.join(traces_table, table.c.trace_id == traces_table.c.trace_id))
+                    if agent_id:
+                        stmt = stmt.where(traces_table.c.agent_id == agent_id)
+                    if team_id:
+                        stmt = stmt.where(traces_table.c.team_id == team_id)
+                    if workflow_id:
+                        stmt = stmt.where(traces_table.c.workflow_id == workflow_id)
+
+                if start_time:
+                    # Convert datetime to ISO string for comparison
+                    stmt = stmt.where(table.c.start_time >= start_time.isoformat())
+                if end_time:
+                    # Convert datetime to ISO string for comparison
+                    stmt = stmt.where(table.c.start_time <= end_time.isoformat())
+                if name:
+                    stmt = stmt.where(table.c.name == name)
+                if span_type:
+                    stmt = stmt.where(span_type_col == span_type)
+
+                # Get total count of groups
+                count_stmt = select(func.count()).select_from(stmt.alias())
+                total_count = await sess.scalar(count_stmt) or 0
+
+                sort_columns = {
+                    "total_calls": total_calls_col,
+                    "avg_duration_ms": avg_duration_col,
+                    "p95_duration_ms": p95_duration_col,
+                    "max_duration_ms": max_duration_col,
+                    "error_count": error_count_col,
+                    "last_called_at": last_called_at_col,
+                }
+                sort_col = sort_columns.get(sort_by)
+                if sort_col is None:
+                    log_debug(f"Invalid sort field: '{sort_by}'. Sorting by total_calls.")
+                    sort_col = total_calls_col
+                order_by = sort_col.asc() if sort_order == "asc" else sort_col.desc()
+
+                offset = (page - 1) * limit if page and limit else 0
+                paginated_stmt = stmt.order_by(order_by, table.c.name, span_type_col).limit(limit).offset(offset)
+
+                result = await sess.execute(paginated_stmt)
+                results = result.fetchall()
+
+                stats_list = []
+                for row in results:
+                    last_called_at = (
+                        datetime.fromisoformat(row.last_called_at.replace("Z", "+00:00"))
+                        if row.last_called_at
+                        else None
+                    )
+                    stats_list.append(
+                        {
+                            "name": row.name,
+                            "span_type": row.span_type,
+                            "total_calls": row.total_calls,
+                            "avg_duration_ms": round(float(row.avg_duration_ms), 1)
+                            if row.avg_duration_ms is not None
+                            else None,
+                            "p95_duration_ms": round(float(row.p95_duration_ms), 1)
+                            if row.p95_duration_ms is not None
+                            else None,
+                            "max_duration_ms": row.max_duration_ms,
+                            "error_count": row.error_count,
+                            "last_called_at": last_called_at,
+                        }
+                    )
+
+                return stats_list, total_count
+
+        except Exception as e:
+            log_error(f"Error getting span stats: {str(e)}")
+            return [], 0
 
     # -- Learning methods --
     async def get_learning(
