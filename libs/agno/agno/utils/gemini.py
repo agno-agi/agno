@@ -182,7 +182,7 @@ def format_image_for_message(image: Image) -> Optional[Dict[str, Any]]:
                     content_bytes = f.read()
             else:
                 log_error(f"Image file {image_path} does not exist.")
-                raise
+                return None
             return {
                 "mime_type": "image/jpeg",
                 "data": content_bytes,
