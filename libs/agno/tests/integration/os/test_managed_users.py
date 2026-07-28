@@ -318,3 +318,57 @@ def test_db_takes_precedence_and_bad_db_errors():
 
     with pytest.raises(ValueError, match="db_engine"):
         engine_from_db(object())  # not an agno db
+
+
+def test_agentos_adopts_its_db_so_the_kill_switch_persists(tmp_path):
+    """Regression: a user directory created without a db must not stay in-memory.
+
+    ManagedUserStore silently fell back to a process-local dict, so disabling a user
+    -- the revocation that is supposed to outlive a valid token -- vanished on restart
+    and was never seen by another replica. Its sibling ManagedRoleStore refuses to run
+    unpersisted at all; this makes the directory consistent by having AgentOS lend it
+    the OS database, carrying any rows written beforehand across.
+    """
+    from agno.agent import Agent
+    from agno.db.sqlite import SqliteDb
+    from agno.os import AgentOS
+    from agno.os.authz.role_store import ManagedRoleStore
+    from agno.os.config import AuthorizationConfig
+
+    db_file = str(tmp_path / "os.db")
+    os_db = SqliteDb(db_file=db_file)
+
+    users = ManagedUserStore()  # no db: the shape that used to be silently in-memory
+    users.upsert("bob")
+    users.set_disabled("bob", True)
+    assert users.is_bound is False
+
+    roles = ManagedRoleStore(db_url=f"sqlite:///{db_file}")
+    roles.set_role_scopes("admin", ["agent_os:admin"])
+    AgentOS(
+        id="user-adopt-os",
+        agents=[Agent(id="a1", name="A", db=os_db)],
+        db=os_db,
+        authorization=True,
+        authorization_config=AuthorizationConfig(
+            verification_keys=["k" * 40], algorithm="HS256", role_store=roles, user_store=users
+        ),
+    ).get_app()
+
+    # adopted, and the revocation made before adoption came across
+    assert users.is_bound is True
+    assert users.is_disabled("bob") is True
+
+    # a second worker on the same database agrees
+    replica = ManagedUserStore(db=SqliteDb(db_file=db_file))
+    assert replica.is_disabled("bob") is True
+    assert [u["id"] for u in replica.list()] == ["bob"]
+
+
+def test_in_memory_directory_still_works_standalone():
+    """The in-memory mode stays supported for tests/dev when there is no AgentOS db."""
+    users = ManagedUserStore()
+    users.upsert("ana", email="ana@example.com")
+    users.set_disabled("ana", True)
+    assert users.is_bound is False
+    assert users.is_disabled("ana") is True

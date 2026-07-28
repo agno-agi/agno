@@ -87,27 +87,72 @@ class ManagedUserStore:
 
             engine = engine_from_db(db)
 
+        self._table_name = table_name
+        self._create_table = create_table
+
         if engine is not None or db_url is not None:
             import sqlalchemy as sa
 
-            self._engine = engine if engine is not None else sa.create_engine(db_url)  # type: ignore[arg-type]
-            metadata = sa.MetaData()
-            self._table = sa.Table(
-                table_name,
-                metadata,
-                sa.Column("id", sa.String(255), primary_key=True),  # the JWT sub
-                sa.Column("email", sa.String(320)),
-                sa.Column("name", sa.String(255)),
-                sa.Column("disabled", sa.Boolean, nullable=False, default=False),
-                sa.Column("created_at", sa.Integer, nullable=False),
-                sa.Column("updated_at", sa.Integer, nullable=False),
-                sa.Column("user_metadata", sa.Text),
-            )
-            if create_table:
-                metadata.create_all(self._engine)
+            self._bind_engine(engine if engine is not None else sa.create_engine(db_url))  # type: ignore[arg-type]
         else:
-            # In-memory directory (not persisted). Fine for tests/dev.
+            # In-memory directory (not persisted). Fine for tests/dev, and AgentOS
+            # upgrades it in place via attach_db() when it has a SQL-capable db --
+            # see the warning there for why a live one must not stay in-memory.
             self._mem = {}
+
+    def _bind_engine(self, engine: Any) -> None:
+        """Point the store at ``engine`` and define/create the directory table on it."""
+        import sqlalchemy as sa
+
+        self._engine = engine
+        metadata = sa.MetaData()
+        self._table = sa.Table(
+            self._table_name,
+            metadata,
+            sa.Column("id", sa.String(255), primary_key=True),  # the JWT sub
+            sa.Column("email", sa.String(320)),
+            sa.Column("name", sa.String(255)),
+            sa.Column("disabled", sa.Boolean, nullable=False, default=False),
+            sa.Column("created_at", sa.Integer, nullable=False),
+            sa.Column("updated_at", sa.Integer, nullable=False),
+            sa.Column("user_metadata", sa.Text),
+        )
+        if self._create_table:
+            metadata.create_all(self._engine)
+
+    @property
+    def is_bound(self) -> bool:
+        """True once the directory is backed by a database rather than a process-local
+        dict (passed in at construction, or adopted later via :meth:`attach_db`)."""
+        return self._engine is not None
+
+    def attach_db(self, db: Any) -> None:
+        """Bind an agno ``Db`` to a store created without one, so the directory persists
+        in (and reads fresh from) that DB.
+
+        No-op if the store already has its own DB, or the db isn't SQL-capable. AgentOS
+        calls this to default the directory to the OS database, mirroring what it does
+        for ``ManagedRoleStore``. Any rows written while the store was in-memory are
+        migrated across, so adoption never silently drops a disabled user.
+        """
+        if self._engine is not None or db is None:
+            return
+        try:
+            from agno.os.authz._db import engine_from_db
+
+            engine = engine_from_db(db)
+        except Exception:
+            return
+        if engine is None:
+            return
+
+        pending = list((self._mem or {}).values())
+        self._bind_engine(engine)
+        self._mem = None
+        # Carry rows written before adoption across verbatim -- including ``disabled``,
+        # which upsert() deliberately refuses to set, so a revoked user stays revoked.
+        for row in pending:
+            self._write(row, insert=True)
 
     # ------------------------------------------------------------------ audit
     def _emit(
