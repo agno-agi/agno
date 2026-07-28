@@ -1618,7 +1618,25 @@ class AgentOS:
         # WebSocket connect path) denies disabled users and — when auto-provision is
         # on — creates a directory row from token claims. Seed the store and the
         # claim/policy flags the middleware reads off app.state.
-        fastapi_app.state.user_store = getattr(config, "user_store", None)
+        user_store = getattr(config, "user_store", None)
+        if user_store is not None:
+            # Adopt the OS db, mirroring what we do for role_store, so a directory
+            # created without one persists instead of living in a process-local dict.
+            # That matters more here than convenience: the directory backs the
+            # disabled-user kill switch, and an in-memory one silently loses a
+            # revocation on restart and never reaches another replica at all.
+            attach = getattr(user_store, "attach_db", None)
+            if callable(attach):
+                attach(self.db)
+            if getattr(user_store, "is_bound", True) is False:
+                log_warning(
+                    "AuthorizationConfig(user_store=...) has no database and AgentOS has no "
+                    "SQL-capable db to lend it, so the user directory is in-memory and "
+                    "per-process. Disabling a user will not survive a restart and will not be "
+                    "seen by other replicas -- the revocation kill switch is effectively off. "
+                    "Give the store a db (ManagedUserStore(db_url=...) / db=...) for production."
+                )
+        fastapi_app.state.user_store = user_store
         fastapi_app.state.user_auto_provision = getattr(config, "auto_provision_users", False)
         fastapi_app.state.user_email_claim = getattr(config, "user_email_claim", "email")
         fastapi_app.state.user_name_claim = getattr(config, "user_name_claim", "name")
