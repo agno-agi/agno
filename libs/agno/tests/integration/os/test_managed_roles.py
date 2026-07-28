@@ -455,3 +455,36 @@ def _ctx_for(subject: str):
     return AuthorizationContext(
         principal_id=subject, resource_type="agents", resource_id="research-agent", action="read"
     )
+
+
+def test_every_mutation_makes_itself_visible_to_its_own_request():
+    """Regression: REVOKES must invalidate the request memo, not just grants.
+
+    The memo was cleared by four of the six mutators. The two that were missed --
+    ``_delete_policy`` and ``_delete_grouping_role`` -- are exactly the revoke paths,
+    so a request that removed a scope or a role kept answering from the pre-revoke
+    answer: the admin API read back the removed scope, and the audit trail recorded
+    the change with after == before, permanently, in an append-only log.
+    """
+    from agno.os.authz._request_scope import request_scope
+    from agno.os.authz.provider import AuthorizationContext
+
+    ctx = AuthorizationContext(principal_id="bob", resource_type="agents", resource_id="a1", action="read")
+
+    # revoking a scope (reaches _delete_policy)
+    store = ManagedRoleStore(db_url=_db_url())
+    store.set_role_scopes("r", ["agents:*:read"])
+    store.assign("bob", "r")
+    with request_scope():
+        assert store.provider.check(ctx) is True
+        store.patch_role_scopes("r", remove=["agents:*:read"])
+        assert store.provider.check(ctx) is False, "revoked scope still allowed inside the same request"
+
+    # revoking the whole role (reaches _delete_grouping_role)
+    store2 = ManagedRoleStore(db_url=_db_url())
+    store2.set_role_scopes("r", ["agents:*:read"])
+    store2.assign("bob", "r")
+    with request_scope():
+        assert store2.provider.check(ctx) is True
+        store2.remove_role("r")
+        assert store2.provider.check(ctx) is False, "removed role still allowed inside the same request"

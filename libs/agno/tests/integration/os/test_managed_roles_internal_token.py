@@ -150,3 +150,47 @@ def test_service_account_pat_passes_the_resource_gate_under_managed_roles(tmp_pa
         )
     assert run.status_code == 200, run.text
     assert mock_arun.call_args.kwargs["user_id"] == "sa:claude-code"
+
+
+def test_service_account_pat_sees_collections_under_managed_roles(tmp_path):
+    """Regression: a PAT must reach LIST endpoints, not just per-resource routes.
+
+    PAT callers are evaluated by scope math because their scopes are their ACL and they
+    have no row in a managed store. That exemption was wired into the per-resource gate
+    only, so ``GET /agents/{id}`` succeeded while ``GET /agents`` -- which resolves the
+    provider separately -- answered 403, or worse returned 200 with an empty list.
+    """
+    from agno.db.sqlite import SqliteDb
+    from agno.os.middleware import JWTMiddleware
+
+    db = SqliteDb(db_file=str(tmp_path / "pat_list.db"))
+    agent = Agent(id="research-agent", name="Research Agent", db=db)
+    agent.deep_copy = lambda **kwargs: agent
+
+    store = ManagedRoleStore(db_url=f"sqlite:///{tmp_path / 'roles.db'}")
+    store.set_role_scopes("os-admin", ["agent_os:admin"])
+    store.assign("human-admin", "os-admin")
+
+    agent_os = AgentOS(id=OS_ID, agents=[agent], db=db)
+    app = agent_os.get_app()
+    app.state.authorization_provider = store.provider
+    app.add_middleware(JWTMiddleware, verification_keys=[SECRET], algorithm="HS256", authorization=True)
+    client = TestClient(app)
+
+    admin_jwt = jwt.encode(
+        {"sub": "human-admin", "scopes": ["agent_os:admin"], "exp": datetime.now(UTC) + timedelta(hours=1)},
+        SECRET,
+        algorithm="HS256",
+    )
+    minted = client.post(
+        "/service-accounts",
+        headers={"Authorization": f"Bearer {admin_jwt}"},
+        json={"name": "claude-code", "scopes": [{"scope": "agents:*:read"}, {"scope": "agents:*:run"}]},
+    )
+    assert minted.status_code == 201, minted.text
+    headers = {"Authorization": f"Bearer {minted.json()['token']}"}
+
+    assert client.get("/agents/research-agent", headers=headers).status_code == 200
+    listing = client.get("/agents", headers=headers)
+    assert listing.status_code == 200, listing.text
+    assert [a["id"] for a in listing.json()] == ["research-agent"], "PAT saw an empty or filtered listing"

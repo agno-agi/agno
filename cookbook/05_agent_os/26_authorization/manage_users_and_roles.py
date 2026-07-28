@@ -79,9 +79,12 @@ from fastapi import HTTPException, Request
 # Plane 2 - managed store / end users: roles you manage at runtime in the store.
 # Both are wired by default; you just point verification at your control plane.
 OS_ID = os.getenv("OS_ID", "manage-users-os")  # the token audience (your os_id)
-ADMIN_SUBJECT = os.getenv(
-    "ADMIN_SUBJECT", "admin"
-)  # whose `sub` is the bootstrap admin
+# Whose `sub` is the bootstrap admin. Note it is NOT "admin": subjects and role slugs
+# share one namespace, so a subject whose id equals a role name is ambiguous and is
+# refused (fail-closed, and logged) rather than being handed that role's permissions.
+# Keep user ids and role slugs disjoint -- emails or opaque ids for people, short slugs
+# for roles -- and the case never comes up.
+ADMIN_SUBJECT = os.getenv("ADMIN_SUBJECT", "admin@example.com")
 ISSUER = (
     os.getenv("JWT_ISSUER") or None
 )  # optionally pin the issuer (e.g. agent-os-api)
