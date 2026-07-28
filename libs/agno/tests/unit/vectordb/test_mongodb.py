@@ -458,6 +458,71 @@ def test_search_with_filters(
     assert any("$match" in stage for stage in args)
 
 
+def test_cosmos_search_supports_custom_path_filters_and_projection(
+    mock_mongodb_client: MagicMock, mock_embedder: MagicMock
+) -> None:
+    """Test Cosmos DB search supports custom vector path, filters, projection, and content_id."""
+    db = MongoVectorDb(
+        collection_name="test_vectors",
+        database="test_vectordb",
+        client=mock_mongodb_client,
+        embedder=mock_embedder,
+        cosmos_compatibility=True,
+        embedding_path="vectorContent",
+        search_projection={"metadata": 1},
+    )
+    db._db = mock_mongodb_client["test_vectordb"]
+    db._collection = db._db["test_vectors"]
+    db._get_collection = MagicMock(return_value=db._collection)
+
+    collection = mock_mongodb_client["test_vectordb"]["test_vectors"]
+    collection.aggregate.return_value = [
+        {
+            "_id": "doc_0",
+            "content": "This is test document 0",
+            "meta_data": {"type": "test"},
+            "name": "test_doc_0",
+            "content_id": "content_0",
+            "similarityScore": 0.95,
+        }
+    ]
+
+    filters = {"category": {"$eq": "finance"}, "metadata.age": {"$gt": 25}}
+    results = db.search("test document", limit=3, filters=filters)
+
+    assert len(results) == 1
+    assert results[0].content_id == "content_0"
+    assert results[0].meta_data["score"] == 0.95
+
+    pipeline = collection.aggregate.call_args[0][0]
+    cosmos_search = pipeline[0]["$search"]["cosmosSearch"]
+    assert cosmos_search["path"] == "vectorContent"
+    assert cosmos_search["k"] == 3
+    assert cosmos_search["filter"] == {"meta_data.category": {"$eq": "finance"}, "metadata.age": {"$gt": 25}}
+    assert pipeline[1]["$project"]["content_id"] == 1
+    assert pipeline[1]["$project"]["metadata"] == 1
+
+
+def test_prepare_doc_uses_custom_nested_embedding_path(
+    mock_mongodb_client: MagicMock, mock_embedder: MagicMock
+) -> None:
+    """Test prepared documents store embeddings at the configured path."""
+    db = MongoVectorDb(
+        collection_name="test_vectors",
+        database="test_vectordb",
+        client=mock_mongodb_client,
+        embedder=mock_embedder,
+        embedding_path="vectors.primary",
+    )
+    doc = create_test_documents(1)[0]
+    doc.embedding = [0.2] * 384
+
+    doc_data = db.prepare_doc("test_hash", doc)
+
+    assert "embedding" not in doc_data
+    assert doc_data["vectors"]["primary"] == [0.2] * 384
+
+
 @pytest.mark.asyncio
 async def test_async_client(async_vector_db: MongoVectorDb) -> None:
     """Test that _get_async_client method creates and returns a client."""
@@ -555,6 +620,54 @@ async def test_async_search(
     # Verify aggregate was called with expected pipeline
     call_args = mock_collection.aggregate.call_args[0][0]
     assert call_args[0]["$vectorSearch"]["limit"] == 5
+
+
+@pytest.mark.asyncio
+async def test_async_cosmos_search_supports_custom_path_filters_and_projection(
+    mock_async_mongodb_client: AsyncMock, mock_embedder: MagicMock
+) -> None:
+    """Test async Cosmos DB search builds the Cosmos-specific pipeline."""
+    with patch("pymongo.AsyncMongoClient", return_value=mock_async_mongodb_client):
+        db = MongoVectorDb(
+            collection_name="test_vectors",
+            database="test_vectordb",
+            embedder=mock_embedder,
+            cosmos_compatibility=True,
+            embedding_path="vectorContent",
+            search_projection={"metadata": 1},
+        )
+
+        db._async_client = mock_async_mongodb_client
+        db._async_db = mock_async_mongodb_client["test_vectordb"]
+        db._async_collection = db._async_db["test_vectors"]
+
+        mock_results = [
+            {
+                "_id": "doc_0",
+                "content": "This is test document 0",
+                "meta_data": {"type": "test"},
+                "name": "test_doc_0",
+                "content_id": "content_0",
+                "similarityScore": 0.95,
+            }
+        ]
+        db._async_collection.aggregate = AsyncMock(return_value=AsyncCursor(mock_results))
+        mock_embedder.async_get_embedding = AsyncMock(return_value=[0.1] * 384)
+
+        filters = {"category": {"$eq": "finance"}, "metadata.age": {"$gt": 25}}
+        results = await db.async_search("test query", limit=3, filters=filters)
+
+        assert len(results) == 1
+        assert results[0].content_id == "content_0"
+        assert results[0].meta_data["score"] == 0.95
+
+        pipeline = db._async_collection.aggregate.call_args[0][0]
+        cosmos_search = pipeline[0]["$search"]["cosmosSearch"]
+        assert cosmos_search["path"] == "vectorContent"
+        assert cosmos_search["k"] == 3
+        assert cosmos_search["filter"] == {"meta_data.category": {"$eq": "finance"}, "metadata.age": {"$gt": 25}}
+        assert pipeline[1]["$project"]["content_id"] == 1
+        assert pipeline[1]["$project"]["metadata"] == 1
 
 
 @pytest.mark.asyncio
