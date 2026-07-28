@@ -134,6 +134,7 @@ mem0 = ["mem0ai"]
 memori = ["memori>=3.0.5"]
 neo4j = ["neo4j"]
 newspaper = ["newspaper4k", "lxml_html_clean"]
+nimble = ["nimble-python>=1.1.0"]
 notion = ["notion-client"]
 opencv = ["opencv-python"]
 oxylabs = ["oxylabs"]
@@ -282,6 +283,7 @@ tools = [
   "agno[memori]",
   "agno[neo4j]",
   "agno[newspaper]",
+  "agno[nimble]",
   "agno[notion]",
   "agno[opencv]",
   "agno[oxylabs]",
@@ -564,6 +566,7 @@ module = [
   "neo4j.*",
   "nest_asyncio.*",
   "newspaper.*",
+  "nimble_python.*",
   "numpy.*",
   "ollama.*",
   "openpyxl.*",

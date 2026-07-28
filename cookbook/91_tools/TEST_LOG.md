@@ -1,5 +1,15 @@
 # Test Log
 
+### nimble_agent_tools.py
+
+**Status:** PASS (unit + static); live run not executed
+
+**Description:** New cookbook for `NimbleAgentTools`, which exposes Nimble's Agent API V2 (Web Search Agent) run lifecycle as three tools the model drives itself: `start_agent_run` returns immediately with the `(web_search_agent_id, run_id)` pair, `get_agent_run_status` reports lifecycle state, and `get_agent_run_result` is non-blocking (returns `not_ready` while the run is active, and the grounded output with its trust envelope once complete). Example 1 uses the generic route with no `agent_id` (Nimble provisions an agent and returns its id); Example 2 pins an existing `agent_id` with discovery disabled. The `__main__` block exercises a research prompt and an enrichment prompt with a JSON `output_schema`.
+
+**Result:** `pytest libs/agno/tests/unit/tools/test_nimble_agent.py` — 65 passed. Includes transport-level billing-safety tests that drive the real client through a mock HTTP transport and assert a run creation makes exactly one attempt on 408/409/429/5xx (a safe read still gets its bounded retry budget), plus a contract test that introspects the real `nimble-python` client (not a mock) to assert `agents.run`, `agents.runs.create/get/result`, `agents.list`, and `agents.templates.list` still accept the parameters this toolkit passes, on both the sync and async clients. `./scripts/format.sh` and `./scripts/validate.sh` clean (ruff + mypy over 951 source files, cookbook ruff + pattern check). Live agent run not executed: an Agent API V2 run is billable and no run was submitted from this environment, so the cookbook's end-to-end output is unverified.
+
+---
+
 ### file_generation_tools.py (generate_code_file)
 
 **Status:** PASS
