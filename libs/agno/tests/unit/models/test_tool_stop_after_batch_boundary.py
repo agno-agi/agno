@@ -4,9 +4,13 @@ from typing import Any, AsyncIterator, Iterator
 
 import pytest
 
+from agno.agent import Agent
 from agno.models.base import Model
 from agno.models.message import Message
-from agno.models.response import ModelResponse
+from agno.models.response import ModelResponse, ToolExecution
+from agno.run.agent import RunOutput
+from agno.run.base import RunStatus
+from agno.run.requirement import RunRequirement
 from agno.tools.function import Function
 
 
@@ -62,6 +66,33 @@ class _BatchModel(Model):
         return response
 
 
+class _ContinuationOrderingModel(_BatchModel):
+    def __init__(self) -> None:
+        super().__init__([])
+
+    def _ordered_response(self, messages: list[Message]) -> ModelResponse:
+        self.calls += 1
+        tool_call_ids = [message.tool_call_id for message in messages if message.role == "tool"]
+        assert tool_call_ids[-2:] == ["present-call", "edit-call"]
+        return ModelResponse(content="ordered")
+
+    def invoke(self, *args: Any, **kwargs: Any) -> ModelResponse:
+        return self._ordered_response(kwargs["messages"])
+
+    async def ainvoke(self, *args: Any, **kwargs: Any) -> ModelResponse:
+        return self._ordered_response(kwargs["messages"])
+
+    def invoke_stream(self, *args: Any, **kwargs: Any) -> Iterator[ModelResponse]:
+        yield self._ordered_response(kwargs["messages"])
+
+    async def ainvoke_stream(
+        self,
+        *args: Any,
+        **kwargs: Any,
+    ) -> AsyncIterator[ModelResponse]:
+        yield self._ordered_response(kwargs["messages"])
+
+
 def _functions(executions: list[str]) -> list[Function]:
     def present() -> str:
         executions.append("present")
@@ -95,6 +126,50 @@ def _confirmation_functions(executions: list[str]) -> list[Function]:
     for function in functions:
         function.requires_confirmation = True
     return functions
+
+
+def _paused_boundary_run() -> RunOutput:
+    execution = ToolExecution(
+        tool_call_id="present-call",
+        tool_name="present",
+        tool_args={},
+        requires_confirmation=True,
+        confirmed=True,
+        stop_after_tool_call=True,
+    )
+    run = RunOutput(
+        run_id="ordered-boundary-run",
+        session_id="ordered-boundary-session",
+        status=RunStatus.paused,
+        tools=[execution],
+        requirements=[RunRequirement(tool_execution=execution)],
+        messages=[
+            Message(role="user", content="Present, then edit."),
+            Message(
+                role="assistant",
+                tool_calls=[
+                    {
+                        "id": "present-call",
+                        "type": "function",
+                        "function": {"name": "present", "arguments": "{}"},
+                    },
+                    {
+                        "id": "edit-call",
+                        "type": "function",
+                        "function": {"name": "edit", "arguments": "{}"},
+                    },
+                ],
+            ),
+            Message(
+                role="tool",
+                tool_call_id="edit-call",
+                tool_name="edit",
+                content="Skipped because present is a stop-after boundary.",
+                tool_call_error=True,
+            ),
+        ],
+    )
+    return RunOutput.from_dict(run.to_dict())
 
 
 def _assert_boundary_result(
@@ -245,3 +320,40 @@ async def test_async_multiple_confirmation_proposals_remain_pending(
     assert executions == []
     assert paused_names == ["confirm_a", "confirm_b"]
     assert not any(message.role == "tool" for message in messages)
+
+
+@pytest.mark.parametrize("stream", [False, True])
+def test_sync_resumed_boundary_result_precedes_deferred_sibling(stream: bool) -> None:
+    model = _ContinuationOrderingModel()
+    executions: list[str] = []
+    agent = Agent(model=model, tools=_functions(executions), telemetry=False)
+    paused = _paused_boundary_run()
+
+    if stream:
+        events = list(agent.continue_run(paused, stream=True, yield_run_output=True))
+        result = next(event for event in events if isinstance(event, RunOutput))
+    else:
+        result = agent.continue_run(paused)
+
+    assert result.status == RunStatus.completed
+    assert model.calls == 1
+    assert executions == ["present"]
+
+
+@pytest.mark.parametrize("stream", [False, True])
+@pytest.mark.asyncio
+async def test_async_resumed_boundary_result_precedes_deferred_sibling(stream: bool) -> None:
+    model = _ContinuationOrderingModel()
+    executions: list[str] = []
+    agent = Agent(model=model, tools=_functions(executions), telemetry=False)
+    paused = _paused_boundary_run()
+
+    if stream:
+        events = [event async for event in agent.acontinue_run(paused, stream=True, yield_run_output=True)]
+        result = next(event for event in events if isinstance(event, RunOutput))
+    else:
+        result = await agent.acontinue_run(paused)
+
+    assert result.status == RunStatus.completed
+    assert model.calls == 1
+    assert executions == ["present"]

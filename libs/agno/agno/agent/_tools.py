@@ -638,6 +638,46 @@ async def _amaybe_create_audit_approval(
         )
 
 
+def _insert_tool_results_in_call_order(run_messages: RunMessages, function_call_results: List[Message]) -> None:
+    """Insert resumed tool results in their original assistant-call order."""
+
+    for result in function_call_results:
+        if result.tool_call_id is None:
+            run_messages.messages.append(result)
+            continue
+
+        assistant_index: Optional[int] = None
+        call_ids: List[str] = []
+        for index in range(len(run_messages.messages) - 1, -1, -1):
+            message = run_messages.messages[index]
+            if message.role != "assistant" or not message.tool_calls:
+                continue
+            candidate_ids = [
+                tool_call.get("id")
+                for tool_call in message.tool_calls
+                if isinstance(tool_call, dict) and tool_call.get("id") is not None
+            ]
+            if result.tool_call_id in candidate_ids:
+                assistant_index = index
+                call_ids = candidate_ids
+                break
+
+        if assistant_index is None:
+            run_messages.messages.append(result)
+            continue
+
+        result_order = call_ids.index(result.tool_call_id)
+        insert_at = assistant_index + 1
+        while insert_at < len(run_messages.messages):
+            existing = run_messages.messages[insert_at]
+            if existing.role != "tool" or existing.tool_call_id not in call_ids:
+                break
+            if call_ids.index(existing.tool_call_id) > result_order:
+                break
+            insert_at += 1
+        run_messages.messages.insert(insert_at, result)
+
+
 def run_tool(
     agent: Agent,
     run_response: RunOutput,
@@ -736,7 +776,7 @@ def run_tool(
                 yield call_result  # type: ignore
 
     if len(function_call_results) > 0:
-        run_messages.messages.extend(function_call_results)
+        _insert_tool_results_in_call_order(run_messages, function_call_results)
 
 
 def reject_tool_call(
@@ -850,7 +890,7 @@ async def arun_tool(
                 yield call_result  # type: ignore
 
     if len(function_call_results) > 0:
-        run_messages.messages.extend(function_call_results)
+        _insert_tool_results_in_call_order(run_messages, function_call_results)
 
 
 def handle_tool_call_updates(
