@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from functools import partial, wraps
+from functools import lru_cache, partial, wraps
 from importlib.metadata import version
 from typing import Any, Callable, Dict, List, Literal, Optional, Sequence, Type, TypeVar, get_type_hints
 
@@ -13,6 +13,11 @@ from agno.run import RunContext
 from agno.utils.log import log_debug, log_exception, log_warning
 
 T = TypeVar("T")
+
+
+@lru_cache(maxsize=1)
+def _get_pydantic_version() -> Version:
+    return Version(version("pydantic"))
 
 
 def get_entrypoint_docstring(entrypoint: Callable) -> str:
@@ -563,7 +568,7 @@ class Function(BaseModel):
         """Wrap a callable with Pydantic's validate_call decorator, if relevant"""
         from inspect import isasyncgenfunction, iscoroutinefunction, signature
 
-        pydantic_version = Version(version("pydantic"))
+        pydantic_version = _get_pydantic_version()
 
         # Async generators need special handling: validate_call turns an `async def ... yield`
         # into a plain function that returns an async_generator, which makes
