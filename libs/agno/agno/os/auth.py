@@ -445,7 +445,11 @@ def get_accessible_resources(request: Request, resource_type: str) -> Set[str]:
     if cached_ids is not None:
         return cached_ids
 
-    provider = resolve_authorization_provider(request)
+    # _provider_for, not the raw resolver: a service-account PAT carries its own scopes as
+    # its ACL and has no row in a managed store, so asking a role store about it answers
+    # "no access" for a caller the route gate already admitted. Must match the per-resource
+    # gate, or a PAT is allowed one agent and refused the list containing it.
+    provider = _provider_for(request)
     ctx = _authorization_context(request, resource_type=resource_type)
     return provider.accessible_resource_ids(ctx)
 
@@ -489,8 +493,9 @@ def filter_resources_by_access(request: Request, resources: List, resource_type:
         resources = [r for r in resources if getattr(r, "id", None) in cached_ids]
 
     # The provider is the authority: it may filter more richly than a plain id-set
-    # membership test (e.g. deny-overrides for managed roles).
-    provider = resolve_authorization_provider(request)
+    # membership test (e.g. deny-overrides for managed roles). _provider_for keeps a
+    # service-account PAT on scope math here too -- see get_accessible_resources.
+    provider = _provider_for(request)
     ctx = _authorization_context(request, resource_type=resource_type)
     return provider.filter_accessible(ctx, resources)
 

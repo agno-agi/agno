@@ -273,6 +273,7 @@ class NativePolicyEngine(PolicyEngine):
 
     def _delete_policy(self, role: str, resource: Optional[str] = None, action: Optional[str] = None) -> None:
         self._require_engine()
+        _invalidate_request_cache()  # a write must be visible to the rest of this request
         import sqlalchemy as sa
 
         clause = [self._policy_tbl.c.role == role]
@@ -297,6 +298,7 @@ class NativePolicyEngine(PolicyEngine):
 
     def _delete_grouping_role(self, role: str) -> None:
         self._require_engine()
+        _invalidate_request_cache()  # a write must be visible to the rest of this request
         import sqlalchemy as sa
 
         with self._engine.begin() as conn:
