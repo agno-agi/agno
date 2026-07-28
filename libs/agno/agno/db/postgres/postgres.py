@@ -92,7 +92,7 @@ class PostgresDb(BaseDb):
         learnings_table: Optional[str] = None,
         schedules_table: Optional[str] = None,
         schedule_runs_table: Optional[str] = None,
-        run_queue_table: Optional[str] = None,
+        job_table: Optional[str] = None,
         approvals_table: Optional[str] = None,
         auth_tokens_table: Optional[str] = None,
         service_accounts_table: Optional[str] = None,
@@ -131,7 +131,7 @@ class PostgresDb(BaseDb):
             learnings_table (Optional[str]): Name of the table to store learnings.
             schedules_table (Optional[str]): Name of the table to store cron schedules.
             schedule_runs_table (Optional[str]): Name of the table to store schedule run history.
-            run_queue_table (Optional[str]): Name of the table to store durable background run jobs.
+            job_table (Optional[str]): Name of the table to store durable background run jobs.
             mcp_oauth_clients_table (Optional[str]): Name of the table to store MCP OAuth client registrations.
             mcp_oauth_transactions_table (Optional[str]): Name of the table to store MCP OAuth transactions.
             mcp_oauth_codes_table (Optional[str]): Name of the table to store MCP OAuth authorization codes.
@@ -182,7 +182,7 @@ class PostgresDb(BaseDb):
             learnings_table=learnings_table,
             schedules_table=schedules_table,
             schedule_runs_table=schedule_runs_table,
-            run_queue_table=run_queue_table,
+            job_table=job_table,
             approvals_table=approvals_table,
             auth_tokens_table=auth_tokens_table,
             service_accounts_table=service_accounts_table,
@@ -629,13 +629,13 @@ class PostgresDb(BaseDb):
             )
             return self.schedule_runs_table
 
-        if table_type == "run_queue":
-            self.run_queue_table = self._get_or_create_table(
-                table_name=self.run_queue_table_name,
-                table_type="run_queue",
+        if table_type == "jobs":
+            self.job_table = self._get_or_create_table(
+                table_name=self.job_table_name,
+                table_type="jobs",
                 create_table_if_not_found=create_table_if_not_found,
             )
-            return self.run_queue_table
+            return self.job_table
 
         if table_type == "approvals":
             self.approvals_table = self._get_or_create_table(
@@ -5351,9 +5351,9 @@ class PostgresDb(BaseDb):
             log_debug(f"Error getting schedule runs: {e}")
             return [], 0
 
-    # -- Run queue methods --
+    # -- Job queue methods --
     #
-    # Durable background run queue: one row per accepted run. Claim/lease with
+    # Durable background job queue: one row per accepted run. Claim/lease with
     # SKIP LOCKED (modeled on claim_due_schedule), stale-lock reclaim gated on
     # the attempt budget, and terminal writes fenced on (locked_by, attempt) so
     # a zombie executor that finishes after reclaim has its write discarded.
@@ -5414,7 +5414,7 @@ class PostgresDb(BaseDb):
             log_debug(f"Error updating run in session: {e}")
             return False
 
-    def enqueue_run_job(self, job: Dict[str, Any], max_depth: int = 0) -> Dict[str, Any]:
+    def enqueue_job(self, job: Dict[str, Any], max_depth: int = 0) -> Dict[str, Any]:
         """Insert an accepted run job.
 
         Returns {"accepted": bool, "reason": None | "queue_full" | "duplicate",
@@ -5425,9 +5425,9 @@ class PostgresDb(BaseDb):
         """
         from sqlalchemy.exc import IntegrityError
 
-        table = self._get_table(table_type="run_queue", create_table_if_not_found=True)
+        table = self._get_table(table_type="jobs", create_table_if_not_found=True)
         if table is None:
-            raise RuntimeError("Failed to get or create run queue table")
+            raise RuntimeError("Failed to get or create job queue table")
         try:
             with self.Session() as sess, sess.begin():
                 # Idempotency FIRST: resubmitting an already-accepted job
@@ -5458,7 +5458,7 @@ class PostgresDb(BaseDb):
                     return {"accepted": False, "reason": "duplicate", "job": dict(row._mapping)}
             raise
 
-    def claim_run_job(self, worker_id: str, lock_grace_seconds: int = 60) -> Optional[Dict[str, Any]]:
+    def claim_job(self, worker_id: str, lock_grace_seconds: int = 60) -> Optional[Dict[str, Any]]:
         """Atomically claim the oldest executable job for this worker.
 
         Executable: queued, or running with a stale lock while the attempt
@@ -5466,7 +5466,7 @@ class PostgresDb(BaseDb):
         which doubles as the fencing generation.
         """
         try:
-            table = self._get_table(table_type="run_queue")
+            table = self._get_table(table_type="jobs")
             if table is None:
                 return None
             now = int(time.time())
@@ -5508,13 +5508,13 @@ class PostgresDb(BaseDb):
             log_debug(f"Error claiming run job: {e}")
             return None
 
-    def heartbeat_run_jobs(self, worker_id: str, job_ids: List[str]) -> int:
+    def heartbeat_jobs(self, worker_id: str, job_ids: List[str]) -> int:
         """Refresh locked_at for this worker's in-flight jobs (keeps the lock
         grace small without long runs being reclaimed while alive)."""
         if not job_ids:
             return 0
         try:
-            table = self._get_table(table_type="run_queue")
+            table = self._get_table(table_type="jobs")
             if table is None:
                 return 0
             now = int(time.time())
@@ -5533,13 +5533,11 @@ class PostgresDb(BaseDb):
             log_debug(f"Error heartbeating run jobs: {e}")
             return 0
 
-    def complete_run_job(
-        self, job_id: str, worker_id: str, attempt: int, status: str, error: Optional[str] = None
-    ) -> bool:
+    def complete_job(self, job_id: str, worker_id: str, attempt: int, status: str, error: Optional[str] = None) -> bool:
         """Fenced terminal transition: only the claim holder of this attempt
         may complete the job. A zombie's late write is silently discarded."""
         try:
-            table = self._get_table(table_type="run_queue")
+            table = self._get_table(table_type="jobs")
             if table is None:
                 return False
             now = int(time.time())
@@ -5566,14 +5564,14 @@ class PostgresDb(BaseDb):
             log_debug(f"Error completing run job: {e}")
             return False
 
-    def retry_or_fail_run_job(
+    def retry_or_fail_job(
         self, job_id: str, worker_id: str, attempt: int, error: str, retry_delay_seconds: int = 30
     ) -> Optional[str]:
         """Fenced failure handling: requeue with backoff while the attempt
         budget lasts, else fail terminally. Returns the resulting status
         ("queued" | "failed") or None if the fence rejected the write."""
         try:
-            table = self._get_table(table_type="run_queue")
+            table = self._get_table(table_type="jobs")
             if table is None:
                 return None
             now = int(time.time())
@@ -5618,12 +5616,12 @@ class PostgresDb(BaseDb):
             log_debug(f"Error retrying/failing run job: {e}")
             return None
 
-    def cancel_run_job(self, job_id: str) -> bool:
+    def cancel_job(self, job_id: str) -> bool:
         """Tombstone cancellation: only jobs still waiting can be cancelled
         here (contract: 'this job will not execute'). Claimed jobs fall
         through to the running-run cancellation path."""
         try:
-            table = self._get_table(table_type="run_queue")
+            table = self._get_table(table_type="jobs")
             if table is None:
                 return False
             now = int(time.time())
@@ -5638,15 +5636,15 @@ class PostgresDb(BaseDb):
             log_debug(f"Error cancelling run job: {e}")
             return False
 
-    def sweep_exhausted_run_jobs(self, lock_grace_seconds: int = 60, limit: int = 20) -> List[Dict[str, Any]]:
+    def sweep_exhausted_jobs(self, lock_grace_seconds: int = 60, limit: int = 20) -> List[Dict[str, Any]]:
         """Return stale running jobs whose attempt budget is exhausted.
 
         These are NOT claimable (attempt >= max_attempts): the worker persists
         a terminal error on the run row first, then calls
-        fail_swept_run_job — ordering + idempotence instead of cross-store
+        fail_swept_job — ordering + idempotence instead of cross-store
         atomicity."""
         try:
-            table = self._get_table(table_type="run_queue")
+            table = self._get_table(table_type="jobs")
             if table is None:
                 return []
             stale = int(time.time()) - lock_grace_seconds
@@ -5666,11 +5664,11 @@ class PostgresDb(BaseDb):
             log_debug(f"Error sweeping run jobs: {e}")
             return []
 
-    def fail_swept_run_job(self, job_id: str, lock_grace_seconds: int = 60, error: str = "worker lost") -> bool:
+    def fail_swept_job(self, job_id: str, lock_grace_seconds: int = 60, error: str = "worker lost") -> bool:
         """Mark an exhausted stale job failed. Re-checks staleness inside the
         write so a live heartbeat between sweep and write wins."""
         try:
-            table = self._get_table(table_type="run_queue")
+            table = self._get_table(table_type="jobs")
             if table is None:
                 return False
             now = int(time.time())
@@ -5697,9 +5695,9 @@ class PostgresDb(BaseDb):
             log_debug(f"Error failing swept run job: {e}")
             return False
 
-    def get_run_job(self, job_id: str) -> Optional[Dict[str, Any]]:
+    def get_job(self, job_id: str) -> Optional[Dict[str, Any]]:
         try:
-            table = self._get_table(table_type="run_queue")
+            table = self._get_table(table_type="jobs")
             if table is None:
                 return None
             with self.Session() as sess:
@@ -5709,9 +5707,9 @@ class PostgresDb(BaseDb):
             log_debug(f"Error getting run job: {e}")
             return None
 
-    def count_queued_run_jobs(self) -> int:
+    def count_queued_jobs(self) -> int:
         try:
-            table = self._get_table(table_type="run_queue")
+            table = self._get_table(table_type="jobs")
             if table is None:
                 return 0
             with self.Session() as sess:
@@ -5721,9 +5719,9 @@ class PostgresDb(BaseDb):
             log_debug(f"Error counting queued run jobs: {e}")
             return 0
 
-    def list_run_jobs(self, status: Optional[str] = None, limit: int = 50) -> List[Dict[str, Any]]:
+    def list_jobs(self, status: Optional[str] = None, limit: int = 50) -> List[Dict[str, Any]]:
         try:
-            table = self._get_table(table_type="run_queue")
+            table = self._get_table(table_type="jobs")
             if table is None:
                 return []
             stmt = select(table)
@@ -5737,11 +5735,11 @@ class PostgresDb(BaseDb):
             log_debug(f"Error listing run jobs: {e}")
             return []
 
-    def requeue_run_job(self, job_id: str) -> bool:
+    def requeue_job(self, job_id: str) -> bool:
         """Operator requeue for a terminally failed/cancelled job: grants
         exactly one more execution by raising max_attempts to attempt + 1."""
         try:
-            table = self._get_table(table_type="run_queue")
+            table = self._get_table(table_type="jobs")
             if table is None:
                 return False
             now = int(time.time())
@@ -5764,9 +5762,9 @@ class PostgresDb(BaseDb):
             log_debug(f"Error requeueing run job: {e}")
             return False
 
-    def run_queue_stats(self) -> Dict[str, Any]:
+    def queue_stats(self) -> Dict[str, Any]:
         try:
-            table = self._get_table(table_type="run_queue")
+            table = self._get_table(table_type="jobs")
             if table is None:
                 return {"counts": {}, "oldest_queued_age_seconds": None}
             now = int(time.time())
@@ -5778,14 +5776,14 @@ class PostgresDb(BaseDb):
                 oldest_age = (now - oldest_created) if oldest_created is not None else None
                 return {"counts": counts, "oldest_queued_age_seconds": oldest_age}
         except Exception as e:
-            log_debug(f"Error getting run queue stats: {e}")
+            log_debug(f"Error getting job queue stats: {e}")
             return {"counts": {}, "oldest_queued_age_seconds": None}
 
-    def cleanup_run_jobs(self, older_than_seconds: int = 86400) -> int:
+    def cleanup_jobs(self, older_than_seconds: int = 86400) -> int:
         """Delete terminal jobs whose completed_at is older than the retention
         window. Returns the number of rows removed."""
         try:
-            table = self._get_table(table_type="run_queue")
+            table = self._get_table(table_type="jobs")
             if table is None:
                 return 0
             cutoff = int(time.time()) - older_than_seconds

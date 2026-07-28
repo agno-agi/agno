@@ -239,34 +239,34 @@ class TestCancellationWhileWaiting:
         await asyncio.wait_for(holder_task, timeout=2)
 
 
-class TestRunQueueConfig:
+class TestQueueConfig:
     def test_default_is_none_not_a_number(self):
         """None means "leave the process setting (env var or library default)
         untouched" - a config constructed to set other fields must never
         silently reset the cap. The effective fallback remains
         DEFAULT_BACKGROUND_MAX_CONCURRENCY via the limiter itself."""
-        from agno.run.queue import RunQueueConfig
+        from agno.queue import QueueConfig
 
-        assert RunQueueConfig().max_concurrency is None
+        assert QueueConfig().max_concurrency is None
         assert get_background_max_concurrency() == DEFAULT_BACKGROUND_MAX_CONCURRENCY
 
     def test_config_value_applies_via_setter(self):
-        from agno.run.queue import RunQueueConfig
+        from agno.queue import QueueConfig
 
-        config = RunQueueConfig(max_concurrency=4)
+        config = QueueConfig(max_concurrency=4)
         set_background_max_concurrency(config.max_concurrency)
         assert get_background_max_concurrency() == 4
 
 
-class TestRunQueueConfigEnvPrecedence:
+class TestQueueConfigEnvPrecedence:
     def test_default_config_leaves_env_var_alone(self, monkeypatch: pytest.MonkeyPatch):
-        """RunQueueConfig() without an explicit max_concurrency must NOT
+        """QueueConfig() without an explicit max_concurrency must NOT
         override AGNO_BACKGROUND_MAX_CONCURRENCY (a config constructed to set
         other fields should not silently reset the cap)."""
-        from agno.run.queue import RunQueueConfig
+        from agno.queue import QueueConfig
 
         monkeypatch.setenv("AGNO_BACKGROUND_MAX_CONCURRENCY", "8")
-        config = RunQueueConfig()
+        config = QueueConfig()
         assert config.max_concurrency is None
         # Mirror the AgentOS wiring: only set when explicitly configured
         if config.max_concurrency is not None:
@@ -274,10 +274,10 @@ class TestRunQueueConfigEnvPrecedence:
         assert get_background_max_concurrency() == 8
 
     def test_explicit_config_wins_over_env_var(self, monkeypatch: pytest.MonkeyPatch):
-        from agno.run.queue import RunQueueConfig
+        from agno.queue import QueueConfig
 
         monkeypatch.setenv("AGNO_BACKGROUND_MAX_CONCURRENCY", "8")
-        config = RunQueueConfig(max_concurrency=4)
+        config = QueueConfig(max_concurrency=4)
         if config.max_concurrency is not None:
             set_background_max_concurrency(config.max_concurrency)
         assert get_background_max_concurrency() == 4
