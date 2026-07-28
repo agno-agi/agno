@@ -1,3 +1,4 @@
+import json
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from os import getenv
@@ -328,7 +329,7 @@ class OpenAIChat(Model):
             "content": tool_result,
             "name": message.name,
             "tool_call_id": message.tool_call_id,
-            "tool_calls": message.tool_calls,
+            "tool_calls": self._format_tool_calls(message.tool_calls) if message.tool_calls is not None else None,
         }
         message_dict = {k: v for k, v in message_dict.items() if v is not None}
 
@@ -376,6 +377,23 @@ class OpenAIChat(Model):
         if message.content is None:
             message_dict["content"] = ""
         return message_dict
+
+    @staticmethod
+    def _format_tool_calls(tool_calls: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        formatted_tool_calls: List[Dict[str, Any]] = []
+        for tool_call in tool_calls:
+            formatted_tool_call = dict(tool_call)
+            function = formatted_tool_call.get("function")
+            if isinstance(function, dict):
+                formatted_function = dict(function)
+                arguments = formatted_function.get("arguments")
+                if arguments is None or arguments == "":
+                    formatted_function["arguments"] = "{}"
+                elif isinstance(arguments, (dict, list)):
+                    formatted_function["arguments"] = json.dumps(arguments)
+                formatted_tool_call["function"] = formatted_function
+            formatted_tool_calls.append(formatted_tool_call)
+        return formatted_tool_calls
 
     def _format_all_messages(
         self, messages: List[Message], compress_tool_results: bool = False
@@ -783,6 +801,10 @@ class OpenAIChat(Model):
                     tool_call_entry["id"] = _tool_call_id
                 if _tool_call_type:
                     tool_call_entry["type"] = _tool_call_type
+        for tool_call in tool_calls:
+            function = tool_call.get("function")
+            if isinstance(function, dict) and not function.get("arguments"):
+                function["arguments"] = "{}"
         return tool_calls
 
     def _should_collect_metrics(self, response: ChatCompletionChunk) -> bool:

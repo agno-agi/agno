@@ -1,5 +1,6 @@
 from typing import Optional
 
+from agno.models.message import Message
 from agno.models.openai.chat import OpenAIChat
 
 
@@ -69,6 +70,37 @@ def test_parse_tool_calls_multiple_tools_independent():
     assert result[0]["function"]["name"] == "tool_a"
     assert result[1]["function"]["name"] == "tool_b"
     assert result[0] is not result[1]
+
+
+def test_parse_tool_calls_defaults_empty_arguments_to_json_object():
+    """Zero-argument streamed tool calls must round-trip as valid JSON."""
+    deltas = [
+        _FakeChoiceDeltaToolCall(index=0, tool_id="call_1", tool_type="function", func_name="api_schema_inspect"),
+    ]
+    result = OpenAIChat.parse_tool_calls(deltas)
+
+    assert result[0]["function"]["arguments"] == "{}"
+
+
+def test_format_message_defaults_empty_tool_call_arguments_without_mutating_message():
+    """OpenAI-compatible providers reject empty-string tool call arguments on the next turn."""
+    model = OpenAIChat(id="gpt-4o-mini")
+    message = Message(
+        role="assistant",
+        content=None,
+        tool_calls=[
+            {
+                "id": "call_1",
+                "type": "function",
+                "function": {"name": "api_schema_inspect", "arguments": ""},
+            }
+        ],
+    )
+
+    formatted = model._format_message(message)
+
+    assert formatted["tool_calls"][0]["function"]["arguments"] == "{}"
+    assert message.tool_calls[0]["function"]["arguments"] == ""
 
 
 # ---------------------------------------------------------------------------
