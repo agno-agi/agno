@@ -45,6 +45,7 @@ from agno.os.config import (
 )
 from agno.os.event_streams import BaseEventStream, set_event_stream
 from agno.os.interfaces.base import BaseInterface
+from agno.os.queue import apply_queue_config, queue_lifespan
 from agno.os.router import get_base_router, get_info_router, get_websocket_router
 from agno.os.routers.agents import get_agent_router
 from agno.os.routers.approvals import get_approval_router
@@ -57,15 +58,14 @@ from agno.os.routers.knowledge import get_knowledge_router
 from agno.os.routers.learnings import get_learnings_router
 from agno.os.routers.memory import get_memory_router
 from agno.os.routers.metrics import get_metrics_router
+from agno.os.routers.queue import get_queue_router
 from agno.os.routers.registry import get_registry_router
-from agno.os.routers.run_queue import get_run_queue_router
 from agno.os.routers.schedules import get_schedule_router
 from agno.os.routers.service_accounts import get_service_accounts_router
 from agno.os.routers.session import get_session_router
 from agno.os.routers.teams import get_team_router
 from agno.os.routers.traces import get_traces_router
 from agno.os.routers.workflows import get_workflow_router
-from agno.os.run_queue import apply_run_queue_config, run_queue_lifespan
 from agno.os.settings import AgnoAPISettings
 from agno.os.utils import (
     _generate_knowledge_id,
@@ -80,9 +80,9 @@ from agno.os.utils import (
     setup_tracing_for_os,
     update_cors_middleware,
 )
+from agno.queue import QueueConfig
 from agno.registry import Registry
 from agno.remote.base import RemoteDb, RemoteKnowledge
-from agno.run.queue import RunQueueConfig
 from agno.team import RemoteTeam, Team, TeamFactory
 from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.utils.string import generate_id, generate_id_from_name
@@ -270,7 +270,7 @@ class AgentOS:
         tracing: bool = False,
         auto_provision_dbs: bool = True,
         run_hooks_in_background: bool = False,
-        run_queue: Optional[RunQueueConfig] = None,
+        queue: Optional[QueueConfig] = None,
         event_stream: Optional[BaseEventStream] = None,
         telemetry: bool = True,
         registry: Optional[Registry] = None,
@@ -327,12 +327,13 @@ class AgentOS:
             cors_allowed_origins: List of allowed CORS origins (will be merged with default Agno domains)
             tracing: If True, enables OpenTelemetry tracing for all agents and teams in the OS
             run_hooks_in_background: If True, run agent/team pre/post hooks as FastAPI background tasks (non-blocking)
-            run_queue: Configuration for the background run queue (RunQueueConfig).
+            queue: Configuration for the AgentOS job queue (QueueConfig). Background runs
+                execute through it today; it is not a message-broker integration.
                 background=True runs are accepted immediately as PENDING and execute under
-                run_queue.max_concurrency per replica (shared across agents, teams and workflows;
+                queue.max_concurrency per replica (shared across agents, teams and workflows;
                 enforced per event loop, so process-wide in the standard deployment). Runs beyond
                 the cap wait in line and can still be cancelled while waiting. 0 or below disables
-                capping. Setting run_queue.redis (URL or RedisCoordination) additionally enables
+                capping. Setting queue.redis (URL or RedisCoordination) additionally enables
                 BOTH cross-container transports for background runs, built from shared clients:
                 distributed cancellation (control in) and the Redis event stream (events out), so
                 cancel and /resume work from any replica. Process-global: last setter wins if
@@ -340,7 +341,7 @@ class AgentOS:
                 settings untouched (concurrency falls back to the AGNO_BACKGROUND_MAX_CONCURRENCY
                 env var or the default of 32).
             event_stream: Explicit event stream override (granular escape hatch). Takes
-                precedence over the stream run_queue.redis would configure. Defaults to the
+                precedence over the stream queue.redis would configure. Defaults to the
                 in-memory stream when neither is set.
             telemetry: Whether to enable telemetry
             registry: Optional registry to use for the AgentOS
@@ -445,11 +446,11 @@ class AgentOS:
         # If True, run agent/team hooks as FastAPI background tasks
         self.run_hooks_in_background = run_hooks_in_background
 
-        # Run queue configuration. None keeps the process defaults (env var or
+        # Job queue configuration. None keeps the process defaults (env var or
         # library default for the concurrency cap, in-memory transports).
-        # run_queue.redis wires the cross-container transports; the explicit
+        # queue.redis wires the cross-container transports; the explicit
         # event_stream parameter below is applied after and wins by ordering.
-        self.run_queue = run_queue
+        self.queue = queue
 
         # Event stream FIRST: the coordination wiring below only fills in-memory
         # defaults and warns on asymmetric transports - it must see the user's
@@ -458,8 +459,8 @@ class AgentOS:
         if event_stream is not None:
             set_event_stream(event_stream)
 
-        if run_queue is not None:
-            apply_run_queue_config(run_queue)
+        if queue is not None:
+            apply_queue_config(queue)
 
         # Scheduler configuration
         self._scheduler_enabled = scheduler
@@ -691,10 +692,10 @@ class AgentOS:
         self._add_router(app, get_workflow_router(self, settings=self.settings))
         self._add_router(app, get_websocket_router(self, settings=self.settings))
 
-        # Run queue operations surface (DLQ, requeue, stats) - only meaningful
+        # Job queue operations surface (DLQ, requeue, stats) - only meaningful
         # when the durable queue is enabled
-        if self.run_queue is not None and self.run_queue.durable:
-            self._add_router(app, get_run_queue_router(self, settings=self.settings))
+        if self.queue is not None and self.queue.durable:
+            self._add_router(app, get_queue_router(self, settings=self.settings))
 
         # Add A2A interface if relevant
         has_a2a_interface = False
@@ -1104,9 +1105,9 @@ class AgentOS:
             if self._scheduler_enabled and self.db is not None:
                 lifespans.append(partial(scheduler_lifespan, agent_os=self))
 
-            # The durable run queue worker (after db so tables exist)
-            if self.run_queue is not None and self.run_queue.durable:
-                lifespans.append(partial(run_queue_lifespan, agent_os=self))
+            # The durable job queue worker (after db so tables exist)
+            if self.queue is not None and self.queue.durable:
+                lifespans.append(partial(queue_lifespan, agent_os=self))
 
             # The httpx client cleanup lifespan (should be last to close after other lifespans)
             lifespans.append(http_client_lifespan)
@@ -1148,9 +1149,9 @@ class AgentOS:
             if self._scheduler_enabled and self.db is not None:
                 lifespans.append(partial(scheduler_lifespan, agent_os=self))
 
-            # The durable run queue worker (after db so tables exist)
-            if self.run_queue is not None and self.run_queue.durable:
-                lifespans.append(partial(run_queue_lifespan, agent_os=self))
+            # The durable job queue worker (after db so tables exist)
+            if self.queue is not None and self.queue.durable:
+                lifespans.append(partial(queue_lifespan, agent_os=self))
 
             # The httpx client cleanup lifespan (should be last to close after other lifespans)
             lifespans.append(http_client_lifespan)

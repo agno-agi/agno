@@ -22,7 +22,7 @@ from agno.agent.factory import AgentFactory
 from agno.agent.protocol import AgentProtocol
 from agno.agent.remote import RemoteAgent
 from agno.db.base import BaseDb
-from agno.db.schemas.run_queue import RunQueueJob
+from agno.db.schemas.jobs import QueuedJob
 from agno.exceptions import InputCheckError, OutputCheckError, RunNotContinuableError, RunNotFoundError
 from agno.media import Audio, Image, Video
 from agno.media import File as FileMedia
@@ -42,8 +42,8 @@ from agno.os.middleware.user_scope import (
     verify_run_in_session,
     verify_run_in_session_via_db,
 )
+from agno.os.queue import aprepare_queued_agent_run
 from agno.os.routers.agents.schema import AgentResponse
-from agno.os.run_queue import aprepare_queued_agent_run
 from agno.os.schema import (
     BadRequestResponse,
     InternalServerErrorResponse,
@@ -757,7 +757,7 @@ def get_agent_router(
                 # response tails the event stream. Durability attaches to the
                 # RUN (complete output guaranteed via the run row); the live
                 # stream is the best-effort view.
-                queue_worker = getattr(request.app.state, "run_queue_worker", None)
+                queue_worker = getattr(request.app.state, "queue_worker", None)
                 stream_queueable = (
                     queue_worker is not None
                     and not isinstance(agent, RemoteAgent)
@@ -775,7 +775,7 @@ def get_agent_router(
 
                     queued_run_id = str(uuid4())
                     queued_session_id = session_id or str(uuid4())
-                    job = RunQueueJob(
+                    job = QueuedJob(
                         id=queued_run_id,
                         component_type="agent",
                         component_id=getattr(agent, "id", None) or agent_id,
@@ -785,7 +785,7 @@ def get_agent_router(
                         max_attempts=queue_worker.config.max_attempts,
                         idempotency_key=request.headers.get("idempotency-key"),
                     ).to_dict()
-                    enqueue_result = await queue_worker.store.enqueue_run_job(
+                    enqueue_result = await queue_worker.store.enqueue_job(
                         job, max_depth=queue_worker.config.max_queue_depth
                     )
                     if enqueue_result["reason"] == "queue_full":
@@ -841,7 +841,7 @@ def get_agent_router(
             # Durable queue path: acceptance is a committed row; whichever
             # replica's worker claims the job executes it, surviving crashes
             # and deploys. Client contract identical: 202 + poll.
-            queue_worker = getattr(request.app.state, "run_queue_worker", None)
+            queue_worker = getattr(request.app.state, "queue_worker", None)
             # Queueable only if the agent is a plain registry instance: the
             # worker resolves from the registry, so factory-backed or
             # off-registry (db-resolved / version-pinned) components would be
@@ -863,7 +863,7 @@ def get_agent_router(
                     )
                 queued_run_id = str(uuid4())
                 queued_session_id = session_id or str(uuid4())
-                job = RunQueueJob(
+                job = QueuedJob(
                     id=queued_run_id,
                     component_type="agent",
                     component_id=getattr(agent, "id", None) or agent_id,
@@ -877,11 +877,11 @@ def get_agent_router(
                 # Enqueue FIRST: the committed queue row is the acceptance.
                 # Rejected or duplicate submissions must leave no phantom
                 # PENDING run behind in the session.
-                enqueue_result = await queue_worker.store.enqueue_run_job(
+                enqueue_result = await queue_worker.store.enqueue_job(
                     job, max_depth=queue_worker.config.max_queue_depth
                 )
                 if enqueue_result["reason"] == "queue_full":
-                    raise HTTPException(status_code=429, detail="Run queue is full")
+                    raise HTTPException(status_code=429, detail="Job queue is full")
                 if enqueue_result["reason"] == "duplicate" and enqueue_result["job"] is not None:
                     existing = enqueue_result["job"]
                     return JSONResponse(

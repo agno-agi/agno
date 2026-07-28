@@ -1,7 +1,7 @@
-"""AgentOS with a durable run queue: accepted background runs survive crashes.
+"""AgentOS with a durable job queue: accepted background runs survive crashes.
 
-With RunQueueConfig(durable=True), a background run (background=True) is
-accepted as a committed row in the run queue table. Whichever replica's worker
+With QueueConfig(durable=True), a background run (background=True) is
+accepted as a committed row in the job queue table. Whichever replica's worker
 claims the job executes it - across process restarts and deploys. A crashed
 run is never silently re-executed (max_attempts=1 by default): it is failed
 visibly, and an operator can requeue it.
@@ -15,9 +15,9 @@ Try it:
 3. Kill the server mid-run and restart it: the job is reclaimed or failed
    visibly - never lost, never stuck at RUNNING forever.
 4. Operations surface:
-   GET  /run-queue/stats                 - counts by status, oldest queued age
-   GET  /run-queue/jobs?status=failed    - the dead-letter list
-   POST /run-queue/jobs/{id}/requeue     - grant a failed job one more attempt
+   GET  /queue/stats                 - counts by status, oldest queued age
+   GET  /queue/jobs?status=failed    - the dead-letter list
+   POST /queue/jobs/{id}/requeue     - grant a failed job one more attempt
 5. Resubmit safely with an Idempotency-Key header: duplicate submissions
    return the existing run instead of enqueueing twice.
 6. STREAMING through the queue: add -F "stream=true" to the submission and the
@@ -32,7 +32,7 @@ infrastructure). To isolate queue load on a dedicated Redis instead:
 
     from agno.db.redis import RedisDb
 
-    run_queue = RunQueueConfig(
+    queue_config = QueueConfig(
         durable=True,
         db=RedisDb(db_url="redis://localhost:6379"),
     )
@@ -49,7 +49,7 @@ from agno.agent import Agent
 from agno.db.postgres import PostgresDb
 from agno.models.openai import OpenAIResponses
 from agno.os import AgentOS
-from agno.run.queue import RunQueueConfig
+from agno.queue.config import QueueConfig
 
 db = PostgresDb(db_url="postgresql+psycopg://ai:ai@localhost:5532/ai")
 
@@ -62,10 +62,10 @@ agent = Agent(
 )
 
 agent_os = AgentOS(
-    description="AgentOS with a durable run queue",
+    description="AgentOS with a durable job queue",
     agents=[agent],
     db=db,
-    run_queue=RunQueueConfig(
+    queue=QueueConfig(
         durable=True,  # queue table lives in the Postgres above
         max_concurrency=8,  # per replica
         max_queue_depth=1000,  # global bound -> 429 beyond it
@@ -75,4 +75,4 @@ app = agent_os.get_app()
 
 
 if __name__ == "__main__":
-    agent_os.serve(app="durable_run_queue:app", reload=True)
+    agent_os.serve(app="durable_jobs:app", reload=True)

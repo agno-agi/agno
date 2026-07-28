@@ -62,7 +62,7 @@
 
 **Status:** NOT RUN (compile-checked)
 **Tier:** untagged
-**Description:** AgentOS configured via run_queue=RunQueueConfig(max_concurrency=16, redis=URL), which wires RedisEventStream + RedisRunCancellationManager from shared clients, plus RedisDb storage on the same Redis, enabling cross-replica background streaming resume (start a run on one replica, hit /resume on another). Serve-style example; requires a running Redis and multiple replicas to demonstrate. The underlying event stream behavior is covered by unit tests (libs/agno/tests/unit/os/test_event_streams_redis.py) and the library-level cookbook cookbook/02_agents/14_advanced/redis_event_stream_resume.py.
+**Description:** AgentOS configured via queue=QueueConfig(max_concurrency=16, redis=URL), which wires RedisEventStream + RedisRunCancellationManager from shared clients, plus RedisDb storage on the same Redis, enabling cross-replica background streaming resume (start a run on one replica, hit /resume on another). Serve-style example; requires a running Redis and multiple replicas to demonstrate. The underlying event stream behavior is covered by unit tests (libs/agno/tests/unit/os/test_event_streams_redis.py) and the library-level cookbook cookbook/02_agents/14_advanced/redis_event_stream_resume.py.
 **Result:** Compile check passed; full run requires Redis and a multi-replica setup.
 
 ---
@@ -74,6 +74,8 @@
 **Description:** AgentOS with RunQueueConfig(durable=True) smoke-tested over HTTP against pgvector Postgres with real OpenAI calls: submit (202 with PENDING, row committed), duplicate submit with the same Idempotency-Key returned the SAME run_id, poll reached COMPLETED with content, /run-queue/stats and /run-queue/jobs/{id} returned correct counts and job state (attempt 1, key recorded). Incidental durability proof: two jobs accepted by an earlier server process (which then died) were recovered and executed by the next server's worker - accepted-then-crashed runs completed after restart.
 **Result:** PASS end to end.
 **Streaming (durable-streaming PR):** submitted stream=true through the queue: SSE response tailed events produced by the WORKER's claimed execution (queue stats showed the job running during the stream). Client disconnected mid-stream; run completed anyway (queue row completed, attempt 1, full output persisted) - the complete-output-guaranteed / live-view-best-effort contract demonstrated live. Also caught and fixed a real bug during testing: the sync PostgresDb queue methods were awaited directly (resolve_run_queue_store now wraps sync stores in an awaitable thread adapter).
+**Description:** AgentOS with QueueConfig(durable=True) smoke-tested over HTTP against pgvector Postgres with real OpenAI calls: submit (202 with PENDING, row committed), duplicate submit with the same Idempotency-Key returned the SAME run_id, poll reached COMPLETED with content, /queue/stats and /queue/jobs/{id} returned correct counts and job state (attempt 1, key recorded). Incidental durability proof: two jobs accepted by an earlier server process (which then died) were recovered and executed by the next server's worker - accepted-then-crashed runs completed after restart.
+**Result:** PASS end to end. Also caught and fixed a real bug during testing: the sync PostgresDb queue methods were awaited directly (resolve_queue_store now wraps sync stores in an awaitable thread adapter).
 
 ---
 

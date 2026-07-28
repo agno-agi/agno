@@ -279,10 +279,11 @@ def _get_schedule_runs_table_schema(
     }
 
 
-RUN_QUEUE_TABLE_SCHEMA = {
+JOBS_TABLE_SCHEMA = {
     # id == run_id, so poll/resume endpoints key identically
     "id": {"type": String, "primary_key": True, "nullable": False},
     "component_type": {"type": String, "nullable": False},  # agent | team | workflow
+    "job_type": {"type": String, "nullable": False},  # "run" today; future: other AgentOS job types
     "component_id": {"type": String, "nullable": False, "index": True},
     "session_id": {"type": String, "nullable": False, "index": True},
     "user_id": {"type": String, "nullable": True},
@@ -306,7 +307,7 @@ RUN_QUEUE_TABLE_SCHEMA = {
     # existing run instead of enqueueing twice. Unique only when set.
     "_partial_unique_indexes": [
         {
-            "name": "uq_run_queue_idempotency_key",
+            "name": "uq_jobs_idempotency_key",
             "columns": ["idempotency_key"],
             "where": "idempotency_key IS NOT NULL",
         }
@@ -416,7 +417,7 @@ def get_table_schema_definition(
         "component_links": COMPONENT_LINKS_TABLE_SCHEMA,
         "learnings": LEARNINGS_TABLE_SCHEMA,
         "schedules": SCHEDULE_TABLE_SCHEMA,
-        "run_queue": RUN_QUEUE_TABLE_SCHEMA,
+        "jobs": JOBS_TABLE_SCHEMA,
         "approvals": APPROVAL_TABLE_SCHEMA,
         "auth_tokens": AUTH_TOKEN_TABLE_SCHEMA,
         "service_accounts": SERVICE_ACCOUNT_TABLE_SCHEMA,

@@ -9,7 +9,7 @@ frees up. This prevents a burst of submissions from executing all at once.
 The limit is process-wide and shared across agents, teams and workflows.
 Configure it one of three ways:
 - set_background_max_concurrency(n) programmatically (used below)
-- AgentOS(run_queue=RunQueueConfig(max_concurrency=n)) when serving over AgentOS
+- AgentOS(queue=QueueConfig(max_concurrency=n)) when serving over AgentOS
 - the AGNO_BACKGROUND_MAX_CONCURRENCY environment variable (default: 32)
 
 Requirements:
