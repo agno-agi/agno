@@ -19,7 +19,8 @@ in a separate process, pointed at a remote AgentOS via ``events_url``.
 from __future__ import annotations
 
 import asyncio
-from typing import Any, Dict, List
+import threading
+from typing import Any, Dict, List, Optional
 
 import discord
 import httpx
@@ -42,15 +43,26 @@ def build_listener_intents() -> "discord.Intents":
 
 
 class DiscordGatewayListener(discord.Client):
-    def __init__(self, *, events_url: str, gateway_secret: str, respond_to_dms: bool = True):
+    def __init__(
+        self,
+        *,
+        events_url: str,
+        gateway_secret: str,
+        respond_to_dms: bool = True,
+        ready_event: Optional[threading.Event] = None,
+    ):
         super().__init__(intents=build_listener_intents())
         self.events_url = events_url
         self.secret_headers = {GATEWAY_SECRET_HEADER: gateway_secret}
         self.respond_to_dms = respond_to_dms
+        self.ready_event = ready_event
         self.relay_http: httpx.AsyncClient
 
     async def setup_hook(self) -> None:
-        # One long-lived HTTP client bound to the listener's event loop
+        # One long-lived HTTP client bound to the listener's event loop. The
+        # process-global client (agno.utils.http) cannot be used here: its
+        # connection pool belongs to the main app's event loop, and this
+        # listener runs on its own loop in a background thread.
         self.relay_http = httpx.AsyncClient(timeout=10.0)
 
     async def close(self) -> None:
@@ -62,6 +74,8 @@ class DiscordGatewayListener(discord.Client):
 
     async def on_ready(self) -> None:
         log_info(f"Discord gateway connected as {self.user}")
+        if self.ready_event is not None:
+            self.ready_event.set()
 
     async def on_message(self, message: Any) -> None:
         if self.user is None or message.author.id == self.user.id or message.author.bot:

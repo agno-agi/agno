@@ -15,8 +15,9 @@ Architecture map::
         gateway_router.py        the endpoint: check secret, gate, run, reply
 
     Shared by both:
-        pipeline.py   Discord REST helpers, chunking, live tool status,
-                      streaming runs (stream_agent_run)
+        constants.py  Discord wire-protocol enums and limits
+        pipeline.py   Discord REST (discord_request: 429 retry), chunking,
+                      debounced tool status, streaming runs (stream_agent_run)
         state.py      session lookup/rotation (discord-{user}-{scope}-{epoch})
 
 Replies always go over Discord REST with the bot token (or the interaction

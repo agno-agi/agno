@@ -1,24 +1,9 @@
 """FastAPI routes for the Discord Gateway relay.
 
-Request flow, end to end:
-
-1. The gateway listener (``listener.DiscordGatewayListener`` running in a
-   background thread — or an external relay process) receives a message over
-   its WebSocket and POSTs a compact JSON payload to
-   ``/discord/gateway/events``.
-2. ``discord_gateway_events`` (the only route) checks the shared-secret
-   header — relayed gateway events carry no Ed25519 signature from Discord,
-   so this secret is the only gate — re-applies the mention-gating rules
-   (the listener pre-filters, but the endpoint is the authority), and hands
-   accepted messages to ``_process_message`` as a background task.
-3. ``_process_message`` opens a reply thread when appropriate, shows the
-   native typing indicator while the entity runs (via ``_keep_typing``),
-   streams the run via ``pipeline.stream_agent_run`` (a status message is
-   only posted when a tool actually runs), and writes the final answer in
-   2000-char chunks over Discord REST.
-
-All handlers are module-level functions taking a ``_GatewayContext`` — the
-immutable bag of config built once in ``attach_gateway_routes``.
+The gateway listener (or an external relay) POSTs message payloads to
+``/discord/gateway/events``, authenticated by a shared-secret header. Accepted
+messages run in the background: open a reply thread when appropriate, show the
+native typing indicator, stream the run, deliver the answer over Discord REST.
 """
 
 from __future__ import annotations
@@ -41,12 +26,14 @@ from agno.os.interfaces.discord.pipeline import (
     post_in_channel,
     resolve_media,
     resolve_session_id,
+    run_in_background,
     stream_agent_run,
     thread_name_from_question,
     trigger_typing,
 )
-from agno.os.interfaces.discord.state import _SessionStoreConfig, build_session_store_config
+from agno.os.interfaces.discord.state import SessionStoreConfig, build_session_store_config
 from agno.team import RemoteTeam, Team
+from agno.utils.http import get_default_async_client
 from agno.utils.log import log_error
 from agno.workflow import RemoteWorkflow, Workflow
 
@@ -54,12 +41,12 @@ GATEWAY_SECRET_HEADER = "X-Discord-Gateway-Secret"
 
 
 @dataclass(frozen=True)
-class _GatewayContext:
-    """Everything the gateway handlers need, built once in attach_gateway_routes."""
+class GatewayContext:
+    """Config the gateway handlers need, built once in attach_gateway_routes."""
 
     entity: Any  # Agent | Team | Workflow (or Remote variants)
     entity_id: Optional[str]
-    session_cfg: _SessionStoreConfig
+    session_cfg: SessionStoreConfig
     bot_headers: Dict[str, str]
     reply_in_thread: bool
 
@@ -91,7 +78,7 @@ def should_respond(payload: dict, respond_to_dms: bool = True) -> bool:
 # ---------------------------------------------------------------------------
 
 
-async def _keep_typing(ctx: _GatewayContext, client: httpx.AsyncClient, channel_id: str, stop: asyncio.Event) -> None:
+async def keep_typing(ctx: GatewayContext, client: httpx.AsyncClient, channel_id: str, stop: asyncio.Event) -> None:
     # The indicator lasts up to 10 seconds per trigger — refresh until stopped
     while not stop.is_set():
         await trigger_typing(client, ctx.bot_headers, channel_id)
@@ -101,100 +88,99 @@ async def _keep_typing(ctx: _GatewayContext, client: httpx.AsyncClient, channel_
             pass
 
 
-async def _process_message(ctx: _GatewayContext, payload: dict) -> None:
+async def process_message(ctx: GatewayContext, payload: dict) -> None:
     """Run the entity for one relayed message and deliver the answer.
 
-    Reply surfaces:
-    - Guild channel: a new thread off the user's own message.
-    - Existing thread or DM: inline in that channel.
-    While the entity runs, the bot shows the native typing indicator; a status
-    message only appears when a tool runs, and then becomes the answer.
+    Reply surface: a new thread off the user's message in guild channels;
+    inline in existing threads and DMs. The typing indicator runs while the
+    entity does; a status message only appears when a tool runs, then becomes
+    the answer.
     """
-    async with httpx.AsyncClient(timeout=60.0) as client:
-        reply_channel: Optional[str] = None
-        status_msg_id: Optional[str] = None
+    client = get_default_async_client()
+    reply_channel: Optional[str] = None
+    status_msg_id: Optional[str] = None
+    try:
+        bot_user_id = payload.get("bot_user_id", "")
+        message = strip_bot_mention(payload.get("content", ""), bot_user_id)
+        user_id = (payload.get("author") or {}).get("id", "")
+        guild_id = payload.get("guild_id")
+        channel_id = payload.get("channel_id", "")
+        message_id = payload.get("message_id", "")
+        is_dm = bool(payload.get("is_dm"))
+        is_thread = bool(payload.get("is_thread"))
+
+        media: Dict[str, Any] = {}
+        attachments = payload.get("attachments") or []
+        if attachments:
+            first = attachments[0]
+            if first.get("url"):
+                content_type = first.get("content_type") or "application/octet-stream"
+                media = resolve_media(content_type, first["url"])
+
+        if not message and not media:
+            return
+
+        # Reply surface: in a guild channel start a thread off the user's own
+        # message; inside threads and DMs reply inline
+        new_thread_id: Optional[str] = None
+        if ctx.reply_in_thread and guild_id and not is_dm and not is_thread and message_id:
+            new_thread_id = await create_thread(
+                client, ctx.bot_headers, channel_id, message_id, thread_name_from_question(message)
+            )
+        reply_channel = new_thread_id or channel_id
+
+        # Session scope: thread id if we opened one, else channel id
+        scope_id = new_thread_id or channel_id
+        session_id = await resolve_session_id(ctx.session_cfg, ctx.entity_id, user_id, scope_id)
+
+        # Surface the Discord origin to the agent so tools like DiscordTools
+        # can act on "this channel" without the user spelling it out
+        dependencies: Dict[str, Any] = {
+            "discord_channel_id": channel_id,
+            "discord_thread_id": new_thread_id or (channel_id if is_thread else None),
+            "discord_guild_id": guild_id,
+        }
+
+        # The native typing indicator covers "the bot is working"; a status
+        # message is only posted when there is real tool activity to show
+        _channel = reply_channel
+
+        async def status_edit(content: str) -> None:
+            nonlocal status_msg_id
+            if status_msg_id is None:
+                if content == STATUS_THINKING:
+                    return
+                status_msg_id = await post_in_channel(client, ctx.bot_headers, _channel, content)
+            else:
+                await edit_channel_message(client, ctx.bot_headers, _channel, status_msg_id, content)
+
+        stop_typing = asyncio.Event()
+        typing_task = asyncio.create_task(keep_typing(ctx, client, reply_channel, stop_typing))
         try:
-            bot_user_id = payload.get("bot_user_id", "")
-            message = strip_bot_mention(payload.get("content", ""), bot_user_id)
-            user_id = (payload.get("author") or {}).get("id", "")
-            guild_id = payload.get("guild_id")
-            channel_id = payload.get("channel_id", "")
-            message_id = payload.get("message_id", "")
-            is_dm = bool(payload.get("is_dm"))
-            is_thread = bool(payload.get("is_thread"))
+            final_content = await stream_agent_run(
+                ctx.entity, message, user_id, session_id, media, dependencies, status_edit
+            )
+        finally:
+            stop_typing.set()
+            await typing_task
 
-            media: Dict[str, Any] = {}
-            attachments = payload.get("attachments") or []
-            if attachments:
-                first = attachments[0]
-                if first.get("url"):
-                    content_type = first.get("content_type") or "application/octet-stream"
-                    media = resolve_media(content_type, first["url"])
-
-            if not message and not media:
-                return
-
-            # Reply surface: in a guild channel start a thread off the user's own
-            # message; inside threads and DMs reply inline
-            new_thread_id: Optional[str] = None
-            if ctx.reply_in_thread and guild_id and not is_dm and not is_thread and message_id:
-                new_thread_id = await create_thread(
-                    client, ctx.bot_headers, channel_id, message_id, thread_name_from_question(message)
-                )
-            reply_channel = new_thread_id or channel_id
-
-            # Session scope: thread id if we opened one, else channel id
-            scope_id = new_thread_id or channel_id
-            session_id = await resolve_session_id(ctx.session_cfg, ctx.entity_id, user_id, scope_id)
-
-            # Surface the Discord origin to the agent so tools like DiscordTools
-            # can act on "this channel" without the user spelling it out
-            dependencies: Dict[str, Any] = {
-                "discord_channel_id": channel_id,
-                "discord_thread_id": new_thread_id or (channel_id if is_thread else None),
-                "discord_guild_id": guild_id,
-            }
-
-            # The native typing indicator covers "the bot is working"; a status
-            # message is only posted when there is real tool activity to show
-            _channel = reply_channel
-
-            async def status_edit(content: str) -> None:
-                nonlocal status_msg_id
-                if status_msg_id is None:
-                    if content == STATUS_THINKING:
-                        return
-                    status_msg_id = await post_in_channel(client, ctx.bot_headers, _channel, content)
-                else:
-                    await edit_channel_message(client, ctx.bot_headers, _channel, status_msg_id, content)
-
-            stop_typing = asyncio.Event()
-            typing_task = asyncio.create_task(_keep_typing(ctx, client, reply_channel, stop_typing))
+        chunks = chunk_text(final_content)
+        if status_msg_id:
+            # The tool-status message becomes the answer; overflow as new messages
+            await edit_channel_message(client, ctx.bot_headers, reply_channel, status_msg_id, chunks[0])
+            chunks = chunks[1:]
+        for chunk in chunks:
+            await post_in_channel(client, ctx.bot_headers, reply_channel, chunk)
+    except Exception as e:
+        log_error(f"Discord gateway event processing failed: {e}")
+        if reply_channel:
             try:
-                final_content = await stream_agent_run(
-                    ctx.entity, message, user_id, session_id, media, dependencies, status_edit
-                )
-            finally:
-                stop_typing.set()
-                await typing_task
-
-            chunks = chunk_text(final_content)
-            if status_msg_id:
-                # The tool-status message becomes the answer; overflow as new messages
-                await edit_channel_message(client, ctx.bot_headers, reply_channel, status_msg_id, chunks[0])
-                chunks = chunks[1:]
-            for chunk in chunks:
-                await post_in_channel(client, ctx.bot_headers, reply_channel, chunk)
-        except Exception as e:
-            log_error(f"Discord gateway event processing failed: {e}")
-            if reply_channel:
-                try:
-                    if status_msg_id:
-                        await edit_channel_message(client, ctx.bot_headers, reply_channel, status_msg_id, f"Error: {e}")
-                    else:
-                        await post_in_channel(client, ctx.bot_headers, reply_channel, f"Error: {e}")
-                except Exception:
-                    pass
+                if status_msg_id:
+                    await edit_channel_message(client, ctx.bot_headers, reply_channel, status_msg_id, f"Error: {e}")
+                else:
+                    await post_in_channel(client, ctx.bot_headers, reply_channel, f"Error: {e}")
+            except Exception:
+                pass
 
 
 # ---------------------------------------------------------------------------
@@ -222,7 +208,7 @@ def attach_gateway_routes(
 
     entity_type: Literal["agent", "team", "workflow"] = "agent" if agent else "team" if team else "workflow"
 
-    ctx = _GatewayContext(
+    ctx = GatewayContext(
         entity=entity,
         entity_id=getattr(entity, "id", None),
         session_cfg=build_session_store_config(entity, entity_type),
@@ -244,7 +230,7 @@ def attach_gateway_routes(
         if not should_respond(payload, respond_to_dms=respond_to_dms):
             return {"status": "ignored"}
 
-        asyncio.create_task(_process_message(ctx, payload))
+        run_in_background(process_message(ctx, payload))
         return {"status": "accepted"}
 
     return router

@@ -1052,9 +1052,9 @@ class AgentOS:
 
             # Interface lifespans (e.g. DiscordGateway's background listener)
             for interface in self.interfaces:
-                interface_lifespan = getattr(interface, "get_lifespan", None)
+                interface_lifespan = interface.get_lifespan()
                 if interface_lifespan is not None:
-                    lifespans.append(interface_lifespan())
+                    lifespans.append(interface_lifespan)
 
             # The httpx client cleanup lifespan (should be last to close after other lifespans)
             lifespans.append(http_client_lifespan)
@@ -1098,9 +1098,9 @@ class AgentOS:
 
             # Interface lifespans (e.g. DiscordGateway's background listener)
             for interface in self.interfaces:
-                interface_lifespan = getattr(interface, "get_lifespan", None)
+                interface_lifespan = interface.get_lifespan()
                 if interface_lifespan is not None:
-                    lifespans.append(interface_lifespan())
+                    lifespans.append(interface_lifespan)
 
             # The httpx client cleanup lifespan (should be last to close after other lifespans)
             lifespans.append(http_client_lifespan)

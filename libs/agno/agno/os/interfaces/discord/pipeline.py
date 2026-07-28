@@ -6,27 +6,26 @@ gateway connection — so both transports (and a future external relay) can reus
 
 from __future__ import annotations
 
+import asyncio
 import time
 from collections import OrderedDict
-from typing import Any, Callable, Coroutine, Dict, List, Optional
+from typing import Any, Callable, Coroutine, Dict, List, Optional, Set
 
 import httpx
 
 from agno.media import Audio, File, Image, Video
+from agno.os.interfaces.discord.constants import (
+    DISCORD_API,
+    MAX_MESSAGE_LENGTH,
+    MAX_THREAD_NAME_LENGTH,
+)
 from agno.os.interfaces.discord.state import (
-    _SessionStoreConfig,
+    SessionStoreConfig,
     find_latest_session_id,
 )
 from agno.run.agent import RunOutput
 from agno.run.team import TeamRunOutput
 from agno.utils.log import log_warning
-
-DISCORD_API = "https://discord.com/api/v10"
-MAX_MESSAGE_LENGTH = 2000
-MAX_THREAD_NAME_LENGTH = 100
-
-# Discord channel types considered threads
-THREAD_CHANNEL_TYPES = {10, 11, 12}  # ANNOUNCEMENT, PUBLIC, PRIVATE
 
 # Event names emitted by agents (and their Team-prefixed siblings)
 TOOL_STARTED_EVENTS = {"ToolCallStarted", "TeamToolCallStarted"}
@@ -34,7 +33,76 @@ TOOL_ENDED_EVENTS = {"ToolCallCompleted", "TeamToolCallCompleted", "ToolCallErro
 
 STATUS_THINKING = "Thinking..."
 
+# Minimum seconds between tool-status edits — Discord's per-channel bucket is
+# roughly 5 requests / 5s, so rapid tool chains must not PATCH on every event.
+# The final answer is never debounced.
+STATUS_EDIT_MIN_INTERVAL = 1.5
+
+# 429 retry policy for Discord REST calls
+MAX_RATE_LIMIT_RETRIES = 3
+MAX_RETRY_AFTER_SECONDS = 30.0
+
 StatusEdit = Callable[[str], Coroutine[Any, Any, None]]
+
+
+# ---------------------------------------------------------------------------
+# Discord REST
+# ---------------------------------------------------------------------------
+
+
+async def discord_request(
+    client: httpx.AsyncClient,
+    method: str,
+    url: str,
+    headers: Optional[Dict[str, str]] = None,
+    json_body: Optional[Any] = None,
+) -> Optional[httpx.Response]:
+    """Single choke point for Discord REST calls.
+
+    Honors 429 rate limits by waiting out ``Retry-After`` (up to
+    ``MAX_RATE_LIMIT_RETRIES`` attempts) — un-retried 429s lose messages and
+    feed Discord's invalid-request counter, which can Cloudflare-ban the host.
+    Logs non-2xx responses. Returns the final response, or None on transport
+    failure (never raises).
+    """
+    resp: Optional[httpx.Response] = None
+    for attempt in range(MAX_RATE_LIMIT_RETRIES + 1):
+        try:
+            resp = await client.request(method, url, headers=headers, json=json_body)
+        except httpx.HTTPError as e:
+            log_warning(f"Discord API {method} {url} transport error: {e}")
+            return None
+        if resp.status_code != 429:
+            break
+        if attempt == MAX_RATE_LIMIT_RETRIES:
+            log_warning(f"Discord API {method} {url} still rate limited after {attempt} retries")
+            break
+        retry_after = 1.0
+        try:
+            retry_after = float(resp.headers.get("Retry-After") or resp.json().get("retry_after") or 1.0)
+        except Exception:
+            pass
+        await asyncio.sleep(min(retry_after, MAX_RETRY_AFTER_SECONDS))
+    if resp is not None and resp.status_code >= 400:
+        log_warning(f"Discord API {method} {url} failed: {resp.status_code} {resp.text[:200]}")
+    return resp
+
+
+_background_tasks: Set["asyncio.Task[Any]"] = set()
+
+
+def run_in_background(coro: Coroutine[Any, Any, Any]) -> "asyncio.Task[Any]":
+    """create_task with a strong reference — asyncio only keeps weak refs, so
+    fire-and-forget tasks can otherwise be garbage collected mid-run."""
+    task = asyncio.create_task(coro)
+    _background_tasks.add(task)
+    task.add_done_callback(_background_tasks.discard)
+    return task
+
+
+# ---------------------------------------------------------------------------
+# Text/media helpers
+# ---------------------------------------------------------------------------
 
 
 def resolve_media(content_type: str, url: str) -> Dict[str, Any]:
@@ -96,15 +164,19 @@ def format_tool_status(active: "OrderedDict[str, str]") -> str:
     return f"Running: {', '.join(names)}..."
 
 
+# ---------------------------------------------------------------------------
+# Channel REST operations (bot-token auth)
+# ---------------------------------------------------------------------------
+
+
 async def post_in_channel(
     client: httpx.AsyncClient, bot_headers: Dict[str, str], channel_id: str, content: str
 ) -> Optional[str]:
     url = f"{DISCORD_API}/channels/{channel_id}/messages"
     body = content[:MAX_MESSAGE_LENGTH] or "(empty)"
-    resp = await client.post(url, headers=bot_headers, json={"content": body})
-    if resp.status_code in (200, 201):
+    resp = await discord_request(client, "POST", url, headers=bot_headers, json_body={"content": body})
+    if resp is not None and resp.status_code in (200, 201):
         return resp.json().get("id")
-    log_warning(f"Posting message failed: {resp.status_code} {resp.text}")
     return None
 
 
@@ -113,19 +185,16 @@ async def edit_channel_message(
 ) -> None:
     url = f"{DISCORD_API}/channels/{channel_id}/messages/{message_id}"
     body = content[:MAX_MESSAGE_LENGTH] or "(empty)"
-    await client.patch(url, headers=bot_headers, json={"content": body})
+    await discord_request(client, "PATCH", url, headers=bot_headers, json_body={"content": body})
 
 
 async def trigger_typing(client: httpx.AsyncClient, bot_headers: Dict[str, str], channel_id: str) -> None:
     """Show the native 'Bot is typing...' indicator (lasts up to 10 seconds).
 
-    Failures are swallowed — typing is cosmetic and must never break a run.
+    Typing is cosmetic — discord_request never raises, so this can't break a run.
     """
     url = f"{DISCORD_API}/channels/{channel_id}/typing"
-    try:
-        await client.post(url, headers=bot_headers)
-    except Exception as e:
-        log_warning(f"Typing indicator failed: {e}")
+    await discord_request(client, "POST", url, headers=bot_headers)
 
 
 async def create_thread(
@@ -133,15 +202,19 @@ async def create_thread(
 ) -> Optional[str]:
     url = f"{DISCORD_API}/channels/{channel_id}/messages/{message_id}/threads"
     payload = {"name": name, "auto_archive_duration": 60}
-    resp = await client.post(url, headers=bot_headers, json=payload)
-    if resp.status_code in (200, 201):
+    resp = await discord_request(client, "POST", url, headers=bot_headers, json_body=payload)
+    if resp is not None and resp.status_code in (200, 201):
         return resp.json().get("id")
-    log_warning(f"Thread creation failed: {resp.status_code} {resp.text}")
     return None
 
 
+# ---------------------------------------------------------------------------
+# Session + streaming
+# ---------------------------------------------------------------------------
+
+
 async def resolve_session_id(
-    session_cfg: _SessionStoreConfig, entity_id: Optional[str], user_id: str, scope_id: str
+    session_cfg: SessionStoreConfig, entity_id: Optional[str], user_id: str, scope_id: str
 ) -> str:
     prefix = f"discord-{user_id}-{scope_id}-"
     if session_cfg.has_db:
@@ -167,7 +240,8 @@ async def stream_agent_run(
 
     `status_edit` is an async callable taking a single `content: str` arg that
     writes to whichever message is acting as the status surface (deferred response,
-    thread status message, or channel status message).
+    thread status message, or channel status message). Tool-status edits are
+    debounced to STATUS_EDIT_MIN_INTERVAL; the returned final answer is not.
     """
     from agno.agent import RemoteAgent
     from agno.team import RemoteTeam
@@ -175,8 +249,11 @@ async def stream_agent_run(
 
     active: "OrderedDict[str, str]" = OrderedDict()
     last_status = STATUS_THINKING
+    last_edit_at = 0.0
     final_content = ""
 
+    # Prime the status surface. Deliberately does not start the debounce clock,
+    # so the first real tool status is never skipped.
     await status_edit(STATUS_THINKING)
 
     # Remote entities proxy to a server and don't accept dependency kwargs;
@@ -221,11 +298,14 @@ async def stream_agent_run(
             continue
 
         status = format_tool_status(active)
-        if status != last_status:
+        # Debounce: skip edits landing inside the interval (a skipped status is
+        # retried on the next tool event; the final answer bypasses this entirely)
+        if status != last_status and time.monotonic() - last_edit_at >= STATUS_EDIT_MIN_INTERVAL:
             try:
                 await status_edit(status)
             except Exception as e:
                 log_warning(f"Discord tool-status edit failed: {e}")
             last_status = status
+            last_edit_at = time.monotonic()
 
     return final_content or "(empty response)"

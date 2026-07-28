@@ -18,7 +18,7 @@ _SESSION_DISPATCH: dict[str, tuple[SessionType, Type[Any], str]] = {
 }
 
 
-class _SessionStoreConfig(NamedTuple):
+class SessionStoreConfig(NamedTuple):
     session_type: SessionType
     session_cls: Type[Any]
     id_field: str
@@ -27,10 +27,10 @@ class _SessionStoreConfig(NamedTuple):
     is_async_db: bool
 
 
-def build_session_store_config(entity: object, entity_type: str) -> _SessionStoreConfig:
+def build_session_store_config(entity: object, entity_type: str) -> SessionStoreConfig:
     session_type, session_cls, id_field = _SESSION_DISPATCH[entity_type]
     db = getattr(entity, "db", None)
-    return _SessionStoreConfig(
+    return SessionStoreConfig(
         session_type=session_type,
         session_cls=session_cls,
         id_field=id_field,
@@ -41,7 +41,7 @@ def build_session_store_config(entity: object, entity_type: str) -> _SessionStor
 
 
 async def find_latest_session_id(
-    cfg: _SessionStoreConfig,
+    cfg: SessionStoreConfig,
     user_id: Optional[str],
     entity_id: Optional[str],
     session_scope: Optional[str] = None,
@@ -71,7 +71,7 @@ async def find_latest_session_id(
 
 
 async def insert_sentinel_session(
-    cfg: _SessionStoreConfig,
+    cfg: SessionStoreConfig,
     session_id: str,
     user_id: Optional[str],
     entity_id: Optional[str],

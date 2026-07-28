@@ -70,35 +70,35 @@ def _ask_payload(extra_options=None) -> dict:
 
 def test_default_ask_is_public():
     client = _client()
-    with patch("agno.os.interfaces.discord.interactions_router.asyncio.create_task") as create_task:
+    with patch("agno.os.interfaces.discord.interactions_router.run_in_background") as spawn:
         resp = _signed_post(client, _ask_payload())
     assert resp.status_code == 200
     assert resp.json() == {"type": 5}
-    create_task.call_args[0][0].close()
+    spawn.call_args[0][0].close()
 
 
 def test_ephemeral_option_sets_flag():
     client = _client()
-    with patch("agno.os.interfaces.discord.interactions_router.asyncio.create_task") as create_task:
+    with patch("agno.os.interfaces.discord.interactions_router.run_in_background") as spawn:
         resp = _signed_post(client, _ask_payload([{"name": "ephemeral", "value": True}]))
     assert resp.json() == {"type": 5, "data": {"flags": EPHEMERAL_FLAG}}
-    create_task.call_args[0][0].close()
+    spawn.call_args[0][0].close()
 
 
 def test_interface_default_ephemeral():
     client = _client(ephemeral=True)
-    with patch("agno.os.interfaces.discord.interactions_router.asyncio.create_task") as create_task:
+    with patch("agno.os.interfaces.discord.interactions_router.run_in_background") as spawn:
         resp = _signed_post(client, _ask_payload())
     assert resp.json() == {"type": 5, "data": {"flags": EPHEMERAL_FLAG}}
-    create_task.call_args[0][0].close()
+    spawn.call_args[0][0].close()
 
 
 def test_option_overrides_interface_default_back_to_public():
     client = _client(ephemeral=True)
-    with patch("agno.os.interfaces.discord.interactions_router.asyncio.create_task") as create_task:
+    with patch("agno.os.interfaces.discord.interactions_router.run_in_background") as spawn:
         resp = _signed_post(client, _ask_payload([{"name": "ephemeral", "value": False}]))
     assert resp.json() == {"type": 5}
-    create_task.call_args[0][0].close()
+    spawn.call_args[0][0].close()
 
 
 def test_unsigned_request_is_rejected():

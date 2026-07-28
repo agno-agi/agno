@@ -93,27 +93,27 @@ def test_unmentioned_channel_message_is_ignored():
 
 def test_mentioned_channel_message_is_accepted():
     client = _client()
-    with patch("agno.os.interfaces.discord.gateway_router.asyncio.create_task") as create_task:
+    with patch("agno.os.interfaces.discord.gateway_router.run_in_background") as spawn:
         resp = client.post(
             "/discord/gateway/events",
             json=_payload(mentions_bot=True, content=f"<@{BOT_ID}> hello"),
             headers={GATEWAY_SECRET_HEADER: SECRET},
         )
     assert resp.json() == {"status": "accepted"}
-    assert create_task.called
-    create_task.call_args[0][0].close()
+    assert spawn.called
+    spawn.call_args[0][0].close()
 
 
 def test_dm_is_accepted_without_mention():
     client = _client()
-    with patch("agno.os.interfaces.discord.gateway_router.asyncio.create_task") as create_task:
+    with patch("agno.os.interfaces.discord.gateway_router.run_in_background") as spawn:
         resp = client.post(
             "/discord/gateway/events",
             json=_payload(is_dm=True, guild_id=None),
             headers={GATEWAY_SECRET_HEADER: SECRET},
         )
     assert resp.json() == {"status": "accepted"}
-    create_task.call_args[0][0].close()
+    spawn.call_args[0][0].close()
 
 
 def test_bot_author_is_ignored():

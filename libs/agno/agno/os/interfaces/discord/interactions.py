@@ -1,20 +1,28 @@
 from os import getenv
 from typing import List, Optional, Union
 
-import httpx
 from fastapi.routing import APIRouter
 
 from agno.agent import Agent, RemoteAgent
 from agno.os.interfaces.base import BaseInterface
+from agno.os.interfaces.discord.constants import (
+    DISCORD_API,
+    CommandOptionType,
+    IntegrationType,
+    InteractionContextType,
+)
 from agno.os.interfaces.discord.interactions_router import attach_routes
-from agno.os.interfaces.discord.pipeline import DISCORD_API
 from agno.team import RemoteTeam, Team
+from agno.utils.http import get_default_sync_client
 from agno.utils.log import log_info, log_warning
 from agno.workflow import RemoteWorkflow, Workflow
 
 
 class DiscordInteractions(BaseInterface):
     type = "discord"
+
+    # Requests are verified with Discord's Ed25519 signature, not AgentOS bearer auth
+    authenticates_own_requests = True
 
     router: APIRouter
 
@@ -72,19 +80,19 @@ class DiscordInteractions(BaseInterface):
                     {
                         "name": "question",
                         "description": "Your question",
-                        "type": 3,
+                        "type": CommandOptionType.STRING,
                         "required": True,
                     },
                     {
                         "name": "file",
                         "description": "Attach an image, audio, video, or document",
-                        "type": 11,
+                        "type": CommandOptionType.ATTACHMENT,
                         "required": False,
                     },
                     {
                         "name": "ephemeral",
                         "description": "Only you can see the reply",
-                        "type": 5,
+                        "type": CommandOptionType.BOOLEAN,
                         "required": False,
                     },
                 ],
@@ -95,11 +103,15 @@ class DiscordInteractions(BaseInterface):
             },
         ]
         if self.user_install:
-            # Installable to both servers (0) and user accounts (1); usable in
-            # guilds (0), bot DMs (1), and private channels / group DMs (2)
+            # Installable to servers and user accounts; usable in guilds,
+            # bot DMs, and private channels / group DMs
             for command in payload:
-                command["integration_types"] = [0, 1]
-                command["contexts"] = [0, 1, 2]
+                command["integration_types"] = [IntegrationType.GUILD_INSTALL, IntegrationType.USER_INSTALL]
+                command["contexts"] = [
+                    InteractionContextType.GUILD,
+                    InteractionContextType.BOT_DM,
+                    InteractionContextType.PRIVATE_CHANNEL,
+                ]
         return payload
 
     def _register_commands(self) -> None:
@@ -111,8 +123,7 @@ class DiscordInteractions(BaseInterface):
         }
         payload = self._build_command_payload()
         try:
-            with httpx.Client(timeout=10.0) as client:
-                resp = client.put(url, headers=headers, json=payload)
+            resp = get_default_sync_client().put(url, headers=headers, json=payload)
             if 200 <= resp.status_code < 300:
                 log_info(f"Registered Discord slash commands: /{self.command_name}, /new")
             else:

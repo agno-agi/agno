@@ -1,28 +1,13 @@
 """FastAPI routes for the Discord Interactions (slash command) transport.
 
-Request flow, end to end:
-
-1. A user runs ``/ask`` (or ``/new``). Discord POSTs a signed interaction to
-   ``/discord/interactions``.
-2. ``discord_interactions`` (the only route) verifies the Ed25519 signature
-   and dispatches on the interaction:
-   - PING     -> PONG (Dev Portal validation handshake)
-   - ``/new`` -> handled synchronously via ``_handle_new_command``
-   - ``/ask`` -> acks with a *deferred* response within Discord's 3-second
-     window (ephemeral flag included when requested), then hands the real
-     work to ``_process_ask`` as a background task.
-3. ``_process_ask`` prepares the reply surface (a thread, an in-thread status
-   message, or the deferred response itself), streams the agent run via
-   ``pipeline.stream_agent_run`` (live tool status), and writes the final
-   answer in 2000-char chunks.
-
-All handlers are module-level functions taking an ``_InteractionsContext`` —
-the immutable bag of config built once in ``attach_routes``.
+Discord POSTs signed interactions to ``/discord/interactions``. After Ed25519
+verification: PING gets PONG, ``/new`` rotates the session synchronously, and
+``/ask`` is acked with a deferred response inside Discord's 3-second window
+while the agent run streams in the background and delivers the answer.
 """
 
 from __future__ import annotations
 
-import asyncio
 import json
 import time
 from dataclasses import dataclass
@@ -34,50 +19,46 @@ from nacl.exceptions import BadSignatureError
 from nacl.signing import VerifyKey
 
 from agno.agent import Agent, RemoteAgent
-from agno.os.interfaces.discord.pipeline import (
+from agno.os.interfaces.discord.constants import (
     DISCORD_API,
+    EPHEMERAL_FLAG,
     MAX_MESSAGE_LENGTH,
-    STATUS_THINKING,
     THREAD_CHANNEL_TYPES,
+    InteractionResponseType,
+    InteractionType,
+)
+from agno.os.interfaces.discord.pipeline import (
+    STATUS_THINKING,
     chunk_text,
     create_thread,
+    discord_request,
     edit_channel_message,
     format_attribution,
     post_in_channel,
     resolve_media,
     resolve_session_id,
+    run_in_background,
     stream_agent_run,
     thread_name_from_question,
 )
 from agno.os.interfaces.discord.state import (
-    _SessionStoreConfig,
+    SessionStoreConfig,
     build_session_store_config,
     insert_sentinel_session,
 )
 from agno.team import RemoteTeam, Team
+from agno.utils.http import get_default_async_client
 from agno.utils.log import log_error, log_warning
 from agno.workflow import RemoteWorkflow, Workflow
 
-# Discord interaction request types
-INTERACTION_PING = 1
-INTERACTION_APPLICATION_COMMAND = 2
-
-# Discord interaction response types
-RESPONSE_PONG = 1
-RESPONSE_CHANNEL_MESSAGE_WITH_SOURCE = 4
-RESPONSE_DEFERRED_CHANNEL_MESSAGE = 5
-
-# Message flag: reply visible only to the invoking user
-EPHEMERAL_FLAG = 64
-
 
 @dataclass(frozen=True)
-class _InteractionsContext:
-    """Everything the interaction handlers need, built once in attach_routes."""
+class InteractionsContext:
+    """Config the interaction handlers need, built once in attach_routes."""
 
     entity: Any  # Agent | Team | Workflow (or Remote variants)
     entity_id: Optional[str]
-    session_cfg: _SessionStoreConfig
+    session_cfg: SessionStoreConfig
     application_id: str
     bot_token: Optional[str]
     bot_headers: Dict[str, str]
@@ -91,7 +72,7 @@ class _InteractionsContext:
 # ---------------------------------------------------------------------------
 
 
-def _extract_message_and_media(data: dict) -> Tuple[str, Dict[str, Any]]:
+def extract_message_and_media(data: dict) -> Tuple[str, Dict[str, Any]]:
     options = {opt["name"]: opt["value"] for opt in data.get("data", {}).get("options", [])}
     message = str(options.get("question", ""))
     media: Dict[str, Any] = {}
@@ -105,7 +86,7 @@ def _extract_message_and_media(data: dict) -> Tuple[str, Dict[str, Any]]:
     return message, media
 
 
-def _extract_ephemeral(data: dict, default: bool) -> bool:
+def extract_ephemeral(data: dict, default: bool) -> bool:
     options = {opt["name"]: opt["value"] for opt in data.get("data", {}).get("options", [])}
     value = options.get("ephemeral")
     if isinstance(value, bool):
@@ -113,7 +94,7 @@ def _extract_ephemeral(data: dict, default: bool) -> bool:
     return default
 
 
-def _extract_user_id(data: dict) -> str:
+def extract_user_id(data: dict) -> str:
     member = data.get("member")
     if isinstance(member, dict):
         user = member.get("user") or {}
@@ -123,7 +104,7 @@ def _extract_user_id(data: dict) -> str:
     return user.get("id", "")
 
 
-def _extract_user_name(data: dict) -> str:
+def extract_user_name(data: dict) -> str:
     # Prefer global_name (new Discord display name), fall back to username, then id
     member = data.get("member")
     sources: List[dict] = []
@@ -144,29 +125,28 @@ def _extract_user_name(data: dict) -> str:
 # ---------------------------------------------------------------------------
 
 
-async def _edit_original(ctx: _InteractionsContext, client: httpx.AsyncClient, token: str, content: str) -> None:
+async def edit_original(ctx: InteractionsContext, client: httpx.AsyncClient, token: str, content: str) -> None:
     url = f"{DISCORD_API}/webhooks/{ctx.application_id}/{token}/messages/@original"
     body = content[:MAX_MESSAGE_LENGTH] or "(empty)"
-    await client.patch(url, json={"content": body})
+    await discord_request(client, "PATCH", url, json_body={"content": body})
 
 
-async def _send_followup(
-    ctx: _InteractionsContext, client: httpx.AsyncClient, token: str, content: str, ephemeral: bool = False
+async def send_followup(
+    ctx: InteractionsContext, client: httpx.AsyncClient, token: str, content: str, ephemeral: bool = False
 ) -> None:
     url = f"{DISCORD_API}/webhooks/{ctx.application_id}/{token}"
     body = content[:MAX_MESSAGE_LENGTH] or "(empty)"
     payload: Dict[str, Any] = {"content": body}
     if ephemeral:
         payload["flags"] = EPHEMERAL_FLAG
-    await client.post(url, json=payload)
+    await discord_request(client, "POST", url, json_body=payload)
 
 
-async def _get_original_message_id(ctx: _InteractionsContext, client: httpx.AsyncClient, token: str) -> Optional[str]:
+async def get_original_message_id(ctx: InteractionsContext, client: httpx.AsyncClient, token: str) -> Optional[str]:
     url = f"{DISCORD_API}/webhooks/{ctx.application_id}/{token}/messages/@original"
-    resp = await client.get(url)
-    if resp.status_code == 200:
+    resp = await discord_request(client, "GET", url)
+    if resp is not None and resp.status_code == 200:
         return resp.json().get("id")
-    log_warning(f"Fetching original interaction message failed: {resp.status_code} {resp.text}")
     return None
 
 
@@ -175,16 +155,16 @@ async def _get_original_message_id(ctx: _InteractionsContext, client: httpx.Asyn
 # ---------------------------------------------------------------------------
 
 
-async def _handle_new_command(ctx: _InteractionsContext, data: dict) -> dict:
+async def handle_new_command(ctx: InteractionsContext, data: dict) -> dict:
     """Rotate the invoking user's session in this channel (synchronous, ephemeral reply)."""
-    user_id = _extract_user_id(data)
+    user_id = extract_user_id(data)
     channel_obj = data.get("channel") or {}
     channel_type = channel_obj.get("type")
     channel_id = data.get("channel_id", "")
 
     if channel_type in THREAD_CHANNEL_TYPES:
         return {
-            "type": RESPONSE_CHANNEL_MESSAGE_WITH_SOURCE,
+            "type": InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE,
             "data": {
                 "content": "Use `/new` in a main channel — threads already have their own session.",
                 "flags": EPHEMERAL_FLAG,
@@ -193,7 +173,7 @@ async def _handle_new_command(ctx: _InteractionsContext, data: dict) -> dict:
 
     if not ctx.session_cfg.has_db:
         return {
-            "type": RESPONSE_CHANNEL_MESSAGE_WITH_SOURCE,
+            "type": InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE,
             "data": {
                 "content": "Session memory isn't configured for this agent. `/new` has no effect.",
                 "flags": EPHEMERAL_FLAG,
@@ -209,105 +189,104 @@ async def _handle_new_command(ctx: _InteractionsContext, data: dict) -> dict:
         content = "Couldn't start a new conversation — check server logs."
 
     return {
-        "type": RESPONSE_CHANNEL_MESSAGE_WITH_SOURCE,
+        "type": InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE,
         "data": {"content": content, "flags": EPHEMERAL_FLAG},
     }
 
 
-async def _process_ask(ctx: _InteractionsContext, data: dict, is_ephemeral: bool = False) -> None:
+async def process_ask(ctx: InteractionsContext, data: dict, is_ephemeral: bool = False) -> None:
     """Run the entity and deliver the answer. Runs as a background task after the deferred ack.
 
     Reply surfaces, in order of preference:
     - Ephemeral: the deferred response is the only surface (no threads/channel messages).
-    - Guild channel: the deferred response becomes the thread parent (edited to show
-      "{user}: {question}"), and a status message inside the new thread carries live
-      tool status, then the answer.
+    - Guild channel: the deferred response becomes the thread parent, a status
+      message inside the new thread carries live tool status, then the answer.
     - Existing thread: attribution on the deferred response, status message below it.
     - Fallback (no thread possible): the deferred response itself is the status surface.
     """
     token = data["token"]
-    async with httpx.AsyncClient(timeout=60.0) as client:
+    client = get_default_async_client()
+    try:
+        message, media = extract_message_and_media(data)
+        user_id = extract_user_id(data)
+        user_name = extract_user_name(data)
+        guild_id = data.get("guild_id")
+        channel_id = data.get("channel_id", "")
+        channel_obj = data.get("channel") or {}
+        channel_type = channel_obj.get("type")
+        already_in_thread = channel_type in THREAD_CHANNEL_TYPES
+
+        attribution = format_attribution(user_name, message)
+
+        # status_channel + status_msg_id identify the message we edit with
+        # tool-call status and then the final answer. If both are None, the
+        # deferred response itself is the status surface.
+        new_thread_id: Optional[str] = None
+        status_channel: Optional[str] = None
+        status_msg_id: Optional[str] = None
+
+        if is_ephemeral:
+            pass
+        elif ctx.reply_in_thread and ctx.bot_token and guild_id and not already_in_thread:
+            thread_name = thread_name_from_question(message)
+            await edit_original(ctx, client, token, attribution)
+            msg_id = await get_original_message_id(ctx, client, token)
+            if msg_id:
+                new_thread_id = await create_thread(client, ctx.bot_headers, channel_id, msg_id, thread_name)
+            if new_thread_id:
+                status_channel = new_thread_id
+                status_msg_id = await post_in_channel(client, ctx.bot_headers, new_thread_id, STATUS_THINKING)
+        elif already_in_thread and ctx.bot_token:
+            await edit_original(ctx, client, token, attribution)
+            status_channel = channel_id
+            status_msg_id = await post_in_channel(client, ctx.bot_headers, channel_id, STATUS_THINKING)
+
+        # Resolve scope + session (thread id if we opened one, else channel id)
+        scope_id = new_thread_id or channel_id
+        session_id = await resolve_session_id(ctx.session_cfg, ctx.entity_id, user_id, scope_id)
+
+        # Surface the Discord origin to the agent so tools like DiscordTools
+        # can act on "this channel" without the user spelling it out
+        dependencies: Dict[str, Any] = {
+            "discord_channel_id": channel_id,
+            "discord_thread_id": new_thread_id or (channel_id if already_in_thread else None),
+            "discord_guild_id": guild_id,
+        }
+
+        if status_channel and status_msg_id:
+            _channel = status_channel
+            _msg_id = status_msg_id
+
+            async def status_edit(content: str) -> None:
+                await edit_channel_message(client, ctx.bot_headers, _channel, _msg_id, content)
+        else:
+
+            async def status_edit(content: str) -> None:
+                await edit_original(ctx, client, token, content)
+
+        final_content = await stream_agent_run(
+            ctx.entity, message, user_id, session_id, media, dependencies, status_edit
+        )
+
+        chunks = chunk_text(final_content)
+
+        if status_channel and status_msg_id:
+            # First chunk replaces the status message; overflow as new messages
+            await edit_channel_message(client, ctx.bot_headers, status_channel, status_msg_id, chunks[0])
+            for chunk in chunks[1:]:
+                await post_in_channel(client, ctx.bot_headers, status_channel, chunk)
+        else:
+            # Status surface IS the deferred response; first chunk replaces status,
+            # overflow rides as webhook followups
+            await edit_original(ctx, client, token, chunks[0])
+            for chunk in chunks[1:]:
+                await send_followup(ctx, client, token, chunk, ephemeral=is_ephemeral)
+    except Exception as e:
+        log_error(f"Discord interaction failed: {e}")
         try:
-            message, media = _extract_message_and_media(data)
-            user_id = _extract_user_id(data)
-            user_name = _extract_user_name(data)
-            guild_id = data.get("guild_id")
-            channel_id = data.get("channel_id", "")
-            channel_obj = data.get("channel") or {}
-            channel_type = channel_obj.get("type")
-            already_in_thread = channel_type in THREAD_CHANNEL_TYPES
-
-            attribution = format_attribution(user_name, message)
-
-            # status_channel + status_msg_id identify the message we edit with
-            # tool-call status and then the final answer. If both are None, the
-            # deferred response itself is the status surface.
-            new_thread_id: Optional[str] = None
-            status_channel: Optional[str] = None
-            status_msg_id: Optional[str] = None
-
-            if is_ephemeral:
-                pass
-            elif ctx.reply_in_thread and ctx.bot_token and guild_id and not already_in_thread:
-                thread_name = thread_name_from_question(message)
-                await _edit_original(ctx, client, token, attribution)
-                msg_id = await _get_original_message_id(ctx, client, token)
-                if msg_id:
-                    new_thread_id = await create_thread(client, ctx.bot_headers, channel_id, msg_id, thread_name)
-                if new_thread_id:
-                    status_channel = new_thread_id
-                    status_msg_id = await post_in_channel(client, ctx.bot_headers, new_thread_id, STATUS_THINKING)
-            elif already_in_thread and ctx.bot_token:
-                await _edit_original(ctx, client, token, attribution)
-                status_channel = channel_id
-                status_msg_id = await post_in_channel(client, ctx.bot_headers, channel_id, STATUS_THINKING)
-
-            # Resolve scope + session (thread id if we opened one, else channel id)
-            scope_id = new_thread_id or channel_id
-            session_id = await resolve_session_id(ctx.session_cfg, ctx.entity_id, user_id, scope_id)
-
-            # Surface the Discord origin to the agent so tools like DiscordTools
-            # can act on "this channel" without the user spelling it out
-            dependencies: Dict[str, Any] = {
-                "discord_channel_id": channel_id,
-                "discord_thread_id": new_thread_id or (channel_id if already_in_thread else None),
-                "discord_guild_id": guild_id,
-            }
-
-            if status_channel and status_msg_id:
-                _channel = status_channel
-                _msg_id = status_msg_id
-
-                async def status_edit(content: str) -> None:
-                    await edit_channel_message(client, ctx.bot_headers, _channel, _msg_id, content)
-            else:
-
-                async def status_edit(content: str) -> None:
-                    await _edit_original(ctx, client, token, content)
-
-            final_content = await stream_agent_run(
-                ctx.entity, message, user_id, session_id, media, dependencies, status_edit
-            )
-
-            chunks = chunk_text(final_content)
-
-            if status_channel and status_msg_id:
-                # First chunk replaces the status message; overflow as new messages
-                await edit_channel_message(client, ctx.bot_headers, status_channel, status_msg_id, chunks[0])
-                for chunk in chunks[1:]:
-                    await post_in_channel(client, ctx.bot_headers, status_channel, chunk)
-            else:
-                # Status surface IS the deferred response; first chunk replaces status,
-                # overflow rides as webhook followups
-                await _edit_original(ctx, client, token, chunks[0])
-                for chunk in chunks[1:]:
-                    await _send_followup(ctx, client, token, chunk, ephemeral=is_ephemeral)
-        except Exception as e:
-            log_error(f"Discord interaction failed: {e}")
-            try:
-                await _edit_original(ctx, client, token, f"Error: {e}")
-            except Exception:
-                pass
+            await edit_original(ctx, client, token, f"Error: {e}")
+        except Exception:
+            pass
 
 
 # ---------------------------------------------------------------------------
@@ -340,7 +319,7 @@ def attach_routes(
     entity_type: Literal["agent", "team", "workflow"] = "agent" if agent else "team" if team else "workflow"
     verify_key = VerifyKey(bytes.fromhex(public_key))
 
-    ctx = _InteractionsContext(
+    ctx = InteractionsContext(
         entity=entity,
         entity_id=getattr(entity, "id", None),
         session_cfg=build_session_store_config(entity, entity_type),
@@ -369,25 +348,25 @@ def attach_routes(
         data = json.loads(body)
         interaction_type = data.get("type")
 
-        if interaction_type == INTERACTION_PING:
-            return {"type": RESPONSE_PONG}
+        if interaction_type == InteractionType.PING:
+            return {"type": InteractionResponseType.PONG}
 
-        if interaction_type == INTERACTION_APPLICATION_COMMAND:
+        if interaction_type == InteractionType.APPLICATION_COMMAND:
             name = (data.get("data") or {}).get("name", "")
             if name == "new":
                 # /new is fast — handle synchronously with an ephemeral reply
-                return await _handle_new_command(ctx, data)
+                return await handle_new_command(ctx, data)
             if name == ctx.command_name:
-                is_ephemeral = _extract_ephemeral(data, ctx.ephemeral_default)
-                asyncio.create_task(_process_ask(ctx, data, is_ephemeral))
-                deferred: Dict[str, Any] = {"type": RESPONSE_DEFERRED_CHANNEL_MESSAGE}
+                is_ephemeral = extract_ephemeral(data, ctx.ephemeral_default)
+                run_in_background(process_ask(ctx, data, is_ephemeral))
+                deferred: Dict[str, Any] = {"type": InteractionResponseType.DEFERRED_CHANNEL_MESSAGE_WITH_SOURCE}
                 if is_ephemeral:
                     # The flag on the deferred ack makes the whole reply chain ephemeral
                     deferred["data"] = {"flags": EPHEMERAL_FLAG}
                 return deferred
             log_warning(f"Unhandled Discord slash command: {name}")
             return {
-                "type": RESPONSE_CHANNEL_MESSAGE_WITH_SOURCE,
+                "type": InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE,
                 "data": {"content": f"Unknown command: /{name}", "flags": EPHEMERAL_FLAG},
             }
 
