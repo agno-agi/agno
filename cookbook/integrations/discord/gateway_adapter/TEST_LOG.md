@@ -71,3 +71,27 @@ verifies routing and DiscordTools history search through the gateway.
 **Result:** Pending live test.
 
 ---
+
+### agent_with_memory.py
+
+**Status:** NOT YET TESTED
+
+**Description:** MemoryManager captures durable user facts on every run
+(`update_memory_on_run=True`), keyed by Discord user id; verifies
+memories persist across channels, threads, and DMs.
+
+**Result:** Pending live test.
+
+---
+
+### agent_with_media.py
+
+**Status:** NOT YET TESTED
+
+**Description:** Media analysis for attachments on relayed messages
+(mentions, thread replies, DMs): the first attachment resolves to typed
+media (Image/Audio/Video/File) by content type.
+
+**Result:** Pending live test.
+
+---

@@ -67,3 +67,41 @@ verifies in-channel replies and get_channel_messages tool flow.
 **Result:** Pending live test.
 
 ---
+
+### personal_assistant.py
+
+**Status:** NOT YET TESTED
+
+**Description:** User-install + ephemeral-by-default combo: the app is
+installable to user accounts (usable in any server, group DM, or bot DM)
+and every `/ask` reply is visible only to the asker with no thread or
+channel message.
+
+**Result:** Pending live test (requires User Install enabled under
+Installation in the Dev Portal).
+
+---
+
+### agent_with_memory.py
+
+**Status:** NOT YET TESTED
+
+**Description:** MemoryManager captures durable user facts on every run
+(`update_memory_on_run=True`), keyed by Discord user id; verifies
+memories persist across channels and servers.
+
+**Result:** Pending live test.
+
+---
+
+### agent_with_media.py
+
+**Status:** NOT YET TESTED
+
+**Description:** Media analysis through the `/ask` `file` option:
+attachments resolve to typed media (Image/Audio/Video/File) by content
+type and are forwarded to the agent.
+
+**Result:** Pending live test.
+
+---

@@ -100,6 +100,8 @@ export OPENAI_API_KEY="your-openai-api-key"
 ## Examples
 
 - `basic.py` -- Single agent with fluid chat: @mention it or DM it.
+- `agent_with_memory.py` -- MemoryManager remembers each user across channels, threads, and DMs, keyed by their Discord user id.
+- `agent_with_media.py` -- Analyze images, audio, video, and documents attached to any message that reaches the bot.
 - `team.py` -- Multi-agent Researcher + Writer team behind one chat bot.
 - `workflow.py` -- Sequential two-step Draft + Edit workflow.
 - `research_assistant.py` -- Agent that combines `DiscordTools` (channel introspection) with web search.

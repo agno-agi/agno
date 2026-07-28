@@ -131,6 +131,9 @@ app to your account):
 ## Examples
 
 - `basic.py` -- Single agent responding to `/ask`, with optional file attachment.
+- `personal_assistant.py` -- The interactions-only combo: `user_install=True` + `ephemeral=True`, a private assistant usable anywhere on Discord with replies only you can see.
+- `agent_with_memory.py` -- MemoryManager remembers each user across channels and servers, keyed by their Discord user id.
+- `agent_with_media.py` -- Analyze images, audio, video, and documents attached via the `file` option.
 - `team.py` -- Multi-agent Researcher + Writer team coordinated behind one bot.
 - `workflow.py` -- Sequential two-step Draft + Edit workflow exposed through Discord.
 - `research_assistant.py` -- Agent that combines `DiscordTools` (channel introspection) with web search to answer research questions.
