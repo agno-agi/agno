@@ -83,6 +83,8 @@ from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.utils.string import generate_id, generate_id_from_name
 from agno.workflow import RemoteWorkflow, Workflow, WorkflowFactory
 
+_AGENTOS_ROUTE_ATTR = "_agno_agentos_managed_route"
+
 if TYPE_CHECKING:
     # Typed for static checkers only -- fastmcp is an optional extra, so importing it at
     # runtime here would break `import agno.os` when the extra is not installed.
@@ -606,16 +608,7 @@ class AgentOS:
         else:
             updated_routers.append(_get_disabled_feature_router("/registry", "Registry", "registry"))
 
-        # Clear all previously existing routes
-        app.router.routes = [
-            route
-            for route in app.router.routes
-            if hasattr(route, "path")
-            and (
-                route.path in ["/docs", "/redoc", "/openapi.json", "/docs/oauth2-redirect"]
-                or route.path.startswith("/mcp")
-            )
-        ]
+        app.router.routes = [route for route in app.router.routes if not self._is_agentos_managed_route(route)]
 
         # Add the built-in routes
         self._add_built_in_routes(app=app)
@@ -1486,6 +1479,21 @@ class AgentOS:
 
         return flatten_routes(app.routes)
 
+    @staticmethod
+    def _is_agentos_managed_route(route: Any) -> bool:
+        return bool(getattr(route, _AGENTOS_ROUTE_ATTR, False))
+
+    @staticmethod
+    def _mark_agentos_managed_route(route: Any) -> None:
+        setattr(route, _AGENTOS_ROUTE_ATTR, True)
+
+    def _include_agentos_router(self, fastapi_app: FastAPI, router: APIRouter) -> None:
+        existing_route_ids = {id(route) for route in fastapi_app.router.routes}
+        fastapi_app.include_router(router)
+        for route in fastapi_app.router.routes:
+            if id(route) not in existing_route_ids:
+                self._mark_agentos_managed_route(route)
+
     def _add_router(self, fastapi_app: FastAPI, router: APIRouter) -> None:
         """Add a router to the FastAPI app, avoiding route conflicts.
 
@@ -1514,7 +1522,7 @@ class AgentOS:
 
                 # Use the filtered router if it has any routes left
                 if filtered_router.routes:
-                    fastapi_app.include_router(filtered_router)
+                    self._include_agentos_router(fastapi_app, filtered_router)
 
             elif self.on_route_conflict == "preserve_agentos":
                 # Log warnings but still add all routes (AgentOS routes will override)
@@ -1532,7 +1540,7 @@ class AgentOS:
                             if route.path == conflict["path"] and list(route.methods) == list(conflict["methods"]):  # type: ignore
                                 fastapi_app.routes.pop(fastapi_app.routes.index(route))
 
-                fastapi_app.include_router(router)
+                self._include_agentos_router(fastapi_app, router)
 
             elif self.on_route_conflict == "error":
                 conflicting_paths = [conflict["path"] for conflict in conflicts]
@@ -1540,7 +1548,7 @@ class AgentOS:
 
         else:
             # No conflicts, add router normally
-            fastapi_app.include_router(router)
+            self._include_agentos_router(fastapi_app, router)
 
     def _get_telemetry_data(self) -> Dict[str, Any]:
         """Get the telemetry data for the OS"""

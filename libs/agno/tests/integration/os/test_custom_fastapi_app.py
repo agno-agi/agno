@@ -858,3 +858,43 @@ def test_custom_health_endpoint():
     response = client.get("/health-check")
     assert response.status_code == 200
     assert response.json()["status"] == "ok"
+
+
+def test_resync_preserves_custom_base_app_routes(test_agent: Agent):
+    """Test that AgentOS.resync() preserves user-owned routes on a custom base_app."""
+    custom_app = FastAPI(title="Custom App")
+
+    @custom_app.get("/status")
+    async def status_check():
+        return {"status": "healthy"}
+
+    agent_os = AgentOS(agents=[test_agent], base_app=custom_app)
+    app = agent_os.get_app()
+    client = TestClient(app)
+
+    response = client.get("/status")
+    assert response.status_code == 200
+    assert response.json() == {"status": "healthy"}
+
+    @app.get("/late-status")
+    async def late_status_check():
+        return {"status": "late-healthy"}
+
+    agent_os.agents.append(Agent(name="second-agent", db=InMemoryDb()))
+    agent_os.resync(app)
+    route_count_after_first_resync = len(app.router.routes)
+    agent_os.resync(app)
+    assert len(app.router.routes) == route_count_after_first_resync
+
+    client = TestClient(app)
+    response = client.get("/status")
+    assert response.status_code == 200
+    assert response.json() == {"status": "healthy"}
+
+    response = client.get("/late-status")
+    assert response.status_code == 200
+    assert response.json() == {"status": "late-healthy"}
+
+    response = client.get("/health")
+    assert response.status_code == 200
+    assert response.json()["status"] == "ok"
