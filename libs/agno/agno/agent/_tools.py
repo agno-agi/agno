@@ -652,11 +652,11 @@ def _insert_tool_results_in_call_order(run_messages: RunMessages, function_call_
             message = run_messages.messages[index]
             if message.role != "assistant" or not message.tool_calls:
                 continue
-            candidate_ids = [
-                tool_call.get("id")
-                for tool_call in message.tool_calls
-                if isinstance(tool_call, dict) and tool_call.get("id") is not None
-            ]
+            candidate_ids: List[str] = []
+            for tool_call in message.tool_calls:
+                tool_call_id = tool_call.get("id")
+                if isinstance(tool_call_id, str):
+                    candidate_ids.append(tool_call_id)
             if result.tool_call_id in candidate_ids:
                 assistant_index = index
                 call_ids = candidate_ids
