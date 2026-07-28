@@ -1,8 +1,8 @@
-"""Configuration for the AgentOS run queue.
+"""Configuration for the AgentOS job queue.
 
-Background runs (``background=True``) execute through a run queue: submissions
+Background runs (``background=True``) execute through a job queue: submissions
 are accepted immediately (PENDING), execute under a concurrency cap, and wait
-in line when the cap is reached. ``RunQueueConfig`` is the single place to
+in line when the cap is reached. ``QueueConfig`` is the single place to
 configure this subsystem.
 
 The config grows with the queue's capabilities:
@@ -17,7 +17,7 @@ The config grows with the queue's capabilities:
   the DB-backed queue with crash recovery.
 
 This module is pure data: it imports no transports and no redis package.
-Wiring happens in ``agno.os.run_queue``.
+Wiring happens in ``agno.os.queue``.
 """
 
 from dataclasses import dataclass
@@ -26,7 +26,7 @@ from typing import Any, Optional, Union
 
 @dataclass
 class RedisCoordination:
-    """Redis connection settings for run-queue coordination.
+    """Redis connection settings for queue coordination.
 
     Provide either ``url`` (clients are constructed for you) or BOTH
     ``sync_client`` and ``async_client`` (e.g. for connection tuning or an
@@ -53,7 +53,7 @@ class RedisCoordination:
 
 
 @dataclass
-class RunQueueConfig:
+class QueueConfig:
     """Configuration for background run execution.
 
     Args:
@@ -109,4 +109,4 @@ class RunQueueConfig:
 
     def __post_init__(self) -> None:
         if self.db is not None and not self.durable:
-            raise ValueError("RunQueueConfig.db requires durable=True (a queue store implies a durable queue)")
+            raise ValueError("QueueConfig.db requires durable=True (a queue store implies a durable queue)")

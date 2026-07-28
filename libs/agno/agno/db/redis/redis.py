@@ -2226,9 +2226,9 @@ class RedisDb(BaseDb):
     ) -> List[Dict[str, Any]]:
         raise NotImplementedError("Learning methods not yet implemented for RedisDb")
 
-    # -- Run queue (durable background runs) --------------------------------
-    # The run-queue contract, matching the Postgres adapters method-for-method
-    # (see agno.run.queue_store.InMemoryRunQueueStore for the reference). Sync,
+    # -- Job queue (durable background runs) --------------------------------
+    # The queue contract, matching the Postgres adapters method-for-method
+    # (see agno.queue.store.InMemoryQueueStore for the reference). Sync,
     # like every other method on this adapter; the queue worker wraps sync
     # stores in a thread adapter. Claims and fenced writes use optimistic
     # WATCH/MULTI on the job key - the SKIP LOCKED equivalent.
@@ -2237,71 +2237,71 @@ class RedisDb(BaseDb):
     # configuration (use AOF appendfsync everysec/always for Postgres-grade
     # guarantees; default RDB snapshotting can lose recently accepted jobs).
 
-    def _rq_key(self, suffix: str) -> str:
-        return f"{self.db_prefix}:run_queue:{suffix}"
+    def _q_key(self, suffix: str) -> str:
+        return f"{self.db_prefix}:jobs:{suffix}"
 
-    def _rq_job_key(self, job_id: str) -> str:
-        return self._rq_key(f"job:{job_id}")
+    def _q_job_key(self, job_id: str) -> str:
+        return self._q_key(f"job:{job_id}")
 
-    def _rq_load_job(self, job_id: str) -> Optional[Dict[str, Any]]:
-        raw = self.redis_client.get(self._rq_job_key(job_id))
+    def _q_load_job(self, job_id: str) -> Optional[Dict[str, Any]]:
+        raw = self.redis_client.get(self._q_job_key(job_id))
         if raw is None:
             return None
         return json.loads(raw if isinstance(raw, str) else raw.decode())
 
-    def _rq_save_job_in_pipe(self, pipe: Any, job: Dict[str, Any]) -> None:
-        pipe.set(self._rq_job_key(job["id"]), json.dumps(job))
+    def _q_save_job_in_pipe(self, pipe: Any, job: Dict[str, Any]) -> None:
+        pipe.set(self._q_job_key(job["id"]), json.dumps(job))
 
-    def enqueue_run_job(self, job: Dict[str, Any], max_depth: int = 0) -> Dict[str, Any]:
+    def enqueue_job(self, job: Dict[str, Any], max_depth: int = 0) -> Dict[str, Any]:
         """Insert an accepted run job (idempotency-first, then depth gate)."""
         idem = job.get("idempotency_key")
         if idem is not None:
-            idem_key = self._rq_key(f"idem:{idem}")
+            idem_key = self._q_key(f"idem:{idem}")
             claimed_key = self.redis_client.set(idem_key, job["id"], nx=True, ex=86400)
             if not claimed_key:
                 existing_id = self.redis_client.get(idem_key)
                 existing_id = (
                     existing_id if isinstance(existing_id, str) else (existing_id.decode() if existing_id else None)
                 )
-                existing = self._rq_load_job(existing_id) if existing_id else None
+                existing = self._q_load_job(existing_id) if existing_id else None
                 return {"accepted": False, "reason": "duplicate", "job": existing}
 
         if max_depth and max_depth > 0:
-            queued = int(self.redis_client.zcard(self._rq_key("queued")))
+            queued = int(self.redis_client.zcard(self._q_key("queued")))
             if queued >= max_depth:
                 if idem is not None:
-                    self.redis_client.delete(self._rq_key(f"idem:{idem}"))
+                    self.redis_client.delete(self._q_key(f"idem:{idem}"))
                 return {"accepted": False, "reason": "queue_full", "job": None}
 
         pipe = self.redis_client.pipeline()
-        self._rq_save_job_in_pipe(pipe, job)
-        pipe.zadd(self._rq_key("queued"), {job["id"]: job["available_at"]})
-        pipe.zadd(self._rq_key("all"), {job["id"]: job["created_at"]})
+        self._q_save_job_in_pipe(pipe, job)
+        pipe.zadd(self._q_key("queued"), {job["id"]: job["available_at"]})
+        pipe.zadd(self._q_key("all"), {job["id"]: job["created_at"]})
         pipe.execute()
         return {"accepted": True, "reason": None, "job": dict(job)}
 
-    def claim_run_job(self, worker_id: str, lock_grace_seconds: int = 60) -> Optional[Dict[str, Any]]:
+    def claim_job(self, worker_id: str, lock_grace_seconds: int = 60) -> Optional[Dict[str, Any]]:
         """Atomically claim the oldest executable job (queued, or stale-running
         within the attempt budget). WATCH/MULTI CAS; a raced claim moves on."""
         now = int(time.time())
         stale = now - lock_grace_seconds
 
-        for raw_id in self.redis_client.zrangebyscore(self._rq_key("queued"), "-inf", now, start=0, num=8):
-            job = self._rq_try_claim(_rq_to_str(raw_id), worker_id, now, expect_status="queued")
+        for raw_id in self.redis_client.zrangebyscore(self._q_key("queued"), "-inf", now, start=0, num=8):
+            job = self._q_try_claim(_q_to_str(raw_id), worker_id, now, expect_status="queued")
             if job is not None:
                 return job
-        for raw_id in self.redis_client.zrangebyscore(self._rq_key("running"), "-inf", stale, start=0, num=8):
-            job = self._rq_try_claim(_rq_to_str(raw_id), worker_id, now, expect_status="running", stale_before=stale)
+        for raw_id in self.redis_client.zrangebyscore(self._q_key("running"), "-inf", stale, start=0, num=8):
+            job = self._q_try_claim(_q_to_str(raw_id), worker_id, now, expect_status="running", stale_before=stale)
             if job is not None:
                 return job
         return None
 
-    def _rq_try_claim(
+    def _q_try_claim(
         self, job_id: str, worker_id: str, now: int, expect_status: str, stale_before: Optional[int] = None
     ) -> Optional[Dict[str, Any]]:
         from redis.exceptions import WatchError
 
-        job_key = self._rq_job_key(job_id)
+        job_key = self._q_job_key(job_id)
         try:
             with self.redis_client.pipeline() as pipe:
                 pipe.watch(job_key)
@@ -2330,19 +2330,19 @@ class RedisDb(BaseDb):
                     status="running", locked_by=worker_id, locked_at=now, attempt=job["attempt"] + 1, updated_at=now
                 )
                 pipe.multi()
-                self._rq_save_job_in_pipe(pipe, job)
-                pipe.zrem(self._rq_key("queued"), job_id)
-                pipe.zadd(self._rq_key("running"), {job_id: now})
+                self._q_save_job_in_pipe(pipe, job)
+                pipe.zrem(self._q_key("queued"), job_id)
+                pipe.zadd(self._q_key("running"), {job_id: now})
                 pipe.execute()
                 return job
         except WatchError:
             return None
 
-    def _rq_fenced_update(self, job_id: str, worker_id: str, attempt: int, mutate: Any) -> Optional[Dict[str, Any]]:
+    def _q_fenced_update(self, job_id: str, worker_id: str, attempt: int, mutate: Any) -> Optional[Dict[str, Any]]:
         """CAS update allowed only for the claim holder of this attempt."""
         from redis.exceptions import WatchError
 
-        job_key = self._rq_job_key(job_id)
+        job_key = self._q_job_key(job_id)
         try:
             with self.redis_client.pipeline() as pipe:
                 pipe.watch(job_key)
@@ -2356,42 +2356,40 @@ class RedisDb(BaseDb):
                     return None
                 mutate(job)
                 pipe.multi()
-                self._rq_save_job_in_pipe(pipe, job)
-                pipe.zrem(self._rq_key("running"), job_id)
+                self._q_save_job_in_pipe(pipe, job)
+                pipe.zrem(self._q_key("running"), job_id)
                 if job["status"] == "queued":
-                    pipe.zadd(self._rq_key("queued"), {job_id: job["available_at"]})
+                    pipe.zadd(self._q_key("queued"), {job_id: job["available_at"]})
                 pipe.execute()
                 return job
         except WatchError:
             return None
 
-    def heartbeat_run_jobs(self, worker_id: str, job_ids: List[str]) -> int:
+    def heartbeat_jobs(self, worker_id: str, job_ids: List[str]) -> int:
         count = 0
         now = int(time.time())
         for job_id in job_ids:
-            job = self._rq_load_job(job_id)
+            job = self._q_load_job(job_id)
             if job is None:
                 continue
 
             def _beat(j: Dict[str, Any]) -> None:
                 j["locked_at"] = now
 
-            if self._rq_fenced_update(job_id, worker_id, job["attempt"], _beat) is not None:
-                self.redis_client.zadd(self._rq_key("running"), {job_id: now})
+            if self._q_fenced_update(job_id, worker_id, job["attempt"], _beat) is not None:
+                self.redis_client.zadd(self._q_key("running"), {job_id: now})
                 count += 1
         return count
 
-    def complete_run_job(
-        self, job_id: str, worker_id: str, attempt: int, status: str, error: Optional[str] = None
-    ) -> bool:
+    def complete_job(self, job_id: str, worker_id: str, attempt: int, status: str, error: Optional[str] = None) -> bool:
         now = int(time.time())
 
         def _complete(job: Dict[str, Any]) -> None:
             job.update(status=status, error=error, locked_by=None, locked_at=None, completed_at=now, updated_at=now)
 
-        return self._rq_fenced_update(job_id, worker_id, attempt, _complete) is not None
+        return self._q_fenced_update(job_id, worker_id, attempt, _complete) is not None
 
-    def retry_or_fail_run_job(
+    def retry_or_fail_job(
         self, job_id: str, worker_id: str, attempt: int, error: str, retry_delay_seconds: int = 30
     ) -> Optional[str]:
         now = int(time.time())
@@ -2414,13 +2412,13 @@ class RedisDb(BaseDb):
                 )
                 outcome["status"] = "failed"
 
-        updated = self._rq_fenced_update(job_id, worker_id, attempt, _retry)
+        updated = self._q_fenced_update(job_id, worker_id, attempt, _retry)
         return outcome.get("status") if updated is not None else None
 
-    def cancel_run_job(self, job_id: str) -> bool:
+    def cancel_job(self, job_id: str) -> bool:
         from redis.exceptions import WatchError
 
-        job_key = self._rq_job_key(job_id)
+        job_key = self._q_job_key(job_id)
         now = int(time.time())
         try:
             with self.redis_client.pipeline() as pipe:
@@ -2435,18 +2433,18 @@ class RedisDb(BaseDb):
                     return False
                 job.update(status="cancelled", completed_at=now, updated_at=now)
                 pipe.multi()
-                self._rq_save_job_in_pipe(pipe, job)
-                pipe.zrem(self._rq_key("queued"), job_id)
+                self._q_save_job_in_pipe(pipe, job)
+                pipe.zrem(self._q_key("queued"), job_id)
                 pipe.execute()
                 return True
         except WatchError:
             return False
 
-    def sweep_exhausted_run_jobs(self, lock_grace_seconds: int = 60, limit: int = 20) -> List[Dict[str, Any]]:
+    def sweep_exhausted_jobs(self, lock_grace_seconds: int = 60, limit: int = 20) -> List[Dict[str, Any]]:
         stale = int(time.time()) - lock_grace_seconds
         exhausted: List[Dict[str, Any]] = []
-        for raw_id in self.redis_client.zrangebyscore(self._rq_key("running"), "-inf", stale, start=0, num=limit * 2):
-            job = self._rq_load_job(_rq_to_str(raw_id))
+        for raw_id in self.redis_client.zrangebyscore(self._q_key("running"), "-inf", stale, start=0, num=limit * 2):
+            job = self._q_load_job(_q_to_str(raw_id))
             if (
                 job is not None
                 and job["status"] == "running"
@@ -2459,10 +2457,10 @@ class RedisDb(BaseDb):
                     break
         return exhausted
 
-    def fail_swept_run_job(self, job_id: str, lock_grace_seconds: int = 60, error: str = "worker lost") -> bool:
+    def fail_swept_job(self, job_id: str, lock_grace_seconds: int = 60, error: str = "worker lost") -> bool:
         from redis.exceptions import WatchError
 
-        job_key = self._rq_job_key(job_id)
+        job_key = self._q_job_key(job_id)
         now = int(time.time())
         stale = now - lock_grace_seconds
         try:
@@ -2481,35 +2479,35 @@ class RedisDb(BaseDb):
                     status="failed", error=error, locked_by=None, locked_at=None, completed_at=now, updated_at=now
                 )
                 pipe.multi()
-                self._rq_save_job_in_pipe(pipe, job)
-                pipe.zrem(self._rq_key("running"), job_id)
+                self._q_save_job_in_pipe(pipe, job)
+                pipe.zrem(self._q_key("running"), job_id)
                 pipe.execute()
                 return True
         except WatchError:
             return False
 
-    def get_run_job(self, job_id: str) -> Optional[Dict[str, Any]]:
-        return self._rq_load_job(job_id)
+    def get_job(self, job_id: str) -> Optional[Dict[str, Any]]:
+        return self._q_load_job(job_id)
 
-    def count_queued_run_jobs(self) -> int:
-        return int(self.redis_client.zcard(self._rq_key("queued")))
+    def count_queued_jobs(self) -> int:
+        return int(self.redis_client.zcard(self._q_key("queued")))
 
-    def list_run_jobs(self, status: Optional[str] = None, limit: int = 50) -> List[Dict[str, Any]]:
+    def list_jobs(self, status: Optional[str] = None, limit: int = 50) -> List[Dict[str, Any]]:
         jobs: List[Dict[str, Any]] = []
-        for raw_id in self.redis_client.zrevrange(self._rq_key("all"), 0, max(limit * 4, limit) - 1):
-            job = self._rq_load_job(_rq_to_str(raw_id))
+        for raw_id in self.redis_client.zrevrange(self._q_key("all"), 0, max(limit * 4, limit) - 1):
+            job = self._q_load_job(_q_to_str(raw_id))
             if job is not None and (status is None or job["status"] == status):
                 jobs.append(job)
                 if len(jobs) >= limit:
                     break
         return jobs
 
-    def requeue_run_job(self, job_id: str) -> bool:
+    def requeue_job(self, job_id: str) -> bool:
         """Operator requeue for a terminally failed/cancelled job: grants
         exactly one more execution by raising max_attempts to attempt + 1."""
         from redis.exceptions import WatchError
 
-        job_key = self._rq_job_key(job_id)
+        job_key = self._q_job_key(job_id)
         now = int(time.time())
         try:
             with self.redis_client.pipeline() as pipe:
@@ -2532,19 +2530,19 @@ class RedisDb(BaseDb):
                     updated_at=now,
                 )
                 pipe.multi()
-                self._rq_save_job_in_pipe(pipe, job)
-                pipe.zadd(self._rq_key("queued"), {job_id: now})
+                self._q_save_job_in_pipe(pipe, job)
+                pipe.zadd(self._q_key("queued"), {job_id: now})
                 pipe.execute()
                 return True
         except WatchError:
             return False
 
-    def run_queue_stats(self) -> Dict[str, Any]:
+    def queue_stats(self) -> Dict[str, Any]:
         now = int(time.time())
         counts: Dict[str, int] = {}
         oldest_queued: Optional[int] = None
-        for raw_id in self.redis_client.zrange(self._rq_key("all"), 0, -1):
-            job = self._rq_load_job(_rq_to_str(raw_id))
+        for raw_id in self.redis_client.zrange(self._q_key("all"), 0, -1):
+            job = self._q_load_job(_q_to_str(raw_id))
             if job is None:
                 continue
             counts[job["status"]] = counts.get(job["status"], 0) + 1
@@ -2553,12 +2551,12 @@ class RedisDb(BaseDb):
                 oldest_queued = age if oldest_queued is None else max(oldest_queued, age)
         return {"counts": counts, "oldest_queued_age_seconds": oldest_queued}
 
-    def cleanup_run_jobs(self, older_than_seconds: int = 86400) -> int:
+    def cleanup_jobs(self, older_than_seconds: int = 86400) -> int:
         cutoff = int(time.time()) - older_than_seconds
         removed = 0
-        for raw_id in self.redis_client.zrange(self._rq_key("all"), 0, -1):
-            job_id = _rq_to_str(raw_id)
-            job = self._rq_load_job(job_id)
+        for raw_id in self.redis_client.zrange(self._q_key("all"), 0, -1):
+            job_id = _q_to_str(raw_id)
+            job = self._q_load_job(job_id)
             if (
                 job is not None
                 and job["status"] in ("completed", "failed", "cancelled")
@@ -2566,14 +2564,14 @@ class RedisDb(BaseDb):
                 and job["completed_at"] <= cutoff
             ):
                 pipe = self.redis_client.pipeline()
-                pipe.delete(self._rq_job_key(job_id))
-                pipe.zrem(self._rq_key("all"), job_id)
-                pipe.zrem(self._rq_key("queued"), job_id)
-                pipe.zrem(self._rq_key("running"), job_id)
+                pipe.delete(self._q_job_key(job_id))
+                pipe.zrem(self._q_key("all"), job_id)
+                pipe.zrem(self._q_key("queued"), job_id)
+                pipe.zrem(self._q_key("running"), job_id)
                 pipe.execute()
                 removed += 1
         return removed
 
 
-def _rq_to_str(value: Any) -> str:
+def _q_to_str(value: Any) -> str:
     return value.decode() if isinstance(value, bytes) else str(value)

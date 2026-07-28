@@ -1,6 +1,6 @@
 """AgentOS with Redis-coordinated background runs (multi-container ready).
 
-RunQueueConfig is the single place to configure background run execution:
+QueueConfig is the single place to configure background run execution:
 - max_concurrency: how many background runs execute at once per replica
   (the rest wait in line as PENDING)
 - redis: one setting that enables BOTH cross-container transports, built from
@@ -15,7 +15,7 @@ tail from Redis regardless of which replica executes the run.
 
 Granular overrides remain available for advanced setups: pass
 AgentOS(event_stream=...) or call set_cancellation_manager() explicitly and
-the run_queue.redis wiring will not replace them.
+the queue.redis wiring will not replace them.
 
 Requirements:
 - Redis running (./cookbook/scripts/run_redis.sh)
@@ -27,7 +27,7 @@ from agno.agent import Agent
 from agno.db.redis import RedisDb
 from agno.models.openai import OpenAIResponses
 from agno.os import AgentOS
-from agno.run.queue import RunQueueConfig
+from agno.queue.config import QueueConfig
 
 REDIS_URL = "redis://localhost:6379"
 
@@ -45,7 +45,7 @@ agent = Agent(
 agent_os = AgentOS(
     description="AgentOS with cross-container background run coordination",
     agents=[agent],
-    run_queue=RunQueueConfig(
+    queue=QueueConfig(
         max_concurrency=16,
         redis=REDIS_URL,
     ),

@@ -1,4 +1,4 @@
-"""Unit tests for the durable run queue worker (against the in-memory store)."""
+"""Unit tests for the durable job queue worker (against the in-memory store)."""
 
 import asyncio
 from types import SimpleNamespace
@@ -6,11 +6,11 @@ from typing import Any, Optional
 
 import pytest
 
-from agno.db.schemas.run_queue import RunQueueJob
-from agno.os.run_queue import RunQueueWorker
+from agno.db.schemas.jobs import QueuedJob
+from agno.os.queue import QueueWorker
+from agno.queue.config import QueueConfig
+from agno.queue.store import InMemoryQueueStore
 from agno.run.base import RunStatus
-from agno.run.queue import RunQueueConfig
-from agno.run.queue_store import InMemoryRunQueueStore
 
 
 class FakeAgent:
@@ -37,14 +37,14 @@ class FakeAgent:
         return SimpleNamespace(status=self.status, content="done")
 
 
-def make_config(**overrides: Any) -> RunQueueConfig:
+def make_config(**overrides: Any) -> QueueConfig:
     defaults = dict(durable=True, poll_interval=0.02, lock_grace_seconds=60, timeout_seconds=None)
     defaults.update(overrides)
-    return RunQueueConfig(**defaults)
+    return QueueConfig(**defaults)
 
 
 def make_job(job_id: str = "r1", max_attempts: int = 1) -> dict:
-    return RunQueueJob(
+    return QueuedJob(
         id=job_id,
         component_type="agent",
         component_id="agent-1",
@@ -54,8 +54,8 @@ def make_job(job_id: str = "r1", max_attempts: int = 1) -> dict:
     ).to_dict()
 
 
-def make_worker(store: InMemoryRunQueueStore, agent: Optional[FakeAgent], config: RunQueueConfig) -> RunQueueWorker:
-    return RunQueueWorker(
+def make_worker(store: InMemoryQueueStore, agent: Optional[FakeAgent], config: QueueConfig) -> QueueWorker:
+    return QueueWorker(
         store=store,
         resolve_component=lambda ctype, cid: agent if (ctype, cid) == ("agent", "agent-1") else None,
         config=config,
@@ -63,10 +63,10 @@ def make_worker(store: InMemoryRunQueueStore, agent: Optional[FakeAgent], config
     )
 
 
-async def wait_for_status(store: InMemoryRunQueueStore, job_id: str, status: str, timeout: float = 3.0) -> dict:
+async def wait_for_status(store: InMemoryQueueStore, job_id: str, status: str, timeout: float = 3.0) -> dict:
     async def poll() -> dict:
         while True:
-            job = await store.get_run_job(job_id)
+            job = await store.get_job(job_id)
             if job is not None and job["status"] == status:
                 return job
             await asyncio.sleep(0.01)
@@ -77,9 +77,9 @@ async def wait_for_status(store: InMemoryRunQueueStore, job_id: str, status: str
 class TestExecution:
     @pytest.mark.asyncio
     async def test_claims_and_completes_job(self):
-        store, agent = InMemoryRunQueueStore(), FakeAgent()
+        store, agent = InMemoryQueueStore(), FakeAgent()
         worker = make_worker(store, agent, make_config())
-        await store.enqueue_run_job(make_job())
+        await store.enqueue_job(make_job())
         await worker.start()
         try:
             job = await wait_for_status(store, "r1", "completed")
@@ -92,10 +92,10 @@ class TestExecution:
 
     @pytest.mark.asyncio
     async def test_error_result_fails_job_with_default_budget(self):
-        store = InMemoryRunQueueStore()
+        store = InMemoryQueueStore()
         agent = FakeAgent(status=RunStatus.error)
         worker = make_worker(store, agent, make_config())
-        await store.enqueue_run_job(make_job())
+        await store.enqueue_job(make_job())
         await worker.start()
         try:
             job = await wait_for_status(store, "r1", "failed")
@@ -105,10 +105,10 @@ class TestExecution:
 
     @pytest.mark.asyncio
     async def test_exception_fails_job_with_error_message(self):
-        store = InMemoryRunQueueStore()
+        store = InMemoryQueueStore()
         agent = FakeAgent(raises=RuntimeError("model exploded"))
         worker = make_worker(store, agent, make_config())
-        await store.enqueue_run_job(make_job())
+        await store.enqueue_job(make_job())
         await worker.start()
         try:
             job = await wait_for_status(store, "r1", "failed")
@@ -118,10 +118,10 @@ class TestExecution:
 
     @pytest.mark.asyncio
     async def test_cancelled_result_marks_cancelled(self):
-        store = InMemoryRunQueueStore()
+        store = InMemoryQueueStore()
         agent = FakeAgent(status=RunStatus.cancelled)
         worker = make_worker(store, agent, make_config())
-        await store.enqueue_run_job(make_job())
+        await store.enqueue_job(make_job())
         await worker.start()
         try:
             await wait_for_status(store, "r1", "cancelled")
@@ -130,12 +130,12 @@ class TestExecution:
 
     @pytest.mark.asyncio
     async def test_timeout_fails_job(self):
-        store = InMemoryRunQueueStore()
+        store = InMemoryQueueStore()
         agent = FakeAgent(delay=5.0)
         worker = make_worker(store, agent, make_config(timeout_seconds=1))
         # Sub-second timeout is not configurable; patch after construction
         worker.config.timeout_seconds = 0.05  # type: ignore[assignment]
-        await store.enqueue_run_job(make_job())
+        await store.enqueue_job(make_job())
         await worker.start()
         try:
             job = await wait_for_status(store, "r1", "failed")
@@ -145,9 +145,9 @@ class TestExecution:
 
     @pytest.mark.asyncio
     async def test_unknown_component_fails_job(self):
-        store = InMemoryRunQueueStore()
+        store = InMemoryQueueStore()
         worker = make_worker(store, None, make_config())
-        await store.enqueue_run_job(make_job())
+        await store.enqueue_job(make_job())
         await worker.start()
         try:
             job = await wait_for_status(store, "r1", "failed")
@@ -161,10 +161,10 @@ class TestCrashRecovery:
     async def test_reclaims_stale_job_when_budget_remains(self):
         """A job claimed by a worker that died is re-executed by a live
         worker when max_attempts allows a second execution."""
-        store, agent = InMemoryRunQueueStore(), FakeAgent()
-        await store.enqueue_run_job(make_job(max_attempts=2))
+        store, agent = InMemoryQueueStore(), FakeAgent()
+        await store.enqueue_job(make_job(max_attempts=2))
         # Dead worker claimed it and vanished; lock goes stale
-        claimed = await store.claim_run_job("dead-worker")
+        claimed = await store.claim_job("dead-worker")
         assert claimed is not None
         store._jobs["r1"]["locked_at"] -= 1000
 
@@ -181,9 +181,9 @@ class TestCrashRecovery:
     async def test_sweeps_exhausted_stale_job_to_failed_without_executing(self):
         """With the default budget of 1, a crashed run is never re-executed:
         the sweep fails it visibly instead."""
-        store, agent = InMemoryRunQueueStore(), FakeAgent()
-        await store.enqueue_run_job(make_job(max_attempts=1))
-        await store.claim_run_job("dead-worker")
+        store, agent = InMemoryQueueStore(), FakeAgent()
+        await store.enqueue_job(make_job(max_attempts=1))
+        await store.claim_job("dead-worker")
         store._jobs["r1"]["locked_at"] -= 1000
 
         worker = make_worker(store, agent, make_config())
@@ -201,7 +201,7 @@ class TestCrashRecovery:
         from agno.run.agent import RunOutput
         from agno.session import AgentSession
 
-        store, agent = InMemoryRunQueueStore(), FakeAgent()
+        store, agent = InMemoryQueueStore(), FakeAgent()
         run_row = RunOutput(run_id="r1", session_id="s1", status=RunStatus.running)
         session = AgentSession(session_id="s1", runs=[run_row])
         saved: list = []
@@ -215,8 +215,8 @@ class TestCrashRecovery:
         monkeypatch.setattr("agno.agent._storage.aread_or_create_session", fake_read)
         monkeypatch.setattr("agno.agent._session.asave_session", fake_save)
 
-        await store.enqueue_run_job(make_job(max_attempts=1))
-        await store.claim_run_job("dead-worker")
+        await store.enqueue_job(make_job(max_attempts=1))
+        await store.claim_job("dead-worker")
         store._jobs["r1"]["locked_at"] -= 1000
 
         worker = make_worker(store, agent, make_config())
@@ -232,17 +232,17 @@ class TestCrashRecovery:
 class TestDrain:
     @pytest.mark.asyncio
     async def test_stop_requeues_interrupted_job_when_budget_remains(self):
-        store = InMemoryRunQueueStore()
+        store = InMemoryQueueStore()
         agent = FakeAgent(delay=30.0)
         worker = make_worker(store, agent, make_config())
         worker.stop_timeout = 0  # cancel stragglers immediately
-        await store.enqueue_run_job(make_job(max_attempts=2))
+        await store.enqueue_job(make_job(max_attempts=2))
         await worker.start()
         await wait_for_status(store, "r1", "running")
 
         await worker.stop()
 
-        job = await store.get_run_job("r1")
+        job = await store.get_job("r1")
         assert job["status"] == "queued"  # requeued for another worker
         assert "shutdown" in job["error"].lower()
 
@@ -256,24 +256,24 @@ class TestStreamingExecution:
         import agno.os.event_streams as es_mod
         from agno.os.event_streams import InMemoryEventStream, set_event_stream
         from agno.os.managers import EventsBuffer, SSESubscriberManager
+        from agno.queue.store import InMemoryQueueStore
         from agno.run.base import RunStatus
-        from agno.run.queue_store import InMemoryRunQueueStore
 
         original = es_mod._event_stream
         stream = InMemoryEventStream(events_buffer=EventsBuffer(), subscriber_manager=SSESubscriberManager())
         set_event_stream(stream)
         try:
-            store = InMemoryRunQueueStore()
-            from agno.db.schemas.run_queue import RunQueueJob
+            store = InMemoryQueueStore()
+            from agno.db.schemas.jobs import QueuedJob
 
-            job = RunQueueJob(
+            job = QueuedJob(
                 id="sr1",
                 component_type="agent",
                 component_id="a1",
                 session_id="s1",
                 payload={"input": "hi", "stream": True},
             ).to_dict()
-            await store.enqueue_run_job(job)
+            await store.enqueue_job(job)
 
             class FakeEvent:
                 def __init__(self, content):
@@ -301,18 +301,18 @@ class TestStreamingExecution:
                 def arun_wrapper(self, **kwargs):
                     return self.arun(**kwargs)
 
-            from agno.os.run_queue import RunQueueWorker
-            from agno.run.queue import RunQueueConfig
+            from agno.os.queue import QueueWorker
+            from agno.queue.config import QueueConfig
 
-            worker = RunQueueWorker(
+            worker = QueueWorker(
                 store=store,
                 resolve_component=lambda t, i: FakeAgent(),
-                config=RunQueueConfig(durable=True, poll_interval=0.05, lock_grace_seconds=60),
+                config=QueueConfig(durable=True, poll_interval=0.05, lock_grace_seconds=60),
             )
-            claimed = await store.claim_run_job(worker.worker_id)
+            claimed = await store.claim_job(worker.worker_id)
             await worker._execute_claimed(claimed)
 
-            assert (await store.get_run_job("sr1"))["status"] == "completed"
+            assert (await store.get_job("sr1"))["status"] == "completed"
             assert await stream.get_event_count("sr1") == 3
             assert await stream.get_run_status("sr1") == RunStatus.completed
 
@@ -350,14 +350,14 @@ class TestStreamingExecution:
                 async def arun(self, **kwargs):
                     yield FakeOutput()
 
-            from agno.os.run_queue import RunQueueWorker
-            from agno.run.queue import RunQueueConfig
-            from agno.run.queue_store import InMemoryRunQueueStore
+            from agno.os.queue import QueueWorker
+            from agno.queue.config import QueueConfig
+            from agno.queue.store import InMemoryQueueStore
 
-            worker = RunQueueWorker(
-                store=InMemoryRunQueueStore(),
+            worker = QueueWorker(
+                store=InMemoryQueueStore(),
                 resolve_component=lambda t, i: FakeAgent(),
-                config=RunQueueConfig(durable=True),
+                config=QueueConfig(durable=True),
             )
             job = {"id": "sr1", "attempt": 2, "session_id": "s1", "payload": {"input": "x", "stream": True}}
             await worker._execute_streaming(FakeAgent(), job)
@@ -376,10 +376,10 @@ class TestStreamViewTermination:
         import agno.os.event_streams as es_mod
         from agno.os.event_streams import InMemoryEventStream, set_event_stream
         from agno.os.managers import EventsBuffer, SSESubscriberManager
-        from agno.os.run_queue import RunQueueWorker
+        from agno.os.queue import QueueWorker
+        from agno.queue.config import QueueConfig
+        from agno.queue.store import InMemoryQueueStore
         from agno.run.base import RunStatus
-        from agno.run.queue import RunQueueConfig
-        from agno.run.queue_store import InMemoryRunQueueStore
 
         original = es_mod._event_stream
         stream = InMemoryEventStream(events_buffer=EventsBuffer(), subscriber_manager=SSESubscriberManager())
@@ -388,10 +388,10 @@ class TestStreamViewTermination:
             # A streaming run mid-flight when its worker died
             await stream.register_run("sr1", RunStatus.running)
 
-            worker = RunQueueWorker(
-                store=InMemoryRunQueueStore(),
+            worker = QueueWorker(
+                store=InMemoryQueueStore(),
                 resolve_component=lambda t, i: None,
-                config=RunQueueConfig(durable=True),
+                config=QueueConfig(durable=True),
             )
             job = {"id": "sr1", "session_id": "s1", "payload": {"stream": True}}
             await worker._terminate_stream_view(job)

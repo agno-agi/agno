@@ -5,7 +5,7 @@ live-tail (XREAD) them — the producer's process is no longer the only place a
 run can be observed from. This is what makes ``/resume`` work behind a load
 balancer: the reconnect can land on any replica.
 
-Design notes (see the run-queue design doc for rationale):
+Design notes (see the queue design doc for rationale):
 - Redis is TTL'd transport, not the source of truth. Terminal state and final
   output live in the database; replay after TTL falls back to the DB path.
 - Streams are keyed per attempt (``{prefix}{run_id}:{attempt}:events``) so a
