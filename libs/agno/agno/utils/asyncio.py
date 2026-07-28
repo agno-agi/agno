@@ -31,7 +31,7 @@ async def run_blocking(
             # Polling also covers runtimes that can miss the cross-thread
             # wakeup after a worker completes in a short-lived event loop.
             await asyncio.wait_for(asyncio.shield(future), timeout=0.01)
-        except TimeoutError:
+        except asyncio.TimeoutError:
             continue
         except asyncio.CancelledError as exc:
             if future.cancelled():
