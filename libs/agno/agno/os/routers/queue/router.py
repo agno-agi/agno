@@ -35,7 +35,7 @@ def get_queue_router(os: "AgentOS", settings: AgnoAPISettings = AgnoAPISettings(
     router = APIRouter(
         dependencies=[Depends(get_authentication_dependency(settings))],
         prefix="/queue",
-        tags=["Run Queue"],
+        tags=["Queue"],
         responses={
             400: {"description": "Bad Request", "model": BadRequestResponse},
             401: {"description": "Unauthorized", "model": UnauthenticatedResponse},
@@ -47,7 +47,7 @@ def get_queue_router(os: "AgentOS", settings: AgnoAPISettings = AgnoAPISettings(
     @router.get(
         "/jobs",
         operation_id="list_queue_jobs",
-        summary="List Run Queue Jobs",
+        summary="List Queue Jobs",
         description="List job queue jobs, optionally filtered by status (e.g. status=failed for the dead-letter list).",
     )
     async def list_jobs(request: Request, status: Optional[str] = None, limit: int = 50):
@@ -59,7 +59,7 @@ def get_queue_router(os: "AgentOS", settings: AgnoAPISettings = AgnoAPISettings(
     @router.get(
         "/jobs/{job_id}",
         operation_id="get_queue_job",
-        summary="Get Run Queue Job",
+        summary="Get Queue Job",
     )
     async def get_job(request: Request, job_id: str):
         store = _get_store(request)
@@ -71,7 +71,7 @@ def get_queue_router(os: "AgentOS", settings: AgnoAPISettings = AgnoAPISettings(
     @router.post(
         "/jobs/{job_id}/requeue",
         operation_id="requeue_queue_job",
-        summary="Requeue Failed Run Queue Job",
+        summary="Requeue Failed Queue Job",
         description=(
             "Requeue a terminally failed or cancelled job for one more execution "
             "(raises its attempt budget by one). The operator remedy for crashed runs "
@@ -87,7 +87,7 @@ def get_queue_router(os: "AgentOS", settings: AgnoAPISettings = AgnoAPISettings(
     @router.get(
         "/stats",
         operation_id="get_queue_stats",
-        summary="Run Queue Stats",
+        summary="Queue Stats",
         description="Job counts by status and the oldest queued job's age - the queue-health signals to alert on.",
     )
     async def stats(request: Request):
