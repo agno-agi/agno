@@ -411,3 +411,71 @@ def test_roles_carrying_policy_are_never_impersonable(has_members):
     assert eng.accessible_resource_ids("agents", "read", subject="admin") == set()
     if has_members:
         assert eng.check_scope("agent_os:admin", subject="carol") is True
+
+
+def test_role_lookup_is_index_covered_not_a_table_scan():
+    """Regression: the role-name guard must not table-scan authz_grouping.
+
+    The composite PK indexes (subject, role), which covers "what roles does this
+    subject hold?" but not the reverse lookup by role alone. Every subject decision
+    runs that reverse lookup (the collision guard asks whether anything is assigned
+    to the name), so without a dedicated index authorization degrades linearly with
+    the number of assignments -- measured at 3.65ms per decision on 50k subjects
+    versus 0.47ms with the index.
+    """
+    import sqlalchemy as sa
+
+    eng = _engine()
+    eng.set_role_scopes("member", [("agents:*:read", "allow")])
+    eng.assign("bob", "member")
+
+    with eng._engine.connect() as conn:
+        plan = conn.execute(
+            sa.text("EXPLAIN QUERY PLAN SELECT 1 FROM authz_grouping WHERE role = 'member' LIMIT 1")
+        ).fetchall()
+    detail = " ".join(str(row[3]) for row in plan)
+    assert "SCAN" not in detail.upper() or "INDEX" in detail.upper(), (
+        f"role lookup on authz_grouping is a table scan, not an index search: {detail}"
+    )
+    assert "ix_authz_grouping_role" in detail, f"expected the role index to be used, got: {detail}"
+
+
+def test_existing_store_gains_the_role_index_on_open(tmp_path):
+    """A store created before the index existed must acquire it when reopened.
+
+    ``metadata.create_all`` skips a table that already exists, and skips its indexes
+    with it, so an in-place upgrade would otherwise keep table-scanning forever.
+    """
+    import sqlalchemy as sa
+
+    url = f"sqlite:///{tmp_path / 'legacy.db'}"
+    legacy = sa.create_engine(url)
+    with legacy.begin() as conn:
+        conn.execute(
+            sa.text(
+                "CREATE TABLE authz_policy (role VARCHAR(255), resource VARCHAR(512), "
+                "action VARCHAR(255), effect VARCHAR(16) NOT NULL, PRIMARY KEY (role, resource, action))"
+            )
+        )
+        conn.execute(
+            sa.text(
+                "CREATE TABLE authz_grouping (subject VARCHAR(255), role VARCHAR(255), PRIMARY KEY (subject, role))"
+            )
+        )
+        conn.execute(sa.text("INSERT INTO authz_grouping VALUES ('bob','member')"))
+
+    def index_names():
+        with sa.create_engine(url).connect() as conn:
+            rows = conn.execute(
+                sa.text("SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='authz_grouping'")
+            )
+            return {r[0] for r in rows}
+
+    assert "ix_authz_grouping_role" not in index_names()
+
+    eng = NativePolicyEngine(db_url=url)
+    assert "ix_authz_grouping_role" in index_names()
+    assert eng.roles_of("bob") == ["member"]  # existing rows untouched
+
+    NativePolicyEngine(db_url=url)  # reopening stays a no-op
+    assert "ix_authz_grouping_role" in index_names()
