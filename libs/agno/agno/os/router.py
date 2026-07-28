@@ -11,8 +11,8 @@ from fastapi import (
 
 from agno import __version__ as agno_version
 from agno.agent.factory import AgentFactory
-from agno.agent.protocol import AgentProtocol
 from agno.exceptions import RemoteServerUnavailableError
+from agno.models.utils import normalize_provider_key
 from agno.os.auth import (
     get_authentication_dependency,
     get_effective_auth_mode,
@@ -241,13 +241,12 @@ def get_base_router(
             for agent in os.agents:
                 if isinstance(agent, AgentFactory):
                     continue
-                if isinstance(agent, AgentProtocol):
-                    continue
-                model = cast(Model, agent.model)
+                model = cast(Model, getattr(agent, "model", None))
                 if model and model.id is not None and model.provider is not None:
-                    key = (model.id, model.provider)
+                    provider = normalize_provider_key(model.provider, getattr(model, "name", None))
+                    key = (model.id, provider)
                     if key not in unique_models:
-                        unique_models[key] = Model(id=model.id, provider=model.provider)
+                        unique_models[key] = Model(id=model.id, provider=provider)
 
         # Collect models from local teams
         if os.teams:
@@ -256,9 +255,10 @@ def get_base_router(
                     continue
                 model = cast(Model, team.model)
                 if model and model.id is not None and model.provider is not None:
-                    key = (model.id, model.provider)
+                    provider = normalize_provider_key(model.provider, getattr(model, "name", None))
+                    key = (model.id, provider)
                     if key not in unique_models:
-                        unique_models[key] = Model(id=model.id, provider=model.provider)
+                        unique_models[key] = Model(id=model.id, provider=provider)
 
         return list(unique_models.values())
 
