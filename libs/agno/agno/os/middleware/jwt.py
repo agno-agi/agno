@@ -1088,7 +1088,20 @@ class AuthMiddleware(BaseHTTPMiddleware):
         return origin in cors_allowed_origins
 
     async def dispatch(self, request: Request, call_next) -> Response:
-        """Process the request: extract JWT, validate, and check RBAC scopes."""
+        """Process the request: extract JWT, validate, and check RBAC scopes.
+
+        The whole request runs inside an authorization request scope, so the several
+        gates that ask the policy store the same question -- the route gate here, the
+        per-resource gate in the endpoint's dependency, and a list endpoint's accessible
+        and denied id lookups -- resolve it once instead of once each. The scope dies
+        with the request, so nothing is cached across requests or replicas.
+        """
+        from agno.os.authz._request_scope import request_scope
+
+        with request_scope():
+            return await self._dispatch(request, call_next)
+
+    async def _dispatch(self, request: Request, call_next) -> Response:
         import jwt
 
         # Ensure the JWT auth config is accessible on app.state for WebSocket

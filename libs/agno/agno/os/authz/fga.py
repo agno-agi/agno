@@ -35,6 +35,7 @@ route gating), since FGA has no notion of non-resource routes like ``/config``::
 
 from typing import List, Optional, Set
 
+from agno.os.authz._request_scope import memoize
 from agno.os.authz.provider import AuthorizationContext, AuthorizationProvider
 
 try:  # Protocol is the right type for a duck-typed port; fall back for old pythons.
@@ -121,7 +122,15 @@ class FGAAuthorizationProvider(AuthorizationProvider):
         # narrow the response — mirrors how the middleware filters collections.
         if not ctx.resource_id:
             return True
-        return bool(self._client.check(user, self._relation(ctx.action), f"{ctx.resource_type}:{ctx.resource_id}"))
+        relation = self._relation(ctx.action)
+        obj = f"{ctx.resource_type}:{ctx.resource_id}"
+        # Memoized for this request: the route gate and the per-resource gate ask the
+        # identical question, and here each ask is a network round trip to the
+        # relationship engine. The scope dies with the request, so this never trades
+        # away freshness -- the next request re-reads.
+        return memoize(
+            ("fga.check", id(self._client), user, relation, obj), lambda: bool(self._client.check(user, relation, obj))
+        )
 
     def accessible_resource_ids(self, ctx: AuthorizationContext) -> Set[str]:
         if not ctx.resource_type:
@@ -135,7 +144,14 @@ class FGAAuthorizationProvider(AuthorizationProvider):
         # reads as "no access at all" and answers 403, never a filtered list. Fall back
         # to the read relation, which is what visibility means for a collection.
         action = ctx.action or "read"
-        objects = self._client.list_objects(user, self._relation(action), ctx.resource_type)
+        relation = self._relation(action)
+        resource_type = ctx.resource_type
+        # Memoized per request like check(): a listing resolves the accessible set more
+        # than once, and each resolution is a round trip to the relationship engine.
+        objects = memoize(
+            ("fga.list_objects", id(self._client), user, relation, resource_type),
+            lambda: self._client.list_objects(user, relation, resource_type),
+        )
         prefix = f"{ctx.resource_type}:"
         # FGA returns concrete objects (never a wildcard), so we return concrete
         # ids — list endpoints get exactly the set the user is related to.

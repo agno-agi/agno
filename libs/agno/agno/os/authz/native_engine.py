@@ -30,6 +30,8 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 from agno.os.authz._db import NO_DB_MESSAGE
 from agno.os.authz._db import engine_from_db as _engine_from_db
 from agno.os.authz._db import engine_from_url as _engine_from_url
+from agno.os.authz._request_scope import invalidate as _invalidate_request_cache
+from agno.os.authz._request_scope import memoize
 from agno.os.authz._scope_policy import resource_action_to_scope, resource_matches, scope_to_resource_action
 from agno.os.authz.engine import PolicyEngine, ScopeEntry
 
@@ -196,45 +198,54 @@ class NativePolicyEngine(PolicyEngine):
         (emails or opaque ids for users) and the case never arises.
         """
         self._require_engine()
-        # The whole resolution -- the role-name guard plus the transitive walk -- runs on
-        # ONE connection. It used to take a checkout per hop, and this is the hot path:
-        # every authorized request resolves a subject before it can be answered.
-        with self._engine.connect() as conn:
-            if self._is_role_name_on(conn, subject):
-                self._log.warning(
-                    "authz: subject %r collides with a role name and was refused. Subject ids and role "
-                    "slugs share one namespace, so this identity is ambiguous and is denied rather than "
-                    "resolved. Rename the role or use opaque subject ids (e.g. emails).",
-                    subject,
-                )
-                return set()
 
-            principals: Set[str] = set()
-            stack = list(self._direct_roles_on(conn, subject))
-            while stack:
-                role = stack.pop()
-                if role in principals:
-                    continue
-                principals.add(role)
-                stack.extend(self._direct_roles_on(conn, role))
-            return principals
+        def resolve() -> Set[str]:
+            # The whole resolution -- the role-name guard plus the transitive walk -- runs
+            # on ONE connection. It used to take a checkout per hop, and this is the hot
+            # path: every authorized request resolves a subject before it can be answered.
+            with self._engine.connect() as conn:
+                if self._is_role_name_on(conn, subject):
+                    self._log.warning(
+                        "authz: subject %r collides with a role name and was refused. Subject ids and role "
+                        "slugs share one namespace, so this identity is ambiguous and is denied rather than "
+                        "resolved. Rename the role or use opaque subject ids (e.g. emails).",
+                        subject,
+                    )
+                    return set()
+
+                principals: Set[str] = set()
+                stack = list(self._direct_roles_on(conn, subject))
+                while stack:
+                    role = stack.pop()
+                    if role in principals:
+                        continue
+                    principals.add(role)
+                    stack.extend(self._direct_roles_on(conn, role))
+                return principals
+
+        return memoize(("subject", id(self), subject), resolve)
 
     def _policies_for(self, principals: Set[str]) -> List[_PolicyRow]:
         """All (role, resource, action, effect) rows whose role is in ``principals``."""
         if not principals:
             return []
         self._require_engine()
-        import sqlalchemy as sa
 
-        t = self._policy_tbl
-        with self._engine.connect() as conn:
-            rows = conn.execute(sa.select(t).where(t.c.role.in_(principals))).mappings()
-            return [(row["role"], row["resource"], row["action"], row["effect"]) for row in rows]
+        def read() -> List[_PolicyRow]:
+            import sqlalchemy as sa
+
+            t = self._policy_tbl
+            with self._engine.connect() as conn:
+                rows = conn.execute(sa.select(t).where(t.c.role.in_(principals))).mappings()
+                return [(row["role"], row["resource"], row["action"], row["effect"]) for row in rows]
+
+        return memoize(("policies", id(self), frozenset(principals)), read)
 
     # --- persistence (db-backed mutations) -------------------------------
     def _persist_policies_set(self, role: str, rows: List[Tuple[str, str, str]]) -> None:
         """Replace a role's persisted policy rows with ``rows`` ((resource, action, effect))."""
         self._require_engine()
+        _invalidate_request_cache()  # a write must be visible to the rest of this request
         import sqlalchemy as sa
 
         with self._engine.begin() as conn:
@@ -247,6 +258,7 @@ class NativePolicyEngine(PolicyEngine):
 
     def _persist_policy(self, role: str, resource: str, action: str, effect: str) -> None:
         self._require_engine()
+        _invalidate_request_cache()  # a write must be visible to the rest of this request
         import sqlalchemy as sa
 
         with self._engine.begin() as conn:
@@ -273,6 +285,7 @@ class NativePolicyEngine(PolicyEngine):
 
     def _persist_grouping(self, subject: str, role: str, add: bool) -> None:
         self._require_engine()
+        _invalidate_request_cache()  # a write must be visible to the rest of this request
         import sqlalchemy as sa
 
         with self._engine.begin() as conn:
@@ -343,6 +356,7 @@ class NativePolicyEngine(PolicyEngine):
         subject holding both. Doing it as read-then-unassign-then-assign gives both.
         """
         self._require_engine()
+        _invalidate_request_cache()  # a write must be visible to the rest of this request
         import sqlalchemy as sa
 
         with self._engine.begin() as conn:
