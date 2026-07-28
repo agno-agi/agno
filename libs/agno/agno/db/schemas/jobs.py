@@ -1,4 +1,4 @@
-"""Schema for the durable run queue.
+"""Schema for the durable job queue.
 
 One row per accepted background run. The row IS the durable acceptance: once
 it commits, the run will be executed (or terminally failed, visibly) by
@@ -18,17 +18,21 @@ from agno.utils.dttm import now_epoch_s, to_epoch_s
 # Lifecycle: queued -> running -> completed | failed | cancelled
 # running with a stale lock is claimable again while attempt < max_attempts;
 # otherwise the sweep moves it to failed without executing.
-RUN_QUEUE_STATUSES = ("queued", "running", "completed", "failed", "cancelled")
+JOB_STATUSES = ("queued", "running", "completed", "failed", "cancelled")
 
 
 @dataclass
-class RunQueueJob:
+class QueuedJob:
     """One accepted background run awaiting or undergoing execution."""
 
     id: str  # == run_id, so poll/resume endpoints key identically
     component_type: str  # "agent" | "team" | "workflow"
     component_id: str
     session_id: str
+    # What kind of work this ticket carries. Runs are the only type today; the
+    # column exists so other AgentOS job types (e.g. knowledge ingestion) can
+    # ride the same queue without a schema migration.
+    job_type: str = "run"
     user_id: Optional[str] = None
     payload: Dict[str, Any] = field(default_factory=dict)  # serialized run params
     status: str = "queued"
@@ -53,8 +57,8 @@ class RunQueueJob:
             self.locked_at = int(self.locked_at)
         if self.completed_at is not None:
             self.completed_at = int(self.completed_at)
-        if self.status not in RUN_QUEUE_STATUSES:
-            raise ValueError(f"Invalid run queue status {self.status!r}; expected one of {RUN_QUEUE_STATUSES}")
+        if self.status not in JOB_STATUSES:
+            raise ValueError(f"Invalid job queue status {self.status!r}; expected one of {JOB_STATUSES}")
 
     def to_dict(self) -> Dict[str, Any]:
         """Serialize to dict. Preserves None values (important for DB updates)."""
@@ -63,6 +67,7 @@ class RunQueueJob:
             "component_type": self.component_type,
             "component_id": self.component_id,
             "session_id": self.session_id,
+            "job_type": self.job_type,
             "user_id": self.user_id,
             "payload": self.payload,
             "status": self.status,
@@ -79,12 +84,13 @@ class RunQueueJob:
         }
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> "RunQueueJob":
+    def from_dict(cls, data: Dict[str, Any]) -> "QueuedJob":
         valid_keys = {
             "id",
             "component_type",
             "component_id",
             "session_id",
+            "job_type",
             "user_id",
             "payload",
             "status",

@@ -1,6 +1,6 @@
-"""AgentOS run queue wiring.
+"""AgentOS job queue wiring.
 
-Interprets ``RunQueueConfig`` (pure data, from ``agno.run.queue``) and wires
+Interprets ``QueueConfig`` (pure data, from ``agno.queue.config``) and wires
 the corresponding runtime pieces. The planned DB-backed queue worker (durable
 acceptance, claim/lease, crash recovery) will live here as well.
 """
@@ -9,12 +9,12 @@ import asyncio
 import contextlib
 from typing import Any, Dict, Optional, Union
 
-from agno.run.queue import RedisCoordination, RunQueueConfig
+from agno.queue.config import QueueConfig, RedisCoordination
 from agno.utils.log import log_debug, log_error, log_info, log_warning
 
 
-def apply_run_queue_config(config: RunQueueConfig) -> None:
-    """Apply a RunQueueConfig to the process.
+def apply_queue_config(config: QueueConfig) -> None:
+    """Apply a QueueConfig to the process.
 
     Sets the background concurrency cap, and - when ``config.redis`` is given -
     wires the cross-container transports (cancellation manager + event stream)
@@ -40,7 +40,7 @@ def _apply_coordination(redis: Union[str, RedisCoordination]) -> None:
         from redis import Redis as SyncRedis
         from redis.asyncio import Redis as AsyncRedis
     except ImportError as e:
-        raise ImportError("`redis` not installed. RunQueueConfig.redis requires it: `pip install redis`") from e
+        raise ImportError("`redis` not installed. QueueConfig.redis requires it: `pip install redis`") from e
 
     url = coordination.url
     if coordination.sync_client is not None and coordination.async_client is not None:
@@ -69,9 +69,9 @@ def _apply_coordination(redis: Union[str, RedisCoordination]) -> None:
             )
         )
         cancellation_wired = True
-        log_debug("Run queue coordination: Redis cancellation manager configured")
+        log_debug("Job queue coordination: Redis cancellation manager configured")
     else:
-        log_debug("Run queue coordination: keeping explicitly configured cancellation manager")
+        log_debug("Job queue coordination: keeping explicitly configured cancellation manager")
 
     # Events out: Redis event stream. Never clobber a custom stream; the
     # explicit AgentOS(event_stream=...) parameter is applied after this and
@@ -83,11 +83,11 @@ def _apply_coordination(redis: Union[str, RedisCoordination]) -> None:
     if isinstance(get_event_stream(), InMemoryEventStream):
         set_event_stream(RedisEventStream(async_client, key_prefix=stream_prefix))
         event_stream_wired = True
-        log_debug("Run queue coordination: Redis event stream configured")
+        log_debug("Job queue coordination: Redis event stream configured")
     else:
-        log_debug("Run queue coordination: keeping explicitly configured event stream")
+        log_debug("Job queue coordination: keeping explicitly configured event stream")
 
-    # The premise of run_queue.redis is that BOTH transports ride the same
+    # The premise of queue.redis is that BOTH transports ride the same
     # Redis. Wiring only one (the other was custom-configured) can split them
     # across different instances - cancellation-in on one Redis, events-out on
     # another. Legitimate for advanced setups, but loud so it is never an
@@ -95,7 +95,7 @@ def _apply_coordination(redis: Union[str, RedisCoordination]) -> None:
     if cancellation_wired != event_stream_wired:
         skipped = "cancellation manager" if not cancellation_wired else "event stream"
         log_warning(
-            f"run_queue.redis wired only one transport: the {skipped} keeps its explicitly "
+            f"queue.redis wired only one transport: the {skipped} keeps its explicitly "
             "configured backend. If that backend targets a different Redis, cancellation and "
             "event streaming will operate on different instances - make sure this is intended."
         )
@@ -129,20 +129,20 @@ class _SyncStoreAdapter:
         return _call
 
 
-def resolve_run_queue_store(config: RunQueueConfig, default_db: Any) -> Any:
-    """Resolve the queue store for a durable RunQueueConfig.
+def resolve_queue_store(config: QueueConfig, default_db: Any) -> Any:
+    """Resolve the queue store for a durable QueueConfig.
 
     Preference order: config.db override, then the AgentOS db (zero extra
     infrastructure). The store must implement the run-queue contract
-    (claim_run_job etc. — the Postgres adapters do; see
-    agno.run.queue_store.InMemoryRunQueueStore for the contract reference).
+    (claim_job etc. — the Postgres adapters do; see
+    agno.queue.store.InMemoryQueueStore for the contract reference).
     Sync stores (e.g. the sync PostgresDb) are wrapped so their contract
     methods can be awaited; calls run in a thread.
     """
     import inspect
 
     store = config.db if config.db is not None else default_db
-    claim = getattr(store, "claim_run_job", None) if store is not None else None
+    claim = getattr(store, "claim_job", None) if store is not None else None
     if callable(claim):
         # Loud-degrade rule: the last place a weaker guarantee could pass
         # quietly. Redis ticket durability is persistence-config-dependent.
@@ -157,15 +157,15 @@ def resolve_run_queue_store(config: RunQueueConfig, default_db: Any) -> Any:
             return store
         return _SyncStoreAdapter(store)
     raise ValueError(
-        "RunQueueConfig(durable=True) requires a queue store implementing the run queue "
-        f"contract (claim_run_job etc.); got {type(store).__name__ if store is not None else None}. "
-        "Use a Postgres or Redis db, or pass a conforming store via run_queue.db. "
+        "QueueConfig(durable=True) requires a queue store implementing the job queue "
+        f"contract (claim_job etc.); got {type(store).__name__ if store is not None else None}. "
+        "Use a Postgres or Redis db, or pass a conforming store via queue.db. "
         "Silently degrading a durability promise is not an option; for a non-durable queue "
-        "set durable=False (or use InMemoryRunQueueStore explicitly in tests)."
+        "set durable=False (or use InMemoryQueueStore explicitly in tests)."
     )
 
 
-class RunQueueWorker:
+class QueueWorker:
     """Claims and executes durable run-queue jobs.
 
     One worker per AgentOS replica. SKIP LOCKED claiming arbitrates between
@@ -183,7 +183,7 @@ class RunQueueWorker:
         self,
         store: Any,
         resolve_component: Any,
-        config: RunQueueConfig,
+        config: QueueConfig,
         worker_id: Optional[str] = None,
         stop_timeout: int = _DEFAULT_STOP_TIMEOUT,
     ) -> None:
@@ -196,7 +196,7 @@ class RunQueueWorker:
         self.stop_timeout = stop_timeout
         if stop_timeout >= config.lock_grace_seconds:
             log_warning(
-                f"RunQueueWorker stop_timeout ({stop_timeout}s) >= lock_grace_seconds "
+                f"QueueWorker stop_timeout ({stop_timeout}s) >= lock_grace_seconds "
                 f"({config.lock_grace_seconds}s): a draining run can be reclaimed by another "
                 "replica mid-drain. Keep stop_timeout below lock_grace_seconds."
             )
@@ -211,7 +211,7 @@ class RunQueueWorker:
         self._running = True
         self._task = asyncio.create_task(self._poll_loop())
         self._heartbeat_task = asyncio.create_task(self._heartbeat_loop())
-        log_info(f"Run queue worker started (worker={self.worker_id}, poll={self.config.poll_interval}s)")
+        log_info(f"Job queue worker started (worker={self.worker_id}, poll={self.config.poll_interval}s)")
 
     async def stop(self) -> None:
         self._running = False
@@ -236,7 +236,7 @@ class RunQueueWorker:
         if self._in_flight:
             await asyncio.gather(*self._in_flight.values(), return_exceptions=True)
         self._in_flight.clear()
-        log_info("Run queue worker stopped")
+        log_info("Job queue worker stopped")
 
     async def _poll_loop(self) -> None:
         import time as _time
@@ -256,7 +256,7 @@ class RunQueueWorker:
             except asyncio.CancelledError:
                 break
             except Exception as e:
-                log_error(f"Run queue poll error: {e}")
+                log_error(f"Job queue poll error: {e}")
                 await asyncio.sleep(self.config.poll_interval)
 
     async def _heartbeat_loop(self) -> None:
@@ -266,11 +266,11 @@ class RunQueueWorker:
                 await asyncio.sleep(interval)
                 job_ids = list(self._in_flight.keys())
                 if job_ids:
-                    await self.store.heartbeat_run_jobs(self.worker_id, job_ids)
+                    await self.store.heartbeat_jobs(self.worker_id, job_ids)
             except asyncio.CancelledError:
                 break
             except Exception as e:
-                log_error(f"Run queue heartbeat error: {e}")
+                log_error(f"Job queue heartbeat error: {e}")
 
     async def _claim_burst(self) -> None:
         """Claim until the concurrency cap is reached or the queue is drained."""
@@ -286,7 +286,7 @@ class RunQueueWorker:
                 effective_max = get_background_max_concurrency()
             if effective_max > 0 and len(self._in_flight) >= effective_max:
                 break
-            job = await self.store.claim_run_job(self.worker_id, self.config.lock_grace_seconds)
+            job = await self.store.claim_job(self.worker_id, self.config.lock_grace_seconds)
             if job is None:
                 break
             task = asyncio.create_task(self._execute_claimed(job))
@@ -306,13 +306,13 @@ class RunQueueWorker:
         """Fail exhausted stale jobs visibly. Run-row error is persisted FIRST,
         then the queue row — an interrupted sweep retries idempotently next
         tick (cross-store atomicity is unavailable; ordering + idempotence)."""
-        swept = await self.store.sweep_exhausted_run_jobs(self.config.lock_grace_seconds)
+        swept = await self.store.sweep_exhausted_jobs(self.config.lock_grace_seconds)
         for job in swept:
             error = "Worker lost and attempt budget exhausted; run was not re-executed"
             with contextlib.suppress(Exception):
                 await self._persist_run_error(job, error)
-            await self.store.fail_swept_run_job(job["id"], self.config.lock_grace_seconds, error)
-            log_warning(f"Run queue: swept job {job['id']} to failed ({error})")
+            await self.store.fail_swept_job(job["id"], self.config.lock_grace_seconds, error)
+            log_warning(f"Job queue: swept job {job['id']} to failed ({error})")
 
     async def _persist_run_error(self, job: Dict[str, Any], error: str) -> None:
         """Persist a terminal ERROR on the run row so pollers see it, never a
@@ -364,10 +364,18 @@ class RunQueueWorker:
         from agno.run.base import RunStatus
 
         job_id, attempt = job["id"], job["attempt"]
+        job_type = job.get("job_type", "run")
+        if job_type != "run":
+            # Forward-compat: a newer producer enqueued a job type this worker
+            # has no executor for. Fail it visibly rather than guessing.
+            await self.store.complete_job(
+                job_id, self.worker_id, attempt, "failed", f"No executor registered for job type {job_type!r}"
+            )
+            return
         component = self.resolve_component(job["component_type"], job["component_id"])
         if component is None:
             error = f"Component not found: {job['component_type']}/{job['component_id']}"
-            await self.store.complete_run_job(job_id, self.worker_id, attempt, "failed", error)
+            await self.store.complete_job(job_id, self.worker_id, attempt, "failed", error)
             return
 
         payload = job.get("payload") or {}
@@ -387,21 +395,21 @@ class RunQueueWorker:
 
             status = getattr(result, "status", None)
             if status == RunStatus.cancelled:
-                await self.store.complete_run_job(job_id, self.worker_id, attempt, "cancelled")
+                await self.store.complete_job(job_id, self.worker_id, attempt, "cancelled")
             elif status == RunStatus.error:
                 error_content = str(getattr(result, "content", "") or "run errored")
-                await self.store.retry_or_fail_run_job(
+                await self.store.retry_or_fail_job(
                     job_id, self.worker_id, attempt, error_content, self.config.retry_delay_seconds
                 )
             else:
-                await self.store.complete_run_job(job_id, self.worker_id, attempt, "completed")
+                await self.store.complete_job(job_id, self.worker_id, attempt, "completed")
         except asyncio.CancelledError:
             # Shutdown drain: the run was interrupted, not failed by its own
             # doing — requeue if budget remains, else fail visibly. If it lands
             # failed, best-effort persist the run-row error too (shielded: we
             # are being cancelled) so queue and session state do not diverge.
             outcome = await asyncio.shield(
-                self.store.retry_or_fail_run_job(
+                self.store.retry_or_fail_job(
                     job_id, self.worker_id, attempt, "interrupted by worker shutdown", self.config.retry_delay_seconds
                 )
             )
@@ -413,15 +421,11 @@ class RunQueueWorker:
             error = f"Run exceeded timeout_seconds={self.config.timeout_seconds}"
             with contextlib.suppress(Exception):
                 await self._persist_run_error(job, error)
-            await self.store.retry_or_fail_run_job(
-                job_id, self.worker_id, attempt, error, self.config.retry_delay_seconds
-            )
+            await self.store.retry_or_fail_job(job_id, self.worker_id, attempt, error, self.config.retry_delay_seconds)
         except Exception as e:
             with contextlib.suppress(Exception):
                 await self._persist_run_error(job, str(e))
-            await self.store.retry_or_fail_run_job(
-                job_id, self.worker_id, attempt, str(e), self.config.retry_delay_seconds
-            )
+            await self.store.retry_or_fail_job(job_id, self.worker_id, attempt, str(e), self.config.retry_delay_seconds)
 
 
 async def aprepare_queued_run(
@@ -510,10 +514,10 @@ async def aprepare_queued_agent_run(
 
 
 @contextlib.asynccontextmanager
-async def run_queue_lifespan(app: Any, agent_os: Any):
-    """Start and stop the durable run queue worker (one per replica)."""
-    config: RunQueueConfig = agent_os.run_queue
-    store = resolve_run_queue_store(config, agent_os.db)
+async def queue_lifespan(app: Any, agent_os: Any):
+    """Start and stop the durable job queue worker (one per replica)."""
+    config: QueueConfig = agent_os.queue
+    store = resolve_queue_store(config, agent_os.db)
 
     def resolve_component(component_type: str, component_id: str) -> Any:
         registry = {
@@ -535,8 +539,8 @@ async def run_queue_lifespan(app: Any, agent_os: Any):
                 return candidate
         return None
 
-    worker = RunQueueWorker(store=store, resolve_component=resolve_component, config=config)
-    app.state.run_queue_worker = worker
+    worker = QueueWorker(store=store, resolve_component=resolve_component, config=config)
+    app.state.queue_worker = worker
     await worker.start()
 
     yield
