@@ -26,12 +26,14 @@ class RecordingLearningDb:
         entity_id = kwargs.get("entity_id")
         entity_type = kwargs.get("entity_type")
         namespace = kwargs.get("namespace")
+        user_id = kwargs.get("user_id")
         for row in self.rows.values():
             if (
                 row.get("learning_type") == learning_type
                 and row.get("entity_id") == entity_id
                 and row.get("entity_type") == entity_type
                 and row.get("namespace") == namespace
+                and (user_id is None or row.get("user_id") == user_id)
             ):
                 return row
         return None
@@ -48,6 +50,7 @@ class RecordingLearningDb:
         entity_id = kwargs.get("entity_id")
         entity_type = kwargs.get("entity_type")
         namespace = kwargs.get("namespace")
+        user_id = kwargs.get("user_id")
         limit = kwargs.get("limit")
         rows = [
             row
@@ -56,6 +59,7 @@ class RecordingLearningDb:
             and (entity_id is None or row.get("entity_id") == entity_id)
             and (entity_type is None or row.get("entity_type") == entity_type)
             and (namespace is None or row.get("namespace") == namespace)
+            and (user_id is None or row.get("user_id") == user_id)
         ]
         rows.sort(key=lambda r: r.get("updated_at", 0), reverse=True)
         if limit is not None:
@@ -73,7 +77,6 @@ class RecordingLearningDb:
         kwargs.pop("session_id", None)
         kwargs.pop("agent_id", None)
         kwargs.pop("team_id", None)
-        kwargs.pop("user_id", None)
         candidates = self.get_learnings(**kwargs)
         variants = {query.lower(), query.lower().replace(" ", "_"), query.lower().replace("_", " ")}
         rows = [row for row in candidates if any(v in json.dumps(row.get("content", {})).lower() for v in variants)]
@@ -167,6 +170,72 @@ class TestAgenticOnly:
         remember = next(t for t in tools if t.__name__ == "remember_about")
         remember(entity="radar", entity_type="project")
         assert all(row.get("namespace") == "team_west" for row in db.rows.values())
+
+
+class TestUserNamespaceIsolation:
+    def test_same_entity_for_two_users_uses_distinct_rows(self, db: RecordingLearningDb) -> None:
+        store = EntityMemoryStore(config=EntityMemoryConfig(db=db, namespace="user"))  # type: ignore[arg-type]
+
+        first = store.remember_about(
+            entity="Acme",
+            entity_type="company",
+            facts=["Alice uses Acme for billing."],
+            user_id="alice",
+        )
+        second = store.remember_about(
+            entity="Acme",
+            entity_type="company",
+            facts=["Bob uses Acme for deployments."],
+            user_id="bob",
+        )
+
+        assert "Recorded" in first
+        assert "Recorded" in second
+        assert sorted(db.rows) == [
+            "entity_user_alice_company_acme",
+            "entity_user_bob_company_acme",
+        ]
+
+        alice = store.get(entity_id="acme", entity_type="company", user_id="alice", namespace="user")
+        bob = store.get(entity_id="acme", entity_type="company", user_id="bob", namespace="user")
+
+        assert alice is not None
+        assert bob is not None
+        assert [fact["content"] for fact in alice.facts] == ["Alice uses Acme for billing."]
+        assert [fact["content"] for fact in bob.facts] == ["Bob uses Acme for deployments."]
+
+    def test_sqlite_user_namespace_uses_tenant_scoped_primary_keys(self, tmp_path) -> None:
+        from agno.db.sqlite import SqliteDb
+
+        sqlite_db = SqliteDb(db_file=str(tmp_path / "entities.db"))
+        store = EntityMemoryStore(config=EntityMemoryConfig(db=sqlite_db, namespace="user"))
+
+        store.remember_about(
+            entity="Acme",
+            entity_type="company",
+            facts=["Alice uses Acme for billing."],
+            user_id="alice",
+        )
+        store.remember_about(
+            entity="Acme",
+            entity_type="company",
+            facts=["Bob uses Acme for deployments."],
+            user_id="bob",
+        )
+
+        rows = sqlite_db.get_learnings(learning_type="entity_memory", namespace="user")
+        assert sorted(row["learning_id"] for row in rows) == [
+            "entity_user_alice_company_acme",
+            "entity_user_bob_company_acme",
+        ]
+
+        alice = store.get(entity_id="acme", entity_type="company", user_id="alice", namespace="user")
+        bob = store.get(entity_id="acme", entity_type="company", user_id="bob", namespace="user")
+
+        assert alice is not None
+        assert bob is not None
+        assert [fact["content"] for fact in alice.facts] == ["Alice uses Acme for billing."]
+        assert [fact["content"] for fact in bob.facts] == ["Bob uses Acme for deployments."]
 
 
 class TestToolSurface:

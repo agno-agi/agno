@@ -21,7 +21,13 @@ class TestBuildLearningId:
         )
         assert (
             build_learning_id("entity_memory", entity_id="acme", entity_type="company", namespace="user")
-            == "entity_user_company_acme"
+            is None
+        )
+        assert (
+            build_learning_id(
+                "entity_memory", entity_id="acme", entity_type="company", namespace="user", user_id="u1"
+            )
+            == "entity_user_u1_company_acme"
         )
 
     def test_missing_identity_fields_returns_none(self):
@@ -66,4 +72,7 @@ class TestStoresDelegateToHelper:
         store = EntityMemoryStore.__new__(EntityMemoryStore)
         assert store._build_entity_db_id("acme", "company", "global") == build_learning_id(
             "entity_memory", entity_id="acme", entity_type="company", namespace="global"
+        )
+        assert store._build_entity_db_id("acme", "company", "user", user_id="u1") == build_learning_id(
+            "entity_memory", entity_id="acme", entity_type="company", namespace="user", user_id="u1"
         )
