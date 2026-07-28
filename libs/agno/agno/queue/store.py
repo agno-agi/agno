@@ -1,6 +1,6 @@
 """In-memory job queue store.
 
-Implements the same contract as the Postgres run-queue methods (enqueue_job,
+Implements the same contract as the Postgres queue methods (enqueue_job,
 claim_job, heartbeat_jobs, complete_job, retry_or_fail_job,
 cancel_job, sweep_exhausted_jobs, fail_swept_job, get_job,
 count_queued_jobs) against process memory.

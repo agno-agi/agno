@@ -133,7 +133,7 @@ def resolve_queue_store(config: QueueConfig, default_db: Any) -> Any:
     """Resolve the queue store for a durable QueueConfig.
 
     Preference order: config.db override, then the AgentOS db (zero extra
-    infrastructure). The store must implement the run-queue contract
+    infrastructure). The store must implement the job-queue contract
     (claim_job etc. — the Postgres adapters do; see
     agno.queue.store.InMemoryQueueStore for the contract reference).
     Sync stores (e.g. the sync PostgresDb) are wrapped so their contract
@@ -157,7 +157,7 @@ def resolve_queue_store(config: QueueConfig, default_db: Any) -> Any:
 
 
 class QueueWorker:
-    """Claims and executes durable run-queue jobs.
+    """Claims and executes durable queue jobs.
 
     One worker per AgentOS replica. SKIP LOCKED claiming arbitrates between
     replicas with zero coordination. The worker also:
