@@ -21,7 +21,9 @@ No variants. The value here is the full pipeline.
 ## When to use
 
 - Searching a stock photo library by natural-language query.
-- Deduplicating a product catalog by visual + descriptive similarity.
+- Deduplicating a product catalog by description similarity. Note the
+  search operates on the extracted text descriptions, not on image
+  embeddings - two images match when their descriptions match.
 - Building "find more like this" features on user-uploaded media.
 
 ## Run
@@ -29,7 +31,7 @@ No variants. The value here is the full pipeline.
 Install the extra dependency for LanceDb first:
 
 ```bash
-pip install lancedb tantivy
+pip install lancedb
 python cookbook/data_labeling/_09_image_extraction_to_vectordb/basic.py
 ```
 
