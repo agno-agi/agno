@@ -92,7 +92,7 @@ export OPENAI_API_KEY="your-openai-api-key"
 6. Run an example — no tunnel, no endpoint URL to configure:
 
 ```bash
-.venvs/demo/bin/python cookbook/05_agent_os/interfaces/discord/gateway_adapter/basic.py
+.venvs/demo/bin/python cookbook/integrations/discord/gateway_adapter/basic.py
 ```
 
 7. In Discord: `@YourBot hello` in a channel, or DM the bot directly.
@@ -109,7 +109,7 @@ export OPENAI_API_KEY="your-openai-api-key"
 Run any example:
 
 ```bash
-.venvs/demo/bin/python cookbook/05_agent_os/interfaces/discord/gateway_adapter/<filename>.py
+.venvs/demo/bin/python cookbook/integrations/discord/gateway_adapter/<filename>.py
 ```
 
 ## Running the Relay Externally

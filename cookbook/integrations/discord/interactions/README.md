@@ -85,7 +85,7 @@ Copy the HTTPS URL (e.g. `https://abc123.ngrok-free.app`).
 ### 4. Run an Example
 
 ```bash
-.venvs/demo/bin/python cookbook/05_agent_os/interfaces/discord/interactions/basic.py
+.venvs/demo/bin/python cookbook/integrations/discord/interactions/basic.py
 ```
 
 The server starts on `http://localhost:7777` and auto-registers both
@@ -140,7 +140,7 @@ app to your account):
 Run any example:
 
 ```bash
-.venvs/demo/bin/python cookbook/05_agent_os/interfaces/discord/interactions/<filename>.py
+.venvs/demo/bin/python cookbook/integrations/discord/interactions/<filename>.py
 ```
 
 ### Notes on DiscordTools
