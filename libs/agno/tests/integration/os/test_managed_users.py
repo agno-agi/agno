@@ -155,7 +155,7 @@ def test_users_api_crud_and_role_merge():
     roles.set_role_scopes("admin", ["agent_os:admin"])
     roles.set_role_scopes("viewer", ["agents:*:read"])
     roles.assign("alice", "admin")
-    users = ManagedUserStore()
+    users = ManagedUserStore(db_url=_db_url())  # AgentOS requires a persistable directory
 
     app = _os(roles, users).get_app()
     app.include_router(get_roles_router(roles, user_store=users))
@@ -206,7 +206,7 @@ def test_users_api_is_admin_only():
     roles.set_role_scopes("viewer", ["agents:*:read"])
     roles.assign("alice", "admin")
     roles.assign("bob", "viewer")
-    users = ManagedUserStore()
+    users = ManagedUserStore(db_url=_db_url())  # AgentOS requires a persistable directory
 
     app = _os(roles, users).get_app()
     app.include_router(get_roles_router(roles, user_store=users))
@@ -220,7 +220,7 @@ def test_disabled_user_is_denied_even_with_valid_token():
     roles = ManagedRoleStore(db_url=_db_url())
     roles.set_role_scopes("viewer", ["agents:*:read"])
     roles.assign("bob", "viewer")
-    users = ManagedUserStore()
+    users = ManagedUserStore(db_url=_db_url())  # AgentOS requires a persistable directory
     users.upsert("bob", email="bob@co")
 
     client = TestClient(_os(roles, users).get_app())
@@ -247,7 +247,7 @@ def test_disabled_user_is_denied_on_websocket():
     roles = ManagedRoleStore(db_url=_db_url())
     roles.set_role_scopes("viewer", ["agents:*:read", "workflows:*:run"])
     roles.assign("bob", "viewer")
-    users = ManagedUserStore()
+    users = ManagedUserStore(db_url=_db_url())  # AgentOS requires a persistable directory
     users.upsert("bob", email="bob@co")
 
     client = TestClient(_os(roles, users).get_app())
@@ -277,7 +277,7 @@ def test_auto_provision_from_claims_at_the_gate():
     roles = ManagedRoleStore(db_url=_db_url())
     roles.set_role_scopes("viewer", ["agents:*:read"])
     roles.assign("carol", "viewer")
-    users = ManagedUserStore()
+    users = ManagedUserStore(db_url=_db_url())  # AgentOS requires a persistable directory
 
     client = TestClient(_os(roles, users, auto_provision_users=True).get_app())
 
@@ -372,3 +372,36 @@ def test_in_memory_directory_still_works_standalone():
     users.set_disabled("ana", True)
     assert users.is_bound is False
     assert users.is_disabled("ana") is True
+
+
+def test_user_store_without_a_persistable_db_fails_fast():
+    """A user directory that cannot persist is not a deployment mode.
+
+    It backs the disabled-user kill switch, so an in-memory one means a revocation is
+    lost on restart and never reaches another replica -- the control silently does
+    nothing. ManagedRoleStore already refuses this; the two must agree, otherwise the
+    weaker of the pair decides how safe the deployment is.
+    """
+    from agno.agent import Agent
+    from agno.db.in_memory import InMemoryDb
+    from agno.os import AgentOS
+    from agno.os.authz.role_store import ManagedRoleStore
+    from agno.os.config import AuthorizationConfig
+
+    non_sql_db = InMemoryDb()  # stands in for any db with no SQLAlchemy engine (e.g. Mongo)
+    roles = ManagedRoleStore(db_url="sqlite:///:memory:")
+    roles.set_role_scopes("admin", ["agent_os:admin"])
+
+    with pytest.raises(ValueError, match="needs a SQL database"):
+        AgentOS(
+            id="unpersisted-users-os",
+            agents=[Agent(id="a1", name="A", db=non_sql_db)],
+            db=non_sql_db,
+            authorization=True,
+            authorization_config=AuthorizationConfig(
+                verification_keys=["k" * 40],
+                algorithm="HS256",
+                role_store=roles,
+                user_store=ManagedUserStore(),  # bare: nothing to persist into
+            ),
+        ).get_app()

@@ -1700,12 +1700,18 @@ class AgentOS:
             if callable(attach):
                 attach(self.db)
             if getattr(user_store, "is_bound", True) is False:
-                log_warning(
-                    "AuthorizationConfig(user_store=...) has no database and AgentOS has no "
-                    "SQL-capable db to lend it, so the user directory is in-memory and "
-                    "per-process. Disabling a user will not survive a restart and will not be "
-                    "seen by other replicas -- the revocation kill switch is effectively off. "
-                    "Give the store a db (ManagedUserStore(db_url=...) / db=...) for production."
+                # Same guard, and the same reasoning, as the role_store branch above: a
+                # store that cannot persist is not a working deployment mode. The
+                # directory backs the disabled-user kill switch, so an unpersisted one
+                # means a revocation is lost on restart and never reaches another
+                # replica -- the control silently does nothing. Fail at construction
+                # rather than serve an OS whose revocations do not work.
+                raise ValueError(
+                    "AuthorizationConfig(user_store=...) needs a SQL database: the user directory "
+                    "backs the disabled-user kill switch, and an in-memory one cannot stay "
+                    "consistent across replicas (a revocation would be lost on restart and never "
+                    "seen by other workers). Give the store a db (ManagedUserStore(db_url=...) / "
+                    "db=...) or pass a SQL-capable db to AgentOS(db=...) for it to adopt."
                 )
         fastapi_app.state.user_store = user_store
         fastapi_app.state.user_auto_provision = getattr(config, "auto_provision_users", False)
