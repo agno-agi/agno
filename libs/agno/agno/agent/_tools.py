@@ -661,6 +661,9 @@ def run_tool(
     agent.model = cast(Model, agent.model)
     # Execute the tool
     function_call = agent.model.get_function_call_to_run_from_tool_execution(tool, functions)
+    # Older persisted runs may not contain this field; retain the current
+    # function definition as a backward-compatible fallback.
+    tool.stop_after_tool_call = tool.stop_after_tool_call or function_call.function.stop_after_tool_call
     function_call_results: List[Message] = []
 
     for call_result in agent.model.run_function_call(
@@ -775,6 +778,7 @@ async def arun_tool(
 
     # Execute the tool
     function_call = agent.model.get_function_call_to_run_from_tool_execution(tool, functions)
+    tool.stop_after_tool_call = tool.stop_after_tool_call or function_call.function.stop_after_tool_call
     function_call_results: List[Message] = []
 
     async for call_result in agent.model.arun_function_calls(
@@ -855,9 +859,10 @@ async def arun_tool(
 
 def handle_tool_call_updates(
     agent: Agent, run_response: RunOutput, run_messages: RunMessages, tools: List[Union[Function, dict]]
-):
+) -> bool:
     agent.model = cast(Model, agent.model)
     _functions = {tool.name: tool for tool in tools if isinstance(tool, Function)}
+    stop_after_tool_call = False
 
     for _t in run_response.tools or []:
         # Case 1: Handle confirmed tools and execute them
@@ -866,6 +871,9 @@ def handle_tool_call_updates(
             if _t.confirmed is not None and _t.confirmed is True and _t.result is None:
                 # Consume the generator without yielding
                 deque(run_tool(agent, run_response, run_messages, _t, functions=_functions), maxlen=0)
+                stop_after_tool_call = stop_after_tool_call or _t.stop_after_tool_call
+                if _t.stop_after_tool_call:
+                    run_response.content = _t.result
             else:
                 reject_tool_call(agent, run_messages, _t, functions=_functions)
                 _t.confirmed = False
@@ -899,6 +907,7 @@ def handle_tool_call_updates(
             # Consume the generator without yielding
             deque(run_tool(agent, run_response, run_messages, _t, functions=_functions), maxlen=0)
             _maybe_create_audit_approval(agent, _t, run_response, "approved")
+    return stop_after_tool_call
 
 
 def handle_tool_call_updates_stream(
@@ -957,9 +966,10 @@ def handle_tool_call_updates_stream(
 
 async def ahandle_tool_call_updates(
     agent: Agent, run_response: RunOutput, run_messages: RunMessages, tools: List[Union[Function, dict]]
-):
+) -> bool:
     agent.model = cast(Model, agent.model)
     _functions = {tool.name: tool for tool in tools if isinstance(tool, Function)}
+    stop_after_tool_call = False
 
     for _t in run_response.tools or []:
         # Case 1: Handle confirmed tools and execute them
@@ -968,6 +978,9 @@ async def ahandle_tool_call_updates(
             if _t.confirmed is not None and _t.confirmed is True and _t.result is None:
                 async for _ in arun_tool(agent, run_response, run_messages, _t, functions=_functions):
                     pass
+                stop_after_tool_call = stop_after_tool_call or _t.stop_after_tool_call
+                if _t.stop_after_tool_call:
+                    run_response.content = _t.result
             else:
                 reject_tool_call(agent, run_messages, _t, functions=_functions)
                 _t.confirmed = False
@@ -1000,6 +1013,7 @@ async def ahandle_tool_call_updates(
             _t.requires_user_input = False
             _t.answered = True
             await _amaybe_create_audit_approval(agent, _t, run_response, "approved")
+    return stop_after_tool_call
 
 
 async def ahandle_tool_call_updates_stream(
