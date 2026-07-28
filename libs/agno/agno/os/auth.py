@@ -588,7 +588,13 @@ def require_resource_access(resource_type: str, action: str, resource_id_param: 
         "workflows": "workflow",
     }.get(resource_type, resource_type.rstrip("s"))
 
-    async def dependency(request: Request):
+    # Deliberately a plain `def`, NOT `async def`: the body awaits nothing, and the
+    # authorization providers it calls are synchronous -- a managed-role or FGA provider
+    # issues DB (or network) round trips here. FastAPI runs a sync dependency in its
+    # worker threadpool, so that I/O stays off the event loop; declaring it `async`
+    # would run the same blocking calls directly on the loop and serialise every other
+    # request behind each authorization check. Keep it sync unless you add a real await.
+    def dependency(request: Request):
         # Only check authorization if it's enabled
         if not getattr(request.state, "authorization_enabled", False):
             return
