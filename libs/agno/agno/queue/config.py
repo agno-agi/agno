@@ -2,7 +2,7 @@
 
 Background runs (``background=True``) execute through a run queue: submissions
 are accepted immediately (PENDING), execute under a concurrency cap, and wait
-in line when the cap is reached. ``RunQueueConfig`` is the single place to
+in line when the cap is reached. ``QueueConfig`` is the single place to
 configure this subsystem.
 
 The config grows with the queue's capabilities:
@@ -18,7 +18,7 @@ from typing import Optional
 
 
 @dataclass
-class RunQueueConfig:
+class QueueConfig:
     """Configuration for background run execution.
 
     Args:

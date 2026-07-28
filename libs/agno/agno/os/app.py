@@ -77,10 +77,10 @@ from agno.os.utils import (
     setup_tracing_for_os,
     update_cors_middleware,
 )
+from agno.queue import QueueConfig
 from agno.registry import Registry
 from agno.remote.base import RemoteDb, RemoteKnowledge
 from agno.run.concurrency import set_background_max_concurrency
-from agno.run.queue import RunQueueConfig
 from agno.team import RemoteTeam, Team, TeamFactory
 from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.utils.string import generate_id, generate_id_from_name
@@ -268,7 +268,7 @@ class AgentOS:
         tracing: bool = False,
         auto_provision_dbs: bool = True,
         run_hooks_in_background: bool = False,
-        run_queue: Optional[RunQueueConfig] = None,
+        queue: Optional[QueueConfig] = None,
         telemetry: bool = True,
         registry: Optional[Registry] = None,
         scheduler: bool = False,
@@ -324,9 +324,10 @@ class AgentOS:
             cors_allowed_origins: List of allowed CORS origins (will be merged with default Agno domains)
             tracing: If True, enables OpenTelemetry tracing for all agents and teams in the OS
             run_hooks_in_background: If True, run agent/team pre/post hooks as FastAPI background tasks (non-blocking)
-            run_queue: Configuration for the background run queue (RunQueueConfig).
+            queue: Configuration for the AgentOS job queue (QueueConfig). Background runs
+                execute through it today; it is not a message-broker integration.
                 background=True runs are accepted immediately as PENDING and execute under
-                run_queue.max_concurrency per replica (shared across agents, teams and workflows;
+                queue.max_concurrency per replica (shared across agents, teams and workflows;
                 enforced per event loop, so process-wide in the standard deployment). Runs beyond
                 the cap wait in line and can still be cancelled while waiting. 0 or below disables
                 capping. The setting is process-global: last setter wins if multiple AgentOS
@@ -437,9 +438,9 @@ class AgentOS:
 
         # Run queue configuration. None keeps the process defaults (env var or
         # library default for the concurrency cap).
-        self.run_queue = run_queue
-        if run_queue is not None and run_queue.max_concurrency is not None:
-            set_background_max_concurrency(run_queue.max_concurrency)
+        self.queue = queue
+        if queue is not None and queue.max_concurrency is not None:
+            set_background_max_concurrency(queue.max_concurrency)
 
         # Scheduler configuration
         self._scheduler_enabled = scheduler
