@@ -445,7 +445,7 @@ class AgentOS:
         # If True, run agent/team hooks as FastAPI background tasks
         self.run_hooks_in_background = run_hooks_in_background
 
-        # Run queue configuration. None keeps the process defaults (env var or
+        # Queue configuration. None keeps the process defaults (env var or
         # library default for the concurrency cap, in-memory transports).
         # queue.redis wires the cross-container transports; the explicit
         # event_stream parameter below is applied after and wins by ordering.

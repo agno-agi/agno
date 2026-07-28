@@ -1,4 +1,4 @@
-"""AgentOS run queue wiring.
+"""AgentOS job queue wiring.
 
 Interprets ``QueueConfig`` (pure data, from ``agno.queue.config``) and wires
 the corresponding runtime pieces. The planned DB-backed queue worker (durable
@@ -67,9 +67,9 @@ def _apply_coordination(redis: Union[str, RedisCoordination]) -> None:
             )
         )
         cancellation_wired = True
-        log_debug("Run queue coordination: Redis cancellation manager configured")
+        log_debug("Queue coordination: Redis cancellation manager configured")
     else:
-        log_debug("Run queue coordination: keeping explicitly configured cancellation manager")
+        log_debug("Queue coordination: keeping explicitly configured cancellation manager")
 
     # Events out: Redis event stream. Never clobber a custom stream; the
     # explicit AgentOS(event_stream=...) parameter is applied after this and
@@ -81,9 +81,9 @@ def _apply_coordination(redis: Union[str, RedisCoordination]) -> None:
     if isinstance(get_event_stream(), InMemoryEventStream):
         set_event_stream(RedisEventStream(async_client, key_prefix=stream_prefix))
         event_stream_wired = True
-        log_debug("Run queue coordination: Redis event stream configured")
+        log_debug("Queue coordination: Redis event stream configured")
     else:
-        log_debug("Run queue coordination: keeping explicitly configured event stream")
+        log_debug("Queue coordination: keeping explicitly configured event stream")
 
     # The premise of queue.redis is that BOTH transports ride the same
     # Redis. Wiring only one (the other was custom-configured) can split them
