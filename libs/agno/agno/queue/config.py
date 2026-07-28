@@ -1,6 +1,6 @@
-"""Configuration for the AgentOS run queue.
+"""Configuration for the AgentOS job queue.
 
-Background runs (``background=True``) execute through a run queue: submissions
+Background runs (``background=True``) execute through a job queue: submissions
 are accepted immediately (PENDING), execute under a concurrency cap, and wait
 in line when the cap is reached. ``QueueConfig`` is the single place to
 configure this subsystem.

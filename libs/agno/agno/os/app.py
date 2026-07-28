@@ -436,7 +436,7 @@ class AgentOS:
         # If True, run agent/team hooks as FastAPI background tasks
         self.run_hooks_in_background = run_hooks_in_background
 
-        # Run queue configuration. None keeps the process defaults (env var or
+        # Queue configuration. None keeps the process defaults (env var or
         # library default for the concurrency cap).
         self.queue = queue
         if queue is not None and queue.max_concurrency is not None:
