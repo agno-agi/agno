@@ -143,3 +143,47 @@ def test_fga_gates_a_real_agentos_per_resource():
     assert r.status_code == 403
     # alice can read research-agent (relationship exists)
     assert client.get("/agents/research-agent", headers=_auth("alice")).status_code == 200
+
+
+def test_fga_list_endpoint_returns_a_filtered_list_not_a_403():
+    """Regression: an FGA-only OS must filter GET /agents, not refuse it.
+
+    ``accessible_resource_ids`` bailed whenever ``ctx.action`` was None -- which is
+    exactly what a collection GET passes, since "what may this user see?" names no
+    action. It therefore returned an empty set for every listing, which the endpoint
+    reads as "no access at all" and answers 403. Relationship-based callers could use
+    per-resource routes but could never list anything.
+    """
+    fga = InMemoryFGA(
+        {
+            ("user:alice", "read", "agents:research-agent"),
+            ("user:alice", "run", "agents:research-agent"),
+        }
+    )
+    agent_os = AgentOS(
+        id=OS_ID,
+        agents=[
+            Agent(id="research-agent", name="Research Agent", db=InMemoryDb()),
+            Agent(id="other-agent", name="Other Agent", db=InMemoryDb()),
+        ],
+        authorization=True,
+        authorization_config=AuthorizationConfig(
+            verification_keys=[SECRET],
+            algorithm="HS256",
+            verify_audience=True,
+            audience=OS_ID,
+            authorization_provider=FGAAuthorizationProvider(fga),
+        ),
+    )
+    client = TestClient(agent_os.get_app())
+
+    listing = client.get("/agents", headers=_auth("alice"))
+    assert listing.status_code == 200
+    assert {a["id"] for a in listing.json()} == {"research-agent"}  # only what she relates to
+
+    # the listing agrees with the per-resource gate
+    assert client.get("/agents/research-agent", headers=_auth("alice")).status_code == 200
+    assert client.get("/agents/other-agent", headers=_auth("alice")).status_code == 403
+
+    # a principal with no relationships still gets nothing
+    assert client.get("/agents", headers=_auth("bob")).status_code == 403

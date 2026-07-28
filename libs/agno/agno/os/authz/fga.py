@@ -124,12 +124,18 @@ class FGAAuthorizationProvider(AuthorizationProvider):
         return bool(self._client.check(user, self._relation(ctx.action), f"{ctx.resource_type}:{ctx.resource_id}"))
 
     def accessible_resource_ids(self, ctx: AuthorizationContext) -> Set[str]:
-        if not ctx.resource_type or not ctx.action:
+        if not ctx.resource_type:
             return set()
         user = self._user(ctx)
         if not user:
             return set()
-        objects = self._client.list_objects(user, self._relation(ctx.action), ctx.resource_type)
+        # The production list path builds its context with no action (a collection GET
+        # asks "what may this user see?", not "may they do X?"), so bailing on a missing
+        # action made every FGA-backed listing return an empty set -- which the endpoint
+        # reads as "no access at all" and answers 403, never a filtered list. Fall back
+        # to the read relation, which is what visibility means for a collection.
+        action = ctx.action or "read"
+        objects = self._client.list_objects(user, self._relation(action), ctx.resource_type)
         prefix = f"{ctx.resource_type}:"
         # FGA returns concrete objects (never a wildcard), so we return concrete
         # ids — list endpoints get exactly the set the user is related to.
