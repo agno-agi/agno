@@ -97,6 +97,7 @@ from agno.run.workflow import (
 from agno.session.workflow import WorkflowChatInteraction, WorkflowSession
 from agno.team.team import Team
 from agno.utils.agent import validate_input
+from agno.utils.asyncio import run_blocking
 from agno.utils.log import (
     log_debug,
     log_error,
@@ -1434,8 +1435,7 @@ class Workflow:
             if self._has_async_db():
                 result = await self._aupsert_session(session=session)  # type: ignore
             else:
-                # Offload the sync DB call so it doesn't block the event loop.
-                result = await asyncio.to_thread(self._upsert_session, session=session)
+                result = await run_blocking(self._upsert_session, session=session)
             if result is None:
                 log_warning(f"WorkflowSession not persisted (ownership mismatch): {session.session_id}")
             else:
