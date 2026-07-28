@@ -68,7 +68,13 @@ def get_all_keys_for_table(redis_client: Union[Redis, RedisCluster], prefix: str
     relevant_keys = []
 
     for key in all_keys:
-        if ":index:" in key:  # Skip index keys
+        # Coerce bytes -> str for substring checks (decode_responses may not be set)
+        key_str = key.decode() if isinstance(key, (bytes, bytearray)) else key
+        if ":index:" in key_str:  # Skip index keys
+            continue
+        # Skip helper indexes maintained by the v3+ runs collection
+        # (e.g. `<prefix>:runs:by_session:<session_id>` sorted-set indexes)
+        if ":by_session:" in key_str:
             continue
         relevant_keys.append(key)
 
@@ -117,6 +123,14 @@ def apply_sorting(
 def apply_pagination(
     records: List[Dict[str, Any]], limit: Optional[int] = None, page: Optional[int] = None
 ) -> List[Dict[str, Any]]:
+    """Apply pagination.
+
+    Raises ``ValueError`` when ``page`` is provided without ``limit`` — see
+    ``agno.db.utils.validate_pagination``.
+    """
+    from agno.db.utils import validate_pagination
+
+    validate_pagination(limit, page)
     if limit is None:
         return records
 

@@ -223,6 +223,50 @@ async def _aupsert_session(team: "Team", session: TeamSession) -> Optional[TeamS
     return None
 
 
+def _upsert_run(
+    team: "Team",
+    run: Union[TeamRunOutput, RunOutput],
+    session_id: str,
+    user_id: Optional[str] = None,
+    run_index: Optional[int] = None,
+) -> None:
+    """Persist a single run to the runs storage (O(1) write).
+
+    Silently no-ops on adapters that have not implemented ``upsert_run`` yet.
+    """
+    try:
+        if not team.db:
+            return
+        team.db.upsert_run(run=run, session_id=session_id, user_id=user_id, run_index=run_index)  # type: ignore[union-attr]
+    except NotImplementedError:
+        log_debug(f"{type(team.db).__name__} does not implement upsert_run; skipping per-run write")
+    except Exception as e:
+        log_warning(f"Error upserting run into db: {str(e)}")
+
+
+async def _aupsert_run(
+    team: "Team",
+    run: Union[TeamRunOutput, RunOutput],
+    session_id: str,
+    user_id: Optional[str] = None,
+    run_index: Optional[int] = None,
+) -> None:
+    """Async version of ``_upsert_run``."""
+    from agno.team._init import _has_async_db
+
+    try:
+        if not team.db:
+            return
+        if _has_async_db(team):
+            await team.db.upsert_run(run=run, session_id=session_id, user_id=user_id, run_index=run_index)  # type: ignore[union-attr,misc]
+        else:
+            team.db.upsert_run(run=run, session_id=session_id, user_id=user_id, run_index=run_index)  # type: ignore[union-attr]
+    except NotImplementedError:
+        log_debug(f"{type(team.db).__name__} does not implement upsert_run; skipping per-run write")
+    except Exception as e:
+        log_warning(f"Error upserting run into db: {str(e)}")
+
+
 def _read_or_create_session(team: "Team", session_id: str, user_id: Optional[str] = None) -> TeamSession:
     """Load the TeamSession from storage
 
@@ -267,17 +311,26 @@ def _read_or_create_session(team: "Team", session_id: str, user_id: Optional[str
         if team.introduction is not None:
             from uuid import uuid4
 
-            team_session.upsert_run(
-                TeamRunOutput(
-                    run_id=str(uuid4()),
-                    team_id=team.id,
-                    session_id=session_id,
-                    user_id=user_id,
-                    team_name=team.name,
-                    content=team.introduction,
-                    messages=[Message(role=team.model.assistant_message_role, content=team.introduction)],  # type: ignore
-                )
+            introduction_run = TeamRunOutput(
+                run_id=str(uuid4()),
+                team_id=team.id,
+                session_id=session_id,
+                user_id=user_id,
+                team_name=team.name,
+                content=team.introduction,
+                messages=[Message(role=team.model.assistant_message_role, content=team.introduction)],  # type: ignore
             )
+            team_session.upsert_run(introduction_run)
+
+            # v3: session.runs is in-memory; persist the intro to the runs table
+            # so a session reload picks it up (pre-3.0's save_session wrote the
+            # entire runs blob, so this happened for free).
+            if team.db is not None and team.parent_team_id is None and team.workflow_id is None:
+                from agno.team._session import save_session
+                from agno.team._storage import _upsert_run
+
+                save_session(team, session=team_session)
+                _upsert_run(team, run=introduction_run, session_id=session_id, user_id=user_id, run_index=0)
 
     # Cache the session if relevant
     if team_session is not None and team.cache_session:
@@ -334,17 +387,33 @@ async def _aread_or_create_session(team: "Team", session_id: str, user_id: Optio
         if team.introduction is not None:
             from uuid import uuid4
 
-            team_session.upsert_run(
-                TeamRunOutput(
-                    run_id=str(uuid4()),
-                    team_id=team.id,
-                    session_id=session_id,
-                    user_id=user_id,
-                    team_name=team.name,
-                    content=team.introduction,
-                    messages=[Message(role=team.model.assistant_message_role, content=team.introduction)],  # type: ignore
-                )
+            introduction_run = TeamRunOutput(
+                run_id=str(uuid4()),
+                team_id=team.id,
+                session_id=session_id,
+                user_id=user_id,
+                team_name=team.name,
+                content=team.introduction,
+                messages=[Message(role=team.model.assistant_message_role, content=team.introduction)],  # type: ignore
             )
+            team_session.upsert_run(introduction_run)
+
+            # v3: session.runs is in-memory; persist the intro to the runs table
+            # so a session reload picks it up (pre-3.0's save_session wrote the
+            # entire runs blob, so this happened for free).
+            if team.db is not None and team.parent_team_id is None and team.workflow_id is None:
+                from agno.team._init import _has_async_db
+                from agno.team._session import asave_session, save_session
+                from agno.team._storage import _aupsert_run, _upsert_run
+
+                if _has_async_db(team):
+                    await asave_session(team, session=team_session)
+                    await _aupsert_run(
+                        team, run=introduction_run, session_id=session_id, user_id=user_id, run_index=0
+                    )
+                else:
+                    save_session(team, session=team_session)
+                    _upsert_run(team, run=introduction_run, session_id=session_id, user_id=user_id, run_index=0)
 
     # Cache the session if relevant
     if team_session is not None and team.cache_session:
@@ -761,25 +830,34 @@ def from_dict(
         for member_data in config["members"]:
             member_type = member_data.get("type")
             if member_type == "agent":
+                agent_id = member_data["agent_id"]
                 # TODO: Make sure to pass the correct version to get_agent_by_id. Right now its returning the latest version.
-                if db is None:
-                    log_warning(f"Cannot load member agent {member_data['agent_id']}: db is None")
-                    continue
-                agent = get_agent_by_id(id=member_data["agent_id"], db=db, registry=registry)
-                if agent:
+                agent = get_agent_by_id(id=agent_id, db=db, registry=registry) if db is not None else None
+                # Fall back to a code-defined agent registered in the registry.
+                # These are legitimately not persisted as DB components (e.g. agents
+                # passed to AgentOS(agents=[...])), so a DB lookup returns nothing.
+                # Deep copy so the shared registry singleton isn't mutated when the
+                # owning team runs (initialize_team sets team_id/_team on members).
+                if agent is None and registry is not None:
+                    registered_agent = registry.get_agent(agent_id)
+                    agent = registered_agent.deep_copy() if registered_agent is not None else None
+                if agent is not None:
                     members.append(agent)
                 else:
-                    log_warning(f"Agent not found: {member_data['agent_id']}")
+                    log_warning(f"Team member agent not found in db or registry: {agent_id}")
             elif member_type == "team":
                 # Handle nested teams as members
-                if db is None:
-                    log_warning(f"Cannot load member team {member_data['team_id']}: db is None")
-                    continue
-                nested_team = get_team_by_id(id=member_data["team_id"], db=db, registry=registry)
-                if nested_team:
+                team_id = member_data["team_id"]
+                nested_team = get_team_by_id(id=team_id, db=db, registry=registry) if db is not None else None
+                # Fall back to a code-defined team registered in the registry.
+                # Deep copy so the shared registry singleton isn't mutated on run.
+                if nested_team is None and registry is not None:
+                    registered_team = registry.get_team(team_id)
+                    nested_team = registered_team.deep_copy() if registered_team is not None else None
+                if nested_team is not None:
                     members.append(nested_team)
                 else:
-                    log_warning(f"Team not found: {member_data['team_id']}")
+                    log_warning(f"Team member team not found in db or registry: {team_id}")
 
     # --- Handle reasoning_model reconstruction ---
     # TODO: implement reasoning model deserialization
@@ -1109,8 +1187,10 @@ def _hydrate_from_graph(
     if team.db is None:
         team.db = db
 
-    # Hydrate members from graph children
-    team.members = []
+    # Hydrate members directly from the already-loaded graph children. This
+    # reuses the preloaded nested graphs and avoids extra DB round-trips for
+    # members that are persisted DB components.
+    graph_members: Dict[str, Union[Agent, "Team"]] = {}
     for child in graph.get("children", []):
         child_graph = child.get("graph")
         if child_graph is None:
@@ -1128,12 +1208,36 @@ def _hydrate_from_graph(
             agent.id = child_graph["component"]["component_id"]
             if agent.db is None:
                 agent.db = db
-            team.members.append(agent)
+            graph_members[agent.id] = agent
         elif member_type == "team":
             # Recursively hydrate nested teams from the already-loaded child graph
             nested_team = _hydrate_from_graph(cls, child_graph, db=db, registry=registry)
-            if nested_team:
-                team.members.append(nested_team)
+            if nested_team is not None and nested_team.id is not None:
+                graph_members[nested_team.id] = nested_team
+
+    # Merge the graph-hydrated members with the members already resolved by
+    # from_dict. from_dict resolves members that are NOT DB components (e.g.
+    # code-defined agents from the registry), which have no graph child. We
+    # must not drop those. When a graph child exists for a member, prefer it
+    # (its nested graph is already loaded). Order follows the config members,
+    # with any graph-only children appended afterwards.
+    resolved_members = team.members if isinstance(team.members, list) else []
+    if graph_members:
+        merged: List[Union[Agent, "Team"]] = []
+        seen = set()
+        for member in resolved_members:
+            member_id = getattr(member, "id", None)
+            if member_id is not None and member_id in graph_members:
+                merged.append(graph_members[member_id])
+                seen.add(member_id)
+            else:
+                merged.append(member)
+                if member_id is not None:
+                    seen.add(member_id)
+        for graph_member_id, graph_member in graph_members.items():
+            if graph_member_id not in seen:
+                merged.append(graph_member)
+        team.members = merged
 
     return team
 

@@ -42,12 +42,17 @@ class InMemoryDb(BaseDb):
         """In-memory implementation, always returns True."""
         return True
 
-    def get_latest_schema_version(self):
-        """Get the latest version of the database schema."""
-        pass
+    def get_latest_schema_version(self, table_name: str = "") -> Optional[str]:
+        """Get the latest version of the database schema.
 
-    def upsert_schema_version(self, version: str) -> None:
-        """Upsert the schema version into the database."""
+        ``table_name`` is accepted for parity with the SQL adapters and the
+        ``BaseDb`` contract; this adapter is in-process and has no versioning.
+        """
+        return None
+
+    def upsert_schema_version(self, table_name: str = "", version: str = "") -> None:
+        """Upsert the schema version. ``table_name`` is ignored — see
+        ``get_latest_schema_version``."""
         pass
 
     # -- Session methods --
@@ -371,6 +376,165 @@ class InMemoryDb(BaseDb):
         except Exception as e:
             log_error(f"Exception during bulk session upsert: {str(e)}")
             return []
+
+    # -- Run methods --
+    #
+    # InMemoryDb keeps runs inline on the session dict (v2.x shape) rather than
+    # in a separate collection — no I/O benefit to splitting them. The direct-run
+    # APIs below walk the session runs list so callers who use them get the
+    # same behaviour as adapters that store runs in a dedicated table.
+
+    def _iter_session_runs(self) -> List[Tuple[Dict[str, Any], Dict[str, Any]]]:
+        """Yield (session_dict, run_dict) pairs across all in-memory sessions."""
+        pairs: List[Tuple[Dict[str, Any], Dict[str, Any]]] = []
+        for session in self._sessions:
+            for run in session.get("runs") or []:
+                if isinstance(run, dict):
+                    pairs.append((session, run))
+        return pairs
+
+    def get_run(self, run_id: str, deserialize: Optional[bool] = True) -> Optional[Union[Any, Dict[str, Any]]]:
+        """Read a single run from an in-memory session."""
+        from agno.db.utils import deserialize_run, get_run_type
+
+        try:
+            for session, run in self._iter_session_runs():
+                if run.get("run_id") == run_id:
+                    run_copy = deepcopy(run)
+                    if not deserialize:
+                        return run_copy
+                    run_type = get_run_type(run_copy)
+                    return deserialize_run(run_type, run_copy)
+            return None
+        except Exception as e:
+            log_error(f"Error reading run {run_id}: {str(e)}")
+            raise e
+
+    def get_runs(
+        self,
+        session_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
+        workflow_id: Optional[str] = None,
+        status: Optional[Any] = None,
+        limit: Optional[int] = None,
+        page: Optional[int] = None,
+        sort_by: Optional[str] = None,
+        sort_order: Optional[str] = None,
+        deserialize: Optional[bool] = True,
+    ) -> Union[List[Any], Tuple[List[Dict[str, Any]], int]]:
+        """Read runs across in-memory sessions with the same filters as SQL adapters."""
+        from agno.db.utils import deserialize_run, get_run_type
+        from agno.run.base import RunStatus
+
+        try:
+            rows: List[Dict[str, Any]] = []
+            for session, run in self._iter_session_runs():
+                if session_id is not None and session.get("session_id") != session_id:
+                    continue
+                if user_id is not None and session.get("user_id") != user_id:
+                    continue
+                if agent_id is not None and run.get("agent_id") != agent_id:
+                    continue
+                if team_id is not None and run.get("team_id") != team_id:
+                    continue
+                if workflow_id is not None and run.get("workflow_id") != workflow_id:
+                    continue
+                if status is not None:
+                    expected = status.value if isinstance(status, RunStatus) else status
+                    if run.get("status") != expected:
+                        continue
+                rows.append(deepcopy(run))
+
+            total_count = len(rows)
+
+            if sort_by is not None:
+                rows = apply_sorting(rows, sort_by, sort_order)
+            else:
+                rows.sort(key=lambda r: (r.get("run_index") or 0, r.get("created_at") or 0))
+
+            if limit is not None:
+                start_idx = ((page or 1) - 1) * limit if page is not None else 0
+                rows = rows[start_idx : start_idx + limit]
+
+            if not deserialize:
+                return rows, total_count
+            return [deserialize_run(get_run_type(r), r) for r in rows]
+        except Exception as e:
+            log_error(f"Error reading runs: {str(e)}")
+            raise e
+
+    def upsert_run(
+        self,
+        run: Any,
+        session_id: str,
+        user_id: Optional[str] = None,
+        run_index: Optional[int] = None,
+    ) -> None:
+        """Upsert a single run into the target session's inline runs list."""
+        try:
+            run_dict = run if isinstance(run, dict) else run.to_dict()
+            run_id = run_dict.get("run_id")
+            if run_id is None:
+                raise ValueError("Run must have a run_id")
+
+            for session in self._sessions:
+                if session.get("session_id") != session_id:
+                    continue
+                runs = session.setdefault("runs", [])
+                for i, existing in enumerate(runs):
+                    existing_id = (
+                        existing.get("run_id") if isinstance(existing, dict) else getattr(existing, "run_id", None)
+                    )
+                    if existing_id == run_id:
+                        # Preserve original run_index on update (matches SQL adapters)
+                        if isinstance(existing, dict) and "run_index" in existing:
+                            run_dict["run_index"] = existing["run_index"]
+                        runs[i] = run_dict
+                        break
+                else:
+                    if run_index is not None and "run_index" not in run_dict:
+                        run_dict["run_index"] = run_index
+                    runs.append(run_dict)
+                session["updated_at"] = int(time.time())
+                return
+
+            log_debug(f"upsert_run: session {session_id} not found; skipping")
+        except Exception as e:
+            log_error(f"Error upserting run: {str(e)}")
+            raise e
+
+    def delete_run(self, run_id: str) -> bool:
+        """Remove a run from its session by run_id."""
+        try:
+            for session in self._sessions:
+                runs = session.get("runs") or []
+                new_runs = [r for r in runs if not (isinstance(r, dict) and r.get("run_id") == run_id)]
+                if len(new_runs) != len(runs):
+                    session["runs"] = new_runs
+                    session["updated_at"] = int(time.time())
+                    return True
+            return False
+        except Exception as e:
+            log_error(f"Error deleting run {run_id}: {str(e)}")
+            raise e
+
+    def delete_runs(self, run_ids: List[str]) -> None:
+        """Remove multiple runs by run_id across all sessions."""
+        if not run_ids:
+            return
+        wanted = set(run_ids)
+        try:
+            for session in self._sessions:
+                runs = session.get("runs") or []
+                new_runs = [r for r in runs if not (isinstance(r, dict) and r.get("run_id") in wanted)]
+                if len(new_runs) != len(runs):
+                    session["runs"] = new_runs
+                    session["updated_at"] = int(time.time())
+        except Exception as e:
+            log_error(f"Error deleting runs: {str(e)}")
+            raise e
 
     # -- Memory methods --
     def delete_user_memory(self, memory_id: str, user_id: Optional[str] = None):

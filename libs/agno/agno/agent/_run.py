@@ -75,6 +75,7 @@ from agno.run.cancel import (
 from agno.run.messages import RunMessages
 from agno.run.requirement import RunRequirement
 from agno.session import AgentSession
+from agno.session._utils import resolve_run_index
 from agno.tools.function import Function
 from agno.utils.agent import (
     await_for_open_threads,
@@ -101,6 +102,7 @@ from agno.utils.events import (
     create_run_started_event,
     create_session_summary_completed_event,
     create_session_summary_started_event,
+    error_type_of,
     handle_event,
 )
 from agno.utils.hooks import (
@@ -1253,7 +1255,7 @@ def _run_stream(
                 run_response.status = RunStatus.error
                 flush_in_flight_messages_on_error(run_response, locals().get("run_messages"))
                 # Add error event to list of events
-                run_error = create_run_error_event(run_response, error=str(e))
+                run_error = create_run_error_event(run_response, error=str(e), error_type=error_type_of(e))
                 run_response.events = add_error_event(error=run_error, events=run_response.events)
 
                 # If the content is None, set it to the error message
@@ -1944,7 +1946,7 @@ async def _arun_background(
 
     Callers can poll for results via agent.aget_run_output(run_id, session_id).
     """
-    from agno.agent._session import asave_session
+    from agno.agent._session import asave_run, asave_session
     from agno.agent._storage import aread_or_create_session, update_metadata
 
     # 1. Register the run for cancellation tracking (before spawning the task)
@@ -1957,17 +1959,19 @@ async def _arun_background(
     agent_session = await aread_or_create_session(agent, session_id=session_id, user_id=user_id)
     update_metadata(agent, session=agent_session)
     agent_session.upsert_run(run=run_response)
+    run_index = resolve_run_index(agent_session, run_response)
     await asave_session(agent, session=agent_session)
+    await asave_run(agent, run=run_response, session_id=session_id, user_id=user_id, run_index=run_index)
 
     log_info(f"Background run {run_response.run_id} created with PENDING status")
 
     # 4. Spawn the background task
     async def _background_task() -> None:
         try:
-            # Transition to RUNNING
+            # Transition to RUNNING — only persist the changed run (O(1))
             run_response.status = RunStatus.running
             agent_session.upsert_run(run=run_response)
-            await asave_session(agent, session=agent_session)
+            await asave_run(agent, run=run_response, session_id=session_id, user_id=user_id)
 
             # Execute the actual run — _arun handles everything including
             # session persistence and cleanup
@@ -1987,11 +1991,11 @@ async def _arun_background(
             )
         except Exception as e:
             log_error(f"Background run {run_response.run_id} failed: {str(e)}")
-            # Persist ERROR status
+            # Persist ERROR status — only persist the changed run (O(1))
             try:
                 run_response.status = RunStatus.error
                 agent_session.upsert_run(run=run_response)
-                await asave_session(agent, session=agent_session)
+                await asave_run(agent, run=run_response, session_id=session_id, user_id=user_id)
             except Exception as e:
                 log_error(f"Failed to persist error state for background run {run_response.run_id}: {str(e)}")
             # Note: acleanup_run is already called by _arun's finally block
@@ -2033,7 +2037,7 @@ async def _arun_background_stream(
     Similar to how Workflow._arun_background_stream handles WebSocket streaming,
     but uses SSE transport with event_buffer and sse_subscriber_manager.
     """
-    from agno.agent._session import asave_session
+    from agno.agent._session import asave_run, asave_session
     from agno.agent._storage import aread_or_create_session, update_metadata
 
     run_id = run_response.run_id
@@ -2046,7 +2050,9 @@ async def _arun_background_stream(
     agent_session = await aread_or_create_session(agent, session_id=session_id, user_id=user_id)
     update_metadata(agent, session=agent_session)
     agent_session.upsert_run(run=run_response)
+    run_index = resolve_run_index(agent_session, run_response)
     await asave_session(agent, session=agent_session)
+    await asave_run(agent, run=run_response, session_id=session_id, user_id=user_id, run_index=run_index)
 
     log_info(f"Background stream run {run_id} persisted with RUNNING status")
 
@@ -2105,11 +2111,11 @@ async def _arun_background_stream(
 
         except Exception:
             log_error(f"Background stream run {run_id} failed", exc_info=True)
-            # Persist ERROR status
+            # Persist ERROR status — only persist the changed run (O(1))
             try:
                 run_response.status = RunStatus.error
                 agent_session.upsert_run(run=run_response)
-                await asave_session(agent, session=agent_session)
+                await asave_run(agent, run=run_response, session_id=session_id, user_id=user_id)
             except Exception:
                 log_error(f"Failed to persist error state for background stream run {run_id}", exc_info=True)
 
@@ -2682,7 +2688,7 @@ async def _arun_stream(
                 run_response.status = RunStatus.error
                 flush_in_flight_messages_on_error(run_response, locals().get("run_messages"))
                 # Add error event to list of events
-                run_error = create_run_error_event(run_response, error=str(e))
+                run_error = create_run_error_event(run_response, error=str(e), error_type=error_type_of(e))
                 run_response.events = add_error_event(error=run_error, events=run_response.events)
 
                 # If the content is None, set it to the error message
@@ -3394,10 +3400,7 @@ def continue_run_dispatch(
             run_response.regenerated_from = original_run_id_for_lineage
             if replace_original is not False and run_response.forked_from_run_id:
                 # Mark the original run as REGENERATED so history builders skip it.
-                for r in agent_session.runs or []:
-                    if r.run_id == original_run_id_for_lineage:
-                        r.status = RunStatus.regenerated
-                        break
+                _mark_run_regenerated(agent, agent_session, original_run_id_for_lineage)
         input_messages = run_response.messages or []
     elif run_id is not None:
         # The run is continued from a run_id.
@@ -3448,10 +3451,7 @@ def continue_run_dispatch(
         if regenerate and original_run_id_for_lineage:
             run_response.regenerated_from = original_run_id_for_lineage
             if replace_original is not False and run_response.forked_from_run_id:
-                for r in agent_session.runs or []:
-                    if r.run_id == original_run_id_for_lineage:
-                        r.status = RunStatus.regenerated
-                        break
+                _mark_run_regenerated(agent, agent_session, original_run_id_for_lineage)
 
         input_messages = run_response.messages or []
 
@@ -4089,7 +4089,7 @@ def _continue_run_stream(
                 run_response.status = RunStatus.error
                 flush_in_flight_messages_on_error(run_response, locals().get("run_messages"))
                 # Add error event to list of events
-                run_error = create_run_error_event(run_response, error=str(e))
+                run_error = create_run_error_event(run_response, error=str(e), error_type=error_type_of(e))
                 run_response.events = add_error_event(error=run_error, events=run_response.events)
 
                 # If the content is None, set it to the error message
@@ -4350,7 +4350,7 @@ async def _acontinue_run_background_stream(
     3. Buffers events (via event_buffer) and publishes to SSE subscribers
     4. Yields SSE-formatted strings via an asyncio.Queue
     """
-    from agno.agent._session import asave_session
+    from agno.agent._session import asave_run, asave_session
     from agno.agent._storage import aread_or_create_session, update_metadata
 
     _run_id = run_id or (run_response.run_id if run_response else None)
@@ -4361,13 +4361,16 @@ async def _acontinue_run_background_stream(
     agent_session = await aread_or_create_session(agent, session_id=session_id, user_id=user_id)
     update_metadata(agent, session=agent_session)
 
-    # Update the run status to RUNNING in the session
+    # Transition to RUNNING here only if we have the run; otherwise the spawned
+    # task will load and persist it via _acontinue_run_stream.
     if run_response:
         run_response.status = RunStatus.running
         agent_session.upsert_run(run=run_response)
-    await asave_session(agent, session=agent_session)
-
-    log_info(f"Background continue-run stream {_run_id} persisted with RUNNING status")
+        await asave_session(agent, session=agent_session)
+        await asave_run(agent, run=run_response, session_id=session_id, user_id=user_id)
+        log_info(f"Background continue-run stream {_run_id} persisted with RUNNING status")
+    else:
+        log_info(f"Background continue-run stream {_run_id} spawned; run will be loaded by the task")
 
     # 2. Create queue for forwarding SSE strings to the caller
     sse_queue: asyncio.Queue[Optional[str]] = asyncio.Queue()
@@ -4429,12 +4432,12 @@ async def _acontinue_run_background_stream(
 
         except Exception:
             log_error(f"Background continue-run stream {_run_id} failed", exc_info=True)
-            # Persist ERROR status
+            # Persist ERROR status — only persist the changed run (O(1))
             try:
                 if run_response:
                     run_response.status = RunStatus.error
                     agent_session.upsert_run(run=run_response)
-                    await asave_session(agent, session=agent_session)
+                    await asave_run(agent, run=run_response, session_id=session_id, user_id=user_id)
             except Exception:
                 log_error(f"Failed to persist error state for background continue-run stream {_run_id}", exc_info=True)
 
@@ -4585,10 +4588,7 @@ async def _acontinue_run(
                     if regenerate and original_run_id_for_lineage:
                         run_response.regenerated_from = original_run_id_for_lineage
                         if replace_original is not False and run_response.forked_from_run_id:
-                            for r in agent_session.runs or []:
-                                if r.run_id == original_run_id_for_lineage:
-                                    r.status = RunStatus.regenerated
-                                    break
+                            await _amark_run_regenerated(agent, agent_session, original_run_id_for_lineage)
                     input_messages = run_response.messages or []
                 elif run_id is not None:
                     # The run is continued from a run_id.
@@ -4632,10 +4632,7 @@ async def _acontinue_run(
                     if regenerate and original_run_id_for_lineage:
                         run_response.regenerated_from = original_run_id_for_lineage
                         if replace_original is not False and run_response.forked_from_run_id:
-                            for r in agent_session.runs or []:
-                                if r.run_id == original_run_id_for_lineage:
-                                    r.status = RunStatus.regenerated
-                                    break
+                            await _amark_run_regenerated(agent, agent_session, original_run_id_for_lineage)
 
                     input_messages = run_response.messages or []
 
@@ -4932,7 +4929,7 @@ async def _acontinue_run(
                 run_response.status = RunStatus.error
                 flush_in_flight_messages_on_error(run_response, locals().get("run_messages"))
                 # Add error event to list of events
-                run_error = create_run_error_event(run_response, error=str(e))  # type: ignore
+                run_error = create_run_error_event(run_response, error=str(e), error_type=error_type_of(e))  # type: ignore
                 run_response.events = add_error_event(error=run_error, events=run_response.events)  # type: ignore
 
                 # If the content is None, set it to the error message
@@ -5075,10 +5072,7 @@ async def _acontinue_run_stream(
                     if regenerate and original_run_id_for_lineage:
                         run_response.regenerated_from = original_run_id_for_lineage
                         if replace_original is not False and run_response.forked_from_run_id:
-                            for r in agent_session.runs or []:
-                                if r.run_id == original_run_id_for_lineage:
-                                    r.status = RunStatus.regenerated
-                                    break
+                            await _amark_run_regenerated(agent, agent_session, original_run_id_for_lineage)
                     input_messages = run_response.messages or []
 
                 elif run_id is not None:
@@ -5123,10 +5117,7 @@ async def _acontinue_run_stream(
                     if regenerate and original_run_id_for_lineage:
                         run_response.regenerated_from = original_run_id_for_lineage
                         if replace_original is not False and run_response.forked_from_run_id:
-                            for r in agent_session.runs or []:
-                                if r.run_id == original_run_id_for_lineage:
-                                    r.status = RunStatus.regenerated
-                                    break
+                            await _amark_run_regenerated(agent, agent_session, original_run_id_for_lineage)
 
                     input_messages = run_response.messages or []
 
@@ -5543,7 +5534,7 @@ async def _acontinue_run_stream(
                 run_response.status = RunStatus.error
                 flush_in_flight_messages_on_error(run_response, locals().get("run_messages"))
                 # Add error event to list of events
-                run_error = create_run_error_event(run_response, error=str(e))
+                run_error = create_run_error_event(run_response, error=str(e), error_type=error_type_of(e))
                 run_response.events = add_error_event(error=run_error, events=run_response.events)
 
                 # If the content is None, set it to the error message
@@ -5777,7 +5768,8 @@ def persist_run_in_session(
     Shared by terminal cleanup (cleanup_and_store) and mid-run checkpointing
     (checkpoint_run). Performs: scrub a shallow copy (unless one is supplied),
     upsert it into the session's runs list, refresh session metrics, sync
-    session_state into session_data, and call save_session.
+    session_state into session_data, and persist both the session row and the
+    run row (O(1) each).
 
     Does NOT stop the run timer, write to file, or update approval status —
     those are terminal-only and live in cleanup_and_store.
@@ -5789,6 +5781,7 @@ def persist_run_in_session(
 
     # Add scrubbed RunOutput to Agent Session
     session.upsert_run(run=storage_copy)
+    run_index = resolve_run_index(session, storage_copy)
 
     # Calculate session metrics
     update_session_metrics(agent, session=session, run_response=run_response)
@@ -5800,8 +5793,15 @@ def persist_run_in_session(
         else:
             session.session_data = {"session_state": run_context.session_state}
 
-    # Save session to memory
+    # Persist the session row and this single run (both O(1))
     _session.save_session(agent, session=session)
+    _session.save_run(
+        agent,
+        run=storage_copy,
+        session_id=session.session_id,
+        user_id=session.user_id,
+        run_index=run_index,
+    )
 
 
 async def apersist_run_in_session(
@@ -5818,6 +5818,7 @@ async def apersist_run_in_session(
         storage_copy = _scrub_and_propagate_session_state(agent, run_response, run_context, isolate_inflight=True)
 
     session.upsert_run(run=storage_copy)
+    run_index = resolve_run_index(session, storage_copy)
     update_session_metrics(agent, session=session, run_response=run_response)
 
     if run_context is not None and run_context.session_state is not None:
@@ -5827,44 +5828,13 @@ async def apersist_run_in_session(
             session.session_data = {"session_state": run_context.session_state}
 
     await _session.asave_session(agent, session=session)
-
-
-def flush_in_flight_messages_on_error(
-    run_response: RunOutput,
-    run_messages: Optional["RunMessages"],
-) -> None:
-    """Copy in-flight conversation into ``run_response.messages`` for the
-    terminal ERROR write.
-
-    During a normal run, ``run_response.messages`` is populated by
-    ``update_run_response`` only **after** the model loop returns
-    successfully. If the model loop raises (e.g. provider API failure,
-    malformed response, exception in a pre-hook) before any tool batch
-    boundary fires, neither ``update_run_response`` nor the mid-run
-    checkpoint hook has a chance to flush ``run_messages.messages`` into
-    ``run_response.messages``. The terminal ERROR write would then persist
-    an empty-message row, losing the conversation that led to the failure
-    and making post-mortem debugging impossible.
-
-    Call this from every ``except Exception`` block right before
-    ``cleanup_and_store``. It only sets ``run_response.messages`` if it's
-    still empty — preserves a partial state that the mid-run hook already
-    captured.
-
-    The filter ``m.add_to_agent_memory`` mirrors what the checkpoint hook
-    does, so the persisted shape is consistent regardless of which path
-    captured it.
-    """
-    if run_messages is None:
-        return
-    if run_response.messages:
-        # Already populated (e.g. by a mid-run checkpoint hook). Don't
-        # overwrite — it may be more complete than run_messages.messages
-        # if intervening processing happened.
-        return
-    if not run_messages.messages:
-        return
-    run_response.messages = [m for m in run_messages.messages if m.add_to_agent_memory]
+    await _session.asave_run(
+        agent,
+        run=storage_copy,
+        session_id=session.session_id,
+        user_id=session.user_id,
+        run_index=run_index,
+    )
 
 
 def cleanup_and_store(
@@ -5911,13 +5881,51 @@ def cleanup_and_store(
         user_id=user_id,
     )
 
-    # Persist run into session and save session
+    # Persist run into session, save session row and run row
     persist_run_in_session(agent, run_response, session, run_context, storage_copy=storage_copy)
 
     # Update approval run_status if this run has an associated approval.
     # This is a no-op if no approval exists for this run_id. (Terminal only.)
     if run_response.status is not None and run_response.run_id is not None:
         update_approval_run_status(agent.db, run_response.run_id, run_response.status)
+
+
+def flush_in_flight_messages_on_error(
+    run_response: RunOutput,
+    run_messages: Optional["RunMessages"],
+) -> None:
+    """Copy in-flight conversation into ``run_response.messages`` for the
+    terminal ERROR write.
+
+    During a normal run, ``run_response.messages`` is populated by
+    ``update_run_response`` only **after** the model loop returns
+    successfully. If the model loop raises (e.g. provider API failure,
+    malformed response, exception in a pre-hook) before any tool batch
+    boundary fires, neither ``update_run_response`` nor the mid-run
+    checkpoint hook has a chance to flush ``run_messages.messages`` into
+    ``run_response.messages``. The terminal ERROR write would then persist
+    an empty-message row, losing the conversation that led to the failure
+    and making post-mortem debugging impossible.
+
+    Call this from every ``except Exception`` block right before
+    ``cleanup_and_store``. It only sets ``run_response.messages`` if it's
+    still empty — preserves a partial state that the mid-run hook already
+    captured.
+
+    The filter ``m.add_to_agent_memory`` mirrors what the checkpoint hook
+    does, so the persisted shape is consistent regardless of which path
+    captured it.
+    """
+    if run_messages is None:
+        return
+    if run_response.messages:
+        # Already populated (e.g. by a mid-run checkpoint hook). Don't
+        # overwrite — it may be more complete than run_messages.messages
+        # if intervening processing happened.
+        return
+    if not run_messages.messages:
+        return
+    run_response.messages = [m for m in run_messages.messages if m.add_to_agent_memory]
 
 
 async def acleanup_and_store(
@@ -6044,6 +6052,53 @@ def _mark_checkpoint_message(run_response: RunOutput) -> None:
     message = run_response.messages[-1]
     message.checkpoint_status = run_response.status.value if run_response.status else None
     message.checkpoint_created_at = int(unix_time())
+
+
+def _mark_run_regenerated(
+    agent: Agent,
+    session: AgentSession,
+    original_run_id: str,
+) -> None:
+    """Flip the parent run's status to ``REGENERATED`` and persist that single
+    row. Under v3 storage, mutating ``session.runs[i].status`` in memory is not
+    enough: ``save_session`` writes only the session row, so without an
+    explicit ``save_run`` here the DB row keeps its old (COMPLETED) status and
+    history builders still surface the parent — producing duplicate content in
+    conversation history after regenerate."""
+    from agno.agent._session import save_run
+
+    for r in session.runs or []:
+        if r.run_id == original_run_id:
+            r.status = RunStatus.regenerated
+            save_run(
+                agent,
+                run=cast(RunOutput, r),
+                session_id=session.session_id,
+                user_id=session.user_id,
+                run_index=resolve_run_index(session, r),
+            )
+            return
+
+
+async def _amark_run_regenerated(
+    agent: Agent,
+    session: AgentSession,
+    original_run_id: str,
+) -> None:
+    """Async variant of :func:`_mark_run_regenerated`."""
+    from agno.agent._session import asave_run
+
+    for r in session.runs or []:
+        if r.run_id == original_run_id:
+            r.status = RunStatus.regenerated
+            await asave_run(
+                agent,
+                run=cast(RunOutput, r),
+                session_id=session.session_id,
+                user_id=session.user_id,
+                run_index=resolve_run_index(session, r),
+            )
+            return
 
 
 def checkpoint_run(
@@ -6221,6 +6276,21 @@ def fork_session_dispatch(
 
     new_session = _build_forked_session(source_session, new_user_id=user_id)
     save_session(agent, session=new_session)
+
+    # Under v3 storage, save_session no longer writes runs — persist each
+    # forked run individually so the new session isn't observably empty.
+    # AgentSession.runs is typed as Union[RunOutput, TeamRunOutput] for legacy
+    # reasons; an agent's own session only ever holds RunOutput.
+    from agno.agent._session import save_run
+
+    for idx, run in enumerate(new_session.runs or []):
+        save_run(
+            agent,
+            run=cast(RunOutput, run),
+            session_id=new_session.session_id,
+            user_id=new_session.user_id,
+            run_index=idx,
+        )
     return new_session.session_id
 
 
@@ -6255,6 +6325,31 @@ async def afork_session_dispatch(
         await asave_session(agent, session=new_session)
     else:
         save_session(agent, session=new_session)
+
+    # Under v3 storage, [a]save_session no longer writes runs — persist each
+    # forked run individually so the new session isn't observably empty.
+    # AgentSession.runs is typed as Union[RunOutput, TeamRunOutput] for legacy
+    # reasons; an agent's own session only ever holds RunOutput.
+    from agno.agent._session import asave_run, save_run
+
+    for idx, run in enumerate(new_session.runs or []):
+        run_out = cast(RunOutput, run)
+        if has_async_db(agent):
+            await asave_run(
+                agent,
+                run=run_out,
+                session_id=new_session.session_id,
+                user_id=new_session.user_id,
+                run_index=idx,
+            )
+        else:
+            save_run(
+                agent,
+                run=run_out,
+                session_id=new_session.session_id,
+                user_id=new_session.user_id,
+                run_index=idx,
+            )
 
     return new_session.session_id
 

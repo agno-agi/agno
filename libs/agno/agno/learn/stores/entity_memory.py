@@ -2670,6 +2670,7 @@ class EntityMemoryStore(LearningStore):
             response = model_copy.response(
                 messages=messages_for_model,
                 tools=functions,
+                tool_call_limit=self.config.max_updates_per_run,
             )
 
             if run_metrics is not None and response.response_usage is not None:
@@ -2718,6 +2719,7 @@ class EntityMemoryStore(LearningStore):
             response = await model_copy.aresponse(
                 messages=messages_for_model,
                 tools=functions,
+                tool_call_limit=self.config.max_updates_per_run,
             )
 
             if run_metrics is not None and response.response_usage is not None:
