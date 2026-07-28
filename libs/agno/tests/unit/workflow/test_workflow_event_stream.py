@@ -157,7 +157,10 @@ class TestWorkerStreamingWorkflowJob:
             async def aget_run_output(self, run_id, session_id, user_id=None):
                 from types import SimpleNamespace
 
-                return SimpleNamespace(run_id=run_id, status=RunStatus.completed)
+                # Deliberately a plain str: DB round-trips lose the enum, and the
+                # terminal write must survive that (found live: stream stuck
+                # RUNNING forever when complete_run choked on the str)
+                return SimpleNamespace(run_id=run_id, status="COMPLETED")
 
         worker = QueueWorker(
             store=store,

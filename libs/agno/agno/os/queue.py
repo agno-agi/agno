@@ -365,7 +365,14 @@ class QueueWorker:
                         job_id, job["session_id"], user_id=job.get("user_id")
                     )
         finally:
-            status = getattr(final_output, "status", None) or RunStatus.error
+            # The final output may come from a DB read (workflows), where status
+            # round-trips as a plain str - coerce before the terminal write, or
+            # complete_run dies inside this suppress and the stream never ends
+            raw_status = getattr(final_output, "status", None)
+            if isinstance(raw_status, str) and not isinstance(raw_status, RunStatus):
+                with contextlib.suppress(ValueError):
+                    raw_status = RunStatus(raw_status)
+            status = raw_status if isinstance(raw_status, RunStatus) else RunStatus.error
             with contextlib.suppress(Exception):
                 await asyncio.shield(event_stream.complete_run(job_id, status))
         return final_output
