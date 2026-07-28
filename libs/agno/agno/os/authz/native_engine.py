@@ -115,15 +115,23 @@ class NativePolicyEngine(PolicyEngine):
         self._setup_db(engine)
 
     # --- read helpers (DB-backed) ----------------------------------------
-    def _direct_roles(self, node: str) -> Set[str]:
-        """Roles directly assigned to ``node`` (a subject, or a role when nesting).
-        Indexed point-lookup on the grouping PK."""
-        self._require_engine()
+    def _direct_roles_on(self, conn: Any, node: str) -> Set[str]:
+        """Roles directly assigned to ``node``, on an existing connection.
+
+        Indexed point-lookup on the grouping PK. Taking the connection as an argument
+        lets one decision reuse a single checkout instead of taking one per hop -- the
+        transitive walk and the role-name guard are all reads of the same two tables.
+        """
         import sqlalchemy as sa
 
+        rows = conn.execute(sa.select(self._group_tbl.c.role).where(self._group_tbl.c.subject == node))
+        return {r[0] for r in rows}
+
+    def _direct_roles(self, node: str) -> Set[str]:
+        """Roles directly assigned to ``node`` (a subject, or a role when nesting)."""
+        self._require_engine()
         with self._engine.connect() as conn:
-            rows = conn.execute(sa.select(self._group_tbl.c.role).where(self._group_tbl.c.subject == node))
-            return {r[0] for r in rows}
+            return self._direct_roles_on(conn, node)
 
     def _closure(self, seed: str) -> Set[str]:
         """``seed`` plus the roles it is (transitively) assigned. The seed itself is
@@ -138,17 +146,20 @@ class NativePolicyEngine(PolicyEngine):
             stack.extend(self._direct_roles(node))
         return seen
 
-    def _is_role_name(self, name: str) -> bool:
+    def _is_role_name_on(self, conn: Any, name: str) -> bool:
         """True if ``name`` is used as a ROLE: it carries policy, or something is
-        assigned to it. Two indexed point lookups, so this is cheap per decision."""
-        self._require_engine()
+        assigned to it.
+
+        One round trip on an existing connection: both halves are indexed lookups on a
+        ``role`` column, so they union into a single statement rather than a query and a
+        checkout each. This runs on every subject decision and answers False on every
+        happy path, so it has to be cheap.
+        """
         import sqlalchemy as sa
 
-        with self._engine.connect() as conn:
-            for table in (self._policy_tbl, self._group_tbl):
-                if conn.execute(sa.select(table.c.role).where(table.c.role == name).limit(1)).first() is not None:
-                    return True
-        return False
+        carries_policy = sa.exists().where(self._policy_tbl.c.role == name)
+        has_members = sa.exists().where(self._group_tbl.c.role == name)
+        return bool(conn.execute(sa.select(sa.or_(carries_policy, has_members))).scalar())
 
     def _subject_closure(self, subject: str) -> Set[str]:
         """Policy roots for a *subject*: only the roles it is (transitively) assigned.
@@ -170,18 +181,29 @@ class NativePolicyEngine(PolicyEngine):
         rather than gaining someone else's. Keep subject ids and role slugs disjoint
         (emails or opaque ids for users) and the case never arises.
         """
-        if self._is_role_name(subject):
-            self._log.warning(
-                "authz: subject %r collides with a role name and was refused. Subject ids and role "
-                "slugs share one namespace, so this identity is ambiguous and is denied rather than "
-                "resolved. Rename the role or use opaque subject ids (e.g. emails).",
-                subject,
-            )
-            return set()
-        principals: Set[str] = set()
-        for role in self._direct_roles(subject):
-            principals |= self._closure(role)
-        return principals
+        self._require_engine()
+        # The whole resolution -- the role-name guard plus the transitive walk -- runs on
+        # ONE connection. It used to take a checkout per hop, and this is the hot path:
+        # every authorized request resolves a subject before it can be answered.
+        with self._engine.connect() as conn:
+            if self._is_role_name_on(conn, subject):
+                self._log.warning(
+                    "authz: subject %r collides with a role name and was refused. Subject ids and role "
+                    "slugs share one namespace, so this identity is ambiguous and is denied rather than "
+                    "resolved. Rename the role or use opaque subject ids (e.g. emails).",
+                    subject,
+                )
+                return set()
+
+            principals: Set[str] = set()
+            stack = list(self._direct_roles_on(conn, subject))
+            while stack:
+                role = stack.pop()
+                if role in principals:
+                    continue
+                principals.add(role)
+                stack.extend(self._direct_roles_on(conn, role))
+            return principals
 
     def _policies_for(self, principals: Set[str]) -> List[_PolicyRow]:
         """All (role, resource, action, effect) rows whose role is in ``principals``."""
