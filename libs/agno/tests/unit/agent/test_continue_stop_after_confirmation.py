@@ -10,6 +10,7 @@ from agno.models.message import Message
 from agno.models.response import ModelResponse, ToolExecution
 from agno.run.agent import (
     RunCompletedEvent,
+    RunContentEvent,
     RunOutput,
     ToolCallCompletedEvent,
     ToolCallStartedEvent,
@@ -253,6 +254,171 @@ async def test_confirmed_stop_after_tool_streams_events_without_async_model_foll
     tool_message = next(message for message in result.messages or [] if message.role == "tool")
     assert tool_message.tool_call_id == paused.tools[0].tool_call_id
     assert tool_message.content == "approved"
+
+
+def test_confirmed_stop_after_tool_yields_content_in_default_sync_stream() -> None:
+    agent, model, executions = _agent(stop_after_tool_call=True)
+    paused = _paused_response(
+        "present",
+        confirmed=True,
+        stop_after_tool_call=True,
+        run_id="sync-default-stream-stop-after",
+        session_id="sync-default-stream-stop-after-session",
+    )
+
+    events = list(agent.continue_run(paused, stream=True))
+
+    assert [event.content for event in events if isinstance(event, RunContentEvent)] == ["approved"]
+    assert executions == ["present"]
+    assert model.calls == 0
+
+
+@pytest.mark.asyncio
+async def test_confirmed_stop_after_tool_yields_content_in_default_async_stream() -> None:
+    agent, model, executions = _agent(stop_after_tool_call=True)
+    paused = _paused_response(
+        "present",
+        confirmed=True,
+        stop_after_tool_call=True,
+        run_id="async-default-stream-stop-after",
+        session_id="async-default-stream-stop-after-session",
+    )
+
+    events = [event async for event in agent.acontinue_run(paused, stream=True)]
+
+    assert [event.content for event in events if isinstance(event, RunContentEvent)] == ["approved"]
+    assert executions == ["present"]
+    assert model.calls == 0
+
+
+def test_sync_retry_retains_confirmed_stop_after_decision(monkeypatch: pytest.MonkeyPatch) -> None:
+    attempts = 0
+
+    def flaky_parser(*args: Any, **kwargs: Any) -> None:
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise RuntimeError("retry parser")
+
+    monkeypatch.setattr("agno.agent._response.parse_response_with_parser_model", flaky_parser)
+    agent, model, executions = _agent(stop_after_tool_call=True)
+    agent.retries = 1
+    agent.delay_between_retries = 0
+    paused = _paused_response(
+        "present",
+        confirmed=True,
+        stop_after_tool_call=True,
+        run_id="sync-retry-stop-after",
+        session_id="sync-retry-stop-after-session",
+    )
+
+    result = agent.continue_run(paused)
+
+    assert result.status == RunStatus.completed
+    assert result.content == "approved"
+    assert attempts == 2
+    assert executions == ["present"]
+    assert model.calls == 0
+
+
+def test_sync_stream_retry_retains_confirmed_stop_after_decision(monkeypatch: pytest.MonkeyPatch) -> None:
+    attempts = 0
+
+    def flaky_parser_stream(*args: Any, **kwargs: Any) -> Iterator[RunContentEvent]:
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise RuntimeError("retry parser")
+        return
+        yield
+
+    monkeypatch.setattr("agno.agent._response.parse_response_with_parser_model_stream", flaky_parser_stream)
+    agent, model, executions = _agent(stop_after_tool_call=True)
+    agent.retries = 1
+    agent.delay_between_retries = 0
+    paused = _paused_response(
+        "present",
+        confirmed=True,
+        stop_after_tool_call=True,
+        run_id="sync-stream-retry-stop-after",
+        session_id="sync-stream-retry-stop-after-session",
+    )
+
+    events = list(agent.continue_run(paused, stream=True, yield_run_output=True))
+    result = next(event for event in events if isinstance(event, RunOutput))
+
+    assert result.status == RunStatus.completed
+    assert result.content == "approved"
+    assert [event.content for event in events if isinstance(event, RunContentEvent)] == ["approved"]
+    assert attempts == 2
+    assert executions == ["present"]
+    assert model.calls == 0
+
+
+@pytest.mark.asyncio
+async def test_async_retry_retains_confirmed_stop_after_decision(monkeypatch: pytest.MonkeyPatch) -> None:
+    attempts = 0
+
+    async def flaky_parser(*args: Any, **kwargs: Any) -> None:
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise RuntimeError("retry parser")
+
+    monkeypatch.setattr("agno.agent._response.aparse_response_with_parser_model", flaky_parser)
+    agent, model, executions = _agent(stop_after_tool_call=True)
+    agent.retries = 1
+    agent.delay_between_retries = 0
+    paused = _paused_response(
+        "present",
+        confirmed=True,
+        stop_after_tool_call=True,
+        run_id="async-retry-stop-after",
+        session_id="async-retry-stop-after-session",
+    )
+
+    result = await agent.acontinue_run(paused)
+
+    assert result.status == RunStatus.completed
+    assert result.content == "approved"
+    assert attempts == 2
+    assert executions == ["present"]
+    assert model.calls == 0
+
+
+@pytest.mark.asyncio
+async def test_async_stream_retry_retains_confirmed_stop_after_decision(monkeypatch: pytest.MonkeyPatch) -> None:
+    attempts = 0
+
+    async def flaky_parser_stream(*args: Any, **kwargs: Any) -> AsyncIterator[RunContentEvent]:
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise RuntimeError("retry parser")
+        return
+        yield
+
+    monkeypatch.setattr("agno.agent._response.aparse_response_with_parser_model_stream", flaky_parser_stream)
+    agent, model, executions = _agent(stop_after_tool_call=True)
+    agent.retries = 1
+    agent.delay_between_retries = 0
+    paused = _paused_response(
+        "present",
+        confirmed=True,
+        stop_after_tool_call=True,
+        run_id="async-stream-retry-stop-after",
+        session_id="async-stream-retry-stop-after-session",
+    )
+
+    events = [event async for event in agent.acontinue_run(paused, stream=True, yield_run_output=True)]
+    result = next(event for event in events if isinstance(event, RunOutput))
+
+    assert result.status == RunStatus.completed
+    assert result.content == "approved"
+    assert [event.content for event in events if isinstance(event, RunContentEvent)] == ["approved"]
+    assert attempts == 2
+    assert executions == ["present"]
+    assert model.calls == 0
 
 
 @pytest.mark.parametrize(

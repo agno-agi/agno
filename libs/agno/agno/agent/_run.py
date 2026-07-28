@@ -97,6 +97,7 @@ from agno.utils.events import (
     create_run_content_completed_event,
     create_run_continued_event,
     create_run_error_event,
+    create_run_output_content_event,
     create_run_paused_event,
     create_run_started_event,
     create_session_summary_completed_event,
@@ -3870,6 +3871,8 @@ def _continue_run_stream(
 
     # Set up retry logic
     num_attempts = agent.retries + 1
+    stop_after_tools = _pending_confirmed_stop_after_tools(run_response, tools)
+    terminal_content_yielded = False
     try:
         for attempt in range(num_attempts):
             try:
@@ -3887,7 +3890,6 @@ def _continue_run_stream(
                     )
 
                 # 2. Handle the updated tools
-                stop_after_tools = _pending_confirmed_stop_after_tools(run_response, tools)
                 for event in handle_tool_call_updates_stream(
                     agent,
                     run_response=run_response,
@@ -3905,6 +3907,18 @@ def _continue_run_stream(
                     run_response.messages = [
                         message for message in run_messages.messages if message.add_to_agent_memory
                     ]
+                    if not terminal_content_yielded:
+                        yield handle_event(  # type: ignore
+                            create_run_output_content_event(
+                                from_run_response=run_response,
+                                content=run_response.content,
+                                content_type=run_response.content_type,
+                            ),
+                            run_response,
+                            events_to_skip=agent.events_to_skip,  # type: ignore
+                            store_events=agent.store_events,
+                        )
+                        terminal_content_yielded = True
                 else:
                     for event in handle_model_response_stream(
                         agent,
@@ -4562,6 +4576,7 @@ async def _acontinue_run(
     agent_session: Optional[AgentSession] = None
 
     # Resolve retry parameters
+    stop_after_tool_call = False
     try:
         num_attempts = agent.retries + 1
         for attempt in range(num_attempts):
@@ -4761,8 +4776,11 @@ async def _acontinue_run(
                 await aregister_run(run_response.run_id)  # type: ignore
 
                 # 7. Handle the updated tools
-                stop_after_tool_call = await ahandle_tool_call_updates(
-                    agent, run_response=run_response, run_messages=run_messages, tools=_tools
+                stop_after_tool_call = (
+                    await ahandle_tool_call_updates(
+                        agent, run_response=run_response, run_messages=run_messages, tools=_tools
+                    )
+                    or stop_after_tool_call
                 )
 
                 # 8. Get model response
@@ -5059,6 +5077,8 @@ async def _acontinue_run_stream(
     agent_session: Optional[AgentSession] = None
 
     # Resolve retry parameters
+    stop_after_tools: List[ToolExecution] = []
+    terminal_content_yielded = False
     try:
         num_attempts = agent.retries + 1
         for attempt in range(num_attempts):
@@ -5265,7 +5285,7 @@ async def _acontinue_run_stream(
                     )
 
                 # 7. Handle the updated tools
-                stop_after_tools = _pending_confirmed_stop_after_tools(run_response, _tools)
+                stop_after_tools = _pending_confirmed_stop_after_tools(run_response, _tools) or stop_after_tools
                 async for event in ahandle_tool_call_updates_stream(
                     agent,
                     run_response=run_response,
@@ -5283,6 +5303,18 @@ async def _acontinue_run_stream(
                     run_response.messages = [
                         message for message in run_messages.messages if message.add_to_agent_memory
                     ]
+                    if not terminal_content_yielded:
+                        yield handle_event(  # type: ignore
+                            create_run_output_content_event(
+                                from_run_response=run_response,
+                                content=run_response.content,
+                                content_type=run_response.content_type,
+                            ),
+                            run_response,
+                            events_to_skip=agent.events_to_skip,  # type: ignore
+                            store_events=agent.store_events,
+                        )
+                        terminal_content_yielded = True
                 elif agent.output_model is None:
                     async for event in ahandle_model_response_stream(
                         agent,
