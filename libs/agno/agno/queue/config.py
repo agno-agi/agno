@@ -26,7 +26,7 @@ from typing import Any, Optional, Union
 
 @dataclass
 class RedisCoordination:
-    """Redis connection settings for run-queue coordination.
+    """Redis connection settings for queue coordination.
 
     Provide either ``url`` (clients are constructed for you) or BOTH
     ``sync_client`` and ``async_client`` (e.g. for connection tuning or an
