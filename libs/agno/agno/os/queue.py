@@ -1,6 +1,6 @@
 """AgentOS run queue wiring.
 
-Interprets ``RunQueueConfig`` (pure data, from ``agno.run.queue``) and wires
+Interprets ``QueueConfig`` (pure data, from ``agno.queue.config``) and wires
 the corresponding runtime pieces. The planned DB-backed queue worker (durable
 acceptance, claim/lease, crash recovery) will live here as well.
 """
@@ -9,12 +9,12 @@ import asyncio
 import contextlib
 from typing import Any, Dict, Optional, Union
 
-from agno.run.queue import RedisCoordination, RunQueueConfig
+from agno.queue.config import QueueConfig, RedisCoordination
 from agno.utils.log import log_debug, log_error, log_info, log_warning
 
 
-def apply_run_queue_config(config: RunQueueConfig) -> None:
-    """Apply a RunQueueConfig to the process.
+def apply_queue_config(config: QueueConfig) -> None:
+    """Apply a QueueConfig to the process.
 
     Sets the background concurrency cap, and - when ``config.redis`` is given -
     wires the cross-container transports (cancellation manager + event stream)
@@ -40,7 +40,7 @@ def _apply_coordination(redis: Union[str, RedisCoordination]) -> None:
         from redis import Redis as SyncRedis
         from redis.asyncio import Redis as AsyncRedis
     except ImportError as e:
-        raise ImportError("`redis` not installed. RunQueueConfig.redis requires it: `pip install redis`") from e
+        raise ImportError("`redis` not installed. QueueConfig.redis requires it: `pip install redis`") from e
 
     url = coordination.url
     if coordination.sync_client is not None and coordination.async_client is not None:
@@ -87,7 +87,7 @@ def _apply_coordination(redis: Union[str, RedisCoordination]) -> None:
     else:
         log_debug("Run queue coordination: keeping explicitly configured event stream")
 
-    # The premise of run_queue.redis is that BOTH transports ride the same
+    # The premise of queue.redis is that BOTH transports ride the same
     # Redis. Wiring only one (the other was custom-configured) can split them
     # across different instances - cancellation-in on one Redis, events-out on
     # another. Legitimate for advanced setups, but loud so it is never an
@@ -95,7 +95,7 @@ def _apply_coordination(redis: Union[str, RedisCoordination]) -> None:
     if cancellation_wired != event_stream_wired:
         skipped = "cancellation manager" if not cancellation_wired else "event stream"
         log_warning(
-            f"run_queue.redis wired only one transport: the {skipped} keeps its explicitly "
+            f"queue.redis wired only one transport: the {skipped} keeps its explicitly "
             "configured backend. If that backend targets a different Redis, cancellation and "
             "event streaming will operate on different instances - make sure this is intended."
         )

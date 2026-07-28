@@ -2,7 +2,7 @@
 
 Background runs (``background=True``) execute through a run queue: submissions
 are accepted immediately (PENDING), execute under a concurrency cap, and wait
-in line when the cap is reached. ``RunQueueConfig`` is the single place to
+in line when the cap is reached. ``QueueConfig`` is the single place to
 configure this subsystem.
 
 The config grows with the queue's capabilities:
@@ -17,7 +17,7 @@ The config grows with the queue's capabilities:
   the DB-backed queue with crash recovery.
 
 This module is pure data: it imports no transports and no redis package.
-Wiring happens in ``agno.os.run_queue``.
+Wiring happens in ``agno.os.queue``.
 """
 
 from dataclasses import dataclass
@@ -53,7 +53,7 @@ class RedisCoordination:
 
 
 @dataclass
-class RunQueueConfig:
+class QueueConfig:
     """Configuration for background run execution.
 
     Args:

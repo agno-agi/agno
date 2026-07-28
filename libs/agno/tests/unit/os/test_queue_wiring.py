@@ -1,4 +1,4 @@
-"""Unit tests for RunQueueConfig wiring (transports from run_queue.redis)."""
+"""Unit tests for QueueConfig wiring (transports from queue.redis)."""
 
 import pytest
 
@@ -11,14 +11,14 @@ from agno.os.event_streams import (  # noqa: E402
     get_event_stream,
     set_event_stream,
 )
-from agno.os.run_queue import apply_run_queue_config  # noqa: E402
+from agno.os.queue import apply_queue_config  # noqa: E402
+from agno.queue.config import QueueConfig, RedisCoordination  # noqa: E402
 from agno.run.cancel import get_cancellation_manager, set_cancellation_manager  # noqa: E402
 from agno.run.cancellation_management.in_memory_cancellation_manager import (  # noqa: E402
     InMemoryRunCancellationManager,
 )
 from agno.run.cancellation_management.redis_cancellation_manager import RedisRunCancellationManager  # noqa: E402
 from agno.run.concurrency import get_background_max_concurrency, set_background_max_concurrency  # noqa: E402
-from agno.run.queue import RedisCoordination, RunQueueConfig  # noqa: E402
 
 
 @pytest.fixture(autouse=True)
@@ -55,24 +55,24 @@ class TestRedisCoordinationValidation:
             RedisCoordination(sync_client=fakeredis.FakeRedis())
 
 
-class TestApplyRunQueueConfig:
+class TestApplyQueueConfig:
     def test_concurrency_applied(self):
-        apply_run_queue_config(RunQueueConfig(max_concurrency=7))
+        apply_queue_config(QueueConfig(max_concurrency=7))
         assert get_background_max_concurrency() == 7
 
     def test_no_redis_keeps_in_memory_transports(self):
-        apply_run_queue_config(RunQueueConfig())
+        apply_queue_config(QueueConfig())
         assert isinstance(get_cancellation_manager(), InMemoryRunCancellationManager)
         assert isinstance(get_event_stream(), InMemoryEventStream)
 
     def test_redis_wires_both_transports(self):
-        apply_run_queue_config(RunQueueConfig(redis=make_coordination()))
+        apply_queue_config(QueueConfig(redis=make_coordination()))
         assert isinstance(get_cancellation_manager(), RedisRunCancellationManager)
         assert isinstance(get_event_stream(), RedisEventStream)
 
     def test_url_string_accepted(self):
         # from_url constructs lazily; no connection is made at wiring time
-        apply_run_queue_config(RunQueueConfig(redis="redis://localhost:6399"))
+        apply_queue_config(QueueConfig(redis="redis://localhost:6399"))
         assert isinstance(get_cancellation_manager(), RedisRunCancellationManager)
         assert isinstance(get_event_stream(), RedisEventStream)
 
@@ -82,7 +82,7 @@ class TestApplyRunQueueConfig:
             redis_client=fakeredis.FakeRedis(), async_redis_client=fakeredis.FakeAsyncRedis()
         )
         set_cancellation_manager(custom)
-        apply_run_queue_config(RunQueueConfig(redis=make_coordination()))
+        apply_queue_config(QueueConfig(redis=make_coordination()))
         assert get_cancellation_manager() is custom
 
     def test_custom_event_stream_not_clobbered(self):
@@ -91,7 +91,7 @@ class TestApplyRunQueueConfig:
 
         custom = CustomStream(fakeredis.FakeAsyncRedis())
         set_event_stream(custom)
-        apply_run_queue_config(RunQueueConfig(redis=make_coordination()))
+        apply_queue_config(QueueConfig(redis=make_coordination()))
         assert get_event_stream() is custom
 
 

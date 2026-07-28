@@ -17,11 +17,11 @@ The default is in-memory (single process). For multi-container deployments,
 configure Redis Streams so clients can resume from ANY replica:
 
     from agno.os import AgentOS
-    from agno.run.queue import RunQueueConfig
+    from agno.queue.config import QueueConfig
 
     agent_os = AgentOS(
         agents=[agent],
-        run_queue=RunQueueConfig(redis="redis://localhost:6379"),
+        queue=QueueConfig(redis="redis://localhost:6379"),
     )
 
 Requirements:
