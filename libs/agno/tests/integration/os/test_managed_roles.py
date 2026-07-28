@@ -392,3 +392,66 @@ def test_concurrent_assign_keeps_exactly_one_role():
         roles = store.roles_of("bob")
         assert len(roles) == 1, f"one role per subject violated: {roles}"
         assert roles[0] in ("admin", "member")
+
+
+def test_request_scoped_cache_does_not_outlive_the_request(tmp_path):
+    """The per-request memo must never behave like an in-process cache.
+
+    NativePolicyEngine deliberately keeps no cache so a revocation on one replica is
+    enforced everywhere on the next request. Deduplicating the repeated lookups within
+    ONE request preserves that exactly -- these assertions are what says so.
+    """
+    url = f"sqlite:///{tmp_path / 'roles.db'}"
+    store = ManagedRoleStore(db_url=url)
+    store.set_role_scopes("member", ["agents:*:read"])
+    store.assign("bob", "member")
+    client = _build(store)
+    headers = {"Authorization": f"Bearer {_token('bob')}"}
+
+    assert client.get("/agents/research-agent", headers=headers).status_code == 200
+
+    # revoked between requests -> enforced on the very next one
+    store.unassign("bob", "member")
+    assert client.get("/agents/research-agent", headers=headers).status_code == 403
+
+    # revoked by a DIFFERENT store on the same db (another worker/replica)
+    store.assign("bob", "member")
+    assert client.get("/agents/research-agent", headers=headers).status_code == 200
+    ManagedRoleStore(db_url=url).unassign("bob", "member")
+    assert client.get("/agents/research-agent", headers=headers).status_code == 403
+
+
+def test_request_scoped_cache_still_honours_deny_overrides(tmp_path):
+    """Deduplication must not collapse the allow and deny lookups into a wrong answer."""
+    store = ManagedRoleStore(db_url=f"sqlite:///{tmp_path / 'roles.db'}")
+    store.set_role_scopes("analyst", [("agents:*:read", "allow"), ("agents:other-agent:read", "deny")])
+    store.assign("bob", "analyst")
+    client = _build(store)
+    headers = {"Authorization": f"Bearer {_token('bob')}"}
+
+    assert client.get("/agents/other-agent", headers=headers).status_code == 403
+    listing = client.get("/agents", headers=headers)
+    assert listing.status_code == 200
+    assert {a["id"] for a in listing.json()} == {"research-agent"}
+
+
+def test_a_write_is_visible_to_the_rest_of_its_own_request():
+    """A mutation clears the request memo, so a request that changes policy and then
+    asks a question sees its own write rather than the answer it cached beforehand."""
+    from agno.os.authz._request_scope import request_scope
+
+    store = ManagedRoleStore(db_url=_db_url())
+    store.set_role_scopes("member", ["agents:*:read"])
+
+    with request_scope():
+        assert store.provider.check(_ctx_for("bob")) is False  # cached: no roles
+        store.assign("bob", "member")  # ... then granted, inside the same scope
+        assert store.provider.check(_ctx_for("bob")) is True
+
+
+def _ctx_for(subject: str):
+    from agno.os.authz.provider import AuthorizationContext
+
+    return AuthorizationContext(
+        principal_id=subject, resource_type="agents", resource_id="research-agent", action="read"
+    )
