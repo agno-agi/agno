@@ -1176,3 +1176,80 @@ async def test_assigning_config_to_mcp_server_attribute_applies_config():
     assert os.mcp_server is True
     assert os.mcp_config is not None
     assert await _tool_names(os) == {"ping"}
+
+
+def test_managed_role_provider_is_mirrored_onto_mcp_subapp():
+    """The MCP tools are a mounted sub-app whose ``request.app`` is the sub-app, not the
+    main AgentOS app. The tool gate resolves its AuthorizationProvider from that ``.app``,
+    so a role_store / custom provider must be mirrored onto the sub-app's state. Without
+    the mirror the gate silently falls back to the default ScopeAuthorizationProvider and a
+    scope-less (role-only) token is denied every tool -- managed RBAC degrades to scope-only
+    over MCP. This locks the mirror in.
+    """
+    import tempfile
+
+    from agno.db.sqlite import SqliteDb
+    from agno.os.authz.role_store import ManagedRoleStore
+    from agno.os.config import AuthorizationConfig
+
+    with tempfile.NamedTemporaryFile(suffix=".db") as f:
+        roles = ManagedRoleStore(db=SqliteDb(db_file=f.name))
+        roles.set_role_scopes("admin", ["agent_os:admin"])
+        os = AgentOS(
+            id="mcp-authz",
+            agents=[_agent()],
+            authorization=True,
+            mcp_server=True,
+            authorization_config=AuthorizationConfig(verification_keys=["x" * 40], algorithm="HS256", role_store=roles),
+        )
+        app = os.get_app()
+        main_provider = getattr(app.state, "authorization_provider", None)
+        assert main_provider is not None, "main app should carry the managed-role provider"
+        sub_provider = getattr(getattr(os._mcp_app, "state", None), "authorization_provider", None)
+        assert sub_provider is main_provider, "MCP sub-app must resolve the SAME provider as the main app"
+
+
+def test_authz_mirror_survives_a_rebuilt_mcp_subapp():
+    """The mirror lives next to the mount, so a REBUILT sub-app gets it re-applied.
+
+    Previously the mirror happened only at seed time, which was correct purely because
+    _mcp_app is built once and never replaced. If anything ever rebuilds it (or remounts
+    onto a fresh app), a seed-time-only mirror would leave the new sub-app with no
+    provider -- silently degrading managed-role RBAC to scope-only over MCP, the exact
+    bug this guards. Simulate the rebuild and assert the state is restored.
+    """
+    import tempfile
+
+    from agno.db.sqlite import SqliteDb
+    from agno.os.authz.audit import LoggingAuditSink
+    from agno.os.authz.role_store import ManagedRoleStore
+    from agno.os.config import AuthorizationConfig
+
+    with tempfile.NamedTemporaryFile(suffix=".db") as f:
+        roles = ManagedRoleStore(db=SqliteDb(db_file=f.name))
+        roles.set_role_scopes("admin", ["agent_os:admin"])
+        sink = LoggingAuditSink()
+        os = AgentOS(
+            id="mcp-mirror",
+            agents=[_agent()],
+            authorization=True,
+            mcp_server=True,
+            authorization_config=AuthorizationConfig(
+                verification_keys=["x" * 40], algorithm="HS256", role_store=roles, audit=sink
+            ),
+        )
+        app = os.get_app()
+        provider = app.state.authorization_provider
+        assert os._mcp_app.state.authorization_provider is provider
+        assert os._mcp_app.state.authz_audit is sink
+
+        # Simulate a rebuilt sub-app by clearing the state a fresh one would not have.
+        sub = os._mcp_app
+        for attr in ("authorization_provider", "authz_audit"):
+            delattr(sub.state, attr)
+        assert not hasattr(sub.state, "authorization_provider")
+
+        # Re-mounting must restore both, rather than leaving the gate scope-only.
+        os._mount_mcp_app(app)
+        assert sub.state.authorization_provider is provider
+        assert sub.state.authz_audit is sink

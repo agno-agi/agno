@@ -85,6 +85,14 @@ class BaseDb(ABC):
         self.mcp_oauth_codes_table_name = mcp_oauth_codes_table or "agno_mcp_oauth_codes"
         self.mcp_oauth_refresh_tokens_table_name = mcp_oauth_refresh_tokens_table or "agno_mcp_oauth_refresh_tokens"
         self.mcp_oauth_keys_table_name = mcp_oauth_keys_table or "agno_mcp_oauth_keys"
+        # Authorization tables. Renameable like any other agno table; only the sync
+        # SQLAlchemy backends implement the methods that use them.
+        self.authz_policy_table_name = "agno_authz_policy"
+        self.authz_grouping_table_name = "agno_authz_grouping"
+        self.authz_roles_table_name = "agno_authz_roles"
+        self.authz_users_table_name = "agno_authz_users"
+        self.authz_audit_table_name = "agno_authz_audit"
+        self.authz_decisions_table_name = "agno_authz_decisions"
 
     def to_dict(self) -> Dict[str, Any]:
         """
@@ -1429,6 +1437,149 @@ class BaseDb(ABC):
 
     def insert_mcp_oauth_key(self, *, kid: str, secret: str, created_at: int) -> bool:
         """Insert a signing key. Returns False on a uniqueness conflict (lost the cold-start race), True on success."""
+        raise NotImplementedError
+
+    # --- Authorization (Optional) ---
+    # Backs the pluggable authorization tier (agno.os.authz): the policy and assignment
+    # tables the native engine decides from, role metadata, the credential-less user
+    # directory carrying the disabled-user kill switch, and the two audit trails.
+    # Implemented by the sync SQLAlchemy backends (PostgresDb / SqliteDb); every other
+    # backend inherits these NotImplementedError stubs, so a db that cannot persist
+    # authorization says so at construction instead of being duck-typed for an engine.
+    #
+    # Decisions are read fresh -- there is no cache below this line -- because a
+    # revocation on one replica must be enforced everywhere on the next request.
+
+    # policy: what a role may do
+    def get_authz_policies(self, roles: List[str]) -> List[Tuple[str, str, str, str]]:
+        """All (role, resource, action, effect) rows whose role is in ``roles``."""
+        raise NotImplementedError
+
+    def get_authz_role_policies(self, role: str) -> List[Tuple[str, str, str]]:
+        """One role's (resource, action, effect) rows."""
+        raise NotImplementedError
+
+    def set_authz_role_policies(self, role: str, rows: List[Tuple[str, str, str]]) -> None:
+        """Replace a role's policy rows with ``rows`` ((resource, action, effect)), atomically."""
+        raise NotImplementedError
+
+    def upsert_authz_policy(self, *, role: str, resource: str, action: str, effect: str) -> None:
+        """Add or flip the effect of one (role, resource, action) grant."""
+        raise NotImplementedError
+
+    def delete_authz_policy(self, *, role: str, resource: Optional[str] = None, action: Optional[str] = None) -> None:
+        """Delete policy rows for a role, optionally narrowed to a resource and action."""
+        raise NotImplementedError
+
+    # grouping: who holds which role (and role-to-role inheritance)
+    def get_authz_direct_roles(self, subject: str) -> List[str]:
+        """Roles directly assigned to ``subject``."""
+        raise NotImplementedError
+
+    def authz_name_is_role(self, name: str) -> bool:
+        """True if ``name`` is used as a ROLE: it carries policy, or something is assigned
+        to it. Used by the collision guard, so it runs on every subject decision."""
+        raise NotImplementedError
+
+    def assign_authz_role(self, subject: str, role: str) -> None:
+        """Add an assignment (idempotent)."""
+        raise NotImplementedError
+
+    def unassign_authz_role(self, subject: str, role: str) -> None:
+        """Remove an assignment (idempotent)."""
+        raise NotImplementedError
+
+    def replace_authz_subject_roles(self, subject: str, role: str) -> None:
+        """Atomically make ``role`` the subject's only role.
+
+        One transaction, so there is no instant where the subject holds nothing and no
+        interleaving in which two concurrent assigns each clear only what they saw and
+        leave the subject holding both.
+        """
+        raise NotImplementedError
+
+    def list_authz_roles(self) -> List[str]:
+        """Every role name known to policy or assignments."""
+        raise NotImplementedError
+
+    def delete_authz_role(self, role: str) -> None:
+        """Drop a role's policy, its assignments, and its metadata."""
+        raise NotImplementedError
+
+    # role metadata: what an admin UI renders
+    def get_authz_role_meta(self, slug: str) -> Optional[Dict[str, Any]]:
+        """A role's metadata row, or None."""
+        raise NotImplementedError
+
+    def list_authz_role_meta(self) -> List[Dict[str, Any]]:
+        """Every role metadata row."""
+        raise NotImplementedError
+
+    def upsert_authz_role_meta(self, slug: str, values: Dict[str, Any]) -> None:
+        """Create or update a role's metadata."""
+        raise NotImplementedError
+
+    def delete_authz_role_meta(self, slug: str) -> None:
+        """Delete a role's metadata row."""
+        raise NotImplementedError
+
+    # user directory: identity is asserted by the JWT; no credentials are stored here
+    def get_authz_user(self, user_id: str) -> Optional[Dict[str, Any]]:
+        """A directory row, or None."""
+        raise NotImplementedError
+
+    def list_authz_users(
+        self,
+        limit: int = 1000,
+        offset: int = 0,
+        include_disabled: bool = True,
+        search: Optional[str] = None,
+        sort_by: str = "created_at",
+        order: str = "desc",
+    ) -> List[Dict[str, Any]]:
+        """A page of directory rows. ``search`` matches id/email/name case-insensitively;
+        NULLs in the sort column sort last in either direction."""
+        raise NotImplementedError
+
+    def count_authz_users(self, include_disabled: bool = True, search: Optional[str] = None) -> int:
+        """How many directory rows match, for pagination alongside list_authz_users."""
+        raise NotImplementedError
+
+    def upsert_authz_user(self, user_id: str, values: Dict[str, Any]) -> None:
+        """Create or update a directory row verbatim (including ``disabled``)."""
+        raise NotImplementedError
+
+    def delete_authz_user(self, user_id: str) -> None:
+        """Remove a directory row."""
+        raise NotImplementedError
+
+    def is_authz_user_disabled(self, user_id: str) -> bool:
+        """The kill switch, read on every request for a known subject."""
+        raise NotImplementedError
+
+    # audit: the change trail and the access trail
+    def record_authz_audit_event(self, values: Dict[str, Any]) -> None:
+        """Append a change-trail event (who changed what)."""
+        raise NotImplementedError
+
+    def record_authz_decision(self, values: Dict[str, Any]) -> None:
+        """Append an access-trail event (one allow/deny decision)."""
+        raise NotImplementedError
+
+    def read_authz_audit_events(
+        self,
+        limit: int = 100,
+        offset: int = 0,
+        search: Optional[str] = None,
+        sort_by: str = "created_at",
+        order: str = "desc",
+        decisions: bool = False,
+    ) -> List[Dict[str, Any]]:
+        """A page of audit events; ``decisions`` selects the access trail over the change trail."""
+        raise NotImplementedError
+
+    def count_authz_audit_events(self, search: Optional[str] = None, decisions: bool = False) -> int:
+        """How many audit events match, for pagination."""
         raise NotImplementedError
 
     # --- Service Accounts (Optional) ---

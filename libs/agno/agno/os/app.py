@@ -88,6 +88,8 @@ if TYPE_CHECKING:
     # runtime here would break `import agno.os` when the extra is not installed.
     from fastmcp.server.auth import AuthProvider
 
+    from agno.os.authz.provider import AuthorizationProvider
+
 
 @asynccontextmanager
 async def mcp_lifespan(_, mcp_tools):
@@ -557,10 +559,39 @@ class AgentOS:
 
         self._reprovision_routers(app=app)
 
+    def _mirror_authz_state_to_mcp_app(self, app: FastAPI) -> None:
+        """Copy the authz state the MCP tool gate reads onto the mounted sub-app.
+
+        The MCP tools are a mounted sub-app, so ``request.app`` inside the tool gate is
+        that sub-app, not this AgentOS's app -- ``request.state`` crosses the mount
+        boundary but ``request.app`` does not. Anything the gate resolves off
+        ``app.state`` therefore has to be mirrored here, or it silently degrades: a
+        missing provider drops managed-role/composite/FGA policy to scope-only, and a
+        missing sink drops every MCP decision from the access trail.
+
+        Kept next to the mount (and called from there as well as from seeding) so that
+        ANY future rebuild or re-mount of ``_mcp_app`` re-applies it. Today the sub-app
+        is built once, which is the only reason a seed-time-only mirror was correct --
+        an implicit dependency worth not relying on.
+        """
+        if self._mcp_app is None or not hasattr(self._mcp_app, "state"):
+            return
+        parent = getattr(app, "state", None)
+        if parent is None:
+            return
+        for attr in ("authorization_provider", "authz_audit"):
+            value = getattr(parent, attr, None)
+            if value is not None:
+                setattr(self._mcp_app.state, attr, value)
+
     def _mount_mcp_app(self, app: FastAPI) -> None:
         """Mount the MCP app at root exactly once (idempotent across get_app/resync calls)."""
         if self._mcp_app is None:
             return
+        # Re-apply on every mount, so a rebuilt sub-app can't silently lose the authz
+        # state (on the first get_app() this is a no-op: seeding runs after the mount
+        # and does the mirror itself).
+        self._mirror_authz_state_to_mcp_app(app)
         if any(getattr(route, "app", None) is self._mcp_app for route in app.router.routes):
             return
         app.mount("/", self._mcp_app)
@@ -1148,10 +1179,25 @@ class AgentOS:
             log_debug("Registry router not enabled: requires a registry to be provided to AgentOS")
             routers.append(_get_disabled_feature_router("/registry", "Registry", "registry"))
 
+        # Managed-roles admin API (/authz). Registered HERE, with the other built-in
+        # routers, so it lands ahead of the MCP catch-all mount added just below. A
+        # router included after get_app() returns sits behind that mount and 404s --
+        # which is what the previously documented "app.include_router(get_roles_router(...))"
+        # step did on any OS with mcp_server=True. Configuring a role store is already
+        # the deliberate opt-in (and, per the check in _add_auth_middleware, it cannot
+        # be set without authorization=True), so no extra flag gates this.
+        authz_config = self.authorization_config
+        role_store = getattr(authz_config, "role_store", None) if authz_config is not None else None
+        if role_store is not None:
+            from agno.os.authz.role_router import get_roles_router
+
+            routers.append(get_roles_router(role_store, user_store=getattr(authz_config, "user_store", None)))
+
         for router in routers:
             self._add_router(fastapi_app, router)
 
-        # Mount MCP if needed
+        # Mount MCP if needed. This is a catch-all Mount at "", so it must stay LAST:
+        # anything registered after it is unreachable.
         if self.mcp_server:
             self._mount_mcp_app(fastapi_app)
 
@@ -1211,6 +1257,24 @@ class AgentOS:
         # the parent app), so the mounted sub-app carries no auth code of its own.
         security_key = self.settings.os_security_key if self.settings else None
         jwt_env_configured = bool(getenv("JWT_VERIFICATION_KEY") or getenv("JWT_JWKS_FILE"))
+        # An authz plane with the enforcement flag off is the most dangerous shape this
+        # config can take: the provider is seeded but nothing consults it, so an OS the
+        # author believes is governed by roles serves every route to anonymous callers.
+        # Fail at construction rather than shipping a silently open instance.
+        cfg = self.authorization_config
+        if (
+            cfg is not None
+            and not self.authorization
+            and (
+                getattr(cfg, "role_store", None) is not None or getattr(cfg, "authorization_provider", None) is not None
+            )
+        ):
+            raise ValueError(
+                "AuthorizationConfig(role_store=... / authorization_provider=...) requires "
+                "AgentOS(authorization=True). Without it the authorization plane is never "
+                "enforced and every route is served unauthenticated. Set authorization=True, "
+                "or drop the provider if you intended an open instance."
+            )
         if self.authorization:
             # Set authorization_enabled flag on settings so security key validation is skipped
             self.settings.authorization_enabled = True
@@ -1400,6 +1464,7 @@ class AgentOS:
                 verification_keys=verification_keys,
                 jwks_file=jwks_file,
                 algorithm=algorithm,
+                issuer=middleware_kwargs.get("issuer"),
             )
         # Expose audience config + admin scope on app.state so WebSocket auth
         # (which does not flow through HTTP middleware) can honour them.
@@ -1410,6 +1475,14 @@ class AgentOS:
         # JWT/RBAC still apply but the per-user DB wrapper and ownership gates
         # added by the user-scoped-DB work stay dormant.
         fastapi_app.state.user_isolation_enabled = user_isolation
+
+        # Seed the pluggable AuthorizationProvider that the REST route gate, per-resource
+        # gate, WebSocket gates, and MCP tool gate all resolve through. When nothing is
+        # configured we leave app.state.authorization_provider unset and the resolver
+        # falls back to the default ScopeAuthorizationProvider — so behaviour is exactly
+        # v2.7's scope RBAC. A role_store or a custom provider is enforced at the SAME
+        # four points instead.
+        self._seed_authorization_provider(fastapi_app)
 
         # Only interfaces that verify the authenticity of their own inbound requests
         # (Slack HMAC, Telegram/WhatsApp webhook secrets -- see
@@ -1475,6 +1548,105 @@ class AgentOS:
             middleware_kwargs["scope_mappings"] = interface_mappings
 
         fastapi_app.add_middleware(AuthMiddleware, **middleware_kwargs)
+
+    def _seed_authorization_provider(self, fastapi_app: FastAPI) -> None:
+        """Seed ``app.state.authorization_provider`` (and ``authz_audit``) from the
+        AuthorizationConfig, so the four choke points resolve the right enforcer.
+
+        Precedence, matching AuthorizationConfig's ``role_store`` XOR
+        ``authorization_provider`` validator:
+
+        - ``role_store`` set: adopt the OS db into the store (``attach_db``) so managed
+          roles persist alongside agent data, then use the store's provider. A managed
+          store MUST have a DB — an in-memory store can't stay consistent across the
+          replicas an AgentOS deployment runs — so if it ends up unbound (no store db
+          and no SQL-capable OS db to adopt) we fail fast rather than silently enforce
+          an empty policy.
+        - ``authorization_provider`` set: use it directly.
+        - neither: leave the state unset; the resolver defaults to
+          ScopeAuthorizationProvider (v2.7 behaviour).
+        """
+        config = self.authorization_config
+        if config is None:
+            return
+
+        role_store = getattr(config, "role_store", None)
+        provider = getattr(config, "authorization_provider", None)
+
+        resolved_provider: Optional[AuthorizationProvider] = None
+        if role_store is not None:
+            # Adopt the OS db so a store created without one persists to it (no-op if the
+            # store already has its own db or the OS db isn't SQL-capable).
+            role_store.attach_db(self.db)
+            if not role_store.is_bound:
+                raise ValueError(
+                    "AuthorizationConfig(role_store=...) needs a SQL database: managed roles must be "
+                    "persisted (an in-memory store can't stay consistent across replicas). Give the "
+                    "store a db (ManagedRoleStore(db_url=...) / db=...) or pass a SQL-capable db to "
+                    "AgentOS(db=...) for it to adopt."
+                )
+            resolved_provider = role_store.provider
+        elif provider is not None:
+            # A list/tuple of providers means "run several authz planes at once"
+            # (e.g. token scopes for operators + a managed role store for end users):
+            # compose them with an OR — a request is allowed if any plane allows it.
+            if isinstance(provider, str):
+                raise ValueError(
+                    "authorization_provider must be an AuthorizationProvider (or a list of them), not a string."
+                )
+            if isinstance(provider, (list, tuple)):
+                from agno.os.authz._composite import CompositeAuthorizationProvider
+
+                resolved_provider = CompositeAuthorizationProvider(list(provider))
+            else:
+                resolved_provider = provider
+
+        if resolved_provider is not None:
+            fastapi_app.state.authorization_provider = resolved_provider
+
+        audit = getattr(config, "audit", None)
+        if audit is not None:
+            fastapi_app.state.authz_audit = audit
+
+        # The MCP tools run in a mounted sub-app whose ``request.app`` is NOT this app,
+        # so everything the tool gate resolves off ``app.state`` (the provider, the audit
+        # sink) must be mirrored onto it -- see _mirror_authz_state_to_mcp_app. Seeding
+        # runs after the mount, so this is where the first mirror happens.
+        self._mirror_authz_state_to_mcp_app(fastapi_app)
+
+        # Optional user directory (no-IdP). When present, the middleware (and the
+        # WebSocket connect path) denies disabled users and — when auto-provision is
+        # on — creates a directory row from token claims. Seed the store and the
+        # claim/policy flags the middleware reads off app.state.
+        user_store = getattr(config, "user_store", None)
+        if user_store is not None:
+            # Adopt the OS db, mirroring what we do for role_store, so a directory
+            # created without one persists instead of living in a process-local dict.
+            # That matters more here than convenience: the directory backs the
+            # disabled-user kill switch, and an in-memory one silently loses a
+            # revocation on restart and never reaches another replica at all.
+            attach = getattr(user_store, "attach_db", None)
+            if callable(attach):
+                attach(self.db)
+            if getattr(user_store, "is_bound", True) is False:
+                # Same guard, and the same reasoning, as the role_store branch above: a
+                # store that cannot persist is not a working deployment mode. The
+                # directory backs the disabled-user kill switch, so an unpersisted one
+                # means a revocation is lost on restart and never reaches another
+                # replica -- the control silently does nothing. Fail at construction
+                # rather than serve an OS whose revocations do not work.
+                raise ValueError(
+                    "AuthorizationConfig(user_store=...) needs a SQL database: the user directory "
+                    "backs the disabled-user kill switch, and an in-memory one cannot stay "
+                    "consistent across replicas (a revocation would be lost on restart and never "
+                    "seen by other workers). Give the store a db (ManagedUserStore(db_url=...) / "
+                    "db=...) or pass a SQL-capable db to AgentOS(db=...) for it to adopt."
+                )
+        fastapi_app.state.user_store = user_store
+        fastapi_app.state.user_auto_provision = getattr(config, "auto_provision_users", False)
+        fastapi_app.state.user_email_claim = getattr(config, "user_email_claim", "email")
+        fastapi_app.state.user_name_claim = getattr(config, "user_name_claim", "name")
+        fastapi_app.state.user_directory_fail_closed = getattr(config, "directory_error_fail_closed", False)
 
     def get_routes(self) -> List[Any]:
         """Retrieve all routes from the FastAPI app.

@@ -1004,3 +1004,43 @@ def test_loopback_redirect_matching():
     assert matches("https://claude.ai/cb", "http://claude.ai/cb") is False
     # Refused: userinfo in the URI must never participate in matching.
     assert matches("http://x@127.0.0.1:62000/callback", reg) is False
+
+
+async def test_identity_bridge_denies_disabled_user_over_mcp_auth(tmp_path):
+    """mcp_auth exempts /mcp from the parent AuthMiddleware, so the disabled-user
+    kill-switch that lives there does not run for OAuth'd MCP traffic. The identity
+    bridge must re-apply it: a disabled user's valid token is NOT bridged (leaving
+    request.state.authenticated unset), so the fail-closed tool gate denies. An enabled
+    user is bridged normally. Locks the revocation-over-OAuth'd-MCP fix in."""
+    from types import SimpleNamespace
+
+    from agno.db.sqlite import SqliteDb
+    from agno.os.authz.user_store import ManagedUserStore
+    from agno.os.mcp_auth import MCPIdentityBridgeMiddleware
+
+    users = ManagedUserStore(db=SqliteDb(db_file=str(tmp_path / "u.db")))
+    users.upsert("alice", email="alice@co")
+    users.upsert("bob", email="bob@co")
+    users.set_disabled("bob", True)
+
+    captured: dict = {}
+
+    async def inner(scope, receive, send):
+        captured["state"] = dict(scope.get("state", {}))
+
+    bridge = MCPIdentityBridgeMiddleware(inner, admin_scope="agent_os:admin", user_store=users)
+
+    def make_scope(sub):
+        token = SimpleNamespace(claims={"sub": sub}, scopes=["agents:*:run"], client_id=sub)
+        return {"type": "http", "user": SimpleNamespace(access_token=token), "state": {}}
+
+    # enabled user -> identity bridged
+    await bridge(make_scope("alice"), None, None)
+    assert captured["state"].get("authenticated") is True
+    assert captured["state"].get("user_id") == "alice"
+
+    # disabled user -> identity NOT bridged; tool gate then fails closed
+    captured.clear()
+    await bridge(make_scope("bob"), None, None)
+    assert captured["state"].get("authenticated") is not True
+    assert "user_id" not in captured["state"]

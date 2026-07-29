@@ -1049,7 +1049,15 @@ def get_workflow_router(
         if os.db and isinstance(os.db, BaseDb):
             from agno.workflow.workflow import get_workflows
 
-            for db_workflow in get_workflows(db=os.db, registry=os.registry):
+            db_workflows = get_workflows(db=os.db, registry=os.registry)
+            # Same RBAC filter as the configured workflows above -- without it a workflow
+            # registered in the database is listed to every caller, including one the
+            # per-resource gate would 403.
+            if db_workflows and getattr(request.state, "authorization_enabled", False):
+                from agno.os.auth import filter_resources_by_access as _filter_workflows
+
+                db_workflows = _filter_workflows(request, db_workflows, "workflows")
+            for db_workflow in db_workflows:
                 try:
                     workflows.append(WorkflowSummaryResponse.from_workflow(workflow=db_workflow, is_component=True))
                 except Exception:
