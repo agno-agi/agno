@@ -254,9 +254,14 @@ class OpenAIResponses(Model):
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
+        use_previous_response_id: bool = True,
     ) -> Dict[str, Any]:
         """
         Returns keyword arguments for API requests.
+
+        Args:
+            use_previous_response_id: When False, skip chaining via previous_response_id
+                (used to recover when a stored response id is no longer valid).
 
         Returns:
             Dict[str, Any]: A dictionary of keyword arguments for API requests.
@@ -369,24 +374,30 @@ class OpenAIResponses(Model):
                 request_params["store"] = True
 
                 # Check if the last assistant message has a previous_response_id to continue from
-                previous_response_id = None
-                for msg in reversed(messages):
-                    if (
-                        msg.role == "assistant"
-                        and hasattr(msg, "provider_data")
-                        and msg.provider_data
-                        and "response_id" in msg.provider_data
-                    ):
-                        previous_response_id = msg.provider_data["response_id"]
-                        log_debug(f"Using previous_response_id: {previous_response_id}")
-                        break
+                if use_previous_response_id:
+                    previous_response_id = None
+                    for msg in reversed(messages):
+                        if (
+                            msg.role == "assistant"
+                            and hasattr(msg, "provider_data")
+                            and msg.provider_data
+                            and "response_id" in msg.provider_data
+                        ):
+                            previous_response_id = msg.provider_data["response_id"]
+                            log_debug(f"Using previous_response_id: {previous_response_id}")
+                            break
 
-                if previous_response_id:
-                    request_params["previous_response_id"] = previous_response_id
+                    if previous_response_id:
+                        request_params["previous_response_id"] = previous_response_id
 
         # Add additional request params if provided
         if self.request_params:
             request_params.update(self.request_params)
+
+        # When recovering from a stale previous_response_id, make sure a user-supplied
+        # request_params entry cannot re-introduce it and defeat the retry.
+        if not use_previous_response_id:
+            request_params.pop("previous_response_id", None)
 
         if request_params:
             log_debug(f"Calling {self.provider} with request parameters: {request_params}", log_level=2)
@@ -582,11 +593,28 @@ class OpenAIResponses(Model):
                         fc_id_to_call_id[fc_id] = call_id
         return fc_id_to_call_id
 
+    @staticmethod
+    def _is_previous_response_not_found_error(exc: APIStatusError) -> bool:
+        """Return True for the specific 400 when a chained previous_response_id is missing."""
+        if exc.status_code != 400:
+            return False
+        # The detail can live on the exception message or only in the response body,
+        # depending on how the SDK surfaces the error; check both.
+        parts = [getattr(exc, "message", None) or "", str(exc)]
+        try:
+            error_body = exc.response.json().get("error", {})
+        except Exception:
+            error_body = getattr(exc.response, "text", "") if exc.response is not None else ""
+        parts.append(error_body.get("message", "") if isinstance(error_body, dict) else str(error_body))
+        text = " ".join(parts).lower()
+        return "previous response" in text and "not found" in text
+
     def _format_messages(
         self,
         messages: List[Message],
         compress_tool_results: bool = False,
         tools: Optional[List[Union[Function, Dict[str, Any]]]] = None,
+        use_previous_response_id: bool = True,
     ) -> List[Union[Dict[str, Any], ResponseReasoningItem]]:
         """
         Format a message into the format expected by OpenAI.
@@ -595,6 +623,8 @@ class OpenAIResponses(Model):
             messages (List[Message]): The message to format.
             compress_tool_results: Whether to compress tool results.
             tools: The tools list, used to detect if file_search is present.
+            use_previous_response_id: When False, send full history (no trim / no skip of
+                prior function_call items). Used to recover when a stored response id is invalid.
 
         Returns:
             Dict[str, Any]: The formatted message.
@@ -611,7 +641,7 @@ class OpenAIResponses(Model):
         messages_to_format = messages
         previous_response_id: Optional[str] = None
 
-        if self._using_reasoning_model() and self.store is not False:
+        if use_previous_response_id and self._using_reasoning_model() and self.store is not False:
             # Detect whether we're chaining via previous_response_id. If so, we should NOT
             # re-send prior function_call items; the Responses API already has the state and
             # expects only the corresponding function_call_output items.
@@ -774,14 +804,41 @@ class OpenAIResponses(Model):
             request_params = self.get_request_params(
                 messages=messages, response_format=response_format, tools=tools, tool_choice=tool_choice
             )
+            formatted_input = self._format_messages(messages, compress_tool_results, tools=tools)  # type: ignore[arg-type]
 
             assistant_message.metrics.start_timer()
 
-            provider_response = self.get_client().responses.create(
-                model=self.id,
-                input=self._format_messages(messages, compress_tool_results, tools=tools),  # type: ignore
-                **request_params,
-            )
+            try:
+                provider_response = self.get_client().responses.create(
+                    model=self.id,
+                    input=formatted_input,  # type: ignore
+                    **request_params,
+                )
+            except APIStatusError as create_exc:
+                if request_params.get("previous_response_id") and self._is_previous_response_not_found_error(
+                    create_exc
+                ):
+                    log_warning("previous_response_id not found; retrying without previous_response_id")
+                    request_params = self.get_request_params(
+                        messages=messages,
+                        response_format=response_format,
+                        tools=tools,
+                        tool_choice=tool_choice,
+                        use_previous_response_id=False,
+                    )
+                    formatted_input = self._format_messages(
+                        messages,
+                        compress_tool_results,
+                        tools=tools,  # type: ignore[arg-type]
+                        use_previous_response_id=False,
+                    )
+                    provider_response = self.get_client().responses.create(
+                        model=self.id,
+                        input=formatted_input,  # type: ignore
+                        **request_params,
+                    )
+                else:
+                    raise
 
             # Stop the timer before polling so wall-clock polling wait is not counted as inference time.
             # For background mode, the initial create() measures submission latency; the polling loop
@@ -879,14 +936,41 @@ class OpenAIResponses(Model):
             request_params = self.get_request_params(
                 messages=messages, response_format=response_format, tools=tools, tool_choice=tool_choice
             )
+            formatted_input = self._format_messages(messages, compress_tool_results, tools=tools)  # type: ignore[arg-type]
 
             assistant_message.metrics.start_timer()
 
-            provider_response = await self.get_async_client().responses.create(
-                model=self.id,
-                input=self._format_messages(messages, compress_tool_results, tools=tools),  # type: ignore
-                **request_params,
-            )
+            try:
+                provider_response = await self.get_async_client().responses.create(
+                    model=self.id,
+                    input=formatted_input,  # type: ignore
+                    **request_params,
+                )
+            except APIStatusError as create_exc:
+                if request_params.get("previous_response_id") and self._is_previous_response_not_found_error(
+                    create_exc
+                ):
+                    log_warning("previous_response_id not found; retrying without previous_response_id")
+                    request_params = self.get_request_params(
+                        messages=messages,
+                        response_format=response_format,
+                        tools=tools,
+                        tool_choice=tool_choice,
+                        use_previous_response_id=False,
+                    )
+                    formatted_input = self._format_messages(
+                        messages,
+                        compress_tool_results,
+                        tools=tools,  # type: ignore[arg-type]
+                        use_previous_response_id=False,
+                    )
+                    provider_response = await self.get_async_client().responses.create(
+                        model=self.id,
+                        input=formatted_input,  # type: ignore
+                        **request_params,
+                    )
+                else:
+                    raise
 
             # Stop the timer before polling so wall-clock polling wait is not counted as inference time.
             # For background mode, the initial create() measures submission latency; the polling loop
@@ -987,16 +1071,47 @@ class OpenAIResponses(Model):
             # Background mode is not supported for streaming. Strip the flag and warn.
             if request_params.pop("background", None):
                 log_warning("Background mode is not supported for streaming requests. Ignoring `background=True`.")
+            formatted_input = self._format_messages(messages, compress_tool_results, tools=tools)  # type: ignore[arg-type]
             tool_use: Dict[str, Any] = {}
 
             assistant_message.metrics.start_timer()
 
-            for chunk in self.get_client().responses.create(
-                model=self.id,
-                input=self._format_messages(messages, compress_tool_results, tools=tools),  # type: ignore
-                stream=True,
-                **request_params,
-            ):
+            try:
+                stream = self.get_client().responses.create(
+                    model=self.id,
+                    input=formatted_input,  # type: ignore
+                    stream=True,
+                    **request_params,
+                )
+            except APIStatusError as create_exc:
+                if request_params.get("previous_response_id") and self._is_previous_response_not_found_error(
+                    create_exc
+                ):
+                    log_warning("previous_response_id not found; retrying without previous_response_id")
+                    request_params = self.get_request_params(
+                        messages=messages,
+                        response_format=response_format,
+                        tools=tools,
+                        tool_choice=tool_choice,
+                        use_previous_response_id=False,
+                    )
+                    request_params.pop("background", None)
+                    formatted_input = self._format_messages(
+                        messages,
+                        compress_tool_results,
+                        tools=tools,  # type: ignore[arg-type]
+                        use_previous_response_id=False,
+                    )
+                    stream = self.get_client().responses.create(
+                        model=self.id,
+                        input=formatted_input,  # type: ignore
+                        stream=True,
+                        **request_params,
+                    )
+                else:
+                    raise
+
+            for chunk in stream:
                 model_response, tool_use = self._parse_provider_response_delta(
                     stream_event=chunk,  # type: ignore
                     assistant_message=assistant_message,
@@ -1076,16 +1191,46 @@ class OpenAIResponses(Model):
             # Background mode is not supported for streaming. Strip the flag and warn.
             if request_params.pop("background", None):
                 log_warning("Background mode is not supported for streaming requests. Ignoring `background=True`.")
+            formatted_input = self._format_messages(messages, compress_tool_results, tools=tools)  # type: ignore[arg-type]
             tool_use: Dict[str, Any] = {}
 
             assistant_message.metrics.start_timer()
 
-            async_stream = await self.get_async_client().responses.create(
-                model=self.id,
-                input=self._format_messages(messages, compress_tool_results, tools=tools),  # type: ignore
-                stream=True,
-                **request_params,
-            )
+            try:
+                async_stream = await self.get_async_client().responses.create(
+                    model=self.id,
+                    input=formatted_input,  # type: ignore
+                    stream=True,
+                    **request_params,
+                )
+            except APIStatusError as create_exc:
+                if request_params.get("previous_response_id") and self._is_previous_response_not_found_error(
+                    create_exc
+                ):
+                    log_warning("previous_response_id not found; retrying without previous_response_id")
+                    request_params = self.get_request_params(
+                        messages=messages,
+                        response_format=response_format,
+                        tools=tools,
+                        tool_choice=tool_choice,
+                        use_previous_response_id=False,
+                    )
+                    request_params.pop("background", None)
+                    formatted_input = self._format_messages(
+                        messages,
+                        compress_tool_results,
+                        tools=tools,  # type: ignore[arg-type]
+                        use_previous_response_id=False,
+                    )
+                    async_stream = await self.get_async_client().responses.create(
+                        model=self.id,
+                        input=formatted_input,  # type: ignore
+                        stream=True,
+                        **request_params,
+                    )
+                else:
+                    raise
+
             async for chunk in async_stream:  # type: ignore
                 model_response, tool_use = self._parse_provider_response_delta(chunk, assistant_message, tool_use)  # type: ignore
                 yield model_response
