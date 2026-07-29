@@ -60,7 +60,7 @@ from agno.os.utils import (
     resolve_workflow,
 )
 from agno.run.base import RunStatus
-from agno.run.workflow import WorkflowErrorEvent
+from agno.run.workflow import WorkflowErrorEvent, WorkflowRunOutput
 from agno.utils.log import log_debug, log_error, log_warning, logger
 from agno.utils.serialize import json_serializer
 from agno.workflow.factory import WorkflowFactory
@@ -113,8 +113,14 @@ async def _pump_event_stream_to_websocket(websocket: WebSocket, run_id: str, fro
     except asyncio.CancelledError:
         raise
     except Exception as e:
-        # Socket closed mid-pump (normal on client disconnect) or stream failed
+        # Socket closed mid-pump (normal on client disconnect) or stream
+        # failed. Best-effort error frame: a dead pump must not look like a
+        # completed run to a client whose socket is still open.
         log_debug(f"WS tail pump for run {run_id} ended: {e}")
+        with contextlib.suppress(Exception):
+            await websocket.send_text(
+                json.dumps({"event": "error", "run_id": run_id, "error": f"stream tail failed: {str(e)[:200]}"})
+            )
 
 
 async def cancel_subscription_pump(websocket: WebSocket) -> None:
@@ -421,8 +427,11 @@ async def handle_workflow_subscription(
             )
             return
 
-        # Run is known to the stream (still active or recently completed)
-        if buffer_status in [RunStatus.completed, RunStatus.error, RunStatus.cancelled]:
+        # Run is known to the stream (still active or recently completed).
+        # PAUSED belongs here too: a paused run's stream is settled until the
+        # continue-run, so subscribers get the replay (ending in the paused
+        # snapshot) rather than an open live tail claiming RUNNING.
+        if buffer_status in [RunStatus.completed, RunStatus.error, RunStatus.cancelled, RunStatus.paused]:
             # Run finished - replay everything still buffered
             all_events = await event_stream.replay(run_id, last_event_index=None)
 
@@ -852,8 +861,30 @@ async def workflow_continue_response_streamer(
             **kwargs,
         )
 
-        async for run_response_chunk in run_response:
-            yield format_sse_event(run_response_chunk)  # type: ignore
+        # Post-approval events must reach the event stream too: with
+        # _handle_event transport-free, this response is otherwise their only
+        # copy, and a later /resume or WS reconnect would replay just the
+        # pre-pause prefix. Re-register (idempotent, cross-replica continue),
+        # mark RUNNING, publish per event, and complete with the final status.
+        _continue_stream = get_event_stream()
+        with contextlib.suppress(Exception):
+            await _continue_stream.register_run(run_id, RunStatus.pending)
+            await _continue_stream.set_run_status(run_id, RunStatus.running)
+
+        try:
+            async for run_response_chunk in run_response:
+                if not isinstance(run_response_chunk, WorkflowRunOutput):
+                    await workflow._apublish_stream_event(run_response_chunk, run_id)
+                yield format_sse_event(run_response_chunk)  # type: ignore
+        finally:
+            _final_session = None
+            with contextlib.suppress(Exception):
+                _final_session = await workflow.aget_session(session_id=session_id)
+            _final_status = RunStatus.completed
+            if _final_session and _final_session.runs:
+                _final_status = _final_session.runs[-1].status or RunStatus.completed
+            with contextlib.suppress(Exception):
+                await asyncio.shield(_continue_stream.complete_run(run_id, _final_status))
 
         # If the workflow re-paused, yield WorkflowPausedEvent as the new clean
         # snapshot event. Also yield the legacy "WorkflowRunOutput" event for
@@ -879,6 +910,8 @@ async def workflow_continue_response_streamer(
                     content=_last_run.content,
                     metadata=_last_run.metadata,
                 )
+                with contextlib.suppress(Exception):
+                    await workflow._apublish_stream_event(paused_event, run_id)
                 yield format_sse_event(paused_event)
 
                 # Legacy WorkflowRunOutput event for backwards compatibility
@@ -1352,10 +1385,12 @@ def get_workflow_router(
                 # RUN (complete output guaranteed via the run row); the live
                 # stream is the best-effort view.
                 queue_worker = getattr(request.app.state, "queue_worker", None)
+                queued_stream_payload = {"input": message, "kwargs": kwargs, "stream": True}
                 stream_queueable = (
                     queue_worker is not None
                     and not isinstance(workflow, RemoteWorkflow)
                     and version is None
+                    and payload_is_queueable(queued_stream_payload)
                     and any(
                         getattr(candidate, "id", None) == workflow_id and not isinstance(candidate, WorkflowFactory)
                         for candidate in (os.workflows or [])
@@ -1373,7 +1408,7 @@ def get_workflow_router(
                         component_id=getattr(workflow, "id", None) or workflow_id,
                         session_id=queued_session_id,
                         user_id=user_id,
-                        payload={"input": message, "kwargs": kwargs, "stream": True},
+                        payload=queued_stream_payload,
                         max_attempts=queue_worker.config.max_attempts,
                         idempotency_key=request.headers.get("idempotency-key"),
                     ).to_dict()
@@ -1389,9 +1424,20 @@ def get_workflow_router(
                                 status_code=409,
                                 detail="Idempotency-Key was already used but the original run could not be retrieved",
                             )
-                        # Attach to the ORIGINAL run's stream instead of a new one
+                        # Attach to the ORIGINAL run's stream. A terminal
+                        # original (or one whose stream keys already expired)
+                        # gets the full resume path - buffer or DB replay -
+                        # instead of a blind tail that would close silently
+                        # with zero events.
+                        if existing.get("status") in ("queued", "running"):
+                            return StreamingResponse(
+                                queued_run_tail_streamer(existing["id"]), media_type="text/event-stream"
+                            )
                         return StreamingResponse(
-                            queued_run_tail_streamer(existing["id"]), media_type="text/event-stream"
+                            _resume_stream_generator(
+                                workflow, existing["id"], None, existing.get("session_id"), user_id
+                            ),
+                            media_type="text/event-stream",
                         )
                     await get_event_stream().register_run(queued_run_id, _RS.pending)
                     await aprepare_queued_run(

@@ -4324,22 +4324,22 @@ class Workflow:
                 await event_stream.set_run_status(publish_run_id, RunStatus.running)
 
                 if self.agent is not None:
+                    # websocket_handler deliberately NOT passed down: every
+                    # broadcast site in _aexecute_workflow_agent yields the
+                    # same event, so delivering from this loop (with the
+                    # event-stream index attached) replaces the internal
+                    # index-less broadcasts without dropping or doubling frames
                     result = self._aexecute_workflow_agent(
                         user_input=input,  # type: ignore
                         run_context=run_context,
                         execution_input=inputs,
                         stream=True,
-                        websocket_handler=websocket_handler,
                         **kwargs,
                     )
-                    # For streaming, result is an async iterator. The socket
-                    # delivery happens inside _aexecute_workflow_agent
-                    # (_broadcast_to_websocket); publishing here buffers events
-                    # for replay and cross-replica tails.
                     async for event in result:  # type: ignore
                         if isinstance(event, WorkflowRunOutput):
                             continue
-                        await self._apublish_stream_event(event, publish_run_id)
+                        await self._apublish_stream_event(event, publish_run_id, websocket_handler=websocket_handler)
                     log_debug(
                         f"Background streaming execution (workflow agent) completed with status: {workflow_run_response.status}"
                     )
