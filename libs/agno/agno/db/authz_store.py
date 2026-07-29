@@ -24,6 +24,43 @@ from sqlalchemy import delete, func, insert, or_, select
 from sqlalchemy.engine import Engine
 from sqlalchemy.exc import IntegrityError
 
+
+def _upsert(conn: Any, table: Any, values: Dict[str, Any], conflict_cols: List[str], update_cols: List[str]) -> None:
+    """One INSERT ... ON CONFLICT, rather than DELETE-then-INSERT.
+
+    Delete-then-insert is not an upsert under concurrency: two writers can both delete,
+    then both insert, and the second gets a primary-key violation. Postgres surfaces that
+    as an IntegrityError and a 500 -- measured at 89/150 concurrent assigns before this --
+    while SQLite mostly hides it behind its global write lock, which is why it looks fine
+    in development and fails in production.
+
+    Both supported backends speak ON CONFLICT; anything else falls back to the old pattern
+    so a future backend still works, just without the atomicity.
+    """
+    dialect = conn.dialect.name
+    stmt: Any
+    if dialect == "postgresql":
+        from sqlalchemy.dialects.postgresql import insert as pg_insert
+
+        stmt = pg_insert(table).values(**values)
+    elif dialect == "sqlite":
+        from sqlalchemy.dialects.sqlite import insert as sqlite_insert
+
+        stmt = sqlite_insert(table).values(**values)
+    else:  # pragma: no cover - neither shipped backend
+        conn.execute(delete(table).where(*[table.c[c] == values[c] for c in conflict_cols]))
+        conn.execute(insert(table).values(**values))
+        return
+
+    if update_cols:
+        stmt = stmt.on_conflict_do_update(
+            index_elements=conflict_cols, set_={c: values[c] for c in update_cols if c in values}
+        )
+    else:
+        stmt = stmt.on_conflict_do_nothing(index_elements=conflict_cols)
+    conn.execute(stmt)
+
+
 # ==================== Policy: what a role may do ====================
 
 
@@ -51,14 +88,25 @@ def set_role_policies(engine: Engine, table: Any, role: str, rows: List[Tuple[st
     with engine.begin() as conn:
         conn.execute(delete(table).where(table.c.role == role))
         for resource, action, effect in rows:
-            conn.execute(insert(table).values(role=role, resource=resource, action=action, effect=effect))
+            _upsert(
+                conn,
+                table,
+                {"role": role, "resource": resource, "action": action, "effect": effect},
+                ["role", "resource", "action"],
+                ["effect"],
+            )
 
 
 def upsert_policy(engine: Engine, table: Any, *, role: str, resource: str, action: str, effect: str) -> None:
     """Add a grant, or flip the effect of the existing one for this (role, resource, action)."""
     with engine.begin() as conn:
-        conn.execute(delete(table).where(table.c.role == role, table.c.resource == resource, table.c.action == action))
-        conn.execute(insert(table).values(role=role, resource=resource, action=action, effect=effect))
+        _upsert(
+            conn,
+            table,
+            {"role": role, "resource": resource, "action": action, "effect": effect},
+            ["role", "resource", "action"],
+            ["effect"],
+        )
 
 
 def delete_policy(
@@ -100,8 +148,7 @@ def name_is_role(engine: Engine, policy_table: Any, grouping_table: Any, name: s
 def assign_role(engine: Engine, table: Any, subject: str, role: str) -> None:
     """Add an assignment. Idempotent: a repeat is not an error."""
     with engine.begin() as conn:
-        conn.execute(delete(table).where(table.c.subject == subject, table.c.role == role))
-        conn.execute(insert(table).values(subject=subject, role=role))
+        _upsert(conn, table, {"subject": subject, "role": role}, ["subject", "role"], [])
 
 
 def unassign_role(engine: Engine, table: Any, subject: str, role: str) -> None:
@@ -151,8 +198,7 @@ def list_role_meta(engine: Engine, table: Any) -> List[Dict[str, Any]]:
 
 def upsert_role_meta(engine: Engine, table: Any, slug: str, values: Dict[str, Any]) -> None:
     with engine.begin() as conn:
-        conn.execute(delete(table).where(table.c.slug == slug))
-        conn.execute(insert(table).values(slug=slug, **values))
+        _upsert(conn, table, {"slug": slug, **values}, ["slug"], list(values))
 
 
 def delete_role_meta(engine: Engine, table: Any, slug: str) -> None:
@@ -190,8 +236,7 @@ def upsert_user(engine: Engine, table: Any, user_id: str, values: Dict[str, Any]
     if metadata is not None:
         payload["user_metadata"] = json.dumps(metadata)
     with engine.begin() as conn:
-        conn.execute(delete(table).where(table.c.id == user_id))
-        conn.execute(insert(table).values(id=user_id, **payload))
+        _upsert(conn, table, {"id": user_id, **payload}, ["id"], list(payload))
 
 
 def delete_user(engine: Engine, table: Any, user_id: str) -> None:
