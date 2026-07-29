@@ -186,3 +186,27 @@ class TestTail:
         r1, r2 = await asyncio.wait_for(asyncio.gather(t1, t2), timeout=2)
         assert r1 == [0, 1]
         assert r2 == [0, 1]
+
+
+class TestInMemoryRetryIndexContinuity:
+    @pytest.mark.asyncio
+    async def test_reset_preserves_index_counter(self):
+        import agno.os.event_streams as es_mod
+        from agno.os.event_streams import InMemoryEventStream, set_event_stream
+        from agno.os.managers import EventsBuffer, SSESubscriberManager
+        from agno.run.agent import RunContentEvent
+        from agno.run.base import RunStatus
+
+        original = es_mod._event_stream
+        stream = InMemoryEventStream(events_buffer=EventsBuffer(), subscriber_manager=SSESubscriberManager())
+        set_event_stream(stream)
+        try:
+            await stream.register_run("r1", RunStatus.running)
+            for c in ("a", "b", "c"):
+                await stream.add_event("r1", RunContentEvent(content=c, run_id="r1"))
+            await stream.reset_run_events("r1")
+            assert await stream.get_event_count("r1") == 0
+            idx = await stream.add_event("r1", RunContentEvent(content="retry", run_id="r1"))
+            assert idx == 3, "indices must not rewind across attempts"
+        finally:
+            es_mod._event_stream = original
