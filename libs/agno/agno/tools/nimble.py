@@ -9,6 +9,7 @@ the asynchronous Agent API V2 lifecycle. Both use the same official
 import json
 import os
 import re
+from math import isfinite
 from typing import Any, Dict, Iterator, List, Literal, Optional
 
 from agno.tools import Toolkit
@@ -25,9 +26,9 @@ CLIENT_SOURCE = "agno"
 DEFAULT_MAX_CONTENT_CHARS = 8000
 MIN_MAX_CONTENT_CHARS = 500
 _SECRET_PATTERNS = (
-    re.compile(r"nvapi-[A-Za-z0-9_-]+"),
     re.compile(r"Bearer\s+[A-Za-z0-9._~+/=-]+", re.IGNORECASE),
-    re.compile(r"\b[0-9a-f]{40,}\b"),
+    re.compile(r"nvapi-[A-Za-z0-9_-]+"),
+    re.compile(r"(?<![0-9a-f])[0-9a-f]{40,}(?![0-9a-f])"),
 )
 
 
@@ -41,20 +42,35 @@ def _redact_text(value: str) -> str:
     return value
 
 
-def _redact_leaves(value: Any) -> Any:
-    """Scrub every string leaf in the response before it is bounded.
+def _sanitize_json(value: Any) -> Any:
+    """Convert a value to JSON-safe data and scrub every emitted string.
 
-    Redacting the structure rather than the rendered JSON keeps the output
-    parseable and means a credential cannot survive by sitting past the point
-    where truncation happens to fall.
+    SDK extension dictionaries can contain arbitrary keys and values, including
+    objects that ``json.dumps(default=str)`` would stringify without redaction.
+    Sanitizing the complete structure before it is bounded keeps the output
+    parseable and prevents a credential from surviving in a key, fallback
+    stringification, or content beyond the truncation point.
     """
     if isinstance(value, str):
         return _redact_text(value)
     if isinstance(value, dict):
-        return {key: _redact_leaves(item) for key, item in value.items()}
-    if isinstance(value, list):
-        return [_redact_leaves(item) for item in value]
-    return value
+        sanitized: Dict[str, Any] = {}
+        for key, item in value.items():
+            base_key = _redact_text(str(key))
+            safe_key = base_key
+            suffix = 2
+            while safe_key in sanitized:
+                safe_key = f"{base_key}#{suffix}"
+                suffix += 1
+            sanitized[safe_key] = _sanitize_json(item)
+        return sanitized
+    if isinstance(value, (list, tuple)):
+        return [_sanitize_json(item) for item in value]
+    if value is None or isinstance(value, (bool, int)):
+        return value
+    if isinstance(value, float):
+        return value if isfinite(value) else _redact_text(str(value))
+    return _redact_text(str(value))
 
 
 def _truncate_strings(value: Any, cap: int) -> Any:
@@ -69,7 +85,7 @@ def _truncate_strings(value: Any, cap: int) -> Any:
 
 
 def _render(payload: Any) -> str:
-    return json.dumps(payload, ensure_ascii=False, default=str)
+    return json.dumps(payload, ensure_ascii=False, allow_nan=False)
 
 
 def _iter_strings(value: Any) -> Iterator[str]:
@@ -98,18 +114,20 @@ def _bounded_render(payload: Dict[str, Any], limit: int) -> str:
         return rendered
 
     original_characters = len(rendered)
-    # Reserve room for the truncation metadata so adding it cannot exceed the cap.
     meta_key = "truncation"
-    overhead = len(
-        _render({meta_key: {"truncated": True, "original_characters": original_characters, "field_characters": 0}})
-    )
-    budget = max(limit - overhead, 0)
 
     longest = max((len(text) for text in _iter_strings(payload)), default=0)
     low, high, best = 0, longest, 0
     while low <= high:
         cap = (low + high) // 2
-        if len(_render(_truncate_strings(payload, cap))) <= budget:
+        candidate = _truncate_strings(payload, cap)
+        if isinstance(candidate, dict):
+            candidate[meta_key] = {
+                "truncated": True,
+                "original_characters": original_characters,
+                "field_characters": cap,
+            }
+        if len(_render(candidate)) <= limit:
             best, low = cap, cap + 1
         else:
             high = cap - 1
@@ -189,9 +207,11 @@ class NimbleTools(Toolkit):
         max_content_chars: int = DEFAULT_MAX_CONTENT_CHARS,
         **kwargs: Any,
     ):
+        if isinstance(max_content_chars, bool) or not isinstance(max_content_chars, int):
+            raise ValueError("max_content_chars must be an integer")
         if max_content_chars < MIN_MAX_CONTENT_CHARS:
             raise ValueError(f"max_content_chars must be at least {MIN_MAX_CONTENT_CHARS}")
-        self.max_content_chars = max_content_chars
+        self.max_content_chars = int(max_content_chars)
         self.api_key = api_key or os.getenv("NIMBLE_API_KEY")
         if not self.api_key:
             log_error("NIMBLE_API_KEY not set. Set NIMBLE_API_KEY or pass api_key.")
@@ -273,18 +293,21 @@ class NimbleTools(Toolkit):
     def _success(self, response: Any) -> str:
         """Shared success path for the sync and async search tools.
 
-        Redaction runs on the string leaves before bounding, so a credential can
-        never survive by sitting past the truncation point.
+        Sanitization runs on every emitted string before bounding, so a
+        credential cannot survive in a key, fallback stringification, or content
+        past the truncation point.
         """
-        return _bounded_render(_redact_leaves(_model_to_dict(response)), self.max_content_chars)
+        return _bounded_render(_sanitize_json(_model_to_dict(response)), self.max_content_chars)
 
-    @staticmethod
-    def _error(exc: Exception) -> str:
-        return json.dumps(
-            {
-                "error": _redact_text(str(exc))[:500],
-                "error_type": type(exc).__name__,
-            }
+    def _error(self, exc: Exception) -> str:
+        return _bounded_render(
+            _sanitize_json(
+                {
+                    "error": str(exc),
+                    "error_type": type(exc).__name__,
+                }
+            ),
+            self.max_content_chars,
         )
 
     def web_search_using_nimble(

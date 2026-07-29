@@ -480,9 +480,9 @@ class NimbleAgentTools(Toolkit):
         if isinstance(exc, APIStatusError):
             status_code = getattr(exc, "status_code", None)
             # On create, only a definite rejection means no run started. A 5xx, and
-            # a 408 (the server accepted the request then timed out), both leave the
-            # run's existence open, so they get the do-not-resubmit path. The other
-            # 4xx codes above answer the question and keep their own outcomes.
+            # a 408 whose application-level outcome is unknown, both leave the run's
+            # existence open, so they get the do-not-resubmit path. The other 4xx
+            # codes above answer the question and keep their own outcomes.
             if unconfirmed_write and isinstance(status_code, int) and (status_code >= 500 or status_code == 408):
                 return self._error(_unconfirmed_run_guidance(agent_id), code="connection_error_unconfirmed")
             return self._error(f"Nimble API error (HTTP {status_code or 'unknown'}).", code="api_error")

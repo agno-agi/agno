@@ -193,6 +193,15 @@ def test_max_content_chars_is_validated():
         NimbleTools(api_key="test-key-1234567890", max_content_chars=10)
 
 
+@pytest.mark.parametrize(
+    "max_content_chars",
+    [True, 500.0, float("inf"), float("-inf"), float("nan"), "500", None],
+)
+def test_max_content_chars_rejects_non_integer_values(max_content_chars):
+    with pytest.raises(ValueError, match="integer"):
+        NimbleTools(api_key="test-key-1234567890", max_content_chars=max_content_chars)
+
+
 def test_deep_search_output_is_hard_bounded_and_still_valid_json(mock_nimble):
     toolkit = NimbleTools(api_key="test-key-1234567890", max_content_chars=2000)
     toolkit._sync_client.search.return_value = search_response(deep_search_payload())
@@ -240,6 +249,62 @@ def test_bounded_output_still_redacts_credentials(mock_nimble):
     json.loads(raw)
     assert "nvapi-" not in raw
     assert "a" * 40 not in raw
+
+
+def test_output_redacts_dictionary_keys_and_stringified_objects(mock_nimble):
+    credential = "nvapi-" + "abcdefgh1234567890"
+
+    class StringifiedCredential:
+        def __str__(self):
+            return f"Bearer {credential}"
+
+    toolkit = NimbleTools(api_key="test-key-1234567890")
+    toolkit._sync_client.search.return_value = search_response(
+        {
+            credential: StringifiedCredential(),
+            f"prefix-{credential}": "second value",
+        }
+    )
+
+    raw = toolkit.web_search_using_nimble("query")
+    decoded = json.loads(raw)
+
+    assert credential not in raw
+    assert "Bearer" not in raw
+    assert decoded["<redacted>"] == "<redacted>"
+    assert decoded["prefix-<redacted>"] == "second value"
+
+
+def test_sync_error_output_is_hard_bounded_and_redacted(mock_nimble):
+    credential = "nvapi-" + "abcdefgh1234567890"
+    toolkit = NimbleTools(api_key="test-key-1234567890", max_content_chars=500)
+    toolkit._sync_client.search.side_effect = RuntimeError((f"Bearer {credential}\n\x00") * 500)
+
+    raw = toolkit.web_search_using_nimble("query")
+    decoded = json.loads(raw)
+
+    assert len(raw) <= 500
+    assert credential not in raw
+    assert "Bearer" not in raw
+    assert decoded["error_type"] == "RuntimeError"
+    assert decoded["truncation"]["truncated"] is True
+
+
+@pytest.mark.asyncio
+async def test_async_error_output_is_hard_bounded_and_redacted(mock_nimble):
+    credential = "nvapi-" + "abcdefgh1234567890"
+    with patch("agno.tools.nimble.AsyncNimble") as async_client:
+        toolkit = NimbleTools(api_key="test-key-1234567890", max_content_chars=500)
+        async_client.return_value.search = AsyncMock(side_effect=RuntimeError((f"Bearer {credential}\n\x00") * 500))
+
+        raw = await toolkit.aweb_search_using_nimble("query")
+
+    decoded = json.loads(raw)
+    assert len(raw) <= 500
+    assert credential not in raw
+    assert "Bearer" not in raw
+    assert decoded["error_type"] == "RuntimeError"
+    assert decoded["truncation"]["truncated"] is True
 
 
 def test_bound_holds_even_when_structure_alone_is_too_large(mock_nimble):

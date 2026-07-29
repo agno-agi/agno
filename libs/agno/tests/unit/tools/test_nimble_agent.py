@@ -986,10 +986,11 @@ async def test_astatus_error_mapping_async(mock_nimble):
 
 
 # ---------------------------------------------------------------------------
-# HTTP 408 on create is accepted-but-unconfirmed
+# HTTP 408 on create has an unconfirmed application-level outcome
 #
-# The server took the request and then timed out, so the run's existence is as
-# open a question as a transport timeout. It must not read as a definite reject.
+# A 408 does not prove whether the application accepted or processed the create,
+# so the run's existence is as open a question as a transport timeout. It must
+# not read as a definite rejection.
 # ---------------------------------------------------------------------------
 
 
