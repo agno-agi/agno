@@ -16,7 +16,7 @@ from dataclasses import dataclass
 from time import time
 from typing import Any, Dict, List, Optional, Tuple, Union
 
-from starlette.websockets import WebSocket
+from starlette.websockets import WebSocket, WebSocketDisconnect
 
 from agno.run.agent import RunOutputEvent
 from agno.run.base import RunStatus
@@ -82,9 +82,20 @@ class WebSocketHandler:
 
             await self.websocket.send_text(self.format_sse_event(json.dumps(data, default=json_serializer)))
 
+        except WebSocketDisconnect:
+            # The send raced the client's disconnect: same treatment as a
+            # closed socket - disarm and go quiet
+            log_debug("WebSocket disconnected, event delivery disabled for this handler")
+            self.websocket = None
         except RuntimeError as e:
-            if "websocket.close" in str(e).lower() or "already completed" in str(e).lower():
-                log_debug("WebSocket closed, event not sent (expected during disconnection)")
+            msg = str(e).lower()
+            if "websocket.close" in msg or "already completed" in msg or "close message has been sent" in msg:
+                # Expected during disconnection. Disarm the handler so the
+                # producer stops attempting a send per remaining event - a
+                # refreshed client otherwise floods the log with one warning
+                # per event for the rest of the run.
+                log_debug("WebSocket closed, event delivery disabled for this handler")
+                self.websocket = None
             else:
                 log_warning(f"Failed to handle WebSocket event: {str(e)}")
         except Exception as e:
