@@ -30,6 +30,7 @@ import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
+from uuid import uuid4
 
 from agno.utils.log import log_debug
 
@@ -213,43 +214,18 @@ class DbAuditSink(AuditSink):
         create_table: bool = True,
         db: Optional[Any] = None,
     ):
-        import sqlalchemy as sa
+        from agno.os.authz._db import require_authz_db, resolve_authz_db
 
-        if db is not None and engine is None:
-            from agno.os.authz._db import engine_from_db
-
-            engine = engine_from_db(db)
-        if engine is None and db_url is None:
-            raise ValueError("DbAuditSink needs one of: db (an agno Db), engine, or db_url")
-        self._engine = engine if engine is not None else sa.create_engine(db_url)  # type: ignore[arg-type]
-        metadata = sa.MetaData()
-        # change trail: role/assignment mutations with before/after
-        self._table = sa.Table(
-            table_name,
-            metadata,
-            sa.Column("id", sa.Integer, primary_key=True, autoincrement=True),
-            sa.Column("created_at", sa.Integer, nullable=False),
-            sa.Column("actor", sa.String(255)),
-            sa.Column("action", sa.String(255), nullable=False),
-            sa.Column("target", sa.String(255), nullable=False),
-            sa.Column("before", sa.Text),
-            sa.Column("after", sa.Text),
-        )
-        # decision trail: per-request allow/deny with the token reference
-        self._decisions = sa.Table(
-            decision_table_name,
-            metadata,
-            sa.Column("id", sa.Integer, primary_key=True, autoincrement=True),
-            sa.Column("created_at", sa.Integer, nullable=False),
-            sa.Column("actor", sa.String(255)),
-            sa.Column("action", sa.String(255), nullable=False),  # access.allowed / access.denied
-            sa.Column("target", sa.String(512), nullable=False),  # "METHOD /path"
-            sa.Column("token_ref", sa.String(255)),  # jti (preferred) or short hash — never the token
-            sa.Column("required", sa.Text),  # scopes the route required (JSON)
-            sa.Column("scopes", sa.Text),  # scopes the caller had (JSON)
-        )
-        if create_table:
-            metadata.create_all(self._engine)
+        if db is None and db_url is None and engine is None:
+            raise ValueError("DbAuditSink needs one of: db (an agno Db), or db_url")
+        if engine is not None and db is None and db_url is None:
+            raise ValueError(
+                "DbAuditSink(engine=...) is no longer supported: audit rows are written through the "
+                "agno database contract so they honour its schema and table names. Pass db=<an agno Db> "
+                "or db_url=... instead."
+            )
+        self._db: Any = resolve_authz_db(db, db_url)
+        require_authz_db(self._db)
 
     def record(self, event: AuditEvent) -> None:
         # The AuditSink contract is that record() must NOT raise into the caller's
@@ -265,69 +241,48 @@ class DbAuditSink(AuditSink):
             logging.getLogger("agno.authz.audit").exception("failed to write audit event %r", event.action)
 
     def _record_change(self, event: AuditEvent) -> None:
-        with self._engine.begin() as conn:
-            conn.execute(
-                self._table.insert().values(
-                    created_at=event.timestamp,
-                    actor=event.actor,
-                    action=event.action,
-                    target=event.target,
-                    before=json.dumps(event.before) if event.before is not None else None,
-                    after=json.dumps(event.after) if event.after is not None else None,
-                )
-            )
+        self._db.record_authz_audit_event(
+            {
+                "event_id": uuid4().hex,
+                "created_at": event.timestamp,
+                "actor": event.actor,
+                "action": event.action,
+                "target": event.target,
+                "before": json.dumps(event.before) if event.before is not None else None,
+                "after": json.dumps(event.after) if event.after is not None else None,
+            }
+        )
 
     def _record_decision(self, event: AuditEvent) -> None:
         meta = event.metadata or {}
-        with self._engine.begin() as conn:
-            conn.execute(
-                self._decisions.insert().values(
-                    created_at=event.timestamp,
-                    actor=event.actor,
-                    action=event.action,
-                    target=event.target,
-                    token_ref=meta.get("token"),
-                    required=json.dumps(meta.get("required")) if meta.get("required") is not None else None,
-                    scopes=json.dumps(meta.get("scopes")) if meta.get("scopes") is not None else None,
-                )
-            )
+        self._db.record_authz_decision(
+            {
+                "event_id": uuid4().hex,
+                "created_at": event.timestamp,
+                "actor": event.actor,
+                "action": event.action,
+                "target": event.target,
+                "token_ref": meta.get("token"),
+                "required": json.dumps(meta.get("required")) if meta.get("required") is not None else None,
+                "scopes": json.dumps(meta.get("scopes")) if meta.get("scopes") is not None else None,
+            }
+        )
 
     # Both trails read the same way: sortable, searchable pages over the columns
     # the two tables share (AUDIT_SORT_FIELDS / AUDIT_SEARCH_FIELDS). Only the
     # row shape differs, so read()/read_decisions() are thin mappers over these
     # two helpers.
-    @staticmethod
-    def _search_clause(table, search: str):
-        import sqlalchemy as sa
-
-        pattern = f"%{search}%"
-        return sa.or_(*(table.c[f].ilike(pattern) for f in AUDIT_SEARCH_FIELDS))
-
     def _select_page(
-        self, table, limit: int, offset: int, search: Optional[str], sort_by: str, order: str
+        self, decisions: bool, limit: int, offset: int, search: Optional[str], sort_by: str, order: str
     ) -> List[Any]:
-        import sqlalchemy as sa
-
         if sort_by not in AUDIT_SORT_FIELDS:
             raise ValueError(f"sort_by must be one of {AUDIT_SORT_FIELDS}, got {sort_by!r}")
-        stmt = sa.select(table)
-        if search:
-            stmt = stmt.where(self._search_clause(table, search))
-        # For time order, sort on id: it's monotonic and finer-grained than ts
-        # (second resolution). id also tie-breaks every other field.
-        cols = (table.c.id,) if sort_by == DEFAULT_AUDIT_SORT_FIELD else (table.c[sort_by], table.c.id)
-        order_by = [c.asc() if order == "asc" else c.desc() for c in cols]
-        with self._engine.connect() as conn:
-            return list(conn.execute(stmt.order_by(*order_by).limit(limit).offset(offset)).mappings().all())
+        return self._db.read_authz_audit_events(
+            limit=limit, offset=offset, search=search, sort_by=sort_by, order=order, decisions=decisions
+        )
 
-    def _count(self, table, search: Optional[str]) -> int:
-        import sqlalchemy as sa
-
-        stmt = sa.select(sa.func.count()).select_from(table)
-        if search:
-            stmt = stmt.where(self._search_clause(table, search))
-        with self._engine.connect() as conn:
-            return int(conn.execute(stmt).scalar() or 0)
+    def _count(self, decisions: bool, search: Optional[str]) -> int:
+        return int(self._db.count_authz_audit_events(search=search, decisions=decisions))
 
     def read(
         self,
@@ -348,7 +303,7 @@ class DbAuditSink(AuditSink):
                 "before": json.loads(r["before"]) if r["before"] else None,
                 "after": json.loads(r["after"]) if r["after"] else None,
             }
-            for r in self._select_page(self._table, limit, offset, search, sort_by, order)
+            for r in self._select_page(False, limit, offset, search, sort_by, order)
         ]
 
     def read_decisions(
@@ -378,13 +333,13 @@ class DbAuditSink(AuditSink):
                     "scopes": json.loads(r["scopes"]) if r["scopes"] else None,
                 },
             }
-            for r in self._select_page(self._decisions, limit, offset, search, sort_by, order)
+            for r in self._select_page(True, limit, offset, search, sort_by, order)
         ]
 
     def count(self, search: Optional[str] = None) -> int:
         """Total number of change events (for pagination), honouring ``search``."""
-        return self._count(self._table, search)
+        return self._count(False, search)
 
     def count_decisions(self, search: Optional[str] = None) -> int:
         """Total number of decision events (for pagination), honouring ``search``."""
-        return self._count(self._decisions, search)
+        return self._count(True, search)

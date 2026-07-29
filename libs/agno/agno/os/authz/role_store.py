@@ -40,9 +40,7 @@ Example::
 import time
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, Union
 
-from agno.os.authz._db import NO_DB_MESSAGE
-from agno.os.authz._db import engine_from_db as _engine_from_db
-from agno.os.authz._db import engine_from_url as _engine_from_url
+from agno.os.authz._db import NO_DB_MESSAGE, resolve_authz_db, supports_authz
 from agno.os.authz.audit import DEFAULT_AUDIT_SORT_FIELD, DEFAULT_AUDIT_SORT_ORDER
 from agno.os.authz.engine import EngineAuthorizationProvider, PolicyEngine, normalize_roles_claim
 
@@ -126,12 +124,7 @@ class ManagedRoleStore:
         # The policy engine only stores policies, so metadata needs its own table in
         # the same DB. Like the engine, it requires a DB — it may arrive later via
         # attach_db(), so it stays unbound (engine None) until then.
-        self._meta_engine: Any = None  # SQLAlchemy Engine once bound, else None
-        self._meta_table: Any = None  # SQLAlchemy Table for authz_roles metadata
-        if db is not None:
-            self._init_meta_table(_engine_from_db(db))
-        elif db_url is not None:
-            self._init_meta_table(_engine_from_url(db_url))
+        self._meta_db: Any = resolve_authz_db(db, db_url)
 
         if decision_log:
             import logging
@@ -165,44 +158,19 @@ class ManagedRoleStore:
         )
 
     # --------------------------------------------------------- role metadata
-    def _init_meta_table(self, engine: Any) -> None:
-        import sqlalchemy as sa
-
-        self._meta_engine = engine
-        metadata = sa.MetaData()
-        self._meta_table = sa.Table(
-            "authz_roles",
-            metadata,
-            sa.Column("slug", sa.String(255), primary_key=True),  # = the role id/name
-            sa.Column("name", sa.String(255)),  # human-readable display name
-            sa.Column("description", sa.Text),
-            sa.Column("is_default", sa.Boolean, nullable=False, default=False),
-            sa.Column("created_at", sa.Integer, nullable=False),
-            sa.Column("updated_at", sa.Integer, nullable=False),
-        )
-        metadata.create_all(self._meta_engine)
-
     def _require_meta(self) -> None:
-        if self._meta_engine is None:
+        if self._meta_db is None:
             raise RuntimeError(NO_DB_MESSAGE)
 
     def _meta_get(self, slug: str) -> Optional[dict]:
         self._require_meta()
-        import sqlalchemy as sa
-
-        with self._meta_engine.connect() as conn:
-            r = conn.execute(sa.select(self._meta_table).where(self._meta_table.c.slug == slug)).mappings().first()
-        return dict(r) if r else None
+        return self._meta_db.get_authz_role_meta(slug)
 
     def _meta_get_all(self) -> dict:
-        """All metadata rows as ``{slug: row}`` in a single read, so list views
-        don't do one SELECT per role (N+1)."""
+        """All metadata rows as ``{slug: row}`` in a single read, so list views don't do
+        one SELECT per role (N+1)."""
         self._require_meta()
-        import sqlalchemy as sa
-
-        with self._meta_engine.connect() as conn:
-            rows = conn.execute(sa.select(self._meta_table)).mappings().all()
-        return {r["slug"]: dict(r) for r in rows}
+        return {row["slug"]: row for row in self._meta_db.list_authz_role_meta()}
 
     def _meta_upsert(
         self,
@@ -231,25 +199,17 @@ class ManagedRoleStore:
             if is_default is not None:
                 row["is_default"] = bool(is_default)
             row["updated_at"] = now
-        self._meta_write(row, insert=existing is None)
+        self._meta_write(row)
         return row
 
-    def _meta_write(self, row: dict, insert: bool) -> None:
+    def _meta_write(self, row: dict) -> None:
         self._require_meta()
-        import sqlalchemy as sa
-
-        with self._meta_engine.begin() as conn:
-            if insert:
-                conn.execute(sa.insert(self._meta_table).values(**row))
-            else:
-                conn.execute(sa.update(self._meta_table).where(self._meta_table.c.slug == row["slug"]).values(**row))
+        values = {k: v for k, v in row.items() if k != "slug"}
+        self._meta_db.upsert_authz_role_meta(row["slug"], values)
 
     def _meta_delete(self, slug: str) -> None:
         self._require_meta()
-        import sqlalchemy as sa
-
-        with self._meta_engine.begin() as conn:
-            conn.execute(sa.delete(self._meta_table).where(self._meta_table.c.slug == slug))
+        self._meta_db.delete_authz_role_meta(slug)
 
     def _meta_or_default(self, slug: str) -> dict:
         """Metadata for a role, synthesising defaults for rows defined before
@@ -371,11 +331,9 @@ class ManagedRoleStore:
     def list_roles(self) -> List[str]:
         """All role slugs (those with policies and/or metadata)."""
         slugs = set(self._engine.list_roles())
-        if self._meta_engine is not None:
-            import sqlalchemy as sa
-
-            with self._meta_engine.connect() as conn:
-                slugs |= {r[0] for r in conn.execute(sa.select(self._meta_table.c.slug))}
+        if self._meta_db is not None:
+            # A role can exist as metadata only (created in the UI, no scopes yet).
+            slugs |= {row["slug"] for row in self._meta_db.list_authz_role_meta()}
         return sorted(slugs)
 
     def list_roles_detailed(self) -> List[dict]:
@@ -440,7 +398,7 @@ class ManagedRoleStore:
         needs a DB for the metadata (authz_roles) it owns."""
         flag = getattr(self._engine, "is_bound", None)
         engine_bound = bool(flag) if flag is not None else True
-        return engine_bound and self._meta_engine is not None
+        return engine_bound and self._meta_db is not None
 
     def attach_db(self, db: Any) -> None:
         """Bind an agno ``Db`` to a store created without one, so managed roles
@@ -454,11 +412,8 @@ class ManagedRoleStore:
         # Bind the metadata table (authz_roles) to the same DB, mirroring the
         # engine's own attach so policy, assignments, and metadata all land together.
         # No-op if metadata is already bound or the db isn't SQL-capable.
-        if self._meta_engine is None:
-            try:
-                self._init_meta_table(_engine_from_db(db))
-            except Exception:
-                return
+        if self._meta_db is None and db is not None and supports_authz(db):
+            self._meta_db = db
 
     # ------------------------------------------------------------------ audit
     def audit_log(

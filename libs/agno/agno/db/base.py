@@ -1528,12 +1528,21 @@ class BaseDb(ABC):
         """A directory row, or None."""
         raise NotImplementedError
 
-    def list_authz_users(self, limit: Optional[int] = None, offset: int = 0) -> List[Dict[str, Any]]:
-        """A page of directory rows."""
+    def list_authz_users(
+        self,
+        limit: int = 1000,
+        offset: int = 0,
+        include_disabled: bool = True,
+        search: Optional[str] = None,
+        sort_by: str = "created_at",
+        order: str = "desc",
+    ) -> List[Dict[str, Any]]:
+        """A page of directory rows. ``search`` matches id/email/name case-insensitively;
+        NULLs in the sort column sort last in either direction."""
         raise NotImplementedError
 
-    def count_authz_users(self) -> int:
-        """How many directory rows exist."""
+    def count_authz_users(self, include_disabled: bool = True, search: Optional[str] = None) -> int:
+        """How many directory rows match, for pagination alongside list_authz_users."""
         raise NotImplementedError
 
     def upsert_authz_user(self, user_id: str, values: Dict[str, Any]) -> None:
@@ -1562,7 +1571,7 @@ class BaseDb(ABC):
         limit: int = 100,
         offset: int = 0,
         search: Optional[str] = None,
-        sort_by: str = "timestamp",
+        sort_by: str = "created_at",
         order: str = "desc",
         decisions: bool = False,
     ) -> List[Dict[str, Any]]:

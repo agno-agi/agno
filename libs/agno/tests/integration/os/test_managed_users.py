@@ -304,20 +304,32 @@ def test_stores_share_one_agno_db(tmp_path):
     r.set_role_scopes("viewer", ["agents:*:read"])
     r.assign("bob", "viewer")
     u.upsert("bob", email="bob@co")
+    a.record(AuditEvent(action="role.set_scopes", actor="admin", target="viewer", timestamp=1))
 
     # all authz tables live in the single shared engine (native policy + grouping,
-    # users, and both audit trails)
+    # users, and the audit trail). Tables are created on first use by the db layer,
+    # which is why each store is exercised above before this assertion.
     tables = set(sa.inspect(shared.db_engine).get_table_names())
-    assert {"authz_policy", "authz_grouping", "authz_users", "authz_audit", "authz_decisions"} <= tables
+    assert {
+        "agno_authz_policy",
+        "agno_authz_grouping",
+        "agno_authz_users",
+        "agno_authz_audit",
+    } <= tables
     assert r.roles_of("bob") == ["viewer"]
     assert u.get("bob")["email"] == "bob@co"
 
 
-def test_db_takes_precedence_and_bad_db_errors():
-    from agno.os.authz._db import engine_from_db
+def test_a_db_that_cannot_store_authz_is_refused():
+    """A backend that does not implement the authorization contract must be rejected,
+    rather than duck-typed for a SQLAlchemy engine and failing somewhere later."""
+    from agno.db.in_memory import InMemoryDb
+    from agno.os.authz._db import require_authz_db, supports_authz
 
-    with pytest.raises(ValueError, match="db_engine"):
-        engine_from_db(object())  # not an agno db
+    assert supports_authz(InMemoryDb()) is False
+    assert supports_authz(None) is False
+    with pytest.raises(RuntimeError, match="does not support authorization storage"):
+        require_authz_db(InMemoryDb())
 
 
 def test_agentos_adopts_its_db_so_the_kill_switch_persists(tmp_path):

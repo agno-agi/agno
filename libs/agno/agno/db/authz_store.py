@@ -215,17 +215,50 @@ def get_user(engine: Engine, table: Any, user_id: str) -> Optional[Dict[str, Any
     return _user_row(row) if row is not None else None
 
 
-def list_users(engine: Engine, table: Any, limit: Optional[int] = None, offset: int = 0) -> List[Dict[str, Any]]:
-    stmt = select(table).order_by(table.c.updated_at.desc())
-    if limit is not None:
-        stmt = stmt.limit(limit).offset(offset)
+USER_SEARCH_COLUMNS = ("id", "email", "name")
+
+
+def _user_filters(table: Any, include_disabled: bool, search: Optional[str]) -> list:
+    clauses = []
+    if not include_disabled:
+        clauses.append(table.c.disabled.is_(False))
+    if search:
+        pattern = f"%{search}%"
+        clauses.append(or_(*(table.c[c].ilike(pattern) for c in USER_SEARCH_COLUMNS)))
+    return clauses
+
+
+def list_users(
+    engine: Engine,
+    table: Any,
+    limit: int = 1000,
+    offset: int = 0,
+    include_disabled: bool = True,
+    search: Optional[str] = None,
+    sort_by: str = "created_at",
+    order: str = "desc",
+) -> List[Dict[str, Any]]:
+    from sqlalchemy import nullslast
+
+    column = table.c[sort_by] if sort_by in table.c else table.c.created_at
+    descending = order != "asc"
+    stmt = (
+        select(table)
+        .where(*_user_filters(table, include_disabled, search))
+        # nullslast: backends disagree on NULL placement and email/name are nullable,
+        # so pin them last in either direction.
+        .order_by(nullslast(column.desc() if descending else column.asc()))
+        .limit(limit)
+        .offset(offset)
+    )
     with engine.connect() as conn:
         return [_user_row(r) for r in conn.execute(stmt).mappings()]
 
 
-def count_users(engine: Engine, table: Any) -> int:
+def count_users(engine: Engine, table: Any, include_disabled: bool = True, search: Optional[str] = None) -> int:
+    stmt = select(func.count()).select_from(table).where(*_user_filters(table, include_disabled, search))
     with engine.connect() as conn:
-        return int(conn.execute(select(func.count()).select_from(table)).scalar() or 0)
+        return int(conn.execute(stmt).scalar() or 0)
 
 
 def upsert_user(engine: Engine, table: Any, user_id: str, values: Dict[str, Any]) -> None:
@@ -279,7 +312,7 @@ def read_events(
     limit: int = 100,
     offset: int = 0,
     search: Optional[str] = None,
-    sort_by: str = "timestamp",
+    sort_by: str = "created_at",
     order: str = "desc",
     search_columns: Optional[List[str]] = None,
 ) -> List[Dict[str, Any]]:
@@ -289,7 +322,7 @@ def read_events(
         columns = [table.c[name] for name in (search_columns or []) if name in table.c]
         if columns:
             stmt = stmt.where(or_(*[c.like(needle) for c in columns]))
-    column = table.c[sort_by] if sort_by in table.c else table.c.timestamp
+    column = table.c[sort_by] if sort_by in table.c else table.c.created_at
     stmt = stmt.order_by(column.desc() if order.lower() == "desc" else column.asc()).limit(limit).offset(offset)
     with engine.connect() as conn:
         return [dict(r) for r in conn.execute(stmt).mappings()]
