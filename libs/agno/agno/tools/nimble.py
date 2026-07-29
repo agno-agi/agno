@@ -9,7 +9,7 @@ the asynchronous Agent API V2 lifecycle. Both use the same official
 import json
 import os
 import re
-from typing import Any, Dict, List, Literal, Optional
+from typing import Any, Dict, Iterator, List, Literal, Optional
 
 from agno.tools import Toolkit
 from agno.utils.log import log_error
@@ -20,6 +20,10 @@ except ImportError:
     raise ImportError("`nimble-python` not installed. Please install using `pip install nimble-python`")
 
 CLIENT_SOURCE = "agno"
+# A deep search returns full page content per result, so an unbounded response can
+# be far larger than the model's context. Cap the rendered payload by default.
+DEFAULT_MAX_CONTENT_CHARS = 8000
+MIN_MAX_CONTENT_CHARS = 500
 _SECRET_PATTERNS = (
     re.compile(r"nvapi-[A-Za-z0-9_-]+"),
     re.compile(r"Bearer\s+[A-Za-z0-9._~+/=-]+", re.IGNORECASE),
@@ -35,6 +39,104 @@ def _redact_text(value: str) -> str:
     for pattern in _SECRET_PATTERNS:
         value = pattern.sub("<redacted>", value)
     return value
+
+
+def _redact_leaves(value: Any) -> Any:
+    """Scrub every string leaf in the response before it is bounded.
+
+    Redacting the structure rather than the rendered JSON keeps the output
+    parseable and means a credential cannot survive by sitting past the point
+    where truncation happens to fall.
+    """
+    if isinstance(value, str):
+        return _redact_text(value)
+    if isinstance(value, dict):
+        return {key: _redact_leaves(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_redact_leaves(item) for item in value]
+    return value
+
+
+def _truncate_strings(value: Any, cap: int) -> Any:
+    """Copy ``value`` with every string leaf truncated to ``cap`` characters."""
+    if isinstance(value, str):
+        return value if len(value) <= cap else value[:cap]
+    if isinstance(value, dict):
+        return {key: _truncate_strings(item, cap) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_truncate_strings(item, cap) for item in value]
+    return value
+
+
+def _render(payload: Any) -> str:
+    return json.dumps(payload, ensure_ascii=False, default=str)
+
+
+def _iter_strings(value: Any) -> Iterator[str]:
+    """Yield every string leaf, used to size the binary search upper bound."""
+    if isinstance(value, str):
+        yield value
+    elif isinstance(value, dict):
+        for item in value.values():
+            yield from _iter_strings(item)
+    elif isinstance(value, list):
+        for item in value:
+            yield from _iter_strings(item)
+
+
+def _bounded_render(payload: Dict[str, Any], limit: int) -> str:
+    """Render ``payload`` as JSON no longer than ``limit`` characters.
+
+    Slicing the serialized JSON would hand the model an unparseable string, so the
+    bound is applied to the structure instead: string leaves are shortened until
+    the rendered form fits. The per-field cap is found by binary search because
+    rendered length grows monotonically with it, which keeps the result as full as
+    the budget allows rather than truncating to an arbitrary depth.
+    """
+    rendered = _render(payload)
+    if len(rendered) <= limit:
+        return rendered
+
+    original_characters = len(rendered)
+    # Reserve room for the truncation metadata so adding it cannot exceed the cap.
+    meta_key = "truncation"
+    overhead = len(
+        _render({meta_key: {"truncated": True, "original_characters": original_characters, "field_characters": 0}})
+    )
+    budget = max(limit - overhead, 0)
+
+    longest = max((len(text) for text in _iter_strings(payload)), default=0)
+    low, high, best = 0, longest, 0
+    while low <= high:
+        cap = (low + high) // 2
+        if len(_render(_truncate_strings(payload, cap))) <= budget:
+            best, low = cap, cap + 1
+        else:
+            high = cap - 1
+
+    bounded = _truncate_strings(payload, best)
+    if isinstance(bounded, dict):
+        bounded[meta_key] = {
+            "truncated": True,
+            "original_characters": original_characters,
+            "field_characters": best,
+        }
+    rendered = _render(bounded)
+    if len(rendered) <= limit:
+        return rendered
+    # Structural overhead alone exceeds the budget (very many fields). Fall back to
+    # a small, valid envelope rather than returning something oversized or invalid.
+    return _render(
+        {
+            "results": [],
+            meta_key: {
+                "truncated": True,
+                "original_characters": original_characters,
+                "field_characters": 0,
+                "note": "Response omitted: its structure exceeds max_content_chars. Retry with fewer max_results.",
+            },
+        }
+    )
 
 
 def _model_to_dict(model: Any) -> Dict[str, Any]:
@@ -68,6 +170,10 @@ class NimbleTools(Toolkit):
         output_format: Default page-content format.
         timeout: Per-request timeout in seconds.
         max_retries: Bounded SDK retry budget. Search is read-only.
+        max_content_chars: Upper bound on the characters of JSON returned to the
+            model. A deep search carries full page content, so this keeps one call
+            from flooding the context. The result stays valid JSON and reports what
+            was truncated. Minimum 500.
     """
 
     def __init__(
@@ -80,8 +186,12 @@ class NimbleTools(Toolkit):
         output_format: Literal["markdown", "plain_text", "simplified_html"] = "markdown",
         timeout: int = 30,
         max_retries: int = 2,
+        max_content_chars: int = DEFAULT_MAX_CONTENT_CHARS,
         **kwargs: Any,
     ):
+        if max_content_chars < MIN_MAX_CONTENT_CHARS:
+            raise ValueError(f"max_content_chars must be at least {MIN_MAX_CONTENT_CHARS}")
+        self.max_content_chars = max_content_chars
         self.api_key = api_key or os.getenv("NIMBLE_API_KEY")
         if not self.api_key:
             log_error("NIMBLE_API_KEY not set. Set NIMBLE_API_KEY or pass api_key.")
@@ -160,10 +270,13 @@ class NimbleTools(Toolkit):
             options["exclude_domains"] = exclude_domains
         return options
 
-    @staticmethod
-    def _success(response: Any) -> str:
-        rendered = _redact_text(json.dumps(_model_to_dict(response), ensure_ascii=False, default=str))
-        return rendered
+    def _success(self, response: Any) -> str:
+        """Shared success path for the sync and async search tools.
+
+        Redaction runs on the string leaves before bounding, so a credential can
+        never survive by sitting past the truncation point.
+        """
+        return _bounded_render(_redact_leaves(_model_to_dict(response)), self.max_content_chars)
 
     @staticmethod
     def _error(exc: Exception) -> str:

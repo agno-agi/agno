@@ -983,3 +983,102 @@ async def test_astatus_error_mapping_async(mock_nimble):
         reader.agents.runs.get = AsyncMock(side_effect=status_error("not_found", 404))
         out = json.loads(await t.aget_agent_run_status("task_run_abc"))
         assert out["code"] == "not_found"
+
+
+# ---------------------------------------------------------------------------
+# HTTP 408 on create is accepted-but-unconfirmed
+#
+# The server took the request and then timed out, so the run's existence is as
+# open a question as a transport timeout. It must not read as a definite reject.
+# ---------------------------------------------------------------------------
+
+
+def test_http_408_on_create_is_unconfirmed_not_a_definite_rejection():
+    attempts = []
+    t = NimbleAgentTools(api_key="test-key-1234567890", agent_id="wsa_123")
+    t._sync_client = _counting_client(408, attempts)
+
+    out = json.loads(t.start_agent_run("q"))
+
+    assert len(attempts) == 1, "a billable create is never retried, 408 included"
+    assert out["code"] == "connection_error_unconfirmed"
+    message = out["error"].lower()
+    assert "do not resubmit" in message
+    assert "wsa_123" in out["error"], "name the agent whose run history to reconcile"
+
+
+async def test_http_408_on_async_create_is_unconfirmed():
+    from nimble_python import AsyncNimble
+
+    attempts = []
+
+    def handler(request):
+        attempts.append(request)
+        return httpx.Response(408, json={"detail": "request timeout"})
+
+    t = NimbleAgentTools(api_key="test-key-1234567890", agent_id="wsa_123")
+    t._async_client = AsyncNimble(
+        api_key="test-key-1234567890",
+        max_retries=0,
+        http_client=httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+    )
+
+    out = json.loads(await t.astart_agent_run("q"))
+
+    assert len(attempts) == 1
+    assert out["code"] == "connection_error_unconfirmed"
+    assert "do not resubmit" in out["error"].lower()
+
+
+@pytest.mark.parametrize(
+    "status_code,expected",
+    [(401, "unauthorized"), (403, "forbidden"), (404, "not_found"), (422, "unprocessable"), (429, "rate_limited")],
+)
+def test_definite_create_outcomes_keep_their_own_codes(status_code, expected):
+    """These answer whether a run started, so they must not become "unconfirmed"."""
+    t = NimbleAgentTools(api_key="test-key-1234567890", agent_id="wsa_123")
+    t._sync_client = _counting_client(status_code, [])
+
+    out = json.loads(t.start_agent_run("q"))
+
+    assert out["code"] == expected
+
+
+# ---------------------------------------------------------------------------
+# A not-ready result says when to poll again
+# ---------------------------------------------------------------------------
+
+
+def test_result_conflict_reports_the_configured_poll_interval(mock_nimble):
+    t = NimbleAgentTools(api_key="test-key-1234567890", agent_id="wsa_123", poll_interval_seconds=3.5)
+    reader = t._sync_client.with_options.return_value
+    reader.agents.runs.get.return_value = make_run(status="completed")
+    reader.agents.runs.result.side_effect = status_error("conflict", 409)
+
+    out = json.loads(t.get_agent_run_result("task_run_abc"))
+
+    assert out["state"] == "not_ready"
+    assert out["poll_after_seconds"] == 3.5
+
+
+async def test_async_result_conflict_reports_the_configured_poll_interval(mock_nimble):
+    with patch("agno.tools.nimble_agent.AsyncNimble") as mock_async:
+        t = NimbleAgentTools(api_key="test-key-1234567890", agent_id="wsa_123", poll_interval_seconds=3.5)
+        reader = mock_async.return_value.with_options.return_value
+        reader.agents.runs.get = AsyncMock(return_value=make_run(status="completed"))
+        reader.agents.runs.result = AsyncMock(side_effect=status_error("conflict", 409))
+
+        out = json.loads(await t.aget_agent_run_result("task_run_abc"))
+
+    assert out["state"] == "not_ready"
+    assert out["poll_after_seconds"] == 3.5
+
+
+def test_shared_409_mapping_also_reports_the_poll_interval(mock_nimble):
+    t = NimbleAgentTools(api_key="test-key-1234567890", agent_id="wsa_123", poll_interval_seconds=3.5)
+    t._sync_client.with_options.return_value.agents.runs.get.side_effect = status_error("conflict", 409)
+
+    out = json.loads(t.get_agent_run_status("task_run_abc"))
+
+    assert out["code"] == "not_ready"
+    assert out["poll_after_seconds"] == 3.5

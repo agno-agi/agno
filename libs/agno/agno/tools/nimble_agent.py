@@ -466,7 +466,11 @@ class NimbleAgentTools(Toolkit):
                 retry_after=_retry_after_of(exc),
             )
         if isinstance(exc, ConflictError):
-            return self._error("Run is still active (409). Poll status and retry.", code="not_ready")
+            return self._error(
+                "Run is still active (409). Poll status and retry.",
+                code="not_ready",
+                poll_after_seconds=self.poll_interval_seconds,
+            )
         if isinstance(exc, UnprocessableEntityError):
             return self._error("Invalid request or non-successful result (422).", code="unprocessable")
         if isinstance(exc, (APITimeoutError, APIConnectionError)):
@@ -475,9 +479,11 @@ class NimbleAgentTools(Toolkit):
             return self._error("Network error contacting Nimble. Try again.", code="connection_error")
         if isinstance(exc, APIStatusError):
             status_code = getattr(exc, "status_code", None)
-            # A 5xx on create leaves the same question open as a timeout: the run
-            # may exist. 4xx answers it -- the request was rejected, nothing ran.
-            if unconfirmed_write and isinstance(status_code, int) and status_code >= 500:
+            # On create, only a definite rejection means no run started. A 5xx, and
+            # a 408 (the server accepted the request then timed out), both leave the
+            # run's existence open, so they get the do-not-resubmit path. The other
+            # 4xx codes above answer the question and keep their own outcomes.
+            if unconfirmed_write and isinstance(status_code, int) and (status_code >= 500 or status_code == 408):
                 return self._error(_unconfirmed_run_guidance(agent_id), code="connection_error_unconfirmed")
             return self._error(f"Nimble API error (HTTP {status_code or 'unknown'}).", code="api_error")
         return self._error(_redact_text(str(exc))[:300] or "Unexpected error", code="error")
@@ -697,7 +703,15 @@ class NimbleAgentTools(Toolkit):
             result = reader.agents.runs.result(run_id, agent_id=resolved)
         except ConflictError:
             # Race: run reported completed but result endpoint says still active.
-            return json.dumps({"state": "not_ready", "run_id": run_id, "message": "Result not ready yet."}, indent=2)
+            return json.dumps(
+                {
+                    "state": "not_ready",
+                    "run_id": run_id,
+                    "message": "Result not ready yet.",
+                    "poll_after_seconds": self.poll_interval_seconds,
+                },
+                indent=2,
+            )
         except Exception as exc:
             log_error(f"Nimble get_agent_run_result failed: {type(exc).__name__}")
             return self._map_exception(exc)
@@ -843,7 +857,15 @@ class NimbleAgentTools(Toolkit):
                 return self._render_result_from_run(run, None)
             result = await reader.agents.runs.result(run_id, agent_id=resolved)
         except ConflictError:
-            return json.dumps({"state": "not_ready", "run_id": run_id, "message": "Result not ready yet."}, indent=2)
+            return json.dumps(
+                {
+                    "state": "not_ready",
+                    "run_id": run_id,
+                    "message": "Result not ready yet.",
+                    "poll_after_seconds": self.poll_interval_seconds,
+                },
+                indent=2,
+            )
         except Exception as exc:
             log_error(f"Nimble aget_agent_run_result failed: {type(exc).__name__}")
             return self._map_exception(exc)

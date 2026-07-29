@@ -164,3 +164,92 @@ async def test_async_search_uses_lazy_attributed_client(tools):
         country="US",
         output_format="markdown",
     )
+
+
+# ---------------------------------------------------------------------------
+# Bounded output
+#
+# A deep search carries full page content per result, so an unbounded response
+# can dwarf the model's context. The cap must hold without ever handing back a
+# string the model cannot parse.
+# ---------------------------------------------------------------------------
+
+
+def deep_search_payload(pages=4, page_chars=20000):
+    return {
+        "results": [
+            {
+                "url": f"https://example.com/{index}",
+                "title": f"Result {index}",
+                "content": "x" * page_chars,
+            }
+            for index in range(pages)
+        ]
+    }
+
+
+def test_max_content_chars_is_validated():
+    with pytest.raises(ValueError, match="at least"):
+        NimbleTools(api_key="test-key-1234567890", max_content_chars=10)
+
+
+def test_deep_search_output_is_hard_bounded_and_still_valid_json(mock_nimble):
+    toolkit = NimbleTools(api_key="test-key-1234567890", max_content_chars=2000)
+    toolkit._sync_client.search.return_value = search_response(deep_search_payload())
+
+    raw = toolkit.web_search_using_nimble("query", deep_search=True)
+
+    assert len(raw) <= 2000
+    decoded = json.loads(raw)  # must remain parseable, not a sliced string
+    assert decoded["truncation"]["truncated"] is True
+    assert decoded["truncation"]["original_characters"] > 2000
+
+
+async def test_async_deep_search_output_is_hard_bounded(mock_nimble):
+    with patch("agno.tools.nimble.AsyncNimble") as async_client:
+        toolkit = NimbleTools(api_key="test-key-1234567890", max_content_chars=2000)
+        async_client.return_value.search = AsyncMock(return_value=search_response(deep_search_payload()))
+
+        raw = await toolkit.aweb_search_using_nimble("query", deep_search=True)
+
+    assert len(raw) <= 2000
+    assert json.loads(raw)["truncation"]["truncated"] is True
+
+
+def test_small_response_is_returned_untruncated(mock_nimble):
+    toolkit = NimbleTools(api_key="test-key-1234567890")
+    toolkit._sync_client.search.return_value = search_response({"results": [{"title": "Nimble"}]})
+
+    decoded = json.loads(toolkit.web_search_using_nimble("query"))
+
+    assert "truncation" not in decoded
+    assert decoded["results"][0]["title"] == "Nimble"
+
+
+def test_bounded_output_still_redacts_credentials(mock_nimble):
+    # Assembled from fragments so the test file holds no contiguous secret shape.
+    leaked = "token " + "nvapi-" + "abcdefgh1234567890" + " tail " + "a" * 40
+    toolkit = NimbleTools(api_key="test-key-1234567890", max_content_chars=1000)
+    toolkit._sync_client.search.return_value = search_response(
+        {"results": [{"content": leaked + "y" * 50000, "title": leaked}]}
+    )
+
+    raw = toolkit.web_search_using_nimble("query", deep_search=True)
+
+    assert len(raw) <= 1000
+    json.loads(raw)
+    assert "nvapi-" not in raw
+    assert "a" * 40 not in raw
+
+
+def test_bound_holds_even_when_structure_alone_is_too_large(mock_nimble):
+    """Many tiny fields: no per-field trimming can help, so it must degrade safely."""
+    toolkit = NimbleTools(api_key="test-key-1234567890", max_content_chars=500)
+    toolkit._sync_client.search.return_value = search_response(
+        {"results": [{"a": 1, "b": 2, "c": 3} for _ in range(500)]}
+    )
+
+    raw = toolkit.web_search_using_nimble("query", deep_search=True)
+
+    assert len(raw) <= 500
+    assert json.loads(raw)["truncation"]["truncated"] is True
