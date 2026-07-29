@@ -359,28 +359,45 @@ class QueueWorker:
         await event_stream.set_run_status(job_id, RunStatus.running)
 
         final_output: Any = None
+        is_workflow = job.get("component_type") == "workflow"
         try:
             extra_kwargs: Dict[str, Any] = dict(payload.get("kwargs") or {})
             # stream_events may arrive as an extra form field inside kwargs;
             # passing it both explicitly and via ** would raise TypeError
             stream_events = extra_kwargs.pop("stream_events", payload.get("stream_events", True))
-            async for event in component.arun(
+            arun_kwargs: Dict[str, Any] = dict(
                 input=payload.get("input"),
                 session_id=job["session_id"],
                 user_id=job.get("user_id"),
                 run_id=job_id,
                 stream=True,
                 stream_events=stream_events,
-                yield_run_output=True,
                 **extra_kwargs,
-            ):
+            )
+            if not is_workflow:
+                # Workflow streams do not support yield_run_output; the final
+                # output is loaded from the run row after the stream ends
+                arun_kwargs["yield_run_output"] = True
+            async for event in component.arun(**arun_kwargs):
                 if hasattr(event, "status") and hasattr(event, "run_id") and not hasattr(event, "event"):
                     final_output = event  # the terminal RunOutput
                     continue
                 with contextlib.suppress(Exception):
                     await event_stream.add_event(job_id, event)
+            if final_output is None and is_workflow:
+                with contextlib.suppress(Exception):
+                    final_output = await component.aget_run_output(
+                        job_id, job["session_id"], user_id=job.get("user_id")
+                    )
         finally:
-            status = getattr(final_output, "status", None) or RunStatus.error
+            # The final output may come from a DB read (workflows), where status
+            # round-trips as a plain str - coerce before the terminal write, or
+            # complete_run dies inside this suppress and the stream never ends
+            raw_status = getattr(final_output, "status", None)
+            if isinstance(raw_status, str) and not isinstance(raw_status, RunStatus):
+                with contextlib.suppress(ValueError):
+                    raw_status = RunStatus(raw_status)
+            status = raw_status if isinstance(raw_status, RunStatus) else RunStatus.error
             # A retryable failure must NOT publish the terminal sentinel: tails
             # would close cleanly and the client would never see the retry's
             # output. Leave the stream open; the retry attempt continues it
