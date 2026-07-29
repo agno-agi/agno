@@ -420,6 +420,24 @@ class QueueWorker:
 
         job_id, attempt = job["id"], job["attempt"]
         job_type = job.get("job_type", "run")
+        component_for_stamp = self.resolve_component(job.get("component_type"), job.get("component_id"))
+        if component_for_stamp is not None:
+            # Establish this attempt's generation on the run row BEFORE
+            # executing: the fence compares terminal writes against the stored
+            # queue_attempt, and without an up-front stamp a zombie's write
+            # passes vacuously (stored None) and stamps its own stale attempt.
+            from agno.run.status_persist import apersist_run_status
+
+            with contextlib.suppress(Exception):
+                await apersist_run_status(
+                    component_for_stamp,
+                    job.get("component_type", ""),
+                    session_id=job["session_id"],
+                    run_id=job_id,
+                    fields={"queue_attempt": attempt},
+                    user_id=job.get("user_id"),
+                    expected_attempt=attempt,
+                )
         if job_type != "run":
             # Forward-compat: a newer producer enqueued a job type this worker
             # has no executor for. Fail it visibly rather than guessing.
