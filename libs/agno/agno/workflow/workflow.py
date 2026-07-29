@@ -1696,6 +1696,29 @@ class Workflow:
             except RuntimeError:
                 pass
 
+    async def _aterminalize_workflow_agent_run(
+        self, workflow_run_response: WorkflowRunOutput, session_id: Optional[str], user_id: Optional[str]
+    ) -> None:
+        """Terminalize a workflow-agent background run after its generator ends.
+
+        _aexecute_workflow_agent maintains its own run output internally and
+        never mutates the caller's workflow_run_response, and its internal
+        session save does not flip the run row out of RUNNING. Without this,
+        the row stays RUNNING forever and the producers complete_run a stale
+        status. The generator finishing without raising means the leg is
+        complete; error paths are handled by the producers' except branches."""
+        if workflow_run_response.status in (RunStatus.running, RunStatus.pending):
+            workflow_run_response.status = RunStatus.completed
+            persist_session_id = session_id or workflow_run_response.session_id
+            if persist_session_id is None:
+                return
+            try:
+                await apersist_run_transition(
+                    self, "workflow", persist_session_id, workflow_run_response, user_id=user_id
+                )
+            except Exception:
+                log_warning(f"Failed to persist terminal status for workflow-agent run {workflow_run_response.run_id}")
+
     async def _apublish_stream_event(
         self,
         event: Any,
@@ -4340,6 +4363,12 @@ class Workflow:
                         if isinstance(event, WorkflowRunOutput):
                             continue
                         await self._apublish_stream_event(event, publish_run_id, websocket_handler=websocket_handler)
+                    # The workflow-agent generator maintains its own run output
+                    # and never mutates workflow_run_response: adopt the final
+                    # status from the run row so terminal persistence and
+                    # complete_run below see COMPLETED/PAUSED, not a stale
+                    # RUNNING
+                    await self._aterminalize_workflow_agent_run(workflow_run_response, session_id, user_id)
                     log_debug(
                         f"Background streaming execution (workflow agent) completed with status: {workflow_run_response.status}"
                     )
@@ -4574,6 +4603,9 @@ class Workflow:
                             await sse_queue.put(sse_data)
                         except Exception:
                             log_warning(f"Failed to push SSE data to queue for workflow run {run_id}")
+                    # Same stale-status issue as the WS producer: the
+                    # workflow-agent generator never mutates workflow_run_response
+                    await self._aterminalize_workflow_agent_run(workflow_run_response, session_id, user_id)
                 else:
                     async for event in self._aexecute_stream(
                         session_id=session_id,
