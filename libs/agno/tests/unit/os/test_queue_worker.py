@@ -406,3 +406,92 @@ class TestStreamViewTermination:
             assert await stream.get_run_status("ns1") == RunStatus.running
         finally:
             es_mod._event_stream = original
+
+
+class TestStreamingRetryVisibility:
+    @pytest.mark.asyncio
+    async def test_retryable_failure_does_not_close_tails(self):
+        """A non-final failed attempt must NOT publish the terminal sentinel:
+        a concurrently tailing client keeps waiting and receives the retry's
+        events with monotonic (non-rewound) indices."""
+        import agno.os.event_streams as es_mod
+        from agno.job_queue.config import QueueConfig
+        from agno.job_queue.store import InMemoryQueueStore
+        from agno.os.event_streams import InMemoryEventStream, set_event_stream
+        from agno.os.job_queue import QueueWorker
+        from agno.os.managers import EventsBuffer, SSESubscriberManager
+        from agno.run.base import RunStatus
+
+        original = es_mod._event_stream
+        stream = InMemoryEventStream(events_buffer=EventsBuffer(), subscriber_manager=SSESubscriberManager())
+        set_event_stream(stream)
+        try:
+
+            class FakeEvent:
+                def __init__(self, content):
+                    self.event = "RunContent"
+                    self.content = content
+                    self.run_id = "rr1"
+
+                def to_dict(self):
+                    return {"event": self.event, "content": self.content, "run_id": self.run_id}
+
+            class FakeOutput:
+                run_id = "rr1"
+                status = RunStatus.completed
+
+            class FlakyAgent:
+                id = "a1"
+                db = None
+                calls = 0
+
+                async def arun(self, **kwargs):
+                    FlakyAgent.calls += 1
+                    if FlakyAgent.calls == 1:
+                        yield FakeEvent("attempt1-a")
+                        raise RuntimeError("transient")
+                    yield FakeEvent("real-a")
+                    yield FakeEvent("real-b")
+                    yield FakeOutput()
+
+            store = InMemoryQueueStore()
+            await store.enqueue_job(
+                {
+                    "id": "rr1",
+                    "component_type": "agent",
+                    "component_id": "a1",
+                    "session_id": "s1",
+                    "job_type": "run",
+                    "payload": {"input": "hi", "kwargs": {}, "stream": True},
+                    "status": "queued",
+                    "attempt": 0,
+                    "max_attempts": 2,
+                    "available_at": 0,
+                    "created_at": 0,
+                }
+            )
+            worker = QueueWorker(
+                store=store,
+                resolve_component=lambda t, i: FlakyAgent(),
+                config=QueueConfig(durable=True, poll_interval=0.05, lock_grace_seconds=60, retry_delay_seconds=0),
+            )
+
+            # Attempt 1: fails retryably - stream must stay non-terminal
+            claimed = await store.claim_job(worker.worker_id)
+            await worker._execute_claimed(claimed)
+            assert await stream.get_run_status("rr1") == RunStatus.running, (
+                "retryable failure must not publish the terminal sentinel"
+            )
+
+            # Attempt 2: succeeds - indices continue past attempt 1's
+            claimed2 = await store.claim_job(worker.worker_id)
+            assert claimed2 is not None, "job must be reclaimable for attempt 2"
+            await worker._execute_claimed(claimed2)
+            assert (await store.get_job("rr1"))["status"] == "completed"
+
+            # A client that saw attempt-1 index 0 and reconnects: receives the
+            # real output (indices 1, 2), filtered by nothing
+            received = [idx async for idx, _sse in stream.tail("rr1", last_event_index=0)]
+            assert received == [1, 2], f"expected retry events at continued indices, got {received}"
+        finally:
+            es_mod._event_stream = original
