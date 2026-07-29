@@ -95,6 +95,7 @@ class BaseDb(ABC):
         return {
             "id": self.id,
             "session_table": self.session_table_name,
+            "job_table": self.job_table_name,
             "culture_table": self.culture_table_name,
             "memory_table": self.memory_table_name,
             "metrics_table": self.metrics_table_name,
