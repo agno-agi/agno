@@ -30,7 +30,7 @@ from agno.os.auth import (
 )
 from agno.os.checkpoints import build_run_checkpoint_snapshot, list_run_checkpoints
 from agno.os.event_streams import get_event_stream
-from agno.os.job_queue import aprepare_queued_run, payload_is_queueable, validate_seam_input
+from agno.os.job_queue import aprepare_queued_run, normalize_idempotency_key, payload_is_queueable, validate_seam_input
 from agno.os.middleware.user_scope import (
     SESSION_ID_REQUIRED,
     assert_session_matches_component,
@@ -757,7 +757,7 @@ def get_team_router(
                     user_id=user_id,
                     payload=queued_payload,
                     max_attempts=queue_worker.config.max_attempts,
-                    idempotency_key=request.headers.get("idempotency-key"),
+                    idempotency_key=normalize_idempotency_key(request.headers.get("idempotency-key")),
                 ).to_dict()
 
                 # Enqueue FIRST: the committed queue row is the acceptance.

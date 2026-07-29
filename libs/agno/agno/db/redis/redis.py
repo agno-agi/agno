@@ -2266,7 +2266,9 @@ class RedisDb(BaseDb):
         # treats an empty header as no key (an "" key would otherwise wedge
         # every later empty-header submit onto one job)
         idem = job.get("idempotency_key") or None
-        idem_key = self._q_key(f"idem:{idem}") if idem is not None else None
+        # user_id scopes the dedup namespace (cross-tenant key reuse must not
+        # attach to another tenant's run) - mirrors the Postgres index
+        idem_key = self._q_key(f"idem:{job.get('user_id') or '-'}:{idem}") if idem is not None else None
 
         for _ in range(10):
             with self.redis_client.pipeline() as pipe:
@@ -2608,7 +2610,7 @@ class RedisDb(BaseDb):
                 # Dedup key dies with the job record (Postgres parity: the
                 # partial-unique index lives exactly as long as the row)
                 if job.get("idempotency_key"):
-                    pipe.delete(self._q_key(f"idem:{job['idempotency_key']}"))
+                    pipe.delete(self._q_key(f"idem:{job.get('user_id') or '-'}:{job['idempotency_key']}"))
                 pipe.zrem(self._q_key("all"), job_id)
                 pipe.zrem(self._q_key("queued"), job_id)
                 pipe.zrem(self._q_key("running"), job_id)

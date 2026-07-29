@@ -102,8 +102,33 @@ class TestSyncStoreAdapter:
         from agno.os.job_queue import resolve_queue_store
 
         class SyncStore:
+            # Full contract: resolve_queue_store validates every method up front
+            def enqueue_job(self, job, max_depth=0):
+                return {"accepted": True, "reason": None, "job": job}
+
             def claim_job(self, worker_id, lock_grace_seconds=60):
                 return {"id": "r1", "worker": worker_id}
+
+            def heartbeat_jobs(self, worker_id, job_ids):
+                return len(job_ids)
+
+            def complete_job(self, job_id, worker_id, attempt, status, error=None):
+                return True
+
+            def retry_or_fail_job(self, job_id, worker_id, attempt, error, retry_delay_seconds):
+                return "failed"
+
+            def cancel_job(self, job_id):
+                return True
+
+            def sweep_exhausted_jobs(self, lock_grace_seconds=60, limit=20):
+                return []
+
+            def fail_swept_job(self, job_id, lock_grace_seconds=60, error="worker lost"):
+                return True
+
+            def get_job(self, job_id):
+                return None
 
             def count_queued_jobs(self):
                 return 3

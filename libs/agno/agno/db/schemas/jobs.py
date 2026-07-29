@@ -18,7 +18,9 @@ from agno.utils.dttm import now_epoch_s, to_epoch_s
 # Lifecycle: queued -> running -> completed | failed | cancelled
 # running with a stale lock is claimable again while attempt < max_attempts;
 # otherwise the sweep moves it to failed without executing.
-JOB_STATUSES = ("queued", "running", "completed", "failed", "cancelled")
+# paused: the execution leg ended awaiting HITL approval - terminal for the
+# ticket (a continuation is a new leg), distinct from completed for ops honesty
+JOB_STATUSES = ("queued", "running", "completed", "failed", "cancelled", "paused")
 
 
 @dataclass

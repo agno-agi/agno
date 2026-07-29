@@ -26,7 +26,7 @@ from agno.os.auth import (
     get_authentication_dependency,
     require_resource_access,
 )
-from agno.os.job_queue import aprepare_queued_run, payload_is_queueable, validate_seam_input
+from agno.os.job_queue import aprepare_queued_run, normalize_idempotency_key, payload_is_queueable, validate_seam_input
 from agno.os.managers import event_buffer, websocket_manager
 from agno.os.middleware.user_scope import (
     SESSION_ID_REQUIRED,
@@ -1293,7 +1293,7 @@ def get_workflow_router(
                     user_id=user_id,
                     payload=queued_payload,
                     max_attempts=queue_worker.config.max_attempts,
-                    idempotency_key=request.headers.get("idempotency-key"),
+                    idempotency_key=normalize_idempotency_key(request.headers.get("idempotency-key")),
                 ).to_dict()
 
                 # Enqueue FIRST: the committed queue row is the acceptance.
