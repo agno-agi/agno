@@ -1,5 +1,5 @@
 import json
-from typing import Any, List, Optional
+from typing import Callable, List, Optional
 
 from agno.knowledge.document import Document
 from agno.knowledge.knowledge import Knowledge
@@ -15,7 +15,7 @@ class WebsiteTools(Toolkit):
     ):
         self.knowledge: Optional[Knowledge] = knowledge
 
-        tools: List[Any] = []
+        tools: List[Callable] = []
         if self.knowledge is not None:
             tools.append(self.add_website_to_knowledge)
         else:

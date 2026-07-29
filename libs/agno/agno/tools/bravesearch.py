@@ -1,6 +1,6 @@
 import json
 from os import getenv
-from typing import Optional
+from typing import Callable, List, Optional
 
 from agno.tools import Toolkit
 from agno.utils.log import log_info
@@ -16,9 +16,9 @@ class BraveSearchTools(Toolkit):
     BraveSearch is a toolkit for searching Brave easily.
 
     Args:
-        api_key (str, optional): Brave API key. If not provided, will use BRAVE_API_KEY environment variable.
-        fixed_max_results (Optional[int]): A fixed number of maximum results.
-        fixed_language (Optional[str]): A fixed language for the search results.
+        api_key: Brave API key. If not provided, will use BRAVE_API_KEY environment variable.
+        fixed_max_results: A fixed number of maximum results.
+        fixed_language: A fixed language for the search results.
     """
 
     def __init__(
@@ -26,7 +26,7 @@ class BraveSearchTools(Toolkit):
         api_key: Optional[str] = None,
         fixed_max_results: Optional[int] = None,
         fixed_language: Optional[str] = None,
-        enable_brave_search: bool = True,
+        brave_search: bool = True,
         all: bool = False,
         **kwargs,
     ):
@@ -39,12 +39,12 @@ class BraveSearchTools(Toolkit):
 
         self.brave_client = Brave(api_key=self.api_key)
 
-        tools = []
-        if all or enable_brave_search:
+        tools: List[Callable] = []
+        if all or brave_search:
             tools.append(self.brave_search)
 
         super().__init__(
-            name="brave_search",
+            name="brave_search_tools",
             tools=tools,
             **kwargs,
         )
@@ -56,16 +56,16 @@ class BraveSearchTools(Toolkit):
         country: str = "US",
         search_lang: str = "en",
     ) -> str:
-        """
-        Search Brave for the specified query and return the results.
+        """Search Brave for the specified query and return the results.
 
         Args:
-            query (str): The query to search for.
-            max_results (int, optional): The maximum number of results to return. Default is 5.
-            country (str, optional): The country code for search results. Default is "US".
-            search_lang (str, optional): The language of the search results. Default is "en".
+            query: The query to search for.
+            max_results: The maximum number of results to return. Defaults to 5.
+            country: The country code for search results. Defaults to "US".
+            search_lang: The language of the search results. Defaults to "en".
+
         Returns:
-            str: A JSON formatted string containing the search results.
+            JSON with web_results list containing title, url, description.
         """
         final_max_results = self.fixed_max_results if self.fixed_max_results is not None else max_results
         final_search_lang = self.fixed_language if self.fixed_language is not None else search_lang
@@ -83,24 +83,27 @@ class BraveSearchTools(Toolkit):
             "result_filter": "web",
         }
 
-        search_results = self.brave_client.search(**search_params)
+        try:
+            search_results = self.brave_client.search(**search_params)
 
-        filtered_results = {
-            "web_results": [],
-            "query": query,
-            "total_results": 0,
-        }
+            filtered_results = {
+                "web_results": [],
+                "query": query,
+                "total_results": 0,
+            }
 
-        if hasattr(search_results, "web") and search_results.web:
-            web_results = []
-            for result in search_results.web.results:
-                web_result = {
-                    "title": result.title,
-                    "url": str(result.url),
-                    "description": result.description,
-                }
-                web_results.append(web_result)
-            filtered_results["web_results"] = web_results
-            filtered_results["total_results"] = len(web_results)
+            if hasattr(search_results, "web") and search_results.web:
+                web_results = []
+                for result in search_results.web.results:
+                    web_result = {
+                        "title": result.title,
+                        "url": str(result.url),
+                        "description": result.description,
+                    }
+                    web_results.append(web_result)
+                filtered_results["web_results"] = web_results
+                filtered_results["total_results"] = len(web_results)
 
-        return json.dumps(filtered_results, indent=2)
+            return json.dumps(filtered_results)
+        except Exception as e:
+            return json.dumps({"error": f"Brave search failed: {e}"})

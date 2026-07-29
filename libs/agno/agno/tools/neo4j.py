@@ -1,5 +1,6 @@
+import json
 import os
-from typing import Any, List, Optional
+from typing import Callable, List, Optional
 
 try:
     from neo4j import GraphDatabase
@@ -17,31 +18,29 @@ class Neo4jTools(Toolkit):
         user: Optional[str] = None,
         password: Optional[str] = None,
         database: Optional[str] = None,
-        # Enable flags for <6 functions
-        enable_list_labels: bool = True,
-        enable_list_relationships: bool = True,
-        enable_get_schema: bool = True,
-        enable_run_cypher: bool = True,
+        list_labels: bool = True,
+        list_relationship_types: bool = True,
+        get_schema: bool = True,
+        run_cypher_query: bool = False,
         all: bool = False,
         **kwargs,
     ):
         """
-        Initialize the Neo4jTools toolkit.
-        Connection parameters (uri/user/password or host/port) can be provided.
-        If not provided, falls back to NEO4J_URI, NEO4J_USERNAME, NEO4J_PASSWORD env vars.
+        Initialize the Neo4jTools toolkit for interacting with a Neo4j graph database.
+
+        Connection parameters can be provided directly or via environment variables
+        (NEO4J_URI, NEO4J_USERNAME, NEO4J_PASSWORD).
 
         Args:
-            uri (Optional[str]): The Neo4j URI.
-            user (Optional[str]): The Neo4j username.
-            password (Optional[str]): The Neo4j password.
-            host (Optional[str]): The Neo4j host.
-            port (Optional[int]): The Neo4j port.
-            database (Optional[str]): The Neo4j database.
-            list_labels (bool): Whether to list node labels.
-            list_relationships (bool): Whether to list relationship types.
-            get_schema (bool): Whether to get the schema.
-            run_cypher (bool): Whether to run Cypher queries.
-            **kwargs: Additional keyword arguments.
+            uri: Neo4j connection URI (default: bolt://localhost:7687 or NEO4J_URI env var)
+            user: Neo4j username (falls back to NEO4J_USERNAME env var)
+            password: Neo4j password (falls back to NEO4J_PASSWORD env var)
+            database: Neo4j database name (default: "neo4j")
+            list_labels: Register the list_labels tool
+            list_relationship_types: Register the list_relationship_types tool
+            get_schema: Register the get_schema tool
+            run_cypher_query: Register the run_cypher_query tool (can execute arbitrary queries)
+            all: Register all tools
         """
         # Determine the connection URI and credentials
         uri = uri or os.getenv("NEO4J_URI", "bolt://localhost:7687")
@@ -63,72 +62,84 @@ class Neo4jTools(Toolkit):
         self.database = database or "neo4j"
 
         # Register toolkit methods as tools
-        tools: List[Any] = []
-        if all or enable_list_labels:
+        tools: List[Callable] = []
+        if all or list_labels:
             tools.append(self.list_labels)
-        if all or enable_list_relationships:
+        if all or list_relationship_types:
             tools.append(self.list_relationship_types)
-        if all or enable_get_schema:
+        if all or get_schema:
             tools.append(self.get_schema)
-        if all or enable_run_cypher:
+        if all or run_cypher_query:
             tools.append(self.run_cypher_query)
         super().__init__(name="neo4j_tools", tools=tools, **kwargs)
 
-    def list_labels(self) -> list:
+    def list_labels(self) -> str:
         """
         Retrieve all node labels present in the connected Neo4j database.
+
+        Returns:
+            JSON array of label strings
         """
         try:
             log_debug("Listing node labels in Neo4j database")
             with self.driver.session(database=self.database) as session:
                 result = session.run("CALL db.labels()")
                 labels = [record["label"] for record in result]
-            return labels
+            return json.dumps(labels)
         except Exception:
             logger.exception("Error listing labels")
-            return []
+            return json.dumps([])
 
-    def list_relationship_types(self) -> list:
+    def list_relationship_types(self) -> str:
         """
         Retrieve all relationship types present in the connected Neo4j database.
+
+        Returns:
+            JSON array of relationship type strings
         """
         try:
             log_debug("Listing relationship types in Neo4j database")
             with self.driver.session(database=self.database) as session:
                 result = session.run("CALL db.relationshipTypes()")
                 types = [record["relationshipType"] for record in result]
-            return types
+            return json.dumps(types)
         except Exception:
             logger.exception("Error listing relationship types")
-            return []
+            return json.dumps([])
 
-    def get_schema(self) -> list:
+    def get_schema(self) -> str:
         """
         Retrieve a visualization of the database schema, including nodes and relationships.
+
+        Returns:
+            JSON array with schema visualization data
         """
         try:
             log_debug("Retrieving Neo4j schema visualization")
             with self.driver.session(database=self.database) as session:
                 result = session.run("CALL db.schema.visualization()")
                 schema_data = result.data()
-            return schema_data
+            return json.dumps(schema_data)
         except Exception:
             logger.exception("Error getting Neo4j schema")
-            return []
+            return json.dumps([])
 
-    def run_cypher_query(self, query: str) -> list:
+    def run_cypher_query(self, query: str) -> str:
         """
         Execute an arbitrary Cypher query against the connected Neo4j database.
 
         Args:
-            query (str): The Cypher query string to execute.
+            query: The Cypher query string to execute
+
+        Returns:
+            JSON array of result records
         """
         try:
             log_debug(f"Running Cypher query: {query}")
             with self.driver.session(database=self.database) as session:
                 result = session.run(query)  # type: ignore[arg-type]
                 data = result.data()
-            return data
+            return json.dumps(data)
         except Exception:
             logger.exception("Error running Cypher query")
-            return []
+            return json.dumps([])

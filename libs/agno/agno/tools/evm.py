@@ -1,5 +1,6 @@
+import json
 from os import getenv
-from typing import Optional
+from typing import Callable, List, Optional
 
 from agno.tools import Toolkit
 from agno.utils.log import log_debug, log_error
@@ -21,7 +22,7 @@ class EvmTools(Toolkit):
         self,
         private_key: Optional[str] = None,
         rpc_url: Optional[str] = None,
-        enable_send_transaction: bool = True,
+        send_transaction: bool = True,
         all: bool = False,
         **kwargs,
     ):
@@ -52,8 +53,8 @@ class EvmTools(Toolkit):
         self.account: "LocalAccount" = self.web3_client.eth.account.from_key(self.private_key)
         log_debug(f"Your wallet address is: {self.account.address}")
 
-        tools = []
-        if all or enable_send_transaction:
+        tools: List[Callable] = []
+        if all or send_transaction:
             tools.append(self.send_transaction)
 
         super().__init__(name="evm_tools", tools=tools, **kwargs)
@@ -119,11 +120,11 @@ class EvmTools(Toolkit):
             transaction_receipt: "TxReceipt" = self.web3_client.eth.wait_for_transaction_receipt(transaction_hash)
             if transaction_receipt.get("status") == 1:
                 log_debug(f"Transaction successful! Transaction hash: 0x{transaction_hash.hex()}")
-                return f"0x{transaction_hash.hex()}"
+                return json.dumps({"transaction_hash": f"0x{transaction_hash.hex()}"})
             else:
                 log_error("Transaction failed!")
-                raise Exception("Transaction failed!")
+                return json.dumps({"error": "Transaction failed"})
 
         except Exception as e:
             log_error(f"Error sending transaction: {str(e)}")
-            return f"error: {e}"
+            return json.dumps({"error": str(e)})

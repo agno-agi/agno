@@ -6,7 +6,7 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 import requests
 
 from agno.tools import Toolkit
-from agno.utils.log import log_error, log_info, logger
+from agno.utils.log import log_error, log_exception, log_info
 
 try:
     from apify_client import ApifyClient
@@ -15,13 +15,17 @@ except ImportError:
 
 
 class ApifyTools(Toolkit):
-    def __init__(self, actors: Optional[Union[str, List[str]]] = None, apify_api_token: Optional[str] = None):
-        """Initialize ApifyTools with specific Actors.
+    """Toolkit for running Apify Actors as agent tools.
 
-        Args:
-            actors (Optional[Union[str, List[str]]]): Single Actor ID as string or list of Actor IDs to register as individual tools
-            apify_api_token (Optional[str]): Apify API token (defaults to APIFY_API_TOKEN env variable)
-        """
+    Dynamically registers specified Apify Actors as tools. Each actor becomes
+    a callable tool that the agent can invoke with the actor's input schema.
+
+    Args:
+        actors: Actor ID(s) to register (e.g., "apify/web-scraper" or list of IDs).
+        apify_api_token: Apify API token. Falls back to APIFY_API_TOKEN env var.
+    """
+
+    def __init__(self, actors: Optional[Union[str, List[str]]] = None, apify_api_token: Optional[str] = None):
         # Get API token from args or environment
         self.apify_api_token = apify_api_token or getenv("APIFY_API_TOKEN")
         if not self.apify_api_token:
@@ -29,15 +33,15 @@ class ApifyTools(Toolkit):
 
         self.client = create_apify_client(self.apify_api_token)
 
-        tools: List[Any] = []
+        actor_ids: List[str] = []
         if actors:
             actor_list = [actors] if isinstance(actors, str) else actors
             for actor_id in actor_list:
-                tools.append(actor_id)
+                actor_ids.append(actor_id)
 
         super().__init__(name="ApifyTools", tools=[], auto_register=False)
 
-        for actor_id in tools:
+        for actor_id in actor_ids:
             self.register_actor(actor_id)
 
     def register_actor(self, actor_id: str) -> None:
@@ -121,7 +125,7 @@ Returns:
             log_info(f"Registered Apify Actor '{actor_id}' as function '{tool_name}'")
 
         except Exception:
-            logger.exception(f"Failed to register Apify Actor '{actor_id}'")
+            log_exception(f"Failed to register Apify Actor '{actor_id}'")
 
 
 # Constants

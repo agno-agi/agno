@@ -1,5 +1,6 @@
+import json
 from os import getenv
-from typing import Any, Dict, List, Literal, Optional
+from typing import Any, Callable, Dict, List, Literal, Optional, Union
 from urllib.parse import quote
 
 import httpx
@@ -27,10 +28,10 @@ class AdanosTools(Toolkit):
         api_key: Optional[str] = None,
         base_url: str = "https://api.adanos.org",
         timeout: float = 20.0,
-        enable_stock_sentiment: bool = True,
-        enable_crypto_sentiment: bool = True,
-        enable_trending: bool = True,
-        enable_market_sentiment: bool = True,
+        stock_sentiment: bool = True,
+        crypto_sentiment: bool = True,
+        trending: bool = True,
+        market_sentiment: bool = True,
         all: bool = False,
         **kwargs,
     ):
@@ -40,10 +41,10 @@ class AdanosTools(Toolkit):
             api_key: Adanos API key. Uses ``ADANOS_API_KEY`` when omitted.
             base_url: Adanos API base URL.
             timeout: Per-request timeout in seconds.
-            enable_stock_sentiment: Register the stock sentiment tool.
-            enable_crypto_sentiment: Register the crypto sentiment tool.
-            enable_trending: Register the trending assets tool.
-            enable_market_sentiment: Register the aggregate market sentiment tool.
+            stock_sentiment: Register the stock sentiment tool.
+            crypto_sentiment: Register the crypto sentiment tool.
+            trending: Register the trending assets tool.
+            market_sentiment: Register the aggregate market sentiment tool.
             all: Register all tools regardless of individual flags.
         """
         self.api_key = api_key or getenv("ADANOS_API_KEY")
@@ -53,18 +54,18 @@ class AdanosTools(Toolkit):
         if not self.api_key:
             log_error("ADANOS_API_KEY not set. Please set the ADANOS_API_KEY environment variable.")
 
-        tools: List[Any] = []
+        tools: List[Callable] = []
         async_tools: List[tuple] = []
-        if all or enable_stock_sentiment:
+        if all or stock_sentiment:
             tools.append(self.get_stock_sentiment)
             async_tools.append((self.aget_stock_sentiment, "get_stock_sentiment"))
-        if all or enable_crypto_sentiment:
+        if all or crypto_sentiment:
             tools.append(self.get_crypto_sentiment)
             async_tools.append((self.aget_crypto_sentiment, "get_crypto_sentiment"))
-        if all or enable_trending:
+        if all or trending:
             tools.append(self.get_trending)
             async_tools.append((self.aget_trending, "get_trending"))
-        if all or enable_market_sentiment:
+        if all or market_sentiment:
             tools.append(self.get_market_sentiment)
             async_tools.append((self.aget_market_sentiment, "get_market_sentiment"))
 
@@ -82,38 +83,38 @@ class AdanosTools(Toolkit):
         return {key: value for key, value in params.items() if value is not None}
 
     @staticmethod
-    def _error(response: httpx.Response) -> Dict[str, Any]:
+    def _error(response: httpx.Response) -> str:
         try:
             detail = response.json().get("detail", response.text)
         except ValueError:
             detail = response.text
-        return {"error": "Adanos API request failed", "status_code": response.status_code, "detail": detail}
+        return json.dumps({"error": "Adanos API request failed", "status_code": response.status_code, "detail": detail})
 
-    def _request(self, path: str, params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    def _request(self, path: str, params: Optional[Dict[str, Any]] = None) -> str:
         try:
             with httpx.Client(timeout=self.timeout) as client:
                 response = client.get(f"{self.base_url}/{path}", headers=self._headers(), params=params)
                 response.raise_for_status()
-                return response.json()
+                return json.dumps(response.json())
         except ValueError as error:
-            return {"error": str(error)}
+            return json.dumps({"error": str(error)})
         except httpx.HTTPStatusError as error:
             return self._error(error.response)
         except httpx.RequestError as error:
-            return {"error": "Adanos API request failed", "detail": str(error)}
+            return json.dumps({"error": "Adanos API request failed", "detail": str(error)})
 
-    async def _arequest(self, path: str, params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    async def _arequest(self, path: str, params: Optional[Dict[str, Any]] = None) -> str:
         try:
             async with httpx.AsyncClient(timeout=self.timeout) as client:
                 response = await client.get(f"{self.base_url}/{path}", headers=self._headers(), params=params)
                 response.raise_for_status()
-                return response.json()
+                return json.dumps(response.json())
         except ValueError as error:
-            return {"error": str(error)}
+            return json.dumps({"error": str(error)})
         except httpx.HTTPStatusError as error:
             return self._error(error.response)
         except httpx.RequestError as error:
-            return {"error": "Adanos API request failed", "detail": str(error)}
+            return json.dumps({"error": "Adanos API request failed", "detail": str(error)})
 
     def get_stock_sentiment(
         self,
@@ -121,7 +122,7 @@ class AdanosTools(Toolkit):
         source: StockSource = "reddit",
         start_date: Optional[str] = None,
         end_date: Optional[str] = None,
-    ) -> Dict[str, Any]:
+    ) -> str:
         """Get sentiment for a stock from one Adanos data source.
 
         Args:
@@ -129,10 +130,13 @@ class AdanosTools(Toolkit):
             source: Sentiment source: reddit, x, news, or polymarket.
             start_date: Inclusive UTC start date in YYYY-MM-DD format.
             end_date: Inclusive UTC end date in YYYY-MM-DD format.
+
+        Returns:
+            JSON with buzz_score, sentiment_score, trend, and period data.
         """
         path = self._STOCK_PATHS.get(source)
         if path is None:
-            return {"error": "source must be one of: reddit, x, news, polymarket"}
+            return json.dumps({"error": "source must be one of: reddit, x, news, polymarket"})
         symbol = quote(ticker.strip().lstrip("$").upper(), safe=".-")
         return self._request(f"{path}/stock/{symbol}", self._params(start_date, end_date))
 
@@ -142,30 +146,33 @@ class AdanosTools(Toolkit):
         source: StockSource = "reddit",
         start_date: Optional[str] = None,
         end_date: Optional[str] = None,
-    ) -> Dict[str, Any]:
+    ) -> str:
         """Asynchronously get sentiment for a stock from one Adanos data source."""
         path = self._STOCK_PATHS.get(source)
         if path is None:
-            return {"error": "source must be one of: reddit, x, news, polymarket"}
+            return json.dumps({"error": "source must be one of: reddit, x, news, polymarket"})
         symbol = quote(ticker.strip().lstrip("$").upper(), safe=".-")
         return await self._arequest(f"{path}/stock/{symbol}", self._params(start_date, end_date))
 
     def get_crypto_sentiment(
         self, symbol: str, start_date: Optional[str] = None, end_date: Optional[str] = None
-    ) -> Dict[str, Any]:
+    ) -> str:
         """Get Reddit sentiment for a cryptocurrency.
 
         Args:
             symbol: Cryptocurrency symbol, for example ``BTC`` or ``ETH``.
             start_date: Inclusive UTC start date in YYYY-MM-DD format.
             end_date: Inclusive UTC end date in YYYY-MM-DD format.
+
+        Returns:
+            JSON with buzz_score, sentiment_score, trend, and period data.
         """
         normalized_symbol = quote(symbol.strip().upper(), safe=".-")
         return self._request(f"{self._CRYPTO_PATH}/token/{normalized_symbol}", self._params(start_date, end_date))
 
     async def aget_crypto_sentiment(
         self, symbol: str, start_date: Optional[str] = None, end_date: Optional[str] = None
-    ) -> Dict[str, Any]:
+    ) -> str:
         """Asynchronously get Reddit sentiment for a cryptocurrency."""
         normalized_symbol = quote(symbol.strip().upper(), safe=".-")
         return await self._arequest(
@@ -179,7 +186,7 @@ class AdanosTools(Toolkit):
         limit: int = 10,
         start_date: Optional[str] = None,
         end_date: Optional[str] = None,
-    ) -> Dict[str, Any]:
+    ) -> str:
         """Get trending stocks or cryptocurrencies ranked by buzz score with sentiment data.
 
         Args:
@@ -188,10 +195,13 @@ class AdanosTools(Toolkit):
             limit: Maximum number of results, from 1 to 100.
             start_date: Inclusive UTC start date in YYYY-MM-DD format.
             end_date: Inclusive UTC end date in YYYY-MM-DD format.
+
+        Returns:
+            JSON array of trending assets with buzz_score, sentiment_score, and trend.
         """
         path = self._asset_path(asset_type, source)
         if isinstance(path, dict):
-            return path
+            return json.dumps(path)
         params = self._params(start_date, end_date, limit=max(1, min(limit, 100)))
         return self._request(f"{path}/trending", params)
 
@@ -202,11 +212,11 @@ class AdanosTools(Toolkit):
         limit: int = 10,
         start_date: Optional[str] = None,
         end_date: Optional[str] = None,
-    ) -> Dict[str, Any]:
+    ) -> str:
         """Asynchronously get trending stocks or cryptocurrencies ranked by buzz score with sentiment data."""
         path = self._asset_path(asset_type, source)
         if isinstance(path, dict):
-            return path
+            return json.dumps(path)
         params = self._params(start_date, end_date, limit=max(1, min(limit, 100)))
         return await self._arequest(f"{path}/trending", params)
 
@@ -216,7 +226,7 @@ class AdanosTools(Toolkit):
         source: StockSource = "reddit",
         start_date: Optional[str] = None,
         end_date: Optional[str] = None,
-    ) -> Dict[str, Any]:
+    ) -> str:
         """Get aggregate market sentiment for stocks or cryptocurrencies.
 
         Args:
@@ -224,10 +234,13 @@ class AdanosTools(Toolkit):
             source: For stocks, reddit, x, news, or polymarket. Crypto uses reddit.
             start_date: Inclusive UTC start date in YYYY-MM-DD format.
             end_date: Inclusive UTC end date in YYYY-MM-DD format.
+
+        Returns:
+            JSON with overall market buzz_score, sentiment_score, and trend.
         """
         path = self._asset_path(asset_type, source)
         if isinstance(path, dict):
-            return path
+            return json.dumps(path)
         return self._request(f"{path}/market-sentiment", self._params(start_date, end_date))
 
     async def aget_market_sentiment(
@@ -236,14 +249,15 @@ class AdanosTools(Toolkit):
         source: StockSource = "reddit",
         start_date: Optional[str] = None,
         end_date: Optional[str] = None,
-    ) -> Dict[str, Any]:
+    ) -> str:
         """Asynchronously get aggregate market sentiment for stocks or cryptocurrencies."""
         path = self._asset_path(asset_type, source)
         if isinstance(path, dict):
-            return path
+            return json.dumps(path)
         return await self._arequest(f"{path}/market-sentiment", self._params(start_date, end_date))
 
-    def _asset_path(self, asset_type: str, source: str) -> Any:
+    def _asset_path(self, asset_type: str, source: str) -> Union[str, Dict[str, str]]:
+        """Return API path string or error dict."""
         if asset_type == "crypto":
             if source != "reddit":
                 return {"error": "crypto sentiment is currently available from reddit only"}

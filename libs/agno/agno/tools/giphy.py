@@ -1,6 +1,6 @@
 import uuid
 from os import getenv
-from typing import Any, List, Optional, Union
+from typing import Callable, List, Optional, Union
 
 import httpx
 
@@ -17,8 +17,7 @@ class GiphyTools(Toolkit):
         self,
         api_key: Optional[str] = None,
         limit: int = 1,
-        enable_search_gifs: bool = True,
-        all: bool = False,
+        search_gifs: bool = True,
         **kwargs,
     ):
         """Initialize Giphy tools.
@@ -26,8 +25,7 @@ class GiphyTools(Toolkit):
         Args:
             api_key: Giphy API key. Defaults to GIPHY_API_KEY environment variable.
             limit: Number of GIFs to return. Defaults to 1.
-            enable_search_gifs: Whether to enable GIF search functionality. Defaults to True.
-            all: Enable all functions. Defaults to False.
+            search_gifs: Whether to enable GIF search functionality. Defaults to True.
         """
         self.api_key = api_key or getenv("GIPHY_API_KEY")
         if not self.api_key:
@@ -35,20 +33,20 @@ class GiphyTools(Toolkit):
 
         self.limit: int = limit
 
-        tools: List[Any] = []
-        if all or enable_search_gifs:
+        tools: List[Callable] = []
+        if search_gifs:
             tools.append(self.search_gifs)
 
         super().__init__(name="giphy_tools", tools=tools, **kwargs)
 
     def search_gifs(self, agent: Union[Agent, Team], query: str) -> ToolResult:
-        """Find a GIPHY gif
+        """Search for GIFs on GIPHY.
 
         Args:
-            query (str): A text description of the required gif.
+            query: Text description of the GIF to find.
 
         Returns:
-            ToolResult: Contains the found GIF images or error message.
+            ToolResult with found GIF images.
         """
 
         base_url = "https://api.giphy.com/v1/gifs/search"

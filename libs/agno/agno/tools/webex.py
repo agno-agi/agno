@@ -1,9 +1,9 @@
 import json
 from os import getenv
-from typing import Any, List, Optional
+from typing import Callable, List, Optional
 
 from agno.tools import Toolkit
-from agno.utils.log import log_error, logger
+from agno.utils.log import log_error, log_exception
 
 try:
     from webexpythonsdk import WebexAPI
@@ -15,12 +15,19 @@ except ImportError as e:
 
 
 class WebexTools(Toolkit):
+    """Toolkit for interacting with Webex messaging and rooms.
+
+    Args:
+        access_token: Webex access token. Falls back to WEBEX_ACCESS_TOKEN env var.
+        send_message: Enable send_message tool. Defaults to False (externally visible).
+        list_rooms: Enable list_rooms tool. Defaults to True.
+    """
+
     def __init__(
         self,
-        enable_send_message: bool = True,
-        enable_list_rooms: bool = True,
-        all: bool = False,
         access_token: Optional[str] = None,
+        send_message: bool = False,
+        list_rooms: bool = True,
         **kwargs,
     ):
         access_token = access_token or getenv("WEBEX_ACCESS_TOKEN")
@@ -29,35 +36,36 @@ class WebexTools(Toolkit):
 
         self.client = WebexAPI(access_token=access_token)
 
-        tools: List[Any] = []
-        if all or enable_send_message:
+        tools: List[Callable] = []
+        if send_message:
             tools.append(self.send_message)
-        if all or enable_list_rooms:
+        if list_rooms:
             tools.append(self.list_rooms)
 
         super().__init__(name="webex", tools=tools, **kwargs)
 
     def send_message(self, room_id: str, text: str) -> str:
-        """
-        Send a message to a Webex Room.
+        """Send a message to a Webex room.
+
         Args:
-            room_id (str): The Room ID to send the message to.
-            text (str): The text of the message to send.
+            room_id: The room ID to send the message to.
+            text: The text of the message to send.
+
         Returns:
-            str: A JSON string containing the response from the Webex.
+            JSON with the message response.
         """
         try:
             response = self.client.messages.create(roomId=room_id, text=text)
             return json.dumps(response.json_data)
         except ApiError as e:
-            logger.exception(f"Error sending message in room: {room_id}")
+            log_exception(f"Error sending message in room: {room_id}")
             return json.dumps({"error": str(e)})
 
     def list_rooms(self) -> str:
-        """
-        List all rooms in the Webex.
+        """List all rooms in Webex.
+
         Returns:
-            str: A JSON string containing the list of rooms.
+            JSON with the list of rooms.
         """
         try:
             response = self.client.rooms.list()
@@ -74,5 +82,5 @@ class WebexTools(Toolkit):
 
             return json.dumps({"rooms": rooms_list}, indent=4)
         except ApiError as e:
-            logger.exception("Error listing rooms")
+            log_exception("Error listing rooms")
             return json.dumps({"error": str(e)})

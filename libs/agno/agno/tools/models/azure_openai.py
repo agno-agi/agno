@@ -32,7 +32,7 @@ class AzureOpenAITools(Toolkit):
         image_deployment: Optional[str] = None,
         image_model: str = "dall-e-3",
         image_quality: Literal["standard", "hd"] = "standard",  # Note: "hd" quality is only available for dall-e-3.
-        enable_generate_image: bool = True,
+        generate_image: bool = True,
         all: bool = False,
     ):
         # Set credentials from parameters or environment variables
@@ -57,7 +57,7 @@ class AzureOpenAITools(Toolkit):
         if self.image_deployment and self.image_model in self.VALID_MODELS:
             # Create and store the base URL
             self.image_base_url = f"{self.azure_endpoint}/openai/deployments/{self.image_deployment}/images/generations?api-version={self.api_version}"
-            if all or enable_generate_image:
+            if all or generate_image:
                 tools.append(self.generate_image)
         else:
             log_error("Missing required image generation parameters or invalid model")

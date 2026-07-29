@@ -1,7 +1,8 @@
+import json
 import os
 import tempfile
 from contextlib import suppress
-from typing import Any, Dict, List, Optional
+from typing import Callable, Dict, List, Optional
 
 from agno.tools import Toolkit
 from agno.utils.log import log_debug, log_info, logger
@@ -29,32 +30,42 @@ def _remove_file_if_exists(path: Optional[str]) -> None:
 
 
 class MoviePyVideoTools(Toolkit):
-    """Tool for processing video files, extracting audio, transcribing and adding captions"""
+    """Tool for processing video files, extracting audio, and adding captions."""
 
     def __init__(
         self,
-        enable_process_video: bool = True,
-        enable_generate_captions: bool = True,
-        enable_embed_captions: bool = True,
+        extract_audio: bool = True,
+        create_srt: bool = True,
+        embed_captions: bool = True,
         all: bool = False,
         **kwargs,
     ):
-        tools: List[Any] = []
-        if enable_process_video or all:
+        """Initialize MoviePy video toolkit.
+
+        Args:
+            extract_audio: Enable the extract_audio tool.
+            create_srt: Enable the create_srt tool.
+            embed_captions: Enable the embed_captions tool.
+            all: Enable all tools.
+        """
+        tools: List[Callable] = []
+        if all or extract_audio:
             tools.append(self.extract_audio)
-        if enable_generate_captions or all:
+        if all or create_srt:
             tools.append(self.create_srt)
-        if enable_embed_captions or all:
+        if all or embed_captions:
             tools.append(self.embed_captions)
 
         super().__init__(name="video_tools", tools=tools, **kwargs)
 
     def split_text_into_lines(self, words: List[Dict]) -> List[Dict]:
-        """Split transcribed words into lines based on duration and length constraints
+        """Split transcribed words into lines based on duration and length constraints.
+
         Args:
-            words: List of dictionaries containing word data with 'word', 'start', and 'end' keys
+            words: List of dicts with 'word', 'start', and 'end' keys.
+
         Returns:
-            List[Dict]: List of subtitle lines, each containing word, start time, end time, and text contents
+            List of subtitle lines with word, start, end, and textcontents.
         """
         MAX_CHARS = 30
         MAX_DURATION = 2.5
@@ -107,17 +118,19 @@ class MoviePyVideoTools(Toolkit):
         stroke_color="black",
         stroke_width=1.5,
     ) -> List[TextClip]:
-        """Create word-level caption clips with highlighting effects
+        """Create word-level caption clips with highlighting effects.
+
         Args:
-            text_json: Dictionary containing text and timing information
-            frame_size: Tuple of (width, height) for the video frame
-            font: Font family to use for captions
-            color: Base text color
-            highlight_color: Color for highlighted words
-            stroke_color: Color for text outline
-            stroke_width: Width of text outline
+            text_json: Dict with text and timing information.
+            frame_size: Tuple of (width, height) for the video frame.
+            font: Font family for captions.
+            color: Base text color.
+            highlight_color: Color for highlighted words.
+            stroke_color: Color for text outline.
+            stroke_width: Width of text outline.
+
         Returns:
-            List[TextClip]: List of MoviePy TextClip objects for each word and highlight
+            List of MoviePy TextClip objects.
         """
         word_clips = []
         x_pos = 0
@@ -196,11 +209,13 @@ class MoviePyVideoTools(Toolkit):
         return word_clips
 
     def parse_srt(self, srt_content: str) -> List[Dict]:
-        """Convert SRT formatted content into word-level timing data
+        """Convert SRT formatted content into word-level timing data.
+
         Args:
-            srt_content: String containing SRT formatted subtitles
+            srt_content: String containing SRT formatted subtitles.
+
         Returns:
-            List[Dict]: List of words with their timing information
+            List of words with timing information.
         """
         words = []
         lines = srt_content.strip().split("\n\n")
@@ -241,46 +256,48 @@ class MoviePyVideoTools(Toolkit):
         return words
 
     def extract_audio(self, video_path: str, output_path: str) -> str:
-        """Converts video to audio using MoviePy
+        """Extract audio track from a video file.
+
         Args:
-            video_path: Path to the video file
-            output_path: Path where the audio will be saved
+            video_path: Path to the video file.
+            output_path: Path where the audio will be saved.
+
         Returns:
-            str: Path to the extracted audio file
+            JSON with output_path on success or error.
         """
         try:
             log_debug(f"Extracting audio from {video_path}")
             video = VideoFileClip(video_path)
             video.audio.write_audiofile(output_path)
             log_info(f"Audio extracted to {output_path}")
-            return output_path
+            return json.dumps({"output_path": output_path})
         except Exception as e:
             logger.exception("Failed to extract audio")
-            return f"Failed to extract audio: {str(e)}"
+            return json.dumps({"error": f"Failed to extract audio: {str(e)}"})
 
     def create_srt(self, transcription: str, output_path: str) -> str:
-        """Save transcription text to SRT formatted file
+        """Save transcription text to SRT formatted file.
+
         Args:
-            transcription: Text transcription in SRT format
-            output_path: Path where the SRT file will be saved
+            transcription: Text transcription in SRT format.
+            output_path: Path where the SRT file will be saved.
+
         Returns:
-            str: Path to the created SRT file, or error message if failed
+            JSON with output_path on success or error.
         """
         temp_output_path: Optional[str] = None
         try:
             log_debug(f"Creating SRT file at {output_path}")
-            # Since we're getting SRT format from Whisper API now,
-            # we can just write it directly to file
             temp_output_path = _make_temp_output_path(output_path)
             with open(temp_output_path, "w", encoding="utf-8") as f:
                 f.write(transcription)
             os.replace(temp_output_path, output_path)
             temp_output_path = None
-            return output_path
+            return json.dumps({"output_path": output_path})
         except Exception as e:
             _remove_file_if_exists(temp_output_path)
             logger.exception("Failed to create SRT file")
-            return f"Failed to create SRT file: {str(e)}"
+            return json.dumps({"error": f"Failed to create SRT file: {str(e)}"})
 
     def embed_captions(
         self,
@@ -292,17 +309,19 @@ class MoviePyVideoTools(Toolkit):
         stroke_color: str = "black",
         stroke_width: int = 1,
     ) -> str:
-        """Create a new video with embedded scrolling captions and word-level highlighting
+        """Burn captions into a video with word-level highlighting.
+
         Args:
-            video_path: Path to the input video file
-            srt_path: Path to the SRT caption file
-            output_path: Path for the output video (optional)
-            font_size: Size of caption text
-            font_color: Color of caption text
-            stroke_color: Color of text outline
-            stroke_width: Width of text outline
+            video_path: Path to the input video file.
+            srt_path: Path to the SRT caption file.
+            output_path: Path for the output video. Defaults to {input}_captioned.mp4.
+            font_size: Size of caption text.
+            font_color: Color of caption text.
+            stroke_color: Color of text outline.
+            stroke_width: Width of text outline.
+
         Returns:
-            str: Path to the captioned video file, or error message if failed
+            JSON with output_path on success or error.
         """
         video = None
         final_video = None
@@ -365,12 +384,12 @@ class MoviePyVideoTools(Toolkit):
             os.replace(temp_output_path, output_path)
             temp_output_path = None
 
-            return output_path
+            return json.dumps({"output_path": output_path})
 
         except Exception as e:
             _remove_file_if_exists(temp_output_path)
             logger.exception("Failed to embed captions")
-            return f"Failed to embed captions: {str(e)}"
+            return json.dumps({"error": f"Failed to embed captions: {str(e)}"})
         finally:
             for clip in all_caption_clips:
                 with suppress(Exception):

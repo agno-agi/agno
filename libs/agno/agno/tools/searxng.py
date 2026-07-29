@@ -1,6 +1,6 @@
 import json
 import urllib.parse
-from typing import Any, List, Optional
+from typing import Callable, List, Optional
 
 import httpx
 
@@ -9,30 +9,65 @@ from agno.utils.log import log_info
 
 
 class Searxng(Toolkit):
+    """SearXNG metasearch engine toolkit for web, images, news, and more.
+
+    Args:
+        host: SearXNG instance URL (e.g., 'https://searxng.example.com').
+        engines: List of search engines to use. Defaults to all available.
+        fixed_max_results: Override max_results for all searches. Defaults to None.
+        timeout: Request timeout in seconds. Defaults to 30.
+        search_web: Enable search_web tool. Defaults to True.
+        image_search: Enable image_search tool. Defaults to True.
+        it_search: Enable it_search tool. Defaults to True.
+        map_search: Enable map_search tool. Defaults to True.
+        music_search: Enable music_search tool. Defaults to True.
+        news_search: Enable news_search tool. Defaults to True.
+        science_search: Enable science_search tool. Defaults to True.
+        video_search: Enable video_search tool. Defaults to True.
+        all: Enable all tools. Defaults to False.
+    """
+
     def __init__(
         self,
         host: str,
         engines: Optional[List[str]] = None,
         fixed_max_results: Optional[int] = None,
         timeout: int = 30,
+        search_web: bool = True,
+        image_search: bool = True,
+        it_search: bool = True,
+        map_search: bool = True,
+        music_search: bool = True,
+        news_search: bool = True,
+        science_search: bool = True,
+        video_search: bool = True,
+        all: bool = False,
         **kwargs,
     ):
         self.host = host
         self.engines = engines or []
         self.fixed_max_results = fixed_max_results
+        self.timeout = timeout
 
-        tools: List[Any] = [
-            self.search_web,
-            self.image_search,
-            self.it_search,
-            self.map_search,
-            self.music_search,
-            self.news_search,
-            self.science_search,
-            self.video_search,
-        ]
+        tools: List[Callable] = []
+        if all or search_web:
+            tools.append(self.search_web)
+        if all or image_search:
+            tools.append(self.image_search)
+        if all or it_search:
+            tools.append(self.it_search)
+        if all or map_search:
+            tools.append(self.map_search)
+        if all or music_search:
+            tools.append(self.music_search)
+        if all or news_search:
+            tools.append(self.news_search)
+        if all or science_search:
+            tools.append(self.science_search)
+        if all or video_search:
+            tools.append(self.video_search)
 
-        super().__init__(name="searxng", tools=tools, timeout=timeout, **kwargs)
+        super().__init__(name="searxng", tools=tools, **kwargs)
 
     def search_web(self, query: str, max_results: int = 5) -> str:
         """Use this function to search the web.
@@ -148,7 +183,7 @@ class Searxng(Toolkit):
             resp["results"] = resp["results"][:results]
             return json.dumps(resp)
         except Exception as e:
-            return f"Error fetching results from searxng: {e}"
+            return json.dumps({"error": f"Error fetching results from searxng: {e}"})
 
 
 # Alias for consistency with other tools

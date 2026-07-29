@@ -1,6 +1,6 @@
 import json
 from os import getenv
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 from agno.tools import Toolkit
 from agno.utils.log import log_error, logger
@@ -19,12 +19,13 @@ class PerplexitySearch(Toolkit):
 
     Args:
         api_key: Perplexity API key. Falls back to PERPLEXITY_API_KEY env var.
-        max_results: Default number of results per query. Default 5.
-        max_tokens_per_page: Max tokens of content per result page. Default 2048.
+        max_results: Default number of results per query. Defaults to 5.
+        max_tokens_per_page: Max tokens of content per result page. Defaults to 2048.
         search_recency_filter: Filter by recency ('day', 'week', 'month', 'year').
         search_domain_filter: Restrict/exclude domains. List of domains.
         search_language_filter: Filter by language. List of ISO codes.
-        show_results: Log results for debugging. Default False.
+        show_results: Log results for debugging. Defaults to False.
+        search: Enable web search tool. Defaults to True.
     """
 
     def __init__(
@@ -36,6 +37,7 @@ class PerplexitySearch(Toolkit):
         search_domain_filter: Optional[List[str]] = None,
         search_language_filter: Optional[List[str]] = None,
         show_results: bool = False,
+        search: bool = True,
         **kwargs,
     ):
         self.api_key = api_key or getenv("PERPLEXITY_API_KEY")
@@ -50,10 +52,16 @@ class PerplexitySearch(Toolkit):
         self.search_language_filter = search_language_filter
         self.show_results = show_results
 
+        tools: List[Callable] = []
+        async_tools: List[tuple] = []
+        if search:
+            tools.append(self.search)
+            async_tools.append((self.asearch, "search"))
+
         super().__init__(
             name="perplexity_search",
-            tools=[self.search],
-            async_tools=[(self.asearch, "search")],
+            tools=tools,
+            async_tools=async_tools,
             **kwargs,
         )
 
@@ -62,11 +70,11 @@ class PerplexitySearch(Toolkit):
         Returns ranked web search results with titles, URLs, snippets, and dates.
 
         Args:
-            query (str): The search query.
-            max_results (int, optional): Number of results to return. Defaults to instance setting.
+            query: The search query.
+            max_results: Number of results to return. Defaults to instance setting.
 
         Returns:
-            str: JSON string of search results with url, title, snippet, and date fields.
+            JSON string of search results with url, title, snippet, and date fields.
         """
         headers = {
             "Authorization": f"Bearer {self.api_key}",
@@ -121,11 +129,11 @@ class PerplexitySearch(Toolkit):
         Returns ranked web search results with titles, URLs, snippets, and dates.
 
         Args:
-            query (str): The search query.
-            max_results (int, optional): Number of results to return. Defaults to instance setting.
+            query: The search query.
+            max_results: Number of results to return. Defaults to instance setting.
 
         Returns:
-            str: JSON string of search results with url, title, snippet, and date fields.
+            JSON string of search results with url, title, snippet, and date fields.
         """
         headers = {
             "Authorization": f"Bearer {self.api_key}",

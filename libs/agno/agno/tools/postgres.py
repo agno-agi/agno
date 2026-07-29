@@ -1,5 +1,5 @@
 import csv
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 try:
     import psycopg
@@ -14,17 +14,23 @@ from agno.utils.log import log_debug, log_error
 
 
 class PostgresTools(Toolkit):
-    """
-    A toolkit for interacting with PostgreSQL databases.
+    """Toolkit for interacting with PostgreSQL databases (read-only).
 
     Args:
-        connection (Optional[PgConnection[DictRow]]): Existing database connection to reuse.
-        db_name (Optional[str]): Database name to connect to.
-        user (Optional[str]): Username for authentication.
-        password (Optional[str]): Password for authentication.
-        host (Optional[str]): PostgreSQL server hostname.
-        port (Optional[int]): PostgreSQL server port number.
-        table_schema (str): Default schema for table operations. Default is "public".
+        connection: Existing database connection to reuse.
+        db_name: Database name to connect to.
+        user: Username for authentication.
+        password: Password for authentication.
+        host: PostgreSQL server hostname.
+        port: PostgreSQL server port number.
+        table_schema: Default schema for table operations. Defaults to "public".
+        show_tables: Enable show_tables tool. Defaults to True.
+        describe_table: Enable describe_table tool. Defaults to True.
+        summarize_table: Enable summarize_table tool. Defaults to True.
+        inspect_query: Enable inspect_query tool. Defaults to True.
+        run_query: Enable run_query tool. Defaults to False (executes arbitrary SQL).
+        export_table_to_path: Enable export_table_to_path tool. Defaults to False (writes files).
+        all: Enable all tools. Defaults to False.
     """
 
     _requires_connect: bool = True
@@ -38,6 +44,13 @@ class PostgresTools(Toolkit):
         host: Optional[str] = None,
         port: Optional[int] = None,
         table_schema: str = "public",
+        show_tables: bool = True,
+        describe_table: bool = True,
+        summarize_table: bool = True,
+        inspect_query: bool = True,
+        run_query: bool = False,
+        export_table_to_path: bool = False,
+        all: bool = False,
         **kwargs,
     ):
         self._connection: Optional[PgConnection[DictRow]] = connection
@@ -48,14 +61,19 @@ class PostgresTools(Toolkit):
         self.port: Optional[int] = port
         self.table_schema: str = table_schema
 
-        tools: List[Any] = [
-            self.show_tables,
-            self.describe_table,
-            self.summarize_table,
-            self.inspect_query,
-            self.run_query,
-            self.export_table_to_path,
-        ]
+        tools: List[Callable] = []
+        if all or show_tables:
+            tools.append(self.show_tables)
+        if all or describe_table:
+            tools.append(self.describe_table)
+        if all or summarize_table:
+            tools.append(self.summarize_table)
+        if all or inspect_query:
+            tools.append(self.inspect_query)
+        if all or run_query:
+            tools.append(self.run_query)
+        if all or export_table_to_path:
+            tools.append(self.export_table_to_path)
 
         super().__init__(name="postgres_tools", tools=tools, **kwargs)
 
