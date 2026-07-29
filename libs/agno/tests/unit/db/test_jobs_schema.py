@@ -3,7 +3,7 @@
 import pytest
 
 from agno.db.schemas.jobs import QueuedJob
-from agno.queue.config import QueueConfig
+from agno.job_queue.config import QueueConfig
 
 
 class TestQueuedJob:

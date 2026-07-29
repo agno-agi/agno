@@ -5,14 +5,14 @@ import pytest
 fakeredis = pytest.importorskip("fakeredis", reason="fakeredis not installed")
 
 import agno.os.event_streams as event_streams_module  # noqa: E402
+from agno.job_queue.config import QueueConfig, RedisCoordination  # noqa: E402
 from agno.os.event_streams import (  # noqa: E402
     InMemoryEventStream,
     RedisEventStream,
     get_event_stream,
     set_event_stream,
 )
-from agno.os.queue import apply_queue_config  # noqa: E402
-from agno.queue.config import QueueConfig, RedisCoordination  # noqa: E402
+from agno.os.job_queue import apply_queue_config  # noqa: E402
 from agno.run.cancel import get_cancellation_manager, set_cancellation_manager  # noqa: E402
 from agno.run.cancellation_management.in_memory_cancellation_manager import (  # noqa: E402
     InMemoryRunCancellationManager,
@@ -98,8 +98,8 @@ class TestApplyQueueConfig:
 class TestSyncStoreAdapter:
     @pytest.mark.asyncio
     async def test_sync_store_methods_become_awaitable(self):
-        from agno.os.queue import resolve_queue_store
-        from agno.queue.config import QueueConfig
+        from agno.job_queue.config import QueueConfig
+        from agno.os.job_queue import resolve_queue_store
 
         class SyncStore:
             def claim_job(self, worker_id, lock_grace_seconds=60):
@@ -115,9 +115,9 @@ class TestSyncStoreAdapter:
 
     @pytest.mark.asyncio
     async def test_async_store_passes_through_unwrapped(self):
-        from agno.os.queue import resolve_queue_store
-        from agno.queue.config import QueueConfig
-        from agno.queue.store import InMemoryQueueStore
+        from agno.job_queue.config import QueueConfig
+        from agno.job_queue.store import InMemoryQueueStore
+        from agno.os.job_queue import resolve_queue_store
 
         native = InMemoryQueueStore()
         assert resolve_queue_store(QueueConfig(durable=True), native) is native
@@ -126,8 +126,8 @@ class TestSyncStoreAdapter:
     async def test_durable_with_nonconforming_store_hard_fails(self):
         """durable=True is a durability promise: a db that cannot honor it must
         raise at startup, never silently degrade to an in-memory queue."""
-        from agno.os.queue import resolve_queue_store
-        from agno.queue.config import QueueConfig
+        from agno.job_queue.config import QueueConfig
+        from agno.os.job_queue import resolve_queue_store
 
         class NotAQueueStore:
             pass
