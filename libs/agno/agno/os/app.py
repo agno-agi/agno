@@ -20,6 +20,7 @@ from agno.agent import Agent, AgentFactory, RemoteAgent
 from agno.agent.protocol import AgentProtocol
 from agno.agents.base import BaseExternalAgent
 from agno.db.base import AsyncBaseDb, BaseDb
+from agno.job_queue import QueueConfig
 from agno.knowledge.knowledge import Knowledge
 from agno.os.config import (
     AgentOSConfig,
@@ -77,7 +78,6 @@ from agno.os.utils import (
     setup_tracing_for_os,
     update_cors_middleware,
 )
-from agno.queue import QueueConfig
 from agno.registry import Registry
 from agno.remote.base import RemoteDb, RemoteKnowledge
 from agno.run.concurrency import set_background_max_concurrency
