@@ -1,5 +1,5 @@
 import json
-from typing import Any, List, Literal, Optional
+from typing import Callable, List, Literal, Optional
 
 from agno.tools import Toolkit
 from agno.utils.log import log_debug
@@ -14,30 +14,28 @@ VALID_TIMELIMITS = frozenset({"d", "w", "m", "y"})
 
 
 class WebSearchTools(Toolkit):
-    """
-    Toolkit for searching the web. Uses the meta-search library DDGS.
-    Multiple search backends (e.g. google, bing, duckduckgo) are available.
+    """Toolkit for searching the web using the DDGS meta-search library.
+
+    Multiple backends available: duckduckgo, google, bing, brave, yandex, yahoo, etc.
 
     Args:
-        enable_search (bool): Enable web search function.
-        enable_news (bool): Enable news search function.
-        backend (str): The backend to use for searching. Defaults to "auto" which
-            automatically selects available backends. Other options include:
-            "duckduckgo", "google", "bing", "brave", "yandex", "yahoo", etc.
-        modifier (Optional[str]): A modifier to be prepended to search queries.
-        fixed_max_results (Optional[int]): A fixed number of maximum results.
-        proxy (Optional[str]): Proxy to be used for requests.
-        timeout (Optional[int]): The maximum number of seconds to wait for a response.
-        verify_ssl (bool): Whether to verify SSL certificates.
-        timelimit (Optional[str]): Time limit for search results. Valid values:
-            "d" (day), "w" (week), "m" (month), "y" (year).
-        region (Optional[str]): Region for search results (e.g., "us-en", "uk-en", "ru-ru").
+        search_web: Enable search_web tool. Defaults to True.
+        search_news: Enable search_news tool. Defaults to True.
+        backend: Backend for searching. Defaults to "auto" (selects available).
+        modifier: Modifier to prepend to search queries.
+        fixed_max_results: Fixed number of maximum results.
+        proxy: Proxy for requests.
+        timeout: Maximum seconds to wait for a response.
+        verify_ssl: Whether to verify SSL certificates.
+        timelimit: Time limit for results ("d", "w", "m", "y").
+        region: Region for results (e.g., "us-en", "uk-en").
+        all: Enable all tools.
     """
 
     def __init__(
         self,
-        enable_search: bool = True,
-        enable_news: bool = True,
+        search_web: bool = True,
+        search_news: bool = True,
         backend: str = "auto",
         modifier: Optional[str] = None,
         fixed_max_results: Optional[int] = None,
@@ -46,6 +44,7 @@ class WebSearchTools(Toolkit):
         verify_ssl: bool = True,
         timelimit: Optional[Literal["d", "w", "m", "y"]] = None,
         region: Optional[str] = None,
+        all: bool = False,
         **kwargs,
     ):
         # Validate timelimit parameter
@@ -63,23 +62,23 @@ class WebSearchTools(Toolkit):
         self.timelimit: Optional[Literal["d", "w", "m", "y"]] = timelimit
         self.region: Optional[str] = region
 
-        tools: List[Any] = []
-        if enable_search:
-            tools.append(self.web_search)
-        if enable_news:
+        tools: List[Callable] = []
+        if all or search_web:
+            tools.append(self.search_web)
+        if all or search_news:
             tools.append(self.search_news)
 
         super().__init__(name="websearch", tools=tools, **kwargs)
 
-    def web_search(self, query: str, max_results: int = 5) -> str:
-        """Use this function to search the web for a query.
+    def search_web(self, query: str, max_results: int = 5) -> str:
+        """Search the web for a query.
 
         Args:
-            query(str): The query to search for.
-            max_results (optional, default=5): The maximum number of results to return.
+            query: The query to search for.
+            max_results: Maximum number of results to return.
 
         Returns:
-            The search results from the web.
+            JSON array of search results.
         """
         actual_max_results = self.fixed_max_results or max_results
         search_query = f"{self.modifier} {query}" if self.modifier else query
@@ -100,14 +99,14 @@ class WebSearchTools(Toolkit):
         return json.dumps(results, indent=2, ensure_ascii=False)
 
     def search_news(self, query: str, max_results: int = 5) -> str:
-        """Use this function to get the latest news from the web.
+        """Search for the latest news on a topic.
 
         Args:
-            query(str): The query to search for.
-            max_results (optional, default=5): The maximum number of results to return.
+            query: The query to search for.
+            max_results: Maximum number of results to return.
 
         Returns:
-            The latest news from the web.
+            JSON array of news results.
         """
         actual_max_results = self.fixed_max_results or max_results
 

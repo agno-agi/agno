@@ -1,6 +1,6 @@
 import json
 from os import getenv
-from typing import Any, Dict, List, Literal, Optional
+from typing import Any, Callable, Dict, List, Literal, Optional
 
 import requests
 
@@ -18,9 +18,9 @@ class SofyaTools(Toolkit):
         self,
         api_key: Optional[str] = None,
         base_url: Optional[str] = None,
-        enable_search: bool = True,
-        enable_extract: bool = False,
-        enable_research: bool = False,
+        search: bool = True,
+        extract: bool = False,
+        research: bool = False,
         all: bool = False,
         max_results: int = 5,
         search_depth: Literal["snippets", "basic"] = "basic",
@@ -38,9 +38,9 @@ class SofyaTools(Toolkit):
         Args:
             api_key: Sofya API key. If not provided, will use SOFYA_API_KEY env var.
             base_url: Sofya API base URL. If not provided, will use SOFYA_BASE_URL env var. Defaults to https://sofya.co.
-            enable_search: Enable web search functionality. Defaults to True.
-            enable_extract: Enable URL content extraction functionality. Defaults to False.
-            enable_research: Enable multi-source deep research functionality. Defaults to False.
+            search: Enable web search functionality. Defaults to True.
+            extract: Enable URL content extraction functionality. Defaults to False.
+            research: Enable multi-source deep research functionality. Defaults to False.
             all: Enable all available tools. Defaults to False.
             max_results: Maximum number of search results to return (1-20). Defaults to 5.
             search_depth: Search depth - snippets (1 credit) or basic (3 credits, full content). Defaults to "basic".
@@ -59,12 +59,12 @@ class SofyaTools(Toolkit):
         self.format: Literal["json", "markdown"] = format
         self.timeout: int = timeout
 
-        tools: List[Any] = []
-        if enable_search or all:
+        tools: List[Callable] = []
+        if all or search:
             tools.append(self.search_web)
-        if enable_extract or all:
+        if all or extract:
             tools.append(self.extract_url_content)
-        if enable_research or all:
+        if all or research:
             tools.append(self.research)
 
         super().__init__(name="sofya_tools", tools=tools, **kwargs)

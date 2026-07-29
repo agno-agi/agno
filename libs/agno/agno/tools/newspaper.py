@@ -1,3 +1,6 @@
+import json
+from typing import Callable, List
+
 from agno.tools import Toolkit
 from agno.utils.log import log_debug
 
@@ -8,20 +11,21 @@ except ImportError:
 
 
 class NewspaperTools(Toolkit):
-    """
-    Newspaper is a tool for getting the text of an article from a URL.
-    Args:
-        get_article_text (bool): Whether to get the text of an article from a URL.
-    """
-
     def __init__(
         self,
-        enable_get_article_text: bool = True,
+        get_article_text: bool = True,
         all: bool = False,
         **kwargs,
     ):
-        tools = []
-        if all or enable_get_article_text:
+        """Initialize the NewspaperTools toolkit.
+
+        Args:
+            get_article_text: Enable the get_article_text tool.
+            all: Enable all tools regardless of individual flags.
+            **kwargs: Additional arguments passed to the Toolkit base class.
+        """
+        tools: List[Callable] = []
+        if all or get_article_text:
             tools.append(self.get_article_text)
 
         super().__init__(name="newspaper_toolkit", tools=tools, **kwargs)
@@ -30,17 +34,16 @@ class NewspaperTools(Toolkit):
         """Get the text of an article from a URL.
 
         Args:
-            url (str): The URL of the article.
+            url: The URL of the article.
 
         Returns:
-            str: The text of the article.
+            JSON object with text content or error message.
         """
-
         try:
             log_debug(f"Reading news: {url}")
             article = Article(url)
             article.download()
             article.parse()
-            return article.text
+            return json.dumps({"text": article.text})
         except Exception as e:
-            return f"Error getting article text from {url}: {e}"
+            return json.dumps({"error": f"Error getting article text from {url}: {e}"})

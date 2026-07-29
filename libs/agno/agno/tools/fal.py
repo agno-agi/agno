@@ -3,7 +3,7 @@ pip install fal-client
 """
 
 from os import getenv
-from typing import Optional, Union
+from typing import Callable, List, Optional, Union
 from uuid import uuid4
 
 from agno.agent import Agent
@@ -24,8 +24,8 @@ class FalTools(Toolkit):
         self,
         api_key: Optional[str] = None,
         model: str = "fal-ai/hunyuan-video",
-        enable_generate_media: bool = True,
-        enable_image_to_image: bool = False,
+        generate_media: bool = True,
+        image_to_image: bool = False,
         all: bool = False,
         **kwargs,
     ):
@@ -35,10 +35,10 @@ class FalTools(Toolkit):
         self.model = model
         self.seen_logs: set[str] = set()
 
-        tools = []
-        if all or enable_generate_media:
+        tools: List[Callable] = []
+        if generate_media or all:
             tools.append(self.generate_media)
-        if all or enable_image_to_image:
+        if image_to_image or all:
             tools.append(self.image_to_image)
 
         super().__init__(name="fal-tools", tools=tools, **kwargs)
@@ -52,13 +52,13 @@ class FalTools(Toolkit):
                     self.seen_logs.add(message)
 
     def generate_media(self, agent: Union[Agent, Team], prompt: str) -> ToolResult:
-        """
-        Use this function to run a model with a given prompt.
+        """Generate media (image or video) from a text prompt.
 
         Args:
-            prompt (str): A text description of the task.
+            prompt: A text description of the media to generate.
+
         Returns:
-            ToolResult: Contains the generated media and success message.
+            ToolResult containing the generated media.
         """
         try:
             result = fal_client.subscribe(
@@ -134,17 +134,14 @@ class FalTools(Toolkit):
             return ToolResult(content=f"Error: {e}")
 
     def image_to_image(self, agent: Union[Agent, Team], prompt: str, image_url: Optional[str] = None) -> ToolResult:
-        """
-        Use this function to transform an input image based on a text prompt using the Fal AI image-to-image model.
-        The model takes an existing image and generates a new version modified according to your prompt.
-        See https://fal.ai/models/fal-ai/flux/dev/image-to-image/api for more details about the image-to-image capabilities.
+        """Transform an input image based on a text prompt.
 
         Args:
-            prompt (str): A text description of the task.
-            image_url (str): The URL of the image to use for the generation.
+            prompt: A text description of the transformation.
+            image_url: The URL of the image to transform.
 
         Returns:
-            ToolResult: Contains the generated image and success message.
+            ToolResult containing the generated image.
         """
 
         try:

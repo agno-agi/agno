@@ -1,7 +1,7 @@
 import json
 import re
 from os import getenv
-from typing import Any, Dict, List, Optional
+from typing import Callable, Dict, List, Optional
 
 from agno.tools import Toolkit
 from agno.utils.log import log_debug, logger
@@ -18,10 +18,10 @@ class BrowserbaseTools(Toolkit):
         api_key: Optional[str] = None,
         project_id: Optional[str] = None,
         base_url: Optional[str] = None,
-        enable_navigate_to: bool = True,
-        enable_screenshot: bool = True,
-        enable_get_page_content: bool = True,
-        enable_close_session: bool = True,
+        navigate_to: bool = True,
+        screenshot: bool = True,
+        get_page_content: bool = True,
+        close_session: bool = True,
         all: bool = False,
         parse_html: bool = True,
         max_content_length: Optional[int] = 100000,
@@ -34,10 +34,10 @@ class BrowserbaseTools(Toolkit):
             project_id (str, optional): Browserbase project ID.
             base_url (str, optional): Custom Browserbase API endpoint URL (NOT the target website URL).
                 Only use this if you're using a self-hosted Browserbase instance or need to connect to a different region.
-            enable_navigate_to (bool): Enable the navigate_to tool. Defaults to True.
-            enable_screenshot (bool): Enable the screenshot tool. Defaults to True.
-            enable_get_page_content (bool): Enable the get_page_content tool. Defaults to True.
-            enable_close_session (bool): Enable the close_session tool. Defaults to True.
+            navigate_to (bool): Enable the navigate_to tool. Defaults to True.
+            screenshot (bool): Enable the screenshot tool. Defaults to True.
+            get_page_content (bool): Enable the get_page_content tool. Defaults to True.
+            close_session (bool): Enable the close_session tool. Defaults to True.
             all (bool): Enable all tools. Defaults to False.
             parse_html (bool): If True, extract only visible text content instead of raw HTML. Defaults to True.
                 This significantly reduces token usage and is recommended for most use cases.
@@ -85,19 +85,19 @@ class BrowserbaseTools(Toolkit):
         # Build tools lists
         # sync tools: used by agent.run() and agent.print_response()
         # async tools: used by agent.arun() and agent.aprint_response()
-        tools: List[Any] = []
+        tools: List[Callable] = []
         async_tools: List[tuple] = []
 
-        if all or enable_navigate_to:
+        if all or navigate_to:
             tools.append(self.navigate_to)
             async_tools.append((self.anavigate_to, "navigate_to"))
-        if all or enable_screenshot:
+        if all or screenshot:
             tools.append(self.screenshot)
             async_tools.append((self.ascreenshot, "screenshot"))
-        if all or enable_get_page_content:
+        if all or get_page_content:
             tools.append(self.get_page_content)
             async_tools.append((self.aget_page_content, "get_page_content"))
-        if all or enable_close_session:
+        if all or close_session:
             tools.append(self.close_session)
             async_tools.append((self.aclose_session, "close_session"))
 
@@ -165,11 +165,11 @@ class BrowserbaseTools(Toolkit):
         """Navigates to a URL.
 
         Args:
-            url (str): The URL to navigate to
-            connect_url (str, optional): The connection URL from an existing session
+            url: The URL to navigate to.
+            connect_url: The connection URL from an existing session.
 
         Returns:
-            JSON string with navigation status
+            JSON with navigation status, title, and url.
         """
         try:
             self._initialize_browser(connect_url)
@@ -179,18 +179,18 @@ class BrowserbaseTools(Toolkit):
             return json.dumps(result)
         except Exception as e:
             self._cleanup()
-            raise e
+            return json.dumps({"error": f"Navigation failed: {e}"})
 
     def screenshot(self, path: str, full_page: bool = True, connect_url: Optional[str] = None) -> str:
         """Takes a screenshot of the current page.
 
         Args:
-            path (str): Where to save the screenshot
-            full_page (bool): Whether to capture the full page
-            connect_url (str, optional): The connection URL from an existing session
+            path: Where to save the screenshot.
+            full_page: Whether to capture the full page. Defaults to True.
+            connect_url: The connection URL from an existing session.
 
         Returns:
-            JSON string confirming screenshot was saved
+            JSON with status and path.
         """
         try:
             self._initialize_browser(connect_url)
@@ -199,7 +199,7 @@ class BrowserbaseTools(Toolkit):
             return json.dumps({"status": "success", "path": path})
         except Exception as e:
             self._cleanup()
-            raise e
+            return json.dumps({"error": f"Screenshot failed: {e}"})
 
     def _extract_text_content(self, html: str) -> str:
         """Extract visible text content from HTML, removing scripts, styles, and tags.
@@ -247,15 +247,15 @@ class BrowserbaseTools(Toolkit):
         """Gets the content of the current page.
 
         Args:
-            connect_url (str, optional): The connection URL from an existing session
+            connect_url: The connection URL from an existing session.
 
         Returns:
-            The page content (text-only if parse_html=True, otherwise raw HTML)
+            The page content (text-only if parse_html=True, otherwise raw HTML).
         """
         try:
             self._initialize_browser(connect_url)
             if not self._page:
-                return ""
+                return json.dumps({"error": "No page available"})
 
             raw_content = self._page.content()
 
@@ -267,7 +267,7 @@ class BrowserbaseTools(Toolkit):
             return self._truncate_content(content)
         except Exception as e:
             self._cleanup()
-            raise e
+            return json.dumps({"error": f"Failed to get page content: {e}"})
 
     def close_session(self) -> str:
         """Closes a browser session.
@@ -331,11 +331,11 @@ class BrowserbaseTools(Toolkit):
         """Navigates to a URL asynchronously.
 
         Args:
-            url (str): The URL to navigate to
-            connect_url (str, optional): The connection URL from an existing session
+            url: The URL to navigate to.
+            connect_url: The connection URL from an existing session.
 
         Returns:
-            JSON string with navigation status
+            JSON with navigation status, title, and url.
         """
         try:
             await self._ainitialize_browser(connect_url)
@@ -346,18 +346,18 @@ class BrowserbaseTools(Toolkit):
             return json.dumps(result)
         except Exception as e:
             await self._acleanup()
-            raise e
+            return json.dumps({"error": f"Navigation failed: {e}"})
 
     async def ascreenshot(self, path: str, full_page: bool = True, connect_url: Optional[str] = None) -> str:
         """Takes a screenshot of the current page asynchronously.
 
         Args:
-            path (str): Where to save the screenshot
-            full_page (bool): Whether to capture the full page
-            connect_url (str, optional): The connection URL from an existing session
+            path: Where to save the screenshot.
+            full_page: Whether to capture the full page. Defaults to True.
+            connect_url: The connection URL from an existing session.
 
         Returns:
-            JSON string confirming screenshot was saved
+            JSON with status and path.
         """
         try:
             await self._ainitialize_browser(connect_url)
@@ -366,21 +366,21 @@ class BrowserbaseTools(Toolkit):
             return json.dumps({"status": "success", "path": path})
         except Exception as e:
             await self._acleanup()
-            raise e
+            return json.dumps({"error": f"Screenshot failed: {e}"})
 
     async def aget_page_content(self, connect_url: Optional[str] = None) -> str:
         """Gets the content of the current page asynchronously.
 
         Args:
-            connect_url (str, optional): The connection URL from an existing session
+            connect_url: The connection URL from an existing session.
 
         Returns:
-            The page content (text-only if parse_html=True, otherwise raw HTML)
+            The page content (text-only if parse_html=True, otherwise raw HTML).
         """
         try:
             await self._ainitialize_browser(connect_url)
             if not self._async_page:
-                return ""
+                return json.dumps({"error": "No page available"})
 
             raw_content = await self._async_page.content()
 
@@ -392,7 +392,7 @@ class BrowserbaseTools(Toolkit):
             return self._truncate_content(content)
         except Exception as e:
             await self._acleanup()
-            raise e
+            return json.dumps({"error": f"Failed to get page content: {e}"})
 
     async def aclose_session(self) -> str:
         """Closes a browser session asynchronously.

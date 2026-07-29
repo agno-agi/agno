@@ -1,5 +1,6 @@
 import asyncio
-from typing import Any, Dict, List, Optional, Union
+import json
+from typing import Any, Callable, Dict, List, Optional, Union
 
 from agno.tools import Toolkit
 from agno.utils.log import log_debug, log_warning
@@ -21,15 +22,17 @@ class Crawl4aiTools(Toolkit):
         headless: bool = True,
         wait_until: str = "domcontentloaded",
         proxy_config: Optional[Dict[str, Any]] = None,
-        enable_crawl: bool = True,
+        crawl: bool = True,
         all: bool = False,
         **kwargs,
     ):
-        tools = []
-        if all or enable_crawl:
+        tools: List[Callable] = []
+        async_tools: List[tuple] = []
+        if all or crawl:
             tools.append(self.crawl)
+            async_tools.append((self.acrawl, "crawl"))
 
-        super().__init__(name="crawl4ai_tools", tools=tools, **kwargs)
+        super().__init__(name="crawl4ai_tools", tools=tools, async_tools=async_tools, **kwargs)
         self.max_length = max_length
         self.timeout = timeout
         self.use_pruning = use_pruning
@@ -77,31 +80,59 @@ class Crawl4aiTools(Toolkit):
 
         return config_params
 
-    def crawl(self, url: Union[str, List[str]], search_query: Optional[str] = None) -> Union[str, Dict[str, str]]:
-        """
-        Crawl URLs and extract their text content.
+    def crawl(self, url: Union[str, List[str]], search_query: Optional[str] = None) -> str:
+        """Crawl URLs and extract their text content.
 
         Args:
-            url: Single URL string or list of URLs to crawl
-            search_query: Optional query string to filter content using BM25 algorithm
+            url: Single URL string or list of URLs to crawl.
+            search_query: Optional query string to filter content using BM25 algorithm.
 
         Returns:
-            The extracted text content from the URL(s)
+            JSON with content for single URL, or dict of URL to content for multiple URLs.
         """
         if not url:
-            return "Error: No URL provided"
+            return json.dumps({"error": "No URL provided"})
 
         # Handle single URL
         if isinstance(url, str):
-            return asyncio.run(self._async_crawl(url, search_query))
+            content = asyncio.run(self._crawl_url(url, search_query))
+            if content.startswith("Error"):
+                return json.dumps({"error": content})
+            return json.dumps({"url": url, "content": content})
 
         # Handle multiple URLs
         results = {}
         for single_url in url:
-            results[single_url] = asyncio.run(self._async_crawl(single_url, search_query))
-        return results
+            results[single_url] = asyncio.run(self._crawl_url(single_url, search_query))
+        return json.dumps(results)
 
-    async def _async_crawl(self, url: str, search_query: Optional[str] = None) -> str:
+    async def acrawl(self, url: Union[str, List[str]], search_query: Optional[str] = None) -> str:
+        """Crawl URLs and extract their text content (async version).
+
+        Args:
+            url: Single URL string or list of URLs to crawl.
+            search_query: Optional query string to filter content using BM25 algorithm.
+
+        Returns:
+            JSON with content for single URL, or dict of URL to content for multiple URLs.
+        """
+        if not url:
+            return json.dumps({"error": "No URL provided"})
+
+        # Handle single URL
+        if isinstance(url, str):
+            content = await self._crawl_url(url, search_query)
+            if content.startswith("Error"):
+                return json.dumps({"error": content})
+            return json.dumps({"url": url, "content": content})
+
+        # Handle multiple URLs
+        results = {}
+        for single_url in url:
+            results[single_url] = await self._crawl_url(single_url, search_query)
+        return json.dumps(results)
+
+    async def _crawl_url(self, url: str, search_query: Optional[str] = None) -> str:
         """Crawl a single URL and extract content."""
         try:
             # Use BrowserConfig to suppress crawl4ai logs

@@ -1,5 +1,6 @@
+import json
 from os import getenv
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 import requests
 
@@ -8,19 +9,49 @@ from agno.utils.log import log_error
 
 
 class FinancialDatasetsTools(Toolkit):
+    """Financial market data toolkit for stocks, crypto, and SEC filings.
+
+    Args:
+        api_key: API key for Financial Datasets API. Falls back to FINANCIAL_DATASETS_API_KEY env var.
+        timeout: Per-request HTTP timeout in seconds. Defaults to 30.
+        search_tickers: Enable search_tickers tool. Defaults to True.
+        get_company_info: Enable get_company_info tool. Defaults to True.
+        get_stock_prices: Enable get_stock_prices tool. Defaults to True.
+        get_news: Enable get_news tool. Defaults to True.
+        get_income_statements: Enable get_income_statements tool. Defaults to False.
+        get_balance_sheets: Enable get_balance_sheets tool. Defaults to False.
+        get_cash_flow_statements: Enable get_cash_flow_statements tool. Defaults to False.
+        get_segmented_financials: Enable get_segmented_financials tool. Defaults to False.
+        get_financial_metrics: Enable get_financial_metrics tool. Defaults to False.
+        get_earnings: Enable get_earnings tool. Defaults to False.
+        get_insider_trades: Enable get_insider_trades tool. Defaults to False.
+        get_institutional_ownership: Enable get_institutional_ownership tool. Defaults to False.
+        get_sec_filings: Enable get_sec_filings tool. Defaults to False.
+        get_crypto_prices: Enable get_crypto_prices tool. Defaults to False.
+        all: Enable all tools. Defaults to False.
+    """
+
     def __init__(
         self,
         api_key: Optional[str] = None,
         timeout: int = 30,
+        search_tickers: bool = True,
+        get_company_info: bool = True,
+        get_stock_prices: bool = True,
+        get_news: bool = True,
+        get_income_statements: bool = False,
+        get_balance_sheets: bool = False,
+        get_cash_flow_statements: bool = False,
+        get_segmented_financials: bool = False,
+        get_financial_metrics: bool = False,
+        get_earnings: bool = False,
+        get_insider_trades: bool = False,
+        get_institutional_ownership: bool = False,
+        get_sec_filings: bool = False,
+        get_crypto_prices: bool = False,
+        all: bool = False,
         **kwargs,
     ):
-        """Initialize the Financial Datasets Tools.
-
-        Args:
-            api_key: API key for Financial Datasets API (optional, can be set via environment variable)
-            timeout: Per-request HTTP timeout in seconds. Default is 30.
-        """
-
         self.api_key: Optional[str] = api_key or getenv("FINANCIAL_DATASETS_API_KEY")
         if not self.api_key:
             log_error(
@@ -28,33 +59,39 @@ class FinancialDatasetsTools(Toolkit):
             )
 
         self.base_url = "https://api.financialdatasets.ai"
+        self.timeout = timeout
 
-        tools: List[Any] = [
-            # Financial statements
-            self.get_income_statements,
-            self.get_balance_sheets,
-            self.get_cash_flow_statements,
-            self.get_segmented_financials,
-            self.get_financial_metrics,
-            # Company info
-            self.get_company_info,
-            # Market data
-            self.get_stock_prices,
-            self.get_earnings,
-            # Ownership data
-            self.get_insider_trades,
-            self.get_institutional_ownership,
-            # News
-            self.get_news,
-            # SEC filings
-            self.get_sec_filings,
-            # Crypto
-            self.get_crypto_prices,
-            # Search
-            self.search_tickers,
-        ]
+        tools: List[Callable] = []
+        if all or get_income_statements:
+            tools.append(self.get_income_statements)
+        if all or get_balance_sheets:
+            tools.append(self.get_balance_sheets)
+        if all or get_cash_flow_statements:
+            tools.append(self.get_cash_flow_statements)
+        if all or get_segmented_financials:
+            tools.append(self.get_segmented_financials)
+        if all or get_financial_metrics:
+            tools.append(self.get_financial_metrics)
+        if all or get_company_info:
+            tools.append(self.get_company_info)
+        if all or get_stock_prices:
+            tools.append(self.get_stock_prices)
+        if all or get_earnings:
+            tools.append(self.get_earnings)
+        if all or get_insider_trades:
+            tools.append(self.get_insider_trades)
+        if all or get_institutional_ownership:
+            tools.append(self.get_institutional_ownership)
+        if all or get_news:
+            tools.append(self.get_news)
+        if all or get_sec_filings:
+            tools.append(self.get_sec_filings)
+        if all or get_crypto_prices:
+            tools.append(self.get_crypto_prices)
+        if all or search_tickers:
+            tools.append(self.search_tickers)
 
-        super().__init__(name="financial_datasets_tools", tools=tools, timeout=timeout, **kwargs)
+        super().__init__(name="financial_datasets_tools", tools=tools, **kwargs)
 
     def _make_request(self, endpoint: str, params: Dict[str, Any]) -> str:
         """
@@ -80,7 +117,7 @@ class FinancialDatasetsTools(Toolkit):
             return response.text
         except requests.exceptions.RequestException as e:
             log_error(f"Error making request to {url}: {str(e)}")
-            return f"Error making request to {url}: {str(e)}"
+            return json.dumps({"error": f"Error making request to {url}: {str(e)}"})
 
     # Financial Statements
     def get_income_statements(self, ticker: str, period: str = "annual", limit: int = 10) -> str:

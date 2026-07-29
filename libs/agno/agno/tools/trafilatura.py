@@ -2,7 +2,7 @@ import json
 from typing import Any, Callable, Dict, List, Optional, Set
 
 from agno.tools import Toolkit
-from agno.utils.log import log_debug, log_warning, logger
+from agno.utils.log import log_debug, log_warning
 
 try:
     from trafilatura import (
@@ -28,24 +28,29 @@ except ImportError:
 
 
 class TrafilaturaTools(Toolkit):
-    """
-    TrafilaturaTools is a toolkit for web scraping and text extraction.
+    """Toolkit for web scraping and text extraction using Trafilatura.
 
     Args:
-        output_format (str): Default output format for extractions. Options: 'txt', 'json', 'xml', 'markdown', 'csv', 'html', 'xmltei'.
-        include_comments (bool): Whether to extract comments along with main text by default.
-        include_tables (bool): Whether to include table content by default.
-        include_images (bool): Whether to include image information by default (experimental).
-        include_formatting (bool): Whether to preserve formatting by default.
-        include_links (bool): Whether to preserve links by default (experimental).
-        with_metadata (bool): Whether to include metadata in extractions by default.
-        favor_precision (bool): Whether to prefer precision over recall by default.
-        favor_recall (bool): Whether to prefer recall over precision by default.
-        target_language (Optional[str]): Default target language filter (ISO 639-1 format).
-        deduplicate (bool): Whether to remove duplicate segments by default.
-        max_tree_size (Optional[int]): Maximum tree size for processing.
-        max_crawl_urls (int): Maximum number of URLs to crawl per website.
-        max_known_urls (int): Maximum number of known URLs during crawling.
+        output_format: Default output format. Options: txt, json, xml, markdown, csv, html, xmltei.
+        include_comments: Extract comments along with main text.
+        include_tables: Include table content.
+        include_images: Include image information (experimental).
+        include_formatting: Preserve formatting.
+        include_links: Preserve links (experimental).
+        with_metadata: Include metadata in extractions.
+        favor_precision: Prefer precision over recall.
+        favor_recall: Prefer recall over precision.
+        target_language: Target language filter (ISO 639-1 format).
+        deduplicate: Remove duplicate segments.
+        max_tree_size: Maximum tree size for processing.
+        max_crawl_urls: Maximum number of URLs to crawl per website.
+        max_known_urls: Maximum number of known URLs during crawling.
+        scrape: Enable scrape tool (fetch URL, extract text). Defaults to False (token heavy).
+        get_metadata: Enable get_metadata tool. Defaults to False (token heavy).
+        convert_html: Enable convert_html tool (local HTML to text). Defaults to False.
+        scrape_batch: Enable scrape_batch tool. Defaults to False (token heavy).
+        crawl: Enable crawl tool (spider a website). Defaults to False (token heavy).
+        all: Enable all tools. Defaults to False.
     """
 
     def __init__(
@@ -64,12 +69,11 @@ class TrafilaturaTools(Toolkit):
         max_tree_size: Optional[int] = None,
         max_crawl_urls: int = 10,
         max_known_urls: int = 100000,
-        # Tool enable flags for <6 functions
-        enable_extract_text: bool = True,
-        enable_extract_metadata_only: bool = True,
-        enable_html_to_text: bool = True,
-        enable_extract_batch: bool = True,
-        enable_crawl_website: bool = True,
+        scrape: bool = False,
+        get_metadata: bool = False,
+        convert_html: bool = False,
+        scrape_batch: bool = False,
+        crawl: bool = False,
         all: bool = False,
         **kwargs,
     ):
@@ -89,20 +93,20 @@ class TrafilaturaTools(Toolkit):
         self.max_known_urls = max_known_urls
 
         tools: List[Callable] = []
-        if all or enable_extract_text:
-            tools.append(self.extract_text)
-        if all or enable_extract_metadata_only:
-            tools.append(self.extract_metadata_only)
-        if all or enable_html_to_text:
-            tools.append(self.html_to_text)
-        if all or enable_extract_batch:
-            tools.append(self.extract_batch)
+        if all or scrape:
+            tools.append(self.scrape)
+        if all or get_metadata:
+            tools.append(self.get_metadata)
+        if all or convert_html:
+            tools.append(self.convert_html)
+        if all or scrape_batch:
+            tools.append(self.scrape_batch)
 
-        if all or enable_crawl_website:
+        if all or crawl:
             if not SPIDER_AVAILABLE:
-                logger.warning("Web crawling requested but spider module not available. Skipping crawler tool.")
+                log_warning("Web crawling requested but spider module not available. Skipping crawler tool.")
             else:
-                tools.append(self.crawl_website)
+                tools.append(self.crawl)
 
         super().__init__(name="trafilatura_tools", tools=tools, **kwargs)
 
@@ -141,20 +145,19 @@ class TrafilaturaTools(Toolkit):
             "author_blacklist": author_blacklist,
         }
 
-    def extract_text(
+    def scrape(
         self,
         url: str,
         output_format: Optional[str] = None,
     ) -> str:
-        """
-        Extract main text content from a web page URL using Trafilatura.
+        """Scrape and extract main text content from a URL.
 
         Args:
-            url (str): The URL to extract content from.
-            output_format (Optional[str]): Output format. Options: 'txt', 'json', 'xml', 'markdown', 'csv', 'html', 'xmltei'.
+            url: The URL to scrape.
+            output_format: Output format (txt, json, xml, markdown, csv, html, xmltei).
 
         Returns:
-            str: Extracted content in the specified format, or error message if extraction fails.
+            Extracted content or error message.
         """
         try:
             log_debug(f"Extracting text from URL: {url}")
@@ -162,7 +165,7 @@ class TrafilaturaTools(Toolkit):
             # Fetch the webpage content
             html_content = fetch_url(url)
             if not html_content:
-                return f"Error: Could not fetch content from URL: {url}"
+                return json.dumps({"error": f"Could not fetch content from URL: {url}"})
 
             # Get extraction parameters
             params = self._get_extraction_params(output_format=output_format)
@@ -170,7 +173,7 @@ class TrafilaturaTools(Toolkit):
             result = extract(html_content, url=url, **params)
 
             if result is None:
-                return f"Error: Could not extract readable content from URL: {url}"
+                return json.dumps({"error": f"Could not extract readable content from URL: {url}"})
 
             # Reset caches
             reset_caches()
@@ -179,22 +182,21 @@ class TrafilaturaTools(Toolkit):
 
         except Exception as e:
             log_warning(f"Error extracting text from {url}: {str(e)}")
-            return f"Error extracting text from {url}: {e}"
+            return json.dumps({"error": f"Error extracting text from {url}: {e}"})
 
-    def extract_metadata_only(
+    def get_metadata(
         self,
         url: str,
         as_json: bool = True,
     ) -> str:
-        """
-        Extract only metadata from a web page URL.
+        """Extract metadata (title, author, date) from a URL.
 
         Args:
-            url (str): The URL to extract metadata from.
-            as_json (bool): Whether to return metadata as JSON string.
+            url: The URL to extract metadata from.
+            as_json: Return as JSON string. Defaults to True.
 
         Returns:
-            str: Extracted metadata as JSON string or formatted text.
+            Metadata as JSON or formatted text.
         """
         try:
             log_debug(f"Extracting metadata from URL: {url}")
@@ -202,18 +204,18 @@ class TrafilaturaTools(Toolkit):
             # Fetch the webpage content
             html_content = fetch_url(url)
             if not html_content:
-                return f"Error: Could not fetch content from URL: {url}"
+                return json.dumps({"error": f"Could not fetch content from URL: {url}"})
 
             # Extract metadata
             metadata_doc = extract_metadata(
                 html_content,
                 default_url=url,
-                extensive=True,  # default
+                extensive=True,
                 author_blacklist=None,
             )
 
             if metadata_doc is None:
-                return f"Error: Could not extract metadata from URL: {url}"
+                return json.dumps({"error": f"Could not extract metadata from URL: {url}"})
 
             metadata_dict = metadata_doc.as_dict()
 
@@ -227,25 +229,24 @@ class TrafilaturaTools(Toolkit):
 
         except Exception as e:
             log_warning(f"Error extracting metadata from {url}: {str(e)}")
-            return f"Error extracting metadata from {url}: {e}"
+            return json.dumps({"error": f"Error extracting metadata from {url}: {e}"})
 
-    def crawl_website(
+    def crawl(
         self,
         homepage_url: str,
         extract_content: bool = False,
     ) -> str:
-        """
-        Crawl a website and optionally extract content from discovered pages.
+        """Crawl a website and optionally extract content from discovered pages.
 
         Args:
-            homepage_url (str): The starting URL (preferably homepage) to crawl from.
-            extract_content (bool): Whether to extract content from discovered URLs.
+            homepage_url: The starting URL to crawl from.
+            extract_content: Extract content from discovered URLs. Defaults to False.
 
         Returns:
-            str: JSON containing crawl results and optionally extracted content.
+            JSON with crawl results and optionally extracted content.
         """
         if not SPIDER_AVAILABLE:
-            return "Error: Web crawling functionality not available. Trafilatura spider module could not be imported."
+            return json.dumps({"error": "Web crawling not available. Trafilatura spider module not installed."})
 
         try:
             log_debug(f"Starting website crawl from: {homepage_url}")
@@ -302,22 +303,21 @@ class TrafilaturaTools(Toolkit):
 
         except Exception as e:
             log_warning(f"Error crawling website {homepage_url}: {str(e)}")
-            return f"Error crawling website {homepage_url}: {e}"
+            return json.dumps({"error": f"Error crawling website {homepage_url}: {e}"})
 
-    def html_to_text(
+    def convert_html(
         self,
         html_content: str,
         clean: bool = True,
     ) -> str:
-        """
-        Convert HTML content to plain text using Trafilatura's html2txt function.
+        """Convert HTML content to plain text.
 
         Args:
-            html_content (str): The HTML content to convert.
-            clean (bool): Whether to remove potentially undesirable elements.
+            html_content: The HTML content to convert.
+            clean: Remove undesirable elements. Defaults to True.
 
         Returns:
-            str: Plain text extracted from HTML.
+            Plain text extracted from HTML.
         """
         try:
             log_debug("Converting HTML to text")
@@ -327,24 +327,23 @@ class TrafilaturaTools(Toolkit):
             # Reset caches
             reset_caches()
 
-            return result if result else "Error: Could not extract text from HTML content"
+            return result if result else json.dumps({"error": "Could not extract text from HTML content"})
 
         except Exception as e:
             log_warning(f"Error converting HTML to text: {str(e)}")
-            return f"Error converting HTML to text: {e}"
+            return json.dumps({"error": f"Error converting HTML to text: {e}"})
 
-    def extract_batch(
+    def scrape_batch(
         self,
         urls: List[str],
     ) -> str:
-        """
-        Extract content from multiple URLs in batch.
+        """Scrape and extract content from multiple URLs.
 
         Args:
-            urls (List[str]): List of URLs to extract content from.
+            urls: List of URLs to scrape.
 
         Returns:
-            str: JSON containing batch extraction results.
+            JSON with batch extraction results.
         """
         try:
             log_debug(f"Starting batch extraction for {len(urls)} URLs")
@@ -386,4 +385,4 @@ class TrafilaturaTools(Toolkit):
 
         except Exception as e:
             log_warning(f"Error in batch extraction: {str(e)}")
-            return f"Error in batch extraction: {e}"
+            return json.dumps({"error": f"Error in batch extraction: {e}"})

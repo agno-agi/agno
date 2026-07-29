@@ -1,7 +1,8 @@
+import json
 import uuid
 from os import getenv
 from textwrap import dedent
-from typing import Any, List, Optional
+from typing import Callable, List, Optional
 
 from agno.tools import Toolkit
 from agno.utils.log import log_debug, log_error, log_warning
@@ -21,28 +22,43 @@ except ImportError:
 DEFAULT_INSTRUCTIONS = dedent(
     """\
     You have access to the users memories stored in Zep. You can interact with them using the following tools:
-    - `add_zep_message`: Add a message to the Zep session memory. Use this to add messages to the Zep session memory.
-    - `get_zep_memory`: Get the memory for the current Zep session. Use this to get the memory for the current Zep session.
-    - `search_zep_memory`: Search the Zep user graph for relevant facts. Use this to search the Zep user graph for relevant facts.
+    - `add_message`: Add a message to the Zep session memory.
+    - `get_memory`: Get the memory for the current Zep session.
+    - `search_memory`: Search the Zep user graph for relevant facts.
 
     Guidelines:
-    - Use `add_zep_message` tool to add relevant messages to the users memories. You can use this tool multiple times to add multiple messages.
-    - Use `get_zep_memory` tool to get the memory for the current Zep session for additional context. This will give you a entire context of the user's memories with relevant facts.
-    - Use `search_zep_memory` tool to search the Zep user memories for relevant facts. This will give you a list of relevant facts.
+    - Use `add_message` tool to add relevant messages to the users memories. You can use this tool multiple times to add multiple messages.
+    - Use `get_memory` tool to get the memory for the current Zep session for additional context. This will give you the entire context of the user's memories with relevant facts.
+    - Use `search_memory` tool to search the Zep user memories for relevant facts. This will give you a list of relevant facts.
     """
 )
 
 
 class ZepTools(Toolkit):
+    """Toolkit for managing Zep memory with knowledge graph search.
+
+    Args:
+        session_id: Zep session ID. Auto-generated if not provided.
+        user_id: Zep user ID. Auto-generated if not provided.
+        api_key: Zep API key. Falls back to ZEP_API_KEY env var.
+        ignore_assistant_messages: Ignore assistant role messages. Defaults to False.
+        add_message: Enable add_message tool. Defaults to False (writes to memory).
+        get_memory: Enable get_memory tool. Defaults to True.
+        search_memory: Enable search_memory tool. Defaults to True.
+        instructions: Custom instructions for the toolkit.
+        add_instructions: Add instructions to agent. Defaults to False.
+        all: Enable all tools. Defaults to False.
+    """
+
     def __init__(
         self,
         session_id: Optional[str] = None,
         user_id: Optional[str] = None,
         api_key: Optional[str] = None,
         ignore_assistant_messages: bool = False,
-        enable_add_zep_message: bool = True,
-        enable_get_zep_memory: bool = True,
-        enable_search_zep_memory: bool = True,
+        add_message: bool = False,
+        get_memory: bool = True,
+        search_memory: bool = True,
         instructions: Optional[str] = None,
         add_instructions: bool = False,
         all: bool = False,
@@ -71,13 +87,13 @@ class ZepTools(Toolkit):
 
         self.initialize()
 
-        tools: List[Any] = []
-        if enable_add_zep_message or all:
-            tools.append(self.add_zep_message)
-        if enable_get_zep_memory or all:
-            tools.append(self.get_zep_memory)
-        if enable_search_zep_memory or all:
-            tools.append(self.search_zep_memory)
+        tools: List[Callable] = []
+        if all or add_message:
+            tools.append(self.add_message)
+        if all or get_memory:
+            tools.append(self.get_memory)
+        if all or search_memory:
+            tools.append(self.search_memory)
 
         super().__init__(
             name="zep_tools", instructions=self.instructions, add_instructions=add_instructions, tools=tools, **kwargs
@@ -133,25 +149,24 @@ class ZepTools(Toolkit):
             self._initialized = False
             return False
 
-    def add_zep_message(self, role: str, content: str) -> str:
-        """
-        Adds a message to the current Zep session memory.
+    def add_message(self, role: str, content: str) -> str:
+        """Add a message to the current Zep session memory.
+
         Args:
-            role (str): The role of the message sender (e.g., 'user', 'assistant', 'system').
-            content (str): The text content of the message.
+            role: The role of the message sender (e.g., 'user', 'assistant', 'system').
+            content: The text content of the message.
 
         Returns:
-            A confirmation message or an error string.
+            JSON with confirmation or error.
         """
         if not self.zep_client or not self.session_id:
             log_error("Zep client or session ID not initialized. Cannot add message.")
-            return "Error: Zep client/session not initialized."
+            return json.dumps({"error": "Zep client/session not initialized."})
 
         try:
             zep_message = ZepMessage(
                 role=role,
                 content=content,
-                role_type=role,
             )
 
             # Prepare ignore_roles if needed
@@ -163,23 +178,26 @@ class ZepTools(Toolkit):
                 messages=[zep_message],
                 ignore_roles=ignore_roles_list,
             )
-            return f"Message from '{role}' added successfully to session {self.session_id}."
+            return json.dumps(
+                {"ok": True, "message": f"Message from '{role}' added successfully to session {self.session_id}."}
+            )
         except Exception as e:
             error_msg = f"Failed to add message to Zep session {self.session_id}: {e}"
             log_error(error_msg)
-            return f"Error adding message: {e}"
+            return json.dumps({"error": f"Error adding message: {e}"})
 
-    def get_zep_memory(self, memory_type: str = "context") -> str:
-        """
-        Retrieves the memory for the current Zep session.
+    def get_memory(self, memory_type: str = "context") -> str:
+        """Retrieve memory for the current Zep session.
+
         Args:
             memory_type: The type of memory to retrieve ('context', 'messages').
+
         Returns:
-            The requested memory content as a string, or an error string.
+            JSON with the requested memory content or error.
         """
         if not self.zep_client or not self.session_id:
             log_error("Zep client or session ID not initialized. Cannot get memory.")
-            return "Error: Zep client/session not initialized."
+            return json.dumps({"error": "Zep client/session not initialized."})
 
         try:
             log_debug(f"Getting Zep memory for session {self.session_id}")
@@ -188,69 +206,88 @@ class ZepTools(Toolkit):
                 # Ensure context is a string
                 user_context = self.zep_client.thread.get_user_context(thread_id=self.session_id, mode="basic")  # type: ignore
                 log_debug(f"Memory data: {user_context}")
-                return user_context.context or "No context available."
+                return json.dumps({"context": user_context.context or "No context available."})
             elif memory_type == "messages":
                 messages_list = self.zep_client.thread.get(thread_id=self.session_id)  # type: ignore
                 # Ensure messages string representation is returned
-                return str(messages_list.messages) if messages_list.messages else "No messages available."
+                return json.dumps(
+                    {"messages": str(messages_list.messages) if messages_list.messages else "No messages available."}
+                )
             else:
                 warning_msg = f"Unsupported memory_type requested: {memory_type}. Returning empty string."
                 log_warning(warning_msg)
-                return warning_msg
+                return json.dumps({"error": warning_msg})
 
         except Exception as e:
             log_error(f"Failed to get Zep memory for session {self.session_id}: {str(e)}")
-            return f"Error getting memory for session {self.session_id}"
+            return json.dumps({"error": f"Error getting memory for session {self.session_id}"})
 
-    def search_zep_memory(self, query: str, search_scope: str = "edges") -> str:
-        """
-        Searches the Zep knowledge graph for relevant facts or nodes.
+    def search_memory(self, query: str, scope: str = "edges", limit: int = 5) -> str:
+        """Search the Zep knowledge graph for relevant facts or nodes.
+
         Args:
             query: The search term to find relevant facts or nodes.
-            search_scope: The scope of the search to perform. Can be "edges" (for facts) or "nodes".
+            scope: The scope of the search. Can be "edges" (for facts) or "nodes".
+            limit: The maximum number of results to return.
+
         Returns:
-            A string of the search result
+            JSON with matching facts or nodes.
         """
-        # Graph search is built on user_id not on session_id
         if not self.zep_client or not self.user_id:
             log_error("Zep client or user ID not initialized. Cannot search graph.")
-            return "Error: Zep client/user not initialized."
+            return json.dumps({"error": "Zep client/user not initialized."})
 
         try:
             search_response = self.zep_client.graph.search(
                 query=query,
                 user_id=self.user_id,
-                scope=search_scope,  # Can be "edges" or "nodes"
+                scope=scope,
+                limit=limit,
             )
 
-            if search_scope == "edges" and search_response.edges:
+            if scope == "edges" and search_response.edges:
                 # Return facts from edges
-                facts_str = "\n".join([f"- {edge.fact}" for edge in search_response.edges])
-                return f"Found {len(search_response.edges)} facts:\n{facts_str}"
-            elif search_scope == "nodes" and search_response.nodes:
-                # Return node summaries
-                nodes_str = "\n".join([f"- {node.name}: {node.summary}" for node in search_response.nodes])
-                return f"Found {len(search_response.nodes)} nodes:\n{nodes_str}"
+                facts = [edge.fact for edge in search_response.edges]
+                return json.dumps({"count": len(facts), "facts": facts})
+            elif scope == "nodes" and search_response.nodes:
+                nodes = [{"name": node.name, "summary": node.summary} for node in search_response.nodes]
+                return json.dumps({"count": len(nodes), "nodes": nodes})
             else:
-                return f"No {search_scope} found for query: {query}"
+                return json.dumps({"error": f"No {scope} found for query: {query}"})
 
         except Exception as e:
             log_error(f"Failed to search Zep graph for user {self.user_id}: {str(e)}")
-            return f"Error searching graph: {e}"
+            return json.dumps({"error": f"Error searching graph: {e}"})
 
 
 class ZepAsyncTools(Toolkit):
+    """Async toolkit for managing Zep memory with knowledge graph search.
+
+    Args:
+        session_id: Zep session ID. Auto-generated if not provided.
+        user_id: Zep user ID. Auto-generated if not provided.
+        api_key: Zep API key. Falls back to ZEP_API_KEY env var.
+        ignore_assistant_messages: Ignore assistant role messages. Defaults to False.
+        add_message: Enable add_message tool. Defaults to False (writes to memory).
+        get_memory: Enable get_memory tool. Defaults to True.
+        search_memory: Enable search_memory tool. Defaults to True.
+        instructions: Custom instructions for the toolkit.
+        add_instructions: Add instructions to agent. Defaults to False.
+        all: Enable all tools. Defaults to False.
+    """
+
     def __init__(
         self,
         session_id: Optional[str] = None,
         user_id: Optional[str] = None,
         api_key: Optional[str] = None,
         ignore_assistant_messages: bool = False,
-        add_zep_message: bool = True,
-        get_zep_memory: bool = True,
-        search_zep_memory: bool = True,
+        add_message: bool = False,
+        get_memory: bool = True,
+        search_memory: bool = True,
         instructions: Optional[str] = None,
         add_instructions: bool = False,
+        all: bool = False,
         **kwargs,
     ):
         self._api_key = api_key or getenv("ZEP_API_KEY")
@@ -276,14 +313,13 @@ class ZepAsyncTools(Toolkit):
 
         self._initialized = False
 
-        # Register methods as tools conditionally
-        tools = []
-        if add_zep_message:
-            tools.append(self.add_zep_message)
-        if get_zep_memory:
-            tools.append(self.get_zep_memory)  # type: ignore
-        if search_zep_memory:
-            tools.append(self.search_zep_memory)  # type: ignore
+        tools: List[Callable] = []
+        if all or add_message:
+            tools.append(self.add_message)
+        if all or get_memory:
+            tools.append(self.get_memory)  # type: ignore
+        if all or search_memory:
+            tools.append(self.search_memory)  # type: ignore
 
         super().__init__(
             name="zep_tools", instructions=self.instructions, add_instructions=add_instructions, tools=tools, **kwargs
@@ -339,28 +375,27 @@ class ZepAsyncTools(Toolkit):
             self._initialized = False
             return False
 
-    async def add_zep_message(self, role: str, content: str) -> str:
-        """
-        Adds a message to the current Zep session memory.
+    async def add_message(self, role: str, content: str) -> str:
+        """Add a message to the current Zep session memory.
+
         Args:
-            role (str): The role of the message sender (e.g., 'user', 'assistant', 'system').
-            content (str): The text content of the message.
+            role: The role of the message sender (e.g., 'user', 'assistant', 'system').
+            content: The text content of the message.
 
         Returns:
-            A confirmation message or an error string.
+            JSON with confirmation or error.
         """
         if not self._initialized:
             await self.initialize()
 
         if not self.zep_client or not self.session_id:
             log_error("Zep client or session ID not initialized. Cannot add message.")
-            return "Error: Zep client/session not initialized."
+            return json.dumps({"error": "Zep client/session not initialized."})
 
         try:
             zep_message = ZepMessage(
                 role=role,
                 content=content,
-                role_type=role,
             )
 
             # Prepare ignore_roles if needed
@@ -372,63 +407,69 @@ class ZepAsyncTools(Toolkit):
                 messages=[zep_message],
                 ignore_roles=ignore_roles_list,
             )
-            return f"Message from '{role}' added successfully to session {self.session_id}."
+            return json.dumps(
+                {"ok": True, "message": f"Message from '{role}' added successfully to session {self.session_id}."}
+            )
         except Exception as e:
             error_msg = f"Failed to add message to Zep session {self.session_id}: {e}"
             log_error(error_msg)
-            return f"Error adding message: {e}"
+            return json.dumps({"error": f"Error adding message: {e}"})
 
-    async def get_zep_memory(self, memory_type: str = "context") -> str:
-        """
-        Retrieves the memory for the current Zep session.
+    async def get_memory(self, memory_type: str = "context") -> str:
+        """Retrieve memory for the current Zep session.
+
         Args:
             memory_type: The type of memory to retrieve ('context', 'messages').
+
         Returns:
-            The requested memory content as a string, or an error string.
+            JSON with the requested memory content or error.
         """
         if not self._initialized:
             await self.initialize()
 
         if not self.zep_client or not self.session_id:
             log_error("Zep client or session ID not initialized. Cannot get memory.")
-            return "Error: Zep client/session not initialized."
+            return json.dumps({"error": "Zep client/session not initialized."})
 
         try:
             if memory_type == "context":
                 # Ensure context is a string
                 user_context = await self.zep_client.thread.get_user_context(thread_id=self.session_id, mode="basic")  # type: ignore
                 log_debug(f"Memory data: {user_context}")
-                return user_context.context or "No context available."
+                return json.dumps({"context": user_context.context or "No context available."})
             elif memory_type == "messages":
                 # Ensure messages string representation is returned
                 messages_list = await self.zep_client.thread.get(thread_id=self.session_id)  # type: ignore
-                return str(messages_list.messages) if messages_list.messages else "No messages available."
+                return json.dumps(
+                    {"messages": str(messages_list.messages) if messages_list.messages else "No messages available."}
+                )
             else:
                 warning_msg = f"Unsupported memory_type requested: {memory_type}. Returning context."
                 log_warning(warning_msg)
-                return "No context available."
+                return json.dumps({"error": warning_msg})
 
         except Exception as e:
             error_msg = f"Failed to get Zep memory for session {self.session_id}: {e}"
             log_error(error_msg)
-            return f"Error getting memory: {e}"
+            return json.dumps({"error": f"Error getting memory: {e}"})
 
-    async def search_zep_memory(self, query: str, scope: str = "edges", limit: int = 5) -> str:
-        """
-        Searches the Zep knowledge graph for relevant facts or nodes.
+    async def search_memory(self, query: str, scope: str = "edges", limit: int = 5) -> str:
+        """Search the Zep knowledge graph for relevant facts or nodes.
+
         Args:
             query: The search term to find relevant facts or nodes.
-            scope: The scope of the search to perform. Can be "edges" (for facts) or "nodes".
+            scope: The scope of the search. Can be "edges" (for facts) or "nodes".
             limit: The maximum number of results to return.
+
         Returns:
-            A string of the search result
+            JSON with matching facts or nodes.
         """
         if not self._initialized:
             await self.initialize()
 
         if not self.zep_client or not self.user_id:
             log_error("Zep client or user ID not initialized. Cannot search graph.")
-            return "Error: Zep client/user not initialized."
+            return json.dumps({"error": "Zep client/user not initialized."})
 
         try:
             search_response = await self.zep_client.graph.search(  # type: ignore
@@ -440,15 +481,15 @@ class ZepAsyncTools(Toolkit):
 
             if scope == "edges" and search_response.edges:
                 # Return facts from edges
-                facts_str = "\n".join([f"- {edge.fact}" for edge in search_response.edges])
-                return f"Found {len(search_response.edges)} facts:\n{facts_str}"
+                facts = [edge.fact for edge in search_response.edges]
+                return json.dumps({"count": len(facts), "facts": facts})
             elif scope == "nodes" and search_response.nodes:
                 # Return node summaries
-                nodes_str = "\n".join([f"- {node.name}: {node.summary}" for node in search_response.nodes])
-                return f"Found {len(search_response.nodes)} nodes:\n{nodes_str}"
+                nodes = [{"name": node.name, "summary": node.summary} for node in search_response.nodes]
+                return json.dumps({"count": len(nodes), "nodes": nodes})
             else:
-                return f"No {scope} found for query: {query}"
+                return json.dumps({"error": f"No {scope} found for query: {query}"})
 
         except Exception as e:
             log_error(f"Failed to search Zep graph for user {self.user_id}: {str(e)}")
-            return f"Error searching graph: {e}"
+            return json.dumps({"error": f"Error searching graph: {e}"})

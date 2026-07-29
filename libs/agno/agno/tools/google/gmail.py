@@ -230,7 +230,7 @@ class GmailTools(GoogleToolkit):
         self.max_batch_size = max(min(max_batch_size, 100), 1)
         self._temp_dir: Optional[tempfile.TemporaryDirectory] = None
         self._label_cache: Optional[Dict[str, str]] = None
-        tools: List[Any] = []
+        tools: List[Callable] = []
         # Reading emails
         if get_latest_emails:
             tools.append(self.get_latest_emails)

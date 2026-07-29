@@ -8,12 +8,12 @@ Get your free API key at: https://unsplash.com/developers
 
 import json
 from os import getenv
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
 from agno.tools import Toolkit
-from agno.utils.log import log_debug, logger
+from agno.utils.log import log_debug, log_exception, logger
 
 
 class UnsplashTools(Toolkit):
@@ -43,10 +43,10 @@ class UnsplashTools(Toolkit):
     def __init__(
         self,
         access_key: Optional[str] = None,
-        enable_search_photos: bool = True,
-        enable_get_photo: bool = True,
-        enable_get_random_photo: bool = True,
-        enable_download_photo: bool = False,
+        search_photos: bool = True,
+        get_photo: bool = True,
+        get_random_photo: bool = True,
+        download_photo: bool = False,
         all: bool = False,
         timeout: int = 30,
         **kwargs: Any,
@@ -56,10 +56,10 @@ class UnsplashTools(Toolkit):
         Args:
             access_key: Unsplash API access key. If not provided, will look for
                 UNSPLASH_ACCESS_KEY environment variable.
-            enable_search_photos: Enable the search_photos tool. Default: True.
-            enable_get_photo: Enable the get_photo tool. Default: True.
-            enable_get_random_photo: Enable the get_random_photo tool. Default: True.
-            enable_download_photo: Enable the download_photo tool. Default: False.
+            search_photos: Enable the search_photos tool. Default: True.
+            get_photo: Enable the get_photo tool. Default: True.
+            get_random_photo: Enable the get_random_photo tool. Default: True.
+            download_photo: Enable the download_photo tool. Default: False.
             all: Enable all tools. Default: False.
             timeout: Per-request HTTP timeout in seconds. Default is 30.
             **kwargs: Additional arguments passed to the Toolkit base class.
@@ -70,14 +70,14 @@ class UnsplashTools(Toolkit):
 
         self.base_url = "https://api.unsplash.com"
 
-        tools: List[Any] = []
-        if all or enable_search_photos:
+        tools: List[Callable] = []
+        if all or search_photos:
             tools.append(self.search_photos)
-        if all or enable_get_photo:
+        if all or get_photo:
             tools.append(self.get_photo)
-        if all or enable_get_random_photo:
+        if all or get_random_photo:
             tools.append(self.get_random_photo)
-        if all or enable_download_photo:
+        if all or download_photo:
             tools.append(self.download_photo)
 
         super().__init__(name="unsplash_tools", tools=tools, timeout=timeout, **kwargs)
@@ -167,10 +167,10 @@ class UnsplashTools(Toolkit):
             URLs, author information, and metadata.
         """
         if not self.access_key:
-            return "Error: No Unsplash API key provided. Set UNSPLASH_ACCESS_KEY environment variable."
+            return json.dumps({"error": "No Unsplash API key provided. Set UNSPLASH_ACCESS_KEY environment variable."})
 
         if not query:
-            return "Error: Please provide a search query."
+            return json.dumps({"error": "Please provide a search query."})
 
         log_debug(f"Searching Unsplash for: {query}")
 
@@ -212,7 +212,8 @@ class UnsplashTools(Toolkit):
             return json.dumps(results, indent=2)
 
         except Exception as e:
-            return f"Error searching Unsplash: {e}"
+            log_exception(e, "Error searching Unsplash")
+            return json.dumps({"error": f"Error searching Unsplash: {e}"})
 
     def get_photo(self, photo_id: str) -> str:
         """Get detailed information about a specific photo.
@@ -225,10 +226,10 @@ class UnsplashTools(Toolkit):
             URLs, author, metadata, EXIF data, and location if available.
         """
         if not self.access_key:
-            return "Error: No Unsplash API key provided. Set UNSPLASH_ACCESS_KEY environment variable."
+            return json.dumps({"error": "No Unsplash API key provided. Set UNSPLASH_ACCESS_KEY environment variable."})
 
         if not photo_id:
-            return "Error: Please provide a photo ID."
+            return json.dumps({"error": "Please provide a photo ID."})
 
         log_debug(f"Getting Unsplash photo: {photo_id}")
 
@@ -261,7 +262,8 @@ class UnsplashTools(Toolkit):
             return json.dumps(result, indent=2)
 
         except Exception as e:
-            return f"Error getting photo: {e}"
+            log_exception(e, "Error getting photo")
+            return json.dumps({"error": f"Error getting photo: {e}"})
 
     def get_random_photo(
         self,
@@ -280,7 +282,7 @@ class UnsplashTools(Toolkit):
             JSON string containing random photo(s) data.
         """
         if not self.access_key:
-            return "Error: No Unsplash API key provided. Set UNSPLASH_ACCESS_KEY environment variable."
+            return json.dumps({"error": "No Unsplash API key provided. Set UNSPLASH_ACCESS_KEY environment variable."})
 
         log_debug(f"Getting random Unsplash photo (query={query})")
 
@@ -306,7 +308,8 @@ class UnsplashTools(Toolkit):
             return json.dumps({"photos": photos}, indent=2)
 
         except Exception as e:
-            return f"Error getting random photo: {e}"
+            log_exception(e, "Error getting random photo")
+            return json.dumps({"error": f"Error getting random photo: {e}"})
 
     def download_photo(self, photo_id: str) -> str:
         """Trigger a download event for a photo.
@@ -321,10 +324,10 @@ class UnsplashTools(Toolkit):
             JSON string with the download URL.
         """
         if not self.access_key:
-            return "Error: No Unsplash API key provided. Set UNSPLASH_ACCESS_KEY environment variable."
+            return json.dumps({"error": "No Unsplash API key provided. Set UNSPLASH_ACCESS_KEY environment variable."})
 
         if not photo_id:
-            return "Error: Please provide a photo ID."
+            return json.dumps({"error": "Please provide a photo ID."})
 
         log_debug(f"Tracking download for Unsplash photo: {photo_id}")
 
@@ -340,4 +343,5 @@ class UnsplashTools(Toolkit):
             )
 
         except Exception as e:
-            return f"Error tracking download: {e}"
+            log_exception(e, "Error tracking download")
+            return json.dumps({"error": f"Error tracking download: {e}"})

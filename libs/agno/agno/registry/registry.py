@@ -139,7 +139,7 @@ class Registry:
         Deduplication depends on the kind of tool, because they duplicate for
         different reasons:
 
-        - ``Toolkit`` instances are re-created at call sites (``DuckDuckGoTools()``
+        - ``Toolkit`` instances are re-created at call sites (``WebSearchTools()``
           written in two places yields two distinct objects), so they dedupe
           structurally by ``(type, name, function names)``. The first matching
           instance wins deterministically: user-declared registry tools are added

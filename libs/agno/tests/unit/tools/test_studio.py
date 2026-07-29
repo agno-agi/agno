@@ -9,13 +9,13 @@ from datetime import datetime
 from typing import Any, Dict
 
 import pytest
+from agno.tools.duckduckgo import DuckDuckGoTools
 
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIResponses
 from agno.registry import Registry
 from agno.tools.calculator import CalculatorTools
-from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.function import Function
 from agno.tools.studio import StudioTool, StudioTools
 from agno.tools.toolkit import Toolkit

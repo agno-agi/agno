@@ -23,7 +23,7 @@ from typing import Any, Callable, Dict, List, Optional
 
 from agno.scheduler.manager import ScheduleManager
 from agno.tools.toolkit import Toolkit
-from agno.utils.log import log_debug, logger
+from agno.utils.log import log_debug, log_exception
 
 
 class SchedulerTools(Toolkit):
@@ -32,16 +32,6 @@ class SchedulerTools(Toolkit):
     The agent can ask a user "what should I do every day?" and then call
     ``create_schedule`` to set up a cron-based recurring execution via the
     existing AgentOS scheduler infrastructure.
-
-    Args:
-        db: A database adapter that implements the scheduler DB methods.
-        default_endpoint: The default endpoint to call when a schedule fires
-            (e.g. ``/agents/<agent_id>/runs``). The agent can override this
-            per-schedule, but having a default simplifies the common case.
-        default_method: HTTP method for the endpoint (default: ``POST``).
-        default_timezone: Default timezone for schedules (default: ``UTC``).
-        default_payload: Default payload to send with each scheduled run.
-            The agent can override or extend this per-schedule.
     """
 
     def __init__(
@@ -51,33 +41,63 @@ class SchedulerTools(Toolkit):
         default_method: str = "POST",
         default_timezone: str = "UTC",
         default_payload: Optional[Dict[str, Any]] = None,
+        create_schedule: bool = False,
+        list_schedules: bool = True,
+        get_schedule: bool = True,
+        delete_schedule: bool = False,
+        enable_schedule: bool = False,
+        disable_schedule: bool = False,
+        get_schedule_runs: bool = False,
+        all: bool = False,
         **kwargs: Any,
     ):
+        """Initialize scheduler toolkit for managing recurring tasks.
+
+        Args:
+            db: Database adapter implementing scheduler DB methods.
+            default_endpoint: Endpoint to call when schedule fires (e.g. /agents/<id>/runs).
+            default_method: HTTP method for endpoint (default: POST).
+            default_timezone: Default timezone for schedules (default: UTC).
+            default_payload: Default payload for scheduled runs.
+            create_schedule: Enable the create_schedule tool.
+            list_schedules: Enable the list_schedules tool.
+            get_schedule: Enable the get_schedule tool.
+            delete_schedule: Enable the delete_schedule tool.
+            enable_schedule: Enable the enable_schedule tool.
+            disable_schedule: Enable the disable_schedule tool.
+            get_schedule_runs: Enable the get_schedule_runs tool.
+            all: Enable all tools.
+        """
         self.manager = ScheduleManager(db=db)
         self.default_endpoint = default_endpoint
         self.default_method = default_method
         self.default_timezone = default_timezone
         self.default_payload = default_payload
 
-        tools: List[Callable] = [
-            self.create_schedule,
-            self.list_schedules,
-            self.get_schedule,
-            self.delete_schedule,
-            self.enable_schedule,
-            self.disable_schedule,
-            self.get_schedule_runs,
-        ]
+        tools: List[Callable] = []
+        async_tools: List[tuple[Callable[..., Any], str]] = []
 
-        async_tools: List[tuple[Callable[..., Any], str]] = [
-            (self.acreate_schedule, "create_schedule"),
-            (self.alist_schedules, "list_schedules"),
-            (self.aget_schedule, "get_schedule"),
-            (self.adelete_schedule, "delete_schedule"),
-            (self.aenable_schedule, "enable_schedule"),
-            (self.adisable_schedule, "disable_schedule"),
-            (self.aget_schedule_runs, "get_schedule_runs"),
-        ]
+        if all or create_schedule:
+            tools.append(self.create_schedule)
+            async_tools.append((self.acreate_schedule, "create_schedule"))
+        if all or list_schedules:
+            tools.append(self.list_schedules)
+            async_tools.append((self.alist_schedules, "list_schedules"))
+        if all or get_schedule:
+            tools.append(self.get_schedule)
+            async_tools.append((self.aget_schedule, "get_schedule"))
+        if all or delete_schedule:
+            tools.append(self.delete_schedule)
+            async_tools.append((self.adelete_schedule, "delete_schedule"))
+        if all or enable_schedule:
+            tools.append(self.enable_schedule)
+            async_tools.append((self.aenable_schedule, "enable_schedule"))
+        if all or disable_schedule:
+            tools.append(self.disable_schedule)
+            async_tools.append((self.adisable_schedule, "disable_schedule"))
+        if all or get_schedule_runs:
+            tools.append(self.get_schedule_runs)
+            async_tools.append((self.aget_schedule_runs, "get_schedule_runs"))
 
         super().__init__(
             name="scheduler",
@@ -175,7 +195,7 @@ class SchedulerTools(Toolkit):
                 }
             )
         except Exception as e:
-            logger.exception("Failed to create schedule")
+            log_exception("Failed to create schedule")
             return json.dumps({"error": str(e)})
 
     def list_schedules(self, enabled_only: bool = False) -> str:
@@ -204,7 +224,7 @@ class SchedulerTools(Toolkit):
             ]
             return json.dumps({"schedules": result, "count": len(result)})
         except Exception as e:
-            logger.exception("Failed to list schedules")
+            log_exception("Failed to list schedules")
             return json.dumps({"error": str(e)})
 
     def get_schedule(self, schedule_id: str) -> str:
@@ -234,7 +254,7 @@ class SchedulerTools(Toolkit):
                 }
             )
         except Exception as e:
-            logger.exception("Failed to get schedule")
+            log_exception("Failed to get schedule")
             return json.dumps({"error": str(e)})
 
     def delete_schedule(self, schedule_id: str) -> str:
@@ -252,7 +272,7 @@ class SchedulerTools(Toolkit):
                 return json.dumps({"status": "deleted", "id": schedule_id})
             return json.dumps({"error": f"Schedule not found or could not be deleted: {schedule_id}"})
         except Exception as e:
-            logger.exception("Failed to delete schedule")
+            log_exception("Failed to delete schedule")
             return json.dumps({"error": str(e)})
 
     def enable_schedule(self, schedule_id: str) -> str:
@@ -277,7 +297,7 @@ class SchedulerTools(Toolkit):
                 }
             )
         except Exception as e:
-            logger.exception("Failed to enable schedule")
+            log_exception("Failed to enable schedule")
             return json.dumps({"error": str(e)})
 
     def disable_schedule(self, schedule_id: str) -> str:
@@ -302,7 +322,7 @@ class SchedulerTools(Toolkit):
                 }
             )
         except Exception as e:
-            logger.exception("Failed to disable schedule")
+            log_exception("Failed to disable schedule")
             return json.dumps({"error": str(e)})
 
     def get_schedule_runs(self, schedule_id: str, limit: int = 10) -> str:
@@ -329,7 +349,7 @@ class SchedulerTools(Toolkit):
             ]
             return json.dumps({"runs": result, "count": len(result)})
         except Exception as e:
-            logger.exception("Failed to get schedule runs")
+            log_exception("Failed to get schedule runs")
             return json.dumps({"error": str(e)})
 
     # ------------------------------------------------------------------
@@ -407,7 +427,7 @@ class SchedulerTools(Toolkit):
                 }
             )
         except Exception as e:
-            logger.exception("Failed to create schedule")
+            log_exception("Failed to create schedule")
             return json.dumps({"error": str(e)})
 
     async def alist_schedules(self, enabled_only: bool = False) -> str:
@@ -436,7 +456,7 @@ class SchedulerTools(Toolkit):
             ]
             return json.dumps({"schedules": result, "count": len(result)})
         except Exception as e:
-            logger.exception("Failed to list schedules")
+            log_exception("Failed to list schedules")
             return json.dumps({"error": str(e)})
 
     async def aget_schedule(self, schedule_id: str) -> str:
@@ -466,7 +486,7 @@ class SchedulerTools(Toolkit):
                 }
             )
         except Exception as e:
-            logger.exception("Failed to get schedule")
+            log_exception("Failed to get schedule")
             return json.dumps({"error": str(e)})
 
     async def adelete_schedule(self, schedule_id: str) -> str:
@@ -484,7 +504,7 @@ class SchedulerTools(Toolkit):
                 return json.dumps({"status": "deleted", "id": schedule_id})
             return json.dumps({"error": f"Schedule not found or could not be deleted: {schedule_id}"})
         except Exception as e:
-            logger.exception("Failed to delete schedule")
+            log_exception("Failed to delete schedule")
             return json.dumps({"error": str(e)})
 
     async def aenable_schedule(self, schedule_id: str) -> str:
@@ -509,7 +529,7 @@ class SchedulerTools(Toolkit):
                 }
             )
         except Exception as e:
-            logger.exception("Failed to enable schedule")
+            log_exception("Failed to enable schedule")
             return json.dumps({"error": str(e)})
 
     async def adisable_schedule(self, schedule_id: str) -> str:
@@ -534,7 +554,7 @@ class SchedulerTools(Toolkit):
                 }
             )
         except Exception as e:
-            logger.exception("Failed to disable schedule")
+            log_exception("Failed to disable schedule")
             return json.dumps({"error": str(e)})
 
     async def aget_schedule_runs(self, schedule_id: str, limit: int = 10) -> str:
@@ -561,5 +581,5 @@ class SchedulerTools(Toolkit):
             ]
             return json.dumps({"runs": result, "count": len(result)})
         except Exception as e:
-            logger.exception("Failed to get schedule runs")
+            log_exception("Failed to get schedule runs")
             return json.dumps({"error": str(e)})

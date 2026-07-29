@@ -1,6 +1,6 @@
 import json
 import os
-from typing import Any, Dict, List, Optional, cast
+from typing import Any, Callable, Dict, List, Optional, cast
 
 from agno.tools import Toolkit
 from agno.utils.log import log_debug, logger
@@ -12,27 +12,26 @@ except ImportError:
 
 
 class NotionTools(Toolkit):
-    """
-    Notion toolkit for creating and managing Notion pages.
+    """Notion toolkit for creating and managing Notion pages.
 
     Args:
-        api_key (Optional[str]): Notion API key (integration token). If not provided, uses NOTION_API_KEY env var.
-        database_id (Optional[str]): The ID of the database to work with. If not provided, uses NOTION_DATABASE_ID env var.
-        enable_create_page (bool): Enable creating pages. Default is True.
-        enable_update_page (bool): Enable updating pages. Default is True.
-        enable_search_pages (bool): Enable searching pages. Default is True.
-        all (bool): Enable all tools. Overrides individual flags when True. Default is False.
+        api_key: Notion API key (integration token). If not provided, uses NOTION_API_KEY env var.
+        database_id: The ID of the database to work with. If not provided, uses NOTION_DATABASE_ID env var.
+        search_pages: Register the search_pages tool (read operation).
+        create_page: Register the create_page tool (write operation).
+        update_page: Register the update_page tool (write operation).
+        all: Register all tools regardless of individual flags.
     """
 
     def __init__(
         self,
         api_key: Optional[str] = None,
         database_id: Optional[str] = None,
-        enable_create_page: bool = True,
-        enable_update_page: bool = True,
-        enable_search_pages: bool = True,
+        search_pages: bool = True,
+        create_page: bool = False,
+        update_page: bool = False,
         all: bool = False,
-        **kwargs,
+        **kwargs: Any,
     ):
         self.api_key = api_key or os.getenv("NOTION_API_KEY")
         self.database_id = database_id or os.getenv("NOTION_DATABASE_ID")
@@ -48,13 +47,13 @@ class NotionTools(Toolkit):
 
         self.client = Client(auth=self.api_key)
 
-        tools: List[Any] = []
-        if all or enable_create_page:
-            tools.append(self.create_page)
-        if all or enable_update_page:
-            tools.append(self.update_page)
-        if all or enable_search_pages:
+        tools: List[Callable] = []
+        if all or search_pages:
             tools.append(self.search_pages)
+        if all or create_page:
+            tools.append(self.create_page)
+        if all or update_page:
+            tools.append(self.update_page)
 
         super().__init__(name="notion_tools", tools=tools, **kwargs)
 
@@ -62,12 +61,12 @@ class NotionTools(Toolkit):
         """Create a new page in the Notion database with a title, tag, and content.
 
         Args:
-            title (str): The title of the page
-            tag (str): The tag/category for the page (e.g., travel, tech, general-blogs, fashion, documents)
-            content (str): The content to add to the page
+            title: The title of the page.
+            tag: The tag/category for the page (e.g., travel, tech, general-blogs, fashion, documents).
+            content: The content to add to the page.
 
         Returns:
-            str: JSON string with page creation details
+            JSON object with page_id, url, title, tag, and success status.
         """
         try:
             log_debug(f"Creating Notion page with title: {title}, tag: {tag}")
@@ -88,8 +87,9 @@ class NotionTools(Toolkit):
                 ),
             )
 
-            result = {"success": True, "page_id": new_page["id"], "url": new_page["url"], "title": title, "tag": tag}
-            return json.dumps(result, indent=2)
+            return json.dumps(
+                {"success": True, "page_id": new_page["id"], "url": new_page["url"], "title": title, "tag": tag}
+            )
 
         except Exception as e:
             logger.exception(e)
@@ -99,11 +99,11 @@ class NotionTools(Toolkit):
         """Add content to an existing Notion page.
 
         Args:
-            page_id (str): The ID of the page to update
-            content (str): The content to append to the page
+            page_id: The ID of the page to update.
+            content: The content to append to the page.
 
         Returns:
-            str: JSON string with update status
+            JSON object with page_id, message, and success status.
         """
         try:
             log_debug(f"Updating Notion page: {page_id}")
@@ -120,8 +120,7 @@ class NotionTools(Toolkit):
                 ],
             )
 
-            result = {"success": True, "page_id": page_id, "message": "Content added successfully"}
-            return json.dumps(result, indent=2)
+            return json.dumps({"success": True, "page_id": page_id, "message": "Content added successfully"})
 
         except Exception as e:
             logger.exception(e)
@@ -131,44 +130,25 @@ class NotionTools(Toolkit):
         """Search for pages in the database by tag.
 
         Args:
-            tag (str): The tag to search for
+            tag: The tag to search for.
 
         Returns:
-            str: JSON string with list of matching pages
+            JSON object with count, pages array (page_id, title, tag, url), and success status.
         """
         try:
             log_debug(f"Searching for pages with tag: {tag}")
 
-            import httpx
-
-            headers = {
-                "Authorization": f"Bearer {self.api_key}",
-                "Notion-Version": "2022-06-28",
-                "Content-Type": "application/json",
-            }
-
-            payload = {"filter": {"property": "Tag", "select": {"equals": tag}}}
-
-            # The SDK client does not support the query method
-            response = httpx.post(
-                f"https://api.notion.com/v1/databases/{self.database_id}/query",
-                headers=headers,
-                json=payload,
-                timeout=30.0,
+            # The SDK's DatabasesEndpoint does not have a query method, use client.request
+            data = cast(
+                Dict[str, Any],
+                self.client.request(
+                    path=f"databases/{self.database_id}/query",
+                    method="POST",
+                    body={"filter": {"property": "Tag", "select": {"equals": tag}}},
+                ),
             )
 
-            if response.status_code != 200:
-                return json.dumps(
-                    {
-                        "success": False,
-                        "error": f"API request failed with status {response.status_code}",
-                        "message": response.text,
-                    }
-                )
-
-            data = response.json()
             pages = []
-
             for page in data.get("results", []):
                 try:
                     page_title = "Untitled"
@@ -190,8 +170,7 @@ class NotionTools(Toolkit):
                     log_debug(f"Error parsing page: {page_error}")
                     continue
 
-            result = {"success": True, "count": len(pages), "pages": pages}
-            return json.dumps(result, indent=2)
+            return json.dumps({"success": True, "count": len(pages), "pages": pages})
 
         except Exception as e:
             logger.exception(e)

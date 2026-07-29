@@ -16,22 +16,31 @@ except ImportError:
 
 
 class OpenCVTools(Toolkit):
-    """Tools for capturing images and videos from the webcam using OpenCV"""
+    """Tools for capturing images and videos from the webcam using OpenCV.
+
+    Requires the `opencv-python` package: `pip install opencv-python`
+
+    Args:
+        show_preview: Show live camera preview window during capture.
+        capture_image: Register the capture_image tool. Defaults to False (opt-in).
+        capture_video: Register the capture_video tool. Defaults to False (opt-in).
+        all: Register all tools regardless of individual flags.
+    """
 
     def __init__(
         self,
-        show_preview=False,
-        enable_capture_image: bool = True,
-        enable_capture_video: bool = True,
+        show_preview: bool = False,
+        capture_image: bool = False,
+        capture_video: bool = False,
         all: bool = False,
         **kwargs,
     ):
         self.show_preview = show_preview
 
         tools: List[Callable] = []
-        if all or enable_capture_image:
+        if all or capture_image:
             tools.append(self.capture_image)
-        if all or enable_capture_video:
+        if all or capture_video:
             tools.append(self.capture_video)
 
         super().__init__(
@@ -48,10 +57,10 @@ class OpenCVTools(Toolkit):
         """Capture an image from the webcam.
 
         Args:
-            prompt (str): Description of the image capture. Defaults to "Webcam capture".
+            prompt: Description of the image capture.
 
         Returns:
-            ToolResult: A ToolResult containing the captured image or error message.
+            A ToolResult containing the captured image or error message.
         """
         try:
             log_debug("Initializing webcam for image capture...")
@@ -153,11 +162,11 @@ class OpenCVTools(Toolkit):
         """Capture a video from the webcam.
 
         Args:
-            duration (int): Duration in seconds to record video. Defaults to 10 seconds.
-            prompt (str): Description of the video capture. Defaults to "Webcam video capture".
+            duration: Duration in seconds to record video.
+            prompt: Description of the video capture.
 
         Returns:
-            ToolResult: A ToolResult containing the captured video or error message.
+            A ToolResult containing the captured video or error message.
         """
         try:
             log_debug("Initializing webcam for video capture...")

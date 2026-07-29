@@ -1,5 +1,6 @@
+import json
 from os import getenv
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Callable, Dict, List, Optional, Union
 from uuid import uuid4
 
 import requests
@@ -17,10 +18,10 @@ class DesiVocalTools(Toolkit):
         self,
         api_key: Optional[str] = None,
         voice_id: Optional[str] = "f27d74e5-ea71-4697-be3e-f04bbd80c1a8",
-        enable_get_voices: bool = True,
-        enable_text_to_speech: bool = True,
-        all: bool = False,
+        get_voices: bool = True,
+        text_to_speech: bool = True,
         timeout: int = 30,
+        all: bool = False,
         **kwargs,
     ):
         self.api_key = api_key or getenv("DESI_VOCAL_API_KEY")
@@ -29,19 +30,19 @@ class DesiVocalTools(Toolkit):
 
         self.voice_id = voice_id
 
-        tools: List[Any] = []
-        if all or enable_get_voices:
+        tools: List[Callable] = []
+        if all or get_voices:
             tools.append(self.get_voices)
-        if all or enable_text_to_speech:
+        if all or text_to_speech:
             tools.append(self.text_to_speech)
 
         super().__init__(name="desi_vocal_tools", tools=tools, timeout=timeout, **kwargs)
 
     def get_voices(self) -> str:
-        """
-        Use this function to get all the voices available.
+        """Get all available voices.
+
         Returns:
-            result (list): A list of voices that have an ID, name and description.
+            JSON list of voices with id, name, gender, type, language, and preview_url.
         """
         try:
             url = "https://prod-api2.desivocal.com/dv/api/v0/tts_api/voices"
@@ -65,18 +66,20 @@ class DesiVocalTools(Toolkit):
                     }
                 )
 
-            return str(responses)
+            return json.dumps(responses)
         except Exception as e:
             logger.exception("Failed to get voices")
-            return f"Error: {e}"
+            return json.dumps({"error": str(e)})
 
     def text_to_speech(self, agent: Union[Agent, Team], prompt: str, voice_id: Optional[str] = None) -> ToolResult:
-        """
-        Use this function to generate audio from text.
+        """Generate audio from text using DesiVocal TTS.
+
         Args:
-            prompt (str): The text to generate audio from.
+            prompt: The text to generate audio from.
+            voice_id: Optional voice ID to use. Defaults to configured voice.
+
         Returns:
-            ToolResult: A ToolResult containing the generated audio or error message.
+            ToolResult: Generated audio URL or error message.
         """
         try:
             url = "https://prod-api2.desivocal.com/dv/api/v0/tts_api/generate"

@@ -1,6 +1,6 @@
 import json
 from os import getenv
-from typing import Any, List, Optional, cast
+from typing import Callable, List, Optional, cast
 
 from agno.tools import Toolkit
 from agno.utils.log import log_debug, logger
@@ -18,11 +18,11 @@ class JiraTools(Toolkit):
         username: Optional[str] = None,
         password: Optional[str] = None,
         token: Optional[str] = None,
-        enable_get_issue: bool = True,
-        enable_create_issue: bool = True,
-        enable_search_issues: bool = True,
-        enable_add_comment: bool = True,
-        enable_add_worklog: bool = True,
+        get_issue: bool = True,
+        create_issue: bool = True,
+        search_issues: bool = True,
+        add_comment: bool = True,
+        add_worklog: bool = True,
         all: bool = False,
         **kwargs,
     ):
@@ -47,26 +47,28 @@ class JiraTools(Toolkit):
         else:
             self.jira = JIRA(server=self.server_url)
 
-        tools: List[Any] = []
-        if enable_get_issue or all:
+        tools: List[Callable] = []
+        if all or get_issue:
             tools.append(self.get_issue)
-        if enable_create_issue or all:
+        if all or create_issue:
             tools.append(self.create_issue)
-        if enable_search_issues or all:
+        if all or search_issues:
             tools.append(self.search_issues)
-        if enable_add_comment or all:
+        if all or add_comment:
             tools.append(self.add_comment)
-        if enable_add_worklog or all:
+        if all or add_worklog:
             tools.append(self.add_worklog)
 
         super().__init__(name="jira_tools", tools=tools, **kwargs)
 
     def get_issue(self, issue_key: str) -> str:
-        """
-        Retrieves issue details from Jira.
+        """Retrieve issue details from Jira.
 
-        :param issue_key: The key of the issue to retrieve.
-        :return: A JSON string containing issue details.
+        Args:
+            issue_key: The key of the issue to retrieve (e.g., PROJ-123).
+
+        Returns:
+            JSON with issue details including key, project, type, summary.
         """
         try:
             issue = self.jira.issue(issue_key)
@@ -86,14 +88,16 @@ class JiraTools(Toolkit):
             return json.dumps({"error": str(e)})
 
     def create_issue(self, project_key: str, summary: str, description: str, issuetype: str = "Task") -> str:
-        """
-        Creates a new issue in Jira.
+        """Create a new issue in Jira.
 
-        :param project_key: The key of the project in which to create the issue.
-        :param summary: The summary of the issue.
-        :param description: The description of the issue.
-        :param issuetype: The type of issue to create.
-        :return: A JSON string with the new issue's key and URL.
+        Args:
+            project_key: The project key (e.g., PROJ).
+            summary: The issue summary/title.
+            description: The issue description.
+            issuetype: Issue type. Defaults to Task.
+
+        Returns:
+            JSON with new issue key and URL.
         """
         try:
             issue_dict = {
@@ -111,12 +115,14 @@ class JiraTools(Toolkit):
             return json.dumps({"error": str(e)})
 
     def search_issues(self, jql_str: str, max_results: int = 50) -> str:
-        """
-        Searches for issues using a JQL query.
+        """Search for issues using a JQL query.
 
-        :param jql_str: The JQL query string.
-        :param max_results: Maximum number of results to return.
-        :return: A JSON string containing a list of dictionaries with issue details.
+        Args:
+            jql_str: JQL query string (e.g., "project = PROJ AND status = Open").
+            max_results: Maximum results to return. Defaults to 50.
+
+        Returns:
+            JSON list of issues with key, summary, status, assignee.
         """
         try:
             issues = self.jira.search_issues(jql_str, maxResults=max_results)
@@ -137,12 +143,14 @@ class JiraTools(Toolkit):
             return json.dumps([{"error": str(e)}])
 
     def add_comment(self, issue_key: str, comment: str) -> str:
-        """
-        Adds a comment to an issue.
+        """Add a comment to an issue.
 
-        :param issue_key: The key of the issue.
-        :param comment: The comment text.
-        :return: A JSON string indicating success or containing an error message.
+        Args:
+            issue_key: The issue key (e.g., PROJ-123).
+            comment: The comment text.
+
+        Returns:
+            JSON with status and issue_key on success.
         """
         try:
             self.jira.add_comment(issue_key, comment)
@@ -153,13 +161,15 @@ class JiraTools(Toolkit):
             return json.dumps({"error": str(e)})
 
     def add_worklog(self, issue_key: str, time_spent: str, comment: Optional[str] = None) -> str:
-        """
-        Adds a worklog entry to log time spent on a specific Jira issue.
+        """Add a worklog entry to an issue.
 
-        :param issue_key: The key of the issue to log work against (e.g., 'PROJ-123').
-        :param time_spent: The amount of time spent. Use Jira's format, e.g., '2h', '30m', '1d 4h'.
-        :param comment: An optional comment describing the work done.
-        :return: A JSON string indicating success or containing an error message.
+        Args:
+            issue_key: The issue key (e.g., PROJ-123).
+            time_spent: Time spent in Jira format (e.g., "2h", "30m", "1d 4h").
+            comment: Optional description of work done.
+
+        Returns:
+            JSON with status, issue_key, and time_spent on success.
         """
         try:
             self.jira.add_worklog(issue=issue_key, timeSpent=time_spent, comment=comment)
