@@ -41,9 +41,9 @@ Requirements:
 
 from agno.agent import Agent
 from agno.db.postgres import PostgresDb
+from agno.job_queue.config import QueueConfig
 from agno.models.openai import OpenAIResponses
 from agno.os import AgentOS
-from agno.queue.config import QueueConfig
 
 db = PostgresDb(db_url="postgresql+psycopg://ai:ai@localhost:5532/ai")
 

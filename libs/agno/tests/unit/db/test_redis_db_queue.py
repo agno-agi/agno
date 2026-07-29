@@ -178,8 +178,8 @@ class TestWorkerIntegration:
     async def test_redis_db_resolves_through_sync_adapter(self):
         """db=RedisDb(...) is a first-class queue store: same concept as the
         sync PostgresDb, wrapped by the worker's thread adapter."""
-        from agno.os.queue import _SyncStoreAdapter, resolve_queue_store
-        from agno.queue.config import QueueConfig
+        from agno.job_queue.config import QueueConfig
+        from agno.os.job_queue import _SyncStoreAdapter, resolve_queue_store
 
         redis_db = RedisDb(redis_client=fakeredis.FakeRedis(decode_responses=True))
         store = resolve_queue_store(QueueConfig(durable=True, db=redis_db), None)

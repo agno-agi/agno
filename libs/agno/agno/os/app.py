@@ -55,11 +55,11 @@ from agno.os.routers.database import get_database_router
 from agno.os.routers.evals import get_eval_router
 from agno.os.routers.health import get_health_router
 from agno.os.routers.home import get_home_router
+from agno.os.routers.job_queue import get_queue_router
 from agno.os.routers.knowledge import get_knowledge_router
 from agno.os.routers.learnings import get_learnings_router
 from agno.os.routers.memory import get_memory_router
 from agno.os.routers.metrics import get_metrics_router
-from agno.os.routers.queue import get_queue_router
 from agno.os.routers.registry import get_registry_router
 from agno.os.routers.schedules import get_schedule_router
 from agno.os.routers.service_accounts import get_service_accounts_router
