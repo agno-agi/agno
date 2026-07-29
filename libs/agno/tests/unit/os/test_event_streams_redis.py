@@ -235,6 +235,10 @@ class TestQuietRunRefresher:
         s = RedisEventStream(fakeredis.FakeAsyncRedis(), ttl_seconds=2, block_ms=100)
         try:
             await s.register_run("r1")
+            # Accept-side registration must NOT start a refresher (only the
+            # producing replica keeps keys alive)
+            assert s._refresher_task is None or s._refresher_task.done()
+            await s.set_run_status("r1", RunStatus.running)
             assert s._refresher_task is not None and not s._refresher_task.done()
             await s.complete_run("r1", RunStatus.completed)
             await asyncio.sleep(1.3)  # one tick with an empty active set
@@ -323,3 +327,28 @@ class TestTailResilience:
         assert "r1" in stream._active_runs, "paused runs must keep their keys refreshed until the approval"
         await stream.complete_run("r1", RunStatus.completed)
         assert "r1" not in stream._active_runs
+
+
+class TestProducerOwnedRefresher:
+    @pytest.mark.asyncio
+    async def test_accept_side_register_does_not_enroll(self, stream):
+        """An accepting replica registers PENDING for a job some other replica
+        will execute: it must not become a key-refresher for that run (it
+        would renew a finished run's keys forever)."""
+        await stream.register_run("r1", RunStatus.pending)
+        assert "r1" not in stream._active_runs
+
+    @pytest.mark.asyncio
+    async def test_running_transition_enrolls_producer(self, stream):
+        await stream.register_run("r1", RunStatus.pending)
+        await stream.set_run_status("r1", RunStatus.running)
+        assert "r1" in stream._active_runs
+        await stream.complete_run("r1", RunStatus.completed)
+        assert "r1" not in stream._active_runs
+
+    @pytest.mark.asyncio
+    async def test_add_event_enrolls_publisher(self, stream):
+        await stream.register_run("r1", RunStatus.running)
+        assert "r1" not in stream._active_runs
+        await stream.add_event("r1", make_event("r1", "a"))
+        assert "r1" in stream._active_runs
