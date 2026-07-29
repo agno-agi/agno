@@ -63,7 +63,7 @@ class TeamSession:
 
         runs = data.get("runs")
         serialized_runs: List[Union[TeamRunOutput, RunOutput]] = []
-        if runs is not None and isinstance(runs[0], dict):
+        if runs and isinstance(runs[0], dict):
             for run in runs:
                 if "agent_id" in run:
                     serialized_runs.append(RunOutput.from_dict(run))
@@ -151,8 +151,8 @@ class TeamSession:
                 return True
             return False
 
-        if member_ids is not None and skip_member_messages:
-            log_debug("Member IDs to filter by were provided. The skip_member_messages flag will be ignored.")
+        if (member_ids is not None or team_id is not None) and skip_member_messages:
+            log_debug("Member or team IDs to filter by were provided. The skip_member_messages flag will be ignored.")
             skip_member_messages = False
 
         if not self.runs:
@@ -266,7 +266,9 @@ class TeamSession:
         Returns:
             A list of user and assistant Messages belonging to the session.
         """
-        return self.get_messages(skip_roles=["system", "tool"], skip_member_messages=True, last_n_runs=last_n_runs)
+        return self.get_messages(
+            skip_roles=["system", "tool"], skip_member_messages=True, skip_statuses=[], last_n_runs=last_n_runs
+        )
 
     def get_tool_calls(self, num_calls: Optional[int] = None) -> List[Dict[str, Any]]:
         """Returns a list of tool calls from the messages"""
@@ -286,10 +288,17 @@ class TeamSession:
                                 return tool_calls
         return tool_calls
 
-    def get_team_history(self, num_runs: Optional[int] = None) -> List[Tuple[str, str]]:
-        """Get team history as structured data (input, response pairs) -> This is the history of the team leader, not the members.
+    def get_team_history(self, team_id: Optional[str] = None, num_runs: Optional[int] = None) -> List[Tuple[str, str]]:
+        """Get team history as structured data (input, response pairs).
+
+        When called without ``team_id``, returns only top-level team runs
+        (those with ``parent_run_id is None``) — i.e. the team leader's own
+        history.  When *team_id* is provided, returns runs belonging to that
+        specific team regardless of nesting depth, which is useful for
+        retrieving a sub-team's history from a shared session.
 
         Args:
+            team_id: If provided, filter runs to this specific team.
             num_runs: Number of recent runs to include. If None, returns all available history.
         """
         if not self.runs:
@@ -298,9 +307,20 @@ class TeamSession:
         from agno.run.base import RunStatus
 
         # Get completed runs only (exclude current/pending run)
-        completed_runs = [run for run in self.runs if run.status == RunStatus.completed and run.parent_run_id is None]
+        if team_id is not None:
+            completed_runs = [
+                run
+                for run in self.runs
+                if run.status == RunStatus.completed and getattr(run, "team_id", None) == team_id
+            ]
+        else:
+            completed_runs = [
+                run for run in self.runs if run.status == RunStatus.completed and run.parent_run_id is None
+            ]
 
-        if num_runs is not None and len(completed_runs) > num_runs:
+        if num_runs is not None:
+            if num_runs <= 0:
+                return []
             recent_runs = completed_runs[-num_runs:]
         else:
             recent_runs = completed_runs
@@ -329,13 +349,14 @@ class TeamSession:
 
         return history_data
 
-    def get_team_history_context(self, num_runs: Optional[int] = None) -> Optional[str]:
-        """Get formatted team history context for steps
+    def get_team_history_context(self, team_id: Optional[str] = None, num_runs: Optional[int] = None) -> Optional[str]:
+        """Get formatted team history context for steps.
 
         Args:
+            team_id: If provided, return history for this specific team.
             num_runs: Number of recent runs to include. If None, returns all available history.
         """
-        history_data = self.get_team_history(num_runs)
+        history_data = self.get_team_history(team_id=team_id, num_runs=num_runs)
 
         if not history_data:
             return None

@@ -205,6 +205,14 @@ class DoclingReader(Reader):
                 doc_name = name or Path(url_path).stem
                 log_debug(f"Reading from URL: {file}")
                 source = file
+            elif isinstance(file, str):
+                # Handle local file path strings
+                file_path = Path(file)
+                if not file_path.exists():
+                    raise FileNotFoundError(f"Could not find file: {file_path}")
+                log_debug(f"Reading: {file_path}")
+                doc_name = name or file_path.stem
+                source = file_path
             elif isinstance(file, BytesIO):
                 # Handle BytesIO objects
                 log_debug(f"Reading uploaded file: {getattr(file, 'name', 'BytesIO')}")
@@ -223,11 +231,11 @@ class DoclingReader(Reader):
             if self.output_format == OutputFormat.TEXT:
                 doc_content = result.document.export_to_text()
             elif self.output_format == OutputFormat.JSON:
-                doc_content = json.dumps(result.document.export_to_dict())
+                doc_content = json.dumps(result.document.export_to_dict(), ensure_ascii=False)
             elif self.output_format == OutputFormat.YAML:
                 import yaml
 
-                doc_content = yaml.safe_dump(result.document.export_to_dict())
+                doc_content = yaml.safe_dump(result.document.export_to_dict(), allow_unicode=True)
             elif self.output_format == OutputFormat.HTML:
                 doc_content = result.document.export_to_html()
             elif self.output_format == OutputFormat.HTML_SPLIT_PAGE:

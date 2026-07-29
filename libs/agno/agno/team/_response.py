@@ -20,6 +20,7 @@ from uuid import uuid4
 
 from pydantic import BaseModel
 
+from agno.exceptions import RunCancelledException
 from agno.media import Audio
 from agno.models.base import Model
 from agno.models.fallback import acall_model_stream_with_fallback, call_model_stream_with_fallback
@@ -954,12 +955,26 @@ def _update_run_response(
     if model_response.citations is not None:
         run_response.citations = model_response.citations
 
-    # Update the run_response tools with the model response tool_executions
+    # Update the run_response tools with the model response tool_executions.
+    # Dedupe by tool_call_id: with checkpoint="tool-batch" the per-batch callback
+    # already wrote tools into run_response, so a naive extend would duplicate
+    # every execution. Replace existing entries in place (preserving order) and
+    # append only genuinely new ones. Carry over child_run_id (the delegation ->
+    # member-run link) when the incoming entry lacks it, since model_response
+    # tool_executions do not carry it.
     if model_response.tool_executions is not None:
         if run_response.tools is None:
-            run_response.tools = model_response.tool_executions
+            run_response.tools = list(model_response.tool_executions)
         else:
-            run_response.tools.extend(model_response.tool_executions)
+            existing_by_id = {t.tool_call_id: i for i, t in enumerate(run_response.tools) if t.tool_call_id}
+            for tool in model_response.tool_executions:
+                if tool.tool_call_id and tool.tool_call_id in existing_by_id:
+                    index = existing_by_id[tool.tool_call_id]
+                    if tool.child_run_id is None and run_response.tools[index].child_run_id is not None:
+                        tool.child_run_id = run_response.tools[index].child_run_id
+                    run_response.tools[index] = tool
+                else:
+                    run_response.tools.append(tool)
 
     # Update the run_response audio with the model response audio
     if model_response.audio is not None:
@@ -1015,6 +1030,9 @@ def _handle_model_response_stream(
         log_debug("Response model set, model response is not streamed.")
         stream_model_response = False
 
+    # Lazy import — _run imports _response, so we can't import at module top.
+    from agno.team._run import build_team_after_tool_results_callback
+
     full_model_response = ModelResponse()
     for model_response_event in call_model_stream_with_fallback(
         team.model,
@@ -1028,6 +1046,9 @@ def _handle_model_response_stream(
         run_response=run_response,
         send_media_to_model=team.send_media_to_model,
         compression_manager=team.compression_manager if team.compress_tool_results else None,
+        after_tool_results=build_team_after_tool_results_callback(
+            team, run_response, session, run_messages, run_context
+        ),
     ):
         # Handle LLM request events and compression events from ModelResponse
         if isinstance(model_response_event, ModelResponse):
@@ -1169,6 +1190,9 @@ async def _ahandle_model_response_stream(
         log_debug("Response model set, model response is not streamed.")
         stream_model_response = False
 
+    # Lazy import — _run imports _response, so we can't import at module top.
+    from agno.team._run import abuild_team_after_tool_results_callback
+
     full_model_response = ModelResponse()
     model_stream = acall_model_stream_with_fallback(
         team.model,
@@ -1182,6 +1206,9 @@ async def _ahandle_model_response_stream(
         send_media_to_model=team.send_media_to_model,
         run_response=run_response,
         compression_manager=team.compression_manager if team.compress_tool_results else None,
+        after_tool_results=abuild_team_after_tool_results_callback(
+            team, run_response, session, run_messages, run_context
+        ),
     )  # type: ignore
     async for model_response_event in model_stream:
         # Handle LLM request events and compression events from ModelResponse
@@ -1324,6 +1351,27 @@ def _handle_model_response_chunk(
                 if not model_response_event.run_id:  # type: ignore
                     model_response_event.run_id = run_response.run_id  # type: ignore
 
+            # Skip terminals — their content is a summary string, not a streaming delta.
+            if not parse_structured_output and team._member_response_model is None:
+                event_name = getattr(model_response_event, "event", "")
+                is_terminal = event_name in {
+                    "RunCompleted",
+                    "RunCancelled",
+                    "RunError",
+                    "TeamRunCompleted",
+                    "TeamRunCancelled",
+                    "TeamRunError",
+                }
+                if (
+                    not is_terminal
+                    and hasattr(model_response_event, "content")
+                    and isinstance(model_response_event.content, str)
+                ):
+                    if run_response.content is None:
+                        run_response.content = model_response_event.content
+                    elif isinstance(run_response.content, str):
+                        run_response.content += model_response_event.content
+
             # We just bubble the event up
             yield handle_event(  # type: ignore
                 model_response_event,  # type: ignore
@@ -1368,6 +1416,7 @@ def _handle_model_response_chunk(
                     run_response.content_type = content_type
                 elif isinstance(model_response_event.content, str):
                     full_model_response.content = (full_model_response.content or "") + model_response_event.content
+                    run_response.content = full_model_response.content
                 should_yield = True
 
             # Process reasoning content
@@ -1732,7 +1781,9 @@ def generate_team_followups(
 
     response_format = _get_followups_response_format(model)
     user_message = run_response.input.input_content_string() if run_response.input else None
-    messages = _build_followup_messages(run_response.content, team.num_followups, user_message=user_message)
+    messages = _build_followup_messages(
+        run_response.content, team.num_followups, user_message=user_message, response_format=response_format
+    )
 
     try:
         model_response: ModelResponse = model.response(
@@ -1741,6 +1792,8 @@ def generate_team_followups(
         )
         run_response.followups = _parse_followups_response(model_response)
         accumulate_model_metrics(model_response, model, ModelType.FOLLOWUP_MODEL, run_response.metrics)
+    except RunCancelledException:
+        raise
     except Exception as e:
         log_warning(f"Error generating followups: {str(e)}")
 
@@ -1762,7 +1815,9 @@ async def agenerate_team_followups(
 
     response_format = _get_followups_response_format(model)
     user_message = run_response.input.input_content_string() if run_response.input else None
-    messages = _build_followup_messages(run_response.content, team.num_followups, user_message=user_message)
+    messages = _build_followup_messages(
+        run_response.content, team.num_followups, user_message=user_message, response_format=response_format
+    )
 
     try:
         model_response: ModelResponse = await model.aresponse(
@@ -1771,6 +1826,8 @@ async def agenerate_team_followups(
         )
         run_response.followups = _parse_followups_response(model_response)
         accumulate_model_metrics(model_response, model, ModelType.FOLLOWUP_MODEL, run_response.metrics)
+    except RunCancelledException:
+        raise
     except Exception as e:
         log_warning(f"Error generating followups: {str(e)}")
 
@@ -1801,7 +1858,9 @@ def generate_team_followups_stream(
 
     response_format = _get_followups_response_format(model)
     user_message = run_response.input.input_content_string() if run_response.input else None
-    messages = _build_followup_messages(run_response.content, team.num_followups, user_message=user_message)
+    messages = _build_followup_messages(
+        run_response.content, team.num_followups, user_message=user_message, response_format=response_format
+    )
 
     try:
         model_response: ModelResponse = model.response(
@@ -1810,6 +1869,8 @@ def generate_team_followups_stream(
         )
         run_response.followups = _parse_followups_response(model_response)
         accumulate_model_metrics(model_response, model, ModelType.FOLLOWUP_MODEL, run_response.metrics)
+    except RunCancelledException:
+        raise
     except Exception as e:
         log_warning(f"Error generating followups: {str(e)}")
 
@@ -1848,7 +1909,9 @@ async def agenerate_team_followups_stream(
 
     response_format = _get_followups_response_format(model)
     user_message = run_response.input.input_content_string() if run_response.input else None
-    messages = _build_followup_messages(run_response.content, team.num_followups, user_message=user_message)
+    messages = _build_followup_messages(
+        run_response.content, team.num_followups, user_message=user_message, response_format=response_format
+    )
 
     try:
         model_response: ModelResponse = await model.aresponse(
@@ -1857,6 +1920,8 @@ async def agenerate_team_followups_stream(
         )
         run_response.followups = _parse_followups_response(model_response)
         accumulate_model_metrics(model_response, model, ModelType.FOLLOWUP_MODEL, run_response.metrics)
+    except RunCancelledException:
+        raise
     except Exception as e:
         log_warning(f"Error generating followups: {str(e)}")
 

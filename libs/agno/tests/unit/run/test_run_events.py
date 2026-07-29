@@ -87,6 +87,42 @@ def test_workflow_run_events():
     assert json.loads(event.to_json(indent=None)) == expected_json_dict
 
 
+def test_workflow_completed_event_serializes_token_metrics():
+    from agno.models.metrics import RunMetrics
+    from agno.run.workflow import WorkflowCompletedEvent
+    from agno.workflow.types import StepMetrics, WorkflowMetrics
+
+    event = WorkflowCompletedEvent(
+        run_id="workflow-run",
+        metrics=WorkflowMetrics(
+            steps={
+                "research": StepMetrics(
+                    step_name="research",
+                    executor_type="agent",
+                    executor_name="Research Agent",
+                    metrics=RunMetrics(input_tokens=12, output_tokens=8, total_tokens=20),
+                )
+            },
+            duration=1.5,
+        ),
+    )
+
+    metrics = event.to_dict()["metrics"]
+
+    assert metrics["duration"] == 1.5
+    assert metrics["steps"]["research"]["metrics"] == {
+        "input_tokens": 12,
+        "output_tokens": 8,
+        "total_tokens": 20,
+    }
+
+    reconstructed = WorkflowCompletedEvent.from_dict(event.to_dict())
+
+    assert isinstance(reconstructed.metrics, WorkflowMetrics)
+    assert reconstructed.metrics.steps["research"].metrics is not None
+    assert reconstructed.metrics.steps["research"].metrics.total_tokens == 20
+
+
 def test_agent_session_state_in_run_output():
     """Test that RunOutput includes session_state field."""
     from agno.run.agent import RunOutput
@@ -103,6 +139,73 @@ def test_agent_session_state_in_run_output():
     # Test deserialization
     reconstructed = RunOutput.from_dict(run_dict)
     assert reconstructed.session_state == {"key": "value", "counter": 10}
+
+
+def test_run_completed_event_includes_files():
+    """Test that RunCompletedEvent includes files in stream serialization."""
+    from agno.media import File
+    from agno.run.agent import RunOutput
+    from agno.utils.events import create_run_completed_event
+
+    run_output = RunOutput(
+        run_id="test_123",
+        agent_id="agent_456",
+        agent_name="TestAgent",
+        files=[
+            File(
+                id="file-1",
+                filename="report.pdf",
+                mime_type="application/pdf",
+                content="base64content",
+                file_type="pdf",
+                size=1024,
+            )
+        ],
+    )
+
+    event = create_run_completed_event(from_run_response=run_output)
+
+    assert event.files is not None
+    assert len(event.files) == 1
+    assert event.files[0].filename == "report.pdf"
+
+    event_dict = event.to_dict()
+    assert "files" in event_dict
+    assert len(event_dict["files"]) == 1
+    assert event_dict["files"][0]["filename"] == "report.pdf"
+
+    reconstructed = type(event).from_dict(event_dict)
+    assert reconstructed.files is not None
+    assert len(reconstructed.files) == 1
+    assert reconstructed.files[0].filename == "report.pdf"
+
+
+def test_run_content_event_includes_image():
+    """RunContentEvent must serialize its singular `image` field in to_dict().
+
+    `image` is excluded from the asdict() call but, unlike its sibling media
+    fields (images/videos/audio/response_audio), was never re-added, so it was
+    silently dropped from to_dict()/to_json() (e.g. in AgentOS SSE streaming).
+    """
+    from agno.media import Image
+    from agno.run.agent import RunContentEvent
+
+    event = RunContentEvent(
+        content="hello",
+        image=Image(id="img-1", url="https://example.com/a.png"),
+    )
+
+    assert event.image is not None
+
+    event_dict = event.to_dict()
+    assert "image" in event_dict
+    assert event_dict["image"]["id"] == "img-1"
+    assert event_dict["image"]["url"] == "https://example.com/a.png"
+
+    reconstructed = type(event).from_dict(event_dict)
+    assert isinstance(reconstructed.image, Image)
+    assert reconstructed.image.id == "img-1"
+    assert reconstructed.image.url == "https://example.com/a.png"
 
 
 def test_agent_session_state_in_completed_event():
@@ -144,6 +247,30 @@ def test_team_session_state_in_run_output():
     # Test deserialization
     reconstructed = TeamRunOutput.from_dict(team_dict)
     assert reconstructed.session_state == {"phase": "planning", "tasks": 3}
+
+
+def test_team_run_output_to_dict_accepts_serialized_media_dicts():
+    """Test that TeamRunOutput.to_dict() tolerates already-serialized dicts in media fields."""
+    from agno.run.team import TeamRunOutput
+
+    team_output = TeamRunOutput(
+        run_id="team_123",
+        images=[{"url": "https://example.com/image.png"}],
+        videos=[{"url": "https://example.com/video.mp4"}],
+        audio=[{"url": "https://example.com/audio.mp3"}],
+        files=[{"url": "https://example.com/report.pdf"}],
+        response_audio={"id": "audio_123", "content": "base64-audio"},
+        member_responses=[{"run_id": "member_123", "content": "done"}],
+    )
+
+    team_dict = team_output.to_dict()
+
+    assert team_dict["images"] == [{"url": "https://example.com/image.png"}]
+    assert team_dict["videos"] == [{"url": "https://example.com/video.mp4"}]
+    assert team_dict["audio"] == [{"url": "https://example.com/audio.mp3"}]
+    assert team_dict["files"] == [{"url": "https://example.com/report.pdf"}]
+    assert team_dict["response_audio"] == {"id": "audio_123", "content": "base64-audio"}
+    assert team_dict["member_responses"] == [{"run_id": "member_123", "content": "done"}]
 
 
 def test_team_session_state_in_completed_event():

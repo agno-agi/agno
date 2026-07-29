@@ -286,23 +286,12 @@ async def _on_run_paused(chunk: BaseRunOutputEvent, state: StreamState, stream: 
     state.paused_event = cast(Union["AgentRunPausedEvent", "TeamRunPausedEvent"], chunk)
     state.terminal_status = "in_progress"
 
-    from agno.os.interfaces.slack.types import tool_name
-
-    requirements = list(getattr(chunk, "active_requirements", None) or [])
-    for req in requirements:
-        req_id = getattr(req, "id", None) or ""
-        key = f"pause_req_{req_id}"
-        if key in state.task_cards:
-            continue
-        tool_label = tool_name(req)
-        # "complete" required — non-complete at stream.stop renders Slack error icon
-        state.track_task(key, tool_label, "complete")
-        await _emit_task(stream, key, tool_label, "complete")
-
     if not state.has_content() and state.stream_chars_sent == 0 and not state.task_cards:
         await stream.append(markdown_text="_Reviewing request…_")
 
-    return True
+    # Don't break early — let generator drain naturally to avoid GeneratorExit.
+    # The generator returns immediately after RunPausedEvent, so no extra events arrive.
+    return False
 
 
 # =============================================================================
@@ -429,7 +418,7 @@ HANDLERS: Dict[str, _EventHandler] = {
     RunEvent.run_completed.value: _on_run_completed,
     RunEvent.run_error.value: _on_run_error,
     RunEvent.run_cancelled.value: _on_run_error,  # Treat cancellation as terminal error
-    # HITL pause — stream ends, router posts Block Kit approval card separately
+    # HITL pause — router posts approval card separately since appendStream rejects Block Kit
     RunEvent.run_paused.value: _on_run_paused,
     TeamRunEvent.run_paused.value: _on_run_paused,
     # -------------------------------------------------------------------------

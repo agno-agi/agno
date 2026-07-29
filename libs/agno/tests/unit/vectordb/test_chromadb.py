@@ -1294,9 +1294,7 @@ def test_sync_async_id_consistency(mock_embedder):
         ]
         for doc in docs_async:
             doc.embedding = mock_embedding
-        asyncio.get_event_loop().run_until_complete(
-            db_async.async_insert(content_hash=content_hash, documents=docs_async)
-        )
+        asyncio.run(db_async.async_insert(content_hash=content_hash, documents=docs_async))
         async_ids = sorted(db_async._collection.get()["ids"])
         db_async.drop()
 

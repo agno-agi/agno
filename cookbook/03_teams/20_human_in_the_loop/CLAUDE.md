@@ -17,6 +17,7 @@ Instructions for Claude Code when testing the Team HITL cookbooks.
 .venvs/demo/bin/python cookbook/03_teams/20_human_in_the_loop/confirmation_required.py
 .venvs/demo/bin/python cookbook/03_teams/20_human_in_the_loop/external_tool_execution.py
 .venvs/demo/bin/python cookbook/03_teams/20_human_in_the_loop/user_input_required.py
+.venvs/demo/bin/python cookbook/03_teams/20_human_in_the_loop/multi_round_user_input.py
 ```
 
 **Test results file:**
@@ -39,6 +40,7 @@ Each script is interactive and requires terminal input:
 - **confirmation_required.py** -- Prompts y/n to approve/deny a weather lookup
 - **external_tool_execution.py** -- Prompts for the result of an external email send
 - **user_input_required.py** -- Prompts for destination and budget values
+- **multi_round_user_input.py** -- Prompts for name, then cuisine/budget (2 HITL rounds)
 
 ### 3. Expected Behavior
 

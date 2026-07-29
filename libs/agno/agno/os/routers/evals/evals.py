@@ -413,7 +413,9 @@ def attach_routes(
             raise HTTPException(status_code=400, detail="Only one of agent_id or team_id must be provided")
 
         if eval_run_input.agent_id:
-            agent = get_agent_by_id(agent_id=eval_run_input.agent_id, agents=agents)
+            # create_fresh: the eval mutates the resolved agent (e.g. agent.model below), so
+            # it must run on a per-request deep_copy, never the shared singleton instance.
+            agent = get_agent_by_id(agent_id=eval_run_input.agent_id, agents=agents, create_fresh=True)
             if not agent:
                 raise HTTPException(status_code=404, detail=f"Agent with id '{eval_run_input.agent_id}' not found")
             if isinstance(agent, RemoteAgent):
@@ -441,7 +443,8 @@ def attach_routes(
             team = None
 
         elif eval_run_input.team_id:
-            team = get_team_by_id(team_id=eval_run_input.team_id, teams=teams)
+            # create_fresh: mirror the agent path -- eval runs must not share the singleton.
+            team = get_team_by_id(team_id=eval_run_input.team_id, teams=teams, create_fresh=True)
             if not team:
                 raise HTTPException(status_code=404, detail=f"Team with id '{eval_run_input.team_id}' not found")
             if isinstance(team, RemoteTeam):

@@ -39,7 +39,7 @@ class LanceDb(VectorDb):
         distance: The distance metric to use when searching for documents.
         nprobes: The number of probes to use when searching for documents.
         reranker: The reranker to use when reranking documents.
-        use_tantivy: Whether to use Tantivy for full text search.
+        use_tantivy: Deprecated. LanceDB now uses native FTS. This parameter is ignored.
         on_bad_vectors: What to do if the vector is bad. One of "error", "drop", "fill", "null".
         fill_value: The value to fill the vector with if on_bad_vectors is "fill".
     """
@@ -61,7 +61,7 @@ class LanceDb(VectorDb):
         distance: Distance = Distance.cosine,
         nprobes: Optional[int] = None,
         reranker: Optional[Reranker] = None,
-        use_tantivy: bool = True,
+        use_tantivy: bool = False,
         on_bad_vectors: Optional[str] = None,  # One of "error", "drop", "fill", "null".
         fill_value: Optional[float] = None,  # Only used if on_bad_vectors is "fill"
     ):
@@ -161,15 +161,9 @@ class LanceDb(VectorDb):
         self.on_bad_vectors: Optional[str] = on_bad_vectors
         self.fill_value: Optional[float] = fill_value
         self.fts_index_exists = False
-        self.use_tantivy = use_tantivy
 
-        if self.use_tantivy and (self.search_type in [SearchType.keyword, SearchType.hybrid]):
-            try:
-                import tantivy  # noqa: F401
-            except ImportError:
-                raise ImportError(
-                    "Please install tantivy-py `pip install tantivy` to use the full text search feature."  # noqa: E501
-                )
+        if use_tantivy:
+            log_warning("use_tantivy is deprecated. LanceDB now uses native FTS. This parameter is ignored.")
 
         log_debug(f"Initialized LanceDb with table: '{self.table_name}'")
 
@@ -615,7 +609,7 @@ class LanceDb(VectorDb):
             return []
 
         if not self.fts_index_exists:
-            self.table.create_fts_index("payload", use_tantivy=self.use_tantivy, replace=True)
+            self.table.create_fts_index("payload", replace=True)
             self.fts_index_exists = True
 
         results = (
@@ -641,7 +635,7 @@ class LanceDb(VectorDb):
             return []
 
         if not self.fts_index_exists:
-            self.table.create_fts_index("payload", use_tantivy=self.use_tantivy, replace=True)
+            self.table.create_fts_index("payload", replace=True)
             self.fts_index_exists = True
 
         results = self.table.search(
