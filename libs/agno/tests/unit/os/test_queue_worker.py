@@ -247,6 +247,331 @@ class TestDrain:
         assert "shutdown" in job["error"].lower()
 
 
+class TestStreamingExecution:
+    @pytest.mark.asyncio
+    async def test_streaming_job_publishes_events_and_completes(self):
+        """A queued streaming job: worker iterates the component's stream,
+        publishes every event to the event stream, run completes, and a tail
+        (the client's SSE connection on any replica) sees it all."""
+        import agno.os.event_streams as es_mod
+        from agno.job_queue.store import InMemoryQueueStore
+        from agno.os.event_streams import InMemoryEventStream, set_event_stream
+        from agno.os.managers import EventsBuffer, SSESubscriberManager
+        from agno.run.base import RunStatus
+
+        original = es_mod._event_stream
+        stream = InMemoryEventStream(events_buffer=EventsBuffer(), subscriber_manager=SSESubscriberManager())
+        set_event_stream(stream)
+        try:
+            store = InMemoryQueueStore()
+            from agno.db.schemas.jobs import QueuedJob
+
+            job = QueuedJob(
+                id="sr1",
+                component_type="agent",
+                component_id="a1",
+                session_id="s1",
+                payload={"input": "hi", "stream": True},
+            ).to_dict()
+            await store.enqueue_job(job)
+
+            class FakeEvent:
+                def __init__(self, content):
+                    self.event = "RunContent"
+                    self.content = content
+                    self.run_id = "sr1"
+
+                def to_dict(self):
+                    return {"event": self.event, "content": self.content, "run_id": self.run_id}
+
+            class FakeOutput:
+                run_id = "sr1"
+                status = RunStatus.completed
+
+            class FakeAgent:
+                id = "a1"
+                db = None
+
+                async def arun(self, **kwargs):
+                    assert kwargs["stream"] is True
+                    for c in ("a", "b", "c"):
+                        yield FakeEvent(c)
+                    yield FakeOutput()
+
+                def arun_wrapper(self, **kwargs):
+                    return self.arun(**kwargs)
+
+            from agno.job_queue.config import QueueConfig
+            from agno.os.job_queue import QueueWorker
+
+            worker = QueueWorker(
+                store=store,
+                resolve_component=lambda t, i: FakeAgent(),
+                config=QueueConfig(durable=True, poll_interval=0.05, lock_grace_seconds=60),
+            )
+            claimed = await store.claim_job(worker.worker_id)
+            await worker._execute_claimed(claimed)
+
+            assert (await store.get_job("sr1"))["status"] == "completed"
+            assert await stream.get_event_count("sr1") == 3
+            assert await stream.get_run_status("sr1") == RunStatus.completed
+
+            # A late tail still replays everything (the resume path's view)
+            received = [idx async for idx, _sse in stream.tail("sr1")]
+            assert received == [0, 1, 2]
+        finally:
+            es_mod._event_stream = original
+
+    @pytest.mark.asyncio
+    async def test_streaming_retry_attempt_cleans_previous_stream(self):
+        import agno.os.event_streams as es_mod
+        from agno.os.event_streams import InMemoryEventStream, set_event_stream
+        from agno.os.managers import EventsBuffer, SSESubscriberManager
+        from agno.run.base import RunStatus
+
+        original = es_mod._event_stream
+        stream = InMemoryEventStream(events_buffer=EventsBuffer(), subscriber_manager=SSESubscriberManager())
+        set_event_stream(stream)
+        try:
+            # Simulate attempt-1 leftovers
+            await stream.register_run("sr1", RunStatus.running)
+            from agno.run.agent import RunContentEvent
+
+            await stream.add_event("sr1", RunContentEvent(content="stale", run_id="sr1"))
+
+            class FakeOutput:
+                run_id = "sr1"
+                status = RunStatus.completed
+
+            class FakeAgent:
+                id = "a1"
+                db = None
+
+                async def arun(self, **kwargs):
+                    yield FakeOutput()
+
+            from agno.job_queue.config import QueueConfig
+            from agno.job_queue.store import InMemoryQueueStore
+            from agno.os.job_queue import QueueWorker
+
+            worker = QueueWorker(
+                store=InMemoryQueueStore(),
+                resolve_component=lambda t, i: FakeAgent(),
+                config=QueueConfig(durable=True),
+            )
+            job = {"id": "sr1", "attempt": 2, "session_id": "s1", "payload": {"input": "x", "stream": True}}
+            await worker._execute_streaming(FakeAgent(), job)
+            # Stale attempt-1 events were cleaned before re-execution
+            assert await stream.get_event_count("sr1") == 0
+            assert await stream.get_run_status("sr1") == RunStatus.completed
+        finally:
+            es_mod._event_stream = original
+
+
+class TestStreamViewTermination:
+    @pytest.mark.asyncio
+    async def test_swept_streaming_job_terminates_live_tails(self):
+        """Worker dies mid-stream, sweep fails the job: connected tails must
+        end immediately via the event stream, not hang until TTL expiry."""
+        import agno.os.event_streams as es_mod
+        from agno.job_queue.config import QueueConfig
+        from agno.job_queue.store import InMemoryQueueStore
+        from agno.os.event_streams import InMemoryEventStream, set_event_stream
+        from agno.os.job_queue import QueueWorker
+        from agno.os.managers import EventsBuffer, SSESubscriberManager
+        from agno.run.base import RunStatus
+
+        original = es_mod._event_stream
+        stream = InMemoryEventStream(events_buffer=EventsBuffer(), subscriber_manager=SSESubscriberManager())
+        set_event_stream(stream)
+        try:
+            # A streaming run mid-flight when its worker died
+            await stream.register_run("sr1", RunStatus.running)
+
+            worker = QueueWorker(
+                store=InMemoryQueueStore(),
+                resolve_component=lambda t, i: None,
+                config=QueueConfig(durable=True),
+            )
+            job = {"id": "sr1", "session_id": "s1", "payload": {"stream": True}}
+            await worker._terminate_stream_view(job)
+
+            assert await stream.get_run_status("sr1") == RunStatus.error
+            received = [idx async for idx, _sse in stream.tail("sr1")]
+            assert received == []  # tail ends immediately, no hang
+
+            # Non-streaming jobs never touch the event stream
+            await stream.register_run("ns1", RunStatus.running)
+            await worker._terminate_stream_view({"id": "ns1", "session_id": "s1", "payload": {}})
+            assert await stream.get_run_status("ns1") == RunStatus.running
+        finally:
+            es_mod._event_stream = original
+
+
+class TestStreamingRetryVisibility:
+    @pytest.mark.asyncio
+    async def test_retryable_failure_does_not_close_tails(self):
+        """A non-final failed attempt must NOT publish the terminal sentinel:
+        a concurrently tailing client keeps waiting and receives the retry's
+        events with monotonic (non-rewound) indices."""
+        import agno.os.event_streams as es_mod
+        from agno.job_queue.config import QueueConfig
+        from agno.job_queue.store import InMemoryQueueStore
+        from agno.os.event_streams import InMemoryEventStream, set_event_stream
+        from agno.os.job_queue import QueueWorker
+        from agno.os.managers import EventsBuffer, SSESubscriberManager
+        from agno.run.base import RunStatus
+
+        original = es_mod._event_stream
+        stream = InMemoryEventStream(events_buffer=EventsBuffer(), subscriber_manager=SSESubscriberManager())
+        set_event_stream(stream)
+        try:
+
+            class FakeEvent:
+                def __init__(self, content):
+                    self.event = "RunContent"
+                    self.content = content
+                    self.run_id = "rr1"
+
+                def to_dict(self):
+                    return {"event": self.event, "content": self.content, "run_id": self.run_id}
+
+            class FakeOutput:
+                run_id = "rr1"
+                status = RunStatus.completed
+
+            class FlakyAgent:
+                id = "a1"
+                db = None
+                calls = 0
+
+                async def arun(self, **kwargs):
+                    FlakyAgent.calls += 1
+                    if FlakyAgent.calls == 1:
+                        yield FakeEvent("attempt1-a")
+                        raise RuntimeError("transient")
+                    yield FakeEvent("real-a")
+                    yield FakeEvent("real-b")
+                    yield FakeOutput()
+
+            store = InMemoryQueueStore()
+            await store.enqueue_job(
+                {
+                    "id": "rr1",
+                    "component_type": "agent",
+                    "component_id": "a1",
+                    "session_id": "s1",
+                    "job_type": "run",
+                    "payload": {"input": "hi", "kwargs": {}, "stream": True},
+                    "status": "queued",
+                    "attempt": 0,
+                    "max_attempts": 2,
+                    "available_at": 0,
+                    "created_at": 0,
+                }
+            )
+            worker = QueueWorker(
+                store=store,
+                resolve_component=lambda t, i: FlakyAgent(),
+                config=QueueConfig(durable=True, poll_interval=0.05, lock_grace_seconds=60, retry_delay_seconds=0),
+            )
+
+            # Attempt 1: fails retryably - stream must stay non-terminal
+            claimed = await store.claim_job(worker.worker_id)
+            await worker._execute_claimed(claimed)
+            assert await stream.get_run_status("rr1") == RunStatus.running, (
+                "retryable failure must not publish the terminal sentinel"
+            )
+
+            # Attempt 2: succeeds - indices continue past attempt 1's
+            claimed2 = await store.claim_job(worker.worker_id)
+            assert claimed2 is not None, "job must be reclaimable for attempt 2"
+            await worker._execute_claimed(claimed2)
+            assert (await store.get_job("rr1"))["status"] == "completed"
+
+            # A client that saw attempt-1 index 0 and reconnects: receives the
+            # real output (indices 1, 2), filtered by nothing
+            received = [idx async for idx, _sse in stream.tail("rr1", last_event_index=0)]
+            assert received == [1, 2], f"expected retry events at continued indices, got {received}"
+        finally:
+            es_mod._event_stream = original
+
+
+class TestTimeoutRetryVisibility:
+    @pytest.mark.asyncio
+    async def test_timeout_with_budget_keeps_stream_open(self):
+        """kausmeows repro: attempt-1 timeout with max_attempts=2 must NOT
+        write a terminal sentinel - tails would close before the retry runs."""
+        import agno.os.event_streams as es_mod
+        from agno.os.event_streams import InMemoryEventStream, set_event_stream
+        from agno.os.managers import EventsBuffer, SSESubscriberManager
+
+        original = es_mod._event_stream
+        stream = InMemoryEventStream(events_buffer=EventsBuffer(), subscriber_manager=SSESubscriberManager())
+        set_event_stream(stream)
+        try:
+            from agno.job_queue.config import QueueConfig
+            from agno.job_queue.store import InMemoryQueueStore
+            from agno.os.job_queue import QueueWorker
+
+            class SlowEvent:
+                def __init__(self):
+                    self.event = "RunContent"
+                    self.content = "x"
+                    self.run_id = "to1"
+
+                def to_dict(self):
+                    return {"event": self.event, "content": self.content, "run_id": self.run_id}
+
+            class SlowAgent:
+                id = "a1"
+                db = None
+                calls = 0
+
+                async def arun(self, **kwargs):
+                    SlowAgent.calls += 1
+                    if SlowAgent.calls == 1:
+                        yield SlowEvent()
+                        await asyncio.sleep(10)  # exceeds timeout
+                    else:
+                        yield SlowEvent()
+
+            store = InMemoryQueueStore()
+            await store.enqueue_job(
+                {
+                    "id": "to1",
+                    "component_type": "agent",
+                    "component_id": "a1",
+                    "session_id": "s1",
+                    "job_type": "run",
+                    "payload": {"input": "hi", "kwargs": {}, "stream": True},
+                    "status": "queued",
+                    "attempt": 0,
+                    "max_attempts": 2,
+                    "available_at": 0,
+                    "created_at": 0,
+                }
+            )
+            worker = QueueWorker(
+                store=store,
+                resolve_component=lambda t, i: SlowAgent(),
+                config=QueueConfig(
+                    durable=True, poll_interval=0.05, lock_grace_seconds=60, retry_delay_seconds=0, timeout_seconds=1
+                ),
+            )
+            claimed = await store.claim_job(worker.worker_id)
+            await worker._execute_claimed(claimed)
+
+            from agno.run.base import RunStatus
+
+            assert await stream.get_run_status("to1") == RunStatus.running, (
+                "timed-out attempt with retry budget must not terminal the stream"
+            )
+            assert (await store.get_job("to1"))["status"] == "queued", "job must be retryable"
+        finally:
+            es_mod._event_stream = original
+
+
 class TestCancelQueued:
     @pytest.mark.asyncio
     async def test_acancel_queued_tombstones_and_terminalizes(self):
