@@ -157,6 +157,8 @@ class SlackTools(Toolkit):
         enable_list_users: bool = False,
         enable_get_user_info: bool = False,
         enable_get_channel_info: bool = False,
+        enable_get_bot_info: bool = False,
+        enable_get_team_info: bool = False,
         all: bool = False,
         ssl: Optional[SSLContext] = None,
         max_file_size: int = 1_073_741_824,  # 1GB
@@ -186,6 +188,8 @@ class SlackTools(Toolkit):
             enable_list_users (bool): Whether to enable the list_users tool. Defaults to False.
             enable_get_user_info (bool): Whether to enable the get_user_info tool. Defaults to False.
             enable_get_channel_info (bool): Whether to enable the get_channel_info tool. Defaults to False.
+            enable_get_bot_info (bool): Whether to enable the get_bot_info tool. Defaults to False.
+            enable_get_team_info (bool): Whether to enable the get_team_info tool. Requires team:read scope. Defaults to False.
             all (bool): Whether to enable all tools. Defaults to False.
             ssl (SSLContext): Optional SSL context for the Slack WebClient. Defaults to None.
             max_file_size (int): Maximum file size in bytes for uploads and downloads. Defaults to 1GB.
@@ -254,6 +258,10 @@ class SlackTools(Toolkit):
             tools.append(self.get_user_info)
         if enable_get_channel_info or all:
             tools.append(self.get_channel_info)
+        if enable_get_bot_info or all:
+            tools.append(self.get_bot_info)
+        if enable_get_team_info or all:
+            tools.append(self.get_team_info)
 
         # Build tool instructions dynamically based on enabled tools
         if kwargs.get("instructions") is None:
@@ -290,12 +298,37 @@ class SlackTools(Toolkit):
         self, msg: Dict[str, Any], user_names: Dict[str, str], channel: _ResolvedChannel | None = None
     ) -> Dict[str, Any]:
         user_id = msg.get("user", "")
+        bot_id = msg.get("bot_id", "")
+        is_bot = msg.get("subtype") == "bot_message" or bool(bot_id)
+
         user_label = msg.get("username") or user_names.get(user_id, user_id) or "unknown"
+
         entry: Dict[str, Any] = {
             "text": msg.get("text", ""),
             "user": user_label,
             "ts": msg.get("ts", ""),
         }
+
+        # Include user_id for @mentions and identity tracking
+        if user_id:
+            entry["user_id"] = user_id
+        if bot_id:
+            entry["bot_id"] = bot_id
+        if is_bot:
+            entry["is_bot"] = True
+
+        # App ID for identifying which Slack app sent the message
+        if msg.get("app_id"):
+            entry["app_id"] = msg["app_id"]
+
+        # Thread context for reply messages
+        if msg.get("parent_user_id"):
+            entry["parent_user_id"] = msg["parent_user_id"]
+
+        # Team ID for multi-workspace context
+        if msg.get("team"):
+            entry["team_id"] = msg["team"]
+
         if channel is not None:
             entry["channel_id"] = channel.id
             if channel.name:
@@ -793,17 +826,22 @@ class SlackTools(Toolkit):
             response = self._user_client.search_messages(query=query, count=min(limit, 100))  # type: ignore[union-attr]
             message_results = cast(Dict[str, Any], response.get("messages") or {})
             matches = cast(List[Dict[str, Any]], message_results.get("matches") or [])
-            messages = [
-                {
+            messages = []
+            for msg in matches:
+                entry: Dict[str, Any] = {
                     "text": msg.get("text", ""),
-                    "user": msg.get("user", "unknown"),
+                    "user": msg.get("username") or msg.get("user", "unknown"),
                     "channel_id": msg.get("channel", {}).get("id", ""),
                     "channel_name": msg.get("channel", {}).get("name", ""),
                     "ts": msg.get("ts", ""),
                     "permalink": msg.get("permalink", ""),
                 }
-                for msg in matches
-            ]
+                # Include user_id for @mentions and identity tracking
+                if msg.get("user"):
+                    entry["user_id"] = msg["user"]
+                if msg.get("team"):
+                    entry["team_id"] = msg["team"]
+                messages.append(entry)
             return json.dumps({"count": len(messages), "messages": messages})
         except SlackApiError as e:
             logger.exception("Error searching messages")
@@ -1008,3 +1046,64 @@ class SlackTools(Toolkit):
                     hint="Invite the bot to the channel, or pass a channel ID the bot can read.",
                 )
             )
+
+    def get_bot_info(self, bot_id: str) -> str:
+        """Get detailed information about a Slack bot by its bot ID.
+
+        Use this to look up bot details when you see a bot_id in message data.
+        Returns the bot's name, app_id, and associated user_id.
+
+        Args:
+            bot_id (str): The Slack bot ID to look up (e.g., B0B906L8V63).
+
+        Returns:
+            str: A JSON string containing the bot's ID, name, app_id, user_id, and deletion status.
+        """
+        try:
+            response = cast(Dict[str, Any], self.client.bots_info(bot=bot_id))
+            bot = cast(Dict[str, Any], response.get("bot") or {})
+            return json.dumps(
+                {
+                    "id": bot.get("id", ""),
+                    "name": bot.get("name", ""),
+                    "app_id": bot.get("app_id", ""),
+                    "user_id": bot.get("user_id", ""),
+                    "deleted": bot.get("deleted", False),
+                }
+            )
+        except SlackApiError as e:
+            logger.exception("Error getting bot info")
+            return json.dumps({"error": str(e)})
+
+    def get_team_info(self, team_id: Optional[str] = None) -> str:
+        """Get information about a Slack workspace (team).
+
+        Use this to look up workspace details when you see a team_id in message data.
+        Requires the team:read OAuth scope.
+
+        Args:
+            team_id (str): The Slack team/workspace ID to look up. If not provided, returns info for the current workspace.
+
+        Returns:
+            str: A JSON string containing the workspace's ID, name, domain, and email domain.
+        """
+        try:
+            kwargs: Dict[str, Any] = {}
+            if team_id:
+                kwargs["team"] = team_id
+            response = cast(Dict[str, Any], self.client.team_info(**kwargs))
+            team = cast(Dict[str, Any], response.get("team") or {})
+            return json.dumps(
+                {
+                    "id": team.get("id", ""),
+                    "name": team.get("name", ""),
+                    "domain": team.get("domain", ""),
+                    "email_domain": team.get("email_domain", ""),
+                }
+            )
+        except SlackApiError as e:
+            error_code = e.response.get("error", "") if getattr(e, "response", None) else ""
+            if error_code == "missing_scope":
+                return json.dumps({"error": "missing_scope", "hint": "Add the team:read scope to your Slack app."})
+            logger.exception("Error getting team info")
+            return json.dumps({"error": str(e)})
