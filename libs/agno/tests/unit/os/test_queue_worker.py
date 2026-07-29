@@ -254,9 +254,9 @@ class TestStreamingExecution:
         publishes every event to the event stream, run completes, and a tail
         (the client's SSE connection on any replica) sees it all."""
         import agno.os.event_streams as es_mod
+        from agno.job_queue.store import InMemoryQueueStore
         from agno.os.event_streams import InMemoryEventStream, set_event_stream
         from agno.os.managers import EventsBuffer, SSESubscriberManager
-        from agno.queue.store import InMemoryQueueStore
         from agno.run.base import RunStatus
 
         original = es_mod._event_stream
@@ -301,8 +301,8 @@ class TestStreamingExecution:
                 def arun_wrapper(self, **kwargs):
                     return self.arun(**kwargs)
 
-            from agno.os.queue import QueueWorker
-            from agno.queue.config import QueueConfig
+            from agno.job_queue.config import QueueConfig
+            from agno.os.job_queue import QueueWorker
 
             worker = QueueWorker(
                 store=store,
@@ -350,9 +350,9 @@ class TestStreamingExecution:
                 async def arun(self, **kwargs):
                     yield FakeOutput()
 
-            from agno.os.queue import QueueWorker
-            from agno.queue.config import QueueConfig
-            from agno.queue.store import InMemoryQueueStore
+            from agno.job_queue.config import QueueConfig
+            from agno.job_queue.store import InMemoryQueueStore
+            from agno.os.job_queue import QueueWorker
 
             worker = QueueWorker(
                 store=InMemoryQueueStore(),
@@ -374,11 +374,11 @@ class TestStreamViewTermination:
         """Worker dies mid-stream, sweep fails the job: connected tails must
         end immediately via the event stream, not hang until TTL expiry."""
         import agno.os.event_streams as es_mod
+        from agno.job_queue.config import QueueConfig
+        from agno.job_queue.store import InMemoryQueueStore
         from agno.os.event_streams import InMemoryEventStream, set_event_stream
+        from agno.os.job_queue import QueueWorker
         from agno.os.managers import EventsBuffer, SSESubscriberManager
-        from agno.os.queue import QueueWorker
-        from agno.queue.config import QueueConfig
-        from agno.queue.store import InMemoryQueueStore
         from agno.run.base import RunStatus
 
         original = es_mod._event_stream
