@@ -1,6 +1,7 @@
 import json
+import urllib.request
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 from agno.tools import Toolkit
 from agno.utils.log import log_debug, logger
@@ -19,37 +20,37 @@ except ImportError:
 class ArxivTools(Toolkit):
     def __init__(
         self,
-        enable_search_arxiv: bool = True,
-        enable_read_arxiv_papers: bool = True,
-        all: bool = False,
         download_dir: Optional[Path] = None,
+        search_arxiv: bool = True,
+        read_arxiv_papers: bool = True,
+        all: bool = False,
         **kwargs,
     ):
         self.client: arxiv.Client = arxiv.Client()
         self.download_dir: Path = download_dir or Path(__file__).parent.joinpath("arxiv_pdfs")
 
-        tools: List[Any] = []
-        if all or enable_search_arxiv:
+        tools: List[Callable] = []
+        if all or search_arxiv:
             tools.append(self.search_arxiv_and_return_articles)
-        if all or enable_read_arxiv_papers:
+        if all or read_arxiv_papers:
             tools.append(self.read_arxiv_papers)
 
         super().__init__(name="arxiv_tools", tools=tools, **kwargs)
 
     def search_arxiv_and_return_articles(self, query: str, num_articles: int = 10) -> str:
-        """Use this function to search arXiv for a query and return the top articles.
+        """Search arXiv for a query and return the top articles.
 
         Args:
-            query (str): The query to search arXiv for.
-            num_articles (int, optional): The number of articles to return. Defaults to 10.
-        Returns:
-            str: A JSON of the articles with title, id, authors, pdf_url and summary.
-        """
+            query: The search query.
+            num_articles: Number of articles to return (default 10).
 
+        Returns:
+            JSON array of articles with title, id, authors, pdf_url, summary.
+        """
         articles = []
         log_debug(f"Searching arxiv for: {query}")
         for result in self.client.results(
-            search=arxiv.Search(
+            arxiv.Search(
                 query=query,
                 max_results=num_articles,
                 sort_by=arxiv.SortCriterion.Relevance,
@@ -73,26 +74,24 @@ class ArxivTools(Toolkit):
                 articles.append(article)
             except Exception:
                 logger.exception("Error processing article")
-        return json.dumps(articles, indent=4)
+        return json.dumps(articles)
 
     def read_arxiv_papers(self, id_list: List[str], pages_to_read: Optional[int] = None) -> str:
-        """Use this function to read a list of arxiv papers and return the content.
+        """Download and read arxiv papers by ID.
 
         Args:
-            id_list (list, str): The list of `id` of the papers to add to the knowledge base.
-                    Should be of the format: ["2103.03404v1", "2103.03404v2"]
-            pages_to_read (int, optional): The number of pages to read from the paper.
-                    None means read all pages. Defaults to None.
-        Returns:
-            str: JSON of the papers.
-        """
+            id_list: Paper IDs, e.g. ["2103.03404v1", "2103.03404v2"].
+            pages_to_read: Max pages to extract (None = all).
 
+        Returns:
+            JSON array of papers with metadata and content.
+        """
         download_dir = self.download_dir
         download_dir.mkdir(parents=True, exist_ok=True)
 
         articles = []
         log_debug(f"Searching arxiv for: {id_list}")
-        for result in self.client.results(search=arxiv.Search(id_list=id_list)):
+        for result in self.client.results(arxiv.Search(id_list=id_list)):
             try:
                 article: Dict[str, Any] = {
                     "title": result.title,
@@ -108,20 +107,20 @@ class ArxivTools(Toolkit):
                     "comment": result.comment,
                 }
                 if result.pdf_url:
+                    # Download PDF (arxiv 4.0 removed download_pdf method)
+                    pdf_filename = f"{result.get_short_id().replace('/', '_')}.pdf"
+                    pdf_path = download_dir / pdf_filename
                     log_debug(f"Downloading: {result.pdf_url}")
-                    pdf_path = result.download_pdf(dirpath=str(download_dir))
+                    urllib.request.urlretrieve(result.pdf_url, pdf_path)
                     log_debug(f"To: {pdf_path}")
+
                     pdf_reader = PdfReader(pdf_path)
                     article["content"] = []
                     for page_number, page in enumerate(pdf_reader.pages, start=1):
                         if pages_to_read and page_number > pages_to_read:
                             break
-                        content = {
-                            "page": page_number,
-                            "text": page.extract_text(),
-                        }
-                        article["content"].append(content)
+                        article["content"].append({"page": page_number, "text": page.extract_text()})
                 articles.append(article)
             except Exception:
                 logger.exception("Error processing article")
-        return json.dumps(articles, indent=4)
+        return json.dumps(articles)

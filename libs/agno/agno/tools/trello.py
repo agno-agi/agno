@@ -1,6 +1,6 @@
 import json
 from os import getenv
-from typing import Any, List, Optional
+from typing import Callable, List, Optional
 
 from agno.tools import Toolkit
 from agno.utils.log import log_debug, log_info, logger
@@ -12,18 +12,50 @@ except ImportError:
 
 
 class TrelloTools(Toolkit):
+    """Trello board and card management toolkit.
+
+    Requires py-trello: `pip install py-trello`
+
+    Authentication:
+        Set environment variables TRELLO_API_KEY, TRELLO_API_SECRET, and TRELLO_TOKEN,
+        or pass them as constructor arguments.
+
+        Get credentials at: https://trello.com/app-key
+
+    Args:
+        api_key: Trello API key. Falls back to TRELLO_API_KEY env var.
+        api_secret: Trello API secret. Falls back to TRELLO_API_SECRET env var.
+        token: Trello token. Falls back to TRELLO_TOKEN env var.
+        list_boards: Enable list_boards tool. Defaults to True.
+        get_board_lists: Enable get_board_lists tool. Defaults to True.
+        get_cards: Enable get_cards tool. Defaults to True.
+        create_card: Enable create_card tool. Defaults to False (creates external content).
+        create_board: Enable create_board tool. Defaults to False (creates external content).
+        create_list: Enable create_list tool. Defaults to False (creates external content).
+        move_card: Enable move_card tool. Defaults to False (modifies external content).
+        all: Enable all tools. Defaults to False.
+    """
+
     def __init__(
         self,
         api_key: Optional[str] = None,
         api_secret: Optional[str] = None,
         token: Optional[str] = None,
+        list_boards: bool = True,
+        get_board_lists: bool = True,
+        get_cards: bool = True,
+        create_card: bool = False,
+        create_board: bool = False,
+        create_list: bool = False,
+        move_card: bool = False,
+        all: bool = False,
         **kwargs,
     ):
         self.api_key = api_key or getenv("TRELLO_API_KEY")
         self.api_secret = api_secret or getenv("TRELLO_API_SECRET")
         self.token = token or getenv("TRELLO_TOKEN")
 
-        if not all([self.api_key, self.api_secret, self.token]):
+        if not (self.api_key and self.api_secret and self.token):
             logger.warning("Missing Trello credentials")
 
         try:
@@ -32,15 +64,21 @@ class TrelloTools(Toolkit):
             logger.exception("Error initializing Trello client")
             self.client = None
 
-        tools: List[Any] = [
-            self.create_card,
-            self.get_board_lists,
-            self.move_card,
-            self.get_cards,
-            self.create_board,
-            self.create_list,
-            self.list_boards,
-        ]
+        tools: List[Callable] = []
+        if all or list_boards:
+            tools.append(self.list_boards)
+        if all or get_board_lists:
+            tools.append(self.get_board_lists)
+        if all or get_cards:
+            tools.append(self.get_cards)
+        if all or create_card:
+            tools.append(self.create_card)
+        if all or create_board:
+            tools.append(self.create_board)
+        if all or create_list:
+            tools.append(self.create_list)
+        if all or move_card:
+            tools.append(self.move_card)
 
         super().__init__(name="trello", tools=tools, **kwargs)
 
@@ -59,7 +97,7 @@ class TrelloTools(Toolkit):
         """
         try:
             if not self.client:
-                return "Trello client not initialized"
+                return json.dumps({"error": "Trello client not initialized"})
 
             log_info(f"Creating card {card_title}")
 
@@ -72,14 +110,14 @@ class TrelloTools(Toolkit):
                     break
 
             if not target_list:
-                return f"List '{list_name}' not found on board"
+                return json.dumps({"error": f"List '{list_name}' not found on board"})
 
             card = target_list.add_card(name=card_title, desc=description)
 
             return json.dumps({"id": card.id, "name": card.name, "url": card.url, "list": list_name})
 
         except Exception as e:
-            return f"Error creating card: {e}"
+            return json.dumps({"error": f"Error creating card: {e}"})
 
     def get_board_lists(self, board_id: str) -> str:
         """
@@ -93,7 +131,7 @@ class TrelloTools(Toolkit):
         """
         try:
             if not self.client:
-                return "Trello client not initialized"
+                return json.dumps({"error": "Trello client not initialized"})
 
             log_debug(f"Getting lists for board {board_id}")
 
@@ -105,7 +143,7 @@ class TrelloTools(Toolkit):
             return json.dumps({"lists": lists_info})
 
         except Exception as e:
-            return f"Error getting board lists: {e}"
+            return json.dumps({"error": f"Error getting board lists: {e}"})
 
     def move_card(self, card_id: str, list_id: str) -> str:
         """
@@ -120,7 +158,7 @@ class TrelloTools(Toolkit):
         """
         try:
             if not self.client:
-                return "Trello client not initialized"
+                return json.dumps({"error": "Trello client not initialized"})
 
             log_debug(f"Moving card {card_id} to list {list_id}")
 
@@ -130,7 +168,7 @@ class TrelloTools(Toolkit):
             return json.dumps({"success": True, "card_id": card_id, "new_list_id": list_id})
 
         except Exception as e:
-            return f"Error moving card: {e}"
+            return json.dumps({"error": f"Error moving card: {e}"})
 
     def get_cards(self, list_id: str) -> str:
         """
@@ -144,7 +182,7 @@ class TrelloTools(Toolkit):
         """
         try:
             if not self.client:
-                return "Trello client not initialized"
+                return json.dumps({"error": "Trello client not initialized"})
 
             log_debug(f"Getting cards for list {list_id}")
 
@@ -165,7 +203,7 @@ class TrelloTools(Toolkit):
             return json.dumps({"cards": cards_info})
 
         except Exception as e:
-            return f"Error getting cards: {e}"
+            return json.dumps({"error": f"Error getting cards: {e}"})
 
     def create_board(self, name: str, default_lists: bool = False) -> str:
         """
@@ -180,7 +218,7 @@ class TrelloTools(Toolkit):
         """
         try:
             if not self.client:
-                return "Trello client not initialized"
+                return json.dumps({"error": "Trello client not initialized"})
 
             log_info(f"Creating board {name}")
 
@@ -195,7 +233,7 @@ class TrelloTools(Toolkit):
             )
 
         except Exception as e:
-            return f"Error creating board: {e}"
+            return json.dumps({"error": f"Error creating board: {e}"})
 
     def create_list(self, board_id: str, list_name: str, pos: str = "bottom") -> str:
         """
@@ -211,7 +249,7 @@ class TrelloTools(Toolkit):
         """
         try:
             if not self.client:
-                return "Trello client not initialized"
+                return json.dumps({"error": "Trello client not initialized"})
 
             log_info(f"Creating list {list_name}")
 
@@ -228,7 +266,7 @@ class TrelloTools(Toolkit):
             )
 
         except Exception as e:
-            return f"Error creating list: {e}"
+            return json.dumps({"error": f"Error creating list: {e}"})
 
     def list_boards(self, board_filter: str = "all") -> str:
         """
@@ -243,7 +281,7 @@ class TrelloTools(Toolkit):
         """
         try:
             if not self.client:
-                return "Trello client not initialized"
+                return json.dumps({"error": "Trello client not initialized"})
 
             log_debug(f"Listing boards with filter: {board_filter}")
 
@@ -271,4 +309,4 @@ class TrelloTools(Toolkit):
             )
 
         except Exception as e:
-            return f"Error listing boards: {e}"
+            return json.dumps({"error": f"Error listing boards: {e}"})

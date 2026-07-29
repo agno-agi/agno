@@ -3,8 +3,7 @@ import posixpath
 import shlex
 from os import getenv
 from pathlib import Path
-from textwrap import dedent
-from typing import Any, Dict, List, Optional, Union
+from typing import Callable, Dict, List, Optional, Union
 
 from agno.agent import Agent
 from agno.team import Team
@@ -23,36 +22,99 @@ try:
 except ImportError:
     raise ImportError("`daytona` not installed. Please install using `pip install daytona`")
 
-DEFAULT_INSTRUCTIONS = dedent(
-    """\
-    You have access to a persistent Daytona sandbox for code execution. The sandbox maintains state across interactions.
-    Available tools:
-    - `run_code`: Execute code in the sandbox
-    - `run_shell_command`: Execute shell commands (bash)
-    - `create_file`: Create or update files
-    - `read_file`: Read file contents
-    - `list_files`: List directory contents
-    - `delete_file`: Delete files or directories
-    - `change_directory`: Change the working directory
-    MANDATORY: When users ask for code (Python, JavaScript, TypeScript, etc.), you MUST:
-    1. Write the code
-    2. Execute it using run_code tool
-    3. Show the actual output/results
-    4. Never just provide code without executing it
-    CRITICAL WORKFLOW:
-    1. Before running Python scripts, check if required packages are installed
-    2. Install missing packages with: run_shell_command("pip install package1 package2")
-    3. When running scripts, capture both output AND errors
-    4. If a script produces no output, check for errors or add print statements
-
-    IMPORTANT: Always use single quotes for the content parameter when creating files
-
-    Remember: Your job is to provide working, executed code examples, not just code snippets!
-    """
-)
-
 
 class DaytonaTools(Toolkit):
+    """Toolkit for running code in a Daytona cloud sandbox.
+
+    Args:
+        api_key: Daytona API key. Falls back to DAYTONA_API_KEY env var.
+        api_url: Daytona API URL. Falls back to DAYTONA_API_URL env var.
+        sandbox_id: Existing sandbox ID to use.
+        sandbox_language: Code language for the sandbox.
+        sandbox_target: Target for the sandbox.
+        sandbox_os: Operating system for the sandbox.
+        auto_stop_interval: Auto-stop interval in minutes. Defaults to 60.
+        sandbox_os_user: OS user for the sandbox.
+        sandbox_env_vars: Environment variables for the sandbox.
+        sandbox_labels: Labels for the sandbox.
+        sandbox_public: Whether sandbox is public.
+        organization_id: Organization ID.
+        timeout: Timeout in seconds. Defaults to 300.
+        auto_create_sandbox: Auto-create sandbox if not found. Defaults to True.
+        verify_ssl: Verify SSL certificates. Defaults to False.
+        persistent: Persist sandbox across calls. Defaults to True.
+        instructions: Custom instructions for the toolkit.
+        add_instructions: Add instructions to agent. Defaults to False.
+        run_code: Enable run_code tool. Defaults to False (executes code).
+        run_shell_command: Enable run_shell_command tool. Defaults to False (executes commands).
+        create_file: Enable create_file tool. Defaults to False (writes files).
+        read_file: Enable read_file tool. Defaults to True.
+        list_files: Enable list_files tool. Defaults to True.
+        delete_file: Enable delete_file tool. Defaults to False (destructive).
+        change_directory: Enable change_directory tool. Defaults to True.
+        all: Enable all tools. Defaults to False.
+    """
+
+    @classmethod
+    def _build_instructions(cls, tool_names: List[str]) -> str:
+        """Build instructions based on which tools are actually enabled."""
+        enabled = set(tool_names)
+        sections: List[str] = []
+
+        sections.append(
+            "You have access to a persistent Daytona sandbox. The sandbox maintains state across interactions."
+        )
+
+        # Tool descriptions - only mention enabled tools
+        tool_lines: List[str] = []
+        if "run_code" in enabled:
+            tool_lines.append("- `run_code`: Execute code in the sandbox")
+        if "run_shell_command" in enabled:
+            tool_lines.append("- `run_shell_command`: Execute shell commands (bash)")
+        if "create_file" in enabled:
+            tool_lines.append("- `create_file`: Create or update files")
+        if "read_file" in enabled:
+            tool_lines.append("- `read_file`: Read file contents")
+        if "list_files" in enabled:
+            tool_lines.append("- `list_files`: List directory contents")
+        if "delete_file" in enabled:
+            tool_lines.append("- `delete_file`: Delete files or directories")
+        if "change_directory" in enabled:
+            tool_lines.append("- `change_directory`: Change the working directory")
+
+        if tool_lines:
+            sections.append("Available tools:\n" + "\n".join(tool_lines))
+
+        # Code execution guidance - only if run_code is enabled
+        if "run_code" in enabled:
+            sections.append(
+                "MANDATORY: When users ask for code (Python, JavaScript, TypeScript, etc.), you MUST:\n"
+                "1. Write the code\n"
+                "2. Execute it using run_code tool\n"
+                "3. Show the actual output/results\n"
+                "4. Never just provide code without executing it"
+            )
+
+        # Shell command guidance - only if run_shell_command is enabled
+        if "run_shell_command" in enabled:
+            sections.append(
+                "CRITICAL WORKFLOW:\n"
+                "1. Before running Python scripts, check if required packages are installed\n"
+                '2. Install missing packages with: run_shell_command("pip install package1 package2")\n'
+                "3. When running scripts, capture both output AND errors\n"
+                "4. If a script produces no output, check for errors or add print statements"
+            )
+
+        # File creation guidance - only if create_file is enabled
+        if "create_file" in enabled:
+            sections.append("IMPORTANT: Always use single quotes for the content parameter when creating files")
+
+        # Execution reminder - only if code execution tools are enabled
+        if "run_code" in enabled or "run_shell_command" in enabled:
+            sections.append("Remember: Your job is to provide working, executed code examples, not just code snippets!")
+
+        return "\n\n".join(sections)
+
     def __init__(
         self,
         api_key: Optional[str] = None,
@@ -61,7 +123,7 @@ class DaytonaTools(Toolkit):
         sandbox_language: Optional[CodeLanguage] = None,
         sandbox_target: Optional[str] = None,
         sandbox_os: Optional[str] = None,
-        auto_stop_interval: Optional[int] = 60,  # Stop after 1 hour
+        auto_stop_interval: Optional[int] = 60,
         sandbox_os_user: Optional[str] = None,
         sandbox_env_vars: Optional[Dict[str, str]] = None,
         sandbox_labels: Optional[Dict[str, str]] = None,
@@ -73,6 +135,14 @@ class DaytonaTools(Toolkit):
         persistent: bool = True,
         instructions: Optional[str] = None,
         add_instructions: bool = False,
+        run_code: bool = False,
+        run_shell_command: bool = False,
+        create_file: bool = False,
+        read_file: bool = True,
+        list_files: bool = True,
+        delete_file: bool = False,
+        change_directory: bool = True,
+        all: bool = False,
         **kwargs,
     ):
         self.api_key = api_key or getenv("DAYTONA_API_KEY")
@@ -95,9 +165,6 @@ class DaytonaTools(Toolkit):
         self.persistent = persistent
         self.verify_ssl = verify_ssl
 
-        # Set instructions - use default if none provided
-        self.instructions = instructions or DEFAULT_INSTRUCTIONS
-
         if not self.verify_ssl:
             self._disable_ssl_verification()
 
@@ -109,15 +176,26 @@ class DaytonaTools(Toolkit):
         )
 
         self.daytona = Daytona(self.config)
-        tools: List[Any] = [
-            self.run_code,
-            self.run_shell_command,
-            self.create_file,
-            self.read_file,
-            self.list_files,
-            self.delete_file,
-            self.change_directory,
-        ]
+        tools: List[Callable] = []
+        if all or run_code:
+            tools.append(self.run_code)
+        if all or run_shell_command:
+            tools.append(self.run_shell_command)
+        if all or create_file:
+            tools.append(self.create_file)
+        if all or read_file:
+            tools.append(self.read_file)
+        if all or list_files:
+            tools.append(self.list_files)
+        if all or delete_file:
+            tools.append(self.delete_file)
+        if all or change_directory:
+            tools.append(self.change_directory)
+
+        # Build instructions based on enabled tools, or use custom instructions
+        tool_names = [t.__name__ for t in tools]
+        self.instructions = instructions or self._build_instructions(tool_names)
+
         super().__init__(
             name="daytona_tools",
             tools=tools,

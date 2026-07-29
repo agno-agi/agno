@@ -1,6 +1,6 @@
 import json
 from os import getenv
-from typing import Any, List, Optional
+from typing import Callable, List, Optional
 
 from agno.tools import Toolkit
 from agno.utils.log import log_info, logger
@@ -15,8 +15,8 @@ class SerpApiTools(Toolkit):
     def __init__(
         self,
         api_key: Optional[str] = None,
-        enable_search_google: bool = True,
-        enable_search_youtube: bool = False,
+        search_google: bool = True,
+        search_youtube: bool = False,
         all: bool = False,
         **kwargs,
     ):
@@ -24,10 +24,10 @@ class SerpApiTools(Toolkit):
         if not self.api_key:
             logger.warning("No Serpapi API key provided")
 
-        tools: List[Any] = []
-        if all or enable_search_google:
+        tools: List[Callable] = []
+        if all or search_google:
             tools.append(self.search_google)
-        if all or enable_search_youtube:
+        if all or search_youtube:
             tools.append(self.search_youtube)
 
         super().__init__(name="serpapi_tools", tools=tools, **kwargs)
@@ -52,9 +52,9 @@ class SerpApiTools(Toolkit):
 
         try:
             if not self.api_key:
-                return "Please provide an API key"
+                return json.dumps({"error": "Please provide an API key"})
             if not query:
-                return "Please provide a query to search for"
+                return json.dumps({"error": "Please provide a query to search for"})
 
             log_info(f"Searching Google for: {query}")
 
@@ -74,7 +74,7 @@ class SerpApiTools(Toolkit):
             return json.dumps(filtered_results)
 
         except Exception as e:
-            return f"Error searching for the query {query}: {e}"
+            return json.dumps({"error": f"Error searching for the query {query}: {e}"})
 
     def search_youtube(self, query: str) -> str:
         """
@@ -93,9 +93,9 @@ class SerpApiTools(Toolkit):
 
         try:
             if not self.api_key:
-                return "Please provide an API key"
+                return json.dumps({"error": "Please provide an API key"})
             if not query:
-                return "Please provide a query to search for"
+                return json.dumps({"error": "Please provide a query to search for"})
 
             log_info(f"Searching Youtube for: {query}")
 
@@ -113,4 +113,4 @@ class SerpApiTools(Toolkit):
             return json.dumps(filtered_results)
 
         except Exception as e:
-            return f"Error searching for the query {query}: {e}"
+            return json.dumps({"error": f"Error searching for the query {query}: {e}"})

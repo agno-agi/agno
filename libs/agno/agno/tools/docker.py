@@ -1,7 +1,7 @@
 import json
 import os
 import sys
-from typing import Any, Dict, List, Optional, Union
+from typing import Callable, Dict, List, Optional, Union
 
 from agno.tools import Toolkit
 from agno.utils.log import log_error, log_warning, logger
@@ -56,8 +56,63 @@ except ImportError:
 
 
 class DockerTools(Toolkit):
+    """Toolkit for managing Docker containers, images, volumes, and networks.
+
+    Args:
+        list_containers: Enable list_containers tool. Defaults to True.
+        start_container: Enable start_container tool. Defaults to False (modifies container state).
+        stop_container: Enable stop_container tool. Defaults to False (modifies container state).
+        remove_container: Enable remove_container tool. Defaults to False (destructive).
+        get_container_logs: Enable get_container_logs tool. Defaults to True.
+        inspect_container: Enable inspect_container tool. Defaults to True.
+        run_container: Enable run_container tool. Defaults to False (creates containers).
+        exec_in_container: Enable exec_in_container tool. Defaults to False (executes commands).
+        list_images: Enable list_images tool. Defaults to True.
+        pull_image: Enable pull_image tool. Defaults to False (downloads images).
+        remove_image: Enable remove_image tool. Defaults to False (destructive).
+        build_image: Enable build_image tool. Defaults to False (builds images).
+        tag_image: Enable tag_image tool. Defaults to False (modifies images).
+        inspect_image: Enable inspect_image tool. Defaults to True.
+        list_volumes: Enable list_volumes tool. Defaults to True.
+        create_volume: Enable create_volume tool. Defaults to False (creates volumes).
+        remove_volume: Enable remove_volume tool. Defaults to False (destructive).
+        inspect_volume: Enable inspect_volume tool. Defaults to True.
+        list_networks: Enable list_networks tool. Defaults to True.
+        create_network: Enable create_network tool. Defaults to False (creates networks).
+        remove_network: Enable remove_network tool. Defaults to False (destructive).
+        inspect_network: Enable inspect_network tool. Defaults to True.
+        connect_container_to_network: Enable connect_container_to_network tool. Defaults to False (modifies network).
+        disconnect_container_from_network: Enable disconnect_container_from_network tool. Defaults to False (modifies network).
+        all: Enable all tools. Defaults to False.
+    """
+
     def __init__(
         self,
+        list_containers: bool = True,
+        start_container: bool = False,
+        stop_container: bool = False,
+        remove_container: bool = False,
+        get_container_logs: bool = True,
+        inspect_container: bool = True,
+        run_container: bool = False,
+        exec_in_container: bool = False,
+        list_images: bool = True,
+        pull_image: bool = False,
+        remove_image: bool = False,
+        build_image: bool = False,
+        tag_image: bool = False,
+        inspect_image: bool = True,
+        list_volumes: bool = True,
+        create_volume: bool = False,
+        remove_volume: bool = False,
+        inspect_volume: bool = True,
+        list_networks: bool = True,
+        create_network: bool = False,
+        remove_network: bool = False,
+        inspect_network: bool = True,
+        connect_container_to_network: bool = False,
+        disconnect_container_from_network: bool = False,
+        all: bool = False,
         **kwargs,
     ):
         self._check_docker_availability()
@@ -76,36 +131,59 @@ class DockerTools(Toolkit):
         except Exception:
             logger.exception("Error connecting to Docker")
 
-        tools: List[Any] = [
-            # Container management
-            self.list_containers,
-            self.start_container,
-            self.stop_container,
-            self.remove_container,
-            self.get_container_logs,
-            self.inspect_container,
-            self.run_container,
-            self.exec_in_container,
-            # Image management
-            self.list_images,
-            self.pull_image,
-            self.remove_image,
-            self.build_image,
-            self.tag_image,
-            self.inspect_image,
-            # Volume management
-            self.list_volumes,
-            self.create_volume,
-            self.remove_volume,
-            self.inspect_volume,
-            # Network management
-            self.list_networks,
-            self.create_network,
-            self.remove_network,
-            self.inspect_network,
-            self.connect_container_to_network,
-            self.disconnect_container_from_network,
-        ]
+        tools: List[Callable] = []
+        # Container management
+        if all or list_containers:
+            tools.append(self.list_containers)
+        if all or start_container:
+            tools.append(self.start_container)
+        if all or stop_container:
+            tools.append(self.stop_container)
+        if all or remove_container:
+            tools.append(self.remove_container)
+        if all or get_container_logs:
+            tools.append(self.get_container_logs)
+        if all or inspect_container:
+            tools.append(self.inspect_container)
+        if all or run_container:
+            tools.append(self.run_container)
+        if all or exec_in_container:
+            tools.append(self.exec_in_container)
+        # Image management
+        if all or list_images:
+            tools.append(self.list_images)
+        if all or pull_image:
+            tools.append(self.pull_image)
+        if all or remove_image:
+            tools.append(self.remove_image)
+        if all or build_image:
+            tools.append(self.build_image)
+        if all or tag_image:
+            tools.append(self.tag_image)
+        if all or inspect_image:
+            tools.append(self.inspect_image)
+        # Volume management
+        if all or list_volumes:
+            tools.append(self.list_volumes)
+        if all or create_volume:
+            tools.append(self.create_volume)
+        if all or remove_volume:
+            tools.append(self.remove_volume)
+        if all or inspect_volume:
+            tools.append(self.inspect_volume)
+        # Network management
+        if all or list_networks:
+            tools.append(self.list_networks)
+        if all or create_network:
+            tools.append(self.create_network)
+        if all or remove_network:
+            tools.append(self.remove_network)
+        if all or inspect_network:
+            tools.append(self.inspect_network)
+        if all or connect_container_to_network:
+            tools.append(self.connect_container_to_network)
+        if all or disconnect_container_from_network:
+            tools.append(self.disconnect_container_from_network)
 
         super().__init__(name="docker_tools", tools=tools, **kwargs)
 

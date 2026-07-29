@@ -1,6 +1,6 @@
 import csv
 from os import getenv
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 try:
     import redshift_connector
@@ -13,56 +13,62 @@ from agno.utils.log import log_debug, log_error, log_info
 
 
 class RedshiftTools(Toolkit):
-    """
-    A toolkit for interacting with Amazon Redshift databases.
+    """Toolkit for interacting with Amazon Redshift databases (read-only).
 
-    Supports these authentication methods:
-    - Standard username and password authentication
-    - IAM authentication with AWS profile
-    - IAM authentication with AWS credentials
+    Supports authentication methods: standard username/password, IAM with AWS profile,
+    or IAM with explicit AWS credentials.
 
     Args:
-        host (Optional[str]): Redshift cluster endpoint hostname. Falls back to REDSHIFT_HOST env var.
-        port (int): Redshift cluster port number. Default is 5439.
-        database (Optional[str]): Database name to connect to. Falls back to REDSHIFT_DATABASE env var.
-        user (Optional[str]): Username for standard authentication.
-        password (Optional[str]): Password for standard authentication.
-        iam (bool): Enable IAM authentication. Default is False.
-        cluster_identifier (Optional[str]): Redshift cluster identifier for IAM auth with provisioned clusters. Falls back to REDSHIFT_CLUSTER_IDENTIFIER env var.
-        region (Optional[str]): AWS region for IAM credential retrieval. Falls back to AWS_REGION or AWS_DEFAULT_REGION env vars.
-        db_user (Optional[str]): Database user for IAM auth with provisioned clusters. Falls back to REDSHIFT_DB_USER env var.
-        access_key_id (Optional[str]): AWS access key ID for IAM auth. Falls back to AWS_ACCESS_KEY_ID env var.
-        secret_access_key (Optional[str]): AWS secret access key for IAM auth. Falls back to AWS_SECRET_ACCESS_KEY env var.
-        session_token (Optional[str]): AWS session token for temporary credentials. Falls back to AWS_SESSION_TOKEN env var.
-        profile (Optional[str]): AWS profile name for IAM auth. Falls back to AWS_PROFILE env var.
-        ssl (bool): Enable SSL connection. Default is True.
-        table_schema (str): Default schema for table operations. Default is "public".
+        host: Redshift cluster endpoint hostname. Falls back to REDSHIFT_HOST env var.
+        port: Redshift cluster port number. Defaults to 5439.
+        database: Database name to connect to. Falls back to REDSHIFT_DATABASE env var.
+        user: Username for standard authentication.
+        password: Password for standard authentication.
+        iam: Enable IAM authentication. Defaults to False.
+        cluster_identifier: Redshift cluster identifier for IAM auth. Falls back to REDSHIFT_CLUSTER_IDENTIFIER env var.
+        region: AWS region for IAM credential retrieval. Falls back to AWS_REGION or AWS_DEFAULT_REGION env vars.
+        db_user: Database user for IAM auth. Falls back to REDSHIFT_DB_USER env var.
+        access_key_id: AWS access key ID for IAM auth. Falls back to AWS_ACCESS_KEY_ID env var.
+        secret_access_key: AWS secret access key for IAM auth. Falls back to AWS_SECRET_ACCESS_KEY env var.
+        session_token: AWS session token for temporary credentials. Falls back to AWS_SESSION_TOKEN env var.
+        profile: AWS profile name for IAM auth. Falls back to AWS_PROFILE env var.
+        ssl: Enable SSL connection. Defaults to True.
+        table_schema: Default schema for table operations. Defaults to "public".
+        show_tables: Enable show_tables tool. Defaults to True.
+        describe_table: Enable describe_table tool. Defaults to True.
+        summarize_table: Enable summarize_table tool. Defaults to True.
+        inspect_query: Enable inspect_query tool. Defaults to True.
+        run_query: Enable run_query tool. Defaults to False (executes arbitrary SQL).
+        export_table_to_path: Enable export_table_to_path tool. Defaults to False (writes files).
+        all: Enable all tools. Defaults to False.
     """
 
     _requires_connect: bool = True
 
     def __init__(
         self,
-        # Connection parameters
         host: Optional[str] = None,
         port: int = 5439,
         database: Optional[str] = None,
-        # Standard authentication (username/password)
         user: Optional[str] = None,
         password: Optional[str] = None,
-        # IAM Authentication
         iam: bool = False,
         cluster_identifier: Optional[str] = None,
         region: Optional[str] = None,
         db_user: Optional[str] = None,
-        # AWS Credentials (for IAM auth)
         access_key_id: Optional[str] = None,
         secret_access_key: Optional[str] = None,
         session_token: Optional[str] = None,
         profile: Optional[str] = None,
-        # Connection settings
         ssl: bool = True,
         table_schema: str = "public",
+        show_tables: bool = True,
+        describe_table: bool = True,
+        summarize_table: bool = True,
+        inspect_query: bool = True,
+        run_query: bool = False,
+        export_table_to_path: bool = False,
+        all: bool = False,
         **kwargs,
     ):
         # Connection parameters
@@ -93,14 +99,19 @@ class RedshiftTools(Toolkit):
         # Connection instance
         self._connection: Optional[Connection] = None
 
-        tools: List[Any] = [
-            self.show_tables,
-            self.describe_table,
-            self.summarize_table,
-            self.inspect_query,
-            self.run_query,
-            self.export_table_to_path,
-        ]
+        tools: List[Callable] = []
+        if all or show_tables:
+            tools.append(self.show_tables)
+        if all or describe_table:
+            tools.append(self.describe_table)
+        if all or summarize_table:
+            tools.append(self.summarize_table)
+        if all or inspect_query:
+            tools.append(self.inspect_query)
+        if all or run_query:
+            tools.append(self.run_query)
+        if all or export_table_to_path:
+            tools.append(self.export_table_to_path)
 
         super().__init__(name="redshift_tools", tools=tools, **kwargs)
 

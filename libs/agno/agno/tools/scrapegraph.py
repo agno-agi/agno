@@ -17,7 +17,7 @@ Tools:
 import json
 import time
 from os import getenv
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 from agno.tools import Toolkit
 from agno.utils.log import log_debug, log_error
@@ -38,11 +38,11 @@ class ScrapeGraphTools(Toolkit):
     def __init__(
         self,
         api_key: Optional[str] = None,
-        enable_smartscraper: bool = True,
-        enable_markdownify: bool = False,
-        enable_searchscraper: bool = False,
-        enable_crawl: bool = False,
-        enable_scrape: bool = False,
+        smartscraper: bool = True,
+        markdownify: bool = False,
+        searchscraper: bool = False,
+        crawl: bool = False,
+        scrape: bool = False,
         render_heavy_js: bool = False,
         headers: Optional[Dict[str, str]] = None,
         crawl_poll_interval: int = 3,
@@ -54,11 +54,11 @@ class ScrapeGraphTools(Toolkit):
 
         Args:
             api_key (Optional[str]): ScrapeGraphAI API key. Defaults to env var SGAI_API_KEY.
-            enable_smartscraper (bool): Enable structured extraction via an AI prompt. Defaults to True.
-            enable_markdownify (bool): Enable URL -> markdown conversion. Defaults to False.
-            enable_searchscraper (bool): Enable web search with content extraction. Defaults to False.
-            enable_crawl (bool): Enable multi-page crawl with structured extraction. Defaults to False.
-            enable_scrape (bool): Enable raw HTML scraping. Defaults to False.
+            smartscraper (bool): Enable structured extraction via an AI prompt. Defaults to True.
+            markdownify (bool): Enable URL -> markdown conversion. Defaults to False.
+            searchscraper (bool): Enable web search with content extraction. Defaults to False.
+            crawl (bool): Enable multi-page crawl with structured extraction. Defaults to False.
+            scrape (bool): Enable raw HTML scraping. Defaults to False.
             render_heavy_js (bool): Request JavaScript rendering on every call. Defaults to False.
             headers (Optional[Dict[str, str]]): Custom HTTP headers to send with every outbound fetch (e.g. User-Agent, Cookie, Authorization). Applied to every tool call when set. Defaults to None.
             crawl_poll_interval (int): Seconds between crawl status polls. Defaults to 3. Raise this for very large crawls.
@@ -75,16 +75,16 @@ class ScrapeGraphTools(Toolkit):
         self.crawl_poll_interval: int = crawl_poll_interval
         self.crawl_max_wait: int = crawl_max_wait
 
-        tools: List[Any] = []
-        if all or enable_smartscraper:
+        tools: List[Callable] = []
+        if all or smartscraper:
             tools.append(self.smartscraper)
-        if all or enable_markdownify:
+        if all or markdownify:
             tools.append(self.markdownify)
-        if all or enable_searchscraper:
+        if all or searchscraper:
             tools.append(self.searchscraper)
-        if all or enable_crawl:
+        if all or crawl:
             tools.append(self.crawl)
-        if all or enable_scrape:
+        if all or scrape:
             tools.append(self.scrape)
 
         super().__init__(name="scrapegraph_tools", tools=tools, **kwargs)
@@ -111,11 +111,11 @@ class ScrapeGraphTools(Toolkit):
             log_debug(f"ScrapeGraph smartscraper request for URL: {url}")
             response = self.client.extract(prompt=prompt, url=url, fetch_config=self._fetch_config())
             if response.status != "success" or response.data is None:
-                return f"Error extracting from {url}: {response.error or 'unknown error'}"
+                return json.dumps({"error": f"Error extracting from {url}: {response.error or 'unknown error'}"})
             payload = response.data.json_data if response.data.json_data is not None else response.data.raw
             return json.dumps(payload)
         except Exception as error:
-            return f"Error extracting from {url}: {type(error).__name__}: {error}"
+            return json.dumps({"error": f"Error extracting from {url}: {type(error).__name__}: {error}"})
 
     def markdownify(self, url: str) -> str:
         """Convert a webpage to markdown.
@@ -134,13 +134,13 @@ class ScrapeGraphTools(Toolkit):
                 fetch_config=self._fetch_config(),
             )
             if response.status != "success" or response.data is None:
-                return f"Error converting {url} to markdown: {response.error or 'unknown error'}"
+                return json.dumps({"error": f"Error converting {url} to markdown: {response.error or 'unknown error'}"})
             markdown_field = response.data.results.get("markdown", {})
             if isinstance(markdown_field, dict):
-                return str(markdown_field.get("data", ""))
-            return str(markdown_field)
+                return json.dumps({"markdown": markdown_field.get("data", "")})
+            return json.dumps({"markdown": markdown_field})
         except Exception as error:
-            return f"Error converting {url} to markdown: {type(error).__name__}: {error}"
+            return json.dumps({"error": f"Error converting {url} to markdown: {type(error).__name__}: {error}"})
 
     def searchscraper(self, query: str) -> str:
         """Search the web and extract information from the top results.
@@ -155,10 +155,10 @@ class ScrapeGraphTools(Toolkit):
             log_debug(f"ScrapeGraph searchscraper request (query_length={len(query)})")
             response = self.client.search(query, fetch_config=self._fetch_config())
             if response.status != "success" or response.data is None:
-                return f"Error searching: {response.error or 'unknown error'}"
+                return json.dumps({"error": f"Error searching: {response.error or 'unknown error'}"})
             return response.data.model_dump_json(by_alias=True)
         except Exception as error:
-            return f"Error searching: {type(error).__name__}: {error}"
+            return json.dumps({"error": f"Error searching: {type(error).__name__}: {error}"})
 
     def crawl(
         self,
@@ -192,23 +192,27 @@ class ScrapeGraphTools(Toolkit):
                 fetch_config=self._fetch_config(),
             )
             if start_response.status != "success" or start_response.data is None:
-                return f"Error starting crawl of {url}: {start_response.error or 'unknown error'}"
+                return json.dumps(
+                    {"error": f"Error starting crawl of {url}: {start_response.error or 'unknown error'}"}
+                )
 
             crawl_data = start_response.data
             crawl_id = crawl_data.id
             deadline = time.monotonic() + self.crawl_max_wait
             while crawl_data.status == "running":
                 if time.monotonic() > deadline:
-                    return f"Error: crawl timed out after {self.crawl_max_wait}s (id={crawl_id})"
+                    return json.dumps({"error": f"Crawl timed out after {self.crawl_max_wait}s (id={crawl_id})"})
                 time.sleep(self.crawl_poll_interval)
                 status_response = self.client.crawl.get(crawl_id)
                 if status_response.status != "success" or status_response.data is None:
-                    return f"Error polling crawl {crawl_id}: {status_response.error or 'unknown error'}"
+                    return json.dumps(
+                        {"error": f"Error polling crawl {crawl_id}: {status_response.error or 'unknown error'}"}
+                    )
                 crawl_data = status_response.data
 
             return crawl_data.model_dump_json(by_alias=True)
         except Exception as error:
-            return f"Error crawling {url}: {type(error).__name__}: {error}"
+            return json.dumps({"error": f"Error crawling {url}: {type(error).__name__}: {error}"})
 
     def scrape(self, url: str) -> str:
         """Get raw HTML content from a webpage.
@@ -227,7 +231,7 @@ class ScrapeGraphTools(Toolkit):
                 fetch_config=self._fetch_config(),
             )
             if response.status != "success" or response.data is None:
-                return f"Error scraping {url}: {response.error or 'unknown error'}"
+                return json.dumps({"error": f"Error scraping {url}: {response.error or 'unknown error'}"})
             return response.data.model_dump_json(by_alias=True)
         except Exception as error:
-            return f"Error scraping {url}: {type(error).__name__}: {error}"
+            return json.dumps({"error": f"Error scraping {url}: {type(error).__name__}: {error}"})

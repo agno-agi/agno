@@ -1,7 +1,7 @@
 import base64
 import json
 from os import getenv
-from typing import Any, Dict, Optional, Union
+from typing import Any, Callable, Dict, List, Optional, Union
 
 import requests
 
@@ -20,8 +20,38 @@ class BitbucketTools(Toolkit):
         repo_slug: Optional[str] = None,
         api_version: str = "2.0",
         timeout: int = 30,
+        list_repositories: bool = True,
+        get_repository_details: bool = True,
+        create_repository: bool = False,
+        list_repository_commits: bool = True,
+        list_all_pull_requests: bool = True,
+        get_pull_request_details: bool = True,
+        get_pull_request_changes: bool = True,
+        list_issues: bool = True,
+        all: bool = False,
         **kwargs,
     ):
+        """Initialize BitbucketTools for Bitbucket Cloud API access.
+
+        Args:
+            server_url: Bitbucket API server URL. Defaults to api.bitbucket.org.
+            username: Bitbucket username. Falls back to BITBUCKET_USERNAME env var.
+            password: Bitbucket app password. Falls back to BITBUCKET_PASSWORD env var.
+            token: Bitbucket access token. Falls back to BITBUCKET_TOKEN env var.
+            workspace: Bitbucket workspace slug (required).
+            repo_slug: Repository slug (required).
+            api_version: API version. Defaults to 2.0.
+            timeout: Request timeout in seconds. Defaults to 30.
+            list_repositories: Enable list_repositories tool. Defaults to True.
+            get_repository_details: Enable get_repository_details tool. Defaults to True.
+            create_repository: Enable create_repository tool. Defaults to False (creates external resource).
+            list_repository_commits: Enable list_repository_commits tool. Defaults to True.
+            list_all_pull_requests: Enable list_all_pull_requests tool. Defaults to True.
+            get_pull_request_details: Enable get_pull_request_details tool. Defaults to True.
+            get_pull_request_changes: Enable get_pull_request_changes tool. Defaults to True.
+            list_issues: Enable list_issues tool. Defaults to True.
+            all: Enable all tools. Defaults to False.
+        """
         self.username = username or getenv("BITBUCKET_USERNAME")
         self.password = password or getenv("BITBUCKET_PASSWORD")
         self.token = token or getenv("BITBUCKET_TOKEN")
@@ -46,18 +76,27 @@ class BitbucketTools(Toolkit):
 
         self.headers = {"Accept": "application/json", "Authorization": f"Basic {self._generate_access_token()}"}
 
+        tools: List[Callable] = []
+        if all or list_repositories:
+            tools.append(self.list_repositories)
+        if all or get_repository_details:
+            tools.append(self.get_repository_details)
+        if all or create_repository:
+            tools.append(self.create_repository)
+        if all or list_repository_commits:
+            tools.append(self.list_repository_commits)
+        if all or list_all_pull_requests:
+            tools.append(self.list_all_pull_requests)
+        if all or get_pull_request_details:
+            tools.append(self.get_pull_request_details)
+        if all or get_pull_request_changes:
+            tools.append(self.get_pull_request_changes)
+        if all or list_issues:
+            tools.append(self.list_issues)
+
         super().__init__(
             name="bitbucket",
-            tools=[
-                self.list_repositories,
-                self.get_repository_details,
-                self.create_repository,
-                self.list_repository_commits,
-                self.list_all_pull_requests,
-                self.get_pull_request_details,
-                self.get_pull_request_changes,
-                self.list_issues,
-            ],
+            tools=tools,
             timeout=timeout,
             **kwargs,
         )
@@ -267,7 +306,7 @@ class BitbucketTools(Toolkit):
             )
             if isinstance(diff, dict):
                 return json.dumps(diff, indent=2)
-            return diff
+            return json.dumps({"diff": diff})
         except Exception as e:
             logger.exception(f"Error retrieving changes for pull request {pull_request_id} in {self.repo_slug}")
             return json.dumps({"error": str(e)})

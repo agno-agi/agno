@@ -1,6 +1,6 @@
 import json
 from os import getenv
-from typing import Any, Dict, List, Literal, Optional, Union
+from typing import Any, Callable, Dict, List, Literal, Optional, Union
 
 import httpx
 
@@ -21,34 +21,33 @@ class YouTools(Toolkit):
     no API key required). To use it instead, point Agno's ``MCPTools`` at that URL.
 
     Args:
-        api_key (Optional[str]): You.com API key. Falls back to the ``YDC_API_KEY`` env var.
-        base_url (Optional[str]): Override the API base URL. Falls back to the ``YDC_BASE_URL``
-            env var, then defaults to ``https://ydc-index.io``.
-        num_results (int): Default number of search results. Default is 5.
-        livecrawl (Optional[str]): Live-crawl mode for the search API (``"web"``, ``"news"``,
-            ``"all"``). Default is ``None`` (off).
-        livecrawl_formats (Union[str, List[str]]): Content formats to request from livecrawl
-            (e.g. ``"markdown"``, ``"html"``, or ``["markdown", "html"]``). Default is ``"markdown"``.
-        text_length_limit (int): Max length of text content per result. Default is 1000.
-        include_domains (Optional[List[str]]): Restrict results to these domains. Cannot be combined
+        api_key: You.com API key. Falls back to the YDC_API_KEY env var.
+        base_url: Override the API base URL. Falls back to the YDC_BASE_URL
+            env var, then defaults to https://ydc-index.io.
+        num_results: Default number of search results. Defaults to 5.
+        livecrawl: Live-crawl mode for the search API (web, news, all).
+            Defaults to None (off).
+        livecrawl_formats: Content formats to request from livecrawl
+            (e.g. markdown, html, or a list). Defaults to markdown.
+        text_length_limit: Max length of text content per result. Defaults to 1000.
+        include_domains: Restrict results to these domains. Cannot be combined
             with exclude_domains or boost_domains.
-        exclude_domains (Optional[List[str]]): Exclude results from these domains.
-        country (Optional[str]): The country code that determines the geographical focus of the web results.
-        freshness (Optional[str]): Specifies the freshness of the results to return (e.g. ``"day"``, ``"week"``, ``"month"``, ``"year"``).
-        language (Optional[str]): The language of the web results that will be returned (BCP 47 format).
-        safesearch (Optional[str]): Configures the safesearch filter for content moderation (``"off"``, ``"moderate"``, ``"strict"``).
-        offset (Optional[int]): Indicates the offset for pagination, in multiples of the result count.
-            Must be between 0 and 9.
-        boost_domains (Optional[List[str]]): Domains to boost in search ranking (results are not limited
-            to them). Cannot be combined with include_domains.
-        crawl_timeout (int): Maximum time in seconds to wait for page content when livecrawl is set.
-            Must be between 1 and 60 seconds. Default is 10.
-        search_params (Optional[Dict[str, Any]]): Additional query parameters merged into the search
-            request, overriding the arguments above. Lets you pass You.com params not exposed here.
-        timeout (int): Maximum time in seconds to wait for API responses. Default is 30.
-        format (str): Output format for search results (``"json"`` or ``"markdown"``).
-            Default is ``"json"``.
-        show_results (bool): Log responses for debugging. Default is False.
+        exclude_domains: Exclude results from these domains.
+        country: Country code for geographical focus of web results.
+        freshness: Freshness of results (day, week, month, year).
+        language: Language of web results in BCP 47 format.
+        safesearch: Content moderation filter (off, moderate, strict).
+        offset: Pagination offset in multiples of count. Must be 0-9.
+        boost_domains: Domains to boost in ranking. Cannot be combined
+            with include_domains.
+        crawl_timeout: Seconds to wait for page content when livecrawl is set.
+            Must be 1-60. Defaults to 10.
+        search_params: Additional query parameters merged into the search
+            request, overriding the arguments above.
+        timeout: Seconds to wait for API responses. Defaults to 30.
+        format: Output format for search results (json or markdown).
+            Defaults to json.
+        show_results: Log responses for debugging. Defaults to False.
     """
 
     def __init__(
@@ -68,11 +67,11 @@ class YouTools(Toolkit):
         offset: Optional[int] = None,
         boost_domains: Optional[List[str]] = None,
         crawl_timeout: int = 10,
-        search_params: Optional[Dict[str, Any]] = None,
+        search_params: Optional[Dict[str, object]] = None,
         timeout: int = 30,
         format: Literal["json", "markdown"] = "json",
         show_results: bool = False,
-        **kwargs: Any,
+        **kwargs,
     ):
         self.api_key = api_key or getenv("YDC_API_KEY")
         if not self.api_key:
@@ -84,7 +83,7 @@ class YouTools(Toolkit):
         if offset is not None and not (0 <= offset <= 9):
             raise ValueError("offset must be between 0 and 9")
 
-        # You.com 422s include+exclude, and accepts include+boost only intermittently; reject both up front.
+        # You.com 422s include+exclude, and accepts include+boost only intermittently
         if include_domains and (exclude_domains or boost_domains):
             raise ValueError("include_domains cannot be combined with exclude_domains or boost_domains")
 
@@ -102,12 +101,13 @@ class YouTools(Toolkit):
         self.offset: Optional[int] = offset
         self.boost_domains: Optional[List[str]] = boost_domains
         self.crawl_timeout: int = crawl_timeout
-        self.search_params: Optional[Dict[str, Any]] = search_params
+        self.search_params: Optional[Dict[str, object]] = search_params
         self.timeout: int = timeout
         self.format: Literal["json", "markdown"] = format
         self.show_results: bool = show_results
 
-        super().__init__(name="youcom", tools=[self.you_search], **kwargs)
+        tools: List[Callable] = [self.you_search]
+        super().__init__(name="youcom", tools=tools, **kwargs)
 
     def _headers(self) -> Dict[str, str]:
         return {"X-API-Key": self.api_key or "", "Accept": "application/json"}
@@ -123,11 +123,11 @@ class YouTools(Toolkit):
         """Search the web using the You.com Search API.
 
         Args:
-            query (str): The search query.
-            num_results (Optional[int]): Override the configured result count.
+            query: The search query.
+            num_results: Override the configured result count.
 
         Returns:
-            str: Search results formatted as JSON or markdown.
+            Search results formatted as JSON or markdown.
         """
         try:
             if self.show_results:
@@ -172,10 +172,10 @@ class YouTools(Toolkit):
             return self._format_results(query, data)
         except httpx.HTTPError as e:
             log_error(f"You.com search request failed: {e}")
-            return f"Error: {e}"
+            return json.dumps({"error": f"You.com search request failed: {e}"})
         except Exception as e:
             logger.exception("Failed to run You.com search")
-            return f"Error: {e}"
+            return json.dumps({"error": str(e)})
 
     def _format_results(self, query: str, data: Dict[str, Any]) -> str:
         results = data.get("results")

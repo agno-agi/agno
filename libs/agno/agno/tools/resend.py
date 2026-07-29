@@ -1,8 +1,9 @@
+import json
 from os import getenv
-from typing import Any, List, Optional
+from typing import Callable, List, Optional
 
 from agno.tools import Toolkit
-from agno.utils.log import log_error, log_info, logger
+from agno.utils.log import log_error, log_info
 
 try:
     import resend  # type: ignore
@@ -11,52 +12,70 @@ except ImportError:
 
 
 class ResendTools(Toolkit):
+    """Toolkit for sending emails via Resend API.
+
+    Requires a Resend API key. Get one at https://resend.com/api-keys
+
+    Set RESEND_API_KEY environment variable or pass api_key to the constructor.
+    """
+
     def __init__(
         self,
         api_key: Optional[str] = None,
         from_email: Optional[str] = None,
-        enable_send_email: bool = True,
+        send_email: bool = False,
         all: bool = False,
         **kwargs,
     ):
+        """Initialize Resend toolkit for sending emails.
+
+        Args:
+            api_key: Resend API key. Falls back to RESEND_API_KEY env var.
+            from_email: Default sender email address.
+            send_email: Enable the send_email tool. Disabled by default (write op).
+            all: Enable all tools.
+        """
         self.from_email = from_email
         self.api_key = api_key or getenv("RESEND_API_KEY")
         if not self.api_key:
             log_error("No Resend API key provided")
 
-        tools: List[Any] = []
-        if all or enable_send_email:
+        tools: List[Callable] = []
+        if all or send_email:
             tools.append(self.send_email)
 
         super().__init__(name="resend_tools", tools=tools, **kwargs)
 
     def send_email(self, to_email: str, subject: str, body: str) -> str:
-        """Send an email using the Resend API. Returns if the email was sent successfully or an error message.
+        """Send an email using the Resend API.
 
-        :to_email: The email address to send the email to.
-        :subject: The subject of the email.
-        :body: The body of the email.
-        :return: A string indicating if the email was sent successfully or an error message.
+        Args:
+            to_email: Recipient email address.
+            subject: Email subject line.
+            body: HTML body content.
+
+        Returns:
+            JSON with email ID on success or error message.
         """
-
         if not self.api_key:
-            return "Please provide an API key"
+            return json.dumps({"error": "No API key configured"})
         if not to_email:
-            return "Please provide an email address to send the email to"
+            return json.dumps({"error": "Recipient email address is required"})
 
         log_info(f"Sending email to: {to_email}")
 
         resend.api_key = self.api_key
         try:
-            params = {
-                "from": self.from_email,
+            params: resend.Emails.SendParams = {
                 "to": to_email,
                 "subject": subject,
                 "html": body,
             }
+            if self.from_email:
+                params["from"] = self.from_email
 
-            resend.Emails.send(params)
-            return f"Email sent to {to_email} successfully."
+            response = resend.Emails.send(params)
+            return json.dumps(response)
         except Exception as e:
-            logger.exception("Failed to send email")
-            return f"Error: {e}"
+            log_error(f"Failed to send email: {e}")
+            return json.dumps({"error": f"Failed to send email: {e}"})
