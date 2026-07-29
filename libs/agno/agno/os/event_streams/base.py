@@ -72,6 +72,18 @@ class BaseEventStream(ABC):
     async def cleanup_run(self, run_id: str) -> None:
         """Drop all stored state for a run (called after the retention period)."""
 
+    @abstractmethod
+    async def reset_run_events(self, run_id: str) -> None:
+        """Drop a run's buffered events but PRESERVE its index counter and
+        registration.
+
+        Used when a retry attempt re-executes a run: the contradicted attempt's
+        events must not replay, but the client-facing index must stay monotonic
+        across attempts - a client that saw indices 0..N on attempt 1 and
+        reconnects with last_event_index=N must receive the retry's events
+        (which start at N+1), not filter them all out. Index gaps across the
+        attempt boundary are covered by the not-gapless contract."""
+
     # ------------------------------------------------------------------
     # Events
     # ------------------------------------------------------------------
