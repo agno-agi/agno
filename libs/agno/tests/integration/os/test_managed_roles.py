@@ -488,3 +488,51 @@ def test_every_mutation_makes_itself_visible_to_its_own_request():
         assert store2.provider.check(ctx) is True
         store2.remove_role("r")
         assert store2.provider.check(ctx) is False, "removed role still allowed inside the same request"
+
+
+def test_db_registered_teams_are_filtered_like_configured_ones(tmp_path):
+    """Regression: teams and workflows loaded FROM THE DATABASE must be RBAC-filtered.
+
+    The agents router filtered its db-loaded agents; teams and workflows appended theirs
+    to the response unfiltered, so a team registered in the database was listed to every
+    caller -- including one the per-resource gate 403s. A wildcard allow plus a
+    per-resource deny leaked the denied team's identity on every list request.
+    """
+    from agno.agent import Agent
+    from agno.db.base import ComponentType
+    from agno.db.sqlite import SqliteDb
+    from agno.os import AgentOS
+
+    db = SqliteDb(db_file=str(tmp_path / "os.db"))
+    for team_id, team_name in (("db-secret-team", "Secret"), ("db-public-team", "Public")):
+        db.upsert_component(component_id=team_id, component_type=ComponentType.TEAM, name=team_name)
+        db.upsert_config(component_id=team_id, config={"config": {"id": team_id, "name": team_name, "members": []}})
+
+    store = ManagedRoleStore(db_url=f"sqlite:///{tmp_path / 'roles.db'}")
+    store.set_role_scopes("analyst", [("teams:*:read", "allow"), ("teams:db-secret-team:read", "deny")])
+    store.assign("bob", "analyst")
+
+    agent_os = AgentOS(
+        id=OS_ID,
+        agents=[Agent(id="a1", name="A", db=db)],
+        db=db,
+        authorization=True,
+        authorization_config=AuthorizationConfig(
+            verification_keys=[SECRET],
+            algorithm="HS256",
+            verify_audience=True,
+            audience=OS_ID,
+            authorization_provider=store.provider,
+        ),
+    )
+    client = TestClient(agent_os.get_app())
+    headers = {"Authorization": f"Bearer {_token('bob')}"}
+
+    listing = client.get("/teams", headers=headers)
+    assert listing.status_code == 200, listing.text
+    listed = {t["id"] for t in listing.json()}
+    assert "db-secret-team" not in listed, f"denied db team leaked into the listing: {listed}"
+    assert "db-public-team" in listed  # and the allowed one is still there
+
+    # the listing agrees with the per-resource gate
+    assert client.get("/teams/db-secret-team", headers=headers).status_code == 403
