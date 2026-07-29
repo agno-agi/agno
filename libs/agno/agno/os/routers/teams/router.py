@@ -757,6 +757,8 @@ def get_team_router(
                     )
                 )
                 if stream_queueable:
+                    # 202/stream-accept must honor input_schema like the inline path
+                    validate_seam_input(team, message)
                     assert queue_worker is not None  # narrowed by stream_queueable
                     queued_run_id = str(uuid4())
                     queued_session_id = session_id or str(uuid4())

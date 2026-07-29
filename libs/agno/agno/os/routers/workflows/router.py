@@ -1398,6 +1398,8 @@ def get_workflow_router(
                     )
                 )
                 if stream_queueable:
+                    # 202/stream-accept must honor input_schema like the inline path
+                    validate_seam_input(workflow, message)
                     assert queue_worker is not None  # narrowed by stream_queueable
                     from agno.run.base import RunStatus as _RS
 
