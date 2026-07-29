@@ -746,6 +746,7 @@ def get_team_router(
                 queued_stream_payload = {"input": message, "kwargs": kwargs, "stream": True}
                 stream_queueable = (
                     queue_worker is not None
+                    and getattr(team, "db", None) is not None
                     and payload_is_queueable(queued_stream_payload)
                     and not isinstance(team, RemoteTeam)
                     and version is None

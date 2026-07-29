@@ -1388,6 +1388,7 @@ def get_workflow_router(
                 queued_stream_payload = {"input": message, "kwargs": kwargs, "stream": True}
                 stream_queueable = (
                     queue_worker is not None
+                    and getattr(workflow, "db", None) is not None
                     and not isinstance(workflow, RemoteWorkflow)
                     and version is None
                     and payload_is_queueable(queued_stream_payload)

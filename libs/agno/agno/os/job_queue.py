@@ -358,14 +358,18 @@ class QueueWorker:
         final_output: Any = None
         is_workflow = job.get("component_type") == "workflow"
         try:
+            extra_kwargs: Dict[str, Any] = dict(payload.get("kwargs") or {})
+            # stream_events may arrive as an extra form field inside kwargs;
+            # passing it both explicitly and via ** would raise TypeError
+            stream_events = extra_kwargs.pop("stream_events", payload.get("stream_events", True))
             arun_kwargs: Dict[str, Any] = dict(
                 input=payload.get("input"),
                 session_id=job["session_id"],
                 user_id=job.get("user_id"),
                 run_id=job_id,
                 stream=True,
-                stream_events=payload.get("stream_events", True),
-                **(payload.get("kwargs") or {}),
+                stream_events=stream_events,
+                **extra_kwargs,
             )
             if not is_workflow:
                 # Workflow streams do not support yield_run_output; the final
