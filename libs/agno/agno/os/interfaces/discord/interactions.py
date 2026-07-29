@@ -1,6 +1,9 @@
+import asyncio
+from contextlib import asynccontextmanager
 from os import getenv
-from typing import List, Optional, Union
+from typing import Any, AsyncIterator, Callable, List, Optional, Union
 
+from fastapi import FastAPI
 from fastapi.routing import APIRouter
 
 from agno.agent import Agent, RemoteAgent
@@ -131,10 +134,25 @@ class DiscordInteractions(BaseInterface):
         except Exception as e:
             log_warning(f"Discord command registration failed: {e}")
 
-    def get_router(self) -> APIRouter:
-        if self.auto_register_command:
-            self._register_commands()
+    def get_lifespan(self) -> Optional[Callable[[FastAPI], Any]]:
+        """Register slash commands on app startup.
 
+        Registration lives in the lifespan (not get_router) so only the process
+        actually serving the app talks to Discord — building the app (uvicorn's
+        reloader parent, tests, imports) must not PUT to the commands endpoint,
+        and repeated PUTs get rate limited fast.
+        """
+        if not self.auto_register_command:
+            return None
+
+        @asynccontextmanager
+        async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+            await asyncio.to_thread(self._register_commands)
+            yield
+
+        return lifespan
+
+    def get_router(self) -> APIRouter:
         self.router = attach_routes(
             router=APIRouter(prefix=self.prefix, tags=self.tags),  # type: ignore[arg-type]
             agent=self.agent,
