@@ -195,7 +195,7 @@ class TestEnqueueAtomicity:
     def test_orphaned_idempotency_key_is_self_healed(self, db):
         """A dangling idem key (dual-write crash) must not 409-wedge the key:
         the next submit with that key takes it over and enqueues."""
-        db.redis_client.set(db._q_key("idem:k1"), "ghost-job-id", ex=86400)
+        db.redis_client.set(db._q_key("idem:-:k1"), "ghost-job-id", ex=86400)
         result = db.enqueue_job(make_job("r1", idempotency_key="k1"))
         assert result["accepted"] is True
         # Key now points at the real job
@@ -228,7 +228,7 @@ class TestHeartbeatAtomicity:
 class TestIdempotencyLifetime:
     def test_dedup_key_has_no_ttl_and_dies_with_cleanup(self, db):
         db.enqueue_job(make_job("il1", idempotency_key="ilk"))
-        assert db.redis_client.ttl(db._q_key("idem:ilk")) == -1, "dedup key must live as long as the job record"
+        assert db.redis_client.ttl(db._q_key("idem:-:ilk")) == -1, "dedup key must live as long as the job record"
         job = db.claim_job("w1")
         db.complete_job("il1", "w1", job["attempt"], "completed")
         # age the job artificially and purge
@@ -236,7 +236,7 @@ class TestIdempotencyLifetime:
         doc["completed_at"] = 0
         db.redis_client.set(db._q_job_key("il1"), json.dumps(doc))
         assert db.cleanup_jobs(older_than_seconds=1) == 1
-        assert db.redis_client.get(db._q_key("idem:ilk")) is None, "dedup key must die with the job record"
+        assert db.redis_client.get(db._q_key("idem:-:ilk")) is None, "dedup key must die with the job record"
         # key is reusable afterwards
         assert db.enqueue_job(make_job("il2", idempotency_key="ilk"))["accepted"] is True
 
