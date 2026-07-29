@@ -34,6 +34,7 @@ from agno.os.auth import (
 )
 from agno.os.checkpoints import build_run_checkpoint_snapshot, list_run_checkpoints
 from agno.os.event_streams import get_event_stream
+from agno.os.job_queue import aprepare_queued_agent_run
 from agno.os.middleware.user_scope import (
     SESSION_ID_REQUIRED,
     assert_session_matches_component,
@@ -42,7 +43,6 @@ from agno.os.middleware.user_scope import (
     verify_run_in_session,
     verify_run_in_session_via_db,
 )
-from agno.os.queue import aprepare_queued_agent_run
 from agno.os.routers.agents.schema import AgentResponse
 from agno.os.schema import (
     BadRequestResponse,

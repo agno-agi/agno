@@ -20,6 +20,7 @@ from agno.agent import Agent, AgentFactory, RemoteAgent
 from agno.agent.protocol import AgentProtocol
 from agno.agents.base import BaseExternalAgent
 from agno.db.base import AsyncBaseDb, BaseDb
+from agno.job_queue import QueueConfig
 from agno.knowledge.knowledge import Knowledge
 from agno.os.config import (
     AgentOSConfig,
@@ -45,7 +46,7 @@ from agno.os.config import (
 )
 from agno.os.event_streams import BaseEventStream, set_event_stream
 from agno.os.interfaces.base import BaseInterface
-from agno.os.queue import apply_queue_config, queue_lifespan
+from agno.os.job_queue import apply_queue_config, queue_lifespan
 from agno.os.router import get_base_router, get_info_router, get_websocket_router
 from agno.os.routers.agents import get_agent_router
 from agno.os.routers.approvals import get_approval_router
@@ -79,7 +80,6 @@ from agno.os.utils import (
     setup_tracing_for_os,
     update_cors_middleware,
 )
-from agno.queue import QueueConfig
 from agno.registry import Registry
 from agno.remote.base import RemoteDb, RemoteKnowledge
 from agno.team import RemoteTeam, Team, TeamFactory

@@ -7,7 +7,7 @@ contract (verified by integration tests when a database is available).
 import pytest
 
 from agno.db.schemas.jobs import QueuedJob
-from agno.queue.store import InMemoryQueueStore
+from agno.job_queue.store import InMemoryQueueStore
 
 
 def make_job(job_id: str = "r1", max_attempts: int = 1, **kwargs) -> dict:
