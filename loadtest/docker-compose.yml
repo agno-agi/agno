@@ -1,0 +1,73 @@
+# Full load-test topology: 2 AgentOS replicas + Postgres + Redis + nginx LB.
+# Toxiproxy is included (profile: chaos) for Phase 2 fault injection.
+#
+# Build context is the repo root so the Dockerfile can copy libs/agno.
+#   docker compose -f loadtest/docker-compose.yml up --build
+# Replicas share one Postgres and one Redis -> exercises cross-replica paths.
+
+services:
+  postgres:
+    image: agnohq/pgvector:16
+    environment:
+      POSTGRES_USER: ai
+      POSTGRES_PASSWORD: ai
+      POSTGRES_DB: ai
+    # Host port 5533 to avoid colliding with a standalone pgvector on 5532.
+    # Replicas reach it as postgres:5432 over the internal network regardless.
+    ports: ["5533:5432"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ai"]
+      interval: 2s
+      timeout: 3s
+      retries: 20
+
+  redis:
+    image: redis:7
+    # appendonly for durability parity; everysec = the documented recommendation
+    command: ["redis-server", "--appendonly", "yes", "--appendfsync", "everysec"]
+    # Host port 6380 to avoid colliding with a standalone redis on 6379.
+    ports: ["6380:6379"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      timeout: 3s
+      retries: 20
+
+  replica1: &replica
+    build:
+      context: ..
+      dockerfile: loadtest/Dockerfile
+    # Repo-root .env carries OPENAI_API_KEY (only that var is read by the app).
+    env_file:
+      - ../.env
+    environment:
+      PG_URL: postgresql+psycopg://ai:ai@postgres:5432/ai
+      REDIS_URL: redis://redis:6379
+      # Real model by default (OpenAIResponses/gpt-5.5). MODEL=stub -> free offline.
+      MODEL: ${MODEL:-real}
+      MODEL_ID: ${MODEL_ID:-gpt-5.5}
+      MAX_CONCURRENCY: ${MAX_CONCURRENCY:-8}
+      MAX_QUEUE_DEPTH: ${MAX_QUEUE_DEPTH:-1000}
+      LOCK_GRACE: ${LOCK_GRACE:-60}
+      MAX_ATTEMPTS: ${MAX_ATTEMPTS:-1}
+      TIMEOUT_SECONDS: ${TIMEOUT_SECONDS:-3600}
+    depends_on:
+      postgres: {condition: service_healthy}
+      redis: {condition: service_healthy}
+
+  replica2:
+    <<: *replica
+
+  lb:
+    image: nginx:alpine
+    ports: ["7777:7777"]
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on: [replica1, replica2]
+
+  # Fault injection for Phase 2 (Redis/PG partitions & latency). Off by default.
+  toxiproxy:
+    image: ghcr.io/shopify/toxiproxy:2.9.0
+    profiles: ["chaos"]
+    ports: ["8474:8474", "16379:16379", "15432:15432"]
+    depends_on: [postgres, redis]

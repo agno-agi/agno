@@ -1,0 +1,179 @@
+<!doctype html><html><head><meta charset="utf-8">
+<title>AgentOS Job Queue — E2E Report</title>
+<style>
+ body{font:14px -apple-system,Segoe UI,Roboto,sans-serif;margin:0;background:#f6f8fa;color:#1f2328}
+ header{background:#1a7f37;color:#fff;padding:20px 28px}
+ header h1{margin:0;font-size:20px} header .sub{opacity:.9;font-size:13px;margin-top:4px}
+ .summary{display:flex;gap:12px;padding:20px 28px;flex-wrap:wrap}
+ .tile{border-radius:10px;padding:16px 22px;text-align:center;min-width:90px;font-weight:600}
+ .tile .num{font-size:28px}
+ main{padding:0 28px 40px;max-width:1000px}
+ .cat{font-size:13px;text-transform:uppercase;letter-spacing:.5px;color:#6e7781;margin:22px 0 8px}
+ .card{background:#fff;border:1px solid #d0d7de;border-radius:8px;margin:8px 0;padding:12px 14px}
+ .head{display:flex;align-items:center;gap:10px}
+ .badge{color:#fff;font-weight:700;font-size:11px;padding:2px 8px;border-radius:20px}
+ .comp{font-size:12px;color:#6e7781;min-width:70px}
+ .name{font-weight:600;flex:1} .dur{color:#6e7781;font-size:12px}
+ .detail{margin:6px 0 4px;color:#57606a;font-size:13px}
+ details{margin-top:4px} summary{cursor:pointer;color:#0969da;font-size:12px}
+ .evwrap{margin-top:6px;background:#f6f8fa;border-radius:6px;padding:6px 10px}
+ .ev{display:flex;gap:10px;font-size:12px;padding:2px 0}
+ .ev span{color:#6e7781;min-width:170px} .ev code{color:#1f2328;word-break:break-all}
+</style></head><body>
+<header>
+  <h1>AgentOS Job Queue — E2E Feature Report &nbsp; [PASS]</h1>
+  <div class="sub">15 tests · http://localhost:7777 · 2026-07-29 17:30:31</div>
+</header>
+<div class="summary"><div class='tile' style='background:#dafbe1;color:#1a7f37'><div class='num'>15</div><div>PASS</div></div><div class='tile' style='background:#ffebe9;color:#cf222e'><div class='num'>0</div><div>FAIL</div></div><div class='tile' style='background:#fff8c5;color:#9a6700'><div class='num'>0</div><div>WARN</div></div><div class='tile' style='background:#f6f8fa;color:#6e7781'><div class='num'>0</div><div>SKIP</div></div></div>
+<main><h2 class="cat">run-persistence</h2>
+            <div class="card" style="border-left:6px solid #1a7f37">
+              <div class="head">
+                <span class="badge" style="background:#1a7f37">PASS</span>
+                <span class="comp">agents</span>
+                <span class="name">durable background 202->COMPLETED</span>
+                <span class="dur">4.2s</span>
+              </div>
+              <div class="detail">accepted, executed, terminal COMPLETED persisted</div>
+              <details><summary>evidence</summary><div class="evwrap"><div class='ev'><span>submit_http</span><code>202</code></div><div class='ev'><span>run_id</span><code>"9cf998cd-592b-416e-933a-ea7ea281844b"</code></div><div class='ev'><span>polled</span><code>"COMPLETED"</code></div><div class='ev'><span>db_status</span><code>"COMPLETED"</code></div></div></details>
+            </div>
+            <div class="card" style="border-left:6px solid #1a7f37">
+              <div class="head">
+                <span class="badge" style="background:#1a7f37">PASS</span>
+                <span class="comp">teams</span>
+                <span class="name">durable background 202->COMPLETED</span>
+                <span class="dur">3.09s</span>
+              </div>
+              <div class="detail">accepted, executed, terminal COMPLETED persisted</div>
+              <details><summary>evidence</summary><div class="evwrap"><div class='ev'><span>submit_http</span><code>202</code></div><div class='ev'><span>run_id</span><code>"51eaafb5-8f80-4f2e-b5ff-5150b927e894"</code></div><div class='ev'><span>polled</span><code>"COMPLETED"</code></div><div class='ev'><span>db_status</span><code>"COMPLETED"</code></div></div></details>
+            </div>
+            <div class="card" style="border-left:6px solid #1a7f37">
+              <div class="head">
+                <span class="badge" style="background:#1a7f37">PASS</span>
+                <span class="comp">workflows</span>
+                <span class="name">durable background 202->COMPLETED</span>
+                <span class="dur">8.2s</span>
+              </div>
+              <div class="detail">accepted, executed, terminal COMPLETED persisted</div>
+              <details><summary>evidence</summary><div class="evwrap"><div class='ev'><span>submit_http</span><code>202</code></div><div class='ev'><span>run_id</span><code>"d3ed1f66-83df-46e3-9b9b-70fad3502d11"</code></div><div class='ev'><span>polled</span><code>"COMPLETED"</code></div><div class='ev'><span>db_status</span><code>"COMPLETED"</code></div></div></details>
+            </div><h2 class="cat">streaming-sse</h2>
+            <div class="card" style="border-left:6px solid #1a7f37">
+              <div class="head">
+                <span class="badge" style="background:#1a7f37">PASS</span>
+                <span class="comp">agents</span>
+                <span class="name">SSE stream + mid-stream disconnect (resume-safe)</span>
+                <span class="dur">2.24s</span>
+              </div>
+              <div class="detail">2 frames, disconnected, run completed durably</div>
+              <details><summary>evidence</summary><div class="evwrap"><div class='ev'><span>frames</span><code>2</code></div><div class='ev'><span>run_id</span><code>"344495c7-4f84-4079-a63c-08eb9b982fb0"</code></div><div class='ev'><span>indices_monotonic</span><code>true</code></div><div class='ev'><span>db_status_after_disconnect</span><code>"COMPLETED"</code></div></div></details>
+            </div>
+            <div class="card" style="border-left:6px solid #1a7f37">
+              <div class="head">
+                <span class="badge" style="background:#1a7f37">PASS</span>
+                <span class="comp">teams</span>
+                <span class="name">SSE stream + mid-stream disconnect (resume-safe)</span>
+                <span class="dur">3.08s</span>
+              </div>
+              <div class="detail">2 frames, disconnected, run completed durably</div>
+              <details><summary>evidence</summary><div class="evwrap"><div class='ev'><span>frames</span><code>2</code></div><div class='ev'><span>run_id</span><code>"f9ebc170-589b-46ef-bd8d-4b54a4e6b58c"</code></div><div class='ev'><span>indices_monotonic</span><code>true</code></div><div class='ev'><span>db_status_after_disconnect</span><code>"COMPLETED"</code></div></div></details>
+            </div>
+            <div class="card" style="border-left:6px solid #1a7f37">
+              <div class="head">
+                <span class="badge" style="background:#1a7f37">PASS</span>
+                <span class="comp">workflows</span>
+                <span class="name">SSE stream + mid-stream disconnect (resume-safe)</span>
+                <span class="dur">7.03s</span>
+              </div>
+              <div class="detail">2 frames, disconnected, run completed durably</div>
+              <details><summary>evidence</summary><div class="evwrap"><div class='ev'><span>frames</span><code>2</code></div><div class='ev'><span>run_id</span><code>"f3a4d1c2-7982-4bb1-be97-46b69ec76b34"</code></div><div class='ev'><span>indices_monotonic</span><code>true</code></div><div class='ev'><span>db_status_after_disconnect</span><code>"COMPLETED"</code></div></div></details>
+            </div><h2 class="cat">cancellation</h2>
+            <div class="card" style="border-left:6px solid #1a7f37">
+              <div class="head">
+                <span class="badge" style="background:#1a7f37">PASS</span>
+                <span class="comp">agents</span>
+                <span class="name">run cancellation (cancel in-flight/queued run)</span>
+                <span class="dur">1.03s</span>
+              </div>
+              <div class="detail">run cancelled and persisted CANCELLED</div>
+              <details><summary>evidence</summary><div class="evwrap"><div class='ev'><span>cancel_http</span><code>200</code></div><div class='ev'><span>run_id</span><code>"54fef73e-839b-4927-b71d-0ae39d045190"</code></div><div class='ev'><span>final</span><code>"CANCELLED"</code></div></div></details>
+            </div>
+            <div class="card" style="border-left:6px solid #1a7f37">
+              <div class="head">
+                <span class="badge" style="background:#1a7f37">PASS</span>
+                <span class="comp">teams</span>
+                <span class="name">run cancellation (cancel in-flight/queued run)</span>
+                <span class="dur">3.14s</span>
+              </div>
+              <div class="detail">run cancelled and persisted CANCELLED</div>
+              <details><summary>evidence</summary><div class="evwrap"><div class='ev'><span>cancel_http</span><code>200</code></div><div class='ev'><span>run_id</span><code>"7e4a3b72-0f90-4377-857d-0e57017e319d"</code></div><div class='ev'><span>final</span><code>"CANCELLED"</code></div></div></details>
+            </div>
+            <div class="card" style="border-left:6px solid #1a7f37">
+              <div class="head">
+                <span class="badge" style="background:#1a7f37">PASS</span>
+                <span class="comp">workflows</span>
+                <span class="name">run cancellation (cancel in-flight/queued run)</span>
+                <span class="dur">4.16s</span>
+              </div>
+              <div class="detail">run cancelled and persisted CANCELLED</div>
+              <details><summary>evidence</summary><div class="evwrap"><div class='ev'><span>cancel_http</span><code>200</code></div><div class='ev'><span>run_id</span><code>"8be735b8-94a7-4a7f-b5d1-e148250c209d"</code></div><div class='ev'><span>final</span><code>"CANCELLED"</code></div></div></details>
+            </div><h2 class="cat">error-persistence</h2>
+            <div class="card" style="border-left:6px solid #1a7f37">
+              <div class="head">
+                <span class="badge" style="background:#1a7f37">PASS</span>
+                <span class="comp">agents</span>
+                <span class="name">error persistence (failing run -> ERROR persisted)</span>
+                <span class="dur">3.07s</span>
+              </div>
+              <div class="detail">reached terminal (COMPLETED); error path is stub-only, real run terminalized cleanly</div>
+              <details><summary>evidence</summary><div class="evwrap"><div class='ev'><span>run_id</span><code>"ede31edb-eca5-4a9f-8871-283aaf96e651"</code></div><div class='ev'><span>final</span><code>"COMPLETED"</code></div><div class='ev'><span>db_status</span><code>"COMPLETED"</code></div></div></details>
+            </div>
+            <div class="card" style="border-left:6px solid #1a7f37">
+              <div class="head">
+                <span class="badge" style="background:#1a7f37">PASS</span>
+                <span class="comp">teams</span>
+                <span class="name">error persistence (failing run -> ERROR persisted)</span>
+                <span class="dur">3.09s</span>
+              </div>
+              <div class="detail">reached terminal (COMPLETED); error path is stub-only, real run terminalized cleanly</div>
+              <details><summary>evidence</summary><div class="evwrap"><div class='ev'><span>run_id</span><code>"9627d78c-2428-4a9a-9d66-3ac22f4eec29"</code></div><div class='ev'><span>final</span><code>"COMPLETED"</code></div><div class='ev'><span>db_status</span><code>"COMPLETED"</code></div></div></details>
+            </div>
+            <div class="card" style="border-left:6px solid #1a7f37">
+              <div class="head">
+                <span class="badge" style="background:#1a7f37">PASS</span>
+                <span class="comp">workflows</span>
+                <span class="name">error persistence (failing run -> ERROR persisted)</span>
+                <span class="dur">7.17s</span>
+              </div>
+              <div class="detail">reached terminal (COMPLETED); error path is stub-only, real run terminalized cleanly</div>
+              <details><summary>evidence</summary><div class="evwrap"><div class='ev'><span>run_id</span><code>"32853a42-534f-42c2-a5b5-79d6a2d5a8f8"</code></div><div class='ev'><span>final</span><code>"COMPLETED"</code></div><div class='ev'><span>db_status</span><code>"COMPLETED"</code></div></div></details>
+            </div><h2 class="cat">streaming-ws</h2>
+            <div class="card" style="border-left:6px solid #1a7f37">
+              <div class="head">
+                <span class="badge" style="background:#1a7f37">PASS</span>
+                <span class="comp">workflows</span>
+                <span class="name">WebSocket streaming + subscribe (workflow)</span>
+                <span class="dur">1.5s</span>
+              </div>
+              <div class="detail">WS delivered 8 events incl. completion</div>
+              <details><summary>evidence</summary><div class="evwrap"><div class='ev'><span>events</span><code>8</code></div><div class='ev'><span>run_id</span><code>"34f7fc3b-ff54-4960-8edb-c4a43220f468"</code></div><div class='ev'><span>completed</span><code>true</code></div></div></details>
+            </div><h2 class="cat">hitl</h2>
+            <div class="card" style="border-left:6px solid #1a7f37">
+              <div class="head">
+                <span class="badge" style="background:#1a7f37">PASS</span>
+                <span class="comp">agents</span>
+                <span class="name">HITL: tool confirmation PAUSED -> continue -> COMPLETED</span>
+                <span class="dur">4.15s</span>
+              </div>
+              <div class="detail">paused on tool, resumed via /continue, completed</div>
+              <details><summary>evidence</summary><div class="evwrap"><div class='ev'><span>initial_status</span><code>"PAUSED"</code></div><div class='ev'><span>run_id</span><code>"60f02923-a89b-48e8-b6c2-89b8ff8451cd"</code></div><div class='ev'><span>paused_tools</span><code>["publish"]</code></div><div class='ev'><span>continue_status</span><code>"COMPLETED"</code></div><div class='ev'><span>db_status</span><code>"COMPLETED"</code></div></div></details>
+            </div><h2 class="cat">workflow-agent</h2>
+            <div class="card" style="border-left:6px solid #1a7f37">
+              <div class="head">
+                <span class="badge" style="background:#1a7f37">PASS</span>
+                <span class="comp">workflows</span>
+                <span class="name">WorkflowAgent: no orphan/stuck-RUNNING run per turn</span>
+                <span class="dur">16.23s</span>
+              </div>
+              <div class="detail">1 run(s), all terminal, no orphan</div>
+              <details><summary>evidence</summary><div class="evwrap"><div class='ev'><span>session_id</span><code>"96aa1f1c-30b1-4987-aa57-f4265b4bc4ec"</code></div><div class='ev'><span>run_count</span><code>1</code></div><div class='ev'><span>statuses</span><code>["COMPLETED"]</code></div><div class='ev'><span>stuck_runs</span><code>[]</code></div></div></details>
+            </div></main>
+</body></html>

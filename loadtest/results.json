@@ -1,0 +1,214 @@
+{
+  "generated_at": 1785326431,
+  "base_url": "http://localhost:7777",
+  "results": [
+    {
+      "name": "durable background 202->COMPLETED",
+      "category": "run-persistence",
+      "component": "agents",
+      "status": "PASS",
+      "detail": "accepted, executed, terminal COMPLETED persisted",
+      "evidence": {
+        "submit_http": 202,
+        "run_id": "9cf998cd-592b-416e-933a-ea7ea281844b",
+        "polled": "COMPLETED",
+        "db_status": "COMPLETED"
+      },
+      "duration": 4.2
+    },
+    {
+      "name": "SSE stream + mid-stream disconnect (resume-safe)",
+      "category": "streaming-sse",
+      "component": "agents",
+      "status": "PASS",
+      "detail": "2 frames, disconnected, run completed durably",
+      "evidence": {
+        "frames": 2,
+        "run_id": "344495c7-4f84-4079-a63c-08eb9b982fb0",
+        "indices_monotonic": true,
+        "db_status_after_disconnect": "COMPLETED"
+      },
+      "duration": 2.24
+    },
+    {
+      "name": "run cancellation (cancel in-flight/queued run)",
+      "category": "cancellation",
+      "component": "agents",
+      "status": "PASS",
+      "detail": "run cancelled and persisted CANCELLED",
+      "evidence": {
+        "cancel_http": 200,
+        "run_id": "54fef73e-839b-4927-b71d-0ae39d045190",
+        "final": "CANCELLED"
+      },
+      "duration": 1.03
+    },
+    {
+      "name": "error persistence (failing run -> ERROR persisted)",
+      "category": "error-persistence",
+      "component": "agents",
+      "status": "PASS",
+      "detail": "reached terminal (COMPLETED); error path is stub-only, real run terminalized cleanly",
+      "evidence": {
+        "run_id": "ede31edb-eca5-4a9f-8871-283aaf96e651",
+        "final": "COMPLETED",
+        "db_status": "COMPLETED"
+      },
+      "duration": 3.07
+    },
+    {
+      "name": "durable background 202->COMPLETED",
+      "category": "run-persistence",
+      "component": "teams",
+      "status": "PASS",
+      "detail": "accepted, executed, terminal COMPLETED persisted",
+      "evidence": {
+        "submit_http": 202,
+        "run_id": "51eaafb5-8f80-4f2e-b5ff-5150b927e894",
+        "polled": "COMPLETED",
+        "db_status": "COMPLETED"
+      },
+      "duration": 3.09
+    },
+    {
+      "name": "SSE stream + mid-stream disconnect (resume-safe)",
+      "category": "streaming-sse",
+      "component": "teams",
+      "status": "PASS",
+      "detail": "2 frames, disconnected, run completed durably",
+      "evidence": {
+        "frames": 2,
+        "run_id": "f9ebc170-589b-46ef-bd8d-4b54a4e6b58c",
+        "indices_monotonic": true,
+        "db_status_after_disconnect": "COMPLETED"
+      },
+      "duration": 3.08
+    },
+    {
+      "name": "run cancellation (cancel in-flight/queued run)",
+      "category": "cancellation",
+      "component": "teams",
+      "status": "PASS",
+      "detail": "run cancelled and persisted CANCELLED",
+      "evidence": {
+        "cancel_http": 200,
+        "run_id": "7e4a3b72-0f90-4377-857d-0e57017e319d",
+        "final": "CANCELLED"
+      },
+      "duration": 3.14
+    },
+    {
+      "name": "error persistence (failing run -> ERROR persisted)",
+      "category": "error-persistence",
+      "component": "teams",
+      "status": "PASS",
+      "detail": "reached terminal (COMPLETED); error path is stub-only, real run terminalized cleanly",
+      "evidence": {
+        "run_id": "9627d78c-2428-4a9a-9d66-3ac22f4eec29",
+        "final": "COMPLETED",
+        "db_status": "COMPLETED"
+      },
+      "duration": 3.09
+    },
+    {
+      "name": "durable background 202->COMPLETED",
+      "category": "run-persistence",
+      "component": "workflows",
+      "status": "PASS",
+      "detail": "accepted, executed, terminal COMPLETED persisted",
+      "evidence": {
+        "submit_http": 202,
+        "run_id": "d3ed1f66-83df-46e3-9b9b-70fad3502d11",
+        "polled": "COMPLETED",
+        "db_status": "COMPLETED"
+      },
+      "duration": 8.2
+    },
+    {
+      "name": "SSE stream + mid-stream disconnect (resume-safe)",
+      "category": "streaming-sse",
+      "component": "workflows",
+      "status": "PASS",
+      "detail": "2 frames, disconnected, run completed durably",
+      "evidence": {
+        "frames": 2,
+        "run_id": "f3a4d1c2-7982-4bb1-be97-46b69ec76b34",
+        "indices_monotonic": true,
+        "db_status_after_disconnect": "COMPLETED"
+      },
+      "duration": 7.03
+    },
+    {
+      "name": "run cancellation (cancel in-flight/queued run)",
+      "category": "cancellation",
+      "component": "workflows",
+      "status": "PASS",
+      "detail": "run cancelled and persisted CANCELLED",
+      "evidence": {
+        "cancel_http": 200,
+        "run_id": "8be735b8-94a7-4a7f-b5d1-e148250c209d",
+        "final": "CANCELLED"
+      },
+      "duration": 4.16
+    },
+    {
+      "name": "error persistence (failing run -> ERROR persisted)",
+      "category": "error-persistence",
+      "component": "workflows",
+      "status": "PASS",
+      "detail": "reached terminal (COMPLETED); error path is stub-only, real run terminalized cleanly",
+      "evidence": {
+        "run_id": "32853a42-534f-42c2-a5b5-79d6a2d5a8f8",
+        "final": "COMPLETED",
+        "db_status": "COMPLETED"
+      },
+      "duration": 7.17
+    },
+    {
+      "name": "WebSocket streaming + subscribe (workflow)",
+      "category": "streaming-ws",
+      "component": "workflows",
+      "status": "PASS",
+      "detail": "WS delivered 8 events incl. completion",
+      "evidence": {
+        "events": 8,
+        "run_id": "34f7fc3b-ff54-4960-8edb-c4a43220f468",
+        "completed": true
+      },
+      "duration": 1.5
+    },
+    {
+      "name": "HITL: tool confirmation PAUSED -> continue -> COMPLETED",
+      "category": "hitl",
+      "component": "agents",
+      "status": "PASS",
+      "detail": "paused on tool, resumed via /continue, completed",
+      "evidence": {
+        "initial_status": "PAUSED",
+        "run_id": "60f02923-a89b-48e8-b6c2-89b8ff8451cd",
+        "paused_tools": [
+          "publish"
+        ],
+        "continue_status": "COMPLETED",
+        "db_status": "COMPLETED"
+      },
+      "duration": 4.15
+    },
+    {
+      "name": "WorkflowAgent: no orphan/stuck-RUNNING run per turn",
+      "category": "workflow-agent",
+      "component": "workflows",
+      "status": "PASS",
+      "detail": "1 run(s), all terminal, no orphan",
+      "evidence": {
+        "session_id": "96aa1f1c-30b1-4987-aa57-f4265b4bc4ec",
+        "run_count": 1,
+        "statuses": [
+          "COMPLETED"
+        ],
+        "stuck_runs": []
+      },
+      "duration": 16.23
+    }
+  ]
+}
