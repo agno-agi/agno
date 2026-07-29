@@ -111,14 +111,23 @@ agent_os = AgentOS(
     teams=[team],
     workflows=[workflow, wf_agent_workflow],
     db=db,
-    queue=QueueConfig(
-        durable=True,
-        redis=REDIS_URL,
-        max_concurrency=_int("MAX_CONCURRENCY", 8),
-        max_queue_depth=_int("MAX_QUEUE_DEPTH", 1000),
-        max_attempts=_int("MAX_ATTEMPTS", 1),
-        lock_grace_seconds=_int("LOCK_GRACE", 60),
-        timeout_seconds=_int("TIMEOUT_SECONDS", 3600),
+    # DURABLE=0 disables the queue -> background runs take the INLINE
+    # (_arun_background) path. The WorkflowAgent empty-ghost regression only
+    # manifests inline; with the durable queue on, the worker runs foreground
+    # and never produces the ghost. So the regression test needs a non-durable
+    # replica (DURABLE=0) to reproduce the FAIL.
+    queue=(
+        QueueConfig(
+            durable=True,
+            redis=REDIS_URL,
+            max_concurrency=_int("MAX_CONCURRENCY", 8),
+            max_queue_depth=_int("MAX_QUEUE_DEPTH", 1000),
+            max_attempts=_int("MAX_ATTEMPTS", 1),
+            lock_grace_seconds=_int("LOCK_GRACE", 60),
+            timeout_seconds=_int("TIMEOUT_SECONDS", 3600),
+        )
+        if os.environ.get("DURABLE", "1") != "0"
+        else None
     ),
 )
 app = agent_os.get_app()

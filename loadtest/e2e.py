@@ -347,31 +347,122 @@ async def t_error_persistence(client, component, cid):
     return r
 
 
-async def t_workflow_agent_orphan(client):
-    r = Result("WorkflowAgent: no orphan/stuck-RUNNING run per turn", "workflow-agent", "workflows")
+def _empty_ghost_runs(runs):
+    """Runs with neither step_results nor content = empty duplicate placeholder
+    ("0 out of 4 steps done"). One per WorkflowAgent turn indicates the bug."""
+    return [
+        x
+        for x in runs
+        if not x.get("step_results") and x.get("content") in (None, "")
+    ]
+
+
+def _war_mismatches(runs):
+    """Runs whose nested workflow_agent_run.input does not match the run's own
+    input = cross-turn contamination (the naive id-reuse failure mode)."""
+    bad = []
+    for x in runs:
+        war = x.get("workflow_agent_run") or {}
+        wi = war.get("input", {})
+        wi = wi.get("input_content") if isinstance(wi, dict) else wi
+        if war and wi is not None and str(wi) != str(x.get("input")):
+            bad.append(x.get("run_id"))
+    return bad
+
+
+async def _wf_agent_turn(client, sid, message, background, stream):
+    data = {
+        "message": message,
+        "background": str(background).lower(),
+        "stream": str(stream).lower(),
+        "session_id": sid,
+    }
+    if stream:
+        async with client.stream("POST", _runs_url("workflows", "load-wf-agent"), data=data, timeout=None) as resp:
+            async for _ in resp.aiter_lines():
+                pass
+    else:
+        await client.post(_runs_url("workflows", "load-wf-agent"), data=data, timeout=120)
+
+
+async def _wait_terminal(sid, min_runs, timeout=120):
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        runs = _db_session_runs(sid)
+        if runs and len(runs) >= min_runs and all(x.get("status") in TERMINAL for x in runs):
+            return runs
+        await asyncio.sleep(2)
+    return _db_session_runs(sid)
+
+
+async def _run_wf_agent_case(client, name, background, stream):
+    """One WorkflowAgent 2-turn scenario. Asserts: exactly ONE run per turn (no
+    empty ghost) and correct workflow_agent_run attribution. FAILS on the
+    unfixed branch (2 runs/turn: real + empty '0 out of 4 steps done')."""
+    r = Result(name, "workflow-agent", "workflows")
     t0 = time.time()
     sid = str(uuid.uuid4())
-    # one orchestrated turn (non-background so it's synchronous)
-    data = {"message": "Tell me a one-line fact about cats.", "background": "false", "stream": "false", "session_id": sid}
     try:
-        resp = await client.post(_runs_url("workflows", "load-wf-agent"), data=data, timeout=90)
-        _ = resp.status_code
+        # Turn 1: new topic -> workflow executes (steps). Turn 2: follow-up ->
+        # direct answer from history. Each should persist exactly one run.
+        await _wf_agent_turn(client, sid, "Write a one-line story about a cat named Luna.", background, stream)
+        await _wait_terminal(sid, 1)
+        await _wf_agent_turn(client, sid, "What is the cat's name?", background, stream)
+        runs = await _wait_terminal(sid, 2)
     except Exception as e:
         r.status, r.detail = "FAIL", f"run error: {e}"
         r.duration = time.time() - t0
         return r
-    await asyncio.sleep(3)
-    runs = _db_session_runs(sid)
-    statuses = [x.get("status") for x in runs]
+
+    ghosts = _empty_ghost_runs(runs)
+    mismatches = _war_mismatches(runs)
     stuck = [x.get("run_id") for x in runs if x.get("status") not in TERMINAL]
-    r.evidence.update(session_id=sid, run_count=len(runs), statuses=statuses, stuck_runs=stuck)
-    if not stuck and len(runs) >= 1:
-        r.status, r.detail = "PASS", f"{len(runs)} run(s), all terminal, no orphan"
-    else:
+    r.evidence.update(
+        session_id=sid,
+        run_count=len(runs),
+        expected_runs=2,
+        empty_ghost_runs=len(ghosts),
+        war_mismatches=len(mismatches),
+        stuck_runs=stuck,
+        statuses=[x.get("status") for x in runs],
+    )
+    if stuck:
+        r.status, r.detail = "FAIL", f"{len(stuck)} run(s) stuck non-terminal"
+    elif ghosts:
         r.status = "FAIL"
-        r.detail = f"orphan/stuck runs present: {len(stuck)} of {len(runs)} non-terminal (statuses={statuses})"
+        r.detail = f"{len(ghosts)} empty '0 out of 4 steps done' ghost run(s) — expected 1 run per turn, got {len(runs)}"
+    elif mismatches:
+        r.status = "FAIL"
+        r.detail = f"{len(mismatches)} run(s) have a cross-turn workflow_agent_run (data corruption)"
+    elif len(runs) != 2:
+        r.status = "FAIL"
+        r.detail = f"expected exactly 2 runs (one per turn), got {len(runs)}"
+    else:
+        r.status, r.detail = "PASS", "1 run per turn, no empty ghost, workflow_agent_run correct"
     r.duration = time.time() - t0
     return r
+
+
+async def t_workflow_agent_background(client):
+    # INLINE background path (server started with DURABLE=0). This is the path
+    # with the empty-ghost regression: on the unfixed branch a WorkflowAgent
+    # turn persists the real run PLUS an empty "0 out of 4 steps done" run.
+    # This test FAILS on the unfixed branch and PASSES once the fix is in.
+    # (Against a durable-queue server this can't reproduce — the worker runs
+    #  foreground and never creates the ghost; run with DURABLE=0.)
+    return await _run_wf_agent_case(
+        client, "WorkflowAgent INLINE (DURABLE=0): one run per turn, no ghost", background=True, stream=True
+    )
+
+
+async def t_workflow_agent_durable(client):
+    # DURABLE queue path (queue_worker claims + executes foreground). Should be
+    # one run per turn stored under the polled run id — on both fixed and
+    # unfixed branches (the durable path never had the ghost). Guards against a
+    # future change that would regress the durable path.
+    return await _run_wf_agent_case(
+        client, "WorkflowAgent DURABLE queue: one run per turn, no ghost", background=True, stream=False
+    )
 
 
 # ---------------------------------------------------------------- runner
@@ -386,10 +477,11 @@ async def run_all():
             results.append(await t_sse_disconnect(client, comp, cid))
             results.append(await t_cancellation(client, comp, cid))
             results.append(await t_error_persistence(client, comp, cid))
-        # workflow-only WS + HITL + workflow-agent
+        # workflow-only WS + HITL + workflow-agent (background + durable queue)
         results.append(await t_workflow_ws(client))
         results.append(await t_hitl(client))
-        results.append(await t_workflow_agent_orphan(client))
+        results.append(await t_workflow_agent_background(client))
+        results.append(await t_workflow_agent_durable(client))
 
     out = [r.to_dict() for r in results]
     with open("results.json", "w") as f:
