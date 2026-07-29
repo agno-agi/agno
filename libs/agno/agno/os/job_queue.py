@@ -1,6 +1,6 @@
 """AgentOS job queue wiring.
 
-Interprets ``QueueConfig`` (pure data, from ``agno.queue.config``) and wires
+Interprets ``QueueConfig`` (pure data, from ``agno.job_queue.config``) and wires
 the corresponding runtime pieces. The planned DB-backed queue worker (durable
 acceptance, claim/lease, crash recovery) will live here as well.
 """
@@ -9,7 +9,7 @@ import asyncio
 import contextlib
 from typing import Any, Dict, Optional, Union
 
-from agno.queue.config import QueueConfig, RedisCoordination
+from agno.job_queue.config import QueueConfig, RedisCoordination
 from agno.utils.log import log_debug, log_error, log_info, log_warning
 
 
@@ -135,7 +135,7 @@ def resolve_queue_store(config: QueueConfig, default_db: Any) -> Any:
     Preference order: config.db override, then the AgentOS db (zero extra
     infrastructure). The store must implement the job-queue contract
     (claim_job etc. — the Postgres adapters do; see
-    agno.queue.store.InMemoryQueueStore for the contract reference).
+    agno.job_queue.store.InMemoryQueueStore for the contract reference).
     Sync stores (e.g. the sync PostgresDb) are wrapped so their contract
     methods can be awaited; calls run in a thread.
     """

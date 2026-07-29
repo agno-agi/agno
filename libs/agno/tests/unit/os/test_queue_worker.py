@@ -7,9 +7,9 @@ from typing import Any, Optional
 import pytest
 
 from agno.db.schemas.jobs import QueuedJob
-from agno.os.queue import QueueWorker
-from agno.queue.config import QueueConfig
-from agno.queue.store import InMemoryQueueStore
+from agno.job_queue.config import QueueConfig
+from agno.job_queue.store import InMemoryQueueStore
+from agno.os.job_queue import QueueWorker
 from agno.run.base import RunStatus
 
 
