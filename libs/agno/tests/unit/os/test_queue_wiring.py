@@ -5,14 +5,14 @@ import pytest
 fakeredis = pytest.importorskip("fakeredis", reason="fakeredis not installed")
 
 import agno.os.event_streams as event_streams_module  # noqa: E402
+from agno.job_queue.config import QueueConfig, RedisCoordination  # noqa: E402
 from agno.os.event_streams import (  # noqa: E402
     InMemoryEventStream,
     RedisEventStream,
     get_event_stream,
     set_event_stream,
 )
-from agno.os.queue import apply_queue_config  # noqa: E402
-from agno.queue.config import QueueConfig, RedisCoordination  # noqa: E402
+from agno.os.job_queue import apply_queue_config  # noqa: E402
 from agno.run.cancel import get_cancellation_manager, set_cancellation_manager  # noqa: E402
 from agno.run.cancellation_management.in_memory_cancellation_manager import (  # noqa: E402
     InMemoryRunCancellationManager,

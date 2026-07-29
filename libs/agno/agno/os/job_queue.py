@@ -1,13 +1,13 @@
 """AgentOS job queue wiring.
 
-Interprets ``QueueConfig`` (pure data, from ``agno.queue.config``) and wires
+Interprets ``QueueConfig`` (pure data, from ``agno.job_queue.config``) and wires
 the corresponding runtime pieces. The planned DB-backed queue worker (durable
 acceptance, claim/lease, crash recovery) will live here as well.
 """
 
 from typing import Union
 
-from agno.queue.config import QueueConfig, RedisCoordination
+from agno.job_queue.config import QueueConfig, RedisCoordination
 from agno.utils.log import log_debug, log_warning
 
 

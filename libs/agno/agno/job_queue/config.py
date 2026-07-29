@@ -17,7 +17,7 @@ The config grows with the queue's capabilities:
   the DB-backed queue with crash recovery.
 
 This module is pure data: it imports no transports and no redis package.
-Wiring happens in ``agno.os.queue``.
+Wiring happens in ``agno.os.job_queue``.
 """
 
 from dataclasses import dataclass
