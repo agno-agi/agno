@@ -1,6 +1,6 @@
 import re
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from agno.tools import Toolkit
 from agno.utils.log import log_debug, log_info, log_warning, logger
@@ -12,6 +12,30 @@ except ImportError:
 
 
 class DuckDbTools(Toolkit):
+    """Toolkit for interacting with DuckDB databases.
+
+    Args:
+        db_path: Path to the DuckDB database file.
+        connection: Existing DuckDB connection to reuse.
+        init_commands: SQL commands to run on connection.
+        read_only: Open database in read-only mode. Defaults to False.
+        config: DuckDB configuration options.
+        show_tables: Enable show_tables tool. Defaults to True.
+        describe_table: Enable describe_table tool. Defaults to True.
+        inspect_query: Enable inspect_query tool. Defaults to True.
+        run_query: Enable run_query tool. Defaults to False (executes arbitrary SQL).
+        create_table_from_path: Enable create_table_from_path tool. Defaults to False (creates tables).
+        summarize_table: Enable summarize_table tool. Defaults to True.
+        export_table_to_path: Enable export_table_to_path tool. Defaults to False (writes files).
+        load_local_path_to_table: Enable load_local_path_to_table tool. Defaults to False (creates tables).
+        load_local_csv_to_table: Enable load_local_csv_to_table tool. Defaults to False (creates tables).
+        load_s3_path_to_table: Enable load_s3_path_to_table tool. Defaults to False (creates tables).
+        load_s3_csv_to_table: Enable load_s3_csv_to_table tool. Defaults to False (creates tables).
+        create_fts_index: Enable create_fts_index tool. Defaults to False (creates indexes).
+        full_text_search: Enable full_text_search tool. Defaults to True.
+        all: Enable all tools. Defaults to False.
+    """
+
     def __init__(
         self,
         db_path: Optional[str] = None,
@@ -19,6 +43,20 @@ class DuckDbTools(Toolkit):
         init_commands: Optional[List] = None,
         read_only: bool = False,
         config: Optional[dict] = None,
+        show_tables: bool = True,
+        describe_table: bool = True,
+        inspect_query: bool = True,
+        run_query: bool = False,
+        create_table_from_path: bool = False,
+        summarize_table: bool = True,
+        export_table_to_path: bool = False,
+        load_local_path_to_table: bool = False,
+        load_local_csv_to_table: bool = False,
+        load_s3_path_to_table: bool = False,
+        load_s3_csv_to_table: bool = False,
+        create_fts_index: bool = False,
+        full_text_search: bool = True,
+        all: bool = False,
         **kwargs,
     ):
         self.db_path: Optional[str] = db_path
@@ -28,21 +66,33 @@ class DuckDbTools(Toolkit):
         self.init_commands: Optional[List] = init_commands
         self._reserved_keywords: Optional[frozenset] = None
 
-        tools: List[Any] = [
-            self.show_tables,
-            self.describe_table,
-            self.inspect_query,
-            self.run_query,
-            self.create_table_from_path,
-            self.summarize_table,
-            self.export_table_to_path,
-            self.load_local_path_to_table,
-            self.load_local_csv_to_table,
-            self.load_s3_path_to_table,
-            self.load_s3_csv_to_table,
-            self.create_fts_index,
-            self.full_text_search,
-        ]
+        tools: List[Callable] = []
+        if all or show_tables:
+            tools.append(self.show_tables)
+        if all or describe_table:
+            tools.append(self.describe_table)
+        if all or inspect_query:
+            tools.append(self.inspect_query)
+        if all or run_query:
+            tools.append(self.run_query)
+        if all or create_table_from_path:
+            tools.append(self.create_table_from_path)
+        if all or summarize_table:
+            tools.append(self.summarize_table)
+        if all or export_table_to_path:
+            tools.append(self.export_table_to_path)
+        if all or load_local_path_to_table:
+            tools.append(self.load_local_path_to_table)
+        if all or load_local_csv_to_table:
+            tools.append(self.load_local_csv_to_table)
+        if all or load_s3_path_to_table:
+            tools.append(self.load_s3_path_to_table)
+        if all or load_s3_csv_to_table:
+            tools.append(self.load_s3_csv_to_table)
+        if all or create_fts_index:
+            tools.append(self.create_fts_index)
+        if all or full_text_search:
+            tools.append(self.full_text_search)
 
         super().__init__(name="duckdb_tools", tools=tools, **kwargs)
 

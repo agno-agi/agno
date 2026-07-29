@@ -41,7 +41,7 @@ import mimetypes
 import textwrap
 from os import getenv
 from pathlib import Path
-from typing import Any, List, Optional, Tuple, Union, cast
+from typing import Any, Callable, List, Optional, Tuple, Union, cast
 
 from agno.exceptions import PathSecurityError
 from agno.tools.google.auth import google_authenticate
@@ -350,8 +350,8 @@ class GoogleDriveTools(GoogleToolkit):
         if upload_file and not any(s in self.scopes for s in write_scopes):
             raise ValueError("A Google Drive write scope is required for enabled tools")
 
-        tools: List[Any] = []
-        async_tools: List[Tuple[Any, str]] = []
+        tools: List[Callable] = []
+        async_tools: List[Tuple[Callable, str]] = []
 
         # Reading
         if list_files:

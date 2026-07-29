@@ -1,6 +1,6 @@
 import json
 from os import getenv
-from typing import Any, List, Optional
+from typing import Callable, List, Optional
 
 from agno.tools import Toolkit
 from agno.utils.log import log_debug, log_info, logger
@@ -21,19 +21,34 @@ class XTools(Toolkit):
         access_token_secret: Optional[str] = None,
         include_post_metrics: bool = False,
         wait_on_rate_limit: bool = False,
+        create_post: bool = False,
+        reply_to_post: bool = False,
+        send_dm: bool = False,
+        get_my_info: bool = True,
+        get_user_info: bool = True,
+        get_home_timeline: bool = False,
+        search_posts: bool = True,
+        all: bool = False,
         **kwargs,
     ):
-        """
-        Initialize the XTools.
+        """Initialize XTools for interacting with X (Twitter) API.
 
         Args:
-            bearer_token Optional[str]: The bearer token for Twitter API.
-            consumer_key Optional[str]: The consumer key for Twitter API.
-            consumer_secret Optional[str]: The consumer secret for Twitter API.
-            access_token Optional[str]: The access token for Twitter API.
-            access_token_secret Optional[str]: The access token secret for Twitter API.
-            include_post_metrics Optional[bool]: Whether to include post metrics in the search results.
-            wait_on_rate_limit Optional[bool]: Whether to wait on rate limit.
+            bearer_token: Bearer token for X API. Falls back to X_BEARER_TOKEN env var.
+            consumer_key: Consumer key for X API. Falls back to X_CONSUMER_KEY env var.
+            consumer_secret: Consumer secret for X API. Falls back to X_CONSUMER_SECRET env var.
+            access_token: Access token for X API. Falls back to X_ACCESS_TOKEN env var.
+            access_token_secret: Access token secret for X API. Falls back to X_ACCESS_TOKEN_SECRET env var.
+            include_post_metrics: Include engagement metrics in search results. Defaults to False.
+            wait_on_rate_limit: Wait when rate limited instead of raising error. Defaults to False.
+            create_post: Enable create_post tool. Defaults to False (externally visible).
+            reply_to_post: Enable reply_to_post tool. Defaults to False (externally visible).
+            send_dm: Enable send_dm tool. Defaults to False (externally visible).
+            get_my_info: Enable get_my_info tool. Defaults to True.
+            get_user_info: Enable get_user_info tool. Defaults to True.
+            get_home_timeline: Enable get_home_timeline tool. Defaults to False (token heavy).
+            search_posts: Enable search_posts tool. Defaults to True.
+            all: Enable all tools. Defaults to False.
         """
         self.bearer_token = bearer_token or getenv("X_BEARER_TOKEN")
         self.consumer_key = consumer_key or getenv("X_CONSUMER_KEY")
@@ -51,14 +66,21 @@ class XTools(Toolkit):
         )
         self.include_post_metrics = include_post_metrics
 
-        tools: List[Any] = [
-            self.create_post,
-            self.reply_to_post,
-            self.send_dm,
-            self.get_user_info,
-            self.get_home_timeline,
-            self.search_posts,
-        ]
+        tools: List[Callable] = []
+        if all or create_post:
+            tools.append(self.create_post)
+        if all or reply_to_post:
+            tools.append(self.reply_to_post)
+        if all or send_dm:
+            tools.append(self.send_dm)
+        if all or get_my_info:
+            tools.append(self.get_my_info)
+        if all or get_user_info:
+            tools.append(self.get_user_info)
+        if all or get_home_timeline:
+            tools.append(self.get_home_timeline)
+        if all or search_posts:
+            tools.append(self.search_posts)
 
         super().__init__(name="x", tools=tools, **kwargs)
 

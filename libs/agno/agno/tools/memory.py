@@ -1,6 +1,6 @@
 import json
 from textwrap import dedent
-from typing import Any, List, Optional
+from typing import Callable, List, Optional
 from uuid import uuid4
 
 from agno.db.base import BaseDb
@@ -14,12 +14,12 @@ class MemoryTools(Toolkit):
     def __init__(
         self,
         db: BaseDb,
-        enable_get_memories: bool = True,
-        enable_add_memory: bool = True,
-        enable_update_memory: bool = True,
-        enable_delete_memory: bool = True,
-        enable_analyze: bool = True,
-        enable_think: bool = True,
+        get_memories: bool = True,
+        add_memory: bool = True,
+        update_memory: bool = False,
+        delete_memory: bool = False,
+        analyze: bool = True,
+        think: bool = True,
         instructions: Optional[str] = None,
         add_instructions: bool = True,
         add_few_shot: bool = True,
@@ -27,7 +27,22 @@ class MemoryTools(Toolkit):
         all: bool = False,
         **kwargs,
     ):
-        # Add instructions for using this toolkit
+        """Initialize Memory toolkit for managing user memories.
+
+        Args:
+            db: Database backend for storing memories.
+            get_memories: Enable the get_memories tool.
+            add_memory: Enable the add_memory tool.
+            update_memory: Enable the update_memory tool. Disabled by default (write op).
+            delete_memory: Enable the delete_memory tool. Disabled by default (destructive).
+            analyze: Enable the analyze tool.
+            think: Enable the think tool.
+            instructions: Custom instructions for the toolkit.
+            add_instructions: Whether to add instructions to the agent.
+            add_few_shot: Whether to add few-shot examples.
+            few_shot_examples: Custom few-shot examples.
+            all: Enable all tools.
+        """
         if instructions is None:
             self.instructions = self.DEFAULT_INSTRUCTIONS
             if add_few_shot:
@@ -38,21 +53,20 @@ class MemoryTools(Toolkit):
         else:
             self.instructions = instructions
 
-        # The database to use for memory operations
         self.db: BaseDb = db
 
-        tools: List[Any] = []
-        if enable_think or all:
+        tools: List[Callable] = []
+        if all or think:
             tools.append(self.think)
-        if enable_get_memories or all:
+        if all or get_memories:
             tools.append(self.get_memories)
-        if enable_add_memory or all:
+        if all or add_memory:
             tools.append(self.add_memory)
-        if enable_update_memory or all:
+        if all or update_memory:
             tools.append(self.update_memory)
-        if enable_delete_memory or all:
+        if all or delete_memory:
             tools.append(self.delete_memory)
-        if enable_analyze or all:
+        if all or analyze:
             tools.append(self.analyze)
 
         super().__init__(
@@ -64,13 +78,14 @@ class MemoryTools(Toolkit):
         )
 
     def think(self, run_context: RunContext, thought: str) -> str:
-        """Use this tool as a scratchpad to reason about memory operations, refine your approach, brainstorm memory content, or revise your plan.
-
-        Call `Think` whenever you need to figure out what to do next, analyze the user's requirements, plan memory operations, or decide on execution strategy.
-        You should use this tool as frequently as needed.
+        """Scratchpad for reasoning about memory operations.
 
         Args:
+            run_context: The run context (auto-injected).
             thought: Your thought process and reasoning about memory operations.
+
+        Returns:
+            Formatted log of all thoughts in this session.
         """
         try:
             log_debug(f"Memory Thought: {thought}")
@@ -95,8 +110,13 @@ class MemoryTools(Toolkit):
             return f"Error recording memory thought: {e}"
 
     def get_memories(self, run_context: RunContext) -> str:
-        """
-        Use this tool to get a list of memories for the current user from the database.
+        """Get all memories for the current user.
+
+        Args:
+            run_context: The run context (auto-injected).
+
+        Returns:
+            JSON list of user memories.
         """
         try:
             # Get user info from run context
@@ -129,14 +149,15 @@ class MemoryTools(Toolkit):
         memory: str,
         topics: Optional[List[str]] = None,
     ) -> str:
-        """Use this tool to add a new memory to the database.
+        """Add a new memory to the database.
 
         Args:
-            memory: The memory content to store
-            topics: Optional list of topics associated with this memory
+            run_context: The run context (auto-injected).
+            memory: The memory content to store.
+            topics: Optional list of topics for categorization.
 
         Returns:
-            str: JSON string containing the created memory information
+            JSON with success status and created memory.
         """
         try:
             log_debug(f"Adding memory: {memory}")
@@ -189,15 +210,16 @@ class MemoryTools(Toolkit):
         memory: Optional[str] = None,
         topics: Optional[List[str]] = None,
     ) -> str:
-        """Use this tool to update an existing memory in the database.
+        """Update an existing memory in the database.
 
         Args:
-            memory_id: The ID of the memory to update
-            memory: Updated memory content (if provided)
-            topics: Updated list of topics (if provided)
+            run_context: The run context (auto-injected).
+            memory_id: The ID of the memory to update.
+            memory: Updated memory content (if provided).
+            topics: Updated list of topics (if provided).
 
         Returns:
-            str: JSON string containing the updated memory information
+            JSON with success status and updated memory.
         """
         try:
             log_debug(f"Updating memory: {memory_id}")
@@ -253,13 +275,14 @@ class MemoryTools(Toolkit):
         run_context: RunContext,
         memory_id: str,
     ) -> str:
-        """Use this tool to delete a memory from the database.
+        """Delete a memory from the database.
 
         Args:
-            memory_id: The ID of the memory to delete
+            run_context: The run context (auto-injected).
+            memory_id: The ID of the memory to delete.
 
         Returns:
-            str: JSON string containing the deletion result
+            JSON with success status and deleted memory info.
         """
         try:
             log_debug(f"Deleting memory: {memory_id}")
@@ -307,11 +330,14 @@ class MemoryTools(Toolkit):
             return json.dumps({"success": False, "operation": "delete_memory", "error": str(e)}, indent=2)
 
     def analyze(self, run_context: RunContext, analysis: str) -> str:
-        """Use this tool to evaluate whether the memory operations results are correct and sufficient.
-        If not, go back to "Think" or use memory operations with refined parameters.
+        """Evaluate memory operations results for correctness and sufficiency.
 
         Args:
+            run_context: The run context (auto-injected).
             analysis: Your analysis of the memory operations results.
+
+        Returns:
+            Formatted log of all analyses in this session.
         """
         try:
             log_debug(f"Memory Analysis: {analysis}")

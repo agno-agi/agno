@@ -1,5 +1,6 @@
+import json
 from pathlib import Path
-from typing import List, Optional, Union
+from typing import Callable, List, Optional, Union
 
 from agno.tools import Toolkit
 from agno.utils.log import log_debug, log_info, log_warning
@@ -9,8 +10,7 @@ class ShellTools(Toolkit):
     def __init__(
         self,
         base_dir: Optional[Union[Path, str]] = None,
-        enable_run_shell_command: bool = True,
-        all: bool = False,
+        run_shell_command: bool = True,
         **kwargs,
     ):
         """Initialize ShellTools.
@@ -27,8 +27,8 @@ class ShellTools(Toolkit):
         if base_dir is not None:
             self.base_dir = Path(base_dir) if isinstance(base_dir, str) else base_dir
 
-        tools = []
-        if all or enable_run_shell_command:
+        tools: List[Callable] = []
+        if run_shell_command:
             tools.append(self.run_shell_command)
 
         super().__init__(name="shell_tools", tools=tools, **kwargs)
@@ -61,8 +61,8 @@ class ShellTools(Toolkit):
             log_debug(f"Result: {result}")
             log_debug(f"Return code: {result.returncode}")
             if result.returncode != 0:
-                return f"Error: {result.stderr}"
+                return json.dumps({"error": result.stderr})
             return "\n".join(result.stdout.split("\n")[-tail:])
         except Exception as e:
             log_warning(f"Failed to run shell command: {str(e)}")
-            return f"Error: {e}"
+            return json.dumps({"error": str(e)})

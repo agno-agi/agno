@@ -1,6 +1,6 @@
 from os import getenv
 from pathlib import Path
-from typing import Any, List, Optional
+from typing import Callable, List, Optional
 from uuid import uuid4
 
 from agno.agent import Agent
@@ -23,20 +23,20 @@ class GroqTools(Toolkit):
         api_key: Optional[str] = None,
         transcription_model: str = "whisper-large-v3",
         translation_model: str = "whisper-large-v3",
-        tts_model: str = "playai-tts",
-        tts_voice: str = "Chip-PlayAI",
-        enable_transcribe_audio: bool = True,
-        enable_translate_audio: bool = True,
-        enable_generate_speech: bool = True,
+        tts_model: str = "canopylabs/orpheus-v1-english",
+        tts_voice: str = "austin",
+        transcribe_audio: bool = True,
+        translate_audio: bool = True,
+        generate_speech: bool = True,
         all: bool = False,
         **kwargs,
     ):
-        tools: List[Any] = []
-        if all or enable_transcribe_audio:
+        tools: List[Callable] = []
+        if all or transcribe_audio:
             tools.append(self.transcribe_audio)
-        if all or enable_translate_audio:
+        if all or translate_audio:
             tools.append(self.translate_audio)
-        if all or enable_generate_speech:
+        if all or generate_speech:
             tools.append(self.generate_speech)
 
         super().__init__(name="groq_tools", tools=tools, **kwargs)

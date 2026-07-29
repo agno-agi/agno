@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from os import getenv
 from pathlib import Path
 from ssl import SSLContext
-from typing import Any, Dict, List, Literal, Optional, Tuple, Union, cast
+from typing import Any, Callable, Dict, List, Literal, Optional, Tuple, Union, cast
 
 import httpx
 
@@ -145,18 +145,18 @@ class SlackTools(Toolkit):
         markdown: bool = True,
         output_directory: Optional[str] = None,
         save_downloads: bool = False,
-        enable_send_message: bool = True,
-        enable_send_message_thread: bool = True,
-        enable_list_channels: bool = True,
-        enable_get_channel_history: bool = True,
-        enable_upload_file: bool = True,
-        enable_download_file: bool = True,
-        enable_search_messages: bool = False,
-        enable_search_workspace: bool = False,
-        enable_get_thread: bool = False,
-        enable_list_users: bool = False,
-        enable_get_user_info: bool = False,
-        enable_get_channel_info: bool = False,
+        send_message: bool = False,
+        send_message_thread: bool = False,
+        list_channels: bool = True,
+        get_channel_history: bool = False,
+        upload_file: bool = False,
+        download_file: bool = False,
+        search_messages: bool = False,
+        search_workspace: bool = False,
+        get_thread: bool = False,
+        list_users: bool = True,
+        get_user_info: bool = True,
+        get_channel_info: bool = True,
         all: bool = False,
         ssl: Optional[SSLContext] = None,
         max_file_size: int = 1_073_741_824,  # 1GB
@@ -172,20 +172,20 @@ class SlackTools(Toolkit):
             markdown (bool): Whether to enable Slack markdown formatting. Defaults to True.
             output_directory (str): Directory for saving downloaded files. Only used when save_downloads=True.
             save_downloads (bool): Whether to save downloaded files to disk. Defaults to False (base64 only).
-            enable_send_message (bool): Whether to enable the send_message tool. Defaults to True.
-            enable_send_message_thread (bool): Whether to enable the send_message_thread tool. Defaults to True.
-            enable_list_channels (bool): Whether to enable the list_channels tool. Defaults to True.
-            enable_get_channel_history (bool): Whether to enable the get_channel_history tool. Defaults to True.
-            enable_upload_file (bool): Whether to enable the upload_file tool. Defaults to True.
-            enable_download_file (bool): Whether to enable the download_file tool. Defaults to True.
-            enable_search_messages (bool): Whether to enable the search_messages tool (legacy API). Defaults to False.
-            enable_search_workspace (bool): Whether to enable the search_workspace tool (assistant.search.context API).
+            send_message (bool): Enable the send_message tool. Defaults to False (externally visible).
+            send_message_thread (bool): Enable the send_message_thread tool. Defaults to False (externally visible).
+            list_channels (bool): Enable the list_channels tool. Defaults to True.
+            get_channel_history (bool): Enable the get_channel_history tool. Defaults to False (token heavy).
+            upload_file (bool): Enable the upload_file tool. Defaults to False (externally visible).
+            download_file (bool): Enable the download_file tool. Defaults to False (token heavy).
+            search_messages (bool): Enable the search_messages tool (legacy API, requires user token). Defaults to False.
+            search_workspace (bool): Enable the search_workspace tool (assistant.search.context API).
                 Requires search:read.public, search:read.files, and search:read.users bot scopes.
                 The action_token is read from run_context.metadata at call time. Defaults to False.
-            enable_get_thread (bool): Whether to enable the get_thread tool. Defaults to False.
-            enable_list_users (bool): Whether to enable the list_users tool. Defaults to False.
-            enable_get_user_info (bool): Whether to enable the get_user_info tool. Defaults to False.
-            enable_get_channel_info (bool): Whether to enable the get_channel_info tool. Defaults to False.
+            get_thread (bool): Enable the get_thread tool. Defaults to False (token heavy).
+            list_users (bool): Enable the list_users tool. Defaults to True.
+            get_user_info (bool): Enable the get_user_info tool. Defaults to True (single user, light).
+            get_channel_info (bool): Enable the get_channel_info tool. Defaults to True (single channel, light).
             all (bool): Whether to enable all tools. Defaults to False.
             ssl (SSLContext): Optional SSL context for the Slack WebClient. Defaults to None.
             max_file_size (int): Maximum file size in bytes for uploads and downloads. Defaults to 1GB.
@@ -225,34 +225,34 @@ class SlackTools(Toolkit):
         else:
             self.output_directory = None
 
-        tools: List[Any] = []
-        if enable_send_message or all:
+        tools: List[Callable] = []
+        if all or send_message:
             tools.append(self.send_message)
-        if enable_send_message_thread or all:
+        if all or send_message_thread:
             tools.append(self.send_message_thread)
-        if enable_list_channels or all:
+        if all or list_channels:
             tools.append(self.list_channels)
-        if enable_get_channel_history or all:
+        if all or get_channel_history:
             tools.append(self.get_channel_history)
-        if enable_upload_file or all:
+        if all or upload_file:
             tools.append(self.upload_file)
-        if enable_download_file or all:
+        if all or download_file:
             tools.append(self.download_file)
-        if enable_search_messages or all:
+        if all or search_messages:
             if self._user_client:
                 tools.append(self.search_messages)
-            elif enable_search_messages:
+            elif search_messages:
                 # Only warn when explicitly requested, not via all=True
                 log_warning("search_messages disabled: no user token (SLACK_USER_TOKEN) provided")
-        if enable_search_workspace or all:
+        if all or search_workspace:
             tools.append(self.search_workspace)
-        if enable_get_thread or all:
+        if all or get_thread:
             tools.append(self.get_thread)
-        if enable_list_users or all:
+        if all or list_users:
             tools.append(self.list_users)
-        if enable_get_user_info or all:
+        if all or get_user_info:
             tools.append(self.get_user_info)
-        if enable_get_channel_info or all:
+        if all or get_channel_info:
             tools.append(self.get_channel_info)
 
         # Build tool instructions dynamically based on enabled tools
