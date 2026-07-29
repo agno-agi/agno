@@ -329,6 +329,7 @@ class QueueWorker:
             error = "Worker lost and attempt budget exhausted; run was not re-executed"
             with contextlib.suppress(Exception):
                 await self._persist_run_error(job, error)
+            await self._terminate_stream_view(job)
             await self.store.fail_swept_job(job["id"], self.config.lock_grace_seconds, error)
             log_warning(f"Job queue: swept job {job['id']} to failed ({error})")
 
@@ -361,15 +362,124 @@ class QueueWorker:
             await asyncio.shield(event_stream.complete_run(run_id, RunStatus.cancelled))
         return True
 
+    async def _execute_streaming(self, component: Any, job: Dict[str, Any]) -> Any:
+        """Execute a queued STREAMING run: iterate the component's stream and
+        publish every event to the event stream (buffer + live tails on any
+        replica). Returns the final RunOutput like the non-stream path.
+
+        On a retry attempt (attempt > 1), the previous attempt's events are
+        cleaned up first - a re-execution is a fresh stream, never an append
+        onto a contradicted history.
+        """
+        from agno.os.event_streams import get_event_stream
+        from agno.run.base import RunStatus
+
+        event_stream = get_event_stream()
+        job_id = job["id"]
+        payload = job.get("payload") or {}
+
+        if job.get("attempt", 1) > 1:
+            # Drop the contradicted attempt's events but keep the index
+            # counter: reconnecting clients filter by last_event_index, and a
+            # rewound index would make them skip the retry's entire output
+            with contextlib.suppress(Exception):
+                await event_stream.reset_run_events(job_id)
+        await event_stream.register_run(job_id, RunStatus.pending)
+        await event_stream.set_run_status(job_id, RunStatus.running)
+
+        final_output: Any = None
+        is_workflow = job.get("component_type") == "workflow"
+        try:
+            extra_kwargs: Dict[str, Any] = dict(payload.get("kwargs") or {})
+            # stream_events may arrive as an extra form field inside kwargs;
+            # passing it both explicitly and via ** would raise TypeError
+            stream_events = extra_kwargs.pop("stream_events", payload.get("stream_events", True))
+            arun_kwargs: Dict[str, Any] = dict(
+                input=payload.get("input"),
+                session_id=job["session_id"],
+                user_id=job.get("user_id"),
+                run_id=job_id,
+                stream=True,
+                stream_events=stream_events,
+                **extra_kwargs,
+            )
+            if not is_workflow:
+                # Workflow streams do not support yield_run_output; the final
+                # output is loaded from the run row after the stream ends
+                arun_kwargs["yield_run_output"] = True
+            async for event in component.arun(**arun_kwargs):
+                if hasattr(event, "status") and hasattr(event, "run_id") and not hasattr(event, "event"):
+                    final_output = event  # the terminal RunOutput
+                    continue
+                with contextlib.suppress(Exception):
+                    await event_stream.add_event(job_id, event)
+            if final_output is None and is_workflow:
+                with contextlib.suppress(Exception):
+                    final_output = await component.aget_run_output(
+                        job_id, job["session_id"], user_id=job.get("user_id")
+                    )
+        finally:
+            # The final output may come from a DB read (workflows), where status
+            # round-trips as a plain str - coerce before the terminal write, or
+            # complete_run dies inside this suppress and the stream never ends
+            raw_status = getattr(final_output, "status", None)
+            if isinstance(raw_status, str) and not isinstance(raw_status, RunStatus):
+                with contextlib.suppress(ValueError):
+                    raw_status = RunStatus(raw_status)
+            status = raw_status if isinstance(raw_status, RunStatus) else RunStatus.error
+            # A retryable failure must NOT publish the terminal sentinel: tails
+            # would close cleanly and the client would never see the retry's
+            # output. Leave the stream open; the retry attempt continues it
+            # (dead-producer TTL detection bounds the wait if no retry comes).
+            will_retry = status == RunStatus.error and job.get("attempt", 1) < job.get("max_attempts", 1)
+            if not will_retry:
+                with contextlib.suppress(Exception):
+                    await asyncio.shield(event_stream.complete_run(job_id, status))
+        return final_output
+
+    async def _terminate_stream_view(self, job: Dict[str, Any]) -> None:
+        """For STREAMING jobs failed outside their own execution (sweep, drain,
+        timeout): write the terminal status into the event stream so connected
+        tails end immediately - a dead producer wrote no sentinel, and without
+        this, live viewers hang on keepalives until the Redis TTL expires."""
+        if not (job.get("payload") or {}).get("stream"):
+            return
+        from agno.os.event_streams import get_event_stream
+        from agno.run.base import RunStatus
+
+        with contextlib.suppress(Exception):
+            await asyncio.shield(get_event_stream().complete_run(job["id"], RunStatus.error))
+
     async def _persist_run_error(self, job: Dict[str, Any], error: str, status: str = "error") -> None:
         """Persist a terminal status on the run row so pollers see it, never a
-        stuck RUNNING/PENDING. The failure reason lands on run.content: the
-        polled run must carry something actionable, not just ERROR with
-        content=None (the job row's error field is the operator surface)."""
+        stuck RUNNING/PENDING. Atomic-first with attempt fencing: a later
+        attempt's write owns the row; this (possibly stale) writer is fenced
+        out by the stored queue_attempt. The failure reason lands on
+        run.content: the polled run must carry something actionable, not just
+        ERROR with content=None (the job row's error field is the operator
+        surface)."""
         component = self.resolve_component(job["component_type"], job["component_id"])
         if component is None:
             return
         from agno.run.base import RunStatus
+        from agno.run.status_persist import apersist_run_status, fallback_allowed
+
+        result = await apersist_run_status(
+            component,
+            job["component_type"],
+            session_id=job["session_id"],
+            run_id=job["id"],
+            fields={
+                "status": RunStatus.cancelled.value if status == "cancelled" else RunStatus.error.value,
+                "content": error,
+            },
+            user_id=job.get("user_id"),
+            expected_attempt=job.get("attempt"),
+        )
+        if not fallback_allowed(result, job.get("attempt")):
+            # Written, or fenced out by a newer attempt that owns the row -
+            # either way the unfenced fallback below must not run
+            return
 
         component_type = job["component_type"]
         if component_type == "agent":
@@ -439,6 +549,24 @@ class QueueWorker:
 
         job_id, attempt = job["id"], job["attempt"]
         job_type = job.get("job_type", "run")
+        component_for_stamp = self.resolve_component(job.get("component_type"), job.get("component_id"))
+        if component_for_stamp is not None:
+            # Establish this attempt's generation on the run row BEFORE
+            # executing: the fence compares terminal writes against the stored
+            # queue_attempt, and without an up-front stamp a zombie's write
+            # passes vacuously (stored None) and stamps its own stale attempt.
+            from agno.run.status_persist import apersist_run_status
+
+            with contextlib.suppress(Exception):
+                await apersist_run_status(
+                    component_for_stamp,
+                    job.get("component_type", ""),
+                    session_id=job["session_id"],
+                    run_id=job_id,
+                    fields={"queue_attempt": attempt},
+                    user_id=job.get("user_id"),
+                    expected_attempt=attempt,
+                )
         if job_type != "run":
             # Forward-compat: a newer producer enqueued a job type this worker
             # has no executor for. Fail it visibly rather than guessing.
@@ -453,19 +581,23 @@ class QueueWorker:
             return
 
         payload = job.get("payload") or {}
+        is_stream = bool(payload.get("stream"))
         try:
-            coro = component.arun(
-                input=payload.get("input"),
-                session_id=job["session_id"],
-                user_id=job.get("user_id"),
-                run_id=job_id,
-                stream=False,
-                **(payload.get("kwargs") or {}),
-            )
-            if self.config.timeout_seconds:
-                result = await asyncio.wait_for(coro, timeout=self.config.timeout_seconds)
+            if is_stream:
+                execution = self._execute_streaming(component, job)
             else:
-                result = await coro
+                execution = component.arun(
+                    input=payload.get("input"),
+                    session_id=job["session_id"],
+                    user_id=job.get("user_id"),
+                    run_id=job_id,
+                    stream=False,
+                    **(payload.get("kwargs") or {}),
+                )
+            if self.config.timeout_seconds:
+                result = await asyncio.wait_for(execution, timeout=self.config.timeout_seconds)
+            else:
+                result = await execution
 
             status = getattr(result, "status", None)
             if status == RunStatus.cancelled:
@@ -490,18 +622,31 @@ class QueueWorker:
             if outcome == "failed":
                 with contextlib.suppress(Exception, asyncio.CancelledError):
                     await asyncio.shield(self._persist_run_error(job, "interrupted by worker shutdown"))
+                with contextlib.suppress(Exception, asyncio.CancelledError):
+                    await asyncio.shield(self._terminate_stream_view(job))
             raise
         except asyncio.TimeoutError:
             error = f"Run exceeded timeout_seconds={self.config.timeout_seconds}"
-            with contextlib.suppress(Exception):
-                await self._persist_run_error(job, error)
+            # A timed-out attempt with retry budget left is NOT terminal: the
+            # retry continues the same stream, so neither the run row nor the
+            # stream view may be marked ERROR yet (tails would close before the
+            # retry's real output). Budget exhausted = genuinely terminal.
+            if attempt >= job.get("max_attempts", 1):
+                with contextlib.suppress(Exception):
+                    await self._persist_run_error(job, error)
+                await self._terminate_stream_view(job)
             await self.store.retry_or_fail_job(job_id, self.worker_id, attempt, error, self._retry_delay(attempt))
         except Exception as e:
             with contextlib.suppress(Exception):
                 await self._persist_run_error(job, str(e))
             if self._is_permanent_failure(e):
-                # Invalid input / schema violations cannot be cured by retrying
+                # Invalid input / schema violations cannot be cured by retrying.
+                # No retry is coming even if budget remains, so the stream view
+                # must terminate here (the streaming finally skipped its
+                # sentinel expecting a retry).
                 await self.store.complete_job(job_id, self.worker_id, attempt, "failed", f"permanent: {str(e)}")
+                with contextlib.suppress(Exception):
+                    await self._terminate_stream_view(job)
             else:
                 await self.store.retry_or_fail_job(job_id, self.worker_id, attempt, str(e), self._retry_delay(attempt))
 
@@ -548,8 +693,9 @@ async def aprepare_queued_run(
             agent_id=getattr(component, "id", None),
             agent_name=getattr(component, "name", None),
             user_id=user_id,
-            # A raw value here made to_dict() raise inside the save and the
-            # PENDING row silently never landed - typed container required
+            # RunOutput.input is a RunInput; a raw value would make to_dict()
+            # raise inside the session save and the PENDING row would never
+            # land (silently - pollers 404 and the attempt stamp finds no row)
             input=RunInput(input_content=input),
             status=RunStatus.pending,
         )
@@ -615,8 +761,19 @@ async def aprepare_queued_agent_run(
 @contextlib.asynccontextmanager
 async def queue_lifespan(app: Any, agent_os: Any):
     """Start and stop the durable job queue worker (one per replica)."""
+    from agno.os.event_streams import InMemoryEventStream, get_event_stream
+
     config: QueueConfig = agent_os.queue
     store = resolve_queue_store(config, agent_os.db)
+
+    if isinstance(get_event_stream(), InMemoryEventStream):
+        log_warning(
+            "Durable queue with the in-memory event stream: streamed views of queued runs are "
+            "replica-local. In a multi-replica deployment, a stream request accepted on one "
+            "replica cannot see events produced by another replica's worker - the tail will idle "
+            "until client timeout even though the run completes durably. Set queue.redis to wire "
+            "a shared event stream."
+        )
 
     def resolve_component(component_type: str, component_id: str) -> Any:
         registry = {

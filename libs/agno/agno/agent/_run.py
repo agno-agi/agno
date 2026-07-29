@@ -76,6 +76,7 @@ from agno.run.cancel import (
 from agno.run.concurrency import SSE_KEEPALIVE_INTERVAL_SECONDS, background_run_slot
 from agno.run.messages import RunMessages
 from agno.run.requirement import RunRequirement
+from agno.run.status_persist import apersist_run_transition
 from agno.session import AgentSession
 from agno.tools.function import Function
 from agno.utils.agent import (
@@ -1973,13 +1974,10 @@ async def _arun_background(
     async def _background_task() -> None:
         try:
             async with background_run_slot(run_id=run_response.run_id):
-                # Transition to RUNNING. Re-read the session so this save
-                # does not clobber concurrent background runs on the same
-                # session with the stale submit-time snapshot.
+                # Transition to RUNNING via the atomic helper (row-locked
+                # patch when the DB supports it, fresh-read + save otherwise).
                 run_response.status = RunStatus.running
-                fresh_session = await aread_or_create_session(agent, session_id=session_id, user_id=user_id)
-                fresh_session.upsert_run(run=run_response)
-                await asave_session(agent, session=fresh_session)
+                await apersist_run_transition(agent, "agent", session_id, run_response, user_id=user_id)
 
                 # Execute the actual run — _arun handles everything including
                 # session persistence and cleanup
@@ -2003,9 +2001,7 @@ async def _arun_background(
             log_info(f"Background run {run_response.run_id} cancelled while waiting for a slot")
             try:
                 run_response.status = RunStatus.cancelled
-                fresh_session = await aread_or_create_session(agent, session_id=session_id, user_id=user_id)
-                fresh_session.upsert_run(run=run_response)
-                await asave_session(agent, session=fresh_session)
+                await apersist_run_transition(agent, "agent", session_id, run_response, user_id=user_id)
             except Exception as e:
                 log_error(f"Failed to persist cancelled state for background run {run_response.run_id}: {str(e)}")
             await acleanup_run(run_context.run_id)
@@ -2016,18 +2012,15 @@ async def _arun_background(
             # properly; this is the non-durable path's honest fallback.
             with contextlib.suppress(Exception):
                 run_response.status = RunStatus.cancelled
-                fresh_session = await aread_or_create_session(agent, session_id=session_id, user_id=user_id)
-                fresh_session.upsert_run(run=run_response)
-                await asave_session(agent, session=fresh_session)
+                await apersist_run_transition(agent, "agent", session_id, run_response, user_id=user_id)
             raise
         except Exception as e:
             log_error(f"Background run {run_response.run_id} failed: {str(e)}")
             # Persist ERROR status
             try:
                 run_response.status = RunStatus.error
-                fresh_session = await aread_or_create_session(agent, session_id=session_id, user_id=user_id)
-                fresh_session.upsert_run(run=run_response)
-                await asave_session(agent, session=fresh_session)
+                flush_in_flight_messages_on_error(run_response, locals().get("run_messages"))
+                await apersist_run_transition(agent, "agent", session_id, run_response, user_id=user_id, full_run=True)
             except Exception as e:
                 log_error(f"Failed to persist error state for background run {run_response.run_id}: {str(e)}")
             # Note: acleanup_run is already called by _arun's finally block
@@ -2110,11 +2103,9 @@ async def _arun_background_stream(
             await slot_cm.__aenter__()
             slot_held = True
 
-            # Transition to RUNNING now that a slot is held
+            # Transition to RUNNING now that a slot is held (atomic helper)
             run_response.status = RunStatus.running
-            fresh_session = await aread_or_create_session(agent, session_id=session_id, user_id=user_id)
-            fresh_session.upsert_run(run=run_response)
-            await asave_session(agent, session=fresh_session)
+            await apersist_run_transition(agent, "agent", session_id, run_response, user_id=user_id)
             await event_stream.set_run_status(run_id, RunStatus.running)
 
             async for event in _arun_stream(
@@ -2157,9 +2148,7 @@ async def _arun_background_stream(
             log_info(f"Background stream run {run_id} cancelled while waiting for a slot")
             try:
                 run_response.status = RunStatus.cancelled
-                fresh_session = await aread_or_create_session(agent, session_id=session_id, user_id=user_id)
-                fresh_session.upsert_run(run=run_response)
-                await asave_session(agent, session=fresh_session)
+                await apersist_run_transition(agent, "agent", session_id, run_response, user_id=user_id)
             except Exception:
                 log_error(f"Failed to persist cancelled state for background stream run {run_id}", exc_info=True)
             await acleanup_run(run_id)
@@ -2168,9 +2157,8 @@ async def _arun_background_stream(
             # Persist ERROR status
             try:
                 run_response.status = RunStatus.error
-                fresh_session = await aread_or_create_session(agent, session_id=session_id, user_id=user_id)
-                fresh_session.upsert_run(run=run_response)
-                await asave_session(agent, session=fresh_session)
+                flush_in_flight_messages_on_error(run_response, locals().get("run_messages"))
+                await apersist_run_transition(agent, "agent", session_id, run_response, user_id=user_id, full_run=True)
             except Exception:
                 log_error(f"Failed to persist error state for background stream run {run_id}", exc_info=True)
 
@@ -4458,12 +4446,10 @@ async def _acontinue_run_background_stream(
             await slot_cm.__aenter__()
             slot_held = True
 
-            # Transition to RUNNING now that a slot is held
+            # Transition to RUNNING now that a slot is held (atomic helper)
             if run_response:
                 run_response.status = RunStatus.running
-                fresh_session = await aread_or_create_session(agent, session_id=session_id, user_id=user_id)
-                fresh_session.upsert_run(run=run_response)
-                await asave_session(agent, session=fresh_session)
+                await apersist_run_transition(agent, "agent", session_id, run_response, user_id=user_id)
             await event_stream.set_run_status(_run_id, RunStatus.running)
 
             async for event in _acontinue_run_stream(
@@ -4513,12 +4499,15 @@ async def _acontinue_run_background_stream(
             log_info(f"Background continue-run stream {_run_id} cancelled while waiting for a slot")
             producer_terminal = RunStatus.cancelled
             try:
-                fresh_session = await aread_or_create_session(agent, session_id=session_id, user_id=user_id)
-                cancelled_run = run_response or cast(Optional[RunOutput], fresh_session.get_run(_run_id))
+                cancelled_run = run_response
+                if cancelled_run is None:
+                    # HITL continues arrive with run_response=None: load the
+                    # run so the terminal persist is never silently skipped
+                    lookup_session = await aread_or_create_session(agent, session_id=session_id, user_id=user_id)
+                    cancelled_run = cast(Optional[RunOutput], lookup_session.get_run(_run_id))
                 if cancelled_run is not None:
                     cancelled_run.status = RunStatus.cancelled
-                    fresh_session.upsert_run(run=cancelled_run)
-                    await asave_session(agent, session=fresh_session)
+                    await apersist_run_transition(agent, "agent", session_id, cancelled_run, user_id=user_id)
             except Exception:
                 log_error(
                     f"Failed to persist cancelled state for background continue-run stream {_run_id}", exc_info=True
@@ -4529,12 +4518,15 @@ async def _acontinue_run_background_stream(
             producer_terminal = RunStatus.error
             # Persist ERROR status (loading from session when run_response is None)
             try:
-                fresh_session = await aread_or_create_session(agent, session_id=session_id, user_id=user_id)
-                errored_run = run_response or cast(Optional[RunOutput], fresh_session.get_run(_run_id))
+                errored_run = run_response
+                if errored_run is None:
+                    # HITL continues arrive with run_response=None: load the
+                    # run so the terminal persist is never silently skipped
+                    lookup_session = await aread_or_create_session(agent, session_id=session_id, user_id=user_id)
+                    errored_run = cast(Optional[RunOutput], lookup_session.get_run(_run_id))
                 if errored_run is not None:
                     errored_run.status = RunStatus.error
-                    fresh_session.upsert_run(run=errored_run)
-                    await asave_session(agent, session=fresh_session)
+                    await apersist_run_transition(agent, "agent", session_id, errored_run, user_id=user_id)
             except Exception:
                 log_error(f"Failed to persist error state for background continue-run stream {_run_id}", exc_info=True)
 
