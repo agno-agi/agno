@@ -59,6 +59,11 @@ class InMemoryEventStream(BaseEventStream):
     async def cleanup_run(self, run_id: str) -> None:
         self._buffer.cleanup_run(run_id)
 
+    async def reset_run_events(self, run_id: str) -> None:
+        # Events go; the index counter and registration stay (monotonic
+        # indices across retry attempts)
+        self._buffer.events.pop(run_id, None)
+
     # ------------------------------------------------------------------
     # Events
     # ------------------------------------------------------------------

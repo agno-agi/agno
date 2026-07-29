@@ -352,3 +352,31 @@ class TestProducerOwnedRefresher:
         assert "r1" not in stream._active_runs
         await stream.add_event("r1", make_event("r1", "a"))
         assert "r1" in stream._active_runs
+
+
+class TestRetryIndexContinuity:
+    @pytest.mark.asyncio
+    async def test_reset_preserves_index_counter(self, stream):
+        await stream.register_run("r1", RunStatus.running)
+        for c in ("a", "b", "c"):
+            await stream.add_event("r1", make_event("r1", c))
+        await stream.reset_run_events("r1")
+        assert await stream.get_event_count("r1") == 0
+        # Retry attempt continues the monotonic index sequence
+        idx = await stream.add_event("r1", make_event("r1", "retry"))
+        assert idx == 3, "indices must not rewind across attempts"
+        assert await stream.get_run_status("r1") == RunStatus.running
+
+    @pytest.mark.asyncio
+    async def test_reconnecting_client_sees_retry_events(self, stream):
+        """A client that saw indices 0..2 on attempt 1 and reconnects with
+        last_event_index=2 must receive attempt 2's events."""
+        await stream.register_run("r1", RunStatus.running)
+        for c in ("a", "b", "c"):
+            await stream.add_event("r1", make_event("r1", c))
+        await stream.reset_run_events("r1")
+        await stream.add_event("r1", make_event("r1", "real-1"))
+        await stream.add_event("r1", make_event("r1", "real-2"))
+        await stream.complete_run("r1", RunStatus.completed)
+        received = [idx async for idx, _sse in stream.tail("r1", last_event_index=2)]
+        assert received == [3, 4], "retry output must not be filtered by the old client index"

@@ -8,9 +8,11 @@ balancer: the reconnect can land on any replica.
 Design notes (see the queue design doc for rationale):
 - Redis is TTL'd transport, not the source of truth. Terminal state and final
   output live in the database; replay after TTL falls back to the DB path.
-- Streams are keyed per attempt (``{prefix}{run_id}:{attempt}:events``) so a
-  future checkpoint-resumed execution can supersede a stale attempt's events by
-  switching streams (stream entries cannot be deleted). Attempt is 1 today.
+- One stream per run across retry attempts (key layout keeps a fixed ``:1:``
+  segment for compatibility). A retry supersedes a contradicted attempt via
+  ``reset_run_events``: events are dropped, the INCR counter survives, so the
+  client-facing index stays monotonic across attempts and reconnecting clients
+  never filter out the retry's real output.
 - ``tail()`` blocks with a bounded timeout and re-checks run status on idle: a
   producer that died without writing a terminal sentinel must not hang tails.
 - Consumers should multiplex: one ``tail()`` per (run, container) fanned out to
@@ -99,11 +101,15 @@ class RedisEventStream(BaseEventStream):
         self._refresher_task: Optional["asyncio.Task"] = None
 
     # ------------------------------------------------------------------
-    # Keys — per-attempt stream keys; attempt is 1 until checkpoint resume lands
+    # Keys
     # ------------------------------------------------------------------
 
-    def _stream_key(self, run_id: str, attempt: int = 1) -> str:
-        return f"{self._prefix}{run_id}:{attempt}:events"
+    def _stream_key(self, run_id: str) -> str:
+        # Single stream per run across retry attempts: reset_run_events clears
+        # a contradicted attempt's events while the counter keeps indices
+        # monotonic, so tails and resumes never rewind. (The :1: segment is a
+        # fixed layout artifact, kept for key compatibility.)
+        return f"{self._prefix}{run_id}:1:events"
 
     def _status_key(self, run_id: str) -> str:
         return f"{self._prefix}{run_id}:status"
@@ -216,6 +222,11 @@ class RedisEventStream(BaseEventStream):
             self._status_key(run_id),
             self._counter_key(run_id),
         )
+
+    async def reset_run_events(self, run_id: str) -> None:
+        # Events go; counter and status stay - indices remain monotonic across
+        # retry attempts (see BaseEventStream.reset_run_events)
+        await self._redis.delete(self._stream_key(run_id))
 
     # ------------------------------------------------------------------
     # Events
