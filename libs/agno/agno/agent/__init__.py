@@ -7,6 +7,7 @@ from agno.agent.agent import (
     get_agent_by_id,
     get_agents,
 )
+from agno.agent._subagents import SubagentsManager
 from agno.agent.factory import AgentFactory
 from agno.agent.remote import RemoteAgent
 from agno.factory import (
@@ -71,6 +72,7 @@ __all__ = [
     "RunContinuedEvent",
     "RunStartedEvent",
     "RunCompletedEvent",
+    "SubagentsManager",
     "MemoryUpdateStartedEvent",
     "MemoryUpdateCompletedEvent",
     "ReasoningStartedEvent",

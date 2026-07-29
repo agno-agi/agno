@@ -16,11 +16,10 @@ Run: .venvs/demo/bin/python cookbook/91_tools/subagents/subagents_os.py
 Then open http://localhost:7777 (config at http://localhost:7777/config).
 """
 
-from agno.agent import Agent
+from agno.agent import Agent, SubagentsManager
 from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIResponses
 from agno.os import AgentOS
-from agno.subagent import SubagentsConfig
 from agno.tools.websearch import WebSearchTools
 
 # ---------------------------------------------------------------------------
@@ -33,7 +32,7 @@ main_agent = Agent(
     name="Research Orchestrator",
     model=OpenAIResponses(id="gpt-5.6-terra"),
     tools=[WebSearchTools()],
-    subagents_config=SubagentsConfig(
+    subagents=SubagentsManager(
         models={
             "fast": (
                 OpenAIResponses(id="gpt-5.6-luna"),

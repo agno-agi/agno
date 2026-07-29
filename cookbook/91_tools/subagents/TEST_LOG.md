@@ -1,5 +1,18 @@
 # Test Log — Subagents
 
+## 2026-07-29 — review round: `Agent(subagents=...)` union field, `SubagentsManager`
+
+PR #9122 review changes applied: `SubagentsConfig` renamed to `SubagentsManager`
+(a dataclass in `agno/agent/_subagents.py`), the `subagents_config` +
+`enable_subagents` pair replaced by the single `Agent(subagents=True | SubagentsManager(...))`
+field, per-spawn child construction (no cache), and new guardrails
+(`max_concurrent`, `max_total_per_run`, `timeout_seconds`).
+
+All six cookbooks updated to the new API and compile-checked. Unit tests
+(41, `libs/agno/tests/unit/agent/test_subagents.py`) pass. Live AgentOS retest
+on the new API pending; the 2026-07-23 live results below exercised the same
+underlying spawn machinery through the old names.
+
 ## 2026-07-23 — v-0.5 (`Agent(subagents_config=...)` / `Agent(enable_subagents=True)`)
 
 ### subagents_enabled.py

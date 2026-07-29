@@ -489,8 +489,8 @@ def determine_tools_for_model(
 
     # Add the spawn_agent tool when subagents are enabled. Built per run (like Team
     # delegate tools) so the tool description lists the real allowed model/tool options.
-    if agent.subagents_config is not None:
-        spawn_function = agent.subagents_config.get_spawn_function(
+    if agent._subagents is not None:
+        spawn_function = agent._subagents.get_spawn_function(
             agent=agent,
             run_context=run_context,
             async_mode=async_mode,

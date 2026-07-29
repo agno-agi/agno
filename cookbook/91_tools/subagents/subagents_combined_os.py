@@ -4,7 +4,7 @@ Subagents Combined in AgentOS
 
 Serves every subagent configuration style side by side in one AgentOS app:
 
-- Researcher: enable_subagents=True - the default config, subagents inherit
+- Researcher: subagents=True - the default manager, subagents inherit
   the agent's model and tools.
 - Luna Researcher: a single Model - the orchestrator thinks on GPT-5.6 Terra,
   every subagent runs on GPT-5.6 Luna.
@@ -24,11 +24,10 @@ Then open http://localhost:7777 (config at http://localhost:7777/config).
 
 from pathlib import Path
 
-from agno.agent import Agent
+from agno.agent import Agent, SubagentsManager
 from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIResponses
 from agno.os import AgentOS
-from agno.subagent import SubagentsConfig
 from agno.tools.coding import CodingTools
 from agno.tools.file_generation import FileGenerationTools
 from agno.tools.websearch import WebSearchTools
@@ -50,14 +49,14 @@ RESEARCH_INSTRUCTIONS = (
 )
 
 # ---------------------------------------------------------------------------
-# Defaults: enable_subagents=True, subagents inherit model and tools
+# Defaults: subagents=True, subagents inherit model and tools
 # ---------------------------------------------------------------------------
 
 researcher = Agent(
     name="Researcher",
     model=OpenAIResponses(id="gpt-5.5"),
     tools=[WebSearchTools()],
-    enable_subagents=True,
+    subagents=True,
     db=db,
     instructions=RESEARCH_INSTRUCTIONS,
     markdown=True,
@@ -71,7 +70,7 @@ luna_researcher = Agent(
     name="Luna Researcher",
     model=OpenAIResponses(id="gpt-5.6-terra"),
     tools=[WebSearchTools()],
-    subagents_config=SubagentsConfig(model=OpenAIResponses(id="gpt-5.6-luna")),
+    subagents=SubagentsManager(model=OpenAIResponses(id="gpt-5.6-luna")),
     db=db,
     instructions=RESEARCH_INSTRUCTIONS,
     markdown=True,
@@ -85,7 +84,7 @@ research_orchestrator = Agent(
     name="Research Orchestrator",
     model=OpenAIResponses(id="gpt-5.6-terra"),
     tools=[WebSearchTools()],
-    subagents_config=SubagentsConfig(
+    subagents=SubagentsManager(
         models={
             "fast": (
                 OpenAIResponses(id="gpt-5.6-luna"),
@@ -117,7 +116,7 @@ coding_orchestrator = Agent(
         Workspace(root=PROJECTS_DIR, allowed=["list", "search", "move", "delete"]),
         FileGenerationTools(output_directory=str(PROJECTS_DIR), save_files=True),
     ],
-    subagents_config=SubagentsConfig(
+    subagents=SubagentsManager(
         models={
             "fast": (
                 OpenAIResponses(id="gpt-5.6-luna"),

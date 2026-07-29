@@ -2,10 +2,10 @@
 Enable Subagents with a Flag
 ============================
 
-The one-liner: Agent(enable_subagents=True). The agent gets a default
-SubagentsConfig, so subagents inherit the agent's model (offered as the single
-"default" option) and all of its tools - no config object needed. Pass
-subagents_config=SubagentsConfig(...) instead when you want to control the
+The one-liner: Agent(subagents=True). The agent gets a default
+SubagentsManager, so subagents inherit the agent's model (offered as the single
+"default" option) and all of its tools - no manager object needed. Pass
+subagents=SubagentsManager(...) instead when you want to control the
 model options or restrict the allowed tools.
 
 The agent gets one tool, spawn_agent(task), and parallelizes by calling it
@@ -25,7 +25,7 @@ agent = Agent(
     name="Researcher",
     model=OpenAIResponses(id="gpt-5.5"),
     tools=[WebSearchTools()],
-    enable_subagents=True,
+    subagents=True,
     instructions=(
         "Split independent research into one spawn_agent call per topic in a "
         "single response. Ask each subagent for a short sourced summary, then "

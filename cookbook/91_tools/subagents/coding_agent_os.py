@@ -7,7 +7,7 @@ Terra, plans the project, then delegates research, frontend, backend, database
 and scripts work to GPT-5.6 Luna subagents that build the project in parallel
 inside a shared workspace.
 
-This example restricts what subagents may use: SubagentsConfig(tools=[...])
+This example restricts what subagents may use: SubagentsManager(tools=[...])
 declares an explicit allowed set (websearch, website reading and the coding
 surface). The orchestrator keeps FileGenerationTools and the Workspace
 move/delete surface to itself - subagents build code, the orchestrator manages
@@ -25,11 +25,10 @@ Then open http://localhost:7777 (config at http://localhost:7777/config).
 
 from pathlib import Path
 
-from agno.agent import Agent
+from agno.agent import Agent, SubagentsManager
 from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIResponses
 from agno.os import AgentOS
-from agno.subagent import SubagentsConfig
 from agno.tools.coding import CodingTools
 from agno.tools.file_generation import FileGenerationTools
 from agno.tools.websearch import WebSearchTools
@@ -59,7 +58,7 @@ coding_agent = Agent(
         # Generate downloadable artifacts (PDF, DOCX, CSV, JSON, HTML) into the workspace
         FileGenerationTools(output_directory=str(PROJECTS_DIR), save_files=True),
     ],
-    subagents_config=SubagentsConfig(
+    subagents=SubagentsManager(
         models={
             "fast": (
                 OpenAIResponses(id="gpt-5.6-luna"),
