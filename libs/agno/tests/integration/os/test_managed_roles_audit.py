@@ -109,7 +109,9 @@ def test_db_audit_sink_is_append_only_table(tmp_path):
 
     eng = sa.create_engine(url)
     with eng.connect() as c:
-        rows = c.execute(sa.text("select actor, action, target, before, after from authz_audit order by id")).fetchall()
+        rows = c.execute(
+            sa.text("select actor, action, target, before, after from agno_authz_audit order by created_at")
+        ).fetchall()
     assert [tuple(r[:3]) for r in rows] == [
         ("alice", "role.set_scopes", "member"),
         ("alice", "user.assigned", "bob"),
@@ -239,8 +241,10 @@ def test_decision_and_change_audit_go_to_separate_tables(tmp_path):
 
     eng = sa.create_engine(url)
     with eng.connect() as c:
-        changes = c.execute(sa.text("select action, target from authz_audit order by id")).fetchall()
-        decisions = c.execute(sa.text("select action, target, token_ref from authz_decisions order by id")).fetchall()
+        changes = c.execute(sa.text("select action, target from agno_authz_audit order by created_at")).fetchall()
+        decisions = c.execute(
+            sa.text("select action, target, token_ref from agno_authz_decisions order by created_at")
+        ).fetchall()
 
     # change table holds only the role change, no access.* rows
     assert [tuple(r) for r in changes] == [("role.set_scopes", "viewer")]

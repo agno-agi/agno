@@ -27,9 +27,7 @@ The decision model, in agno terms:
 import logging
 from typing import Any, Dict, List, Optional, Set, Tuple
 
-from agno.os.authz._db import NO_DB_MESSAGE
-from agno.os.authz._db import engine_from_db as _engine_from_db
-from agno.os.authz._db import engine_from_url as _engine_from_url
+from agno.os.authz._db import NO_DB_MESSAGE, require_authz_db, resolve_authz_db, supports_authz
 from agno.os.authz._request_scope import invalidate as _invalidate_request_cache
 from agno.os.authz._request_scope import memoize
 from agno.os.authz._scope_policy import resource_action_to_scope, resource_matches, scope_to_resource_action
@@ -58,96 +56,41 @@ class NativePolicyEngine(PolicyEngine):
     stay consistent across the workers/replicas an AgentOS deployment runs."""
 
     def __init__(self, db_url: Optional[str] = None, db: Optional[Any] = None):
-        # A DB is required. It may arrive later via attach_db() (the AgentOS
-        # role_store= shortcut), so an engine built with neither db nor db_url starts
-        # "unbound" and raises on use until bound — it is never an operating mode.
-        self._engine: Any = None  # SQLAlchemy Engine once bound, else None (unbound)
-        self._policy_tbl: Any = None
-        self._group_tbl: Any = None
+        # A DB is required. It may arrive later via attach_db() (the AgentOS role_store=
+        # shortcut), so an engine built with neither starts "unbound" and raises on use
+        # until bound — it is never an operating mode.
+        self._db: Any = resolve_authz_db(db, db_url)
         self._log = logging.getLogger("agno.authz.engine")
-
-        target = _engine_from_db(db) if db is not None else (_engine_from_url(db_url) if db_url else None)
-        if target is not None:
-            self._setup_db(target)
+        if self._db is not None:
+            require_authz_db(self._db)
 
     # --- storage ---------------------------------------------------------
     @property
     def is_bound(self) -> bool:
         """True once a DB is bound (directly or via :meth:`attach_db`)."""
-        return self._engine is not None
+        return self._db is not None
 
     def _require_engine(self) -> None:
-        if self._engine is None:
+        if self._db is None:
             raise RuntimeError(NO_DB_MESSAGE)
 
-    def _setup_db(self, engine: Any) -> None:
-        import sqlalchemy as sa
-
-        self._engine = engine
-        metadata = sa.MetaData()
-        self._policy_tbl = sa.Table(
-            "authz_policy",
-            metadata,
-            sa.Column("role", sa.String(255), primary_key=True),
-            sa.Column("resource", sa.String(512), primary_key=True),
-            sa.Column("action", sa.String(255), primary_key=True),
-            sa.Column("effect", sa.String(16), nullable=False),
-        )
-        self._group_tbl = sa.Table(
-            "authz_grouping",
-            metadata,
-            sa.Column("subject", sa.String(255), primary_key=True),
-            sa.Column("role", sa.String(255), primary_key=True),
-            # The composite PK indexes (subject, role), which covers "what roles does
-            # this subject hold?" -- but NOT the reverse lookup by role alone, which
-            # would table-scan. Every subject decision asks exactly that (the role-name
-            # collision guard: "is anything assigned to this name?"), so without this
-            # index authorization is O(number of assignments): measured at 3.65ms per
-            # decision on 50k subjects, versus microseconds with it.
-            sa.Index("ix_authz_grouping_role", "role"),
-        )
-        metadata.create_all(self._engine)
-        # create_all skips a table that already exists, and therefore skips its indexes
-        # too -- so a store upgraded in place would never gain the index above. Create it
-        # explicitly; checkfirst makes this a no-op once present.
-        try:
-            sa.Index("ix_authz_grouping_role", self._group_tbl.c.role).create(self._engine, checkfirst=True)
-        except Exception:  # pragma: no cover - already present, or insufficient DDL rights
-            pass
-
     def attach_db(self, db: Any) -> None:
-        """Bind an agno ``Db`` to a still-unbound engine, then read the DB fresh.
+        """Bind an agno ``Db`` to a still-unbound engine, then read it fresh.
 
-        No-op if a DB is already bound (the caller's explicit choice wins) or the db
-        isn't SQL-capable (e.g. a NoSQL agno Db) — in which case the engine stays
-        unbound and the next operation raises. Lets AgentOS adopt the OS database for
-        a managed store created without one."""
-        if self._engine is not None:
+        No-op if a DB is already bound (the caller's explicit choice wins) or the db does
+        not implement the authorization contract — in which case the engine stays unbound
+        and the next operation raises. Lets AgentOS lend the OS database to a managed
+        store created without one."""
+        if self._db is not None:
             return  # already bound — respect the explicit choice
-        try:
-            engine = _engine_from_db(db)
-        except Exception:
-            return  # not a SQL-capable db; stay unbound (use will raise)
-        self._setup_db(engine)
+        if db is not None and supports_authz(db):
+            self._db = db
 
-    # --- read helpers (DB-backed) ----------------------------------------
-    def _direct_roles_on(self, conn: Any, node: str) -> Set[str]:
-        """Roles directly assigned to ``node``, on an existing connection.
-
-        Indexed point-lookup on the grouping PK. Taking the connection as an argument
-        lets one decision reuse a single checkout instead of taking one per hop -- the
-        transitive walk and the role-name guard are all reads of the same two tables.
-        """
-        import sqlalchemy as sa
-
-        rows = conn.execute(sa.select(self._group_tbl.c.role).where(self._group_tbl.c.subject == node))
-        return {r[0] for r in rows}
-
+    # --- read helpers (through the BaseDb authorization contract) ----------
     def _direct_roles(self, node: str) -> Set[str]:
         """Roles directly assigned to ``node`` (a subject, or a role when nesting)."""
         self._require_engine()
-        with self._engine.connect() as conn:
-            return self._direct_roles_on(conn, node)
+        return set(self._db.get_authz_direct_roles(node))
 
     def _closure(self, seed: str) -> Set[str]:
         """``seed`` plus the roles it is (transitively) assigned. The seed itself is
@@ -162,29 +105,14 @@ class NativePolicyEngine(PolicyEngine):
             stack.extend(self._direct_roles(node))
         return seen
 
-    def _is_role_name_on(self, conn: Any, name: str) -> bool:
-        """True if ``name`` is used as a ROLE: it carries policy, or something is
-        assigned to it.
-
-        One round trip on an existing connection: both halves are indexed lookups on a
-        ``role`` column, so they union into a single statement rather than a query and a
-        checkout each. This runs on every subject decision and answers False on every
-        happy path, so it has to be cheap.
-        """
-        import sqlalchemy as sa
-
-        carries_policy = sa.exists().where(self._policy_tbl.c.role == name)
-        has_members = sa.exists().where(self._group_tbl.c.role == name)
-        return bool(conn.execute(sa.select(sa.or_(carries_policy, has_members))).scalar())
-
     def _subject_closure(self, subject: str) -> Set[str]:
         """Policy roots for a *subject*: only the roles it is (transitively) assigned.
 
-        Subjects and roles share one namespace in ``authz_grouping``: role inheritance
-        and a user's assignment are both written by :meth:`assign`, so an edge out of a
-        name cannot be attributed to one or the other. Two consequences, both handled
-        here, and neither reachable through :meth:`_closure` (which is for token-carried
-        roles, where the seed IS legitimately a role):
+        Subjects and roles share one namespace in the grouping table: role inheritance and
+        a user's assignment are both written by :meth:`assign`, so an edge out of a name
+        cannot be attributed to one or the other. Two consequences, both handled here, and
+        neither reachable through :meth:`_closure` (which is for token-carried roles, where
+        the seed IS legitimately a role):
 
         1. The subject is never a policy root, so a ``sub`` equal to a role slug cannot
            pick up that role's own rows.
@@ -200,28 +128,24 @@ class NativePolicyEngine(PolicyEngine):
         self._require_engine()
 
         def resolve() -> Set[str]:
-            # The whole resolution -- the role-name guard plus the transitive walk -- runs
-            # on ONE connection. It used to take a checkout per hop, and this is the hot
-            # path: every authorized request resolves a subject before it can be answered.
-            with self._engine.connect() as conn:
-                if self._is_role_name_on(conn, subject):
-                    self._log.warning(
-                        "authz: subject %r collides with a role name and was refused. Subject ids and role "
-                        "slugs share one namespace, so this identity is ambiguous and is denied rather than "
-                        "resolved. Rename the role or use opaque subject ids (e.g. emails).",
-                        subject,
-                    )
-                    return set()
+            if self._db.authz_name_is_role(subject):
+                self._log.warning(
+                    "authz: subject %r collides with a role name and was refused. Subject ids and role "
+                    "slugs share one namespace, so this identity is ambiguous and is denied rather than "
+                    "resolved. Rename the role or use opaque subject ids (e.g. emails).",
+                    subject,
+                )
+                return set()
 
-                principals: Set[str] = set()
-                stack = list(self._direct_roles_on(conn, subject))
-                while stack:
-                    role = stack.pop()
-                    if role in principals:
-                        continue
-                    principals.add(role)
-                    stack.extend(self._direct_roles_on(conn, role))
-                return principals
+            principals: Set[str] = set()
+            stack = list(self._db.get_authz_direct_roles(subject))
+            while stack:
+                role = stack.pop()
+                if role in principals:
+                    continue
+                principals.add(role)
+                stack.extend(self._db.get_authz_direct_roles(role))
+            return principals
 
         return memoize(("subject", id(self), subject), resolve)
 
@@ -230,79 +154,41 @@ class NativePolicyEngine(PolicyEngine):
         if not principals:
             return []
         self._require_engine()
+        return memoize(
+            ("policies", id(self), frozenset(principals)),
+            lambda: [tuple(row) for row in self._db.get_authz_policies(sorted(principals))],  # type: ignore[misc]
+        )
 
-        def read() -> List[_PolicyRow]:
-            import sqlalchemy as sa
-
-            t = self._policy_tbl
-            with self._engine.connect() as conn:
-                rows = conn.execute(sa.select(t).where(t.c.role.in_(principals))).mappings()
-                return [(row["role"], row["resource"], row["action"], row["effect"]) for row in rows]
-
-        return memoize(("policies", id(self), frozenset(principals)), read)
-
-    # --- persistence (db-backed mutations) -------------------------------
+    # --- persistence (through the BaseDb authorization contract) -----------
     def _persist_policies_set(self, role: str, rows: List[Tuple[str, str, str]]) -> None:
         """Replace a role's persisted policy rows with ``rows`` ((resource, action, effect))."""
         self._require_engine()
         _invalidate_request_cache()  # a write must be visible to the rest of this request
-        import sqlalchemy as sa
-
-        with self._engine.begin() as conn:
-            conn.execute(sa.delete(self._policy_tbl).where(self._policy_tbl.c.role == role))
-            if rows:
-                conn.execute(
-                    sa.insert(self._policy_tbl),
-                    [{"role": role, "resource": res, "action": act, "effect": eff} for res, act, eff in rows],
-                )
+        self._db.set_authz_role_policies(role, rows)
 
     def _persist_policy(self, role: str, resource: str, action: str, effect: str) -> None:
         self._require_engine()
         _invalidate_request_cache()  # a write must be visible to the rest of this request
-        import sqlalchemy as sa
-
-        with self._engine.begin() as conn:
-            conn.execute(
-                sa.delete(self._policy_tbl).where(
-                    self._policy_tbl.c.role == role,
-                    self._policy_tbl.c.resource == resource,
-                    self._policy_tbl.c.action == action,
-                )
-            )
-            conn.execute(sa.insert(self._policy_tbl).values(role=role, resource=resource, action=action, effect=effect))
+        self._db.upsert_authz_policy(role=role, resource=resource, action=action, effect=effect)
 
     def _delete_policy(self, role: str, resource: Optional[str] = None, action: Optional[str] = None) -> None:
         self._require_engine()
         _invalidate_request_cache()  # a write must be visible to the rest of this request
-        import sqlalchemy as sa
-
-        clause = [self._policy_tbl.c.role == role]
-        if resource is not None:
-            clause.append(self._policy_tbl.c.resource == resource)
-        if action is not None:
-            clause.append(self._policy_tbl.c.action == action)
-        with self._engine.begin() as conn:
-            conn.execute(sa.delete(self._policy_tbl).where(*clause))
+        self._db.delete_authz_policy(role=role, resource=resource, action=action)
 
     def _persist_grouping(self, subject: str, role: str, add: bool) -> None:
         self._require_engine()
         _invalidate_request_cache()  # a write must be visible to the rest of this request
-        import sqlalchemy as sa
-
-        with self._engine.begin() as conn:
-            conn.execute(
-                sa.delete(self._group_tbl).where(self._group_tbl.c.subject == subject, self._group_tbl.c.role == role)
-            )
-            if add:
-                conn.execute(sa.insert(self._group_tbl).values(subject=subject, role=role))
+        if add:
+            self._db.assign_authz_role(subject, role)
+        else:
+            self._db.unassign_authz_role(subject, role)
 
     def _delete_grouping_role(self, role: str) -> None:
+        """Drop the role entirely: its policy, its assignments, and its metadata."""
         self._require_engine()
         _invalidate_request_cache()  # a write must be visible to the rest of this request
-        import sqlalchemy as sa
-
-        with self._engine.begin() as conn:
-            conn.execute(sa.delete(self._group_tbl).where(self._group_tbl.c.role == role))
+        self._db.delete_authz_role(role)
 
     # --- authoring: roles -> scopes -------------------------------------
     def set_role_scopes(self, role: str, entries: List[ScopeEntry]) -> None:
@@ -328,19 +214,15 @@ class NativePolicyEngine(PolicyEngine):
         return [(resource_action_to_scope(res, act), eff) for (r, res, act, eff) in self._policies_for({role})]
 
     def remove_role(self, role: str) -> None:
-        self._delete_policy(role)
+        # One call: the db drops policy, assignments and metadata in a single transaction,
+        # so a decision can never observe a half-deleted role.
         self._delete_grouping_role(role)
 
     def list_roles(self) -> List[str]:
         # Roles defined by scope policies PLUS roles that only exist as assignments,
         # so an assignment-only role is still inspectable/cleanable.
         self._require_engine()
-        import sqlalchemy as sa
-
-        with self._engine.connect() as conn:
-            roles = {r[0] for r in conn.execute(sa.select(self._policy_tbl.c.role).distinct())}
-            roles |= {r[0] for r in conn.execute(sa.select(self._group_tbl.c.role).distinct())}
-        return sorted(roles)
+        return sorted(self._db.list_authz_roles())
 
     # --- assignments: subject -> roles ----------------------------------
     def assign(self, subject: str, role: str) -> None:
@@ -359,11 +241,7 @@ class NativePolicyEngine(PolicyEngine):
         """
         self._require_engine()
         _invalidate_request_cache()  # a write must be visible to the rest of this request
-        import sqlalchemy as sa
-
-        with self._engine.begin() as conn:
-            conn.execute(sa.delete(self._group_tbl).where(self._group_tbl.c.subject == subject))
-            conn.execute(sa.insert(self._group_tbl).values(subject=subject, role=role))
+        self._db.replace_authz_subject_roles(subject, role)
 
     def roles_of(self, subject: str) -> List[str]:
         return sorted(self._direct_roles(subject))

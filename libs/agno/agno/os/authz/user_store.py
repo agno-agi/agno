@@ -79,52 +79,20 @@ class ManagedUserStore:
         """
         self._audit = audit
         self._mem: Optional[Dict[str, dict]] = None
-        self._engine: Any = None  # SQLAlchemy Engine when db-backed, else None
-        self._table: Any = None  # SQLAlchemy Table for authz_users
+        from agno.os.authz._db import resolve_authz_db
 
-        if db is not None and engine is None:
-            from agno.os.authz._db import engine_from_db
-
-            engine = engine_from_db(db)
-
-        self._table_name = table_name
-        self._create_table = create_table
-
-        if engine is not None or db_url is not None:
-            import sqlalchemy as sa
-
-            self._bind_engine(engine if engine is not None else sa.create_engine(db_url))  # type: ignore[arg-type]
-        else:
+        self._db: Any = resolve_authz_db(db, db_url)
+        if self._db is None:
             # In-memory directory (not persisted). Fine for tests/dev, and AgentOS
-            # upgrades it in place via attach_db() when it has a SQL-capable db --
-            # see the warning there for why a live one must not stay in-memory.
+            # upgrades it in place via attach_db() when it has a usable db -- see the
+            # guard there for why a live one must not stay in-memory.
             self._mem = {}
-
-    def _bind_engine(self, engine: Any) -> None:
-        """Point the store at ``engine`` and define/create the directory table on it."""
-        import sqlalchemy as sa
-
-        self._engine = engine
-        metadata = sa.MetaData()
-        self._table = sa.Table(
-            self._table_name,
-            metadata,
-            sa.Column("id", sa.String(255), primary_key=True),  # the JWT sub
-            sa.Column("email", sa.String(320)),
-            sa.Column("name", sa.String(255)),
-            sa.Column("disabled", sa.Boolean, nullable=False, default=False),
-            sa.Column("created_at", sa.Integer, nullable=False),
-            sa.Column("updated_at", sa.Integer, nullable=False),
-            sa.Column("user_metadata", sa.Text),
-        )
-        if self._create_table:
-            metadata.create_all(self._engine)
 
     @property
     def is_bound(self) -> bool:
         """True once the directory is backed by a database rather than a process-local
         dict (passed in at construction, or adopted later via :meth:`attach_db`)."""
-        return self._engine is not None
+        return self._db is not None
 
     def attach_db(self, db: Any) -> None:
         """Bind an agno ``Db`` to a store created without one, so the directory persists
@@ -135,19 +103,12 @@ class ManagedUserStore:
         for ``ManagedRoleStore``. Any rows written while the store was in-memory are
         migrated across, so adoption never silently drops a disabled user.
         """
-        if self._engine is not None or db is None:
-            return
-        try:
-            from agno.os.authz._db import engine_from_db
+        from agno.os.authz._db import supports_authz
 
-            engine = engine_from_db(db)
-        except Exception:
+        if self._db is not None or db is None or not supports_authz(db):
             return
-        if engine is None:
-            return
-
         pending = list((self._mem or {}).values())
-        self._bind_engine(engine)
+        self._db = db
         self._mem = None
         # Carry rows written before adoption across verbatim -- including ``disabled``,
         # which upsert() deliberately refuses to set, so a revoked user stays revoked.
@@ -264,10 +225,7 @@ class ManagedUserStore:
         if self._mem is not None:
             self._mem.pop(id, None)
         else:
-            import sqlalchemy as sa
-
-            with self._engine.begin() as conn:  # type: ignore[union-attr]
-                conn.execute(sa.delete(self._table).where(self._table.c.id == id))  # type: ignore[union-attr]
+            self._db.delete_authz_user(id)
         self._emit("user.removed", id, [self._summary(existing)], None, actor)
         return True
 
@@ -297,36 +255,19 @@ class ManagedUserStore:
             row = self._mem.get(id)
             return dict(row) if row else None
 
-        import sqlalchemy as sa
+        return self._db.get_authz_user(id)
 
-        with self._engine.connect() as conn:  # type: ignore[union-attr]
-            r = conn.execute(sa.select(self._table).where(self._table.c.id == id)).mappings().first()  # type: ignore[union-attr]
-        return self._row_to_dict(r) if r else None
-
-    # list() and count() apply the same filters (include_disabled + search) over
-    # whichever backend is active; these two helpers are that shared filtering.
     def _filtered_mem_rows(self, include_disabled: bool, search: Optional[str]) -> List[dict]:
-        def matches(row: dict, needle: str) -> bool:
-            return any(needle in (row.get(f) or "").casefold() for f in USER_SEARCH_FIELDS)
-
-        rows = list(self._mem.values())  # type: ignore[union-attr]
+        """The in-memory equivalent of the SQL filters, for the unbound dev/test store."""
+        rows = list((self._mem or {}).values())
         if not include_disabled:
             rows = [r for r in rows if not r["disabled"]]
         if search:
             needle = search.casefold()
-            rows = [r for r in rows if matches(r, needle)]
+            rows = [
+                r for r in rows if any(str(r.get(f) or "").casefold().find(needle) >= 0 for f in USER_SEARCH_FIELDS)
+            ]
         return rows
-
-    def _sql_filters(self, include_disabled: bool, search: Optional[str]) -> list:
-        import sqlalchemy as sa
-
-        clauses = []
-        if not include_disabled:
-            clauses.append(self._table.c.disabled.is_(False))  # type: ignore[union-attr]
-        if search:
-            pattern = f"%{search}%"
-            clauses.append(sa.or_(*(self._table.c[f].ilike(pattern) for f in USER_SEARCH_FIELDS)))  # type: ignore[index]
-        return clauses
 
     def list(
         self,
@@ -356,21 +297,14 @@ class ManagedUserStore:
             missing = [r for r in rows if r.get(sort_by) is None]
             return [dict(r) for r in (present + missing)[offset : offset + limit]]
 
-        import sqlalchemy as sa
-
-        sort_col = self._table.c[sort_by]  # type: ignore[index]
-        stmt = (
-            sa.select(self._table)
-            .where(*self._sql_filters(include_disabled, search))
-            # nullslast: backends disagree on NULL placement (and email/name are
-            # nullable); pin them last in either direction.
-            .order_by(sa.nullslast(sort_col.desc() if descending else sort_col.asc()))
-            .limit(limit)
-            .offset(offset)
+        return self._db.list_authz_users(
+            limit=limit,
+            offset=offset,
+            include_disabled=include_disabled,
+            search=search,
+            sort_by=sort_by,
+            order=order,
         )
-        with self._engine.connect() as conn:
-            db_rows = conn.execute(stmt).mappings().all()
-        return [self._row_to_dict(r) for r in db_rows]
 
     def count(self, include_disabled: bool = True, search: Optional[str] = None) -> int:
         """Total number of users (for pagination), with the same filters as
@@ -378,11 +312,7 @@ class ManagedUserStore:
         if self._mem is not None:
             return len(self._filtered_mem_rows(include_disabled, search))
 
-        import sqlalchemy as sa
-
-        stmt = sa.select(sa.func.count()).select_from(self._table).where(*self._sql_filters(include_disabled, search))  # type: ignore[arg-type]
-        with self._engine.connect() as conn:  # type: ignore[union-attr]
-            return int(conn.execute(stmt).scalar() or 0)
+        return int(self._db.count_authz_users(include_disabled=include_disabled, search=search))
 
     def is_disabled(self, id: Optional[str]) -> bool:
         """Fast path for the enforcement point: True only if the user exists AND is
@@ -394,13 +324,7 @@ class ManagedUserStore:
             row = self._mem.get(id)
             return bool(row and row["disabled"])
 
-        import sqlalchemy as sa
-
-        with self._engine.connect() as conn:  # type: ignore[union-attr]
-            r = conn.execute(
-                sa.select(self._table.c.disabled).where(self._table.c.id == id)  # type: ignore[union-attr]
-            ).first()
-        return bool(r and r[0])
+        return bool(self._db.is_authz_user_disabled(id))
 
     # ------------------------------------------------------------------ helpers
     @staticmethod
@@ -423,26 +347,21 @@ class ManagedUserStore:
             "metadata": json.loads(r["user_metadata"]) if r["user_metadata"] else None,
         }
 
-    def _write(self, row: dict, insert: bool) -> None:
+    def _write(self, row: dict, insert: bool = True) -> None:
+        """Persist a directory row. ``insert`` is vestigial -- the store upserts, so a
+        caller never has to know whether the row already existed."""
         if self._mem is not None:
             self._mem[row["id"]] = dict(row)
             return
 
-        import sqlalchemy as sa
-
-        values = {
-            "id": row["id"],
-            "email": row["email"],
-            "name": row["name"],
-            "disabled": bool(row["disabled"]),
-            "created_at": row["created_at"],
-            "updated_at": row["updated_at"],
-            "user_metadata": json.dumps(row["metadata"]) if row.get("metadata") else None,
-        }
-        with self._engine.begin() as conn:  # type: ignore[union-attr]
-            if insert:
-                conn.execute(sa.insert(self._table).values(**values))  # type: ignore[union-attr]
-            else:
-                conn.execute(
-                    sa.update(self._table).where(self._table.c.id == row["id"]).values(**values)  # type: ignore[union-attr]
-                )
+        self._db.upsert_authz_user(
+            row["id"],
+            {
+                "email": row["email"],
+                "name": row["name"],
+                "disabled": bool(row["disabled"]),
+                "created_at": row["created_at"],
+                "updated_at": row["updated_at"],
+                "metadata": row.get("metadata"),
+            },
+        )

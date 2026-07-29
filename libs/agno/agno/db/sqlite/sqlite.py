@@ -6411,13 +6411,21 @@ class SqliteDb(BaseDb):
         table = self._get_table(table_type=AUTHZ_USERS, create_table_if_not_found=True)
         return authz_store.get_user(self.db_engine, table, user_id)
 
-    def list_authz_users(self, limit: Optional[int] = None, offset: int = 0) -> List[Dict[str, Any]]:
+    def list_authz_users(
+        self,
+        limit: int = 1000,
+        offset: int = 0,
+        include_disabled: bool = True,
+        search: Optional[str] = None,
+        sort_by: str = "created_at",
+        order: str = "desc",
+    ) -> List[Dict[str, Any]]:
         table = self._get_table(table_type=AUTHZ_USERS, create_table_if_not_found=True)
-        return authz_store.list_users(self.db_engine, table, limit, offset)
+        return authz_store.list_users(self.db_engine, table, limit, offset, include_disabled, search, sort_by, order)
 
-    def count_authz_users(self) -> int:
+    def count_authz_users(self, include_disabled: bool = True, search: Optional[str] = None) -> int:
         table = self._get_table(table_type=AUTHZ_USERS, create_table_if_not_found=True)
-        return authz_store.count_users(self.db_engine, table)
+        return authz_store.count_users(self.db_engine, table, include_disabled, search)
 
     def upsert_authz_user(self, user_id: str, values: Dict[str, Any]) -> None:
         table = self._get_table(table_type=AUTHZ_USERS, create_table_if_not_found=True)
@@ -6444,12 +6452,12 @@ class SqliteDb(BaseDb):
         limit: int = 100,
         offset: int = 0,
         search: Optional[str] = None,
-        sort_by: str = "timestamp",
+        sort_by: str = "created_at",
         order: str = "desc",
         decisions: bool = False,
     ) -> List[Dict[str, Any]]:
         table_type = AUTHZ_DECISIONS if decisions else AUTHZ_AUDIT
-        columns = ["actor", "target", "reason"] if decisions else ["actor", "action", "target"]
+        columns = ["actor", "action", "target"]
         table = self._get_table(table_type=table_type, create_table_if_not_found=True)
         return authz_store.read_events(
             self.db_engine, table, limit, offset, search, sort_by, order, search_columns=columns
@@ -6457,6 +6465,6 @@ class SqliteDb(BaseDb):
 
     def count_authz_audit_events(self, search: Optional[str] = None, decisions: bool = False) -> int:
         table_type = AUTHZ_DECISIONS if decisions else AUTHZ_AUDIT
-        columns = ["actor", "target", "reason"] if decisions else ["actor", "action", "target"]
+        columns = ["actor", "action", "target"]
         table = self._get_table(table_type=table_type, create_table_if_not_found=True)
         return authz_store.count_events(self.db_engine, table, search, search_columns=columns)

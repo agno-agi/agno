@@ -82,28 +82,31 @@ AUTHZ_USERS_TABLE_SCHEMA = {
 }
 
 # The change trail: who changed what. Append-only.
+#
+# The primary key is a caller-generated string rather than an autoincrementing integer:
+# an autoincrement BigInteger PK does not round-trip cleanly across both backends, and an
+# opaque id keeps the two trails writable through the same upsert path.
 AUTHZ_AUDIT_TABLE_SCHEMA = {
     "event_id": {"type": String, "primary_key": True, "nullable": False},
-    "action": {"type": String, "nullable": False},
+    "created_at": {"type": BigInteger, "nullable": False, "index": True},
     "actor": {"type": String, "nullable": True},
+    "action": {"type": String, "nullable": False},
     "target": {"type": String, "nullable": True},
     "before": {"type": Text, "nullable": True},
     "after": {"type": Text, "nullable": True},
-    "timestamp": {"type": BigInteger, "nullable": False, "index": True},
 }
 
 # The access trail: every allow/deny decision, so an audit covers who was let in as well
 # as who changed the rules.
 AUTHZ_DECISIONS_TABLE_SCHEMA = {
     "event_id": {"type": String, "primary_key": True, "nullable": False},
-    "allowed": {"type": Boolean, "nullable": False},
+    "created_at": {"type": BigInteger, "nullable": False, "index": True},
     "actor": {"type": String, "nullable": True},
-    "target": {"type": String, "nullable": True},
-    "reason": {"type": String, "nullable": True},
-    "required_scopes": {"type": Text, "nullable": True},
-    "scopes": {"type": Text, "nullable": True},
-    "token_ref": {"type": String, "nullable": True},
-    "timestamp": {"type": BigInteger, "nullable": False, "index": True},
+    "action": {"type": String, "nullable": False},  # access.allowed / access.denied
+    "target": {"type": Text, "nullable": True},  # "METHOD /path"
+    "token_ref": {"type": String, "nullable": True},  # jti, or a short hash -- never the token
+    "required": {"type": Text, "nullable": True},  # scopes the route required (JSON)
+    "scopes": {"type": Text, "nullable": True},  # scopes the caller had (JSON)
 }
 
 # Registered in each SQLAlchemy backend's get_table_schema_definition so the authz tables
