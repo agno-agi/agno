@@ -1,12 +1,31 @@
 # Test Log
 
+### nimble_tools.py
+
+**Status:** PASS (unit + static); consolidated from PR #6534
+
+**Description:** Direct Nimble Search API toolkit for fast or deep one-shot web
+search. The refreshed implementation uses the current `nimble-python>=1.2.0`
+parameter names, shares the `NIMBLE_API_KEY` and `X-Client-Source: agno`
+contract with `NimbleAgentTools`, supports matching sync and async tools, and
+redacts credential shapes from results and errors.
+
+**Result:** The combined Nimble suite passes 110 tests:
+`pytest libs/agno/tests/unit/tools/test_nimble.py
+libs/agno/tests/unit/tools/test_nimble_agent.py`. The 10 direct-search tests
+cover current SDK serialization, attribution, sync/async parity, missing-key
+behavior, input bounds, and output/error redaction. Ruff and mypy are clean.
+No live API request was made for this test log.
+
+---
+
 ### nimble_agent_tools.py
 
 **Status:** PASS (unit + static); live run not executed
 
 **Description:** New cookbook for `NimbleAgentTools`, which exposes Nimble's Agent API V2 (Web Search Agent) run lifecycle as three tools the model drives itself: `start_agent_run` returns immediately with the `(web_search_agent_id, run_id)` pair, `get_agent_run_status` reports lifecycle state, and `get_agent_run_result` is non-blocking (returns `not_ready` while the run is active, and the grounded output with its trust envelope once complete). Example 1 uses the generic route with no `agent_id` (Nimble provisions an agent and returns its id); Example 2 pins an existing `agent_id` with discovery disabled. The `__main__` block exercises a research prompt and an enrichment prompt with a JSON `output_schema`.
 
-**Result:** `pytest libs/agno/tests/unit/tools/test_nimble_agent.py` — 76 passed. Includes transport-level billing-safety tests that drive the real client through a mock HTTP transport and assert a run creation makes exactly one attempt on 408/409/429/5xx (a safe read still gets its bounded retry budget), plus a contract test that introspects the real `nimble-python` client (not a mock) to assert `agents.run`, `agents.runs.create/get/result`, `agents.list`, and `agents.templates.list` still accept the parameters this toolkit passes, on both the sync and async clients, and a guard that fails if the SDK's effort tiers ever drift from the set the toolkit accepts. `./scripts/format.sh` and `./scripts/validate.sh` clean (ruff + mypy over 951 source files, cookbook ruff + pattern check). Live agent run not executed: an Agent API V2 run is billable and no run was submitted from this environment, so the cookbook's end-to-end output is unverified.
+**Result:** `pytest libs/agno/tests/unit/tools/test_nimble_agent.py` — 100 passed. Includes transport-level billing-safety tests that drive the real client through a mock HTTP transport and assert a run creation makes exactly one attempt on 408/409/429/5xx (a safe read still gets its bounded retry budget), plus a contract test that introspects the real `nimble-python==1.2.0` client (not a mock) to assert `agents.run`, `agents.runs.create/get/result`, `agents.list`, and `agents.templates.list` still accept the parameters this toolkit passes, on both the sync and async clients, and a guard that fails if the SDK's effort tiers ever drift from the set the toolkit accepts. Ruff and mypy are clean. Live agent run not executed: an Agent API V2 run is billable and no run was submitted from this environment, so the cookbook's end-to-end output is unverified.
 
 ---
 

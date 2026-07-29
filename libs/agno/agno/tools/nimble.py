@@ -1,25 +1,75 @@
+"""Nimble Search API toolkit for Agno.
+
+This direct-search surface complements :class:`NimbleAgentTools`, which exposes
+the asynchronous Agent API V2 lifecycle. Both use the same official
+``nimble-python`` dependency, ``NIMBLE_API_KEY`` credential, and
+``X-Client-Source: agno`` attribution.
+"""
+
 import json
-from os import getenv
+import os
+import re
 from typing import Any, Dict, List, Literal, Optional
 
-from agno.tools.toolkit import Toolkit
-from agno.utils.log import logger
-
-# Try to get agno version for tracking
-try:
-    from importlib.metadata import version as get_version
-
-    AGNO_VERSION = get_version("agno")
-except Exception:
-    AGNO_VERSION = "unknown"
+from agno.tools import Toolkit
+from agno.utils.log import log_error
 
 try:
     from nimble_python import AsyncNimble, Nimble
 except ImportError:
-    raise ImportError("`nimble_python` not installed. Please install using `pip install nimble_python`")
+    raise ImportError("`nimble-python` not installed. Please install using `pip install nimble-python`")
+
+CLIENT_SOURCE = "agno"
+_SECRET_PATTERNS = (
+    re.compile(r"nvapi-[A-Za-z0-9_-]+"),
+    re.compile(r"Bearer\s+[A-Za-z0-9._~+/=-]+", re.IGNORECASE),
+    re.compile(r"\b[0-9a-f]{40,}\b"),
+)
+
+
+def _redact_text(value: str) -> str:
+    """Remove common credential shapes and the configured live Nimble key."""
+    secret = os.getenv("NIMBLE_API_KEY")
+    if secret and len(secret) >= 12:
+        value = value.replace(secret, "<redacted>")
+    for pattern in _SECRET_PATTERNS:
+        value = pattern.sub("<redacted>", value)
+    return value
+
+
+def _model_to_dict(model: Any) -> Dict[str, Any]:
+    """Convert the released SDK response model to a JSON-safe dictionary."""
+    if hasattr(model, "to_dict"):
+        value = model.to_dict()
+    elif hasattr(model, "model_dump"):
+        value = model.model_dump(mode="json")
+    elif hasattr(model, "dict"):
+        value = model.dict()
+    else:
+        raise TypeError("Nimble SDK response does not expose a supported dict conversion")
+    if not isinstance(value, dict):
+        raise TypeError("Nimble SDK response conversion did not return a dict")
+    return value
 
 
 class NimbleTools(Toolkit):
+    """Provide direct, real-time web search through Nimble's Search API.
+
+    Use :class:`NimbleTools` for one-shot search. Use
+    :class:`agno.tools.nimble_agent.NimbleAgentTools` when a task needs a
+    resumable Agent API V2 start/status/result lifecycle.
+
+    Args:
+        api_key: Nimble API key. Falls back to ``NIMBLE_API_KEY``.
+        enable_search: Register the direct-search tool. Defaults to ``True``.
+        all: Enable all tools exposed by this toolkit.
+        locale: Default result locale.
+        country: Default result country.
+        output_format: Default page-content format.
+        timeout: Per-request timeout in seconds.
+        max_retries: Bounded SDK retry budget. Search is read-only.
+    """
+
     def __init__(
         self,
         api_key: Optional[str] = None,
@@ -28,41 +78,101 @@ class NimbleTools(Toolkit):
         locale: str = "en",
         country: str = "US",
         output_format: Literal["markdown", "plain_text", "simplified_html"] = "markdown",
-        **kwargs,
+        timeout: int = 30,
+        max_retries: int = 2,
+        **kwargs: Any,
     ):
-        """Initialize NimbleTools with web search capabilities.
-
-        Provides real-time web search powered by the Nimble Search API with support
-        for deep content extraction and LLM-generated answer summaries.
-
-        Args:
-            api_key: Nimble API key. If not provided, will use NIMBLE_API_KEY env var.
-            enable_search: Enable web search functionality. Defaults to True.
-            all: Enable all available tools. Defaults to False.
-            locale: Locale for search results (e.g., "en", "es"). Defaults to "en".
-            country: Country code for search results (e.g., "US", "GB"). Defaults to "US".
-            output_format: Output format - "markdown", "plain_text", or "simplified_html". Defaults to "markdown".
-            **kwargs: Additional arguments passed to Toolkit.
-        """
-        self.api_key = api_key or getenv("NIMBLE_API_KEY")
+        self.api_key = api_key or os.getenv("NIMBLE_API_KEY")
         if not self.api_key:
-            logger.error("NIMBLE_API_KEY not provided")
+            log_error("NIMBLE_API_KEY not set. Set NIMBLE_API_KEY or pass api_key.")
 
-        # Initialize clients
-        self.client: Nimble = Nimble(api_key=self.api_key)
-        self.async_client: AsyncNimble = AsyncNimble(api_key=self.api_key)
+        self.locale = locale
+        self.country = country
+        self.output_format = output_format
+        self.timeout = timeout
+        self.max_retries = max_retries
+        self._sync_client = self._build_sync_client() if self.api_key else None
+        self._async_client: Optional[AsyncNimble] = None
 
-        # Store configuration (only things that rarely change per call)
-        self.locale: str = locale
-        self.country: str = country
-        self.output_format: Literal["markdown", "plain_text", "simplified_html"] = output_format
-
-        # Register tools
         tools: List[Any] = []
+        async_tools: List[Any] = []
         if enable_search or all:
             tools.append(self.web_search_using_nimble)
+            async_tools.append((self.aweb_search_using_nimble, "web_search_using_nimble"))
 
-        super().__init__(name="nimble_tools", tools=tools, **kwargs)
+        super().__init__(
+            name="nimble_tools",
+            tools=tools,
+            async_tools=async_tools,
+            timeout=timeout,
+            **kwargs,
+        )
+
+    def _build_sync_client(self) -> Nimble:
+        return Nimble(
+            api_key=self.api_key,
+            client_source=CLIENT_SOURCE,
+            timeout=self.timeout,
+            max_retries=self.max_retries,
+        )
+
+    def _get_async_client(self) -> AsyncNimble:
+        if self._async_client is None:
+            self._async_client = AsyncNimble(
+                api_key=self.api_key,
+                client_source=CLIENT_SOURCE,
+                timeout=self.timeout,
+                max_retries=self.max_retries,
+            )
+        return self._async_client
+
+    def _search_options(
+        self,
+        *,
+        query: str,
+        max_results: int,
+        deep_search: bool,
+        include_answer: bool,
+        time_range: Optional[Literal["hour", "day", "week", "month", "year"]],
+        include_domains: Optional[List[str]],
+        exclude_domains: Optional[List[str]],
+    ) -> Dict[str, Any]:
+        prompt = (query or "").strip()
+        if not prompt:
+            raise ValueError("query is required")
+        if not 1 <= max_results <= 100:
+            raise ValueError("max_results must be between 1 and 100")
+
+        options: Dict[str, Any] = {
+            "query": prompt,
+            "max_results": max_results,
+            "deep_search": deep_search,
+            "include_answer": include_answer,
+            "locale": self.locale,
+            "country": self.country,
+            "output_format": self.output_format,
+        }
+        if time_range is not None:
+            options["time_range"] = time_range
+        if include_domains:
+            options["include_domains"] = include_domains
+        if exclude_domains:
+            options["exclude_domains"] = exclude_domains
+        return options
+
+    @staticmethod
+    def _success(response: Any) -> str:
+        rendered = _redact_text(json.dumps(_model_to_dict(response), ensure_ascii=False, default=str))
+        return rendered
+
+    @staticmethod
+    def _error(exc: Exception) -> str:
+        return json.dumps(
+            {
+                "error": _redact_text(str(exc))[:500],
+                "error_type": type(exc).__name__,
+            }
+        )
 
     def web_search_using_nimble(
         self,
@@ -74,60 +184,53 @@ class NimbleTools(Toolkit):
         include_domains: Optional[List[str]] = None,
         exclude_domains: Optional[List[str]] = None,
     ) -> str:
-        """Search the web for real-time information using Nimble's search API.
+        """Search the web for real-time information using Nimble.
 
-        Choose the right mode:
-        - Fast Mode (deep_search=False, default): Best for URL discovery and quick answers.
-          Returns concise, token-efficient results perfect for agentic loops and initial research.
-        - Deep Search (deep_search=True): Use when you need comprehensive full-page content
-          for in-depth analysis, extracting detailed information, or reading entire articles.
-
-        Args:
-            query: Search query string.
-            max_results: Number of results to return (1-100). Defaults to 3.
-            deep_search: Enable full-page content extraction. Defaults to False (fast mode).
-            include_answer: Generate an LLM-powered summary answer. Defaults to False.
-            time_range: Filter by recency - "hour", "day", "week", "month", "year".
-                       Use for time-sensitive queries like "latest news" or "recent updates".
-            include_domains: Restrict search to specific domains (e.g., ["github.com", "docs.python.org"]).
-            exclude_domains: Exclude specific domains from results.
-
-        Returns:
-            JSON string with search results formatted according to output_format setting.
+        Fast mode is the token-efficient default for URL discovery and quick
+        answers. Set ``deep_search=True`` when the agent needs full-page content
+        for detailed analysis.
         """
+        if self._sync_client is None:
+            return json.dumps({"error": "Nimble API key not configured.", "error_type": "configuration_error"})
         try:
-            # Build search parameters
-            search_params: Dict[str, Any] = {
-                "query": query,
-                "num_results": max_results,
-                "deep_search": deep_search,
-                "include_answer": include_answer,
-                "locale": self.locale,
-                "country": self.country,
-                "parsing_type": self.output_format,
-            }
-
-            # Add optional parameters if specified
-            if time_range:
-                search_params["time_range"] = time_range
-            if include_domains:
-                search_params["include_domains"] = include_domains
-            if exclude_domains:
-                search_params["exclude_domains"] = exclude_domains
-
-            # Call Nimble Search API with tracking headers
-            response = self.client.search(
-                **search_params,
-                extra_headers={
-                    "X-Client-Source": "agno-tools",
-                    "X-Client-Tool": "NimbleTools",
-                    "X-Client-Version": AGNO_VERSION,
-                },
+            options = self._search_options(
+                query=query,
+                max_results=max_results,
+                deep_search=deep_search,
+                include_answer=include_answer,
+                time_range=time_range,
+                include_domains=include_domains,
+                exclude_domains=exclude_domains,
             )
+            return self._success(self._sync_client.search(**options))
+        except Exception as exc:
+            log_error(f"Nimble web search failed: {type(exc).__name__}")
+            return self._error(exc)
 
-            # Return the response as JSON
-            return json.dumps(response.model_dump(), indent=2)
-
-        except Exception as e:
-            logger.error(f"Error searching with Nimble: {e}")
-            return json.dumps({"error": f"Search failed: {str(e)}"}, indent=2)
+    async def aweb_search_using_nimble(
+        self,
+        query: str,
+        max_results: int = 3,
+        deep_search: bool = False,
+        include_answer: bool = False,
+        time_range: Optional[Literal["hour", "day", "week", "month", "year"]] = None,
+        include_domains: Optional[List[str]] = None,
+        exclude_domains: Optional[List[str]] = None,
+    ) -> str:
+        """Async variant of :meth:`web_search_using_nimble`."""
+        if not self.api_key:
+            return json.dumps({"error": "Nimble API key not configured.", "error_type": "configuration_error"})
+        try:
+            options = self._search_options(
+                query=query,
+                max_results=max_results,
+                deep_search=deep_search,
+                include_answer=include_answer,
+                time_range=time_range,
+                include_domains=include_domains,
+                exclude_domains=exclude_domains,
+            )
+            return self._success(await self._get_async_client().search(**options))
+        except Exception as exc:
+            log_error(f"Nimble async web search failed: {type(exc).__name__}")
+            return self._error(exc)
