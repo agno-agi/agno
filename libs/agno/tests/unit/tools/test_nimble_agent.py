@@ -277,7 +277,7 @@ def test_unconfirmed_create_says_do_not_resubmit_and_how_to_reconcile(exc):
     """A create that never got an answer may already have been billed.
 
     "Try again" here would buy a second run, so the guidance has to forbid
-    resubmission and tell the model how to find out what happened.
+    resubmission and point at somewhere reconciliation can actually happen.
     """
     attempts = []
     t = NimbleAgentTools(api_key="test-key-1234567890", agent_id="wsa_123")
@@ -289,8 +289,40 @@ def test_unconfirmed_create_says_do_not_resubmit_and_how_to_reconcile(exc):
     message = out["error"].lower()
     assert "do not resubmit" in message
     assert "may still have been created and billed" in message
-    # Reconciliation must be actionable, not just a warning.
-    assert "list_agents" in message and "get_agent_run_status" in message
+
+
+def test_unconfirmed_create_with_agent_id_points_at_that_agents_run_history():
+    """A durable agent id narrows reconciliation to one agent's run history."""
+    t = NimbleAgentTools(api_key="test-key-1234567890", agent_id="wsa_123")
+    t._sync_client = _transport_failure_client(httpx.ReadTimeout("t"), [])
+    message = json.loads(t.start_agent_run("q"))["error"]
+
+    assert "wsa_123" in message, "name the agent whose run history to inspect"
+    assert "run history" in message.lower()
+    # get_agent_run_status is only reachable once a run id has been recovered,
+    # so it may only ever be mentioned as a follow-up to finding that run.
+    assert "if you find a matching run, pass its run id to get_agent_run_status" in message.lower()
+
+
+def test_unconfirmed_agentless_create_does_not_promise_a_toolkit_reconciliation():
+    """Agentless creates return no durable id, so this toolkit cannot reconcile them.
+
+    There is no run-listing tool and get_agent_run_status needs a run id that was
+    never returned, so the guidance must send the caller to the account's run
+    history rather than implying list_agents plus a status check can settle it.
+    """
+    t = NimbleAgentTools(api_key="test-key-1234567890")  # no agent_id anywhere
+    t._sync_client = _transport_failure_client(httpx.ReadTimeout("t"), [])
+    message = json.loads(t.start_agent_run("q"))["error"].lower()
+
+    assert "do not resubmit" in message
+    assert "no run id was returned" in message
+    assert "dashboard or api" in message
+    # list_agents may be mentioned, but never as sufficient on its own.
+    if "list_agents" in message:
+        assert "it does not report runs" in message
+    # The dead-end instruction from the previous revision must not come back.
+    assert "then use get_agent_run_status" not in message
 
 
 @pytest.mark.parametrize("status_code", [500, 503])

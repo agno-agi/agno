@@ -64,15 +64,36 @@ MAX_EFFORT_CONTACT = "https://www.nimbleway.com/contact"
 # Mirrors the effort tiers nimble-python accepts. A unit test asserts this stays
 # equal to the SDK's own Literal, so a tier added or renamed upstream fails loudly.
 SUPPORTED_EFFORTS = frozenset({"low", "medium", "high", "x-high", "max"})
-# Returned when a run creation fails without a confirmed answer. The run may
-# already exist and be billable, so this must not read as "safe to try again".
-UNCONFIRMED_RUN_GUIDANCE = (
-    "The run was not confirmed and may still have been created and billed. "
-    "Do not resubmit this run. Reconcile first: if you passed an agent_id, check that agent's "
-    "runs for one matching this request; if you did not, call list_agents to find an agent Nimble "
-    "may have just provisioned, then use get_agent_run_status on its run. Only start a new run "
-    "once you have confirmed no run was created."
-)
+
+
+def _unconfirmed_run_guidance(agent_id: Optional[str]) -> str:
+    """Explain how to reconcile a run creation that never returned an answer.
+
+    The run may already exist and be billable, so this must never read as "safe
+    to try again". Reconciliation genuinely cannot be completed from this
+    toolkit: no run id came back, ``get_agent_run_status`` needs one, and there
+    is no run-listing tool here. The honest instruction is therefore to check
+    the account's run history, and the useful part is saying *where* to look,
+    which depends on whether a durable agent id was in play.
+    """
+    if agent_id:
+        where = (
+            f"A run may exist under agent {agent_id}. Check that agent's run history in the Nimble "
+            "dashboard or API. If you find a matching run, pass its run id to get_agent_run_status "
+            "to see how it ended."
+        )
+    else:
+        where = (
+            "No agent id was supplied, so this request may also have provisioned a new agent, and "
+            "no run id was returned for it. Check the account's recent agents and their run history "
+            "in the Nimble dashboard or API. list_agents here can show a newly provisioned agent, "
+            "but it does not report runs, so it cannot confirm on its own whether a run started."
+        )
+    return (
+        "The run was not confirmed and may still have been created and billed. Do not resubmit "
+        f"this run until you have confirmed whether one exists. {where}"
+    )
+
 
 _SECRET_PATTERNS = (
     re.compile(r"nvapi-[A-Za-z0-9_-]+"),
@@ -420,7 +441,7 @@ class NimbleAgentTools(Toolkit):
         payload.update(extra)
         return json.dumps(payload, indent=2)
 
-    def _map_exception(self, exc: Exception, *, unconfirmed_write: bool = False) -> str:
+    def _map_exception(self, exc: Exception, *, unconfirmed_write: bool = False, agent_id: Optional[str] = None) -> str:
         """Map an SDK error to a redacted, actionable tool result. Never echo the key.
 
         ``unconfirmed_write`` marks the run-creation path, where the outcome is
@@ -450,14 +471,14 @@ class NimbleAgentTools(Toolkit):
             return self._error("Invalid request or non-successful result (422).", code="unprocessable")
         if isinstance(exc, (APITimeoutError, APIConnectionError)):
             if unconfirmed_write:
-                return self._error(UNCONFIRMED_RUN_GUIDANCE, code="connection_error_unconfirmed")
+                return self._error(_unconfirmed_run_guidance(agent_id), code="connection_error_unconfirmed")
             return self._error("Network error contacting Nimble. Try again.", code="connection_error")
         if isinstance(exc, APIStatusError):
             status_code = getattr(exc, "status_code", None)
             # A 5xx on create leaves the same question open as a timeout: the run
             # may exist. 4xx answers it -- the request was rejected, nothing ran.
             if unconfirmed_write and isinstance(status_code, int) and status_code >= 500:
-                return self._error(UNCONFIRMED_RUN_GUIDANCE, code="connection_error_unconfirmed")
+                return self._error(_unconfirmed_run_guidance(agent_id), code="connection_error_unconfirmed")
             return self._error(f"Nimble API error (HTTP {status_code or 'unknown'}).", code="api_error")
         return self._error(_redact_text(str(exc))[:300] or "Unexpected error", code="error")
 
@@ -613,7 +634,7 @@ class NimbleAgentTools(Toolkit):
                 )
         except Exception as exc:  # surface a structured result rather than raising into the agent loop
             log_error(f"Nimble start_agent_run failed: {type(exc).__name__}")
-            return self._map_exception(exc, unconfirmed_write=True)
+            return self._map_exception(exc, unconfirmed_write=True, agent_id=resolved)
         return self._render_created(created)
 
     def get_agent_run_status(self, run_id: str, agent_id: Optional[str] = None) -> str:
@@ -786,7 +807,7 @@ class NimbleAgentTools(Toolkit):
                 )
         except Exception as exc:
             log_error(f"Nimble astart_agent_run failed: {type(exc).__name__}")
-            return self._map_exception(exc, unconfirmed_write=True)
+            return self._map_exception(exc, unconfirmed_write=True, agent_id=resolved)
         return self._render_created(created)
 
     async def aget_agent_run_status(self, run_id: str, agent_id: Optional[str] = None) -> str:
