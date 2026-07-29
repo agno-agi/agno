@@ -245,3 +245,85 @@ class TestDrain:
         job = await store.get_job("r1")
         assert job["status"] == "queued"  # requeued for another worker
         assert "shutdown" in job["error"].lower()
+
+
+class TestCancelQueued:
+    @pytest.mark.asyncio
+    async def test_acancel_queued_tombstones_and_terminalizes(self):
+        """A run cancelled while still queued must not be claimed and executed
+        later: the ticket is tombstoned, the stream view closes CANCELLED."""
+        import agno.os.event_streams as es_mod
+        from agno.os.event_streams import InMemoryEventStream, set_event_stream
+        from agno.os.managers import EventsBuffer, SSESubscriberManager
+
+        original = es_mod._event_stream
+        stream = InMemoryEventStream(events_buffer=EventsBuffer(), subscriber_manager=SSESubscriberManager())
+        set_event_stream(stream)
+        try:
+            from agno.job_queue.config import QueueConfig
+            from agno.job_queue.store import InMemoryQueueStore
+            from agno.os.job_queue import QueueWorker
+            from agno.run.base import RunStatus
+
+            store = InMemoryQueueStore()
+            await store.enqueue_job(
+                {
+                    "id": "cq1",
+                    "component_type": "agent",
+                    "component_id": "a1",
+                    "session_id": "s1",
+                    "job_type": "run",
+                    "payload": {},
+                    "status": "queued",
+                    "attempt": 0,
+                    "max_attempts": 1,
+                    "available_at": 0,
+                    "created_at": 0,
+                }
+            )
+            worker = QueueWorker(
+                store=store,
+                resolve_component=lambda t, i: None,
+                config=QueueConfig(durable=True, poll_interval=0.05, lock_grace_seconds=60),
+            )
+            assert await worker.acancel_queued("cq1") is True
+            assert (await store.get_job("cq1"))["status"] == "cancelled"
+            assert await store.claim_job("w2") is None, "tombstoned job must not be claimable"
+            assert await stream.get_run_status("cq1") == RunStatus.cancelled
+
+            # Running jobs are not touched by this path
+            await store.enqueue_job(
+                {
+                    "id": "cq2",
+                    "component_type": "agent",
+                    "component_id": "a1",
+                    "session_id": "s1",
+                    "job_type": "run",
+                    "payload": {},
+                    "status": "queued",
+                    "attempt": 0,
+                    "max_attempts": 1,
+                    "available_at": 0,
+                    "created_at": 0,
+                }
+            )
+            await store.claim_job("w1")
+            assert await worker.acancel_queued("cq2") is False
+        finally:
+            es_mod._event_stream = original
+
+
+class TestConfigValidation:
+    def test_broken_configs_rejected(self):
+        from agno.job_queue.config import QueueConfig
+
+        for kwargs in (
+            {"max_attempts": 0},
+            {"poll_interval": 0},
+            {"lock_grace_seconds": 1},
+            {"retry_delay_seconds": -1},
+            {"retention_seconds": 0},
+            {"durable": True, "timeout_seconds": 0},
+        ):
+            with pytest.raises(ValueError):
+                QueueConfig(durable=True, **{k: v for k, v in kwargs.items() if k != "durable"})

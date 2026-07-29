@@ -26,7 +26,7 @@ from agno.os.auth import (
     get_authentication_dependency,
     require_resource_access,
 )
-from agno.os.job_queue import aprepare_queued_run, payload_is_queueable
+from agno.os.job_queue import aprepare_queued_run, payload_is_queueable, validate_seam_input
 from agno.os.managers import event_buffer, websocket_manager
 from agno.os.middleware.user_scope import (
     SESSION_ID_REQUIRED,
@@ -1281,6 +1281,8 @@ def get_workflow_router(
                 and version is None  # version-pinned resolution differs from the worker's registry instance
                 and payload_is_queueable(queued_payload)
             ):
+                # 202 must honor input_schema exactly like the inline path 422s
+                validate_seam_input(workflow, message)
                 queued_run_id = str(uuid4())
                 queued_session_id = session_id or str(uuid4())
                 job = QueuedJob(
@@ -1593,6 +1595,11 @@ def get_workflow_router(
                     component_id=workflow_id,
                 )
 
+            # Tombstone a still-queued durable ticket first: intent alone
+            # does not stop a job no task is executing yet
+            queue_worker = getattr(request.app.state, "queue_worker", None)
+            if queue_worker is not None:
+                await queue_worker.acancel_queued(run_id)
             await acancel_run(run_id)
             return JSONResponse(content={}, status_code=200)
 
@@ -1623,6 +1630,11 @@ def get_workflow_router(
 
         # cancel_run always stores cancellation intent (even for not-yet-registered runs
         # in cancel-before-start scenarios), so we always return success.
+        # Tombstone a still-queued durable ticket first: intent alone
+        # does not stop a job no task is executing yet
+        queue_worker = getattr(request.app.state, "queue_worker", None)
+        if queue_worker is not None:
+            await queue_worker.acancel_queued(run_id)
         await workflow.acancel_run(run_id=run_id)
         return JSONResponse(content={}, status_code=200)
 
