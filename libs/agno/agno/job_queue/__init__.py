@@ -1,3 +1,3 @@
-from agno.job_queue.config import QueueConfig
+from agno.job_queue.config import QueueConfig, RedisCoordination
 
-__all__ = ["QueueConfig"]
+__all__ = ["QueueConfig", "RedisCoordination"]
