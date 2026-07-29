@@ -484,11 +484,51 @@ class QueueWorker:
                 else:
                     component.save_session(session=workflow_session)
 
+    def _retry_delay(self, attempt: int) -> int:
+        """Exponential backoff with full jitter, capped at 10x the base.
+
+        config.retry_delay_seconds is the BASE delay; attempt N waits up to
+        base * 2**(N-1), jittered uniformly to avoid a thundering herd of
+        retries when many workers fail together."""
+        import random
+
+        base = self.config.retry_delay_seconds
+        if base <= 0:
+            return 0  # explicit no-backoff configuration (tests, dev loops)
+        ceiling = min(base * (2 ** max(0, attempt - 1)), base * 10)
+        return random.randint(base, max(base, ceiling))
+
+    @staticmethod
+    def _is_permanent_failure(exc: BaseException) -> bool:
+        """Failures that retrying cannot cure: fail fast to the dead-letter
+        surface instead of burning the attempt budget."""
+        from agno.exceptions import InputCheckError, OutputCheckError
+
+        return isinstance(exc, (InputCheckError, OutputCheckError, TypeError))
+
     async def _execute_claimed(self, job: Dict[str, Any]) -> None:
         from agno.run.base import RunStatus
 
         job_id, attempt = job["id"], job["attempt"]
         job_type = job.get("job_type", "run")
+        component_for_stamp = self.resolve_component(job.get("component_type"), job.get("component_id"))
+        if component_for_stamp is not None:
+            # Establish this attempt's generation on the run row BEFORE
+            # executing: the fence compares terminal writes against the stored
+            # queue_attempt, and without an up-front stamp a zombie's write
+            # passes vacuously (stored None) and stamps its own stale attempt.
+            from agno.run.status_persist import apersist_run_status
+
+            with contextlib.suppress(Exception):
+                await apersist_run_status(
+                    component_for_stamp,
+                    job.get("component_type", ""),
+                    session_id=job["session_id"],
+                    run_id=job_id,
+                    fields={"queue_attempt": attempt},
+                    user_id=job.get("user_id"),
+                    expected_attempt=attempt,
+                )
         if job_type != "run":
             # Forward-compat: a newer producer enqueued a job type this worker
             # has no executor for. Fail it visibly rather than guessing.
@@ -527,7 +567,7 @@ class QueueWorker:
             elif status == RunStatus.error:
                 error_content = str(getattr(result, "content", "") or "run errored")
                 await self.store.retry_or_fail_job(
-                    job_id, self.worker_id, attempt, error_content, self.config.retry_delay_seconds
+                    job_id, self.worker_id, attempt, error_content, self._retry_delay(attempt)
                 )
             else:
                 await self.store.complete_job(job_id, self.worker_id, attempt, "completed")
@@ -552,11 +592,15 @@ class QueueWorker:
             with contextlib.suppress(Exception):
                 await self._persist_run_error(job, error)
             await self._terminate_stream_view(job)
-            await self.store.retry_or_fail_job(job_id, self.worker_id, attempt, error, self.config.retry_delay_seconds)
+            await self.store.retry_or_fail_job(job_id, self.worker_id, attempt, error, self._retry_delay(attempt))
         except Exception as e:
             with contextlib.suppress(Exception):
                 await self._persist_run_error(job, str(e))
-            await self.store.retry_or_fail_job(job_id, self.worker_id, attempt, str(e), self.config.retry_delay_seconds)
+            if self._is_permanent_failure(e):
+                # Invalid input / schema violations cannot be cured by retrying
+                await self.store.complete_job(job_id, self.worker_id, attempt, "failed", f"permanent: {str(e)}")
+            else:
+                await self.store.retry_or_fail_job(job_id, self.worker_id, attempt, str(e), self._retry_delay(attempt))
 
 
 async def aprepare_queued_run(
