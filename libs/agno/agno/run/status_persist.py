@@ -31,19 +31,25 @@ async def apersist_run_status(
     fields: Dict[str, Any],
     user_id: Optional[str] = None,
     expected_attempt: Optional[int] = None,
-) -> bool:
+) -> Optional[bool]:
     """Persist run-status fields atomically when the adapter supports it.
 
-    Returns True when the atomic primitive handled the write. False means the
-    caller must use its fallback (fresh-read + save) - the run may not exist
-    yet, or the adapter has no atomic primitive.
+    Tri-state result:
+    - True: the atomic primitive wrote the fields.
+    - False: the atomic primitive RAN and declined - the run row is missing,
+      or (when ``expected_attempt`` was given) the attempt fence rejected this
+      writer because a newer attempt owns the row. When a fence was requested,
+      False is FINAL: falling back to an unfenced whole-session save would
+      hand a fenced-out zombie exactly the clobber the fence exists to stop.
+    - None: no atomic primitive available (no db, no method, or it raised) -
+      the unfenced fallback is the only option and remains legitimate.
     """
     db = _get_db(component)
     if db is None:
-        return False
+        return None
     method = getattr(db, "update_run_in_session", None)
     if not callable(method):
-        return False
+        return None
     try:
         if inspect.iscoroutinefunction(method):
             return bool(
@@ -55,8 +61,23 @@ async def apersist_run_status(
             )
         )
     except Exception as e:
+        # Liveness over strictness: a transient DB error should not strand the
+        # run in a non-terminal state, so the caller may fall back. The fence
+        # bypass this opens needs a zombie AND a coincident DB failure.
         log_debug(f"Atomic run status persist failed, caller falls back: {e}")
+        return None
+
+
+def fallback_allowed(result: Optional[bool], expected_attempt: Optional[int]) -> bool:
+    """Whether the unfenced fallback may run after an atomic-path result."""
+    if result is True:
         return False
+    if result is None:
+        return True
+    # result is False: the atomic path spoke. Without a fence that means the
+    # run row does not exist yet (fallback creates it); with a fence it may
+    # mean a newer attempt owns the row - never override a possible fence.
+    return expected_attempt is None
 
 
 async def apersist_run_transition(
@@ -81,10 +102,12 @@ async def apersist_run_transition(
         fields.update(extra_fields)
 
     run_id = getattr(run_response, "run_id", None)
-    if run_id and await apersist_run_status(
-        component, component_type, session_id, run_id, fields, user_id=user_id, expected_attempt=expected_attempt
-    ):
-        return
+    if run_id:
+        result = await apersist_run_status(
+            component, component_type, session_id, run_id, fields, user_id=user_id, expected_attempt=expected_attempt
+        )
+        if not fallback_allowed(result, expected_attempt):
+            return
 
     # Fallback: fresh-read + whole-session save (narrows, does not close, the
     # concurrent-write window - see module docstring)
