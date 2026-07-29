@@ -58,6 +58,7 @@ v3.0 normalized run storage is implemented for:
 - `MongoDb` and `AsyncMongoDb` (uses a separate ``agno_runs`` collection)
 - `FirestoreDb` (uses a separate ``agno_runs`` collection)
 - `RedisDb` (uses ``<prefix>:runs:<run_id>`` keys plus a per-session sorted-set index)
+- `ValkeyDb` (uses ``<prefix>:runs:<run_id>`` keys plus a per-session sorted-set index)
 - `DynamoDb` (uses a separate ``agno_runs`` table with a ``session_id-created_at`` GSI)
 - `SurrealDb` (uses a separate ``agno_runs`` table)
 - `JsonDb` (uses a separate ``agno_runs.json`` file)
@@ -92,6 +93,16 @@ a per-session sorted set (``<prefix>:runs:by_session:<session_id>``) scored by
 ``ZRANGE`` + ``MGET`` round-trip rather than a full scan. The legacy ``runs``
 field on the session record is preserved by the migration; call
 ``db.cleanup_legacy_runs_field()`` to drop it once verified.
+
+### Valkey note
+
+Valkey stores each run as a separate key (``<prefix>:runs:<run_id>``) and maintains
+a per-session sorted set (``<prefix>:runs:by_session:<session_id>``) scored by
+``run_index`` for cheap ordered reads. ``get_runs(session_id=...)`` is a ``ZRANGE``
+plus one batched read of those keys rather than a full scan; the batch is issued
+through the GLIDE client, which pipelines the whole page in a single round trip.
+The legacy ``runs`` field on the session record is preserved by the migration;
+call ``db.cleanup_legacy_runs_field()`` to drop it once verified.
 
 ### DynamoDB note
 

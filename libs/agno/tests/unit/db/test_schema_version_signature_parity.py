@@ -41,6 +41,7 @@ _ADAPTER_IMPORTS: list[tuple[str, str, str]] = [
     ("agno.db.mongo.mongo", "MongoDb", "sync"),
     ("agno.db.mongo.async_mongo", "AsyncMongoDb", "sync"),
     ("agno.db.redis.redis", "RedisDb", "sync"),
+    ("agno.db.valkey.valkey", "ValkeyDb", "sync"),
     ("agno.db.firestore.firestore", "FirestoreDb", "sync"),
     ("agno.db.dynamo.dynamo", "DynamoDb", "sync"),
     ("agno.db.surrealdb.surrealdb", "SurrealDb", "sync"),

@@ -164,3 +164,33 @@ def test_get_run_get_runs_apis():
     # All run keys + the sorted-set index should be gone
     rows, total = db.get_runs(session_id="sx", deserialize=False)
     assert total == 0
+
+
+def test_runs_index_is_excluded_from_record_scans():
+    """`<prefix>:runs:by_session:<id>` matches the `runs` scan pattern but is a sorted
+    set. `_get_all_records` wraps its whole read loop in one try/except, so a GET
+    raising WRONGTYPE on that key drops every run in the table, not just that key."""
+    db = _new_db()
+    run = _make_run("r0", "s20", "c0")
+    db.upsert_run(run=run, session_id="s20", user_id="u1", run_index=0)
+
+    assert [r["run_id"] for r in db._get_all_records("runs")] == ["r0"]
+
+
+def test_ids_containing_the_index_marker_stay_visible():
+    """The helper-key filters are namespace-anchored, not substring matches.
+
+    A caller-supplied id may legitimately contain `:by_session:` or `:index:`. Those
+    records are real keys, and filtering them by substring hides them from every
+    list API while direct-by-id reads keep working.
+    """
+    db = _new_db()
+    ids = ["plain", "tenant:by_session:42", "tenant:index:42"]
+    for sid in ids:
+        db.upsert_session(AgentSession(session_id=sid, agent_id="agent-1", user_id="u1"))
+
+    rows, total = db.get_sessions(deserialize=False)
+    assert total == len(ids)
+    assert {r["session_id"] for r in rows} == set(ids)
+    for sid in ids:
+        assert db.get_session(sid, SessionType.AGENT) is not None
