@@ -413,9 +413,9 @@ class QueueWorker:
         if component is None:
             return
         from agno.run.base import RunStatus
-        from agno.run.status_persist import apersist_run_status
+        from agno.run.status_persist import apersist_run_status, fallback_allowed
 
-        if await apersist_run_status(
+        result = await apersist_run_status(
             component,
             job["component_type"],
             session_id=job["session_id"],
@@ -423,7 +423,10 @@ class QueueWorker:
             fields={"status": RunStatus.error.value},
             user_id=job.get("user_id"),
             expected_attempt=job.get("attempt"),
-        ):
+        )
+        if not fallback_allowed(result, job.get("attempt")):
+            # Written, or fenced out by a newer attempt that owns the row -
+            # either way the unfenced fallback below must not run
             return
 
         component_type = job["component_type"]
