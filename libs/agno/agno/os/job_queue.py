@@ -357,15 +357,19 @@ class QueueWorker:
 
         final_output: Any = None
         try:
+            extra_kwargs: Dict[str, Any] = dict(payload.get("kwargs") or {})
+            # stream_events may arrive as an extra form field inside kwargs;
+            # passing it both explicitly and via ** would raise TypeError
+            stream_events = extra_kwargs.pop("stream_events", payload.get("stream_events", True))
             async for event in component.arun(
                 input=payload.get("input"),
                 session_id=job["session_id"],
                 user_id=job.get("user_id"),
                 run_id=job_id,
                 stream=True,
-                stream_events=payload.get("stream_events", True),
+                stream_events=stream_events,
                 yield_run_output=True,
-                **(payload.get("kwargs") or {}),
+                **extra_kwargs,
             ):
                 if hasattr(event, "status") and hasattr(event, "run_id") and not hasattr(event, "event"):
                     final_output = event  # the terminal RunOutput
