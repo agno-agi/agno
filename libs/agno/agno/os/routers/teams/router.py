@@ -782,6 +782,16 @@ def get_team_router(
                                 status_code=409,
                                 detail="Idempotency-Key was already used but the original run could not be retrieved",
                             )
+                        if not (existing.get("payload") or {}).get("stream"):
+                            # The key was used by a NON-stream submission: its
+                            # run never registers in the event stream, so a
+                            # tail would close instantly and silently. Refuse
+                            # honestly instead.
+                            raise HTTPException(
+                                status_code=409,
+                                detail="Idempotency-Key was used by a non-streaming submission; "
+                                f"poll run {existing['id']} instead of attaching a stream",
+                            )
                         # Attach to the ORIGINAL run's stream. A terminal
                         # original (or one whose stream keys already expired)
                         # gets the full resume path - buffer or DB replay -
