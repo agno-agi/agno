@@ -758,8 +758,10 @@ def get_agent_router(
                 # RUN (complete output guaranteed via the run row); the live
                 # stream is the best-effort view.
                 queue_worker = getattr(request.app.state, "queue_worker", None)
+                queued_stream_payload = {"input": message, "kwargs": kwargs, "stream": True}
                 stream_queueable = (
                     queue_worker is not None
+                    and payload_is_queueable(queued_stream_payload)
                     and not isinstance(agent, RemoteAgent)
                     and version is None
                     and not (base64_images or base64_audios or base64_videos or input_files)
@@ -781,7 +783,7 @@ def get_agent_router(
                         component_id=getattr(agent, "id", None) or agent_id,
                         session_id=queued_session_id,
                         user_id=user_id,
-                        payload={"input": message, "kwargs": kwargs, "stream": True},
+                        payload=queued_stream_payload,
                         max_attempts=queue_worker.config.max_attempts,
                         idempotency_key=request.headers.get("idempotency-key"),
                     ).to_dict()
@@ -797,9 +799,24 @@ def get_agent_router(
                                 status_code=409,
                                 detail="Idempotency-Key was already used but the original run could not be retrieved",
                             )
-                        # Attach to the ORIGINAL run's stream instead of a new one
+                        # Attach to the ORIGINAL run's stream. A terminal
+                        # original (or one whose stream keys already expired)
+                        # gets the full resume path - buffer or DB replay -
+                        # instead of a blind tail that would close silently
+                        # with zero events.
+                        if existing.get("status") in ("queued", "running"):
+                            return StreamingResponse(
+                                queued_run_tail_streamer(existing["id"]), media_type="text/event-stream"
+                            )
                         return StreamingResponse(
-                            queued_run_tail_streamer(existing["id"]), media_type="text/event-stream"
+                            _resume_stream_generator(
+                                cast(Union[Agent, RemoteAgent], agent),
+                                existing["id"],
+                                None,
+                                existing.get("session_id"),
+                                user_id,
+                            ),
+                            media_type="text/event-stream",
                         )
                     await _ges().register_run(queued_run_id, _RS.pending)
                     await aprepare_queued_agent_run(
