@@ -2253,32 +2253,51 @@ class RedisDb(BaseDb):
         pipe.set(self._q_job_key(job["id"]), json.dumps(job))
 
     def enqueue_job(self, job: Dict[str, Any], max_depth: int = 0) -> Dict[str, Any]:
-        """Insert an accepted run job (idempotency-first, then depth gate)."""
+        """Insert an accepted run job (idempotency-first, then depth gate).
+
+        The idempotency key and the job document commit in ONE MULTI under
+        WATCH: a crash can no longer leave a dangling key that 409-wedges the
+        idempotency key until its TTL. A dangling key from a pre-fix crash is
+        self-healed: a key whose job document is missing is treated as
+        orphaned and taken over (WATCH arbitrates racing takeovers)."""
+        from redis.exceptions import WatchError
+
         idem = job.get("idempotency_key")
-        if idem is not None:
-            idem_key = self._q_key(f"idem:{idem}")
-            claimed_key = self.redis_client.set(idem_key, job["id"], nx=True, ex=86400)
-            if not claimed_key:
-                existing_id = self.redis_client.get(idem_key)
-                existing_id = (
-                    existing_id if isinstance(existing_id, str) else (existing_id.decode() if existing_id else None)
-                )
-                existing = self._q_load_job(existing_id) if existing_id else None
-                return {"accepted": False, "reason": "duplicate", "job": existing}
+        idem_key = self._q_key(f"idem:{idem}") if idem is not None else None
 
-        if max_depth and max_depth > 0:
-            queued = int(self.redis_client.zcard(self._q_key("queued")))
-            if queued >= max_depth:
-                if idem is not None:
-                    self.redis_client.delete(self._q_key(f"idem:{idem}"))
-                return {"accepted": False, "reason": "queue_full", "job": None}
+        for _ in range(10):
+            with self.redis_client.pipeline() as pipe:
+                try:
+                    if idem_key is not None:
+                        pipe.watch(idem_key)
+                        existing_id = pipe.get(idem_key)
+                        if existing_id is not None:
+                            existing_id = existing_id if isinstance(existing_id, str) else existing_id.decode()
+                            existing = self._q_load_job(existing_id)
+                            if existing is not None:
+                                pipe.unwatch()
+                                return {"accepted": False, "reason": "duplicate", "job": existing}
+                            # Orphaned key (dual-write crash before this fix):
+                            # fall through and take it over inside the MULTI
 
-        pipe = self.redis_client.pipeline()
-        self._q_save_job_in_pipe(pipe, job)
-        pipe.zadd(self._q_key("queued"), {job["id"]: job["available_at"]})
-        pipe.zadd(self._q_key("all"), {job["id"]: job["created_at"]})
-        pipe.execute()
-        return {"accepted": True, "reason": None, "job": dict(job)}
+                    if max_depth and max_depth > 0:
+                        queued = int(self.redis_client.zcard(self._q_key("queued")))
+                        if queued >= max_depth:
+                            if idem_key is not None:
+                                pipe.unwatch()
+                            return {"accepted": False, "reason": "queue_full", "job": None}
+
+                    pipe.multi()
+                    if idem_key is not None:
+                        pipe.set(idem_key, job["id"], ex=86400)
+                    self._q_save_job_in_pipe(pipe, job)
+                    pipe.zadd(self._q_key("queued"), {job["id"]: job["available_at"]})
+                    pipe.zadd(self._q_key("all"), {job["id"]: job["created_at"]})
+                    pipe.execute()
+                    return {"accepted": True, "reason": None, "job": dict(job)}
+                except WatchError:
+                    continue  # another submitter raced this key; re-evaluate
+        raise RuntimeError("enqueue_job: idempotency-key contention did not settle after 10 attempts")
 
     def claim_job(self, worker_id: str, lock_grace_seconds: int = 60) -> Optional[Dict[str, Any]]:
         """Atomically claim the oldest executable job (queued, or stale-running

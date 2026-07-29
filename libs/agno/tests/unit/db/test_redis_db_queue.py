@@ -189,3 +189,23 @@ class TestWorkerIntegration:
         claimed = await store.claim_job("w1")
         assert claimed["id"] == "r1"
         assert await store.complete_job("r1", "w1", claimed["attempt"], "completed")
+
+
+class TestEnqueueAtomicity:
+    def test_orphaned_idempotency_key_is_self_healed(self, db):
+        """A dangling idem key (dual-write crash) must not 409-wedge the key:
+        the next submit with that key takes it over and enqueues."""
+        db.redis_client.set(db._q_key("idem:k1"), "ghost-job-id", ex=86400)
+        result = db.enqueue_job(make_job("r1", idempotency_key="k1"))
+        assert result["accepted"] is True
+        # Key now points at the real job
+        assert db._q_load_job("r1") is not None
+        again = db.enqueue_job(make_job("r2", idempotency_key="k1"))
+        assert again["accepted"] is False and again["reason"] == "duplicate"
+        assert again["job"]["id"] == "r1"
+
+    def test_duplicate_returns_existing_job(self, db):
+        db.enqueue_job(make_job("r1", idempotency_key="k2"))
+        result = db.enqueue_job(make_job("r2", idempotency_key="k2"))
+        assert result["accepted"] is False and result["reason"] == "duplicate"
+        assert result["job"]["id"] == "r1"
