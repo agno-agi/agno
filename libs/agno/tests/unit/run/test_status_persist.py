@@ -149,3 +149,42 @@ class TestFenceFinality:
         result = await apersist_run_status(FakeAgent(), "agent", "s1", "r1", {"status": "error"})
         assert result is None
         assert fallback_allowed(result, 1) is True, "no atomic primitive: fallback is the only option"
+
+
+class TestGenerationStamping:
+    @pytest.mark.asyncio
+    async def test_stamped_generation_fences_zombie(self):
+        """Attempt 2 stamps queue_attempt=2 at claim; attempt 1's late ERROR
+        write (expected_attempt=1) must be rejected, not stamped vacuously."""
+        from agno.run.base import RunStatus
+        from agno.run.status_persist import apersist_run_status, fallback_allowed
+
+        stored = {"queue_attempt": None, "status": "running"}
+
+        class Db:
+            async def update_run_in_session(self, session_id, run_id, fields, expected_attempt=None):
+                if (
+                    expected_attempt is not None
+                    and stored["queue_attempt"] is not None
+                    and stored["queue_attempt"] > expected_attempt
+                ):
+                    return False
+                stored.update(fields)
+                if expected_attempt is not None:
+                    stored["queue_attempt"] = expected_attempt
+                return True
+
+        class FakeAgent:
+            db = Db()
+
+        # Attempt 2 claims and stamps
+        r = await apersist_run_status(FakeAgent(), "agent", "s1", "r1", {"queue_attempt": 2}, expected_attempt=2)
+        assert r is True and stored["queue_attempt"] == 2
+
+        # Attempt 1's zombie tries its terminal write
+        r = await apersist_run_status(
+            FakeAgent(), "agent", "s1", "r1", {"status": RunStatus.error.value}, expected_attempt=1
+        )
+        assert r is False, "zombie must be fenced by the stamped generation"
+        assert fallback_allowed(r, 1) is False
+        assert stored["status"] == "running", "zombie write must not land"
