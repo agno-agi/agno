@@ -108,6 +108,12 @@ def tools(mock_nimble):
 def test_init_with_api_key(mock_nimble):
     t = NimbleAgentTools(api_key="test-key-1234567890")
     assert t.api_key == "test-key-1234567890"
+    assert t.poll_interval_seconds == 10.0
+
+
+def test_poll_interval_is_configurable_for_test_only_override(mock_nimble):
+    t = NimbleAgentTools(api_key="test-key-1234567890", poll_interval_seconds=0.1)
+    assert t.poll_interval_seconds == 0.1
 
 
 def test_init_with_env_vars(mock_nimble):
@@ -173,11 +179,21 @@ def test_run_lifecycle_can_be_disabled(mock_nimble):
     assert "list_agents" in t.functions
 
 
-def test_effort_is_capped_at_low(mock_nimble):
-    with patch("agno.tools.nimble_agent.log_warning") as warn:
-        t = NimbleAgentTools(api_key="test-key-1234567890", effort="max")
-        assert t.effort == "low"
-        warn.assert_called_once()
+@pytest.mark.parametrize("effort", ["low", "medium", "high", "x-high", "max"])
+def test_supported_effort_override_is_preserved(mock_nimble, effort):
+    t = NimbleAgentTools(api_key="test-key-1234567890", effort=effort)
+    assert t.effort == effort
+
+
+def test_effort_defaults_to_server_selected_default(mock_nimble):
+    t = NimbleAgentTools(api_key="test-key-1234567890")
+    assert t.effort is None
+
+
+@pytest.mark.parametrize("effort", ["turbo"])
+def test_unknown_effort_is_rejected(mock_nimble, effort):
+    with pytest.raises(ValueError, match="omit it"):
+        NimbleAgentTools(api_key="test-key-1234567890", effort=effort)
 
 
 # ---------------------------------------------------------------------------
@@ -261,11 +277,35 @@ def test_safe_reads_keep_a_bounded_retry_budget():
     "attr_path,required_params",
     [
         # Generic route: no agent_id needed; Nimble provisions one and returns its id.
-        ("agents.run", {"input", "effort", "enable_events", "input_data", "output_schema", "sources", "extra_body"}),
+        (
+            "agents.run",
+            {
+                "input",
+                "effort",
+                "enable_events",
+                "agent_name",
+                "use_case",
+                "skill",
+                "input_data",
+                "output_schema",
+                "sources",
+            },
+        ),
         # Persistent route: run against an existing agent.
         (
             "agents.runs.create",
-            {"agent_id", "input", "effort", "enable_events", "input_data", "output_schema", "sources", "extra_body"},
+            {
+                "agent_id",
+                "input",
+                "effort",
+                "enable_events",
+                "agent_name",
+                "use_case",
+                "skill",
+                "input_data",
+                "output_schema",
+                "sources",
+            },
         ),
         ("agents.runs.get", {"run_id", "agent_id"}),
         ("agents.runs.result", {"run_id", "agent_id"}),
@@ -286,6 +326,34 @@ def test_sdk_exposes_the_methods_and_parameters_this_toolkit_calls(attr_path, re
         )
 
 
+def test_accepted_effort_tiers_match_the_sdk_exactly():
+    """The toolkit validates effort against a hardcoded set; keep it tied to the SDK.
+
+    If nimble-python adds, renames, or removes a tier, this fails here rather than
+    silently rejecting a valid tier or forwarding one the API no longer accepts.
+    The SDK annotates with PEP 563 strings, so resolve them before reading Literals.
+    """
+    import typing
+    from functools import reduce
+
+    from agno.tools.nimble_agent import SUPPORTED_EFFORTS
+
+    def literal_values(annotation):
+        if typing.get_origin(annotation) is typing.Literal:
+            return set(typing.get_args(annotation))
+        return set().union(*(literal_values(arg) for arg in typing.get_args(annotation)), set())
+
+    t = NimbleAgentTools(api_key="test-key-1234567890", agent_id="wsa_123")
+    for client in (t._sync_client, t._get_async_client()):
+        for attr_path in ("agents.run", "agents.runs.create"):
+            method = reduce(getattr, attr_path.split("."), client)
+            func = getattr(method, "__func__", method)
+            hints = typing.get_type_hints(func)
+            assert literal_values(hints["effort"]) == SUPPORTED_EFFORTS, (
+                f"{type(client).__name__}.{attr_path} effort tiers drifted from the toolkit's allow-list"
+            )
+
+
 # ---------------------------------------------------------------------------
 # start_agent_run
 # ---------------------------------------------------------------------------
@@ -297,12 +365,11 @@ def test_start_agent_run_happy_path(tools):
     assert out["run_id"] == "task_run_abc"
     assert out["agent_id"] == "wsa_123"
     assert out["status"] == "queued"
+    assert out["poll_after_seconds"] == 10.0
     tools._sync_client.agents.runs.create.assert_called_once_with(
         "wsa_123",
         input="What is the latest Python release?",
-        effort="low",
         enable_events=False,
-        extra_body=None,
     )
 
 
@@ -322,9 +389,7 @@ def test_start_agent_run_without_agent_auto_provisions(mock_nimble):
     assert out["run_id"] == "task_run_abc"
     t._sync_client.agents.run.assert_called_once_with(
         input="q",
-        effort="low",
         enable_events=False,
-        extra_body=None,
     )
     # The per-agent route must not be used when no agent is configured.
     t._sync_client.agents.runs.create.assert_not_called()
@@ -342,12 +407,10 @@ def test_start_agent_run_create_or_reuse_by_name(mock_nimble):
         )
     )
     assert out["agent_id"] == "wsa_123"
-    # Creation-time fields the typed signature does not expose ride in extra_body.
-    assert t._sync_client.agents.run.call_args.kwargs["extra_body"] == {
-        "agent_name": "agno-researcher",
-        "use_case": "research",
-        "skill": "Use primary sources.",
-    }
+    assert t._sync_client.agents.run.call_args.kwargs["agent_name"] == "agno-researcher"
+    assert t._sync_client.agents.run.call_args.kwargs["use_case"] == "research"
+    assert t._sync_client.agents.run.call_args.kwargs["skill"] == "Use primary sources."
+    assert "extra_body" not in t._sync_client.agents.run.call_args.kwargs
 
 
 def test_start_agent_run_generic_route_forwards_structured_controls(mock_nimble):
@@ -366,9 +429,8 @@ def test_start_agent_run_generic_route_forwards_structured_controls(mock_nimble)
     )
     t._sync_client.agents.run.assert_called_once_with(
         input="q",
-        effort="low",
         enable_events=True,
-        extra_body={"use_case": "dataset_building"},
+        use_case="dataset_building",
         input_data=input_data,
         output_schema=output_schema,
         sources=sources,
@@ -392,13 +454,34 @@ def test_start_agent_run_forwards_all_existing_agent_overrides(tools):
     tools._sync_client.agents.runs.create.assert_called_once_with(
         "wsa_123",
         input="q",
-        effort="low",
         enable_events=True,
-        extra_body={"use_case": "enrichment", "skill": "Fill missing fields."},
+        use_case="enrichment",
+        skill="Fill missing fields.",
         input_data=input_data,
         output_schema=output_schema,
         sources=sources,
     )
+
+
+def test_start_agent_run_forwards_explicit_effort_override(mock_nimble):
+    t = NimbleAgentTools(api_key="test-key-1234567890", effort="x-high")
+    t._sync_client.agents.run.return_value = make_run()
+    t.start_agent_run("q")
+    t._sync_client.agents.run.assert_called_once_with(
+        input="q",
+        effort="x-high",
+        enable_events=False,
+    )
+
+
+def test_start_agent_run_promotes_gated_max_without_creating(mock_nimble):
+    t = NimbleAgentTools(api_key="test-key-1234567890", effort="max")
+    out = json.loads(t.start_agent_run("q"))
+    assert out["code"] == "effort_tier_coming_soon"
+    assert "custom budget" in out["error"]
+    assert "https://www.nimbleway.com/contact" in out["error"]
+    t._sync_client.agents.run.assert_not_called()
+    t._sync_client.agents.runs.create.assert_not_called()
 
 
 def test_start_agent_run_rejects_two_identity_modes(tools):
@@ -460,6 +543,7 @@ def test_result_not_ready_when_active(tools):
     out = json.loads(tools.get_agent_run_result("task_run_abc"))
     assert out["state"] == "not_ready"
     assert out["status"] == "running"
+    assert out["poll_after_seconds"] == 10.0
     # Must not fetch the result while the run is active.
     reader.agents.runs.result.assert_not_called()
 
@@ -629,7 +713,18 @@ async def test_astart_agent_run_without_agent_auto_provisions(mock_nimble):
         assert out["run_id"] == "task_run_abc"
         call = mock_async.return_value.agents.run.call_args
         assert call.kwargs["input"] == "q"
-        assert call.kwargs["extra_body"] == {"agent_name": "agno-researcher"}
+        assert call.kwargs["agent_name"] == "agno-researcher"
+        assert "extra_body" not in call.kwargs
+
+
+async def test_astart_agent_run_promotes_gated_max_without_creating(mock_nimble):
+    with patch("agno.tools.nimble_agent.AsyncNimble") as mock_async:
+        t = NimbleAgentTools(api_key="test-key-1234567890", effort="max")
+        out = json.loads(await t.astart_agent_run("q"))
+        assert out["code"] == "effort_tier_coming_soon"
+        assert "https://www.nimbleway.com/contact" in out["error"]
+        mock_async.return_value.agents.run.assert_not_called()
+        mock_async.return_value.agents.runs.create.assert_not_called()
 
 
 async def test_aget_result_not_ready(mock_nimble):

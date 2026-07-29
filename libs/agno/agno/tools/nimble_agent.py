@@ -22,7 +22,10 @@ Design and safety notes:
 - Un-idempotent writes are never retried. The public API exposes no idempotency
   key, so ``start_agent_run`` uses a client built with ``max_retries=0``; safe
   reads get a bounded retry budget per call via ``with_options``.
-- Effort is capped at ``low`` (a higher tier is coerced down with a warning).
+- Effort is optional. When omitted, Nimble applies the selected agent or template
+  default (the product default is ``high``); callers may override it with
+  ``low``, ``medium``, ``high``, ``x-high``, or the promotional ``max`` tier.
+  ``max`` stops before create with custom-budget contact guidance.
 - Every output is bounded and scrubbed of credential shapes before it is returned.
 - Every request carries ``X-Client-Source: agno``.
 """
@@ -30,10 +33,10 @@ Design and safety notes:
 import json
 import os
 import re
-from typing import Any, Dict, List, Literal, Optional, Tuple, Union
+from typing import Any, Dict, List, Literal, Optional, Union
 
 from agno.tools import Toolkit
-from agno.utils.log import log_error, log_warning
+from agno.utils.log import log_error
 
 try:
     from nimble_python import (
@@ -54,6 +57,11 @@ except ImportError:
 
 CLIENT_SOURCE = "agno"
 ACTIVE_STATES = frozenset({"queued", "running"})
+DEFAULT_POLL_INTERVAL_SECONDS = 10.0
+MAX_EFFORT_CONTACT = "https://www.nimbleway.com/contact"
+# Mirrors the effort tiers nimble-python accepts. A unit test asserts this stays
+# equal to the SDK's own Literal, so a tier added or renamed upstream fails loudly.
+SUPPORTED_EFFORTS = frozenset({"low", "medium", "high", "x-high", "max"})
 
 _SECRET_PATTERNS = (
     re.compile(r"nvapi-[A-Za-z0-9_-]+"),
@@ -250,11 +258,16 @@ class NimbleAgentTools(Toolkit):
         agent_id (Optional[str]): Default Nimble agent id (``wsa_...``) to run against.
             Falls back to the ``NIMBLE_AGENT_ID`` environment variable. When absent,
             start_agent_run can create or reuse by agent_name, or auto-provision.
-        effort (str): Agent effort tier. Capped at ``"low"``; a higher value is
-            coerced down with a warning.
+        effort (Optional[str]): Optional run-level effort override: ``"low"``,
+            ``"medium"``, ``"high"``, ``"x-high"``, or ``"max"``. When omitted,
+            Nimble applies the selected agent/template default. ``"max"`` is a
+            custom-budget tier and stops before create with contact guidance.
         timeout (int): Per-request timeout in seconds.
         max_read_retries (int): Bounded retry budget for safe, read-only calls.
             Writes (run creation) are never retried.
+        poll_interval_seconds (float): Recommended delay between model-driven
+            status checks. Defaults to 10 seconds and remains configurable.
+            This toolkit does not sleep inside a tool call.
         max_content_chars (int): Upper bound on characters of result content returned.
         enable_run_lifecycle (bool): Register the ``start_agent_run`` /
             ``get_agent_run_status`` / ``get_agent_run_result`` tools. These are gated
@@ -268,9 +281,10 @@ class NimbleAgentTools(Toolkit):
         self,
         api_key: Optional[str] = None,
         agent_id: Optional[str] = None,
-        effort: str = "low",
+        effort: Optional[Literal["low", "medium", "high", "x-high", "max"]] = None,
         timeout: int = 30,
         max_read_retries: int = 2,
+        poll_interval_seconds: float = DEFAULT_POLL_INTERVAL_SECONDS,
         max_content_chars: int = 4000,
         enable_run_lifecycle: bool = True,
         enable_discovery: bool = True,
@@ -282,14 +296,18 @@ class NimbleAgentTools(Toolkit):
 
         self.agent_id: Optional[str] = agent_id or os.getenv("NIMBLE_AGENT_ID")
 
-        # Runs are billable, so this toolkit pins the cheapest effort tier rather than
-        # letting a model escalate cost on its own.
-        if effort != "low":
-            log_warning(f"NimbleAgentTools caps effort at 'low'; ignoring requested effort '{effort}'.")
-        self.effort: Literal["low", "medium", "high", "x-high", "max"] = "low"
+        if effort is not None and effort not in SUPPORTED_EFFORTS:
+            raise ValueError(
+                "effort must be one of 'low', 'medium', 'high', 'x-high', or 'max'; "
+                "omit it to use the agent/template default"
+            )
+        self.effort: Optional[Literal["low", "medium", "high", "x-high", "max"]] = effort
 
         self._timeout: int = timeout
         self.max_read_retries: int = max_read_retries
+        if poll_interval_seconds <= 0:
+            raise ValueError("poll_interval_seconds must be greater than zero")
+        self.poll_interval_seconds: float = float(poll_interval_seconds)
         self.max_content_chars: int = max_content_chars
 
         self._sync_client: Optional[Nimble] = self._build_sync_client() if self.api_key else None
@@ -359,17 +377,17 @@ class NimbleAgentTools(Toolkit):
         input_data: Any,
         output_schema: Optional[Dict[str, Any]],
         sources: Optional[Dict[str, Any]],
-    ) -> Tuple[Dict[str, Any], Optional[Dict[str, Any]]]:
-        """Split run options into SDK-typed keyword arguments and extra_body passthrough.
-
-        ``input_data`` / ``output_schema`` / ``sources`` are named parameters on both
-        run methods. ``agent_name`` / ``use_case`` / ``skill`` are creation-time fields
-        the typed signatures do not expose, so they ride along in ``extra_body``.
-        """
-        typed = {"input_data": input_data, "output_schema": output_schema, "sources": sources}
-        extra = {"agent_name": agent_name, "use_case": use_case, "skill": skill}
-        extra_body = {key: value for key, value in extra.items() if value is not None}
-        return {key: value for key, value in typed.items() if value is not None}, extra_body or None
+    ) -> Dict[str, Any]:
+        """Build the typed per-run options supported by nimble-python 1.2.0."""
+        typed = {
+            "agent_name": agent_name,
+            "use_case": use_case,
+            "skill": skill,
+            "input_data": input_data,
+            "output_schema": output_schema,
+            "sources": sources,
+        }
+        return {key: value for key, value in typed.items() if value is not None}
 
     @staticmethod
     def _error(message: str, **extra: Any) -> str:
@@ -404,8 +422,7 @@ class NimbleAgentTools(Toolkit):
             return self._error(f"Nimble API error (HTTP {getattr(exc, 'status_code', 'unknown')}).", code="api_error")
         return self._error(_redact_text(str(exc))[:300] or "Unexpected error", code="error")
 
-    @staticmethod
-    def _render_created(created: Any) -> str:
+    def _render_created(self, created: Any) -> str:
         return json.dumps(
             {
                 "agent_id": created.web_search_agent_id,
@@ -413,18 +430,20 @@ class NimbleAgentTools(Toolkit):
                 "status": created.status,
                 "is_active": created.is_active,
                 "effort": created.effort,
+                "poll_after_seconds": self.poll_interval_seconds,
             },
             indent=2,
         )
 
-    @staticmethod
-    def _render_status(run: Any) -> str:
+    def _render_status(self, run: Any) -> str:
         payload: Dict[str, Any] = {
             "run_id": run.id,
             "agent_id": run.web_search_agent_id,
             "status": run.status,
             "is_active": run.is_active,
         }
+        if run.status in ACTIVE_STATES:
+            payload["poll_after_seconds"] = self.poll_interval_seconds
         error = getattr(run, "error", None)
         if error is not None:
             payload["error"] = _redact_text(str(getattr(error, "message", error)))[:500]
@@ -441,6 +460,7 @@ class NimbleAgentTools(Toolkit):
                     "run_id": run.id,
                     "agent_id": run.web_search_agent_id,
                     "message": "Run is still active. Poll get_agent_run_status and retry when completed.",
+                    "poll_after_seconds": self.poll_interval_seconds,
                 },
                 indent=2,
             )
@@ -510,6 +530,11 @@ class NimbleAgentTools(Toolkit):
         """
         if self._sync_client is None:
             return self._error("Nimble API key not configured. Set NIMBLE_API_KEY or pass api_key.")
+        if self.effort == "max":
+            return self._error(
+                f"Nimble Max effort is available with a custom budget. Contact Nimble to enable it: {MAX_EFFORT_CONTACT}",
+                code="effort_tier_coming_soon",
+            )
         resolved = self._resolve_agent_id(agent_id)
         if resolved and agent_name:
             return self._error(
@@ -519,7 +544,7 @@ class NimbleAgentTools(Toolkit):
         prompt = (query or "").strip()
         if not prompt:
             return self._error("query is required")
-        run_kwargs, extra_body = self._run_options(
+        run_kwargs = self._run_options(
             agent_name=agent_name,
             use_case=use_case,
             skill=skill,
@@ -529,24 +554,23 @@ class NimbleAgentTools(Toolkit):
         )
         # Both routes return the same run envelope shape; _render_created reads it structurally.
         created: Any
+        request_options: Dict[str, Any] = {
+            "input": prompt,
+            "enable_events": enable_events,
+            **run_kwargs,
+        }
+        if self.effort is not None:
+            request_options["effort"] = self.effort
         try:
             if resolved:
                 created = self._sync_client.agents.runs.create(
                     resolved,
-                    input=prompt,
-                    effort=self.effort,
-                    enable_events=enable_events,
-                    extra_body=extra_body,
-                    **run_kwargs,
+                    **request_options,
                 )
             else:
                 # Generic route: Nimble provisions a minimal agent and returns its id.
                 created = self._sync_client.agents.run(
-                    input=prompt,
-                    effort=self.effort,
-                    enable_events=enable_events,
-                    extra_body=extra_body,
-                    **run_kwargs,
+                    **request_options,
                 )
         except Exception as exc:  # surface a structured result rather than raising into the agent loop
             log_error(f"Nimble start_agent_run failed: {type(exc).__name__}")
@@ -679,6 +703,11 @@ class NimbleAgentTools(Toolkit):
         """Async variant of start_agent_run."""
         if self.api_key is None:
             return self._error("Nimble API key not configured. Set NIMBLE_API_KEY or pass api_key.")
+        if self.effort == "max":
+            return self._error(
+                f"Nimble Max effort is available with a custom budget. Contact Nimble to enable it: {MAX_EFFORT_CONTACT}",
+                code="effort_tier_coming_soon",
+            )
         resolved = self._resolve_agent_id(agent_id)
         if resolved and agent_name:
             return self._error(
@@ -688,7 +717,7 @@ class NimbleAgentTools(Toolkit):
         prompt = (query or "").strip()
         if not prompt:
             return self._error("query is required")
-        run_kwargs, extra_body = self._run_options(
+        run_kwargs = self._run_options(
             agent_name=agent_name,
             use_case=use_case,
             skill=skill,
@@ -698,24 +727,23 @@ class NimbleAgentTools(Toolkit):
         )
         # Both routes return the same run envelope shape; _render_created reads it structurally.
         created: Any
+        request_options: Dict[str, Any] = {
+            "input": prompt,
+            "enable_events": enable_events,
+            **run_kwargs,
+        }
+        if self.effort is not None:
+            request_options["effort"] = self.effort
         try:
             client = self._get_async_client()
             if resolved:
                 created = await client.agents.runs.create(
                     resolved,
-                    input=prompt,
-                    effort=self.effort,
-                    enable_events=enable_events,
-                    extra_body=extra_body,
-                    **run_kwargs,
+                    **request_options,
                 )
             else:
                 created = await client.agents.run(
-                    input=prompt,
-                    effort=self.effort,
-                    enable_events=enable_events,
-                    extra_body=extra_body,
-                    **run_kwargs,
+                    **request_options,
                 )
         except Exception as exc:
             log_error(f"Nimble astart_agent_run failed: {type(exc).__name__}")
