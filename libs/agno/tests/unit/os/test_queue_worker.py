@@ -495,3 +495,78 @@ class TestStreamingRetryVisibility:
             assert received == [1, 2], f"expected retry events at continued indices, got {received}"
         finally:
             es_mod._event_stream = original
+
+
+class TestTimeoutRetryVisibility:
+    @pytest.mark.asyncio
+    async def test_timeout_with_budget_keeps_stream_open(self):
+        """kausmeows repro: attempt-1 timeout with max_attempts=2 must NOT
+        write a terminal sentinel - tails would close before the retry runs."""
+        import agno.os.event_streams as es_mod
+        from agno.os.event_streams import InMemoryEventStream, set_event_stream
+        from agno.os.managers import EventsBuffer, SSESubscriberManager
+
+        original = es_mod._event_stream
+        stream = InMemoryEventStream(events_buffer=EventsBuffer(), subscriber_manager=SSESubscriberManager())
+        set_event_stream(stream)
+        try:
+            from agno.job_queue.config import QueueConfig
+            from agno.job_queue.store import InMemoryQueueStore
+            from agno.os.job_queue import QueueWorker
+
+            class SlowEvent:
+                def __init__(self):
+                    self.event = "RunContent"
+                    self.content = "x"
+                    self.run_id = "to1"
+
+                def to_dict(self):
+                    return {"event": self.event, "content": self.content, "run_id": self.run_id}
+
+            class SlowAgent:
+                id = "a1"
+                db = None
+                calls = 0
+
+                async def arun(self, **kwargs):
+                    SlowAgent.calls += 1
+                    if SlowAgent.calls == 1:
+                        yield SlowEvent()
+                        await asyncio.sleep(10)  # exceeds timeout
+                    else:
+                        yield SlowEvent()
+
+            store = InMemoryQueueStore()
+            await store.enqueue_job(
+                {
+                    "id": "to1",
+                    "component_type": "agent",
+                    "component_id": "a1",
+                    "session_id": "s1",
+                    "job_type": "run",
+                    "payload": {"input": "hi", "kwargs": {}, "stream": True},
+                    "status": "queued",
+                    "attempt": 0,
+                    "max_attempts": 2,
+                    "available_at": 0,
+                    "created_at": 0,
+                }
+            )
+            worker = QueueWorker(
+                store=store,
+                resolve_component=lambda t, i: SlowAgent(),
+                config=QueueConfig(
+                    durable=True, poll_interval=0.05, lock_grace_seconds=60, retry_delay_seconds=0, timeout_seconds=1
+                ),
+            )
+            claimed = await store.claim_job(worker.worker_id)
+            await worker._execute_claimed(claimed)
+
+            from agno.run.base import RunStatus
+
+            assert await stream.get_run_status("to1") == RunStatus.running, (
+                "timed-out attempt with retry budget must not terminal the stream"
+            )
+            assert (await store.get_job("to1"))["status"] == "queued", "job must be retryable"
+        finally:
+            es_mod._event_stream = original
