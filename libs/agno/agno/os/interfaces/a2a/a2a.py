@@ -42,3 +42,8 @@ class A2A(BaseInterface):
         self.router = attach_routes(router=self.router, agents=self.agents, teams=self.teams, workflows=self.workflows)
 
         return self.router
+
+    def get_scope_mappings(self) -> dict:
+        from agno.os.interfaces.a2a.scopes import get_a2a_scope_mappings
+
+        return get_a2a_scope_mappings(self.prefix)

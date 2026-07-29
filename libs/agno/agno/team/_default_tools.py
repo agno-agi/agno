@@ -48,6 +48,7 @@ from agno.run.agent import (
     RunOutputEvent,
 )
 from agno.run.cancel import (
+    araise_if_cancelled,
     aregister_member_run,
     raise_if_cancelled,
     register_member_drain_task,
@@ -185,7 +186,7 @@ def _get_chat_history_function(team: "Team", session: TeamSession, async_mode: b
         if num_chats is not None:
             history = history[-num_chats:]
 
-        return json.dumps(history)
+        return json.dumps(history, ensure_ascii=False)
 
     async def aget_chat_history(num_chats: Optional[int] = None) -> str:
         """
@@ -216,7 +217,7 @@ def _get_chat_history_function(team: "Team", session: TeamSession, async_mode: b
         if num_chats is not None:
             history = history[-num_chats:]
 
-        return json.dumps(history)
+        return json.dumps(history, ensure_ascii=False)
 
     if async_mode:
         get_chat_history_func = aget_chat_history
@@ -286,7 +287,7 @@ def _search_past_sessions_function(
                 continue
             results.append(_extract_session_preview(session, num_runs=_num_runs))
 
-        return json.dumps(results)
+        return json.dumps(results, ensure_ascii=False)
 
     async def asearch_past_sessions() -> str:
         """List previous chat sessions with short previews.
@@ -323,7 +324,7 @@ def _search_past_sessions_function(
                 continue
             results.append(_extract_session_preview(session, num_runs=_num_runs))
 
-        return json.dumps(results)
+        return json.dumps(results, ensure_ascii=False)
 
     if async_mode and _has_async_db(team):
         return Function.from_callable(asearch_past_sessions, name="search_past_sessions")
@@ -507,9 +508,16 @@ def _get_delegate_task_function(
         )
 
         # 5. Get the team history
+        # When the member is a sub-team, filter history by that team's id
+        # so it receives its own history rather than the parent's.
         team_history_str = None
         if team.add_team_history_to_members and session:
-            team_history_str = session.get_team_history_context(num_runs=team.num_team_history_runs)
+            from agno.team.team import Team
+
+            member_team_id = member_agent.id if isinstance(member_agent, Team) else None
+            team_history_str = session.get_team_history_context(
+                team_id=member_team_id, num_runs=team.num_team_history_runs
+            )
 
         # 6. Create the member agent task or use the input directly
         if team.determine_input_for_members is False:
@@ -756,7 +764,7 @@ def _get_delegate_task_function(
                 else:
                     import json
 
-                    yield json.dumps(member_agent_run_response.content, indent=2)  # type: ignore
+                    yield json.dumps(member_agent_run_response.content, indent=2, ensure_ascii=False)  # type: ignore
             except Exception as e:
                 yield str(e)
 
@@ -858,7 +866,7 @@ def _get_delegate_task_function(
 
                     try:
                         if run_response.run_id is not None:
-                            raise_if_cancelled(run_response.run_id)
+                            await araise_if_cancelled(run_response.run_id)
                     except RunCancelledException:
                         if member_run_id:
                             await _acascading_cancel_run(member_run_id)
@@ -894,7 +902,7 @@ def _get_delegate_task_function(
                 check_if_run_cancelled(member_agent_run_response)  # type: ignore
                 # Also check if the parent team's run was cancelled while the member was executing
                 if run_response.run_id is not None:
-                    raise_if_cancelled(run_response.run_id)
+                    await araise_if_cancelled(run_response.run_id)
         except RunCancelledException:
             use_team_logger()
             _process_delegate_task_to_member(
@@ -939,7 +947,7 @@ def _get_delegate_task_function(
                 else:
                     import json
 
-                    yield json.dumps(member_agent_run_response.content, indent=2)  # type: ignore
+                    yield json.dumps(member_agent_run_response.content, indent=2, ensure_ascii=False)  # type: ignore
             except Exception as e:
                 yield str(e)
 
@@ -1108,7 +1116,7 @@ def _get_delegate_task_function(
                     else:
                         import json
 
-                        yield f"Agent {member_agent.name}: {json.dumps(member_agent_run_response.content, indent=2)}"  # type: ignore
+                        yield f"Agent {member_agent.name}: {json.dumps(member_agent_run_response.content, indent=2, ensure_ascii=False)}"  # type: ignore
                 except Exception as e:
                     yield f"Agent {member_agent.name}: Error - {str(e)}"
 
@@ -1208,7 +1216,7 @@ def _get_delegate_task_function(
                             # Check if the parent team's run is cancelled - propagate to member
                             try:
                                 if run_response.run_id is not None:
-                                    raise_if_cancelled(run_response.run_id)
+                                    await araise_if_cancelled(run_response.run_id)
                             except RunCancelledException:
                                 if member_run_id:
                                     await _acascading_cancel_run(member_run_id)
@@ -1312,7 +1320,7 @@ def _get_delegate_task_function(
                         )
                         check_if_run_cancelled(member_agent_run_response)
                         if run_response.run_id is not None:
-                            raise_if_cancelled(run_response.run_id)
+                            await araise_if_cancelled(run_response.run_id)
                     except RunCancelledException:
                         _process_delegate_task_to_member(
                             member_agent_run_response,
@@ -1371,7 +1379,7 @@ def _get_delegate_task_function(
                             import json
 
                             return (
-                                f"Agent {member_name}: {json.dumps(member_agent_run_response.content, indent=2)}",
+                                f"Agent {member_name}: {json.dumps(member_agent_run_response.content, indent=2, ensure_ascii=False)}",
                                 None,
                                 None,
                             )
@@ -1448,7 +1456,7 @@ def add_to_knowledge(team: "Team", query: str, result: str) -> str:
         return "Knowledge base does not support adding content"
 
     document_name = query.replace(" ", "_").replace("?", "").replace("!", "").replace(".", "")
-    document_content = json.dumps({"query": query, "result": result})
+    document_content = json.dumps({"query": query, "result": result}, ensure_ascii=False)
     log_info(f"Adding document to Knowledge: {document_name}: {document_content}")
     from agno.knowledge.reader.text_reader import TextReader
 
@@ -1474,11 +1482,11 @@ def create_knowledge_search_tool(
         if not docs:
             return "No documents found"
         if team.references_format == "json":
-            return json.dumps(docs, indent=2, default=str)
+            return json.dumps(docs, indent=2, default=str, ensure_ascii=False)
         else:
             import yaml
 
-            return yaml.dump(docs, default_flow_style=False)
+            return yaml.dump(docs, default_flow_style=False, allow_unicode=True)
 
     def _track_references(docs: Optional[List[Union[Dict[str, Any], str]]], query: str, elapsed: float) -> None:
         if run_response is not None and docs:
