@@ -9,9 +9,10 @@ visibly, and an operator can requeue it.
 Try it:
 1. Start this app and submit a background run:
    curl -X POST localhost:7777/agents/durable-agent/runs \
-        -F "message=Write a haiku about queues" -F "background=true"
-   -> 202 with run_id; the run row is committed before the response.
-2. Poll GET /agents/durable-agent/runs/{run_id} for the result.
+        -F "message=Write a haiku about queues" -F "background=true" \
+        -F "stream=false"
+   -> 202 with run_id and session_id; the run row is committed before the response.
+2. Poll GET /agents/durable-agent/runs/{run_id}?session_id={session_id} for the result.
 3. Kill the server mid-run and restart it: the job is reclaimed or failed
    visibly - never lost, never stuck at RUNNING forever.
 4. Operations surface:
@@ -69,4 +70,4 @@ app = agent_os.get_app()
 
 
 if __name__ == "__main__":
-    agent_os.serve(app="durable_jobs:app", reload=True)
+    agent_os.serve(app="durable_queue:app", reload=True)
