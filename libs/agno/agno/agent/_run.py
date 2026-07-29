@@ -2019,7 +2019,8 @@ async def _arun_background(
             # Persist ERROR status
             try:
                 run_response.status = RunStatus.error
-                await apersist_run_transition(agent, "agent", session_id, run_response, user_id=user_id)
+                flush_in_flight_messages_on_error(run_response, locals().get("run_messages"))
+                await apersist_run_transition(agent, "agent", session_id, run_response, user_id=user_id, full_run=True)
             except Exception as e:
                 log_error(f"Failed to persist error state for background run {run_response.run_id}: {str(e)}")
             # Note: acleanup_run is already called by _arun's finally block
@@ -2156,7 +2157,8 @@ async def _arun_background_stream(
             # Persist ERROR status
             try:
                 run_response.status = RunStatus.error
-                await apersist_run_transition(agent, "agent", session_id, run_response, user_id=user_id)
+                flush_in_flight_messages_on_error(run_response, locals().get("run_messages"))
+                await apersist_run_transition(agent, "agent", session_id, run_response, user_id=user_id, full_run=True)
             except Exception:
                 log_error(f"Failed to persist error state for background stream run {run_id}", exc_info=True)
 

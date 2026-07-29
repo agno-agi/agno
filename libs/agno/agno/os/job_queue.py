@@ -519,7 +519,7 @@ async def aprepare_queued_run(
     if component_type == "agent":
         from agno.agent._session import asave_session
         from agno.agent._storage import aread_or_create_session, update_metadata
-        from agno.run.agent import RunOutput
+        from agno.run.agent import RunInput, RunOutput
 
         session = await aread_or_create_session(component, session_id=session_id, user_id=user_id)
         if session.get_run(run_id) is not None:
@@ -530,14 +530,17 @@ async def aprepare_queued_run(
             agent_id=getattr(component, "id", None),
             agent_name=getattr(component, "name", None),
             user_id=user_id,
-            input=input,
+            # RunOutput.input is a RunInput; a raw value would make to_dict()
+            # raise inside the session save and the PENDING row would never
+            # land (silently - pollers 404 and the attempt stamp finds no row)
+            input=RunInput(input_content=input),
             status=RunStatus.pending,
         )
         update_metadata(component, session=session)
         session.upsert_run(run=run_response)
         await asave_session(component, session=session)
     elif component_type == "team":
-        from agno.run.team import TeamRunOutput
+        from agno.run.team import TeamRunInput, TeamRunOutput
         from agno.team._session import asave_session as team_asave_session
         from agno.team._storage import _aread_or_create_session, _update_metadata
 
@@ -550,7 +553,7 @@ async def aprepare_queued_run(
             team_id=getattr(component, "id", None),
             team_name=getattr(component, "name", None),
             user_id=user_id,
-            input=input,
+            input=TeamRunInput(input_content=input),
             status=RunStatus.pending,
         )
         _update_metadata(component, session=team_session)
