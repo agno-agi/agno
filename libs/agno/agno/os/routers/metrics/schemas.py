@@ -32,7 +32,7 @@ class DayAggregatedMetrics(BaseModel):
         return cls(
             agent_runs_count=metrics_dict.get("agent_runs_count", 0),
             agent_sessions_count=metrics_dict.get("agent_sessions_count", 0),
-            date=metrics_dict.get("date", datetime.now(timezone.utc)),
+            date=to_utc_datetime(metrics_dict.get("date")) or datetime.now(timezone.utc),
             id=metrics_dict.get("id", ""),
             model_metrics=metrics_dict.get("model_metrics", {}),
             team_runs_count=metrics_dict.get("team_runs_count", 0),
@@ -49,3 +49,8 @@ class DayAggregatedMetrics(BaseModel):
 class MetricsResponse(BaseModel):
     metrics: List[DayAggregatedMetrics] = Field(..., description="List of daily aggregated metrics")
     updated_at: Optional[datetime] = Field(None, description="Timestamp of the most recent metrics update")
+
+
+class MetricsRefreshResponse(BaseModel):
+    status: str = Field(..., description="Status of the refresh request")
+    message: Optional[str] = Field(None, description="Additional details")
