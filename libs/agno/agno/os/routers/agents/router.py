@@ -761,6 +761,7 @@ def get_agent_router(
                 queued_stream_payload = {"input": message, "kwargs": kwargs, "stream": True}
                 stream_queueable = (
                     queue_worker is not None
+                    and getattr(agent, "db", None) is not None
                     and payload_is_queueable(queued_stream_payload)
                     and not isinstance(agent, RemoteAgent)
                     and version is None
@@ -798,6 +799,16 @@ def get_agent_router(
                             raise HTTPException(
                                 status_code=409,
                                 detail="Idempotency-Key was already used but the original run could not be retrieved",
+                            )
+                        if not (existing.get("payload") or {}).get("stream"):
+                            # The key was used by a NON-stream submission: its
+                            # run never registers in the event stream, so a
+                            # tail would close instantly and silently. Refuse
+                            # honestly instead.
+                            raise HTTPException(
+                                status_code=409,
+                                detail="Idempotency-Key was used by a non-streaming submission; "
+                                f"poll run {existing['id']} instead of attaching a stream",
                             )
                         # Attach to the ORIGINAL run's stream. A terminal
                         # original (or one whose stream keys already expired)

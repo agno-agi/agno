@@ -350,22 +350,29 @@ class QueueWorker:
         payload = job.get("payload") or {}
 
         if job.get("attempt", 1) > 1:
+            # Drop the contradicted attempt's events but keep the index
+            # counter: reconnecting clients filter by last_event_index, and a
+            # rewound index would make them skip the retry's entire output
             with contextlib.suppress(Exception):
-                await event_stream.cleanup_run(job_id)
+                await event_stream.reset_run_events(job_id)
         await event_stream.register_run(job_id, RunStatus.pending)
         await event_stream.set_run_status(job_id, RunStatus.running)
 
         final_output: Any = None
         is_workflow = job.get("component_type") == "workflow"
         try:
+            extra_kwargs: Dict[str, Any] = dict(payload.get("kwargs") or {})
+            # stream_events may arrive as an extra form field inside kwargs;
+            # passing it both explicitly and via ** would raise TypeError
+            stream_events = extra_kwargs.pop("stream_events", payload.get("stream_events", True))
             arun_kwargs: Dict[str, Any] = dict(
                 input=payload.get("input"),
                 session_id=job["session_id"],
                 user_id=job.get("user_id"),
                 run_id=job_id,
                 stream=True,
-                stream_events=payload.get("stream_events", True),
-                **(payload.get("kwargs") or {}),
+                stream_events=stream_events,
+                **extra_kwargs,
             )
             if not is_workflow:
                 # Workflow streams do not support yield_run_output; the final
@@ -391,8 +398,14 @@ class QueueWorker:
                 with contextlib.suppress(ValueError):
                     raw_status = RunStatus(raw_status)
             status = raw_status if isinstance(raw_status, RunStatus) else RunStatus.error
-            with contextlib.suppress(Exception):
-                await asyncio.shield(event_stream.complete_run(job_id, status))
+            # A retryable failure must NOT publish the terminal sentinel: tails
+            # would close cleanly and the client would never see the retry's
+            # output. Leave the stream open; the retry attempt continues it
+            # (dead-producer TTL detection bounds the wait if no retry comes).
+            will_retry = status == RunStatus.error and job.get("attempt", 1) < job.get("max_attempts", 1)
+            if not will_retry:
+                with contextlib.suppress(Exception):
+                    await asyncio.shield(event_stream.complete_run(job_id, status))
         return final_output
 
     async def _terminate_stream_view(self, job: Dict[str, Any]) -> None:
@@ -417,9 +430,9 @@ class QueueWorker:
         if component is None:
             return
         from agno.run.base import RunStatus
-        from agno.run.status_persist import apersist_run_status
+        from agno.run.status_persist import apersist_run_status, fallback_allowed
 
-        if await apersist_run_status(
+        result = await apersist_run_status(
             component,
             job["component_type"],
             session_id=job["session_id"],
@@ -427,7 +440,10 @@ class QueueWorker:
             fields={"status": RunStatus.error.value},
             user_id=job.get("user_id"),
             expected_attempt=job.get("attempt"),
-        ):
+        )
+        if not fallback_allowed(result, job.get("attempt")):
+            # Written, or fenced out by a newer attempt that owns the row -
+            # either way the unfenced fallback below must not run
             return
 
         component_type = job["component_type"]
@@ -631,8 +647,19 @@ async def aprepare_queued_agent_run(
 @contextlib.asynccontextmanager
 async def queue_lifespan(app: Any, agent_os: Any):
     """Start and stop the durable job queue worker (one per replica)."""
+    from agno.os.event_streams import InMemoryEventStream, get_event_stream
+
     config: QueueConfig = agent_os.queue
     store = resolve_queue_store(config, agent_os.db)
+
+    if isinstance(get_event_stream(), InMemoryEventStream):
+        log_warning(
+            "Durable queue with the in-memory event stream: streamed views of queued runs are "
+            "replica-local. In a multi-replica deployment, a stream request accepted on one "
+            "replica cannot see events produced by another replica's worker - the tail will idle "
+            "until client timeout even though the run completes durably. Set queue.redis to wire "
+            "a shared event stream."
+        )
 
     def resolve_component(component_type: str, component_id: str) -> Any:
         registry = {

@@ -82,3 +82,70 @@ class TestApersistRunTransition:
             component, "workflow", "s1", run_response, extra_fields={"content": "failed: boom"}
         )
         assert component.db.calls[0]["fields"] == {"status": "ERROR", "content": "failed: boom"}
+
+
+class TestFenceFinality:
+    """A fence rejection must never be overridden by the unfenced fallback
+    (the zombie-clobber path from review)."""
+
+    @pytest.mark.asyncio
+    async def test_fenced_rejection_does_not_fall_back(self):
+        from agno.run.base import RunStatus
+        from agno.run.status_persist import apersist_run_transition
+
+        class FencingDb:
+            async def update_run_in_session(self, session_id, run_id, fields, expected_attempt=None):
+                return False  # fence rejected: newer attempt owns the row
+
+        saves = []
+
+        class FakeAgent:
+            db = FencingDb()
+
+        class FakeRun:
+            run_id = "r1"
+            status = RunStatus.error
+
+        import agno.agent._session as sess_mod
+
+        original = sess_mod.asave_session
+
+        async def spy_save(component, session=None, **kw):
+            saves.append(session)
+
+        sess_mod.asave_session = spy_save
+        try:
+            await apersist_run_transition(FakeAgent(), "agent", "s1", FakeRun(), expected_attempt=1)
+        finally:
+            sess_mod.asave_session = original
+        assert saves == [], "fenced-out writer must not clobber via the whole-session fallback"
+
+    @pytest.mark.asyncio
+    async def test_unfenced_missing_run_still_falls_back(self):
+        from agno.run.status_persist import apersist_run_status, fallback_allowed
+
+        class NoRowDb:
+            async def update_run_in_session(self, session_id, run_id, fields, expected_attempt=None):
+                return False  # run not in session yet
+
+        class FakeAgent:
+            db = NoRowDb()
+
+        result = await apersist_run_status(FakeAgent(), "agent", "s1", "r1", {"status": "error"})
+        assert result is False
+        assert fallback_allowed(result, None) is True, "no fence requested: fallback creates the run"
+        assert fallback_allowed(result, 1) is False, "fence requested: False is final"
+
+    @pytest.mark.asyncio
+    async def test_no_adapter_support_falls_back(self):
+        from agno.run.status_persist import apersist_run_status, fallback_allowed
+
+        class BareDb:
+            pass
+
+        class FakeAgent:
+            db = BareDb()
+
+        result = await apersist_run_status(FakeAgent(), "agent", "s1", "r1", {"status": "error"})
+        assert result is None
+        assert fallback_allowed(result, 1) is True, "no atomic primitive: fallback is the only option"
