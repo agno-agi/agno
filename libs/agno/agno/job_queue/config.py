@@ -92,6 +92,8 @@ class QueueConfig:
     # At most this many executions ever, under any failure mode (reclaim
     # included). 1 = a crashed run is failed visibly, never silently re-run.
     max_attempts: int = 1
+    # BASE retry delay: attempt N waits up to base * 2**(N-1) with full
+    # jitter (capped at 10x base) - see QueueWorker._retry_delay
     retry_delay_seconds: int = 30
     # Per-run execution timeout enforced by the worker; None disables.
     timeout_seconds: Optional[int] = 3600

@@ -378,6 +378,26 @@ class QueueWorker:
                 else:
                     component.save_session(session=workflow_session)
 
+    def _retry_delay(self, attempt: int) -> int:
+        """Exponential backoff with full jitter, capped at 10x the base.
+
+        config.retry_delay_seconds is the BASE delay; attempt N waits up to
+        base * 2**(N-1), jittered uniformly to avoid a thundering herd of
+        retries when many workers fail together."""
+        import random
+
+        base = max(1, self.config.retry_delay_seconds)
+        ceiling = min(base * (2 ** max(0, attempt - 1)), base * 10)
+        return random.randint(base, max(base, ceiling))
+
+    @staticmethod
+    def _is_permanent_failure(exc: BaseException) -> bool:
+        """Failures that retrying cannot cure: fail fast to the dead-letter
+        surface instead of burning the attempt budget."""
+        from agno.exceptions import InputCheckError, OutputCheckError
+
+        return isinstance(exc, (InputCheckError, OutputCheckError, TypeError))
+
     async def _execute_claimed(self, job: Dict[str, Any]) -> None:
         from agno.run.base import RunStatus
 
@@ -417,7 +437,7 @@ class QueueWorker:
             elif status == RunStatus.error:
                 error_content = str(getattr(result, "content", "") or "run errored")
                 await self.store.retry_or_fail_job(
-                    job_id, self.worker_id, attempt, error_content, self.config.retry_delay_seconds
+                    job_id, self.worker_id, attempt, error_content, self._retry_delay(attempt)
                 )
             else:
                 await self.store.complete_job(job_id, self.worker_id, attempt, "completed")
@@ -439,11 +459,15 @@ class QueueWorker:
             error = f"Run exceeded timeout_seconds={self.config.timeout_seconds}"
             with contextlib.suppress(Exception):
                 await self._persist_run_error(job, error)
-            await self.store.retry_or_fail_job(job_id, self.worker_id, attempt, error, self.config.retry_delay_seconds)
+            await self.store.retry_or_fail_job(job_id, self.worker_id, attempt, error, self._retry_delay(attempt))
         except Exception as e:
             with contextlib.suppress(Exception):
                 await self._persist_run_error(job, str(e))
-            await self.store.retry_or_fail_job(job_id, self.worker_id, attempt, str(e), self.config.retry_delay_seconds)
+            if self._is_permanent_failure(e):
+                # Invalid input / schema violations cannot be cured by retrying
+                await self.store.complete_job(job_id, self.worker_id, attempt, "failed", f"permanent: {str(e)}")
+            else:
+                await self.store.retry_or_fail_job(job_id, self.worker_id, attempt, str(e), self._retry_delay(attempt))
 
 
 async def aprepare_queued_run(
