@@ -21,7 +21,9 @@ Design and safety notes:
   auto-provisions an agent for a one-off run and returns its id.
 - Un-idempotent writes are never retried. The public API exposes no idempotency
   key, so ``start_agent_run`` uses a client built with ``max_retries=0``; safe
-  reads get a bounded retry budget per call via ``with_options``.
+  reads get a bounded retry budget per call via ``with_options``. When a run
+  creation fails without a confirmed answer, the result says not to resubmit and
+  explains how to reconcile, because the run may already exist and be billable.
 - Effort is optional. When omitted, Nimble applies the selected agent or template
   default (the product default is ``high``); callers may override it with
   ``low``, ``medium``, ``high``, ``x-high``, or the promotional ``max`` tier.
@@ -62,6 +64,15 @@ MAX_EFFORT_CONTACT = "https://www.nimbleway.com/contact"
 # Mirrors the effort tiers nimble-python accepts. A unit test asserts this stays
 # equal to the SDK's own Literal, so a tier added or renamed upstream fails loudly.
 SUPPORTED_EFFORTS = frozenset({"low", "medium", "high", "x-high", "max"})
+# Returned when a run creation fails without a confirmed answer. The run may
+# already exist and be billable, so this must not read as "safe to try again".
+UNCONFIRMED_RUN_GUIDANCE = (
+    "The run was not confirmed and may still have been created and billed. "
+    "Do not resubmit this run. Reconcile first: if you passed an agent_id, check that agent's "
+    "runs for one matching this request; if you did not, call list_agents to find an agent Nimble "
+    "may have just provisioned, then use get_agent_run_status on its run. Only start a new run "
+    "once you have confirmed no run was created."
+)
 
 _SECRET_PATTERNS = (
     re.compile(r"nvapi-[A-Za-z0-9_-]+"),
@@ -228,24 +239,38 @@ def _bounded_limit(limit: int) -> int:
         return 20
 
 
+def _public_text(value: Any, limit: int) -> Optional[str]:
+    """Scrub and bound one discovery field.
+
+    Discovery echoes back strings authored in the Nimble account. ``skill`` in particular is
+    free-form instruction text, so it is the most likely place for a pasted
+    credential to be sitting server-side. Every string field is scrubbed and
+    length-bounded rather than trusted, so no single record can leak a secret or
+    flood the model's context.
+    """
+    if value is None:
+        return None
+    return _redact_text(str(value))[:limit] or None
+
+
 def _summarize_agent(item: Dict[str, Any]) -> Dict[str, Any]:
     return {
-        "id": item.get("id"),
-        "agent_name": item.get("agent_name"),
-        "display_name": item.get("display_name"),
-        "use_case": item.get("use_case"),
-        "skill": item.get("skill"),
+        "id": _public_text(item.get("id"), 200),
+        "agent_name": _public_text(item.get("agent_name"), 200),
+        "display_name": _public_text(item.get("display_name"), 200),
+        "use_case": _public_text(item.get("use_case"), 100),
+        "skill": _public_text(item.get("skill"), 500),
         "is_active": item.get("is_active"),
     }
 
 
 def _summarize_template(item: Dict[str, Any]) -> Dict[str, Any]:
     return {
-        "template_name": item.get("template_name"),
-        "display_name": item.get("display_name"),
-        "use_case": item.get("use_case"),
-        "skill": item.get("skill"),
-        "description": _redact_text(str(item.get("description", "")))[:300] or None,
+        "template_name": _public_text(item.get("template_name"), 200),
+        "display_name": _public_text(item.get("display_name"), 200),
+        "use_case": _public_text(item.get("use_case"), 100),
+        "skill": _public_text(item.get("skill"), 500),
+        "description": _public_text(item.get("description"), 300),
     }
 
 
@@ -395,8 +420,15 @@ class NimbleAgentTools(Toolkit):
         payload.update(extra)
         return json.dumps(payload, indent=2)
 
-    def _map_exception(self, exc: Exception) -> str:
-        """Map an SDK error to a redacted, actionable tool result. Never echo the key."""
+    def _map_exception(self, exc: Exception, *, unconfirmed_write: bool = False) -> str:
+        """Map an SDK error to a redacted, actionable tool result. Never echo the key.
+
+        ``unconfirmed_write`` marks the run-creation path, where the outcome is
+        genuinely unknown: the request may have reached Nimble and created a
+        billable run even though no response came back. Telling the model to
+        "try again" there would invite a duplicate run, so those failures get
+        their own code and reconciliation guidance instead.
+        """
         if isinstance(exc, AuthenticationError):
             return self._error("Authentication failed (401). Check NIMBLE_API_KEY.", code="unauthorized")
         if isinstance(exc, PermissionDeniedError):
@@ -417,9 +449,16 @@ class NimbleAgentTools(Toolkit):
         if isinstance(exc, UnprocessableEntityError):
             return self._error("Invalid request or non-successful result (422).", code="unprocessable")
         if isinstance(exc, (APITimeoutError, APIConnectionError)):
+            if unconfirmed_write:
+                return self._error(UNCONFIRMED_RUN_GUIDANCE, code="connection_error_unconfirmed")
             return self._error("Network error contacting Nimble. Try again.", code="connection_error")
         if isinstance(exc, APIStatusError):
-            return self._error(f"Nimble API error (HTTP {getattr(exc, 'status_code', 'unknown')}).", code="api_error")
+            status_code = getattr(exc, "status_code", None)
+            # A 5xx on create leaves the same question open as a timeout: the run
+            # may exist. 4xx answers it -- the request was rejected, nothing ran.
+            if unconfirmed_write and isinstance(status_code, int) and status_code >= 500:
+                return self._error(UNCONFIRMED_RUN_GUIDANCE, code="connection_error_unconfirmed")
+            return self._error(f"Nimble API error (HTTP {status_code or 'unknown'}).", code="api_error")
         return self._error(_redact_text(str(exc))[:300] or "Unexpected error", code="error")
 
     def _render_created(self, created: Any) -> str:
@@ -574,7 +613,7 @@ class NimbleAgentTools(Toolkit):
                 )
         except Exception as exc:  # surface a structured result rather than raising into the agent loop
             log_error(f"Nimble start_agent_run failed: {type(exc).__name__}")
-            return self._map_exception(exc)
+            return self._map_exception(exc, unconfirmed_write=True)
         return self._render_created(created)
 
     def get_agent_run_status(self, run_id: str, agent_id: Optional[str] = None) -> str:
@@ -747,7 +786,7 @@ class NimbleAgentTools(Toolkit):
                 )
         except Exception as exc:
             log_error(f"Nimble astart_agent_run failed: {type(exc).__name__}")
-            return self._map_exception(exc)
+            return self._map_exception(exc, unconfirmed_write=True)
         return self._render_created(created)
 
     async def aget_agent_run_status(self, run_id: str, agent_id: Optional[str] = None) -> str:

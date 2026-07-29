@@ -255,6 +255,94 @@ def test_generic_route_create_also_makes_exactly_one_http_attempt(status_code):
     assert len(attempts) == 1
 
 
+def _transport_failure_client(exc, attempts):
+    from nimble_python import Nimble
+
+    def handler(request):
+        attempts.append(request)
+        raise exc
+
+    return Nimble(
+        api_key="test-key-1234567890",
+        max_retries=0,
+        http_client=httpx.Client(transport=httpx.MockTransport(handler)),
+    )
+
+
+@pytest.mark.parametrize(
+    "exc",
+    [httpx.ConnectError("refused"), httpx.ReadTimeout("timed out")],
+)
+def test_unconfirmed_create_says_do_not_resubmit_and_how_to_reconcile(exc):
+    """A create that never got an answer may already have been billed.
+
+    "Try again" here would buy a second run, so the guidance has to forbid
+    resubmission and tell the model how to find out what happened.
+    """
+    attempts = []
+    t = NimbleAgentTools(api_key="test-key-1234567890", agent_id="wsa_123")
+    t._sync_client = _transport_failure_client(exc, attempts)
+    out = json.loads(t.start_agent_run("q"))
+
+    assert len(attempts) == 1, "an unconfirmed create must never be retried"
+    assert out["code"] == "connection_error_unconfirmed"
+    message = out["error"].lower()
+    assert "do not resubmit" in message
+    assert "may still have been created and billed" in message
+    # Reconciliation must be actionable, not just a warning.
+    assert "list_agents" in message and "get_agent_run_status" in message
+
+
+@pytest.mark.parametrize("status_code", [500, 503])
+def test_unconfirmed_create_covers_server_errors_too(status_code):
+    """A 5xx leaves the same question open as a timeout: did the run start?"""
+    attempts = []
+    t = NimbleAgentTools(api_key="test-key-1234567890", agent_id="wsa_123")
+    t._sync_client = _counting_client(status_code, attempts)
+    out = json.loads(t.start_agent_run("q"))
+    assert len(attempts) == 1
+    assert out["code"] == "connection_error_unconfirmed"
+
+
+@pytest.mark.parametrize("status_code", [401, 404, 422])
+def test_rejected_create_is_not_reported_as_unconfirmed(status_code):
+    """A 4xx answers the question -- nothing ran -- so it keeps its own code."""
+    t = NimbleAgentTools(api_key="test-key-1234567890", agent_id="wsa_123")
+    t._sync_client = _counting_client(status_code, [])
+    out = json.loads(t.start_agent_run("q"))
+    assert out["code"] != "connection_error_unconfirmed"
+
+
+@pytest.mark.parametrize(
+    "exc",
+    [httpx.ConnectError("refused"), httpx.ReadTimeout("timed out")],
+)
+def test_safe_reads_still_say_try_again(exc):
+    """Reads are idempotent, so the old retry guidance is still correct there."""
+    t = NimbleAgentTools(api_key="test-key-1234567890", agent_id="wsa_123", max_read_retries=0)
+    t._sync_client = _transport_failure_client(exc, [])
+    out = json.loads(t.get_agent_run_status("task_run_abc"))
+    assert out["code"] == "connection_error"
+    assert "do not resubmit" not in out["error"].lower()
+
+
+async def test_unconfirmed_create_guidance_is_the_same_on_the_async_path():
+    from nimble_python import AsyncNimble
+
+    def handler(request):
+        raise httpx.ReadTimeout("timed out")
+
+    t = NimbleAgentTools(api_key="test-key-1234567890", agent_id="wsa_123")
+    t._async_client = AsyncNimble(
+        api_key="test-key-1234567890",
+        max_retries=0,
+        http_client=httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+    )
+    out = json.loads(await t.astart_agent_run("q"))
+    assert out["code"] == "connection_error_unconfirmed"
+    assert "do not resubmit" in out["error"].lower()
+
+
 def test_safe_reads_keep_a_bounded_retry_budget():
     """Reads are idempotent, so they may retry - but only up to max_read_retries."""
     attempts = []
@@ -669,6 +757,61 @@ def test_discovery_limit_is_clamped(tools, requested, expected):
     reader.agents.list.return_value = resp
     tools.list_agents(limit=requested)
     reader.agents.list.assert_called_once_with(limit=expected)
+
+
+def test_discovery_redacts_credentials_in_agent_and_template_skill(tools):
+    """skill is free-form account-authored text, the likeliest place a key is sitting."""
+    leaked = "use " + "nvapi-" + "abcdefgh1234567890 then " + "b" * 40
+    agents_resp, templates_resp = Mock(), Mock()
+    agents_resp.to_dict.return_value = {
+        "items": [{"id": "wsa_1", "agent_name": "researcher", "skill": leaked}],
+        "total": 1,
+    }
+    templates_resp.to_dict.return_value = {
+        "items": [{"template_name": "company_research", "skill": leaked, "description": leaked}],
+        "total": 1,
+    }
+    reader = tools._sync_client.with_options.return_value
+    reader.agents.list.return_value = agents_resp
+    reader.agents.templates.list.return_value = templates_resp
+
+    agent_skill = json.loads(tools.list_agents())["agents"][0]["skill"]
+    template = json.loads(tools.list_agent_templates())["templates"][0]
+    for value in (agent_skill, template["skill"], template["description"]):
+        assert "nvapi-" not in value
+        assert "b" * 40 not in value
+        assert "<redacted>" in value
+
+
+@pytest.mark.parametrize(
+    "field,limit",
+    [("agent_name", 200), ("display_name", 200), ("use_case", 100), ("skill", 500), ("id", 200)],
+)
+def test_discovery_bounds_each_agent_field(tools, field, limit):
+    resp = Mock()
+    resp.to_dict.return_value = {"items": [{field: "z" * 5000}], "total": 1}
+    tools._sync_client.with_options.return_value.agents.list.return_value = resp
+    assert len(json.loads(tools.list_agents())["agents"][0][field]) == limit
+
+
+@pytest.mark.parametrize(
+    "field,limit",
+    [("template_name", 200), ("display_name", 200), ("use_case", 100), ("skill", 500), ("description", 300)],
+)
+def test_discovery_bounds_each_template_field(tools, field, limit):
+    resp = Mock()
+    resp.to_dict.return_value = {"items": [{field: "z" * 5000}], "total": 1}
+    tools._sync_client.with_options.return_value.agents.templates.list.return_value = resp
+    assert len(json.loads(tools.list_agent_templates())["templates"][0][field]) == limit
+
+
+def test_discovery_keeps_missing_fields_null_rather_than_empty_strings(tools):
+    resp = Mock()
+    resp.to_dict.return_value = {"items": [{"id": "wsa_1"}], "total": 1}
+    tools._sync_client.with_options.return_value.agents.list.return_value = resp
+    agent = json.loads(tools.list_agents())["agents"][0]
+    assert agent["skill"] is None
+    assert agent["display_name"] is None
 
 
 def test_list_agent_templates(tools):
