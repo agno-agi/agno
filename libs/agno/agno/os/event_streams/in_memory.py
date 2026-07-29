@@ -61,8 +61,10 @@ class InMemoryEventStream(BaseEventStream):
 
     async def reset_run_events(self, run_id: str) -> None:
         # Events go; the index counter and registration stay (monotonic
-        # indices across retry attempts)
-        self._buffer.events.pop(run_id, None)
+        # indices across retry attempts). Empty the list IN PLACE: popping the
+        # key would make the buffer's add_event re-zero the counter.
+        if run_id in self._buffer.events:
+            self._buffer.events[run_id] = []
 
     # ------------------------------------------------------------------
     # Events
