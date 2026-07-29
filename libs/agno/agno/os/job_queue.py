@@ -332,9 +332,40 @@ class QueueWorker:
             await self.store.fail_swept_job(job["id"], self.config.lock_grace_seconds, error)
             log_warning(f"Job queue: swept job {job['id']} to failed ({error})")
 
-    async def _persist_run_error(self, job: Dict[str, Any], error: str) -> None:
-        """Persist a terminal ERROR on the run row so pollers see it, never a
-        stuck RUNNING/PENDING."""
+    async def acancel_queued(self, run_id: str) -> bool:
+        """Tombstone a still-QUEUED ticket and terminalize its run row and
+        stream view. Claimed/running jobs are not touched here: the
+        cancellation manager reaches the executing attempt instead. Without
+        this, a run cancelled while waiting in the durable queue kept
+        status='queued' and was claimed and executed after a restart."""
+        cancelled = False
+        with contextlib.suppress(Exception):
+            cancelled = bool(await self.store.cancel_job(run_id))
+        if not cancelled:
+            return False
+        job = None
+        with contextlib.suppress(Exception):
+            job = await self.store.get_job(run_id)
+        if job is not None:
+            with contextlib.suppress(Exception):
+                await self._persist_run_error(job, "cancelled before execution", status="cancelled")
+        from agno.os.event_streams import get_event_stream
+        from agno.run.base import RunStatus
+
+        with contextlib.suppress(Exception):
+            event_stream = get_event_stream()
+            # Register-then-complete: a queued non-stream run may never have
+            # been registered; watchers attaching later must see CANCELLED,
+            # not an unknown run
+            await event_stream.register_run(run_id, RunStatus.pending)
+            await asyncio.shield(event_stream.complete_run(run_id, RunStatus.cancelled))
+        return True
+
+    async def _persist_run_error(self, job: Dict[str, Any], error: str, status: str = "error") -> None:
+        """Persist a terminal status on the run row so pollers see it, never a
+        stuck RUNNING/PENDING. The failure reason lands on run.content: the
+        polled run must carry something actionable, not just ERROR with
+        content=None (the job row's error field is the operator surface)."""
         component = self.resolve_component(job["component_type"], job["component_id"])
         if component is None:
             return
@@ -349,7 +380,8 @@ class QueueWorker:
             session = await aread_or_create_session(component, session_id=job["session_id"], user_id=job.get("user_id"))
             run = session.get_run(job["id"])
             if isinstance(run, RunOutput):
-                run.status = RunStatus.error
+                run.status = RunStatus.cancelled if status == "cancelled" else RunStatus.error
+                run.content = run.content or error
                 session.upsert_run(run=run)
                 await asave_session(component, session=session)
         elif component_type == "team":
@@ -362,7 +394,8 @@ class QueueWorker:
             )
             team_run = team_session.get_run(job["id"])
             if isinstance(team_run, TeamRunOutput):
-                team_run.status = RunStatus.error
+                team_run.status = RunStatus.cancelled if status == "cancelled" else RunStatus.error
+                team_run.content = team_run.content or error
                 team_session.upsert_run(run_response=team_run)
                 await team_asave_session(component, session=team_session)
         elif component_type == "workflow":
@@ -371,7 +404,8 @@ class QueueWorker:
             )
             workflow_run = workflow_session.get_run(job["id"])
             if workflow_run is not None:
-                workflow_run.status = RunStatus.error
+                workflow_run.status = RunStatus.cancelled if status == "cancelled" else RunStatus.error
+                workflow_run.content = workflow_run.content or error
                 workflow_session.upsert_run(run=workflow_run)
                 if component._has_async_db():
                     await component.asave_session(session=workflow_session)
@@ -472,6 +506,25 @@ class QueueWorker:
                 await self.store.retry_or_fail_job(job_id, self.worker_id, attempt, str(e), self._retry_delay(attempt))
 
 
+def validate_seam_input(component: Any, input: Any) -> None:
+    """Mirror arun's input_schema validation at the durable seams: the inline
+    path 422s on schema violations, so a 202 for the same payload (failing
+    only later, inside the worker) would be a contract divergence."""
+    schema = getattr(component, "input_schema", None)
+    if schema is None:
+        return
+    from fastapi import HTTPException
+
+    try:
+        from agno.utils.agent import validate_input
+
+        validate_input(input, schema)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=422, detail=f"Input failed schema validation: {str(e)[:300]}")
+
+
 async def aprepare_queued_run(
     component: Any, component_type: str, run_id: str, session_id: str, user_id: Optional[str], input: Any
 ) -> None:
@@ -484,7 +537,7 @@ async def aprepare_queued_run(
     if component_type == "agent":
         from agno.agent._session import asave_session
         from agno.agent._storage import aread_or_create_session, update_metadata
-        from agno.run.agent import RunOutput
+        from agno.run.agent import RunInput, RunOutput
 
         session = await aread_or_create_session(component, session_id=session_id, user_id=user_id)
         if session.get_run(run_id) is not None:
@@ -495,14 +548,16 @@ async def aprepare_queued_run(
             agent_id=getattr(component, "id", None),
             agent_name=getattr(component, "name", None),
             user_id=user_id,
-            input=input,
+            # A raw value here made to_dict() raise inside the save and the
+            # PENDING row silently never landed - typed container required
+            input=RunInput(input_content=input),
             status=RunStatus.pending,
         )
         update_metadata(component, session=session)
         session.upsert_run(run=run_response)
         await asave_session(component, session=session)
     elif component_type == "team":
-        from agno.run.team import TeamRunOutput
+        from agno.run.team import TeamRunInput, TeamRunOutput
         from agno.team._session import asave_session as team_asave_session
         from agno.team._storage import _aread_or_create_session, _update_metadata
 
@@ -515,7 +570,7 @@ async def aprepare_queued_run(
             team_id=getattr(component, "id", None),
             team_name=getattr(component, "name", None),
             user_id=user_id,
-            input=input,
+            input=TeamRunInput(input_content=input),
             status=RunStatus.pending,
         )
         _update_metadata(component, session=team_session)
@@ -575,12 +630,20 @@ async def queue_lifespan(app: Any, agent_os: Any):
                 # runs must not share mutable state with concurrent runs on
                 # the registry instance. (Factory-backed components are
                 # rejected at submit time - they need request context.)
+                resolved = candidate
                 if callable(getattr(candidate, "deep_copy", None)):
                     try:
-                        return candidate.deep_copy()
+                        resolved = candidate.deep_copy()
                     except Exception:
-                        return candidate
-                return candidate
+                        resolved = candidate
+                if component_type == "team":
+                    # Mirror the HTTP path's per-request copy: member HITL
+                    # continue reloads member tool state from the DB and
+                    # depends on this - the registry instance carries the
+                    # class default (False)
+                    with contextlib.suppress(Exception):
+                        resolved.store_member_responses = True
+                return resolved
         return None
 
     worker = QueueWorker(store=store, resolve_component=resolve_component, config=config)

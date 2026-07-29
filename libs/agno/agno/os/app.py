@@ -696,6 +696,10 @@ class AgentOS:
         # when the durable queue is enabled
         if self.queue is not None and self.queue.durable:
             self._add_router(app, get_queue_router(self, settings=self.settings))
+        else:
+            # Parity with every other switchable feature: answer 503 naming
+            # the switch instead of 404ing the whole surface
+            self._add_router(app, _get_disabled_feature_router("/queue", "Queue", "queue=QueueConfig(durable=True)"))
 
         # Add A2A interface if relevant
         has_a2a_interface = False
