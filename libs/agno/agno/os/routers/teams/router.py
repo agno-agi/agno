@@ -30,7 +30,7 @@ from agno.os.auth import (
 )
 from agno.os.checkpoints import build_run_checkpoint_snapshot, list_run_checkpoints
 from agno.os.event_streams import get_event_stream
-from agno.os.job_queue import aprepare_queued_run
+from agno.os.job_queue import aprepare_queued_run, payload_is_queueable
 from agno.os.middleware.user_scope import (
     SESSION_ID_REQUIRED,
     assert_session_matches_component,
@@ -743,8 +743,10 @@ def get_team_router(
                 # RUN (complete output guaranteed via the run row); the live
                 # stream is the best-effort view.
                 queue_worker = getattr(request.app.state, "queue_worker", None)
+                queued_stream_payload = {"input": message, "kwargs": kwargs, "stream": True}
                 stream_queueable = (
                     queue_worker is not None
+                    and payload_is_queueable(queued_stream_payload)
                     and not isinstance(team, RemoteTeam)
                     and version is None
                     and not (base64_images or base64_audios or base64_videos or document_files)
@@ -763,7 +765,7 @@ def get_team_router(
                         component_id=getattr(team, "id", None) or team_id,
                         session_id=queued_session_id,
                         user_id=user_id,
-                        payload={"input": message, "kwargs": kwargs, "stream": True},
+                        payload=queued_stream_payload,
                         max_attempts=queue_worker.config.max_attempts,
                         idempotency_key=request.headers.get("idempotency-key"),
                     ).to_dict()
@@ -779,9 +781,18 @@ def get_team_router(
                                 status_code=409,
                                 detail="Idempotency-Key was already used but the original run could not be retrieved",
                             )
-                        # Attach to the ORIGINAL run's stream instead of a new one
+                        # Attach to the ORIGINAL run's stream. A terminal
+                        # original (or one whose stream keys already expired)
+                        # gets the full resume path - buffer or DB replay -
+                        # instead of a blind tail that would close silently
+                        # with zero events.
+                        if existing.get("status") in ("queued", "running"):
+                            return StreamingResponse(
+                                queued_run_tail_streamer(existing["id"]), media_type="text/event-stream"
+                            )
                         return StreamingResponse(
-                            queued_run_tail_streamer(existing["id"]), media_type="text/event-stream"
+                            _resume_stream_generator(team, existing["id"], None, existing.get("session_id"), user_id),
+                            media_type="text/event-stream",
                         )
                     await get_event_stream().register_run(queued_run_id, RunStatus.pending)
                     await aprepare_queued_run(
@@ -837,11 +848,13 @@ def get_team_router(
                 getattr(candidate, "id", None) == team_id and not isinstance(candidate, TeamFactory)
                 for candidate in (os.teams or [])
             )
+            queued_payload = {"input": message, "kwargs": kwargs}
             if (
                 queue_worker is not None
                 and not isinstance(team, RemoteTeam)
                 and component_is_queueable
                 and version is None  # version-pinned resolution differs from the worker's registry instance
+                and payload_is_queueable(queued_payload)
             ):
                 if base64_images or base64_audios or base64_videos or document_files:
                     raise HTTPException(
@@ -856,7 +869,7 @@ def get_team_router(
                     component_id=getattr(team, "id", None) or team_id,
                     session_id=queued_session_id,
                     user_id=user_id,
-                    payload={"input": message, "kwargs": kwargs},
+                    payload=queued_payload,
                     max_attempts=queue_worker.config.max_attempts,
                     idempotency_key=request.headers.get("idempotency-key"),
                 ).to_dict()
@@ -902,6 +915,12 @@ def get_team_router(
                 return JSONResponse(
                     status_code=202,
                     content={"run_id": queued_run_id, "session_id": queued_session_id, "status": "PENDING"},
+                )
+            elif queue_worker is not None and not payload_is_queueable(queued_payload):
+                log_warning(
+                    "Background run bypasses the durable queue: the submission carries values plain "
+                    "JSON cannot store (e.g. output_schema classes or media objects). Executing on the "
+                    "accepting replica instead - bounded and observable, but NOT durable."
                 )
 
             run_response = await team.arun(  # type: ignore[misc]

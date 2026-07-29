@@ -129,6 +129,24 @@ class _SyncStoreAdapter:
         return _call
 
 
+def payload_is_queueable(payload: Any) -> bool:
+    """True when the job payload survives a JSON round-trip as-is.
+
+    The queue stores payloads in JSONB / Redis JSON strings, and a worker on
+    another replica reconstructs the run from them. Values that plain JSON
+    cannot carry (media BaseModel instances, dynamically-built output_schema
+    classes, arbitrary objects in kwargs) would either fail the enqueue INSERT
+    or come back as lossy strings - such submissions must fall back to the
+    non-durable path instead of 500ing or corrupting the run."""
+    import json as _json
+
+    try:
+        _json.dumps(payload)
+        return True
+    except (TypeError, ValueError):
+        return False
+
+
 def resolve_queue_store(config: QueueConfig, default_db: Any) -> Any:
     """Resolve the queue store for a durable QueueConfig.
 

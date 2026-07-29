@@ -116,13 +116,22 @@ class RedisEventStream(BaseEventStream):
     # ------------------------------------------------------------------
 
     async def register_run(self, run_id: str, status: RunStatus = RunStatus.pending) -> None:
-        # NX keeps registration idempotent: a reconnect must not reset state
+        # NX keeps registration idempotent: a reconnect must not reset state.
+        # Deliberately NOT enrolled in the TTL refresher: accept-side replicas
+        # register runs that some other replica's worker will execute, and only
+        # the PRODUCER may keep the keys alive - an accept-side refresher would
+        # renew a finished run's keys forever (and defeat dead-producer TTL
+        # detection). Enrollment happens on the producing replica via
+        # set_run_status(RUNNING) / add_event.
         await self._redis.set(self._status_key(run_id), status.value, nx=True, ex=self._ttl)
-        self._active_runs.add(run_id)
-        self._ensure_refresher()
 
     async def set_run_status(self, run_id: str, status: RunStatus) -> None:
         await self._redis.set(self._status_key(run_id), status.value, ex=self._ttl)
+        if status == RunStatus.running:
+            # The transition to RUNNING happens on the executing replica: this
+            # process is the producer, so it owns keeping the keys alive
+            self._active_runs.add(run_id)
+            self._ensure_refresher()
 
     async def get_run_status(self, run_id: str) -> Optional[RunStatus]:
         value = _to_str(await self._redis.get(self._status_key(run_id)))
@@ -213,6 +222,9 @@ class RedisEventStream(BaseEventStream):
     # ------------------------------------------------------------------
 
     async def add_event(self, run_id: str, event: Any) -> int:
+        if run_id not in self._active_runs:
+            self._active_runs.add(run_id)
+            self._ensure_refresher()
         from agno.os.utils import format_sse_event_with_index
 
         # INCR assigns the monotonic index atomically (single producer today;

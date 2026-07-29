@@ -29,7 +29,7 @@ from agno.os.auth import (
     require_resource_access,
 )
 from agno.os.event_streams import get_event_stream
-from agno.os.job_queue import aprepare_queued_run
+from agno.os.job_queue import aprepare_queued_run, payload_is_queueable
 from agno.os.middleware.user_scope import (
     SESSION_ID_REQUIRED,
     SESSION_ID_REQUIRED_RECONNECT,
@@ -1444,11 +1444,13 @@ def get_workflow_router(
                 getattr(candidate, "id", None) == workflow_id and not isinstance(candidate, WorkflowFactory)
                 for candidate in (os.workflows or [])
             )
+            queued_payload = {"input": message, "kwargs": kwargs}
             if (
                 queue_worker is not None
                 and not isinstance(workflow, RemoteWorkflow)
                 and component_is_queueable
                 and version is None  # version-pinned resolution differs from the worker's registry instance
+                and payload_is_queueable(queued_payload)
             ):
                 queued_run_id = str(uuid4())
                 queued_session_id = session_id or str(uuid4())
@@ -1458,7 +1460,7 @@ def get_workflow_router(
                     component_id=getattr(workflow, "id", None) or workflow_id,
                     session_id=queued_session_id,
                     user_id=user_id,
-                    payload={"input": message, "kwargs": kwargs},
+                    payload=queued_payload,
                     max_attempts=queue_worker.config.max_attempts,
                     idempotency_key=request.headers.get("idempotency-key"),
                 ).to_dict()
@@ -1504,6 +1506,12 @@ def get_workflow_router(
                 return JSONResponse(
                     status_code=202,
                     content={"run_id": queued_run_id, "session_id": queued_session_id, "status": "PENDING"},
+                )
+            elif queue_worker is not None and not payload_is_queueable(queued_payload):
+                log_warning(
+                    "Background run bypasses the durable queue: the submission carries values plain "
+                    "JSON cannot store (e.g. output_schema classes or media objects). Executing on the "
+                    "accepting replica instead - bounded and observable, but NOT durable."
                 )
 
             run_response = await workflow.arun(
