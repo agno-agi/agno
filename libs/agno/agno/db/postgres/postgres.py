@@ -5358,6 +5358,71 @@ class PostgresDb(BaseDb):
     # the attempt budget, and terminal writes fenced on (locked_by, attempt) so
     # a zombie executor that finishes after reclaim has its write discarded.
 
+    def update_run_in_session(
+        self,
+        session_id: str,
+        run_id: str,
+        fields: Dict[str, Any],
+        expected_attempt: Optional[int] = None,
+        user_id: Optional[str] = None,
+    ) -> bool:
+        """Atomically patch fields of ONE run inside the session's runs list.
+
+        Row-locked read-modify-write (SELECT ... FOR UPDATE), so concurrent
+        status transitions on different runs of the same session can no longer
+        clobber each other - the fix the fresh-read mitigation only narrowed.
+
+        Attempt fencing: when ``expected_attempt`` is given, the write is
+        rejected if the stored run carries a NEWER ``queue_attempt`` (a
+        reclaimed job's later attempt owns the row; a zombie's stale write is
+        discarded). The incoming attempt is stamped onto the run.
+
+        Returns True if the run was found and patched.
+        """
+        try:
+            table = self._get_table(table_type="sessions")
+            if table is None:
+                return False
+            with self.Session() as sess, sess.begin():
+                row = sess.execute(
+                    select(table.c.runs)
+                    .where(table.c.session_id == session_id)
+                    .where((table.c.user_id == user_id) | (table.c.user_id.is_(None)))
+                    .with_for_update()
+                ).fetchone()
+                if row is None or not row[0]:
+                    return False
+                runs = list(row[0])
+                for i, run in enumerate(runs):
+                    if isinstance(run, dict) and run.get("run_id") == run_id:
+                        stored_attempt = run.get("queue_attempt")
+                        if (
+                            expected_attempt is not None
+                            and stored_attempt is not None
+                            and stored_attempt > expected_attempt
+                        ):
+                            return False  # stale writer fenced out
+                        updated = dict(run)
+                        updated.update(fields)
+                        if expected_attempt is not None:
+                            updated["queue_attempt"] = expected_attempt
+                        runs[i] = updated
+                        sess.execute(
+                            update(table)
+                            .where(table.c.session_id == session_id)
+                            .where((table.c.user_id == user_id) | (table.c.user_id.is_(None)))
+                            .values(runs=runs, updated_at=int(time.time()))
+                        )
+                        return True
+                return False
+        except Exception as e:
+            # Do NOT collapse unexpected errors into False: the caller treats a
+            # False under a requested fence as final (no fallback), and a
+            # transient DB error must instead surface as "primitive
+            # unavailable" so the terminal state still gets persisted somehow
+            log_warning(f"Error updating run in session (falling back): {e}")
+            raise
+
     def enqueue_job(self, job: Dict[str, Any], max_depth: int = 0) -> Dict[str, Any]:
         """Insert an accepted run job.
 

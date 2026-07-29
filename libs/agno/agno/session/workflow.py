@@ -140,6 +140,12 @@ class WorkflowSession:
         # Find existing run and update it, or append new one
         for i, existing_run in enumerate(self.runs):
             if existing_run.run_id == run.run_id:
+                # queue_attempt is sticky: the generation stamp lives on the
+                # stored row (written by the queue worker's fenced patch), and
+                # a whole-run save from execution - which never knows its
+                # attempt - must not erase it
+                if getattr(run, "queue_attempt", None) is None:
+                    run.queue_attempt = getattr(existing_run, "queue_attempt", None)
                 self.runs[i] = run
                 break
         else:
