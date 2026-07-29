@@ -1,5 +1,6 @@
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Union
 
 from agno.skills.errors import SkillValidationError
 
@@ -20,7 +21,8 @@ class Skill:
         name: Unique skill name (from folder name or SKILL.md frontmatter)
         description: Short description of what the skill does
         instructions: Full SKILL.md body (the instructions/guidance for the agent)
-        source_path: Filesystem path to the skill folder (path-backed skills only)
+        source_path: Filesystem path to the skill folder, a str or a pathlib.Path
+            (path-backed skills only)
         scripts: List of script filenames in scripts/ subdirectory
         references: List of reference filenames in references/ subdirectory
         metadata: Optional metadata from frontmatter (version, author, tags, etc.)
@@ -35,7 +37,7 @@ class Skill:
     name: str
     description: str
     instructions: str
-    source_path: Optional[str] = None
+    source_path: Optional[Union[str, Path]] = None
     scripts: List[str] = field(default_factory=list)
     references: List[str] = field(default_factory=list)
     metadata: Optional[Dict[str, Any]] = None
@@ -80,7 +82,8 @@ class Skill:
             "name": self.name,
             "description": self.description,
             "instructions": self.instructions,
-            "source_path": self.source_path,
+            # Coerced: source_path may be a Path, which is not JSON serializable.
+            "source_path": str(self.source_path) if self.source_path is not None else None,
             "scripts": self.scripts,
             "references": self.references,
             "metadata": self.metadata,

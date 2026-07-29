@@ -676,6 +676,53 @@ def test_content_skill_script_execute_timeout(content_skill: Skill) -> None:
     assert "timed out" in result["error"].lower()
 
 
+# --- Path source_path Tests ---
+
+
+def test_path_source_path_serves_reference_and_script(temp_skill_dir: Path) -> None:
+    """Test that a skill whose source_path is a Path works through every tool that builds a path."""
+    (temp_skill_dir / "scripts" / "path_runner.py").write_text('#!/usr/bin/env python3\nprint("ran from a Path")')
+    skill = Skill(
+        name="path-skill",
+        description="Path-backed via a pathlib.Path",
+        instructions="Instructions",
+        source_path=temp_skill_dir,
+        scripts=["path_runner.py"],
+        references=["guide.md"],
+    )
+    skills = Skills(loaders=[MockSkillLoader([skill])])
+
+    reference = json.loads(skills._get_skill_reference("path-skill", "guide.md"))
+    assert "reference guide" in reference["content"].lower()
+
+    read = json.loads(skills._get_skill_script("path-skill", "path_runner.py"))
+    assert "ran from a Path" in read["content"]
+
+    executed = json.loads(skills._get_skill_script("path-skill", "path_runner.py", execute=True))
+    assert "error" not in executed
+    assert "ran from a Path" in executed["stdout"]
+
+
+def test_path_backed_and_content_carrying_skills_coexist(temp_skill_dir: Path, content_skill: Skill) -> None:
+    """Test that a Path-backed skill and a content-carrying skill serve from one Skills instance."""
+    path_skill = Skill(
+        name="path-skill",
+        description="Path-backed via a pathlib.Path",
+        instructions="Instructions",
+        source_path=temp_skill_dir,
+        references=["guide.md"],
+    )
+    skills = Skills(loaders=[MockSkillLoader([path_skill]), MockSkillLoader([content_skill])])
+
+    assert sorted(skills.get_skill_names()) == ["content-skill", "path-skill"]
+
+    from_disk = json.loads(skills._get_skill_reference("path-skill", "guide.md"))
+    from_contents = json.loads(skills._get_skill_reference("content-skill", "guide.md"))
+
+    assert "reference guide" in from_disk["content"].lower()
+    assert from_contents["content"] == "# Guide\n\nThis is a reference guide."
+
+
 # --- Executor Tests ---
 
 

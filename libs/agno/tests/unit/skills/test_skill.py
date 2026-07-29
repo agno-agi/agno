@@ -1,5 +1,8 @@
 """Unit tests for Skill dataclass."""
 
+import json
+from pathlib import Path
+
 import pytest
 
 from agno.skills.errors import SkillValidationError
@@ -75,6 +78,18 @@ def test_skill_positional_construction_is_unchanged() -> None:
     assert skill.compatibility == "requires python>=3.9"
     assert skill.allowed_tools == ["get_skill_script"]
     assert skill.source_type == "local"
+
+
+def test_skill_accepts_a_path_source_path() -> None:
+    """Test that source_path accepts a pathlib.Path, not only a str."""
+    skill = Skill(
+        name="path-skill",
+        description="Path-backed via a pathlib.Path",
+        instructions="Instructions",
+        source_path=Path("/path/to/skill"),
+    )
+
+    assert skill.source_path == Path("/path/to/skill")
 
 
 # --- Content-Carrying Skill Tests ---
@@ -232,6 +247,42 @@ def test_content_skill_roundtrip(content_skill: Skill) -> None:
     recreated_skill = Skill.from_dict(content_skill.to_dict())
 
     assert recreated_skill == content_skill
+
+
+def test_to_dict_serializes_a_path_source_path_to_str() -> None:
+    """Test that a Path source_path is serialized as a str, keeping the dict JSON-encodable."""
+    skill = Skill(
+        name="path-skill",
+        description="Path-backed via a pathlib.Path",
+        instructions="Instructions",
+        source_path=Path("/path/to/skill"),
+    )
+
+    skill_dict = skill.to_dict()
+
+    assert isinstance(skill_dict["source_path"], str)
+    assert skill_dict["source_path"] == str(Path("/path/to/skill"))
+    # A raw Path is not JSON serializable, so without the coercion above this call raises.
+    assert json.loads(json.dumps(skill_dict))["source_path"] == str(Path("/path/to/skill"))
+
+
+def test_from_dict_restores_a_serialized_path_source_path() -> None:
+    """Test that a skill built from a Path survives a JSON round trip, as a str path."""
+    original = Skill(
+        name="path-skill",
+        description="Path-backed via a pathlib.Path",
+        instructions="Instructions",
+        source_path=Path("/path/to/skill"),
+        scripts=[],
+        references=[],
+    )
+
+    restored = Skill.from_dict(json.loads(json.dumps(original.to_dict())))
+
+    # JSON has no path type, so the restored skill carries the equivalent str.
+    assert restored.source_path == str(Path("/path/to/skill"))
+    assert restored.name == original.name
+    assert restored.instructions == original.instructions
 
 
 # --- Skill Equality Tests ---
