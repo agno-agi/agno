@@ -5364,6 +5364,7 @@ class PostgresDb(BaseDb):
         run_id: str,
         fields: Dict[str, Any],
         expected_attempt: Optional[int] = None,
+        user_id: Optional[str] = None,
     ) -> bool:
         """Atomically patch fields of ONE run inside the session's runs list.
 
@@ -5384,7 +5385,10 @@ class PostgresDb(BaseDb):
                 return False
             with self.Session() as sess, sess.begin():
                 row = sess.execute(
-                    select(table.c.runs).where(table.c.session_id == session_id).with_for_update()
+                    select(table.c.runs)
+                    .where(table.c.session_id == session_id)
+                    .where((table.c.user_id == user_id) | (table.c.user_id.is_(None)))
+                    .with_for_update()
                 ).fetchone()
                 if row is None or not row[0]:
                     return False
@@ -5406,13 +5410,18 @@ class PostgresDb(BaseDb):
                         sess.execute(
                             update(table)
                             .where(table.c.session_id == session_id)
+                            .where((table.c.user_id == user_id) | (table.c.user_id.is_(None)))
                             .values(runs=runs, updated_at=int(time.time()))
                         )
                         return True
                 return False
         except Exception as e:
-            log_debug(f"Error updating run in session: {e}")
-            return False
+            # Do NOT collapse unexpected errors into False: the caller treats a
+            # False under a requested fence as final (no fallback), and a
+            # transient DB error must instead surface as "primitive
+            # unavailable" so the terminal state still gets persisted somehow
+            log_warning(f"Error updating run in session (falling back): {e}")
+            raise
 
     def enqueue_job(self, job: Dict[str, Any], max_depth: int = 0) -> Dict[str, Any]:
         """Insert an accepted run job.

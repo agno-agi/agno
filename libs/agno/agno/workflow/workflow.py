@@ -4209,7 +4209,7 @@ class Workflow:
                     session_id,
                     workflow_run_response,
                     user_id=user_id,
-                    extra_fields={"content": workflow_run_response.content},
+                    full_run=True,
                 )
 
         # Create and start asyncio task
@@ -4433,7 +4433,7 @@ class Workflow:
                     session_id,
                     workflow_run_response,
                     user_id=user_id,
-                    extra_fields={"content": workflow_run_response.content},
+                    full_run=True,
                 )
             finally:
                 if slot_held:
@@ -4652,7 +4652,9 @@ class Workflow:
                 # Persist ERROR status
                 try:
                     workflow_run_response.status = RunStatus.error
-                    await apersist_run_transition(self, "workflow", session_id, workflow_run_response, user_id=user_id)
+                    await apersist_run_transition(
+                        self, "workflow", session_id, workflow_run_response, user_id=user_id, full_run=True
+                    )
                 except Exception:
                     log_error(
                         f"Failed to persist error state for background stream workflow run {run_id}", exc_info=True
