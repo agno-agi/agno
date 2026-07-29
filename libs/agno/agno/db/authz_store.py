@@ -84,8 +84,15 @@ def get_role_policies(engine: Engine, table: Any, role: str) -> List[Tuple[str, 
 
 def set_role_policies(engine: Engine, table: Any, role: str, rows: List[Tuple[str, str, str]]) -> None:
     """Replace a role's policy rows in one transaction, so a reader never sees a role
-    that has been emptied but not yet refilled."""
+    that has been emptied but not yet refilled.
+
+    Serialized per role: two concurrent replacements would otherwise each delete only
+    the rows they could see and both insert, so the result is the UNION of the two sets
+    rather than the later one -- a revoke that silently does not revoke, with no error
+    raised to surface it.
+    """
     with engine.begin() as conn:
+        _serialize_on(conn, f"authz:role:{role}")
         conn.execute(delete(table).where(table.c.role == role))
         for resource, action, effect in rows:
             _upsert(
@@ -157,9 +164,26 @@ def unassign_role(engine: Engine, table: Any, subject: str, role: str) -> None:
         conn.execute(delete(table).where(table.c.subject == subject, table.c.role == role))
 
 
+def _serialize_on(conn: Any, key: str) -> None:
+    """Serialize this transaction against others touching ``key``.
+
+    A transaction is not enough on its own here. Under READ COMMITTED two concurrent
+    replacements for a subject who holds nothing yet BOTH delete zero rows and BOTH
+    insert, and neither conflicts -- so the subject ends up holding both roles, the
+    engine ORs their privileges, and the admin API shows only the first one. Postgres
+    needs an explicit lock; SQLite's database-wide write lock already serializes, which
+    is exactly why this class of bug is invisible in development.
+    """
+    if conn.dialect.name == "postgresql":
+        from sqlalchemy import text
+
+        conn.execute(text("SELECT pg_advisory_xact_lock(hashtext(:key))"), {"key": key})
+
+
 def replace_subject_roles(engine: Engine, table: Any, subject: str, role: str) -> None:
     """Atomically make ``role`` the subject's only role -- see the module docstring."""
     with engine.begin() as conn:
+        _serialize_on(conn, f"authz:subject:{subject}")
         conn.execute(delete(table).where(table.c.subject == subject))
         conn.execute(insert(table).values(subject=subject, role=role))
 
