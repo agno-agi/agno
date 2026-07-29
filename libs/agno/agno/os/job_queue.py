@@ -342,7 +342,9 @@ class QueueWorker:
         retries when many workers fail together."""
         import random
 
-        base = max(1, self.config.retry_delay_seconds)
+        base = self.config.retry_delay_seconds
+        if base <= 0:
+            return 0  # explicit no-backoff configuration (tests, dev loops)
         ceiling = min(base * (2 ** max(0, attempt - 1)), base * 10)
         return random.randint(base, max(base, ceiling))
 
