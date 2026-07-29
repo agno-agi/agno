@@ -572,16 +572,26 @@ class QueueWorker:
             raise
         except asyncio.TimeoutError:
             error = f"Run exceeded timeout_seconds={self.config.timeout_seconds}"
-            with contextlib.suppress(Exception):
-                await self._persist_run_error(job, error)
-            await self._terminate_stream_view(job)
+            # A timed-out attempt with retry budget left is NOT terminal: the
+            # retry continues the same stream, so neither the run row nor the
+            # stream view may be marked ERROR yet (tails would close before the
+            # retry's real output). Budget exhausted = genuinely terminal.
+            if attempt >= job.get("max_attempts", 1):
+                with contextlib.suppress(Exception):
+                    await self._persist_run_error(job, error)
+                await self._terminate_stream_view(job)
             await self.store.retry_or_fail_job(job_id, self.worker_id, attempt, error, self._retry_delay(attempt))
         except Exception as e:
             with contextlib.suppress(Exception):
                 await self._persist_run_error(job, str(e))
             if self._is_permanent_failure(e):
-                # Invalid input / schema violations cannot be cured by retrying
+                # Invalid input / schema violations cannot be cured by retrying.
+                # No retry is coming even if budget remains, so the stream view
+                # must terminate here (the streaming finally skipped its
+                # sentinel expecting a retry).
                 await self.store.complete_job(job_id, self.worker_id, attempt, "failed", f"permanent: {str(e)}")
+                with contextlib.suppress(Exception):
+                    await self._terminate_stream_view(job)
             else:
                 await self.store.retry_or_fail_job(job_id, self.worker_id, attempt, str(e), self._retry_delay(attempt))
 
