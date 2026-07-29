@@ -2228,7 +2228,7 @@ class RedisDb(BaseDb):
 
     # -- Job queue (durable background runs) --------------------------------
     # The queue contract, matching the Postgres adapters method-for-method
-    # (see agno.queue.store.InMemoryQueueStore for the reference). Sync,
+    # (see agno.job_queue.store.InMemoryQueueStore for the reference). Sync,
     # like every other method on this adapter; the queue worker wraps sync
     # stores in a thread adapter. Claims and fenced writes use optimistic
     # WATCH/MULTI on the job key - the SKIP LOCKED equivalent.

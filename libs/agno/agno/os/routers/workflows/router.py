@@ -29,6 +29,7 @@ from agno.os.auth import (
     require_resource_access,
 )
 from agno.os.event_streams import get_event_stream
+from agno.os.job_queue import aprepare_queued_run
 from agno.os.middleware.user_scope import (
     SESSION_ID_REQUIRED,
     SESSION_ID_REQUIRED_RECONNECT,
@@ -39,7 +40,6 @@ from agno.os.middleware.user_scope import (
     verify_run_in_session,
     verify_run_in_session_via_db,
 )
-from agno.os.queue import aprepare_queued_run
 from agno.os.routers.workflows.schema import WorkflowResponse
 from agno.os.schema import (
     BadRequestResponse,

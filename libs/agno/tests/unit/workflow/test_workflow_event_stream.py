@@ -122,9 +122,9 @@ class TestWorkerStreamingWorkflowJob:
         """The worker executes a streaming workflow job: events published under
         the job id, terminal status from the run row (workflows do not support
         yield_run_output)."""
-        from agno.os.queue import QueueWorker
-        from agno.queue.config import QueueConfig
-        from agno.queue.store import InMemoryQueueStore
+        from agno.job_queue.config import QueueConfig
+        from agno.job_queue.store import InMemoryQueueStore
+        from agno.os.job_queue import QueueWorker
 
         store = InMemoryQueueStore()
         await store.enqueue_job(

@@ -245,13 +245,13 @@ class TestQueueConfig:
         untouched" - a config constructed to set other fields must never
         silently reset the cap. The effective fallback remains
         DEFAULT_BACKGROUND_MAX_CONCURRENCY via the limiter itself."""
-        from agno.queue import QueueConfig
+        from agno.job_queue import QueueConfig
 
         assert QueueConfig().max_concurrency is None
         assert get_background_max_concurrency() == DEFAULT_BACKGROUND_MAX_CONCURRENCY
 
     def test_config_value_applies_via_setter(self):
-        from agno.queue import QueueConfig
+        from agno.job_queue import QueueConfig
 
         config = QueueConfig(max_concurrency=4)
         set_background_max_concurrency(config.max_concurrency)
@@ -263,7 +263,7 @@ class TestQueueConfigEnvPrecedence:
         """QueueConfig() without an explicit max_concurrency must NOT
         override AGNO_BACKGROUND_MAX_CONCURRENCY (a config constructed to set
         other fields should not silently reset the cap)."""
-        from agno.queue import QueueConfig
+        from agno.job_queue import QueueConfig
 
         monkeypatch.setenv("AGNO_BACKGROUND_MAX_CONCURRENCY", "8")
         config = QueueConfig()
@@ -274,7 +274,7 @@ class TestQueueConfigEnvPrecedence:
         assert get_background_max_concurrency() == 8
 
     def test_explicit_config_wins_over_env_var(self, monkeypatch: pytest.MonkeyPatch):
-        from agno.queue import QueueConfig
+        from agno.job_queue import QueueConfig
 
         monkeypatch.setenv("AGNO_BACKGROUND_MAX_CONCURRENCY", "8")
         config = QueueConfig(max_concurrency=4)
