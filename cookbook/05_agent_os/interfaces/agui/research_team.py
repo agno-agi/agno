@@ -2,7 +2,13 @@
 Research Team
 =============
 
-Demonstrates research team.
+Demonstrates a research team exposed over AG-UI.
+
+Each member's live progress is surfaced as AG-UI ACTIVITY_SNAPSHOT events
+(activity_type "agno.team_member"), keyed by a per-member message_id, so the
+frontend can render which member is working and what it has produced. The
+leader's own text continues to stream as TEXT_MESSAGE_*; member text is NOT
+folded into the leader's message.
 """
 
 from agno.agent.agent import Agent
@@ -19,7 +25,7 @@ from agno.tools.websearch import WebSearchTools
 researcher = Agent(
     name="researcher",
     role="Research Assistant",
-    model=OpenAIResponses(id="gpt-5.4"),
+    model=OpenAIResponses(id="gpt-5.5"),
     instructions="You are a research assistant. Find information and provide detailed analysis.",
     tools=[WebSearchTools()],
     markdown=True,
@@ -28,7 +34,7 @@ researcher = Agent(
 writer = Agent(
     name="writer",
     role="Content Writer",
-    model=OpenAIResponses(id="gpt-5.4"),
+    model=OpenAIResponses(id="gpt-5.5"),
     instructions="You are a content writer. Create well-structured content based on research.",
     tools=[WebSearchTools()],
     markdown=True,

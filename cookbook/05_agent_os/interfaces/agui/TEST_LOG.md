@@ -54,9 +54,11 @@
 
 ### research_team.py
 
-**Status:** PENDING
+**Status:** PASS
 
-**Description:** Research Team.
+**Description:** Research Team - two members (researcher + writer) coordinated by a team leader, exposed over AG-UI. Demonstrates team member visibility via AG-UI Activity events.
+
+**Result:** Verified end-to-end against the real AG-UI pipeline (run_entity -> event translation). Each member's progress is emitted as ACTIVITY_SNAPSHOT events (activity_type "agno.team_member") with a stable per-member message_id, agentId/agentName, status transitions (running -> tool_calling -> completed), and accumulated member text. Member text is NOT folded into the leader's TEXT_MESSAGE_* stream, which carries only the leader's own output. Validated with both a mocked-model harness and a real OpenAI-compatible model run; member tool calls produce tool_calling snapshots and the leader's final summary appears only in the leader message. Note: the model id was corrected to gpt-5.5 (the file previously referenced a non-existent gpt-5.4).
 
 ---
 

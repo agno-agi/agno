@@ -4,6 +4,7 @@ import uuid
 from typing import Any, Callable, Dict, List, Optional
 
 from ag_ui.core import (
+    ActivitySnapshotEvent,
     BaseEvent,
     CustomEvent,
     EventType,
@@ -27,13 +28,16 @@ from ag_ui.core import (
 
 from agno.os.interfaces.agui.state import StreamState
 from agno.reasoning.step import ReasoningStep
-from agno.run.agent import RunContentEvent, RunEvent
+from agno.run.agent import BaseAgentRunEvent, RunContentEvent, RunEvent
 from agno.run.base import BaseRunOutputEvent
 from agno.run.team import RunContentEvent as TeamRunContentEvent
 from agno.run.team import TeamRunEvent
 from agno.utils.message import get_text_from_message
 
 EventHandler = Callable[[BaseRunOutputEvent, StreamState], List[BaseEvent]]
+
+# activity_type identifying an Agno team member's live state to AG-UI frontends.
+TEAM_MEMBER_ACTIVITY_TYPE = "agno.team_member"
 
 
 def _extract_response_chunk_content(response: RunContentEvent) -> str:
@@ -47,21 +51,55 @@ def _extract_response_chunk_content(response: RunContentEvent) -> str:
 
 
 def _extract_team_response_chunk_content(response: TeamRunContentEvent) -> str:
-    # Team responses nest member outputs — fold them into one text delta
-    members_content = []
-    if hasattr(response, "member_responses") and response.member_responses:  # type: ignore
-        for member_resp in response.member_responses:  # type: ignore
-            if isinstance(member_resp, RunContentEvent):
-                member_content = _extract_response_chunk_content(member_resp)
-                if member_content:
-                    members_content.append(f"Team member: {member_content}")
-            elif isinstance(member_resp, TeamRunContentEvent):
-                member_content = _extract_team_response_chunk_content(member_resp)
-                if member_content:
-                    members_content.append(f"Team member: {member_content}")
-    members_response = "\n".join(members_content) if members_content else ""
-    main_content = get_text_from_message(response.content) if response.content is not None else ""
-    return main_content + members_response
+    # Team-leader chunks carry only the leader's own token in .content. Member
+    # output is NOT folded in here — member chunks stream separately as agent
+    # RunContentEvents and are surfaced via Activity snapshots (see on_run_content).
+    return get_text_from_message(response.content) if response.content is not None else ""
+
+
+def _is_member_chunk(chunk: BaseRunOutputEvent) -> bool:
+    """True when this chunk comes from a team member (not the team leader).
+
+    Member events are agent-level events whose parent_run_id was set to the team
+    run_id when delegated (see team/_default_tools.py). The team leader emits
+    BaseTeamRunEvent instead, so agent-level events with a parent are members.
+    """
+    return isinstance(chunk, BaseAgentRunEvent) and getattr(chunk, "parent_run_id", None) is not None
+
+
+def _member_key(chunk: BaseRunOutputEvent) -> str:
+    """Stable per-member key for the run: member run_id, falling back to agent_id."""
+    run_id = getattr(chunk, "run_id", None)
+    agent_id = getattr(chunk, "agent_id", None)
+    return run_id or agent_id or "member"
+
+
+def _member_activity_snapshot(chunk: BaseRunOutputEvent, state: StreamState) -> ActivitySnapshotEvent:
+    """Build the ACTIVITY_SNAPSHOT for a member chunk, updating its live state."""
+    key = _member_key(chunk)
+    message_id, content = state.get_or_create_member(key)
+    # Identity fields are filled in once known; chunks always carry them but we
+    # only overwrite when present so a later sparse chunk can't blank them out.
+    agent_id = getattr(chunk, "agent_id", None)
+    agent_name = getattr(chunk, "agent_name", None)
+    parent_run_id = getattr(chunk, "parent_run_id", None)
+    run_id = getattr(chunk, "run_id", None)
+    if agent_id:
+        content["agentId"] = agent_id
+    if agent_name:
+        content["agentName"] = agent_name
+    if run_id:
+        content["runId"] = run_id
+    if parent_run_id:
+        content["parentRunId"] = parent_run_id
+    content["updatedAt"] = getattr(chunk, "created_at", None)
+    return ActivitySnapshotEvent(
+        type=EventType.ACTIVITY_SNAPSHOT,
+        message_id=message_id,
+        activity_type=TEAM_MEMBER_ACTIVITY_TYPE,
+        content=dict(content),
+        replace=True,
+    )
 
 
 def _format_reasoning_step(step: Optional[ReasoningStep], step_number: int = 0) -> str:
@@ -96,15 +134,21 @@ def _emit_state_delta(state: StreamState) -> List[BaseEvent]:
 
 
 def on_run_content(chunk: BaseRunOutputEvent, state: StreamState) -> List[BaseEvent]:
+    # Team member chunks are surfaced as Activity snapshots, not folded into the
+    # leader's text message. This preserves which member produced the content.
+    if _is_member_chunk(chunk):
+        _, content = state.get_or_create_member(_member_key(chunk))
+        content["text"] += _extract_response_chunk_content(chunk)  # type: ignore
+        content["status"] = "running"
+        return [_member_activity_snapshot(chunk, state)]
+
     events: List[BaseEvent] = []
 
     event = getattr(chunk, "event", None)
-    if event == RunEvent.run_content:
-        content = _extract_response_chunk_content(chunk)  # type: ignore
-    elif event == TeamRunEvent.run_content:
-        content = _extract_team_response_chunk_content(chunk)  # type: ignore
+    if event == TeamRunEvent.run_content:
+        content_str = _extract_team_response_chunk_content(chunk)  # type: ignore
     else:
-        content = ""
+        content_str = _extract_response_chunk_content(chunk)  # type: ignore
 
     if not state.text_message_open:
         message_id = state.open_text_message()
@@ -117,12 +161,12 @@ def on_run_content(chunk: BaseRunOutputEvent, state: StreamState) -> List[BaseEv
             )
         )
 
-    if content:
+    if content_str:
         events.append(
             TextMessageContentEvent(
                 type=EventType.TEXT_MESSAGE_CONTENT,
                 message_id=state.text_message_id,
-                delta=content,
+                delta=content_str,
             )
         )
 
@@ -134,6 +178,14 @@ def on_tool_call_started(chunk: BaseRunOutputEvent, state: StreamState) -> List[
     tool = getattr(chunk, "tool", None)
     if tool is None:
         return events
+
+    # Member tool call: reflect it on the member's Activity and skip the
+    # leader-oriented text-message bookkeeping below.
+    if _is_member_chunk(chunk):
+        _, content = state.get_or_create_member(_member_key(chunk))
+        content["status"] = "tool_calling"
+        content["currentTool"] = tool.tool_name
+        return [_member_activity_snapshot(chunk, state)]
 
     # Close open text message before tool call
     if state.text_message_open:
@@ -182,6 +234,12 @@ def on_tool_call_completed(chunk: BaseRunOutputEvent, state: StreamState) -> Lis
     tool = getattr(chunk, "tool", None)
     if tool is None:
         return events
+
+    if _is_member_chunk(chunk):
+        _, content = state.get_or_create_member(_member_key(chunk))
+        content["status"] = "running"
+        content["currentTool"] = None
+        return [_member_activity_snapshot(chunk, state)]
 
     if tool.tool_call_id in state.ended_tool_call_ids:
         return events
@@ -284,6 +342,16 @@ def on_reasoning_completed(chunk: BaseRunOutputEvent, state: StreamState) -> Lis
         state.end_reasoning()
 
     return events
+
+
+def on_member_content_completed(chunk: BaseRunOutputEvent, state: StreamState) -> List[BaseEvent]:
+    """Member finished producing content: mark its Activity completed."""
+    if not _is_member_chunk(chunk):
+        return []
+    _, content = state.get_or_create_member(_member_key(chunk))
+    content["status"] = "completed"
+    content["currentTool"] = None
+    return [_member_activity_snapshot(chunk, state)]
 
 
 def on_custom_event(chunk: BaseRunOutputEvent, state: StreamState) -> List[BaseEvent]:
@@ -404,6 +472,7 @@ HANDLERS: Dict[str, EventHandler] = {
     RunEvent.reasoning_content_delta.value: on_reasoning_content_delta,
     RunEvent.reasoning_step.value: on_reasoning_step,
     RunEvent.reasoning_completed.value: on_reasoning_completed,
+    RunEvent.run_content_completed.value: on_member_content_completed,
     RunEvent.custom_event.value: on_custom_event,
 }
 
