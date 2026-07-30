@@ -455,6 +455,90 @@ async def _wait_terminal_run(run_id, timeout=40):
     return (_db_run(run_id) or {}).get("status") or "TIMEOUT"
 
 
+# ---------------------------------------------------------------- reserved-kwarg collision (streaming durable)
+
+async def s_reserved_kwarg_stream():
+    """A STREAMING durable submit that carries a reserved run-method name
+    (run_id/input/session_id/user_id) as an extra form field must not blow up.
+
+    The durable STREAMING executor (job_queue.py `_execute_streaming`) pops only
+    `stream_events` from the persisted payload["kwargs"], then splats
+    `**extra_kwargs` alongside explicit `input=`/`run_id=`/`session_id=`/
+    `user_id=`. get_request_kwargs collects every undeclared form field into
+    payload["kwargs"], so a client field named `run_id` collides:
+        TypeError: arun() got multiple values for keyword argument 'run_id'
+    which _is_permanent_failure classifies terminal -> no retry -> the run row
+    goes ERROR and the SSE tail is closed as error. The NON-STREAM executor pops
+    the full reserved set and is unaffected - this scenario asserts that
+    asymmetry is closed.
+
+    We submit the SAME extra field on stream=true and stream=false; on buggy
+    code the stream run errors with a 'multiple values' message while the
+    non-stream run completes. On fixed code both complete.
+    """
+    r = Result("reserved kwarg on streaming durable run does not TypeError", "reserved-kwarg", "agents")
+    t0 = time.time()
+    extra = "run_id"  # the reserved name most obviously wrong to accept from a client
+
+    async def submit(stream: bool, session_id: str):
+        # A failing streaming run may emit NO frame with a run_id (it errors in
+        # the worker before the first event), so we key off an explicit
+        # session_id and read the persisted run row from the DB rather than the
+        # SSE tail.
+        data = {
+            "message": "sleep=1",
+            "background": "true",
+            "stream": "true" if stream else "false",
+            "session_id": session_id,
+            extra: "client-injected-value",  # lands in payload["kwargs"]
+        }
+        async with httpx.AsyncClient(timeout=None) as c:
+            try:
+                if stream:
+                    async with c.stream("POST", f"{LB}/agents/load-agent/runs", data=data) as resp:
+                        async for _line in resp.aiter_lines():
+                            if time.time() - t0 > 25:
+                                break
+                else:
+                    await c.post(f"{LB}/agents/load-agent/runs", data=data, timeout=30)
+            except Exception:
+                pass
+        # give the worker a moment to persist the terminal/error row
+        dbrun = {}
+        for _ in range(25):
+            runs = e2e._db_session_runs(session_id)
+            if runs:
+                dbrun = runs[-1]
+                if str(dbrun.get("status", "")).upper() in TERMINAL:
+                    break
+            await asyncio.sleep(1)
+        blob = json.dumps(dbrun).lower()
+        multi = "multiple values for keyword argument" in blob
+        return {"run_id": dbrun.get("run_id"), "status": dbrun.get("status"),
+                "multi_kwarg_error": multi, "detail": str(dbrun.get("content") or dbrun.get("error"))[:80]}
+
+    stream_res = await submit(stream=True, session_id=f"rkw-stream-{int(t0)}")
+    nonstream_res = await submit(stream=False, session_id=f"rkw-nonstream-{int(t0)}")
+    r.evidence["stream"] = stream_res
+    r.evidence["non_stream"] = nonstream_res
+
+    if stream_res["multi_kwarg_error"] or stream_res["status"] == "ERROR":
+        r.status = "FAIL"
+        r.detail = (
+            f"streaming durable run with extra '{extra}' field errored "
+            f"(status={stream_res['status']}, multi_kwarg={stream_res['multi_kwarg_error']}) while the "
+            f"non-stream run status={nonstream_res['status']}. _execute_streaming strips only stream_events; "
+            "strip the full reserved set before the ** splat."
+        )
+    elif stream_res["status"] == "COMPLETED":
+        r.status, r.detail = "PASS", f"streaming durable run tolerated an extra '{extra}' field (both paths complete)"
+    else:
+        r.status = "WARN"
+        r.detail = f"inconclusive: stream status={stream_res['status']} non_stream={nonstream_res['status']}"
+    r.duration = time.time() - t0
+    return r
+
+
 # ---------------------------------------------------------------- runner
 
 async def run_all():
@@ -462,6 +546,7 @@ async def run_all():
     results.append(await s_cross_replica_resume())
     results.append(await s_clobber_stream())
     results.append(await s_stream_cancel())
+    results.append(await s_reserved_kwarg_stream())
     results.append(await s_retryable_timeout_tail())
     # chaos LAST (both pause redis; each recovers before the next runs)
     results.append(await s_cancel_check_redis_fault())
