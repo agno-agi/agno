@@ -9,27 +9,22 @@ from agno.models.openai.like import OpenAILike
 @dataclass
 class DaoXE(OpenAILike):
     """
-    Multi-model multi-protocol gateway via OpenAI-compatible Chat Completions.
+    A class for interacting with models served by the DaoXE gateway.
 
-    DaoXE exposes Chat Completions at ``https://daoxe.com/v1``. Use an API key from
-    the DaoXE dashboard and an exact model ID from your account catalog
-    (``GET /v1/models``). Do not hardcode a public model price list.
-
-    DaoXE also exposes OpenAI Responses and Anthropic Messages for other clients;
-    this provider uses the Chat Completions path through ``OpenAILike``.
-
-    Not available in mainland China.
+    DaoXE is an OpenAI-compatible gateway that fronts many upstream models. This
+    provider uses the Chat Completions path through ``OpenAILike``. Model IDs are
+    scoped to your account catalog, so list ``GET /v1/models`` (or set
+    ``DAOXE_MODEL``) to pick one instead of assuming the default is enabled.
 
     Attributes:
-        id (str): Exact account model ID. Defaults to ``DAOXE_MODEL`` env, else
-            ``"not-provided"``.
-        name (str): Display name. Defaults to ``"DaoXE"``.
-        provider (str): Provider name. Defaults to ``"DaoXE"``.
-        api_key (Optional[str]): API key. Defaults to ``DAOXE_API_KEY`` env.
-        base_url (str): Defaults to ``https://daoxe.com/v1``.
+        id (str): The model id. Defaults to ``DAOXE_MODEL`` env, else ``"gpt-5.5"``.
+        name (str): The model name. Defaults to "DaoXE".
+        provider (str): The provider name. Defaults to "DaoXE".
+        api_key (Optional[str]): The API key. Defaults to ``DAOXE_API_KEY`` env.
+        base_url (str): The base URL. Defaults to "https://daoxe.com/v1".
     """
 
-    id: str = field(default_factory=lambda: getenv("DAOXE_MODEL") or "not-provided")
+    id: str = field(default_factory=lambda: getenv("DAOXE_MODEL") or "gpt-5.5")
     name: str = "DaoXE"
     provider: str = "DaoXE"
 

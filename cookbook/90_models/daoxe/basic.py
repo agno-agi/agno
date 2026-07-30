@@ -4,13 +4,11 @@ DaoXE Basic
 
 Cookbook example for `daoxe/basic.py`.
 
-DaoXE is a multi-model multi-protocol gateway. Use an exact account model ID
-from GET /v1/models (export as DAOXE_MODEL). Do not hardcode a public model
-price list.
+Model IDs are scoped to your DaoXE account catalog. List `GET /v1/models` and
+export the one you want as `DAOXE_MODEL` to override the default.
 """
 
 import asyncio
-import os
 
 from agno.agent import Agent
 from agno.models.daoxe import DaoXE
@@ -19,32 +17,26 @@ from agno.models.daoxe import DaoXE
 # Create Agent
 # ---------------------------------------------------------------------------
 
-model_id = os.environ.get("DAOXE_MODEL")
-if not model_id:
-    raise SystemExit(
-        "Set DAOXE_MODEL to an exact model ID from your DaoXE account catalog "
-        "(GET /v1/models)."
-    )
-
 agent = Agent(
-    model=DaoXE(id=model_id),
+    model=DaoXE(),
     markdown=True,
 )
+
+# You can also use the string syntax:
+# agent = Agent(model="daoxe:gpt-5.5", markdown=True)
 
 # ---------------------------------------------------------------------------
 # Run Agent
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
     # --- Sync ---
-    agent.print_response("Share a 2 sentence practical tip about API gateways")
+    agent.print_response("write a two sentence horror story")
 
     # --- Sync + Streaming ---
-    agent.print_response("Share a 2 sentence practical tip about API gateways", stream=True)
+    agent.print_response("write a two sentence horror story", stream=True)
 
     # --- Async ---
-    asyncio.run(agent.aprint_response("Share a 2 sentence practical tip about API gateways"))
+    asyncio.run(agent.aprint_response("write a two sentence horror story"))
 
     # --- Async + Streaming ---
-    asyncio.run(
-        agent.aprint_response("Share a 2 sentence practical tip about API gateways", stream=True)
-    )
+    asyncio.run(agent.aprint_response("write a two sentence horror story", stream=True))

@@ -1,30 +1,56 @@
 # DaoXE Cookbook
 
-> Multi-model multi-protocol API gateway (OpenAI-compatible Chat Completions)
+DaoXE is an OpenAI-compatible gateway. These examples use the Chat Completions
+path via `agno.models.daoxe.DaoXE` (`OpenAILike`).
 
-### 1. Export keys
+> Note: Fork and clone this repository if needed
+
+### 1. Create and activate a virtual environment
+
+```shell
+python3 -m venv ~/.venvs/aienv
+source ~/.venvs/aienv/bin/activate
+```
+
+### 2. Export your `DAOXE_API_KEY`
 
 ```shell
 export DAOXE_API_KEY=***
-export DAOXE_MODEL=***   # exact ID from your account GET /v1/models
 ```
 
-### 2. Install
+Model IDs are scoped to your account catalog. List them with `GET /v1/models`
+and export one to override the default:
 
 ```shell
-uv pip install -U openai agno
+export DAOXE_MODEL=***
 ```
 
-### 3. Run
+### 3. Install libraries
+
+```shell
+uv pip install -U openai ddgs agno
+```
+
+### 4. Run basic Agent
 
 ```shell
 python cookbook/90_models/daoxe/basic.py
+```
+
+### 5. Run Agent with Tools
+
+```shell
 python cookbook/90_models/daoxe/tool_use.py
+```
+
+### 6. Run Agent that returns structured output
+
+```shell
 python cookbook/90_models/daoxe/structured_output.py
 ```
 
-DaoXE also exposes OpenAI Responses and Anthropic Messages for other clients; these examples use Chat Completions via `agno.models.daoxe.DaoXE` (`OpenAILike`).
+### 7. Run Agent with retries
 
-Not available in mainland China.
-
-Docs / examples: https://github.com/seven7763/DaoXE-AI
+```shell
+python cookbook/90_models/daoxe/retry.py
+```

@@ -1,4 +1,3 @@
-import os
 from typing import Optional
 
 import pytest
@@ -8,7 +7,7 @@ from agno.models.daoxe import DaoXE
 from agno.tools.websearch import WebSearchTools
 from agno.tools.yfinance import YFinanceTools
 
-DAOXE_MODEL_ID = os.environ.get("DAOXE_MODEL", "not-provided")
+DAOXE_MODEL_ID = "gpt-5.5"
 
 
 def test_tool_use():

@@ -1,5 +1,3 @@
-import os
-
 import pytest
 from pydantic import BaseModel, Field
 
@@ -7,7 +5,7 @@ from agno.agent import Agent, RunOutput
 from agno.db.sqlite import SqliteDb
 from agno.models.daoxe import DaoXE
 
-DAOXE_MODEL_ID = os.environ.get("DAOXE_MODEL", "not-provided")
+DAOXE_MODEL_ID = "gpt-5.5"
 
 
 def _assert_metrics(response: RunOutput):
