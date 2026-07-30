@@ -34,7 +34,7 @@ from agno.os.routers.memory.schemas import (
     UserMemorySchema,
     UserStatsSchema,
 )
-from agno.os.routers.metrics.schemas import MetricsRefreshResponse, MetricsResponse
+from agno.os.routers.metrics.schemas import DayAggregatedMetrics, MetricsRefreshResponse, MetricsResponse
 from agno.os.routers.teams.schema import TeamResponse
 from agno.os.routers.traces.schemas import (
     TraceDetail,
@@ -2967,30 +2967,37 @@ class AgentOSClient:
         self,
         db_id: Optional[str] = None,
         table: Optional[str] = None,
+        background: bool = False,
         headers: Optional[Dict[str, str]] = None,
-    ) -> MetricsRefreshResponse:
+    ) -> Union[List[DayAggregatedMetrics], MetricsRefreshResponse]:
         """Manually trigger recalculation of system metrics from raw data.
 
         This operation analyzes system activity logs and regenerates aggregated metrics.
         Useful for ensuring metrics are up-to-date or after system maintenance.
-        Returns immediately with 202 Accepted; refresh runs in background.
+        By default the refresh runs synchronously and returns the refreshed metrics.
+        With background=True the server returns 202 immediately and runs the refresh
+        in the background; poll get_metrics for results. Servers that predate
+        background support ignore the flag and refresh synchronously.
 
         Args:
             db_id: Optional database ID to use
             table: Optional database table to use
+            background: Run the refresh in the background and return immediately
             headers: HTTP headers to include in the request (optional)
 
         Returns:
-            MetricsRefreshResponse: Status of the refresh request
+            List[DayAggregatedMetrics]: The refreshed daily aggregated metrics (synchronous refresh)
+            MetricsRefreshResponse: Status of the refresh request (background refresh)
 
         Raises:
             HTTPStatusError: On HTTP errors
         """
         params: Dict[str, Any] = {"db_id": db_id, "table": table}
         params = {k: v for k, v in params.items() if v is not None}
+        if background:
+            params["background"] = True
 
         data = await self._apost("/metrics/refresh", params=params, headers=headers)
         if isinstance(data, list):
-            # Servers older than the 202 contract compute synchronously and return the refreshed metrics
-            return MetricsRefreshResponse(status="completed", message="Metrics refresh completed")
+            return [DayAggregatedMetrics.model_validate(m) for m in data]
         return MetricsRefreshResponse.model_validate(data)

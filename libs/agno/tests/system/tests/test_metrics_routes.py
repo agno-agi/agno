@@ -105,24 +105,36 @@ class TestLocalMetricsRoutes:
             assert "created_at" in metric
             assert "updated_at" in metric
 
-    def test_refresh_metrics_returns_accepted(self, client: httpx.Client, generate_metrics_data: dict):
-        """Test POST /metrics/refresh returns 202 with a refresh status for local db."""
+    def test_refresh_metrics_returns_list(self, client: httpx.Client, generate_metrics_data: dict):
+        """Test POST /metrics/refresh recalculates and returns metrics for local db."""
         response = client.post(f"/metrics/refresh?db_id={self.DB_ID}")
+        assert response.status_code == 200
+        data = response.json()
+
+        assert isinstance(data, list)
+
+    def test_refresh_metrics_contains_expected_fields(self, client: httpx.Client, generate_metrics_data: dict):
+        """Test POST /metrics/refresh returns metrics with expected fields for local db."""
+        response = client.post(f"/metrics/refresh?db_id={self.DB_ID}")
+        assert response.status_code == 200
+        data = response.json()
+
+        if len(data) > 0:
+            metric = data[0]
+            assert "id" in metric
+            assert "agent_runs_count" in metric
+            assert "token_metrics" in metric
+            assert "model_metrics" in metric
+            assert "date" in metric
+
+    def test_refresh_metrics_background_returns_accepted(self, client: httpx.Client, generate_metrics_data: dict):
+        """Test POST /metrics/refresh?background=true returns 202 with a refresh status for local db."""
+        response = client.post(f"/metrics/refresh?db_id={self.DB_ID}&background=true")
         assert response.status_code == 202
         data = response.json()
 
         assert data["status"] in ("started", "already_running")
         assert "message" in data
-
-    def test_refresh_metrics_repeated_calls_accepted(self, client: httpx.Client, generate_metrics_data: dict):
-        """Test repeated POST /metrics/refresh calls return 202 without stacking refreshes for local db."""
-        first = client.post(f"/metrics/refresh?db_id={self.DB_ID}")
-        second = client.post(f"/metrics/refresh?db_id={self.DB_ID}")
-        assert first.status_code == 202
-        assert second.status_code == 202
-
-        assert first.json()["status"] in ("started", "already_running")
-        assert second.json()["status"] in ("started", "already_running")
 
 
 class TestRemoteMetricsRoutes:
@@ -197,21 +209,33 @@ class TestRemoteMetricsRoutes:
             assert "created_at" in metric
             assert "updated_at" in metric
 
-    def test_refresh_metrics_returns_accepted(self, client: httpx.Client, generate_metrics_data: dict):
-        """Test POST /metrics/refresh returns 202 with a refresh status for remote db."""
+    def test_refresh_metrics_returns_list(self, client: httpx.Client, generate_metrics_data: dict):
+        """Test POST /metrics/refresh recalculates and returns metrics for remote db."""
         response = client.post(f"/metrics/refresh?db_id={self.DB_ID}")
+        assert response.status_code == 200
+        data = response.json()
+
+        assert isinstance(data, list)
+
+    def test_refresh_metrics_contains_expected_fields(self, client: httpx.Client, generate_metrics_data: dict):
+        """Test POST /metrics/refresh returns metrics with expected fields for remote db."""
+        response = client.post(f"/metrics/refresh?db_id={self.DB_ID}")
+        assert response.status_code == 200
+        data = response.json()
+
+        if len(data) > 0:
+            metric = data[0]
+            assert "id" in metric
+            assert "agent_runs_count" in metric
+            assert "token_metrics" in metric
+            assert "model_metrics" in metric
+            assert "date" in metric
+
+    def test_refresh_metrics_background_returns_accepted(self, client: httpx.Client, generate_metrics_data: dict):
+        """Test POST /metrics/refresh?background=true returns 202 with a refresh status for remote db."""
+        response = client.post(f"/metrics/refresh?db_id={self.DB_ID}&background=true")
         assert response.status_code == 202
         data = response.json()
 
         assert data["status"] in ("started", "already_running")
         assert "message" in data
-
-    def test_refresh_metrics_repeated_calls_accepted(self, client: httpx.Client, generate_metrics_data: dict):
-        """Test repeated POST /metrics/refresh calls return 202 without stacking refreshes for remote db."""
-        first = client.post(f"/metrics/refresh?db_id={self.DB_ID}")
-        second = client.post(f"/metrics/refresh?db_id={self.DB_ID}")
-        assert first.status_code == 202
-        assert second.status_code == 202
-
-        assert first.json()["status"] in ("started", "already_running")
-        assert second.json()["status"] in ("started", "already_running")

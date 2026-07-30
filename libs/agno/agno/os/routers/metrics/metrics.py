@@ -1,8 +1,8 @@
 import logging
 from datetime import date
-from typing import Optional, Union
+from typing import List, Optional, Union
 
-from fastapi import BackgroundTasks, Depends, HTTPException, Query, Request
+from fastapi import BackgroundTasks, Depends, HTTPException, Query, Request, Response
 from fastapi.routing import APIRouter
 from starlette.concurrency import run_in_threadpool
 
@@ -141,7 +141,7 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
     ) -> None:
         try:
             if isinstance(db, RemoteDb):
-                await db.refresh_metrics(db_id=db_id, table=table, headers=headers)
+                await db.refresh_metrics(db_id=db_id, table=table, headers=headers, background=True)
             elif isinstance(db, AsyncBaseDb):
                 await db.calculate_metrics()
             else:
@@ -153,36 +153,70 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
 
     @router.post(
         "/metrics/refresh",
-        response_model=MetricsRefreshResponse,
-        status_code=202,
+        response_model=Union[List[DayAggregatedMetrics], MetricsRefreshResponse],
+        status_code=200,
         operation_id="refresh_metrics",
         summary="Refresh Metrics",
         description=(
             "Manually trigger recalculation of system metrics from raw data. "
             "This operation analyzes system activity logs and regenerates aggregated metrics. "
             "Useful for ensuring metrics are up-to-date or after system maintenance. "
-            "Returns immediately with 202 Accepted. Poll GET /metrics for results. "
-            "If a refresh is already in progress for the target database, "
+            "By default the refresh runs synchronously and returns the refreshed metrics. "
+            "Pass background=true to run the refresh in the background instead: the endpoint "
+            "returns 202 Accepted immediately and GET /metrics can be polled for results. "
+            "If a background refresh is already in progress for the target database, "
             "returns status 'already_running' without starting a new one."
         ),
         responses={
+            200: {
+                "description": "Metrics refreshed successfully",
+                "content": {
+                    "application/json": {
+                        "example": [
+                            {
+                                "id": "e77c9531-818b-47a5-99cd-59fed61e5403",
+                                "agent_runs_count": 2,
+                                "agent_sessions_count": 2,
+                                "team_runs_count": 0,
+                                "team_sessions_count": 0,
+                                "workflow_runs_count": 0,
+                                "workflow_sessions_count": 0,
+                                "users_count": 1,
+                                "token_metrics": {
+                                    "input_tokens": 256,
+                                    "output_tokens": 441,
+                                    "total_tokens": 697,
+                                },
+                                "model_metrics": [{"model_id": "gpt-5.5", "model_provider": "OpenAI", "count": 2}],
+                                "date": "2025-08-12T00:00:00Z",
+                                "created_at": "2025-08-12T08:01:47Z",
+                                "updated_at": "2025-08-12T08:01:47Z",
+                            }
+                        ]
+                    }
+                },
+            },
             202: {
-                "description": "Refresh started",
+                "description": "Background refresh started",
                 "content": {
                     "application/json": {
                         "example": {"status": "started", "message": "Metrics refresh started in background"}
                     }
                 },
             },
-            500: {"description": "Failed to start metrics refresh", "model": InternalServerErrorResponse},
+            500: {"description": "Failed to refresh metrics", "model": InternalServerErrorResponse},
         },
     )
     async def calculate_metrics(
         request: Request,
+        response: Response,
         background_tasks: BackgroundTasks,
         db_id: Optional[str] = Query(default=None, description="Database ID to use for metrics calculation"),
         table: Optional[str] = Query(default=None, description="Table to use for metrics calculation"),
-    ) -> MetricsRefreshResponse:
+        background: bool = Query(
+            default=False, description="Run the refresh in the background and return 202 immediately"
+        ),
+    ) -> Union[List[DayAggregatedMetrics], MetricsRefreshResponse]:
         try:
             db = await get_db(dbs, db_id, table)
 
@@ -191,18 +225,32 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
                 auth_token = get_auth_token_from_request(request)
                 headers = {"Authorization": f"Bearer {auth_token}"} if auth_token else None
 
-            refresh_key = str(db.id)
-            if refresh_key in refreshes_in_flight:
-                return MetricsRefreshResponse(
-                    status="already_running", message="A metrics refresh is already in progress for this database"
-                )
+            if background:
+                response.status_code = 202
+                refresh_key = str(db.id)
+                if refresh_key in refreshes_in_flight:
+                    return MetricsRefreshResponse(
+                        status="already_running", message="A metrics refresh is already in progress for this database"
+                    )
 
-            refreshes_in_flight.add(refresh_key)
-            background_tasks.add_task(_do_refresh, db, db_id, table, headers)
+                refreshes_in_flight.add(refresh_key)
+                background_tasks.add_task(_do_refresh, db, db_id, table, headers)
 
-            return MetricsRefreshResponse(status="started", message="Metrics refresh started in background")
+                return MetricsRefreshResponse(status="started", message="Metrics refresh started in background")
+
+            if isinstance(db, RemoteDb):
+                return await db.refresh_metrics(db_id=db_id, table=table, headers=headers)
+
+            if isinstance(db, AsyncBaseDb):
+                result = await db.calculate_metrics()
+            else:
+                result = await run_in_threadpool(db.calculate_metrics)
+            if result is None:
+                return []
+
+            return [DayAggregatedMetrics.from_dict(metric) for metric in result]
 
         except Exception as e:
-            raise HTTPException(status_code=500, detail=f"Error starting metrics refresh: {str(e)}")
+            raise HTTPException(status_code=500, detail=f"Error refreshing metrics: {str(e)}")
 
     return router
