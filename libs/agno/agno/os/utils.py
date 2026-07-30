@@ -1,5 +1,5 @@
 import json
-from datetime import date, datetime, timezone
+from datetime import date, datetime, time, timezone
 from os import getenv
 from typing import Any, Callable, Dict, List, Optional, Sequence, Set, Tuple, Type, Union
 
@@ -45,9 +45,9 @@ def to_utc_datetime(value: Optional[Union[str, int, float, date, datetime]]) -> 
             return value.replace(tzinfo=timezone.utc)
         return value
 
-    # Checked after datetime, since datetime is a subclass of date
+    # datetime is a subclass of date, so this must come after the datetime check
     if isinstance(value, date):
-        return datetime(value.year, value.month, value.day, tzinfo=timezone.utc)
+        return datetime.combine(value, time.min, tzinfo=timezone.utc)
 
     if isinstance(value, str):
         try:
