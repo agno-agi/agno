@@ -4444,6 +4444,10 @@ class AsyncPostgresDb(AsyncBaseDb):
         try:
             table = await self._get_table(table_type="skills")
             if table is None:
+                # _get_table reads a swallowed connection failure as "no table". Probe the
+                # connection so an outage raises here instead of reading as an empty table.
+                async with self.async_session_factory() as sess:
+                    await sess.execute(text("SELECT 1"))
                 return []
             async with self.async_session_factory() as sess:
                 # The loader's read: every column, uncapped, name-ordered so the loaded

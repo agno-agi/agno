@@ -5924,6 +5924,10 @@ class PostgresDb(BaseDb):
         try:
             table = self._get_table(table_type="skills")
             if table is None:
+                # _get_table reads a swallowed connection failure as "no table". Probe the
+                # connection so an outage raises here instead of reading as an empty table.
+                with self.Session() as sess:
+                    sess.execute(text("SELECT 1"))
                 return []
             with self.Session() as sess:
                 # The loader's read: every column, uncapped, name-ordered so the loaded
