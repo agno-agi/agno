@@ -55,6 +55,7 @@ from agno.os.routers.database import get_database_router
 from agno.os.routers.evals import get_eval_router
 from agno.os.routers.health import get_health_router
 from agno.os.routers.home import get_home_router
+from agno.os.routers.job_queue import get_queue_router
 from agno.os.routers.knowledge import get_knowledge_router
 from agno.os.routers.learnings import get_learnings_router
 from agno.os.routers.memory import get_memory_router
@@ -690,6 +691,15 @@ class AgentOS:
         self._add_router(app, get_team_router(self, settings=self.settings, registry=self.registry))
         self._add_router(app, get_workflow_router(self, settings=self.settings))
         self._add_router(app, get_websocket_router(self, settings=self.settings))
+
+        # Job queue operations surface (DLQ, requeue, stats) - only meaningful
+        # when the durable queue is enabled
+        if self.queue is not None and self.queue.durable:
+            self._add_router(app, get_queue_router(self, settings=self.settings))
+        else:
+            # Parity with every other switchable feature: answer 503 naming
+            # the switch instead of 404ing the whole surface
+            self._add_router(app, _get_disabled_feature_router("/queue", "Queue", "queue=QueueConfig(durable=True)"))
 
         # Add A2A interface if relevant
         has_a2a_interface = False

@@ -3965,6 +3965,135 @@ class AsyncPostgresDb(AsyncBaseDb):
     # the attempt budget, and terminal writes fenced on (locked_by, attempt) so
     # a zombie executor that finishes after reclaim has its write discarded.
 
+    async def update_run_in_session(
+        self,
+        session_id: str,
+        run_id: str,
+        fields: Dict[str, Any],
+        expected_attempt: Optional[int] = None,
+        user_id: Optional[str] = None,
+    ) -> bool:
+        """Atomically patch fields of ONE run inside the session's runs list.
+
+        Row-locked read-modify-write (SELECT ... FOR UPDATE), so concurrent
+        status transitions on different runs of the same session can no longer
+        clobber each other - the fix the fresh-read mitigation only narrowed.
+
+        Attempt fencing: when ``expected_attempt`` is given, the write is
+        rejected if the stored run carries a NEWER ``queue_attempt`` (a
+        reclaimed job's later attempt owns the row; a zombie's stale write is
+        discarded). The incoming attempt is stamped onto the run.
+
+        Returns True if the run was found and patched.
+        """
+        try:
+            table = await self._get_table(table_type="sessions")
+            if table is None:
+                return False
+            async with self.async_session_factory() as sess:
+                async with sess.begin():
+                    result = await sess.execute(
+                        select(table.c.runs)
+                        .where(table.c.session_id == session_id)
+                        .where((table.c.user_id == user_id) | (table.c.user_id.is_(None)))
+                        .with_for_update()
+                    )
+                    row = result.fetchone()
+                    if row is None or not row[0]:
+                        return False
+                    runs = list(row[0])
+                    for i, run in enumerate(runs):
+                        if isinstance(run, dict) and run.get("run_id") == run_id:
+                            stored_attempt = run.get("queue_attempt")
+                            if (
+                                expected_attempt is not None
+                                and stored_attempt is not None
+                                and stored_attempt > expected_attempt
+                            ):
+                                return False  # stale writer fenced out
+                            # A run that reached completed/cancelled is FINAL:
+                            # a sweep or drain racing a legitimate completion
+                            # must not rewrite it (the classic case: zombie
+                            # finished arun, its complete_job never landed, the
+                            # sweeper then tried to mark the run ERROR)
+                            stored_status = str(run.get("status") or "").lower()
+                            incoming_status = str(fields.get("status") or "").lower()
+                            if (
+                                stored_status in ("completed", "cancelled")
+                                and incoming_status
+                                and incoming_status != stored_status
+                            ):
+                                return False  # terminal row wins
+                            updated = dict(run)
+                            updated.update(fields)
+                            if expected_attempt is not None:
+                                updated["queue_attempt"] = expected_attempt
+                            runs[i] = updated
+                            await sess.execute(
+                                update(table)
+                                .where(table.c.session_id == session_id)
+                                .where((table.c.user_id == user_id) | (table.c.user_id.is_(None)))
+                                .values(runs=runs, updated_at=int(time.time()))
+                            )
+                            return True
+                    return False
+        except Exception as e:
+            # Do NOT collapse unexpected errors into False: the caller treats a
+            # False under a requested fence as final (no fallback), and a
+            # transient DB error must instead surface as "primitive
+            # unavailable" so the terminal state still gets persisted somehow
+            log_warning(f"Error updating run in session (falling back): {e}")
+            raise
+
+    async def append_run_to_session_if_absent(
+        self,
+        session_id: str,
+        run_dict: Dict[str, Any],
+        user_id: Optional[str] = None,
+    ) -> Optional[bool]:
+        """Atomically append a run to an EXISTING session's runs list, only if
+        no run with that run_id is present - under the session row lock.
+
+        Closes the enqueue-vs-prepare race: the worker can claim and COMPLETE a
+        run between the router's read and its whole-session save, and the
+        unlocked read-check-save would clobber the completed run back to
+        PENDING. Returns True (appended), False (already present - a worker
+        got there first, its row wins), None (session row does not exist yet -
+        the caller's create-and-save path is the only option; fresh sessions
+        keep the narrow legacy race, documented).
+        """
+        try:
+            table = await self._get_table(table_type="sessions")
+            if table is None:
+                return None
+            async with self.async_session_factory() as sess:
+                async with sess.begin():
+                    result = await sess.execute(
+                        select(table.c.runs)
+                        .where(table.c.session_id == session_id)
+                        .where((table.c.user_id == user_id) | (table.c.user_id.is_(None)))
+                        .with_for_update()
+                    )
+                    row = result.fetchone()
+                    if row is None:
+                        return None
+                    runs = list(row[0] or [])
+                    run_id = run_dict.get("run_id")
+                    for run in runs:
+                        if isinstance(run, dict) and run.get("run_id") == run_id:
+                            return False
+                    runs.append(run_dict)
+                    await sess.execute(
+                        update(table)
+                        .where(table.c.session_id == session_id)
+                        .where((table.c.user_id == user_id) | (table.c.user_id.is_(None)))
+                        .values(runs=runs, updated_at=int(time.time()))
+                    )
+                    return True
+        except Exception as e:
+            log_warning(f"Error appending run to session (caller falls back): {e}")
+            return None
+
     async def enqueue_job(self, job: Dict[str, Any], max_depth: int = 0) -> Dict[str, Any]:
         """Insert an accepted run job.
 
@@ -4292,6 +4421,91 @@ class AsyncPostgresDb(AsyncBaseDb):
                 return result.scalar() or 0
         except Exception as e:
             log_debug(f"Error counting queued run jobs: {e}")
+            return 0
+
+    async def list_jobs(self, status: Optional[str] = None, limit: int = 50) -> List[Dict[str, Any]]:
+        try:
+            table = await self._get_table(table_type="jobs")
+            if table is None:
+                return []
+            stmt = select(table)
+            if status is not None:
+                stmt = stmt.where(table.c.status == status)
+            stmt = stmt.order_by(table.c.created_at.desc()).limit(limit)
+            async with self.async_session_factory() as sess:
+                result = await sess.execute(stmt)
+                return [dict(row._mapping) for row in result.fetchall()]
+        except Exception as e:
+            log_debug(f"Error listing run jobs: {e}")
+            return []
+
+    async def requeue_job(self, job_id: str) -> bool:
+        """Operator requeue for a terminally failed/cancelled job: grants
+        exactly one more execution by raising max_attempts to attempt + 1."""
+        try:
+            table = await self._get_table(table_type="jobs")
+            if table is None:
+                return False
+            now = int(time.time())
+            async with self.async_session_factory() as sess:
+                async with sess.begin():
+                    result = await sess.execute(
+                        update(table)
+                        .where(table.c.id == job_id, table.c.status.in_(["failed", "cancelled"]))
+                        .values(
+                            status="queued",
+                            max_attempts=table.c.attempt + 1,
+                            available_at=now,
+                            locked_by=None,
+                            locked_at=None,
+                            completed_at=None,
+                            updated_at=now,
+                        )
+                    )
+                    return (result.rowcount or 0) > 0  # type: ignore[attr-defined]
+        except Exception as e:
+            log_debug(f"Error requeueing run job: {e}")
+            return False
+
+    async def queue_stats(self) -> Dict[str, Any]:
+        try:
+            table = await self._get_table(table_type="jobs")
+            if table is None:
+                return {"counts": {}, "oldest_queued_age_seconds": None}
+            now = int(time.time())
+            async with self.async_session_factory() as sess:
+                counts_result = await sess.execute(select(table.c.status, func.count()).group_by(table.c.status))
+                counts = {row[0]: row[1] for row in counts_result.fetchall()}
+                oldest_result = await sess.execute(
+                    select(func.min(table.c.created_at)).where(table.c.status == "queued")
+                )
+                oldest_created = oldest_result.scalar()
+                oldest_age = (now - oldest_created) if oldest_created is not None else None
+                return {"counts": counts, "oldest_queued_age_seconds": oldest_age}
+        except Exception as e:
+            log_debug(f"Error getting job queue stats: {e}")
+            return {"counts": {}, "oldest_queued_age_seconds": None}
+
+    async def cleanup_jobs(self, older_than_seconds: int = 86400) -> int:
+        """Delete terminal jobs whose completed_at is older than the retention
+        window. Returns the number of rows removed."""
+        try:
+            table = await self._get_table(table_type="jobs")
+            if table is None:
+                return 0
+            cutoff = int(time.time()) - older_than_seconds
+            async with self.async_session_factory() as sess:
+                async with sess.begin():
+                    result = await sess.execute(
+                        table.delete().where(
+                            table.c.status.in_(["completed", "failed", "cancelled"]),
+                            table.c.completed_at.is_not(None),
+                            table.c.completed_at <= cutoff,
+                        )
+                    )
+                    return result.rowcount or 0  # type: ignore[attr-defined]
+        except Exception as e:
+            log_debug(f"Error cleaning up run jobs: {e}")
             return 0
 
     # -- Approval methods --

@@ -191,3 +191,48 @@ class TestCancelAndCounts:
         await store.enqueue_job(make_job("r2"))
         await store.claim_job("w1")
         assert await store.count_queued_jobs() == 1
+
+
+class TestOpsSurface:
+    @pytest.mark.asyncio
+    async def test_list_and_stats(self, store):
+        await store.enqueue_job(make_job("r1"))
+        await store.enqueue_job(make_job("r2"))
+        await store.claim_job("w1")
+
+        assert len(await store.list_jobs(status="queued")) == 1
+        stats = await store.queue_stats()
+        assert stats["counts"] == {"queued": 1, "running": 1}
+        assert stats["oldest_queued_age_seconds"] is not None
+
+    @pytest.mark.asyncio
+    async def test_requeue_grants_one_more_attempt(self, store):
+        await store.enqueue_job(make_job("r1"))
+        claimed = await store.claim_job("w1")
+        await store.retry_or_fail_job("r1", "w1", claimed["attempt"], "boom")
+        assert (await store.get_job("r1"))["status"] == "failed"
+
+        assert await store.requeue_job("r1")
+        job = await store.get_job("r1")
+        assert job["status"] == "queued"
+        assert job["max_attempts"] == job["attempt"] + 1
+
+        reclaimed = await store.claim_job("w1")
+        assert await store.complete_job("r1", "w1", reclaimed["attempt"], "completed")
+
+    @pytest.mark.asyncio
+    async def test_requeue_rejects_non_terminal(self, store):
+        await store.enqueue_job(make_job("r1"))
+        assert not await store.requeue_job("r1")  # queued, not failed
+
+    @pytest.mark.asyncio
+    async def test_cleanup_removes_old_terminal_jobs(self, store):
+        await store.enqueue_job(make_job("r1"))
+        claimed = await store.claim_job("w1")
+        await store.complete_job("r1", "w1", claimed["attempt"], "completed")
+        await store.enqueue_job(make_job("r2"))
+
+        store._jobs["r1"]["completed_at"] -= 100000
+        assert await store.cleanup_jobs(older_than_seconds=86400) == 1
+        assert await store.get_job("r1") is None
+        assert await store.get_job("r2") is not None

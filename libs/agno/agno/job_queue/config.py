@@ -105,7 +105,28 @@ class QueueConfig:
     # despite finishing). Keep blocking work in threads, or raise this grace.
     lock_grace_seconds: int = 60
     poll_interval: float = 1.0
+    # Terminal jobs older than this are deleted by the worker's retention
+    # sweep; the queue table must not grow unboundedly.
+    retention_seconds: int = 86400
 
     def __post_init__(self) -> None:
         if self.db is not None and not self.durable:
             raise ValueError("QueueConfig.db requires durable=True (a queue store implies a durable queue)")
+        # Numeric sanity: silently-broken configs must fail at construction,
+        # not as mysterious runtime behavior
+        if self.max_attempts < 1:
+            raise ValueError("QueueConfig.max_attempts must be >= 1 (every run needs at least one attempt)")
+        if self.poll_interval <= 0:
+            raise ValueError("QueueConfig.poll_interval must be > 0 seconds")
+        if self.lock_grace_seconds < 3:
+            # Heartbeats fire every lock_grace/3: below ~3s the worker races
+            # its own heartbeat and reclaims its own healthy jobs
+            raise ValueError("QueueConfig.lock_grace_seconds must be >= 3 (heartbeats fire at lock_grace/3)")
+        if self.retry_delay_seconds < 0:
+            raise ValueError("QueueConfig.retry_delay_seconds must be >= 0 (0 = no backoff)")
+        if self.max_queue_depth < 0:
+            raise ValueError("QueueConfig.max_queue_depth must be >= 0 (0 = unbounded)")
+        if self.retention_seconds <= 0:
+            raise ValueError("QueueConfig.retention_seconds must be > 0")
+        if self.timeout_seconds is not None and self.timeout_seconds <= 0:
+            raise ValueError("QueueConfig.timeout_seconds must be > 0 when set (None = no timeout)")
