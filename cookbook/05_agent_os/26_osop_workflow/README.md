@@ -1,54 +1,69 @@
-# Research Agent Workflow — OSOP Example
+# Research Agent Workflow in OSOP Format
+# OSOP = Open Standard Operating Process
+# Spec: https://github.com/Archie0125/osop-spec
+#
+# This is the PORTABLE definition of the workflow. It describes WHAT should
+# happen, step by step, in a tool-agnostic way. The same .osop file can be
+# understood by any compatible runtime (Agno, LangChain, CrewAI, ...).
+# The runnable Agno implementation lives in research_workflow.py.
 
-This folder shows how to express an **Agno agent pattern** as a portable
-[OSOP](https://github.com/Archie0125/osop-spec) workflow, and how to run the
-same workflow with Agno.
+osop_version: "1.0"
+id: agno-research-agent
+name: Agno Research Agent Workflow
+description: A multi-step research agent — web search, analysis, and report generation — expressed as a portable OSOP workflow.
+tags: [agno, agent, research, web-search, osop]
 
-## What is OSOP?
+nodes:
+  - id: user-request
+    type: human
+    name: User Request
+    description: User provides a research topic or question.
 
-**OSOP** (Open Standard Operating Process) is a YAML-based format for
-describing multi-step workflows in a tool-agnostic way. Think of it as the
-*OpenAPI of workflows*: a single `.osop` file says what your agent does, so
-teams can share, review, and port agent workflows across frameworks (Agno,
-LangChain, CrewAI, …).
+  - id: web-search
+    type: agent
+    name: Web Search Agent
+    description: Search the web for relevant, up-to-date information on the topic.
+    runtime:
+      provider: openai
+      model: gpt-4o
+      config:
+        tools: [duckduckgo_search]
 
-An OSOP file has two parts:
+  - id: analyze
+    type: agent
+    name: Analysis Agent
+    description: Analyze the search results and extract the key insights.
+    runtime:
+      provider: openai
+      model: gpt-4o
+      config:
+        temperature: 0.2
 
-- **`nodes`** — the steps. Core node types: `agent`, `api`, `cli`, `human`.
-- **`edges`** — the connections. Core edge modes: `sequential`,
-  `conditional`, `parallel`, `fallback`.
+  - id: generate-report
+    type: agent
+    name: Report Generator
+    description: Compile the findings into a structured research report.
+    runtime:
+      provider: openai
+      model: gpt-4o
+      config:
+        temperature: 0.5
 
-## What's in this folder
+  - id: deliver
+    type: api
+    name: Deliver Report
+    description: Return the final report to the user.
 
-| File | Purpose |
-|------|---------|
-| `research_workflow.osop` | The portable OSOP definition of a research agent. |
-| `research_workflow.py` | The runnable Agno implementation of the same workflow. |
-
-## The workflow
-
-User Request → Web Search Agent → Analysis Agent → Report Generator → Deliver
-
-
-| OSOP Node | OSOP Type | Agno Equivalent |
-|-----------|-----------|-----------------|
-| user-request | `human` | The message you type in the UI/API |
-| web-search | `agent` | `Agent(tools=[DuckDuckGoTools()])` |
-| analyze | `agent` | `Agent` with analysis instructions |
-| generate-report | `agent` | `Agent` with report instructions |
-| deliver | `api` | Output returned to the user |
-
-Each OSOP `agent` node becomes an `Agent`; the `sequential` edges become
-ordered `Step`s inside a `Workflow`; the whole graph is served by `AgentOS`.
-
-## Run the Agno version
-
-```bash
-# 1. Set your key
-export OPENAI_API_KEY=sk-...
-
-# 2. Install dependencies
-pip install agno duckduckgo-search openai sqlalchemy fastapi python-multipart
-
-# 3. Run
-python cookbook/05_agent_os/26_osop_workflow/research_workflow.py
+edges:
+  - from: user-request
+    to: web-search
+    mode: sequential
+  - from: web-search
+    to: analyze
+    mode: sequential
+  - from: analyze
+    to: generate-report
+    mode: sequential
+  - from: generate-report
+    to: deliver
+    mode: sequential
