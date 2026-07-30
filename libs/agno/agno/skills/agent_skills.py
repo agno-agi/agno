@@ -27,7 +27,9 @@ class Skills:
     Args:
         loaders: List of SkillLoader instances to load skills from.
         on_duplicate: What to do when two loaders provide the same skill name. "warn" (default)
-            keeps the last one loaded and logs a warning; "raise" rejects the collision.
+            keeps the last one loaded and logs a warning; "raise" rejects the collision at load
+            and reload. A per-request refresh that would collide keeps the previous mapping
+            instead of raising mid-request.
         executor: Runs a skill's scripts. Defaults to LocalSkillExecutor, which runs them as
             subprocesses on this host.
     """
@@ -45,6 +47,10 @@ class Skills:
         self.on_duplicate = on_duplicate
         self.executor = executor if executor is not None else LocalSkillExecutor()
         self._skills: Dict[str, Skill] = {}
+        # Each loader's last successful result, keyed by its index in self.loaders. A
+        # per-request refresh re-runs only the loaders marked for it and merges the rest
+        # from here; a failed refresh falls back to it.
+        self._loader_results: Dict[int, List[Skill]] = {}
         self._load_skills()
 
     def _load_skills(self) -> None:
@@ -54,27 +60,64 @@ class Skills:
             SkillValidationError: If any skill fails validation.
             SkillError: If on_duplicate is "raise" and two loaders provide the same skill name.
         """
-        new_skills: Dict[str, Skill] = {}
-        for loader in self.loaders:
+        results: Dict[int, List[Skill]] = {}
+        for index, loader in enumerate(self.loaders):
             try:
-                loaded = loader.load()
+                results[index] = loader.load()
             except SkillValidationError:
                 raise  # Re-raise validation errors as hard failures
             except Exception as e:
                 log_warning(f"Error loading skills from {loader}: {str(e)}")
-                continue
 
-            for skill in loaded:
-                if skill.name in new_skills:
+        merged = self._merge_loader_results(results)
+        # Swap once, at the end: a reader during a reload sees the previous mapping rather than an
+        # empty or half-filled one.
+        self._loader_results = results
+        self._skills = merged
+        log_debug(f"Loaded {len(self._skills)} total skills")
+
+    def _merge_loader_results(self, results: Dict[int, List[Skill]]) -> Dict[str, Skill]:
+        """Merge per-loader results into one name-keyed mapping, later loaders winning.
+
+        Raises:
+            SkillError: If on_duplicate is "raise" and two loaders provide the same skill name.
+        """
+        merged: Dict[str, Skill] = {}
+        for index, loader in enumerate(self.loaders):
+            for skill in results.get(index, []):
+                if skill.name in merged:
                     if self.on_duplicate == "raise":
                         raise SkillError(f"Duplicate skill name '{skill.name}' from loader {loader}")
                     log_warning(f"Duplicate skill name '{skill.name}', overwriting with newer version")
-                new_skills[skill.name] = skill
+                merged[skill.name] = skill
+        return merged
 
-        # Swap once, at the end: a reader during a reload sees the previous mapping rather than an
-        # empty or half-filled one.
-        self._skills = new_skills
-        log_debug(f"Loaded {len(self._skills)} total skills")
+    def _refresh_loaders(self) -> None:
+        """Re-run the loaders marked refresh_per_request and swap the rebuilt mapping in once.
+
+        Any failure keeps the previous state: a request mid-outage serves the last
+        loaded skills rather than an empty or partial set.
+        """
+        results = dict(self._loader_results)
+        changed = False
+        for index, loader in enumerate(self.loaders):
+            if not loader.refresh_per_request:
+                continue
+            try:
+                results[index] = loader.load()
+                changed = True
+            except Exception as e:
+                log_warning(f"Error refreshing skills from {loader}, keeping the last loaded skills: {str(e)}")
+
+        if not changed:
+            return
+        try:
+            merged = self._merge_loader_results(results)
+        except SkillError as e:
+            log_warning(f"Error refreshing skills, keeping the last loaded skills: {str(e)}")
+            return
+        self._loader_results = results
+        self._skills = merged
 
     def reload(self) -> None:
         """Reload skills from all loaders, replacing the existing skills.
@@ -118,9 +161,17 @@ class Skills:
         This creates an XML-formatted snippet that provides the agent with
         information about available skills without including the full instructions.
 
+        With a refresh_per_request loader attached (DbSkills), building the snippet
+        performs that loader's blocking database read — also on the async message
+        path, which calls this sync method.
+
         Returns:
             An XML-formatted string with skills metadata.
         """
+        # The once-per-request read of database-backed loaders: the system prompt is
+        # built once per run, the same moment memory and learning already hit the db.
+        self._refresh_loaders()
+
         if not self._skills:
             return ""
 

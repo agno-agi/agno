@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from typing import List
+from typing import ClassVar, List
 
 from agno.skills.skill import Skill
 
@@ -13,6 +13,10 @@ class SkillLoader(ABC):
     Subclasses must implement the `load()` method to define how skills
     are loaded from their specific source.
     """
+
+    # Loaders reading a source that can change between requests (the database) declare
+    # True, and Skills re-runs them each time a system prompt is built.
+    refresh_per_request: ClassVar[bool] = False
 
     @abstractmethod
     def load(self) -> List[Skill]:
