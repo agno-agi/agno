@@ -181,6 +181,7 @@ couchbase = ["couchbase"]
 lancedb = ["lancedb>=0.26.0"]
 milvusdb = ["pymilvus>=2.5.10"]
 mongodb = ["pymongo[srv]"]
+opensearch = ["opensearch-py"]
 pgvector = ["pgvector"]
 pinecone = ["pinecone==5.4.2"]
 pylance = ["pylance"]
@@ -333,6 +334,7 @@ vectordbs = [
   "agno[lancedb]",
   "agno[milvusdb]",
   "agno[mongodb]",
+  "agno[opensearch]",
   "agno[pgvector]",
   "agno[pinecone]",
   "agno[pylance]",
@@ -568,6 +570,7 @@ module = [
   "ollama.*",
   "openpyxl.*",
   "openai.*",
+  "opensearchpy.*",
   "cv2.*",
   "openbb.*",
   "pandas.*",
