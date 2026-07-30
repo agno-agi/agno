@@ -48,7 +48,7 @@ ordered `Step`s inside a `Workflow`; the whole graph is served by `AgentOS`.
 export OPENAI_API_KEY=sk-...
 
 # 2. Install dependencies
-pip install agno duckduckgo-search
+pip install agno duckduckgo-search openai sqlalchemy fastapi python-multipart
 
 # 3. Run
 python cookbook/05_agent_os/26_osop_workflow/research_workflow.py
