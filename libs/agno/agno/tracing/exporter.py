@@ -122,6 +122,11 @@ class DatabaseSpanExporter(SpanExporter):
         # We're in an async context, schedule the coroutine. Keep a strong
         # reference to the task and drop it on completion so it isn't garbage
         # collected before it finishes (which would silently drop the traces).
+        #
+        # Both mutations of _background_tasks happen on the event loop thread, so
+        # no lock is needed: get_running_loop() above raises RuntimeError unless
+        # this call is already running on the loop's thread, and done callbacks
+        # are scheduled with loop.call_soon(), which also runs them there.
         task = loop.create_task(self._do_async_export(spans_by_trace))
         self._background_tasks.add(task)
         task.add_done_callback(self._background_tasks.discard)
