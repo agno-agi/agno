@@ -5402,6 +5402,17 @@ class PostgresDb(BaseDb):
                             and stored_attempt > expected_attempt
                         ):
                             return False  # stale writer fenced out
+                        # A run that reached completed/cancelled is FINAL: a
+                        # sweep or drain racing a legitimate completion must
+                        # not rewrite it
+                        stored_status = str(run.get("status") or "").lower()
+                        incoming_status = str(fields.get("status") or "").lower()
+                        if (
+                            stored_status in ("completed", "cancelled")
+                            and incoming_status
+                            and incoming_status != stored_status
+                        ):
+                            return False  # terminal row wins
                         updated = dict(run)
                         updated.update(fields)
                         if expected_attempt is not None:
@@ -5422,6 +5433,54 @@ class PostgresDb(BaseDb):
             # unavailable" so the terminal state still gets persisted somehow
             log_warning(f"Error updating run in session (falling back): {e}")
             raise
+
+    def append_run_to_session_if_absent(
+        self,
+        session_id: str,
+        run_dict: Dict[str, Any],
+        user_id: Optional[str] = None,
+    ) -> Optional[bool]:
+        """Atomically append a run to an EXISTING session's runs list, only if
+        no run with that run_id is present - under the session row lock.
+
+        Closes the enqueue-vs-prepare race: the worker can claim and COMPLETE a
+        run between the router's read and its whole-session save, and the
+        unlocked read-check-save would clobber the completed run back to
+        PENDING. Returns True (appended), False (already present - a worker
+        got there first, its row wins), None (session row does not exist yet -
+        the caller's create-and-save path is the only option; fresh sessions
+        keep the narrow legacy race, documented).
+        """
+        try:
+            table = self._get_table(table_type="sessions")
+            if table is None:
+                return None
+            with self.Session() as sess, sess.begin():
+                result = sess.execute(
+                    select(table.c.runs)
+                    .where(table.c.session_id == session_id)
+                    .where((table.c.user_id == user_id) | (table.c.user_id.is_(None)))
+                    .with_for_update()
+                )
+                row = result.fetchone()
+                if row is None:
+                    return None
+                runs = list(row[0] or [])
+                run_id = run_dict.get("run_id")
+                for run in runs:
+                    if isinstance(run, dict) and run.get("run_id") == run_id:
+                        return False
+                runs.append(run_dict)
+                sess.execute(
+                    update(table)
+                    .where(table.c.session_id == session_id)
+                    .where((table.c.user_id == user_id) | (table.c.user_id.is_(None)))
+                    .values(runs=runs, updated_at=int(time.time()))
+                )
+                return True
+        except Exception as e:
+            log_warning(f"Error appending run to session (caller falls back): {e}")
+            return None
 
     def enqueue_job(self, job: Dict[str, Any], max_depth: int = 0) -> Dict[str, Any]:
         """Insert an accepted run job.
