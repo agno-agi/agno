@@ -2990,4 +2990,7 @@ class AgentOSClient:
         params = {k: v for k, v in params.items() if v is not None}
 
         data = await self._apost("/metrics/refresh", params=params, headers=headers)
+        if isinstance(data, list):
+            # Servers older than the 202 contract compute synchronously and return the refreshed metrics
+            return MetricsRefreshResponse(status="completed", message="Metrics refresh completed")
         return MetricsRefreshResponse.model_validate(data)

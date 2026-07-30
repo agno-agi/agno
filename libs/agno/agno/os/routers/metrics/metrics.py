@@ -118,7 +118,7 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
                 metrics, latest_updated_at = await db.get_metrics(starting_date=starting_date, ending_date=ending_date)
             else:
                 metrics, latest_updated_at = await run_in_threadpool(
-                    lambda: db.get_metrics(starting_date=starting_date, ending_date=ending_date)
+                    db.get_metrics, starting_date=starting_date, ending_date=ending_date
                 )
 
             return MetricsResponse(
@@ -128,6 +128,10 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
 
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Error getting metrics: {str(e)}")
+
+    # Databases with a refresh currently in flight, keyed by db id. Only mutated on the
+    # event loop (the sync calculation itself runs in the threadpool), so no lock is needed.
+    refreshes_in_flight: set[str] = set()
 
     async def _do_refresh(
         db: Union[BaseDb, AsyncBaseDb, RemoteDb],
@@ -144,6 +148,8 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
                 await run_in_threadpool(db.calculate_metrics)
         except Exception as e:
             logger.error(f"Metrics refresh failed: {e}")
+        finally:
+            refreshes_in_flight.discard(str(db.id))
 
     @router.post(
         "/metrics/refresh",
@@ -155,7 +161,9 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
             "Manually trigger recalculation of system metrics from raw data. "
             "This operation analyzes system activity logs and regenerates aggregated metrics. "
             "Useful for ensuring metrics are up-to-date or after system maintenance. "
-            "Returns immediately with 202 Accepted. Poll GET /metrics for results."
+            "Returns immediately with 202 Accepted. Poll GET /metrics for results. "
+            "If a refresh is already in progress for the target database, "
+            "returns status 'already_running' without starting a new one."
         ),
         responses={
             202: {
@@ -183,6 +191,13 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
                 auth_token = get_auth_token_from_request(request)
                 headers = {"Authorization": f"Bearer {auth_token}"} if auth_token else None
 
+            refresh_key = str(db.id)
+            if refresh_key in refreshes_in_flight:
+                return MetricsRefreshResponse(
+                    status="already_running", message="A metrics refresh is already in progress for this database"
+                )
+
+            refreshes_in_flight.add(refresh_key)
             background_tasks.add_task(_do_refresh, db, db_id, table, headers)
 
             return MetricsRefreshResponse(status="started", message="Metrics refresh started in background")
