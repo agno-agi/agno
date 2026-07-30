@@ -142,54 +142,30 @@ async def s_cross_replica_resume():
 async def s_cancel_check_redis_fault():
     """A Redis fault WHILE a run executes must not fail an otherwise-successful
     run. The cancellation-check (RedisRunCancellationManager.ais_cancelled) does
-    an UN-GUARDED redis .get() at ~8 points per run; a down/slow Redis raises
-    TimeoutError into the run -> RunError, even though the work completed.
+    a redis .get() at several safe points per run; a down/slow Redis must NOT
+    raise TimeoutError into the run -> RunError. It is fail-open by contract
+    (guarded try/except -> return False; see commit 99c1cb832).
 
     Repro: submit a durable run, pause Redis mid-execution, unpause; then check
     the run's terminal status. If the run has real content but status=ERROR with
-    a redis TimeoutError, the cancel-check failed CLOSED (bug). It should
+    a redis TimeoutError, the cancel-check failed CLOSED (regression). It should
     fail-OPEN (treat redis error as 'not cancelled') and complete.
     """
     r = Result("redis fault: cancellation-check fails-open (not the run)", "cancel-check-fault", "agents")
     t0 = time.time()
-    # Deterministic sub-check FIRST: does the cancellation-manager's ais_cancelled
-    # raise (fail-closed) when Redis is down, or return False (fail-open)? This is
-    # the root cause, tested directly against the same Redis the server uses.
-    redis_url = os.environ.get("COORD_REDIS_URL", "redis://localhost:6380")
-    raised = None
-    try:
-        import redis.asyncio as aioredis
-        client = aioredis.from_url(redis_url, socket_timeout=2, socket_connect_timeout=2)
-        await client.ping()
-        _compose("pause", "redis")
-        await asyncio.sleep(1)
-        try:
-            # emulate the cancel-check's exact call: an un-guarded GET while Redis is down
-            await client.get("agno:run:cancel:probe")
-            raised = False  # returned without raising = fail-open behavior
-        except Exception as e:
-            raised = type(e).__name__  # raised = fail-closed (propagates into the run)
-    except Exception as e:
-        r.evidence["probe_setup_err"] = str(e)[:80]
-    finally:
-        _compose("unpause", "redis")
-        await _wait_redis_healthy()
-    r.evidence["cancel_check_get_raised_when_redis_down"] = raised
-    if raised and raised != "False":
-        r.status = "FAIL"
-        r.detail = (f"root cause CONFIRMED: a bare redis GET raises {raised} when Redis is down. "
-                    "RedisRunCancellationManager.ais_cancelled does exactly this un-guarded, so a Redis "
-                    "fault DURING a run propagates into the run and fails an otherwise-successful run. "
-                    "Fix: try/except -> return False (fail-open), like the best-effort event stream.")
-        r.duration = time.time() - t0
-        return r
-    if raised is False:
-        r.status, r.detail = "PASS", "bare redis GET returned without raising while Redis down (fail-open)"
-        r.duration = time.time() - t0
-        return r
-    # Fall through to the end-to-end variant only if the probe was inconclusive.
+    # This scenario asserts server behavior: when Redis faults mid-run, the
+    # cancellation-check (RedisRunCancellationManager.ais_cancelled) must
+    # fail-OPEN (treat the fault as "not cancelled") so an otherwise-successful
+    # run completes instead of being marked ERROR by a coordination outage.
+    #
+    # NOTE: we do NOT probe a raw redis client here. A bare aioredis .get()
+    # against a down Redis always raises TimeoutError - that is generic
+    # redis-py behavior, not the server's, and asserting on it is a false
+    # negative that stays red even after the server is fixed. The only valid
+    # test is the end-to-end one below, which drives the server's actual
+    # (now guarded) ais_cancelled through a real run.
     if os.environ.get("MODEL") != "stub":
-        r.status, r.detail = "SKIP", "probe inconclusive; e2e variant needs MODEL=stub"
+        r.status, r.detail = "SKIP", "e2e Redis-fault variant needs MODEL=stub"
         return r
     async with httpx.AsyncClient(timeout=None) as c:
         # a multi-second run so we can fault Redis while it's mid-flight and the
