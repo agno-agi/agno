@@ -6,7 +6,7 @@ same workflow with Agno.
 
 ## What is OSOP?
 
-**OSOP** (Open Standard for Orchestration Protocols) is a YAML-based format for
+**OSOP** (Open Standard Operating Process) is a YAML-based format for
 describing multi-step workflows in a tool-agnostic way. Think of it as the
 *OpenAPI of workflows*: a single `.osop` file says what your agent does, so
 teams can share, review, and port agent workflows across frameworks (Agno,
