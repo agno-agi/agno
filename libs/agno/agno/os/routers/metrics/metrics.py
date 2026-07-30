@@ -1,5 +1,5 @@
 import logging
-from datetime import date
+from datetime import date, datetime, timezone
 from typing import List, Optional, Union
 
 from fastapi import BackgroundTasks, Depends, HTTPException, Query, Request, Response
@@ -8,7 +8,12 @@ from starlette.concurrency import run_in_threadpool
 
 from agno.db.base import AsyncBaseDb, BaseDb
 from agno.os.auth import get_auth_token_from_request, get_authentication_dependency
-from agno.os.routers.metrics.schemas import DayAggregatedMetrics, MetricsRefreshResponse, MetricsResponse
+from agno.os.routers.metrics.schemas import (
+    DayAggregatedMetrics,
+    MetricsRefreshResponse,
+    MetricsRefreshStatusResponse,
+    MetricsResponse,
+)
 from agno.os.schema import (
     BadRequestResponse,
     InternalServerErrorResponse,
@@ -129,9 +134,10 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Error getting metrics: {str(e)}")
 
-    # Databases with a refresh currently in flight, keyed by db id. Only mutated on the
-    # event loop (the sync calculation itself runs in the threadpool), so no lock is needed.
-    refreshes_in_flight: set[str] = set()
+    # Most recent refresh state per db id, doubling as the in-flight guard ('running').
+    # Only mutated on the event loop (the sync calculation itself runs in the threadpool),
+    # so no lock is needed. Per-process: each worker tracks the refreshes it started.
+    refresh_states: dict[str, MetricsRefreshStatusResponse] = {}
 
     async def _do_refresh(
         db: Union[BaseDb, AsyncBaseDb, RemoteDb],
@@ -139,6 +145,10 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
         table: Optional[str],
         headers: Optional[dict],
     ) -> None:
+        refresh_key = str(db.id)
+        current_state = refresh_states.get(refresh_key)
+        started_at = current_state.started_at if current_state else None
+        final_state = MetricsRefreshStatusResponse(status="completed", started_at=started_at)
         try:
             if isinstance(db, RemoteDb):
                 await db.refresh_metrics(db_id=db_id, table=table, headers=headers, background=True)
@@ -148,8 +158,10 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
                 await run_in_threadpool(db.calculate_metrics)
         except Exception as e:
             logger.error(f"Metrics refresh failed: {e}")
+            final_state = MetricsRefreshStatusResponse(status="failed", started_at=started_at, error=str(e))
         finally:
-            refreshes_in_flight.discard(str(db.id))
+            final_state.finished_at = datetime.now(timezone.utc)
+            refresh_states[refresh_key] = final_state
 
     @router.post(
         "/metrics/refresh",
@@ -228,12 +240,15 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
             if background:
                 response.status_code = 202
                 refresh_key = str(db.id)
-                if refresh_key in refreshes_in_flight:
+                current_state = refresh_states.get(refresh_key)
+                if current_state is not None and current_state.status == "running":
                     return MetricsRefreshResponse(
                         status="already_running", message="A metrics refresh is already in progress for this database"
                     )
 
-                refreshes_in_flight.add(refresh_key)
+                refresh_states[refresh_key] = MetricsRefreshStatusResponse(
+                    status="running", started_at=datetime.now(timezone.utc)
+                )
                 background_tasks.add_task(_do_refresh, db, db_id, table, headers)
 
                 return MetricsRefreshResponse(status="started", message="Metrics refresh started in background")
@@ -252,5 +267,61 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
 
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Error refreshing metrics: {str(e)}")
+
+    @router.get(
+        "/metrics/refresh/status",
+        response_model=MetricsRefreshStatusResponse,
+        status_code=200,
+        operation_id="get_metrics_refresh_status",
+        summary="Get Metrics Refresh Status",
+        description=(
+            "Get the status of the most recent metrics refresh for the target database. "
+            "Returns 'running' while a refresh is in progress, then 'completed' or 'failed' with "
+            "the finish timestamp — the state updates even when a refresh completes without "
+            "writing new data. Returns 'idle' if no refresh has been triggered since this server "
+            "process started. For remote databases the status is fetched from the remote AgentOS. "
+            "Intended for polling after starting a background refresh via POST /metrics/refresh?background=true."
+        ),
+        responses={
+            200: {
+                "description": "Current refresh status",
+                "content": {
+                    "application/json": {
+                        "example": {
+                            "status": "completed",
+                            "started_at": "2025-08-12T08:01:47Z",
+                            "finished_at": "2025-08-12T08:01:49Z",
+                            "error": None,
+                        }
+                    }
+                },
+            },
+            400: {"description": "Invalid request", "model": BadRequestResponse},
+            404: {"description": "Database not found", "model": NotFoundResponse},
+            500: {"description": "Failed to get refresh status", "model": InternalServerErrorResponse},
+        },
+    )
+    async def get_metrics_refresh_status(
+        request: Request,
+        db_id: Optional[str] = Query(default=None, description="Database ID to get the refresh status for"),
+        table: Optional[str] = Query(default=None, description="Table to get the refresh status for"),
+    ) -> MetricsRefreshStatusResponse:
+        try:
+            db = await get_db(dbs, db_id, table)
+
+            if isinstance(db, RemoteDb):
+                auth_token = get_auth_token_from_request(request)
+                headers = {"Authorization": f"Bearer {auth_token}"} if auth_token else None
+                return await db.get_metrics_refresh_status(db_id=db_id, table=table, headers=headers)
+
+            state = refresh_states.get(str(db.id))
+            if state is None:
+                return MetricsRefreshStatusResponse(status="idle")
+            return state
+
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Error getting metrics refresh status: {str(e)}")
 
     return router

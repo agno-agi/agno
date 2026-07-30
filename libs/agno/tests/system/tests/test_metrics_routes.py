@@ -4,6 +4,7 @@ System Tests for AgentOS Metrics Routes.
 Run with: pytest test_metrics_routes.py -v --tb=short
 """
 
+import time
 import uuid
 
 import httpx
@@ -136,6 +137,29 @@ class TestLocalMetricsRoutes:
         assert data["status"] in ("started", "already_running")
         assert "message" in data
 
+    def test_refresh_metrics_background_status_reaches_completed(
+        self, client: httpx.Client, generate_metrics_data: dict
+    ):
+        """Test GET /metrics/refresh/status reports completion after a background refresh for local db."""
+        response = client.post(f"/metrics/refresh?db_id={self.DB_ID}&background=true")
+        assert response.status_code == 202
+
+        data = {}
+        deadline = time.time() + 30
+        while time.time() < deadline:
+            status_response = client.get(f"/metrics/refresh/status?db_id={self.DB_ID}")
+            assert status_response.status_code == 200
+            data = status_response.json()
+            assert data["status"] in ("running", "completed", "failed")
+            if data["status"] != "running":
+                break
+            time.sleep(0.5)
+
+        assert data["status"] == "completed"
+        assert data["started_at"] is not None
+        assert data["finished_at"] is not None
+        assert data["error"] is None
+
 
 class TestRemoteMetricsRoutes:
     """Test metrics routes with remote database (remote-db)."""
@@ -239,3 +263,26 @@ class TestRemoteMetricsRoutes:
 
         assert data["status"] in ("started", "already_running")
         assert "message" in data
+
+    def test_refresh_metrics_background_status_reaches_completed(
+        self, client: httpx.Client, generate_metrics_data: dict
+    ):
+        """Test GET /metrics/refresh/status reports completion after a background refresh for remote db."""
+        response = client.post(f"/metrics/refresh?db_id={self.DB_ID}&background=true")
+        assert response.status_code == 202
+
+        data = {}
+        deadline = time.time() + 30
+        while time.time() < deadline:
+            status_response = client.get(f"/metrics/refresh/status?db_id={self.DB_ID}")
+            assert status_response.status_code == 200
+            data = status_response.json()
+            assert data["status"] in ("running", "completed", "failed")
+            if data["status"] != "running":
+                break
+            time.sleep(0.5)
+
+        assert data["status"] == "completed"
+        assert data["started_at"] is not None
+        assert data["finished_at"] is not None
+        assert data["error"] is None

@@ -34,7 +34,12 @@ from agno.os.routers.memory.schemas import (
     UserMemorySchema,
     UserStatsSchema,
 )
-from agno.os.routers.metrics.schemas import DayAggregatedMetrics, MetricsRefreshResponse, MetricsResponse
+from agno.os.routers.metrics.schemas import (
+    DayAggregatedMetrics,
+    MetricsRefreshResponse,
+    MetricsRefreshStatusResponse,
+    MetricsResponse,
+)
 from agno.os.routers.teams.schema import TeamResponse
 from agno.os.routers.traces.schemas import (
     TraceDetail,
@@ -3001,3 +3006,34 @@ class AgentOSClient:
         if isinstance(data, list):
             return [DayAggregatedMetrics.model_validate(m) for m in data]
         return MetricsRefreshResponse.model_validate(data)
+
+    async def get_metrics_refresh_status(
+        self,
+        db_id: Optional[str] = None,
+        table: Optional[str] = None,
+        headers: Optional[Dict[str, str]] = None,
+    ) -> MetricsRefreshStatusResponse:
+        """Get the status of the most recent metrics refresh for the target database.
+
+        Returns 'running' while a refresh is in progress, then 'completed' or 'failed'
+        with the finish timestamp. The state updates even when a refresh completes
+        without writing new data. Returns 'idle' if no refresh has been triggered
+        since the server process started. Intended for polling after starting a
+        background refresh via refresh_metrics(background=True).
+
+        Args:
+            db_id: Optional database ID to use
+            table: Optional database table to use
+            headers: HTTP headers to include in the request (optional)
+
+        Returns:
+            MetricsRefreshStatusResponse: Status of the most recent refresh
+
+        Raises:
+            HTTPStatusError: On HTTP errors
+        """
+        params: Dict[str, Any] = {"db_id": db_id, "table": table}
+        params = {k: v for k, v in params.items() if v is not None}
+
+        data = await self._aget("/metrics/refresh/status", params=params, headers=headers)
+        return MetricsRefreshStatusResponse.model_validate(data)

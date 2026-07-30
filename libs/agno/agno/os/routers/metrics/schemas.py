@@ -54,3 +54,10 @@ class MetricsResponse(BaseModel):
 class MetricsRefreshResponse(BaseModel):
     status: str = Field(..., description="Status of the refresh request")
     message: Optional[str] = Field(None, description="Additional details")
+
+
+class MetricsRefreshStatusResponse(BaseModel):
+    status: str = Field(..., description="Refresh status: 'idle', 'running', 'completed' or 'failed'")
+    started_at: Optional[datetime] = Field(None, description="When the most recent refresh started")
+    finished_at: Optional[datetime] = Field(None, description="When the most recent refresh finished")
+    error: Optional[str] = Field(None, description="Error message if the most recent refresh failed")
