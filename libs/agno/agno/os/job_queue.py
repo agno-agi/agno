@@ -7,6 +7,7 @@ acceptance, claim/lease, crash recovery) will live here as well.
 
 import asyncio
 import contextlib
+import inspect
 from typing import Any, Dict, Optional, Union
 
 from agno.job_queue.config import QueueConfig, RedisCoordination
@@ -530,7 +531,7 @@ class QueueWorker:
 
             session = await aread_or_create_session(component, session_id=job["session_id"], user_id=job.get("user_id"))
             run = session.get_run(job["id"])
-            if isinstance(run, RunOutput):
+            if isinstance(run, RunOutput) and run.status not in (RunStatus.completed, RunStatus.cancelled):
                 run.status = RunStatus.cancelled if status == "cancelled" else RunStatus.error
                 run.content = run.content or error
                 session.upsert_run(run=run)
@@ -544,7 +545,10 @@ class QueueWorker:
                 component, session_id=job["session_id"], user_id=job.get("user_id")
             )
             team_run = team_session.get_run(job["id"])
-            if isinstance(team_run, TeamRunOutput):
+            if isinstance(team_run, TeamRunOutput) and team_run.status not in (
+                RunStatus.completed,
+                RunStatus.cancelled,
+            ):
                 team_run.status = RunStatus.cancelled if status == "cancelled" else RunStatus.error
                 team_run.content = team_run.content or error
                 team_session.upsert_run(run_response=team_run)
@@ -554,7 +558,7 @@ class QueueWorker:
                 session_id=job["session_id"], user_id=job.get("user_id"), session_state=None
             )
             workflow_run = workflow_session.get_run(job["id"])
-            if workflow_run is not None:
+            if workflow_run is not None and workflow_run.status not in (RunStatus.completed, RunStatus.cancelled):
                 workflow_run.status = RunStatus.cancelled if status == "cancelled" else RunStatus.error
                 workflow_run.content = workflow_run.content or error
                 workflow_session.upsert_run(run=workflow_run)
@@ -586,6 +590,7 @@ class QueueWorker:
         return isinstance(exc, (InputCheckError, OutputCheckError, TypeError))
 
     async def _execute_claimed(self, job: Dict[str, Any]) -> None:
+        from agno.exceptions import RunCancelledException
         from agno.run.base import RunStatus
 
         job_id, attempt = job["id"], job["attempt"]
@@ -623,7 +628,19 @@ class QueueWorker:
 
         payload = job.get("payload") or {}
         is_stream = bool(payload.get("stream"))
+        slot_acquired = False
         try:
+            # Shared per-replica cap: worker executions acquire the SAME slot
+            # the SSE/detached background paths use, so max_concurrency bounds
+            # one population instead of two (worker + limiter previously each
+            # counted their own, allowing up to 2x per replica). The claim
+            # gate still throttles claiming; this makes the execution itself
+            # share the counter.
+            from agno.run.concurrency import background_run_slot
+
+            slot_cm = background_run_slot(run_id=job_id)
+            await slot_cm.__aenter__()
+            slot_acquired = True
             if is_stream:
                 execution = self._execute_streaming(component, job)
             else:
@@ -676,6 +693,13 @@ class QueueWorker:
                 with contextlib.suppress(Exception, asyncio.CancelledError):
                     await asyncio.shield(self._terminate_stream_view(job))
             raise
+        except RunCancelledException:
+            # Cancelled while waiting for a slot (or via the cancellation
+            # manager): honour it - the ticket tombstones as cancelled
+            await self.store.complete_job(job_id, self.worker_id, attempt, "cancelled")
+            with contextlib.suppress(Exception):
+                await self._persist_run_error(job, "cancelled while queued for a slot", status="cancelled")
+            await self._terminate_stream_view(job)
         except asyncio.TimeoutError:
             error = f"Run exceeded timeout_seconds={self.config.timeout_seconds}"
             # A timed-out attempt with retry budget left is NOT terminal: the
@@ -701,6 +725,10 @@ class QueueWorker:
                     await self._terminate_stream_view(job)
             else:
                 await self.store.retry_or_fail_job(job_id, self.worker_id, attempt, str(e), self._retry_delay(attempt))
+        finally:
+            if slot_acquired:
+                with contextlib.suppress(Exception):
+                    await slot_cm.__aexit__(None, None, None)
 
 
 def validate_seam_input(component: Any, input: Any) -> None:
@@ -722,6 +750,27 @@ def validate_seam_input(component: Any, input: Any) -> None:
         raise HTTPException(status_code=422, detail=f"Input failed schema validation: {str(e)[:300]}")
 
 
+async def _atomic_append_run(
+    component: Any, session_id: str, run_dict: Dict[str, Any], user_id: Optional[str]
+) -> Optional[bool]:
+    """Try the row-locked append-if-absent primitive on the component's db.
+
+    Returns True (appended), False (run already present - a worker got there
+    first and its row wins), or None (no primitive / no session row yet - the
+    caller must use the legacy create-and-save path)."""
+    db = getattr(component, "db", None)
+    method = getattr(db, "append_run_to_session_if_absent", None) if db is not None else None
+    if not callable(method):
+        return None
+    try:
+        if inspect.iscoroutinefunction(method):
+            return await method(session_id=session_id, run_dict=run_dict, user_id=user_id)
+        return await asyncio.to_thread(method, session_id=session_id, run_dict=run_dict, user_id=user_id)
+    except Exception as e:
+        log_warning(f"Atomic run append failed; falling back to read-modify-write: {e}")
+        return None
+
+
 async def aprepare_queued_run(
     component: Any, component_type: str, run_id: str, session_id: str, user_id: Optional[str], input: Any
 ) -> None:
@@ -736,6 +785,21 @@ async def aprepare_queued_run(
         from agno.agent._storage import aread_or_create_session, update_metadata
         from agno.run.agent import RunInput, RunOutput
 
+        run_response_early = RunOutput(
+            run_id=run_id,
+            session_id=session_id,
+            agent_id=getattr(component, "id", None),
+            agent_name=getattr(component, "name", None),
+            user_id=user_id,
+            input=RunInput(input_content=input),
+            status=RunStatus.pending,
+        )
+        appended = await _atomic_append_run(component, session_id, run_response_early.to_dict(), user_id)
+        if appended is not None:
+            return  # atomically landed (True) or a worker's row already won (False)
+        # No session row yet: create-and-save (fresh sessions keep the narrow
+        # legacy read-save window; the worker cannot have run before the
+        # session exists in the common case)
         session = await aread_or_create_session(component, session_id=session_id, user_id=user_id)
         if session.get_run(run_id) is not None:
             return
@@ -759,6 +823,18 @@ async def aprepare_queued_run(
         from agno.team._session import asave_session as team_asave_session
         from agno.team._storage import _aread_or_create_session, _update_metadata
 
+        team_run_early = TeamRunOutput(
+            run_id=run_id,
+            session_id=session_id,
+            team_id=getattr(component, "id", None),
+            team_name=getattr(component, "name", None),
+            user_id=user_id,
+            input=TeamRunInput(input_content=input),
+            status=RunStatus.pending,
+        )
+        appended = await _atomic_append_run(component, session_id, team_run_early.to_dict(), user_id)
+        if appended is not None:
+            return
         team_session = await _aread_or_create_session(component, session_id=session_id, user_id=user_id)
         if team_session.get_run(run_id) is not None:
             return
@@ -779,6 +855,19 @@ async def aprepare_queued_run(
 
         from agno.run.workflow import WorkflowRunOutput
 
+        workflow_run_early = WorkflowRunOutput(
+            run_id=run_id,
+            input=input,
+            session_id=session_id,
+            user_id=user_id,
+            workflow_id=getattr(component, "id", None),
+            workflow_name=getattr(component, "name", None),
+            created_at=int(datetime.now().timestamp()),
+            status=RunStatus.pending,
+        )
+        appended = await _atomic_append_run(component, session_id, workflow_run_early.to_dict(), user_id)
+        if appended is not None:
+            return
         workflow_session, _ = await component._aload_or_create_session(
             session_id=session_id, user_id=user_id, session_state=None
         )
