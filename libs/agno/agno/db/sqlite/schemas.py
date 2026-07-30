@@ -287,6 +287,28 @@ AUTH_TOKEN_TABLE_SCHEMA = {
     ],
 }
 
+SKILLS_TABLE_SCHEMA = {
+    "id": {"type": String, "primary_key": True, "nullable": False},
+    # Unique: skills resolve by name, the key stored agents reference.
+    "name": {"type": String, "nullable": False, "unique": True, "index": True},
+    # Ownership, not identity: NULL means a shared/global skill. Never part of a
+    # unique constraint -- name alone stays the key.
+    "user_id": {"type": String, "nullable": True, "index": True},
+    "description": {"type": String, "nullable": False},
+    "source_type": {"type": String, "nullable": False, "default": "local"},
+    "instructions": {"type": String, "nullable": False},
+    "scripts": {"type": JSON, "nullable": False, "default": {}},  # {filename: UTF-8 text}
+    "references": {"type": JSON, "nullable": False, "default": {}},  # {filename: UTF-8 text}
+    "metadata": {"type": JSON, "nullable": True},
+    "license": {"type": String, "nullable": True},
+    "compatibility": {"type": String, "nullable": True},
+    "allowed_tools": {"type": JSON, "nullable": True},
+    # Server-managed: fixed at 1 on create, bumped by one on every successful update.
+    "version": {"type": BigInteger, "nullable": False, "default": 1},
+    "created_at": {"type": BigInteger, "nullable": False, "index": True},
+    "updated_at": {"type": BigInteger, "nullable": True},
+}
+
 SERVICE_ACCOUNT_TABLE_SCHEMA = {
     "id": {"type": String, "primary_key": True, "nullable": False},
     "name": {"type": String, "nullable": False},
@@ -372,6 +394,7 @@ def get_table_schema_definition(
         "approvals": APPROVAL_TABLE_SCHEMA,
         "auth_tokens": AUTH_TOKEN_TABLE_SCHEMA,
         "service_accounts": SERVICE_ACCOUNT_TABLE_SCHEMA,
+        "skills": SKILLS_TABLE_SCHEMA,
         **MCP_OAUTH_TABLE_SCHEMAS,
     }
     schema = schemas.get(table_type, {})
