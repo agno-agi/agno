@@ -380,3 +380,24 @@ class TestRetryIndexContinuity:
         await stream.complete_run("r1", RunStatus.completed)
         received = [idx async for idx, _sse in stream.tail("r1", last_event_index=2)]
         assert received == [3, 4], "retry output must not be filtered by the old client index"
+
+
+class TestCancellationFailOpen:
+    """A Redis fault during the cancellation check must never poison the run
+    (the check re-fires at the next safe point)."""
+
+    @pytest.mark.asyncio
+    async def test_redis_fault_fails_open(self):
+        from agno.run.cancellation_management.redis_cancellation_manager import RedisRunCancellationManager
+
+        class BoomClient:
+            def get(self, key):
+                raise ConnectionError("redis down")
+
+        class ABoomClient:
+            async def get(self, key):
+                raise ConnectionError("redis down")
+
+        mgr = RedisRunCancellationManager(redis_client=BoomClient(), async_redis_client=ABoomClient())
+        assert mgr.is_cancelled("r1") is False
+        assert await mgr.ais_cancelled("r1") is False

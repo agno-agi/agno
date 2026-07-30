@@ -4,7 +4,7 @@ from typing import TYPE_CHECKING, Any, Dict, Iterable, Optional, Set, Union
 
 from agno.exceptions import RunCancelledException
 from agno.run.cancellation_management.base import BaseRunCancellationManager
-from agno.utils.log import logger
+from agno.utils.log import log_warning, logger
 
 # Defer import error until class instantiation
 _redis_available = True
@@ -178,10 +178,19 @@ class RedisRunCancellationManager(BaseRunCancellationManager):
         return was_registered
 
     def is_cancelled(self, run_id: str) -> bool:
-        """Check if a run is cancelled."""
-        client = self._ensure_sync_client()
-        key = self._get_key(run_id)
-        value = client.get(key)
+        """Check if a run is cancelled.
+
+        FAIL-OPEN by contract: Redis is coordination, not truth. This check
+        runs several times per run at safe points - a Redis restart, failover,
+        timeout or pool exhaustion mid-run must degrade to "not cancelled"
+        (the signal is re-checked at the next safe point), never propagate
+        into the run and mark a healthy run ERROR."""
+        try:
+            client = self._ensure_sync_client()
+            value = client.get(self._get_key(run_id))
+        except Exception as e:
+            log_warning(f"Cancellation check unavailable (Redis fault, failing open): {e}")
+            return False
         if value is None:
             return False
         # Redis returns bytes, handle both bytes and str
@@ -190,10 +199,14 @@ class RedisRunCancellationManager(BaseRunCancellationManager):
         return value == "1"
 
     async def ais_cancelled(self, run_id: str) -> bool:
-        """Check if a run is cancelled (async version)."""
-        client = self._ensure_async_client()
-        key = self._get_key(run_id)
-        value = await client.get(key)
+        """Check if a run is cancelled (async version). Fail-open: see
+        is_cancelled."""
+        try:
+            client = self._ensure_async_client()
+            value = await client.get(self._get_key(run_id))
+        except Exception as e:
+            log_warning(f"Cancellation check unavailable (Redis fault, failing open): {e}")
+            return False
         if value is None:
             return False
         # Redis returns bytes, handle both bytes and str
