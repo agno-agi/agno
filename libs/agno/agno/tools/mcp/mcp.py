@@ -23,8 +23,14 @@ try:
     from mcp.client.sse import sse_client
     from mcp.client.stdio import get_default_environment, stdio_client
     from mcp.client.streamable_http import streamablehttp_client
-except (ImportError, ModuleNotFoundError):
+except ModuleNotFoundError:
     raise ImportError("`mcp` not installed. Please install using `pip install mcp`")
+except ImportError as e:
+    raise ImportError(
+        "The installed `mcp` package is not compatible with this version of agno "
+        f"({e}). agno currently requires `mcp>=1.9.2,<2.0.0`; "
+        "please install a compatible version with `pip install 'mcp>=1.9.2,<2.0.0'`"
+    )
 
 
 class MCPTools(Toolkit):
