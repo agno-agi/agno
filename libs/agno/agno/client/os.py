@@ -34,7 +34,7 @@ from agno.os.routers.memory.schemas import (
     UserMemorySchema,
     UserStatsSchema,
 )
-from agno.os.routers.metrics.schemas import DayAggregatedMetrics, MetricsResponse
+from agno.os.routers.metrics.schemas import MetricsRefreshResponse, MetricsResponse
 from agno.os.routers.teams.schema import TeamResponse
 from agno.os.routers.traces.schemas import (
     TraceDetail,
@@ -2968,11 +2968,12 @@ class AgentOSClient:
         db_id: Optional[str] = None,
         table: Optional[str] = None,
         headers: Optional[Dict[str, str]] = None,
-    ) -> List[DayAggregatedMetrics]:
+    ) -> MetricsRefreshResponse:
         """Manually trigger recalculation of system metrics from raw data.
 
         This operation analyzes system activity logs and regenerates aggregated metrics.
         Useful for ensuring metrics are up-to-date or after system maintenance.
+        Returns immediately with 202 Accepted; refresh runs in background.
 
         Args:
             db_id: Optional database ID to use
@@ -2980,7 +2981,7 @@ class AgentOSClient:
             headers: HTTP headers to include in the request (optional)
 
         Returns:
-            List[DayAggregatedMetrics]: List of refreshed daily aggregated metrics
+            MetricsRefreshResponse: Status of the refresh request
 
         Raises:
             HTTPStatusError: On HTTP errors
@@ -2989,4 +2990,4 @@ class AgentOSClient:
         params = {k: v for k, v in params.items() if v is not None}
 
         data = await self._apost("/metrics/refresh", params=params, headers=headers)
-        return [DayAggregatedMetrics.model_validate(m) for m in data]
+        return MetricsRefreshResponse.model_validate(data)
