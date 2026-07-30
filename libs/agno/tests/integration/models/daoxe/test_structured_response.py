@@ -1,5 +1,4 @@
 import enum
-import os
 from typing import List
 
 from pydantic import BaseModel, Field
@@ -7,7 +6,7 @@ from pydantic import BaseModel, Field
 from agno.agent import Agent
 from agno.models.daoxe import DaoXE
 
-DAOXE_MODEL_ID = os.environ.get("DAOXE_MODEL", "not-provided")
+DAOXE_MODEL_ID = "gpt-5.5"
 
 
 class MovieScript(BaseModel):

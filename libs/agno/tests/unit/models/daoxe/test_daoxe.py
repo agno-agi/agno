@@ -18,6 +18,14 @@ def test_default_config():
     assert model.api_key == "test-key"
 
 
+def test_default_id():
+    """id falls back to a concrete default when DAOXE_MODEL is unset."""
+    with patch.dict("os.environ", {}, clear=True):
+        model = DaoXE(api_key="test-key")
+
+    assert model.id == "gpt-5.5"
+
+
 def test_reads_env_defaults():
     """id and api_key fall back to DAOXE_MODEL / DAOXE_API_KEY when unset."""
     with patch.dict(

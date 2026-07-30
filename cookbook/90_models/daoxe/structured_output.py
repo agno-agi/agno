@@ -5,7 +5,6 @@ DaoXE Structured Output
 Cookbook example for `daoxe/structured_output.py`.
 """
 
-import os
 from typing import List
 
 from agno.agent import Agent
@@ -15,13 +14,6 @@ from pydantic import BaseModel, Field
 # ---------------------------------------------------------------------------
 # Create Agent
 # ---------------------------------------------------------------------------
-
-model_id = os.environ.get("DAOXE_MODEL")
-if not model_id:
-    raise SystemExit(
-        "Set DAOXE_MODEL to an exact model ID from your DaoXE account catalog "
-        "(GET /v1/models)."
-    )
 
 
 class MovieScript(BaseModel):
@@ -44,7 +36,7 @@ class MovieScript(BaseModel):
 
 
 structured_output_agent = Agent(
-    model=DaoXE(id=model_id),
+    model=DaoXE(),
     description="You are a helpful assistant. Summarize the movie script based on the location in a JSON object.",
     output_schema=MovieScript,
 )
