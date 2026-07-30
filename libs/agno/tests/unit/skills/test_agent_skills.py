@@ -2,7 +2,7 @@
 
 import json
 from pathlib import Path
-from typing import List, Optional
+from typing import ClassVar, List, Optional
 
 import pytest
 
@@ -389,6 +389,105 @@ def test_get_system_prompt_includes_progressive_discovery(mock_loader: MockSkill
     assert "get_skill_instructions" in snippet
     assert "get_skill_reference" in snippet
     assert "get_skill_script" in snippet
+
+
+# --- Per-Request Refresh Tests ---
+
+
+class CountingLoader(SkillLoader):
+    """A loader that counts its load() calls and can be told to fail."""
+
+    def __init__(self, skills: List[Skill]):
+        self._skills = skills
+        self.load_count = 0
+        self.fail = False
+
+    def load(self) -> List[Skill]:
+        self.load_count += 1
+        if self.fail:
+            raise RuntimeError("database down")
+        return list(self._skills)
+
+
+class RefreshingLoader(CountingLoader):
+    """A CountingLoader marked for per-request refresh, like DbSkills."""
+
+    refresh_per_request: ClassVar[bool] = True
+
+
+def test_snippet_refreshes_marked_loaders_per_request(sample_skill: Skill, minimal_skill: Skill) -> None:
+    """Test that a refresh_per_request loader's changes appear in the next snippet without reload()."""
+    loader = RefreshingLoader([sample_skill])
+    skills = Skills(loaders=[loader])
+
+    assert "minimal-skill" not in skills.get_system_prompt_snippet()
+    loader._skills = [sample_skill, minimal_skill]
+    assert "minimal-skill" in skills.get_system_prompt_snippet()
+
+
+def test_snippet_does_not_rerun_unmarked_loaders(sample_skill: Skill) -> None:
+    """Test that a plain loader is loaded once, not re-run on every snippet build."""
+    loader = CountingLoader([sample_skill])
+    skills = Skills(loaders=[loader])
+
+    skills.get_system_prompt_snippet()
+    skills.get_system_prompt_snippet()
+
+    assert loader.load_count == 1
+
+
+def test_refresh_merges_unmarked_loader_results_from_cache(sample_skill: Skill, minimal_skill: Skill) -> None:
+    """Test that a refresh re-reads only the marked loader and keeps the others' cached skills."""
+    static = CountingLoader([sample_skill])
+    refreshing = RefreshingLoader([minimal_skill])
+    skills = Skills(loaders=[static, refreshing])
+
+    # If the refresh re-ran the static loader, its skill would vanish here.
+    static._skills = []
+    snippet = skills.get_system_prompt_snippet()
+
+    assert "test-skill" in snippet
+    assert "minimal-skill" in snippet
+    assert static.load_count == 1
+
+
+def test_failed_refresh_keeps_last_loaded_skills(sample_skill: Skill) -> None:
+    """Test that a snippet built while the refresh fails serves the last loaded skills."""
+    loader = RefreshingLoader([sample_skill])
+    skills = Skills(loaders=[loader])
+
+    loader.fail = True
+    # Twice: the second request must also serve the cached mapping, not an empty one.
+    assert "test-skill" in skills.get_system_prompt_snippet()
+    assert "test-skill" in skills.get_system_prompt_snippet()
+
+
+def test_refresh_recovers_after_failure(sample_skill: Skill, minimal_skill: Skill) -> None:
+    """Test that the mapping self-corrects on the next successful refresh."""
+    loader = RefreshingLoader([sample_skill])
+    skills = Skills(loaders=[loader])
+
+    loader.fail = True
+    assert "test-skill" in skills.get_system_prompt_snippet()
+
+    loader.fail = False
+    loader._skills = [minimal_skill]
+    snippet = skills.get_system_prompt_snippet()
+    assert "minimal-skill" in snippet
+    assert "test-skill" not in snippet
+
+
+def test_refresh_collision_under_raise_keeps_old_mapping(sample_skill: Skill) -> None:
+    """Test that a duplicate introduced by a refresh keeps the old mapping instead of raising mid-request."""
+    static = MockSkillLoader([sample_skill])
+    refreshing = RefreshingLoader([])
+    skills = Skills(loaders=[static, refreshing], on_duplicate="raise")
+
+    refreshing._skills = [Skill(name="test-skill", description="Colliding", instructions="i", source_path="/p2")]
+    snippet = skills.get_system_prompt_snippet()
+
+    assert "A test skill for unit testing" in snippet
+    assert "Colliding" not in snippet
 
 
 # --- Get Tools Tests ---

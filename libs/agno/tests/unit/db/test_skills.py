@@ -168,6 +168,8 @@ def test_backend_without_skills_support_raises_not_implemented():
     with pytest.raises(NotImplementedError):
         db.get_skills()
     with pytest.raises(NotImplementedError):
+        db.get_skills_with_content()
+    with pytest.raises(NotImplementedError):
         db.update_skill("x", 1)
     with pytest.raises(NotImplementedError):
         db.delete_skill("x")
@@ -472,6 +474,110 @@ def test_same_name_different_user_rejected(sqlite_db, skill_data):
 
 
 # ============================================================================
+# GET_SKILLS_WITH_CONTENT TESTS (the loader's read: full content, uncapped)
+# ============================================================================
+
+
+def test_get_skills_with_content_returns_full_rows(sqlite_db, skill_data):
+    sqlite_db.create_skill(skill_data)
+    sqlite_db.create_skill({**skill_data, "name": "second", "scripts": {}, "references": {}})
+
+    rows = sqlite_db.get_skills_with_content()
+
+    # Name-ordered, and every column present: the loader builds a full SkillRow from each
+    assert [r["name"] for r in rows] == ["release-notes", "second"]
+    row = rows[0]
+    assert set(row.keys()) == set(SKILLS_TABLE_SCHEMA.keys())
+    assert row["instructions"] == skill_data["instructions"]
+    assert row["scripts"] == skill_data["scripts"]
+    assert row["references"] == skill_data["references"]
+
+
+def test_get_skills_with_content_is_uncapped(sqlite_db, skill_data):
+    # More rows than get_skills' default page size: the loader read has no limit
+    for n in range(105):
+        sqlite_db.create_skill({**skill_data, "name": f"skill-{n:03d}"})
+    assert len(sqlite_db.get_skills_with_content()) == 105
+
+
+def test_get_skills_with_content_names_filter(sqlite_db, skill_data):
+    for name in ("alpha", "beta", "gamma"):
+        sqlite_db.create_skill({**skill_data, "name": name})
+
+    rows = sqlite_db.get_skills_with_content(names=["gamma", "alpha"])
+    assert [r["name"] for r in rows] == ["alpha", "gamma"]
+
+    # A requested name with no row is not an error; the rows that exist come back
+    rows = sqlite_db.get_skills_with_content(names=["beta", "missing"])
+    assert [r["name"] for r in rows] == ["beta"]
+
+
+def test_get_skills_with_content_user_filter(sqlite_db, skill_data):
+    sqlite_db.create_skill({**skill_data, "name": "owned-a", "user_id": "user-a"})
+    sqlite_db.create_skill({**skill_data, "name": "shared"})
+
+    rows = sqlite_db.get_skills_with_content(user_id="user-a")
+    assert [r["name"] for r in rows] == ["owned-a"]
+
+    # None is unscoped: shared rows included
+    assert len(sqlite_db.get_skills_with_content()) == 2
+
+
+def test_get_skills_with_content_empty_db(sqlite_db):
+    assert sqlite_db.get_skills_with_content() == []
+
+
+def test_get_skills_with_content_postgres_outage_raises_not_empty():
+    # The live-test regression: postgres _get_table swallows a connection failure and
+    # returns None, which the old code read as an empty table -- one refresh during an
+    # outage then wiped the skill set. An unreachable database must raise instead.
+    pytest.importorskip("psycopg")
+    from sqlalchemy import create_engine
+    from sqlalchemy.exc import OperationalError
+
+    from agno.db.postgres import PostgresDb
+
+    dead_engine = create_engine(
+        "postgresql+psycopg://nobody:nothing@127.0.0.1:9/dead",
+        connect_args={"connect_timeout": 2},
+    )
+    dead = PostgresDb(db_engine=dead_engine, db_schema="ai")
+    with pytest.raises(OperationalError):
+        dead.get_skills_with_content()
+
+
+async def test_async_get_skills_with_content_postgres_outage_raises_not_empty():
+    pytest.importorskip("psycopg")
+    from sqlalchemy.exc import OperationalError
+    from sqlalchemy.ext.asyncio import create_async_engine
+
+    from agno.db.postgres.async_postgres import AsyncPostgresDb
+
+    dead_engine = create_async_engine(
+        "postgresql+psycopg://nobody:nothing@127.0.0.1:9/dead",
+        connect_args={"connect_timeout": 2},
+    )
+    dead = AsyncPostgresDb(db_engine=dead_engine)
+    with pytest.raises(OperationalError):
+        await dead.get_skills_with_content()
+
+
+def test_get_skills_with_content_propagates_read_errors(sqlite_db, skill_data, monkeypatch):
+    # The deliberate divergence from the sibling reads: a failed read raises, so a
+    # refreshing loader can tell an outage from an empty table. get_skill swallows
+    # the same failure. If this test breaks, an outage silently wipes the skill set.
+    sqlite_db.create_skill(skill_data)
+
+    def boom():
+        raise RuntimeError("database down")
+
+    monkeypatch.setattr(sqlite_db, "Session", boom)
+    with pytest.raises(RuntimeError, match="database down"):
+        sqlite_db.get_skills_with_content()
+    assert sqlite_db.get_skill("release-notes") is None
+
+
+# ============================================================================
 # ASYNC SQLITE CRUD TESTS
 # ============================================================================
 
@@ -583,3 +689,42 @@ async def test_async_same_name_different_user_rejected(async_sqlite_db, skill_da
         await async_sqlite_db.create_skill({**skill_data, "user_id": "user-b"})
     stored = await async_sqlite_db.get_skill("release-notes")
     assert stored["user_id"] == "user-a"
+
+
+async def test_async_get_skills_with_content_returns_full_rows(async_sqlite_db, skill_data):
+    await async_sqlite_db.create_skill(skill_data)
+    await async_sqlite_db.create_skill({**skill_data, "name": "second", "scripts": {}, "references": {}})
+
+    rows = await async_sqlite_db.get_skills_with_content()
+
+    assert [r["name"] for r in rows] == ["release-notes", "second"]
+    row = rows[0]
+    assert set(row.keys()) == set(SKILLS_TABLE_SCHEMA.keys())
+    assert row["instructions"] == skill_data["instructions"]
+    assert row["scripts"] == skill_data["scripts"]
+    assert row["references"] == skill_data["references"]
+
+
+async def test_async_get_skills_with_content_filters(async_sqlite_db, skill_data):
+    await async_sqlite_db.create_skill({**skill_data, "name": "owned-a", "user_id": "user-a"})
+    await async_sqlite_db.create_skill({**skill_data, "name": "shared"})
+
+    rows = await async_sqlite_db.get_skills_with_content(names=["owned-a", "missing"])
+    assert [r["name"] for r in rows] == ["owned-a"]
+
+    rows = await async_sqlite_db.get_skills_with_content(user_id="user-a")
+    assert [r["name"] for r in rows] == ["owned-a"]
+
+    # None is unscoped: shared rows included
+    assert len(await async_sqlite_db.get_skills_with_content()) == 2
+
+
+async def test_async_get_skills_with_content_propagates_read_errors(async_sqlite_db, skill_data, monkeypatch):
+    await async_sqlite_db.create_skill(skill_data)
+
+    def boom():
+        raise RuntimeError("database down")
+
+    monkeypatch.setattr(async_sqlite_db, "async_session_factory", boom)
+    with pytest.raises(RuntimeError, match="database down"):
+        await async_sqlite_db.get_skills_with_content()
