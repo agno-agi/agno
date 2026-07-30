@@ -324,7 +324,6 @@ class BaseDb(ABC):
         raise NotImplementedError
 
     # --- Knowledge ---
-    # --- Knowledge ---
     # ``user_id`` semantics:
     # - ``None``: no scoping. Single-user / admin / RBAC-off behaviour — sees
     #   every row including those owned by other users.
@@ -2106,15 +2105,11 @@ class AsyncBaseDb(ABC):
     # --- Schedules (Optional) ---
     # See "Notes on user_id" on the sync BaseDb above. Same semantics here.
 
-    async def get_schedule(
-        self, schedule_id: str, user_id: Optional[str] = None
-    ) -> Optional[Dict[str, Any]]:
+    async def get_schedule(self, schedule_id: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
         """Get a schedule by ID."""
         raise NotImplementedError
 
-    async def get_schedule_by_name(
-        self, name: str, user_id: Optional[str] = None
-    ) -> Optional[Dict[str, Any]]:
+    async def get_schedule_by_name(self, name: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
         """Get a schedule by name."""
         raise NotImplementedError
 
@@ -2164,9 +2159,7 @@ class AsyncBaseDb(ABC):
         """Update a schedule run record. SYSTEM CONTEXT — executor writes."""
         raise NotImplementedError
 
-    async def get_schedule_run(
-        self, run_id: str, user_id: Optional[str] = None
-    ) -> Optional[Dict[str, Any]]:
+    async def get_schedule_run(self, run_id: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
         """Get a schedule run by ID."""
         raise NotImplementedError
 

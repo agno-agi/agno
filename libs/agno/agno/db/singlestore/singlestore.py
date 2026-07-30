@@ -3048,4 +3048,3 @@ class SingleStoreDb(BaseDb):
         limit: Optional[int] = None,
     ) -> List[Dict[str, Any]]:
         raise NotImplementedError("Learning methods not yet implemented for SingleStoreDb")
-

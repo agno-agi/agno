@@ -326,3 +326,99 @@ class TestExecutorExecute:
         mock_db.update_schedule_run.assert_called()
         cancel_call = mock_db.update_schedule_run.call_args
         assert cancel_call[1]["status"] == "cancelled"
+
+
+class TestScheduleOwnerAttribution:
+    """The schedule owner -- not the payload, not the internal service -- decides
+    who a scheduled call runs as."""
+
+    @pytest.fixture
+    def executor(self):
+        return ScheduleExecutor(base_url="http://localhost:8000", internal_service_token="tok")
+
+    @staticmethod
+    def _schedule(**overrides):
+        from agno.db.schemas.scheduler import Schedule
+
+        defaults = {
+            "id": "sched-1",
+            "name": "nightly",
+            "cron_expr": "0 0 * * *",
+            "endpoint": "/agents/my-agent/runs",
+            "method": "POST",
+        }
+        defaults.update(overrides)
+        return Schedule(**defaults)
+
+    @staticmethod
+    async def _capture(executor, schedule):
+        """Run _call_endpoint against a stand-in client and return (headers, form)."""
+        captured = {}
+
+        class _Client:
+            is_closed = False
+
+            async def request(self, method, url, **kwargs):
+                captured["headers"] = kwargs.get("headers")
+                captured["data"] = kwargs.get("data")
+
+                class _Resp:
+                    status_code = 200
+                    text = "ok"
+
+                    @staticmethod
+                    def json():
+                        return {"run_id": "r1", "session_id": "s1", "status": "COMPLETED"}
+
+                return _Resp()
+
+        executor._client = _Client()
+        await executor._call_endpoint(schedule)
+        return captured
+
+    @pytest.mark.asyncio
+    async def test_payload_user_id_cannot_impersonate_the_owner(self, executor):
+        schedule = self._schedule(user_id="alice", payload={"message": "hi", "user_id": "victim"})
+        with patch.object(executor, "_background_run", new=AsyncMock(return_value={})) as bg:
+            await executor._call_endpoint(schedule)
+
+        form_payload = bg.await_args.args[3]
+        assert form_payload["user_id"] == "alice"
+
+    @pytest.mark.asyncio
+    async def test_unowned_schedule_sends_no_user_id(self, executor):
+        schedule = self._schedule(user_id=None, payload={"message": "hi", "user_id": "victim"})
+        with patch.object(executor, "_background_run", new=AsyncMock(return_value={})) as bg:
+            await executor._call_endpoint(schedule)
+
+        form_payload = bg.await_args.args[3]
+        assert "user_id" not in form_payload
+
+    @pytest.mark.asyncio
+    async def test_owner_header_is_sent_on_run_endpoints(self, executor):
+        from agno.os.auth import SCHEDULE_OWNER_HEADER
+
+        schedule = self._schedule(user_id="alice", payload={"message": "hi"})
+        with patch.object(executor, "_background_run", new=AsyncMock(return_value={})) as bg:
+            await executor._call_endpoint(schedule)
+
+        assert bg.await_args.args[2][SCHEDULE_OWNER_HEADER] == "alice"
+
+    @pytest.mark.asyncio
+    async def test_owner_header_is_sent_on_non_run_endpoints(self, executor):
+        """A schedule can name any endpoint, so the owner has to ride along there too."""
+        from agno.os.auth import SCHEDULE_OWNER_HEADER
+
+        schedule = self._schedule(user_id="alice", endpoint="/schedules/someone-elses", method="DELETE")
+        captured = await self._capture(executor, schedule)
+
+        assert captured["headers"][SCHEDULE_OWNER_HEADER] == "alice"
+
+    @pytest.mark.asyncio
+    async def test_unowned_schedule_sends_no_owner_header(self, executor):
+        from agno.os.auth import SCHEDULE_OWNER_HEADER
+
+        schedule = self._schedule(user_id=None, endpoint="/schedules/someone-elses", method="DELETE")
+        captured = await self._capture(executor, schedule)
+
+        assert SCHEDULE_OWNER_HEADER not in captured["headers"]

@@ -1160,9 +1160,7 @@ class RedisDb(BaseDb):
                     # Preserve created_at across re-runs.
                     existing_record = self._get_record("metrics", metrics_record["id"])
                     if existing_record:
-                        metrics_record["created_at"] = existing_record.get(
-                            "created_at", metrics_record["created_at"]
-                        )
+                        metrics_record["created_at"] = existing_record.get("created_at", metrics_record["created_at"])
 
                     success = self._store_record("metrics", metrics_record["id"], metrics_record)
                     if success:
@@ -1233,8 +1231,6 @@ class RedisDb(BaseDb):
         except Exception as e:
             log_error(f"Error getting metrics: {str(e)}")
             raise e
-
-    # -- Knowledge methods --
 
     # -- Knowledge methods --
     # Redis stores records as serialized dicts; we filter in Python. A row
@@ -2297,4 +2293,3 @@ class RedisDb(BaseDb):
         limit: Optional[int] = None,
     ) -> List[Dict[str, Any]]:
         raise NotImplementedError("Learning methods not yet implemented for RedisDb")
-

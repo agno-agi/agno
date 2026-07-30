@@ -1456,7 +1456,7 @@ class ValkeyDb(BaseDb):
             log_error(f"Error getting metrics starting date: {str(e)}")
             raise e
 
-    def calculate_metrics(self, user_isolation: bool = False) -> Optional[list[dict]]:
+    def calculate_metrics(self) -> Optional[list[dict]]:
         """Calculate metrics for all dates without complete metrics.
 
         Returns:
@@ -1507,9 +1507,7 @@ class ValkeyDb(BaseDb):
                 # calculate_date_metrics returns a LIST: one record per
                 # distinct user_id (plus the empty-string bucket for unowned
                 # sessions). Iterate and upsert each.
-                for metrics_record in calculate_date_metrics(
-                    date_to_process, sessions_for_date, user_isolation=user_isolation
-                ):
+                for metrics_record in calculate_date_metrics(date_to_process, sessions_for_date):
                     # Preserve created_at across re-runs.
                     existing_record = self._get_record("metrics", metrics_record["id"])
                     if existing_record:

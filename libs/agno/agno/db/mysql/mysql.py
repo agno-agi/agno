@@ -3076,7 +3076,6 @@ class MySQLDb(BaseDb):
     ) -> None:
         raise NotImplementedError("Learning methods not yet implemented for MySQLDb")
 
-
     def delete_learning(self, id: str) -> bool:
         raise NotImplementedError("Learning methods not yet implemented for MySQLDb")
 

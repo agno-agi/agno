@@ -38,6 +38,12 @@ def _default_scope_mappings() -> Dict[str, List[str]]:
 # work owner from a form-field ``user_id`` passed by the caller.
 INTERNAL_SCHEDULER_USER_ID: str = "__scheduler__"
 
+# Header the scheduler executor stamps with the schedule's owner. The internal
+# service token says *who is calling*; this says *whose work it is*, so routes
+# scope a scheduled call to the owner instead of running it unscoped. Only
+# honoured for callers that already authenticated with the internal token.
+SCHEDULE_OWNER_HEADER: str = "X-Schedule-Owner"
+
 INTERNAL_SERVICE_SCOPES: List[str] = [
     "agents:read",
     "agents:run",

@@ -66,17 +66,23 @@ def _calc_firestore():
     return calculate_date_metrics
 
 
+def _calc_valkey():
+    from agno.db.valkey.utils import calculate_date_metrics
+
+    return calculate_date_metrics
+
+
 BACKEND_CALCS: List[tuple] = [
     ("postgres", _calc_postgres),
     ("mysql", _calc_mysql),
     ("singlestore", _calc_singlestore),
     ("mongo", _calc_mongo),
-    # SQLite reference uses uuid IDs and ``int(time.time())`` timestamps;
-    # the backends below produce identical bucket counts and token metrics
-    # but use deterministic per-(date, user_id) string IDs and/or
-    # backend-specific date/timestamp shapes. They're tested by the looser
-    # "buckets-and-counts" assertion below instead of byte-parity.
+    # SQLite reference uses uuid IDs and ``int(time.time())`` timestamps; the
+    # backends below use deterministic per-(date, user_id) string IDs instead.
+    # The EPHEMERAL fields are stripped before comparison, so they still match
+    # byte for byte on everything that carries meaning.
     ("redis", _calc_redis),
+    ("valkey", _calc_valkey),
     ("dynamo", _calc_dynamo),
 ]
 
@@ -201,6 +207,36 @@ CASES = [
         },
     ),
     (
+        "null_session_data",
+        # A NULL session_data column reaches the helper as None.
+        {
+            "agent": [
+                {
+                    "user_id": "alice",
+                    "runs": [{"model": "gpt-5", "model_provider": "openai"}],
+                    "session_data": None,
+                },
+            ],
+            "team": [],
+            "workflow": [],
+        },
+    ),
+    (
+        "null_session_metrics",
+        # Sessions that never recorded token usage carry a NULL session_metrics.
+        {
+            "agent": [
+                {
+                    "user_id": "alice",
+                    "runs": [{"model": "gpt-5", "model_provider": "openai"}],
+                    "session_data": {"session_metrics": None},
+                },
+            ],
+            "team": [],
+            "workflow": [],
+        },
+    ),
+    (
         "multi_model_per_bucket",
         # Same user spans multiple models in one run set. Exercises the
         # ``model_counts`` -> ``model_metrics`` per-user nesting.
@@ -233,16 +269,13 @@ def _normalize(recs: List[dict]) -> Dict[str, dict]:
 
 @pytest.mark.parametrize("backend, get_calc", BACKEND_CALCS, ids=[b for b, _ in BACKEND_CALCS])
 @pytest.mark.parametrize("case_label, sessions_data", CASES, ids=[c for c, _ in CASES])
-def test_backend_matches_sqlite_reference(
-    backend: str, get_calc: Callable, case_label: str, sessions_data: dict
-):
+def test_backend_matches_sqlite_reference(backend: str, get_calc: Callable, case_label: str, sessions_data: dict):
     backend_calc = get_calc()
     target_date = date(2026, 1, 1)
     backend_recs = backend_calc(target_date, sessions_data)
     sqlite_recs = sqlite_calc(target_date, sessions_data)
     assert _normalize(backend_recs) == _normalize(sqlite_recs), (
-        f"backend={backend} case={case_label}: calculate_date_metrics drift "
-        f"from SQLite reference"
+        f"backend={backend} case={case_label}: calculate_date_metrics drift from SQLite reference"
     )
 
 
@@ -264,13 +297,9 @@ SURREAL_NUMERIC_FIELDS = (
 )
 
 
-@pytest.mark.parametrize(
-    "backend, get_calc", LOOSE_PARITY_BACKENDS, ids=[b for b, _ in LOOSE_PARITY_BACKENDS]
-)
+@pytest.mark.parametrize("backend, get_calc", LOOSE_PARITY_BACKENDS, ids=[b for b, _ in LOOSE_PARITY_BACKENDS])
 @pytest.mark.parametrize("case_label, sessions_data", CASES, ids=[c for c, _ in CASES])
-def test_loose_parity_buckets_and_counts_match_sqlite(
-    backend: str, get_calc, case_label: str, sessions_data: dict
-):
+def test_loose_parity_buckets_and_counts_match_sqlite(backend: str, get_calc, case_label: str, sessions_data: dict):
     """Backends that ship their own ID/date/timestamp shapes still need to
     produce the same per-user bucket set and the same counts/token metrics
     as the SQLite reference. We don't compare the ID or date field shapes

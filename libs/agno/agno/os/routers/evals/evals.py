@@ -281,6 +281,8 @@ def attach_routes(
                 await db.delete_eval_runs(eval_run_ids=request.eval_run_ids, **scope)
             else:
                 db.delete_eval_runs(eval_run_ids=request.eval_run_ids, **scope)
+        except HTTPException:
+            raise  # scoping and db lookup carry their own status
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Failed to delete eval runs: {e}")
 
@@ -346,6 +348,8 @@ def attach_routes(
                 )
             else:
                 eval_run = db.rename_eval_run(eval_run_id=eval_run_id, name=request.name, deserialize=False, **scope)
+        except HTTPException:
+            raise
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Failed to rename eval run: {e}")
 

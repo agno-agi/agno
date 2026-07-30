@@ -368,20 +368,22 @@ def remove_index_entries(
 # -- Metrics utils --
 
 
-def calculate_date_metrics(date_to_process: date, sessions_data: dict, user_isolation: bool = False) -> List[dict]:
+def calculate_date_metrics(date_to_process: date, sessions_data: dict) -> List[dict]:
     """Calculate metrics for the given date, bucketed per user_id.
 
-    Each session is attributed to its owning user when user_isolation is
-    enabled. Sessions without a user_id aggregate under the sentinel
-    empty-string bucket.
+    Each session is attributed to its owning user. Sessions without a user_id
+    aggregate under the sentinel empty-string bucket.
 
     Args:
         date_to_process (date): The date to calculate metrics for.
         sessions_data (dict): The sessions data.
-        user_isolation (bool): Whether to bucket metrics per user_id.
 
     Returns:
         List[dict]: A list of per-user metrics records.
+
+    Note:
+        The record id is deterministic per (date, user_id), so re-running the
+        calculation for the same day updates the same record.
     """
 
     def _empty_metric_record() -> Dict[str, Any]:
@@ -405,7 +407,6 @@ def calculate_date_metrics(date_to_process: date, sessions_data: dict, user_isol
                 "reasoning_tokens": 0,
             },
             "model_counts": {},
-            "user_ids": set(),
         }
 
     session_types = [
@@ -420,11 +421,8 @@ def calculate_date_metrics(date_to_process: date, sessions_data: dict, user_isol
         sessions = sessions_data.get(session_type, []) or []
 
         for session in sessions:
-            session_user_id = session.get("user_id") or ""
-            bucket_key = session_user_id if user_isolation else ""
+            bucket_key = session.get("user_id") or ""
             bucket = per_user.setdefault(bucket_key, _empty_metric_record())
-            if session_user_id:
-                bucket["user_ids"].add(session_user_id)
             bucket[sessions_count_key] += 1
 
             runs = session.get("runs") or []
@@ -435,7 +433,7 @@ def calculate_date_metrics(date_to_process: date, sessions_data: dict, user_isol
                     key = f"{model_id}:{model_provider}"
                     bucket["model_counts"][key] = bucket["model_counts"].get(key, 0) + 1
 
-            session_metrics = (session.get("session_data") or {}).get("session_metrics", {})
+            session_metrics = (session.get("session_data") or {}).get("session_metrics", {}) or {}
             for field in bucket["token_metrics"]:
                 bucket["token_metrics"][field] += session_metrics.get(field, 0)
 
@@ -449,8 +447,9 @@ def calculate_date_metrics(date_to_process: date, sessions_data: dict, user_isol
             model_id, model_provider = model.rsplit(":", 1)
             model_metrics.append({"model_id": model_id, "model_provider": model_provider, "count": count})
 
-        users_count = len(bucket["user_ids"])
-        # Create a deterministic ID based on date and user. This simplifies avoiding duplicates
+        users_count = 0 if user_id == "" else 1
+        # Deterministic per-(date, user) ID so re-running the calculation
+        # updates the same record rather than producing duplicates.
         metric_id = f"{date_to_process.isoformat()}_{user_id}_daily"
 
         records.append(

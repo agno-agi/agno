@@ -173,10 +173,7 @@ def test_create_table_with_unique_constraints(postgres_db, mock_session):
 
     # Verify the constraint has the correct columns
     for constraint in table.constraints:
-        if (
-            isinstance(constraint, UniqueConstraint)
-            and constraint.name == "test_metrics_uq_metrics_user_date_period"
-        ):
+        if isinstance(constraint, UniqueConstraint) and constraint.name == "test_metrics_uq_metrics_user_date_period":
             col_names = [col.name for col in constraint.columns]
             assert "user_id" in col_names
             assert "date" in col_names

@@ -966,7 +966,6 @@ class GcsJsonDb(BaseDb):
             raise e
 
     # -- Knowledge methods --
-    # -- Knowledge methods --
     # GCS-backed JSON storage filters in Python: a row is visible if its
     # ``user_id`` matches the caller OR is unset (None / missing).
 
@@ -1047,9 +1046,7 @@ class GcsJsonDb(BaseDb):
 
             # Owner scoping: drop rows the caller isn't allowed to see.
             if user_id is not None:
-                knowledge_items = [
-                    item for item in knowledge_items if self._knowledge_item_is_visible(item, user_id)
-                ]
+                knowledge_items = [item for item in knowledge_items if self._knowledge_item_is_visible(item, user_id)]
 
             total_count = len(knowledge_items)
 
@@ -1952,4 +1949,3 @@ class GcsJsonDb(BaseDb):
         limit: Optional[int] = None,
     ) -> List[Dict[str, Any]]:
         raise NotImplementedError("Learning methods not yet implemented for GcsJsonDb")
-

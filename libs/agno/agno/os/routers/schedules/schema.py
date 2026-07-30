@@ -7,6 +7,11 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 
 _NAME_PATTERN = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9 ._-]*$")
 
+# Matches a run endpoint and captures resource type + ID. Shared by the
+# schedules router and the executor. ``\Z`` rather than ``$`` so a trailing
+# newline can't slip past the run-endpoint check.
+RUN_ENDPOINT_RE = re.compile(r"^/(agents|teams|workflows)/([^/]+)/runs/?\Z")
+
 
 class ScheduleCreate(BaseModel):
     name: str = Field(..., max_length=255)
@@ -42,6 +47,10 @@ class ScheduleCreate(BaseModel):
             raise ValueError("Endpoint must start with '/'")
         if "://" in v:
             raise ValueError("Endpoint must be a path, not a full URL")
+        # A control character makes the URL unsendable, so the schedule would be
+        # stored only to fail every time the poller reaches it.
+        if any(c.isspace() or ord(c) < 32 for c in v):
+            raise ValueError("Endpoint must not contain whitespace or control characters")
         return v
 
 
@@ -81,6 +90,8 @@ class ScheduleUpdate(BaseModel):
                 raise ValueError("Endpoint must start with '/'")
             if "://" in v:
                 raise ValueError("Endpoint must be a path, not a full URL")
+            if any(c.isspace() or ord(c) < 32 for c in v):
+                raise ValueError("Endpoint must not contain whitespace or control characters")
         return v
 
     @model_validator(mode="after")

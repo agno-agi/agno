@@ -1507,8 +1507,6 @@ class FirestoreDb(BaseDb):
             raise e
 
     # -- Knowledge methods --
-
-    # -- Knowledge methods --
     # Firestore lacks a native OR predicate across "user_id == X OR user_id
     # IS NULL", so we post-filter in Python. A row is visible if its
     # ``user_id`` matches the caller OR is unset (None / missing). When
@@ -2569,4 +2567,3 @@ class FirestoreDb(BaseDb):
         limit: Optional[int] = None,
     ) -> List[Dict[str, Any]]:
         raise NotImplementedError("Learning methods not yet implemented for FirestoreDb")
-

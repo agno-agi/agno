@@ -5137,13 +5137,7 @@ class PostgresDb(BaseDb):
                 offset = (page - 1) * limit
 
                 # Get paginated results
-                stmt = (
-                    select(table)
-                    .where(base_filter)
-                    .order_by(table.c.created_at.desc())
-                    .limit(limit)
-                    .offset(offset)
-                )
+                stmt = select(table).where(base_filter).order_by(table.c.created_at.desc()).limit(limit).offset(offset)
                 results = sess.execute(stmt).fetchall()
                 return [dict(row._mapping) for row in results], total_count
         except Exception as e:

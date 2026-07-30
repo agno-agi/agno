@@ -766,14 +766,25 @@ class Knowledge(RemoteKnowledge):
     def remove_all_content(self, user_id: Optional[str] = None):
         contents, _ = self.get_content(user_id=user_id)
         for content in contents:
-            if content.id is not None:
+            if content.id is not None and not self._content_is_shared(content, user_id):
                 self.remove_content_by_id(content.id, user_id=user_id)
 
     async def aremove_all_content(self, user_id: Optional[str] = None):
         contents, _ = await self.aget_content(user_id=user_id)
         for content in contents:
-            if content.id is not None:
+            if content.id is not None and not self._content_is_shared(content, user_id):
                 await self.aremove_content_by_id(content.id, user_id=user_id)
+
+    @staticmethod
+    def _content_is_shared(content: Content, user_id: Optional[str]) -> bool:
+        """Whether ``content`` is shared (unowned) content the caller may read but not delete.
+
+        Reads surface a scoped caller's own rows *plus* unowned ones, so a bulk
+        delete that reused that list would destroy org-wide content — including
+        its vectors, which are removed without an owner filter. An unscoped
+        caller (admin / isolation off) still deletes everything.
+        """
+        return user_id is not None and content.user_id is None
 
     def remove_vector_by_id(self, id: str) -> bool:
         from agno.vectordb import VectorDb
@@ -1445,6 +1456,7 @@ class Knowledge(RemoteKnowledge):
                     metadata=content.metadata,
                     description=content.description,
                     reader=content.reader,
+                    user_id=content.user_id,
                 )
                 file_content.content_hash = self._build_content_hash(file_content)
                 file_content.id = generate_id(file_content.content_hash)
@@ -1530,6 +1542,7 @@ class Knowledge(RemoteKnowledge):
                     metadata=content.metadata,
                     description=content.description,
                     reader=content.reader,
+                    user_id=content.user_id,
                 )
                 file_content.content_hash = self._build_content_hash(file_content)
                 file_content.id = generate_id(file_content.content_hash)
@@ -2083,6 +2096,7 @@ class Knowledge(RemoteKnowledge):
                     type="Topic",
                 ),
                 topics=[topic],
+                user_id=content.user_id,
             )
             content.content_hash = self._build_content_hash(content)
             content.id = generate_id(content.content_hash)
@@ -2144,6 +2158,7 @@ class Knowledge(RemoteKnowledge):
                     type="Topic",
                 ),
                 topics=[topic],
+                user_id=content.user_id,
             )
             content.content_hash = self._build_content_hash(content)
             content.id = generate_id(content.content_hash)
@@ -2255,8 +2270,16 @@ class Knowledge(RemoteKnowledge):
           so the same content inserted with different metadata produces distinct hashes
           (this allows `upsert=False` inserts of the same document with different
           metadata to coexist instead of collapsing onto each other).
+        - When the content carries an owner, the owner leads the hash so two users
+          uploading the same file name get distinct rows instead of one user's upload
+          landing on — and taking over — the other's.
         """
         hash_parts = []
+        # Owner first: the id derived from this hash is the row key, so leaving the
+        # owner out lets a second uploader overwrite the first one's row. Unowned
+        # content (isolation off, admin/system uploads) hashes exactly as before.
+        if content.user_id:
+            hash_parts.append(content.user_id)
         if content.name:
             hash_parts.append(content.name)
         if content.description:

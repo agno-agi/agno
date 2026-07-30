@@ -2980,4 +2980,3 @@ class DynamoDb(BaseDb):
         limit: Optional[int] = None,
     ) -> List[Dict[str, Any]]:
         raise NotImplementedError("Learning methods not yet implemented for DynamoDb")
-

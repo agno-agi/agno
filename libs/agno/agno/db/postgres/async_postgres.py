@@ -3741,13 +3741,7 @@ class AsyncPostgresDb(AsyncBaseDb):
                 offset = (page - 1) * limit
 
                 # Get paginated results
-                stmt = (
-                    select(table)
-                    .where(base_filter)
-                    .order_by(table.c.created_at.desc())
-                    .limit(limit)
-                    .offset(offset)
-                )
+                stmt = select(table).where(base_filter).order_by(table.c.created_at.desc()).limit(limit).offset(offset)
                 result = await sess.execute(stmt)
                 return [dict(row._mapping) for row in result.fetchall()], total_count
         except Exception as e:

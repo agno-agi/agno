@@ -14,9 +14,9 @@ if TYPE_CHECKING:
 
 from agno.db.base import AsyncBaseDb, SessionType
 from agno.db.mongo.utils import (
+    abulk_upsert_metrics,
     apply_pagination,
     apply_sorting,
-    bulk_upsert_metrics,
     calculate_date_metrics,
     create_collection_indexes_async,
     deserialize_cultural_knowledge_from_db,
@@ -1869,7 +1869,7 @@ class AsyncMongoDb(AsyncBaseDb):
                 metrics_records.extend(calculate_date_metrics(date_to_process, sessions_for_date))
 
             if metrics_records:
-                results = bulk_upsert_metrics(collection, metrics_records)  # type: ignore
+                results = await abulk_upsert_metrics(collection, metrics_records)
 
             return results
 
@@ -1928,8 +1928,6 @@ class AsyncMongoDb(AsyncBaseDb):
         except Exception as e:
             log_error(f"Error getting metrics: {str(e)}")
             raise e
-
-    # -- Knowledge methods --
 
     # -- Knowledge methods --
     # The owner-scope predicate is consistently "rows I own, plus rows nobody

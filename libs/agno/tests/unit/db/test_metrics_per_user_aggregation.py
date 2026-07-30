@@ -172,6 +172,4 @@ class TestRecordShape:
         assert single_user_record["completed"] is True
 
     def test_has_model_metrics(self, single_user_record):
-        assert single_user_record["model_metrics"] == [
-            {"model_id": "gpt-4", "model_provider": "OpenAI", "count": 3}
-        ]
+        assert single_user_record["model_metrics"] == [{"model_id": "gpt-4", "model_provider": "OpenAI", "count": 3}]

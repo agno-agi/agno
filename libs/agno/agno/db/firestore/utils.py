@@ -5,7 +5,6 @@ import json
 import time
 from datetime import date, datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
-from uuid import uuid4
 
 from agno.db.firestore.schemas import get_collection_indexes
 from agno.db.schemas.culture import CulturalKnowledge

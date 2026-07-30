@@ -472,6 +472,9 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Union[Knowledge, 
         existing = await knowledge.aget_content_by_id(content_id=content_id, user_id=scoped_user_id)
         if existing is None:
             raise HTTPException(status_code=404, detail=f"Content not found: {content_id}")
+        # Non-admins can read shared (unowned) content but not modify it.
+        if scoped_user_id is not None and existing.user_id is None:
+            raise HTTPException(status_code=403, detail="Cannot modify shared content")
 
         content = Content(
             id=content_id,
@@ -700,6 +703,9 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Union[Knowledge, 
             existing = await knowledge.aget_content_by_id(content_id=content_id, user_id=scoped_user_id)
             if existing is None:
                 raise HTTPException(status_code=404, detail=f"Content not found: {content_id}")
+            # Non-admins can read shared (unowned) content but not delete it.
+            if scoped_user_id is not None and existing.user_id is None:
+                raise HTTPException(status_code=403, detail="Cannot delete shared content")
             await knowledge.aremove_content_by_id(content_id=content_id, user_id=scoped_user_id)
 
         return ContentResponseSchema(
@@ -731,12 +737,9 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Union[Knowledge, 
             headers = {"Authorization": f"Bearer {auth_token}"} if auth_token else None
             return await knowledge.delete_all_content(headers=headers)
 
-        # Bulk delete is scoped to the caller's rows + shared rows. An admin
-        # bulk-delete clears EVERYTHING (no scoping). A non-admin's bulk
-        # delete also clears shared rows — that's deliberate at the DB layer
-        # but may be tighter than what we want here. Route-level policy
-        # (e.g. "only admin can delete shared") is a follow-up; for now this
-        # matches the existing read/list semantics for symmetry.
+        # An admin bulk-delete clears EVERYTHING (no scoping). A non-admin's
+        # clears only their own rows: shared (unowned) content is readable but
+        # not deletable, same rule the single-item routes enforce with a 403.
         scoped_user_id = get_scoped_user_id(request)
         await knowledge.aremove_all_content(user_id=scoped_user_id)
         return "success"
