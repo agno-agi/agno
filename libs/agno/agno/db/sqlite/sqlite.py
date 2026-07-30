@@ -5768,6 +5768,31 @@ class SqliteDb(BaseDb):
             log_debug(f"Error listing skills: {e}")
             return [], 0
 
+    def get_skills_with_content(
+        self,
+        names: Optional[List[str]] = None,
+        user_id: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        try:
+            table = self._get_table(table_type="skills")
+            if table is None:
+                return []
+            with self.Session() as sess:
+                # The loader's read: every column, uncapped, name-ordered so the loaded
+                # mapping and the prompt built from it stay stable across requests.
+                stmt = select(table).order_by(table.c.name)
+                if names is not None:
+                    stmt = stmt.where(table.c.name.in_(names))
+                if user_id is not None:
+                    stmt = stmt.where(table.c.user_id == user_id)
+                results = sess.execute(stmt).fetchall()
+                return [dict(row._mapping) for row in results]
+        except Exception as e:
+            # Propagated, not swallowed: a refreshing caller must tell a failed read
+            # from an empty table, or an outage would wipe the loaded skill set.
+            log_error(f"Error getting skills with content: {e}")
+            raise e
+
     def create_skill(self, skill_data: Dict[str, Any]) -> Dict[str, Any]:
         try:
             table = self._get_table(table_type="skills", create_table_if_not_found=True)

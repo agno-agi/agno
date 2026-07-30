@@ -1511,6 +1511,18 @@ class BaseDb(ABC):
         """
         raise NotImplementedError
 
+    def get_skills_with_content(
+        self,
+        names: Optional[List[str]] = None,
+        user_id: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        """Get full skill rows, content included, for every skill or a named subset.
+
+        The loader's read: unlike get_skills it selects every column and is uncapped.
+        Errors propagate rather than returning [], so a refreshing caller can tell a
+        failed read from an empty table and keep its last good skills."""
+        raise NotImplementedError
+
     def create_skill(self, skill_data: Dict[str, Any]) -> Dict[str, Any]:
         """Create a new skill. Raises SkillError if a skill with the same name exists."""
         raise NotImplementedError
@@ -2543,6 +2555,18 @@ class AsyncBaseDb(ABC):
         Returns:
             Tuple of (skills, total_count)
         """
+        raise NotImplementedError
+
+    async def get_skills_with_content(
+        self,
+        names: Optional[List[str]] = None,
+        user_id: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        """Get full skill rows, content included, for every skill or a named subset.
+
+        The loader's read: unlike get_skills it selects every column and is uncapped.
+        Errors propagate rather than returning [], so a refreshing caller can tell a
+        failed read from an empty table and keep its last good skills."""
         raise NotImplementedError
 
     async def create_skill(self, skill_data: Dict[str, Any]) -> Dict[str, Any]:

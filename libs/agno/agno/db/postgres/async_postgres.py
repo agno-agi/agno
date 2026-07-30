@@ -4436,6 +4436,31 @@ class AsyncPostgresDb(AsyncBaseDb):
             log_debug(f"Error listing skills: {e}")
             return [], 0
 
+    async def get_skills_with_content(
+        self,
+        names: Optional[List[str]] = None,
+        user_id: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        try:
+            table = await self._get_table(table_type="skills")
+            if table is None:
+                return []
+            async with self.async_session_factory() as sess:
+                # The loader's read: every column, uncapped, name-ordered so the loaded
+                # mapping and the prompt built from it stay stable across requests.
+                stmt = select(table).order_by(table.c.name)
+                if names is not None:
+                    stmt = stmt.where(table.c.name.in_(names))
+                if user_id is not None:
+                    stmt = stmt.where(table.c.user_id == user_id)
+                result = await sess.execute(stmt)
+                return [dict(row._mapping) for row in result.fetchall()]
+        except Exception as e:
+            # Propagated, not swallowed: a refreshing caller must tell a failed read
+            # from an empty table, or an outage would wipe the loaded skill set.
+            log_error(f"Error getting skills with content: {e}")
+            raise e
+
     async def create_skill(self, skill_data: Dict[str, Any]) -> Dict[str, Any]:
         try:
             table = await self._get_table(table_type="skills", create_table_if_not_found=True)
