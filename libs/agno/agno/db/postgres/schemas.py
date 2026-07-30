@@ -308,7 +308,9 @@ JOBS_TABLE_SCHEMA = {
     "_partial_unique_indexes": [
         {
             "name": "uq_jobs_idempotency_key",
-            "columns": ["idempotency_key"],
+            # user_id scopes the dedup namespace: a second tenant reusing a
+            # key must not attach to (and observe) the first tenant's run
+            "columns": ["idempotency_key", "user_id"],
             "where": "idempotency_key IS NOT NULL",
         }
     ],

@@ -4120,12 +4120,16 @@ class Workflow:
         workflow_run_response.metrics = WorkflowMetrics(steps={})
         workflow_run_response.metrics.start_timer()
 
-        # Store PENDING response immediately
-        workflow_session.upsert_run(run=workflow_run_response)
-        if self._has_async_db():
-            await self.asave_session(session=workflow_session)
-        else:
-            self.save_session(session=workflow_session)
+        # Store PENDING response immediately. Skip for the workflow-agent case:
+        # _aexecute_workflow_agent persists the real run (reusing this run id),
+        # so pre-persisting an empty outer run here would leave a duplicate the
+        # UI renders as "0 out of 4 steps done".
+        if self.agent is None:
+            workflow_session.upsert_run(run=workflow_run_response)
+            if self._has_async_db():
+                await self.asave_session(session=workflow_session)
+            else:
+                self.save_session(session=workflow_session)
 
         # Prepare execution input
         inputs = WorkflowExecutionInput(
@@ -4146,31 +4150,27 @@ class Workflow:
 
             try:
                 async with background_run_slot(run_id=workflow_run_response.run_id):
-                    # Update status to RUNNING and save (atomic helper: row-locked
-                    # patch when the DB supports it, fresh-read + save otherwise)
-                    workflow_run_response.status = RunStatus.running
-                    await apersist_run_transition(self, "workflow", session_id, workflow_run_response, user_id=user_id)
-
                     if self.agent is not None:
-                        agent_result = await self._aexecute_workflow_agent(
+                        # WorkflowAgent case: _aexecute_workflow_agent owns the
+                        # run rows and reuses this run id, so there is no empty
+                        # outer run to transition or finalize. Delegating cleanly
+                        # (no pre-persist, no safety-net upsert) yields a single
+                        # run per turn instead of an extra "0 out of 4 steps done".
+                        await self._aexecute_workflow_agent(
                             user_input=input,  # type: ignore
                             execution_input=inputs,
                             run_context=run_context,
                             stream=False,
                             **kwargs,
                         )
-                        # Safety net: the polled 202 run_id must reach a
-                        # terminal state even if an internal path persisted the
-                        # answer under a different run id
-                        if getattr(agent_result, "run_id", None) != workflow_run_response.run_id:
-                            workflow_run_response.status = getattr(agent_result, "status", None) or RunStatus.completed
-                            workflow_run_response.content = getattr(agent_result, "content", None)
-                            workflow_session.upsert_run(run=workflow_run_response)
-                            if self._has_async_db():
-                                await self.asave_session(session=workflow_session)
-                            else:
-                                self.save_session(session=workflow_session)
                     else:
+                        # Update status to RUNNING and save (atomic helper:
+                        # row-locked patch when the DB supports it, fresh-read +
+                        # save otherwise)
+                        workflow_run_response.status = RunStatus.running
+                        await apersist_run_transition(
+                            self, "workflow", session_id, workflow_run_response, user_id=user_id
+                        )
                         await self._aexecute(
                             session_id=session_id,
                             user_id=user_id,
@@ -4209,7 +4209,7 @@ class Workflow:
                     session_id,
                     workflow_run_response,
                     user_id=user_id,
-                    extra_fields={"content": workflow_run_response.content},
+                    full_run=True,
                 )
 
         # Create and start asyncio task
@@ -4433,7 +4433,7 @@ class Workflow:
                     session_id,
                     workflow_run_response,
                     user_id=user_id,
-                    extra_fields={"content": workflow_run_response.content},
+                    full_run=True,
                 )
             finally:
                 if slot_held:
@@ -4652,7 +4652,9 @@ class Workflow:
                 # Persist ERROR status
                 try:
                     workflow_run_response.status = RunStatus.error
-                    await apersist_run_transition(self, "workflow", session_id, workflow_run_response, user_id=user_id)
+                    await apersist_run_transition(
+                        self, "workflow", session_id, workflow_run_response, user_id=user_id, full_run=True
+                    )
                 except Exception:
                     log_error(
                         f"Failed to persist error state for background stream workflow run {run_id}", exc_info=True
@@ -4869,8 +4871,11 @@ class Workflow:
 
         log_debug(f"Executing workflow agent with streaming - input: {agent_input}...")
 
-        # Create a workflow run response upfront for potential direct answer (will be used only if workflow is not executed)
-        run_id = str(uuid4())
+        # Create a workflow run response upfront for potential direct answer (will be used only if workflow is not executed).
+        # Reuse the caller's run id so a direct answer IS the polled run (the
+        # background path no longer pre-persists an empty outer run for the
+        # workflow-agent case, so there is no placeholder to merge with).
+        run_id = run_context.run_id or str(uuid4())
         direct_reply_run_response = WorkflowRunOutput(
             run_id=run_id,
             input=execution_input.input,
@@ -5259,8 +5264,11 @@ class Workflow:
 
         log_debug(f"Executing async workflow agent with streaming - input: {agent_input}...")
 
-        # Create a workflow run response upfront for potential direct answer (will be used only if workflow is not executed)
-        run_id = str(uuid4())
+        # Create a workflow run response upfront for potential direct answer (will be used only if workflow is not executed).
+        # Reuse the caller's run id so a direct answer IS the polled run (the
+        # background path no longer pre-persists an empty outer run for the
+        # workflow-agent case, so there is no placeholder to merge with).
+        run_id = run_context.run_id or str(uuid4())
         direct_reply_run_response = WorkflowRunOutput(
             run_id=run_id,
             input=execution_input.input,

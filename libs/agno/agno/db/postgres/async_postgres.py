@@ -3971,6 +3971,7 @@ class AsyncPostgresDb(AsyncBaseDb):
         run_id: str,
         fields: Dict[str, Any],
         expected_attempt: Optional[int] = None,
+        user_id: Optional[str] = None,
     ) -> bool:
         """Atomically patch fields of ONE run inside the session's runs list.
 
@@ -3992,7 +3993,10 @@ class AsyncPostgresDb(AsyncBaseDb):
             async with self.async_session_factory() as sess:
                 async with sess.begin():
                     result = await sess.execute(
-                        select(table.c.runs).where(table.c.session_id == session_id).with_for_update()
+                        select(table.c.runs)
+                        .where(table.c.session_id == session_id)
+                        .where((table.c.user_id == user_id) | (table.c.user_id.is_(None)))
+                        .with_for_update()
                     )
                     row = result.fetchone()
                     if row is None or not row[0]:
@@ -4015,13 +4019,18 @@ class AsyncPostgresDb(AsyncBaseDb):
                             await sess.execute(
                                 update(table)
                                 .where(table.c.session_id == session_id)
+                                .where((table.c.user_id == user_id) | (table.c.user_id.is_(None)))
                                 .values(runs=runs, updated_at=int(time.time()))
                             )
                             return True
                     return False
         except Exception as e:
-            log_debug(f"Error updating run in session: {e}")
-            return False
+            # Do NOT collapse unexpected errors into False: the caller treats a
+            # False under a requested fence as final (no fallback), and a
+            # transient DB error must instead surface as "primitive
+            # unavailable" so the terminal state still gets persisted somehow
+            log_warning(f"Error updating run in session (falling back): {e}")
+            raise
 
     async def enqueue_job(self, job: Dict[str, Any], max_depth: int = 0) -> Dict[str, Any]:
         """Insert an accepted run job.
@@ -4037,6 +4046,11 @@ class AsyncPostgresDb(AsyncBaseDb):
         table = await self._get_table(table_type="jobs", create_table_if_not_found=True)
         if table is None:
             raise RuntimeError("Failed to get or create job queue table")
+        # Empty-string keys are "no key": the falsy pre-check would skip dedup
+        # while the partial-unique index still covered '', turning the second
+        # empty-header submit into an IntegrityError -> 500
+        if not job.get("idempotency_key"):
+            job = {**job, "idempotency_key": None}
         try:
             async with self.async_session_factory() as sess:
                 async with sess.begin():
@@ -4044,7 +4058,10 @@ class AsyncPostgresDb(AsyncBaseDb):
                     # must return the existing run even when the queue is full
                     if job.get("idempotency_key"):
                         result = await sess.execute(
-                            select(table).where(table.c.idempotency_key == job["idempotency_key"])
+                            select(table).where(
+                                table.c.idempotency_key == job["idempotency_key"],
+                                table.c.user_id == job.get("user_id"),
+                            )
                         )
                         row = result.fetchone()
                         if row is not None:
@@ -4064,7 +4081,12 @@ class AsyncPostgresDb(AsyncBaseDb):
                 raise
             # Race on the partial-unique idempotency index: return the winner
             async with self.async_session_factory() as sess:
-                result = await sess.execute(select(table).where(table.c.idempotency_key == job["idempotency_key"]))
+                result = await sess.execute(
+                    select(table).where(
+                        table.c.idempotency_key == job["idempotency_key"],
+                        table.c.user_id == job.get("user_id"),
+                    )
+                )
                 row = result.fetchone()
                 if row is not None:
                     return {"accepted": False, "reason": "duplicate", "job": dict(row._mapping)}

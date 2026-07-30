@@ -12,7 +12,7 @@ class FakeAsyncDb:
         self.result = result
         self.calls = []
 
-    async def update_run_in_session(self, session_id, run_id, fields, expected_attempt=None):
+    async def update_run_in_session(self, session_id, run_id, fields, expected_attempt=None, user_id=None):
         self.calls.append({"session_id": session_id, "run_id": run_id, "fields": fields, "attempt": expected_attempt})
         return self.result
 
@@ -22,7 +22,7 @@ class FakeSyncDb:
         self.result = result
         self.calls = []
 
-    def update_run_in_session(self, session_id, run_id, fields, expected_attempt=None):
+    def update_run_in_session(self, session_id, run_id, fields, expected_attempt=None, user_id=None):
         self.calls.append({"fields": fields, "attempt": expected_attempt})
         return self.result
 
@@ -94,7 +94,7 @@ class TestFenceFinality:
         from agno.run.status_persist import apersist_run_transition
 
         class FencingDb:
-            async def update_run_in_session(self, session_id, run_id, fields, expected_attempt=None):
+            async def update_run_in_session(self, session_id, run_id, fields, expected_attempt=None, user_id=None):
                 return False  # fence rejected: newer attempt owns the row
 
         saves = []
@@ -125,7 +125,7 @@ class TestFenceFinality:
         from agno.run.status_persist import apersist_run_status, fallback_allowed
 
         class NoRowDb:
-            async def update_run_in_session(self, session_id, run_id, fields, expected_attempt=None):
+            async def update_run_in_session(self, session_id, run_id, fields, expected_attempt=None, user_id=None):
                 return False  # run not in session yet
 
         class FakeAgent:
@@ -149,3 +149,66 @@ class TestFenceFinality:
         result = await apersist_run_status(FakeAgent(), "agent", "s1", "r1", {"status": "error"})
         assert result is None
         assert fallback_allowed(result, 1) is True, "no atomic primitive: fallback is the only option"
+
+
+class TestGenerationStamping:
+    @pytest.mark.asyncio
+    async def test_stamped_generation_fences_zombie(self):
+        """Attempt 2 stamps queue_attempt=2 at claim; attempt 1's late ERROR
+        write (expected_attempt=1) must be rejected, not stamped vacuously."""
+        from agno.run.base import RunStatus
+        from agno.run.status_persist import apersist_run_status, fallback_allowed
+
+        stored = {"queue_attempt": None, "status": "running"}
+
+        class Db:
+            async def update_run_in_session(self, session_id, run_id, fields, expected_attempt=None, user_id=None):
+                if (
+                    expected_attempt is not None
+                    and stored["queue_attempt"] is not None
+                    and stored["queue_attempt"] > expected_attempt
+                ):
+                    return False
+                stored.update(fields)
+                if expected_attempt is not None:
+                    stored["queue_attempt"] = expected_attempt
+                return True
+
+        class FakeAgent:
+            db = Db()
+
+        # Attempt 2 claims and stamps
+        r = await apersist_run_status(FakeAgent(), "agent", "s1", "r1", {"queue_attempt": 2}, expected_attempt=2)
+        assert r is True and stored["queue_attempt"] == 2
+
+        # Attempt 1's zombie tries its terminal write
+        r = await apersist_run_status(
+            FakeAgent(), "agent", "s1", "r1", {"status": RunStatus.error.value}, expected_attempt=1
+        )
+        assert r is False, "zombie must be fenced by the stamped generation"
+        assert fallback_allowed(r, 1) is False
+        assert stored["status"] == "running", "zombie write must not land"
+
+
+class TestPreparedRunSerializes:
+    def test_prepared_agent_run_round_trips(self):
+        """The PENDING row aprepare builds must survive to_dict: a raw-string
+        input made it raise inside the session save, so the row never landed
+        (pollers 404'd and the attempt stamp found no run)."""
+        from agno.run.agent import RunInput, RunOutput
+        from agno.run.base import RunStatus
+
+        run = RunOutput(run_id="r1", session_id="s1", input=RunInput(input_content="hello"), status=RunStatus.pending)
+        d = run.to_dict()
+        assert d["input"]["input_content"] == "hello"
+        assert RunOutput.from_dict(d).run_id == "r1"
+
+    def test_prepared_team_run_round_trips(self):
+        from agno.run.base import RunStatus
+        from agno.run.team import TeamRunInput, TeamRunOutput
+
+        run = TeamRunOutput(
+            run_id="r1", session_id="s1", input=TeamRunInput(input_content="hello"), status=RunStatus.pending
+        )
+        d = run.to_dict()
+        assert d["input"]["input_content"] == "hello"

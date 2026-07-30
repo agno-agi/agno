@@ -92,6 +92,8 @@ class QueueConfig:
     # At most this many executions ever, under any failure mode (reclaim
     # included). 1 = a crashed run is failed visibly, never silently re-run.
     max_attempts: int = 1
+    # BASE retry delay: attempt N waits up to base * 2**(N-1) with full
+    # jitter (capped at 10x base) - see QueueWorker._retry_delay
     retry_delay_seconds: int = 30
     # Per-run execution timeout enforced by the worker; None disables.
     timeout_seconds: Optional[int] = 3600
@@ -110,3 +112,21 @@ class QueueConfig:
     def __post_init__(self) -> None:
         if self.db is not None and not self.durable:
             raise ValueError("QueueConfig.db requires durable=True (a queue store implies a durable queue)")
+        # Numeric sanity: silently-broken configs must fail at construction,
+        # not as mysterious runtime behavior
+        if self.max_attempts < 1:
+            raise ValueError("QueueConfig.max_attempts must be >= 1 (every run needs at least one attempt)")
+        if self.poll_interval <= 0:
+            raise ValueError("QueueConfig.poll_interval must be > 0 seconds")
+        if self.lock_grace_seconds < 3:
+            # Heartbeats fire every lock_grace/3: below ~3s the worker races
+            # its own heartbeat and reclaims its own healthy jobs
+            raise ValueError("QueueConfig.lock_grace_seconds must be >= 3 (heartbeats fire at lock_grace/3)")
+        if self.retry_delay_seconds < 0:
+            raise ValueError("QueueConfig.retry_delay_seconds must be >= 0 (0 = no backoff)")
+        if self.max_queue_depth < 0:
+            raise ValueError("QueueConfig.max_queue_depth must be >= 0 (0 = unbounded)")
+        if self.retention_seconds <= 0:
+            raise ValueError("QueueConfig.retention_seconds must be > 0")
+        if self.timeout_seconds is not None and self.timeout_seconds <= 0:
+            raise ValueError("QueueConfig.timeout_seconds must be > 0 when set (None = no timeout)")

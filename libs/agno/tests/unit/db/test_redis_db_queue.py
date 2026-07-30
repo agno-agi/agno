@@ -189,3 +189,72 @@ class TestWorkerIntegration:
         claimed = await store.claim_job("w1")
         assert claimed["id"] == "r1"
         assert await store.complete_job("r1", "w1", claimed["attempt"], "completed")
+
+
+class TestEnqueueAtomicity:
+    def test_orphaned_idempotency_key_is_self_healed(self, db):
+        """A dangling idem key (dual-write crash) must not 409-wedge the key:
+        the next submit with that key takes it over and enqueues."""
+        db.redis_client.set(db._q_key("idem:-:k1"), "ghost-job-id", ex=86400)
+        result = db.enqueue_job(make_job("r1", idempotency_key="k1"))
+        assert result["accepted"] is True
+        # Key now points at the real job
+        assert db._q_load_job("r1") is not None
+        again = db.enqueue_job(make_job("r2", idempotency_key="k1"))
+        assert again["accepted"] is False and again["reason"] == "duplicate"
+        assert again["job"]["id"] == "r1"
+
+    def test_duplicate_returns_existing_job(self, db):
+        db.enqueue_job(make_job("r1", idempotency_key="k2"))
+        result = db.enqueue_job(make_job("r2", idempotency_key="k2"))
+        assert result["accepted"] is False and result["reason"] == "duplicate"
+        assert result["job"]["id"] == "r1"
+
+
+class TestHeartbeatAtomicity:
+    def test_heartbeat_keeps_running_membership(self, db):
+        """The old flow zrem'd inside the MULTI and re-added after - a crash
+        between left a running doc in NO zset: permanent zombie."""
+        db.enqueue_job(make_job("hb1"))
+        job = db.claim_job("w1")
+        assert job is not None
+        assert db.heartbeat_jobs("w1", ["hb1"]) == 1
+        running = [
+            x.decode() if isinstance(x, bytes) else str(x) for x in db.redis_client.zrange(db._q_key("running"), 0, -1)
+        ]
+        assert "hb1" in running, "heartbeat must never remove the job from the running zset"
+
+
+class TestIdempotencyLifetime:
+    def test_dedup_key_has_no_ttl_and_dies_with_cleanup(self, db):
+        db.enqueue_job(make_job("il1", idempotency_key="ilk"))
+        assert db.redis_client.ttl(db._q_key("idem:-:ilk")) == -1, "dedup key must live as long as the job record"
+        job = db.claim_job("w1")
+        db.complete_job("il1", "w1", job["attempt"], "completed")
+        # age the job artificially and purge
+        doc = db._q_load_job("il1")
+        doc["completed_at"] = 0
+        db.redis_client.set(db._q_job_key("il1"), json.dumps(doc))
+        assert db.cleanup_jobs(older_than_seconds=1) == 1
+        assert db.redis_client.get(db._q_key("idem:-:ilk")) is None, "dedup key must die with the job record"
+        # key is reusable afterwards
+        assert db.enqueue_job(make_job("il2", idempotency_key="ilk"))["accepted"] is True
+
+    def test_empty_idempotency_key_is_no_key(self, db):
+        r1 = db.enqueue_job(make_job("ek1", idempotency_key=""))
+        r2 = db.enqueue_job(make_job("ek2", idempotency_key=""))
+        assert r1["accepted"] is True and r2["accepted"] is True, "empty header must not dedupe (Postgres parity)"
+
+
+class TestListJobsPagination:
+    def test_status_filter_reaches_past_newer_nonmatching(self, db):
+        for i in range(30):
+            db.enqueue_job(make_job(f"old-fail-{i}"))
+            j = db.claim_job("w1")
+            db.retry_or_fail_job(j["id"], "w1", j["attempt"], "boom", 0)
+        for i in range(250):
+            db.enqueue_job(make_job(f"new-ok-{i}"))
+            j = db.claim_job("w1")
+            db.complete_job(j["id"], "w1", j["attempt"], "completed")
+        failed = db.list_jobs(status="failed", limit=50)
+        assert len(failed) == 30, f"filter must page past newer non-matching jobs, got {len(failed)}"

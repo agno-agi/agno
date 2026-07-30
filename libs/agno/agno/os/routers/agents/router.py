@@ -34,7 +34,12 @@ from agno.os.auth import (
 )
 from agno.os.checkpoints import build_run_checkpoint_snapshot, list_run_checkpoints
 from agno.os.event_streams import get_event_stream
-from agno.os.job_queue import aprepare_queued_agent_run, payload_is_queueable
+from agno.os.job_queue import (
+    aprepare_queued_agent_run,
+    normalize_idempotency_key,
+    payload_is_queueable,
+    validate_seam_input,
+)
 from agno.os.middleware.user_scope import (
     SESSION_ID_REQUIRED,
     assert_session_matches_component,
@@ -772,6 +777,8 @@ def get_agent_router(
                     )
                 )
                 if stream_queueable:
+                    # 202/stream-accept must honor input_schema like the inline path
+                    validate_seam_input(agent, message)
                     assert queue_worker is not None  # narrowed by stream_queueable
                     from agno.os.event_streams import get_event_stream as _ges
                     from agno.run.base import RunStatus as _RS
@@ -886,6 +893,8 @@ def get_agent_router(
                 and version is None  # version-pinned resolution differs from the worker's registry instance
                 and payload_is_queueable(queued_payload)
             ):
+                # 202 must honor input_schema exactly like the inline path 422s
+                validate_seam_input(agent, message)
                 if base64_images or base64_audios or base64_videos or input_files:
                     raise HTTPException(
                         status_code=400,
@@ -901,7 +910,7 @@ def get_agent_router(
                     user_id=user_id,
                     payload=queued_payload,
                     max_attempts=queue_worker.config.max_attempts,
-                    idempotency_key=request.headers.get("idempotency-key"),
+                    idempotency_key=normalize_idempotency_key(request.headers.get("idempotency-key")),
                 ).to_dict()
 
                 # Enqueue FIRST: the committed queue row is the acceptance.
@@ -1064,6 +1073,11 @@ def get_agent_router(
                     component_id=agent_id,
                 )
 
+            # Tombstone a still-queued durable ticket first: intent alone
+            # does not stop a job no task is executing yet
+            queue_worker = getattr(request.app.state, "queue_worker", None)
+            if queue_worker is not None:
+                await queue_worker.acancel_queued(run_id)
             await acancel_run(run_id)
             return JSONResponse(content={}, status_code=200)
 
@@ -1094,6 +1108,11 @@ def get_agent_router(
                 component_id=agent_id,
             )
 
+        # Tombstone a still-queued durable ticket first: intent alone does not
+        # stop a job no task is executing yet
+        queue_worker = getattr(request.app.state, "queue_worker", None)
+        if queue_worker is not None:
+            await queue_worker.acancel_queued(run_id)
         # cancel_run always stores cancellation intent (even for not-yet-registered runs
         # in cancel-before-start scenarios), so we always return success.
         await agent.acancel_run(run_id=run_id)  # type: ignore[union-attr]

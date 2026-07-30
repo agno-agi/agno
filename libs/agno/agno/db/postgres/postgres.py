@@ -5364,6 +5364,7 @@ class PostgresDb(BaseDb):
         run_id: str,
         fields: Dict[str, Any],
         expected_attempt: Optional[int] = None,
+        user_id: Optional[str] = None,
     ) -> bool:
         """Atomically patch fields of ONE run inside the session's runs list.
 
@@ -5384,7 +5385,10 @@ class PostgresDb(BaseDb):
                 return False
             with self.Session() as sess, sess.begin():
                 row = sess.execute(
-                    select(table.c.runs).where(table.c.session_id == session_id).with_for_update()
+                    select(table.c.runs)
+                    .where(table.c.session_id == session_id)
+                    .where((table.c.user_id == user_id) | (table.c.user_id.is_(None)))
+                    .with_for_update()
                 ).fetchone()
                 if row is None or not row[0]:
                     return False
@@ -5406,13 +5410,18 @@ class PostgresDb(BaseDb):
                         sess.execute(
                             update(table)
                             .where(table.c.session_id == session_id)
+                            .where((table.c.user_id == user_id) | (table.c.user_id.is_(None)))
                             .values(runs=runs, updated_at=int(time.time()))
                         )
                         return True
                 return False
         except Exception as e:
-            log_debug(f"Error updating run in session: {e}")
-            return False
+            # Do NOT collapse unexpected errors into False: the caller treats a
+            # False under a requested fence as final (no fallback), and a
+            # transient DB error must instead surface as "primitive
+            # unavailable" so the terminal state still gets persisted somehow
+            log_warning(f"Error updating run in session (falling back): {e}")
+            raise
 
     def enqueue_job(self, job: Dict[str, Any], max_depth: int = 0) -> Dict[str, Any]:
         """Insert an accepted run job.
@@ -5428,13 +5437,21 @@ class PostgresDb(BaseDb):
         table = self._get_table(table_type="jobs", create_table_if_not_found=True)
         if table is None:
             raise RuntimeError("Failed to get or create job queue table")
+        # Empty-string keys are "no key": the falsy pre-check would skip dedup
+        # while the partial-unique index still covered '', turning the second
+        # empty-header submit into an IntegrityError -> 500
+        if not job.get("idempotency_key"):
+            job = {**job, "idempotency_key": None}
         try:
             with self.Session() as sess, sess.begin():
                 # Idempotency FIRST: resubmitting an already-accepted job
                 # must return the existing run even when the queue is full
                 if job.get("idempotency_key"):
                     row = sess.execute(
-                        select(table).where(table.c.idempotency_key == job["idempotency_key"])
+                        select(table).where(
+                            table.c.idempotency_key == job["idempotency_key"],
+                            table.c.user_id == job.get("user_id"),
+                        )
                     ).fetchone()
                     if row is not None:
                         return {"accepted": False, "reason": "duplicate", "job": dict(row._mapping)}
@@ -5453,7 +5470,12 @@ class PostgresDb(BaseDb):
                 raise
             # Race on the partial-unique idempotency index: return the winner
             with self.Session() as sess:
-                row = sess.execute(select(table).where(table.c.idempotency_key == job["idempotency_key"])).fetchone()
+                row = sess.execute(
+                    select(table).where(
+                        table.c.idempotency_key == job["idempotency_key"],
+                        table.c.user_id == job.get("user_id"),
+                    )
+                ).fetchone()
                 if row is not None:
                     return {"accepted": False, "reason": "duplicate", "job": dict(row._mapping)}
             raise

@@ -129,6 +129,19 @@ class _SyncStoreAdapter:
         return _call
 
 
+def normalize_idempotency_key(raw: Any) -> Any:
+    """Seam-side normalization of the Idempotency-Key header: empty means no
+    key; oversized keys 422 up front (they land in a uniquely-indexed column -
+    a multi-KB key would surface as a btree ProgramLimitExceeded 500)."""
+    if not raw:
+        return None
+    if len(raw) > 512:
+        from fastapi import HTTPException
+
+        raise HTTPException(status_code=422, detail="Idempotency-Key must be at most 512 characters")
+    return raw
+
+
 def payload_is_queueable(payload: Any) -> bool:
     """True when the job payload survives a JSON round-trip as-is.
 
@@ -162,6 +175,26 @@ def resolve_queue_store(config: QueueConfig, default_db: Any) -> Any:
     store = config.db if config.db is not None else default_db
     claim = getattr(store, "claim_job", None) if store is not None else None
     if callable(claim):
+        # Validate the WHOLE contract up front: a store missing one method
+        # would otherwise surface as an AttributeError deep inside the worker
+        required = (
+            "enqueue_job",
+            "claim_job",
+            "heartbeat_jobs",
+            "complete_job",
+            "retry_or_fail_job",
+            "cancel_job",
+            "sweep_exhausted_jobs",
+            "fail_swept_job",
+            "get_job",
+            "count_queued_jobs",
+        )
+        missing = [m for m in required if not callable(getattr(store, m, None))]
+        if missing:
+            raise ValueError(
+                f"Queue store {type(store).__name__} implements claim_job but is missing "
+                f"contract methods: {', '.join(missing)}"
+            )
         # Loud-degrade rule: the last place a weaker guarantee could pass
         # quietly. Redis ticket durability is persistence-config-dependent.
         if type(store).__name__ == "RedisDb":
@@ -233,13 +266,15 @@ class QueueWorker:
 
     async def stop(self) -> None:
         self._running = False
-        for task in (self._task, self._heartbeat_task):
-            if task is not None:
-                task.cancel()
-                with contextlib.suppress(asyncio.CancelledError, asyncio.TimeoutError):
-                    await asyncio.wait_for(task, timeout=5)
+        # Stop CLAIMING, but keep the heartbeat alive through the drain: a
+        # draining run that stops refreshing locked_at looks abandoned to
+        # peers within lock_grace, and a peer reclaim mid-drain re-executes a
+        # run that is still healthily finishing here.
+        if self._task is not None:
+            self._task.cancel()
+            with contextlib.suppress(asyncio.CancelledError, asyncio.TimeoutError):
+                await asyncio.wait_for(self._task, timeout=5)
         self._task = None
-        self._heartbeat_task = None
 
         # Drain: give in-flight runs a chance to finish
         if self._in_flight:
@@ -249,6 +284,12 @@ class QueueWorker:
                     timeout=self.stop_timeout,
                 )
         # Cancel stragglers; their jobs go back through the fenced retry path
+        # Drain finished (or timed out): heartbeat may stop now
+        if self._heartbeat_task is not None:
+            self._heartbeat_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError, asyncio.TimeoutError):
+                await asyncio.wait_for(self._heartbeat_task, timeout=5)
+        self._heartbeat_task = None
         for task in list(self._in_flight.values()):
             task.cancel()
         if self._in_flight:
@@ -332,6 +373,35 @@ class QueueWorker:
             await self._terminate_stream_view(job)
             await self.store.fail_swept_job(job["id"], self.config.lock_grace_seconds, error)
             log_warning(f"Job queue: swept job {job['id']} to failed ({error})")
+
+    async def acancel_queued(self, run_id: str) -> bool:
+        """Tombstone a still-QUEUED ticket and terminalize its run row and
+        stream view. Claimed/running jobs are not touched here: the
+        cancellation manager reaches the executing attempt instead. Without
+        this, a run cancelled while waiting in the durable queue kept
+        status='queued' and was claimed and executed after a restart."""
+        cancelled = False
+        with contextlib.suppress(Exception):
+            cancelled = bool(await self.store.cancel_job(run_id))
+        if not cancelled:
+            return False
+        job = None
+        with contextlib.suppress(Exception):
+            job = await self.store.get_job(run_id)
+        if job is not None:
+            with contextlib.suppress(Exception):
+                await self._persist_run_error(job, "cancelled before execution", status="cancelled")
+        from agno.os.event_streams import get_event_stream
+        from agno.run.base import RunStatus
+
+        with contextlib.suppress(Exception):
+            event_stream = get_event_stream()
+            # Register-then-complete: a queued non-stream run may never have
+            # been registered; watchers attaching later must see CANCELLED,
+            # not an unknown run
+            await event_stream.register_run(run_id, RunStatus.pending)
+            await asyncio.shield(event_stream.complete_run(run_id, RunStatus.cancelled))
+        return True
 
     async def _execute_streaming(self, component: Any, job: Dict[str, Any]) -> Any:
         """Execute a queued STREAMING run: iterate the component's stream and
@@ -421,11 +491,14 @@ class QueueWorker:
         with contextlib.suppress(Exception):
             await asyncio.shield(get_event_stream().complete_run(job["id"], RunStatus.error))
 
-    async def _persist_run_error(self, job: Dict[str, Any], error: str) -> None:
-        """Persist a terminal ERROR on the run row so pollers see it, never a
+    async def _persist_run_error(self, job: Dict[str, Any], error: str, status: str = "error") -> None:
+        """Persist a terminal status on the run row so pollers see it, never a
         stuck RUNNING/PENDING. Atomic-first with attempt fencing: a later
         attempt's write owns the row; this (possibly stale) writer is fenced
-        out by the stored queue_attempt."""
+        out by the stored queue_attempt. The failure reason lands on
+        run.content: the polled run must carry something actionable, not just
+        ERROR with content=None (the job row's error field is the operator
+        surface)."""
         component = self.resolve_component(job["component_type"], job["component_id"])
         if component is None:
             return
@@ -437,7 +510,10 @@ class QueueWorker:
             job["component_type"],
             session_id=job["session_id"],
             run_id=job["id"],
-            fields={"status": RunStatus.error.value},
+            fields={
+                "status": RunStatus.cancelled.value if status == "cancelled" else RunStatus.error.value,
+                "content": error,
+            },
             user_id=job.get("user_id"),
             expected_attempt=job.get("attempt"),
         )
@@ -455,7 +531,8 @@ class QueueWorker:
             session = await aread_or_create_session(component, session_id=job["session_id"], user_id=job.get("user_id"))
             run = session.get_run(job["id"])
             if isinstance(run, RunOutput):
-                run.status = RunStatus.error
+                run.status = RunStatus.cancelled if status == "cancelled" else RunStatus.error
+                run.content = run.content or error
                 session.upsert_run(run=run)
                 await asave_session(component, session=session)
         elif component_type == "team":
@@ -468,7 +545,8 @@ class QueueWorker:
             )
             team_run = team_session.get_run(job["id"])
             if isinstance(team_run, TeamRunOutput):
-                team_run.status = RunStatus.error
+                team_run.status = RunStatus.cancelled if status == "cancelled" else RunStatus.error
+                team_run.content = team_run.content or error
                 team_session.upsert_run(run_response=team_run)
                 await team_asave_session(component, session=team_session)
         elif component_type == "workflow":
@@ -477,18 +555,59 @@ class QueueWorker:
             )
             workflow_run = workflow_session.get_run(job["id"])
             if workflow_run is not None:
-                workflow_run.status = RunStatus.error
+                workflow_run.status = RunStatus.cancelled if status == "cancelled" else RunStatus.error
+                workflow_run.content = workflow_run.content or error
                 workflow_session.upsert_run(run=workflow_run)
                 if component._has_async_db():
                     await component.asave_session(session=workflow_session)
                 else:
                     component.save_session(session=workflow_session)
 
+    def _retry_delay(self, attempt: int) -> int:
+        """Exponential backoff with full jitter, capped at 10x the base.
+
+        config.retry_delay_seconds is the BASE delay; attempt N waits up to
+        base * 2**(N-1), jittered uniformly to avoid a thundering herd of
+        retries when many workers fail together."""
+        import random
+
+        base = self.config.retry_delay_seconds
+        if base <= 0:
+            return 0  # explicit no-backoff configuration (tests, dev loops)
+        ceiling = min(base * (2 ** max(0, attempt - 1)), base * 10)
+        return random.randint(base, max(base, ceiling))
+
+    @staticmethod
+    def _is_permanent_failure(exc: BaseException) -> bool:
+        """Failures that retrying cannot cure: fail fast to the dead-letter
+        surface instead of burning the attempt budget."""
+        from agno.exceptions import InputCheckError, OutputCheckError
+
+        return isinstance(exc, (InputCheckError, OutputCheckError, TypeError))
+
     async def _execute_claimed(self, job: Dict[str, Any]) -> None:
         from agno.run.base import RunStatus
 
         job_id, attempt = job["id"], job["attempt"]
         job_type = job.get("job_type", "run")
+        component_for_stamp = self.resolve_component(job.get("component_type"), job.get("component_id"))
+        if component_for_stamp is not None:
+            # Establish this attempt's generation on the run row BEFORE
+            # executing: the fence compares terminal writes against the stored
+            # queue_attempt, and without an up-front stamp a zombie's write
+            # passes vacuously (stored None) and stamps its own stale attempt.
+            from agno.run.status_persist import apersist_run_status
+
+            with contextlib.suppress(Exception):
+                await apersist_run_status(
+                    component_for_stamp,
+                    job.get("component_type", ""),
+                    session_id=job["session_id"],
+                    run_id=job_id,
+                    fields={"queue_attempt": attempt},
+                    user_id=job.get("user_id"),
+                    expected_attempt=attempt,
+                )
         if job_type != "run":
             # Forward-compat: a newer producer enqueued a job type this worker
             # has no executor for. Fail it visibly rather than guessing.
@@ -508,13 +627,19 @@ class QueueWorker:
             if is_stream:
                 execution = self._execute_streaming(component, job)
             else:
+                call_kwargs = dict(payload.get("kwargs") or {})
+                # Reserved names arrive as unfiltered form fields; passing
+                # them through ** alongside the explicit keywords raises
+                # TypeError (the streaming executor strips its own)
+                for reserved in ("input", "session_id", "user_id", "run_id", "stream", "stream_events"):
+                    call_kwargs.pop(reserved, None)
                 execution = component.arun(
                     input=payload.get("input"),
                     session_id=job["session_id"],
                     user_id=job.get("user_id"),
                     run_id=job_id,
                     stream=False,
-                    **(payload.get("kwargs") or {}),
+                    **call_kwargs,
                 )
             if self.config.timeout_seconds:
                 result = await asyncio.wait_for(execution, timeout=self.config.timeout_seconds)
@@ -522,12 +647,16 @@ class QueueWorker:
                 result = await execution
 
             status = getattr(result, "status", None)
-            if status == RunStatus.cancelled:
+            if status == RunStatus.paused:
+                # HITL pause: the execution leg ended awaiting a human, which
+                # is neither completed nor failed - the ops surface must say so
+                await self.store.complete_job(job_id, self.worker_id, attempt, "paused")
+            elif status == RunStatus.cancelled:
                 await self.store.complete_job(job_id, self.worker_id, attempt, "cancelled")
             elif status == RunStatus.error:
                 error_content = str(getattr(result, "content", "") or "run errored")
                 await self.store.retry_or_fail_job(
-                    job_id, self.worker_id, attempt, error_content, self.config.retry_delay_seconds
+                    job_id, self.worker_id, attempt, error_content, self._retry_delay(attempt)
                 )
             else:
                 await self.store.complete_job(job_id, self.worker_id, attempt, "completed")
@@ -549,14 +678,48 @@ class QueueWorker:
             raise
         except asyncio.TimeoutError:
             error = f"Run exceeded timeout_seconds={self.config.timeout_seconds}"
-            with contextlib.suppress(Exception):
-                await self._persist_run_error(job, error)
-            await self._terminate_stream_view(job)
-            await self.store.retry_or_fail_job(job_id, self.worker_id, attempt, error, self.config.retry_delay_seconds)
+            # A timed-out attempt with retry budget left is NOT terminal: the
+            # retry continues the same stream, so neither the run row nor the
+            # stream view may be marked ERROR yet (tails would close before the
+            # retry's real output). Budget exhausted = genuinely terminal.
+            if attempt >= job.get("max_attempts", 1):
+                with contextlib.suppress(Exception):
+                    await self._persist_run_error(job, error)
+                await self._terminate_stream_view(job)
+            await self.store.retry_or_fail_job(job_id, self.worker_id, attempt, error, self._retry_delay(attempt))
         except Exception as e:
-            with contextlib.suppress(Exception):
-                await self._persist_run_error(job, str(e))
-            await self.store.retry_or_fail_job(job_id, self.worker_id, attempt, str(e), self.config.retry_delay_seconds)
+            if self._is_permanent_failure(e) or attempt >= job.get("max_attempts", 1):
+                with contextlib.suppress(Exception):
+                    await self._persist_run_error(job, str(e))
+            if self._is_permanent_failure(e):
+                # Invalid input / schema violations cannot be cured by retrying.
+                # No retry is coming even if budget remains, so the stream view
+                # must terminate here (the streaming finally skipped its
+                # sentinel expecting a retry).
+                await self.store.complete_job(job_id, self.worker_id, attempt, "failed", f"permanent: {str(e)}")
+                with contextlib.suppress(Exception):
+                    await self._terminate_stream_view(job)
+            else:
+                await self.store.retry_or_fail_job(job_id, self.worker_id, attempt, str(e), self._retry_delay(attempt))
+
+
+def validate_seam_input(component: Any, input: Any) -> None:
+    """Mirror arun's input_schema validation at the durable seams: the inline
+    path 422s on schema violations, so a 202 for the same payload (failing
+    only later, inside the worker) would be a contract divergence."""
+    schema = getattr(component, "input_schema", None)
+    if schema is None:
+        return
+    from fastapi import HTTPException
+
+    try:
+        from agno.utils.agent import validate_input
+
+        validate_input(input, schema)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=422, detail=f"Input failed schema validation: {str(e)[:300]}")
 
 
 async def aprepare_queued_run(
@@ -571,7 +734,7 @@ async def aprepare_queued_run(
     if component_type == "agent":
         from agno.agent._session import asave_session
         from agno.agent._storage import aread_or_create_session, update_metadata
-        from agno.run.agent import RunOutput
+        from agno.run.agent import RunInput, RunOutput
 
         session = await aread_or_create_session(component, session_id=session_id, user_id=user_id)
         if session.get_run(run_id) is not None:
@@ -582,14 +745,17 @@ async def aprepare_queued_run(
             agent_id=getattr(component, "id", None),
             agent_name=getattr(component, "name", None),
             user_id=user_id,
-            input=input,
+            # RunOutput.input is a RunInput; a raw value would make to_dict()
+            # raise inside the session save and the PENDING row would never
+            # land (silently - pollers 404 and the attempt stamp finds no row)
+            input=RunInput(input_content=input),
             status=RunStatus.pending,
         )
         update_metadata(component, session=session)
         session.upsert_run(run=run_response)
         await asave_session(component, session=session)
     elif component_type == "team":
-        from agno.run.team import TeamRunOutput
+        from agno.run.team import TeamRunInput, TeamRunOutput
         from agno.team._session import asave_session as team_asave_session
         from agno.team._storage import _aread_or_create_session, _update_metadata
 
@@ -602,7 +768,7 @@ async def aprepare_queued_run(
             team_id=getattr(component, "id", None),
             team_name=getattr(component, "name", None),
             user_id=user_id,
-            input=input,
+            input=TeamRunInput(input_content=input),
             status=RunStatus.pending,
         )
         _update_metadata(component, session=team_session)
@@ -673,12 +839,20 @@ async def queue_lifespan(app: Any, agent_os: Any):
                 # runs must not share mutable state with concurrent runs on
                 # the registry instance. (Factory-backed components are
                 # rejected at submit time - they need request context.)
+                resolved = candidate
                 if callable(getattr(candidate, "deep_copy", None)):
                     try:
-                        return candidate.deep_copy()
+                        resolved = candidate.deep_copy()
                     except Exception:
-                        return candidate
-                return candidate
+                        resolved = candidate
+                if component_type == "team":
+                    # Mirror the HTTP path's per-request copy: member HITL
+                    # continue reloads member tool state from the DB and
+                    # depends on this - the registry instance carries the
+                    # class default (False)
+                    with contextlib.suppress(Exception):
+                        resolved.store_member_responses = True
+                return resolved
         return None
 
     worker = QueueWorker(store=store, resolve_component=resolve_component, config=config)

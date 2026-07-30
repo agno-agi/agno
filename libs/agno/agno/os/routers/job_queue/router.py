@@ -24,6 +24,18 @@ if TYPE_CHECKING:
     from agno.os.app import AgentOS
 
 
+async def _require_queue_admin(request: Request) -> None:
+    """Queue operations are an operator surface: job rows expose payloads
+    (verbatim user input) and user_ids ACROSS tenants, and requeue grants
+    execution budget. Scoped (non-admin) JWT callers are rejected; admin and
+    unauthenticated deployments (no JWT enforcement) pass, matching how the
+    run routes treat scope enforcement."""
+    from agno.os.middleware.user_scope import get_scoped_user_id
+
+    if get_scoped_user_id(request) is not None:
+        raise HTTPException(status_code=403, detail="Job queue operations require an admin scope")
+
+
 def _get_store(request: Request):
     worker = getattr(request.app.state, "queue_worker", None)
     if worker is None:
@@ -33,7 +45,7 @@ def _get_store(request: Request):
 
 def get_queue_router(os: "AgentOS", settings: AgnoAPISettings = AgnoAPISettings()) -> APIRouter:
     router = APIRouter(
-        dependencies=[Depends(get_authentication_dependency(settings))],
+        dependencies=[Depends(get_authentication_dependency(settings)), Depends(_require_queue_admin)],
         prefix="/queue",
         tags=["Queue"],
         responses={

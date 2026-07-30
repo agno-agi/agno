@@ -2253,32 +2253,56 @@ class RedisDb(BaseDb):
         pipe.set(self._q_job_key(job["id"]), json.dumps(job))
 
     def enqueue_job(self, job: Dict[str, Any], max_depth: int = 0) -> Dict[str, Any]:
-        """Insert an accepted run job (idempotency-first, then depth gate)."""
-        idem = job.get("idempotency_key")
-        if idem is not None:
-            idem_key = self._q_key(f"idem:{idem}")
-            claimed_key = self.redis_client.set(idem_key, job["id"], nx=True, ex=86400)
-            if not claimed_key:
-                existing_id = self.redis_client.get(idem_key)
-                existing_id = (
-                    existing_id if isinstance(existing_id, str) else (existing_id.decode() if existing_id else None)
-                )
-                existing = self._q_load_job(existing_id) if existing_id else None
-                return {"accepted": False, "reason": "duplicate", "job": existing}
+        """Insert an accepted run job (idempotency-first, then depth gate).
 
-        if max_depth and max_depth > 0:
-            queued = int(self.redis_client.zcard(self._q_key("queued")))
-            if queued >= max_depth:
-                if idem is not None:
-                    self.redis_client.delete(self._q_key(f"idem:{idem}"))
-                return {"accepted": False, "reason": "queue_full", "job": None}
+        The idempotency key and the job document commit in ONE MULTI under
+        WATCH: a crash can no longer leave a dangling key that 409-wedges the
+        idempotency key until its TTL. A dangling key from a pre-fix crash is
+        self-healed: a key whose job document is missing is treated as
+        orphaned and taken over (WATCH arbitrates racing takeovers)."""
+        from redis.exceptions import WatchError
 
-        pipe = self.redis_client.pipeline()
-        self._q_save_job_in_pipe(pipe, job)
-        pipe.zadd(self._q_key("queued"), {job["id"]: job["available_at"]})
-        pipe.zadd(self._q_key("all"), {job["id"]: job["created_at"]})
-        pipe.execute()
-        return {"accepted": True, "reason": None, "job": dict(job)}
+        # Falsy ("" or None) means no dedup - matching the Postgres store, which
+        # treats an empty header as no key (an "" key would otherwise wedge
+        # every later empty-header submit onto one job)
+        idem = job.get("idempotency_key") or None
+        # user_id scopes the dedup namespace (cross-tenant key reuse must not
+        # attach to another tenant's run) - mirrors the Postgres index
+        idem_key = self._q_key(f"idem:{job.get('user_id') or '-'}:{idem}") if idem is not None else None
+
+        for _ in range(10):
+            with self.redis_client.pipeline() as pipe:
+                try:
+                    if idem_key is not None:
+                        pipe.watch(idem_key)
+                        existing_id = pipe.get(idem_key)
+                        if existing_id is not None:
+                            existing_id = existing_id if isinstance(existing_id, str) else existing_id.decode()
+                            existing = self._q_load_job(existing_id)
+                            if existing is not None:
+                                pipe.unwatch()
+                                return {"accepted": False, "reason": "duplicate", "job": existing}
+                            # Orphaned key (dual-write crash before this fix):
+                            # fall through and take it over inside the MULTI
+
+                    if max_depth and max_depth > 0:
+                        queued = int(self.redis_client.zcard(self._q_key("queued")))
+                        if queued >= max_depth:
+                            if idem_key is not None:
+                                pipe.unwatch()
+                            return {"accepted": False, "reason": "queue_full", "job": None}
+
+                    pipe.multi()
+                    if idem_key is not None:
+                        pipe.set(idem_key, job["id"])
+                    self._q_save_job_in_pipe(pipe, job)
+                    pipe.zadd(self._q_key("queued"), {job["id"]: job["available_at"]})
+                    pipe.zadd(self._q_key("all"), {job["id"]: job["created_at"]})
+                    pipe.execute()
+                    return {"accepted": True, "reason": None, "job": dict(job)}
+                except WatchError:
+                    continue  # another submitter raced this key; re-evaluate
+        raise RuntimeError("enqueue_job: idempotency-key contention did not settle after 10 attempts")
 
     def claim_job(self, worker_id: str, lock_grace_seconds: int = 60) -> Optional[Dict[str, Any]]:
         """Atomically claim the oldest executable job (queued, or stale-running
@@ -2357,7 +2381,16 @@ class RedisDb(BaseDb):
                 mutate(job)
                 pipe.multi()
                 self._q_save_job_in_pipe(pipe, job)
-                pipe.zrem(self._q_key("running"), job_id)
+                # Zset membership is decided ENTIRELY inside this MULTI from
+                # the post-mutate status. A running job keeps (or refreshes)
+                # its running-zset entry in the same transaction - the old
+                # post-EXEC zadd left a crash window where a heartbeaten job
+                # was status="running" but in NO zset: invisible to reclaim
+                # and sweep alike, a permanent zombie.
+                if job["status"] == "running":
+                    pipe.zadd(self._q_key("running"), {job_id: job.get("locked_at") or int(time.time())})
+                else:
+                    pipe.zrem(self._q_key("running"), job_id)
                 if job["status"] == "queued":
                     pipe.zadd(self._q_key("queued"), {job_id: job["available_at"]})
                 pipe.execute()
@@ -2377,7 +2410,6 @@ class RedisDb(BaseDb):
                 j["locked_at"] = now
 
             if self._q_fenced_update(job_id, worker_id, job["attempt"], _beat) is not None:
-                self.redis_client.zadd(self._q_key("running"), {job_id: now})
                 count += 1
         return count
 
@@ -2493,14 +2525,24 @@ class RedisDb(BaseDb):
         return int(self.redis_client.zcard(self._q_key("queued")))
 
     def list_jobs(self, status: Optional[str] = None, limit: int = 50) -> List[Dict[str, Any]]:
+        """Newest-first job listing. With a status filter, pages through the
+        FULL index in chunks until the limit is satisfied - a fixed window
+        would hide older matches behind newer non-matching jobs (e.g. failed
+        jobs older than a burst of completed ones)."""
         jobs: List[Dict[str, Any]] = []
-        for raw_id in self.redis_client.zrevrange(self._q_key("all"), 0, max(limit * 4, limit) - 1):
-            job = self._q_load_job(_q_to_str(raw_id))
-            if job is not None and (status is None or job["status"] == status):
-                jobs.append(job)
-                if len(jobs) >= limit:
-                    break
-        return jobs
+        chunk = max(limit * 4, 100)
+        offset = 0
+        while True:
+            raw_ids = self.redis_client.zrevrange(self._q_key("all"), offset, offset + chunk - 1)
+            if not raw_ids:
+                return jobs
+            for raw_id in raw_ids:
+                job = self._q_load_job(_q_to_str(raw_id))
+                if job is not None and (status is None or job["status"] == status):
+                    jobs.append(job)
+                    if len(jobs) >= limit:
+                        return jobs
+            offset += chunk
 
     def requeue_job(self, job_id: str) -> bool:
         """Operator requeue for a terminally failed/cancelled job: grants
@@ -2565,6 +2607,10 @@ class RedisDb(BaseDb):
             ):
                 pipe = self.redis_client.pipeline()
                 pipe.delete(self._q_job_key(job_id))
+                # Dedup key dies with the job record (Postgres parity: the
+                # partial-unique index lives exactly as long as the row)
+                if job.get("idempotency_key"):
+                    pipe.delete(self._q_key(f"idem:{job.get('user_id') or '-'}:{job['idempotency_key']}"))
                 pipe.zrem(self._q_key("all"), job_id)
                 pipe.zrem(self._q_key("queued"), job_id)
                 pipe.zrem(self._q_key("running"), job_id)

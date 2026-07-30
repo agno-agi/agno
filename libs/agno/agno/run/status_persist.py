@@ -16,7 +16,7 @@ import asyncio
 import inspect
 from typing import Any, Dict, Optional
 
-from agno.utils.log import log_debug
+from agno.utils.log import log_warning
 
 
 def _get_db(component: Any) -> Any:
@@ -53,18 +53,30 @@ async def apersist_run_status(
     try:
         if inspect.iscoroutinefunction(method):
             return bool(
-                await method(session_id=session_id, run_id=run_id, fields=fields, expected_attempt=expected_attempt)
+                await method(
+                    session_id=session_id,
+                    run_id=run_id,
+                    fields=fields,
+                    expected_attempt=expected_attempt,
+                    user_id=user_id,
+                )
             )
         return bool(
             await asyncio.to_thread(
-                method, session_id=session_id, run_id=run_id, fields=fields, expected_attempt=expected_attempt
+                method,
+                session_id=session_id,
+                run_id=run_id,
+                fields=fields,
+                expected_attempt=expected_attempt,
+                user_id=user_id,
             )
         )
     except Exception as e:
         # Liveness over strictness: a transient DB error should not strand the
         # run in a non-terminal state, so the caller may fall back. The fence
-        # bypass this opens needs a zombie AND a coincident DB failure.
-        log_debug(f"Atomic run status persist failed, caller falls back: {e}")
+        # bypass this opens needs a zombie AND a coincident DB failure. Loud on
+        # purpose: this downgrade re-opens the clobber window.
+        log_warning(f"Atomic run status persist failed; falling back to unfenced whole-session save: {e}")
         return None
 
 
@@ -88,6 +100,7 @@ async def apersist_run_transition(
     user_id: Optional[str] = None,
     extra_fields: Optional[Dict[str, Any]] = None,
     expected_attempt: Optional[int] = None,
+    full_run: bool = False,
 ) -> None:
     """Persist a run's status transition: atomic patch first, fallback second.
 
@@ -97,7 +110,16 @@ async def apersist_run_transition(
     adapter lacks the primitive or the run row does not exist yet.
     """
     status = getattr(run_response, "status", None)
-    fields: Dict[str, Any] = {"status": getattr(status, "value", status)}
+    if full_run:
+        # Persist the ENTIRE serialized run atomically (row-locked, single-run
+        # scoped): used by error paths that just flushed in-flight messages
+        # onto the run - a status-only patch would drop the conversation that
+        # led to the failure on adapters with the atomic primitive, while the
+        # whole-session fallback kept it (Postgres losing data SQLite kept).
+        fields = dict(run_response.to_dict())
+        fields["status"] = getattr(status, "value", status)
+    else:
+        fields = {"status": getattr(status, "value", status)}
     if extra_fields:
         fields.update(extra_fields)
 
@@ -126,9 +148,14 @@ async def apersist_run_transition(
         team_session.upsert_run(run_response=run_response)
         await team_asave_session(component, session=team_session)
     elif component_type == "workflow":
-        workflow_session, _ = await component._aload_or_create_session(
-            session_id=session_id, user_id=user_id, session_state=None
-        )
+        # Read-only fetch first: _aload_or_create_session(session_state=None)
+        # writes {} into session_data["session_state"], clobbering the live
+        # state of a run whose only write is this error transition
+        workflow_session = await component.aget_session(session_id=session_id)
+        if workflow_session is None:
+            workflow_session, _ = await component._aload_or_create_session(
+                session_id=session_id, user_id=user_id, session_state=None
+            )
         workflow_session.upsert_run(run=run_response)
         if component._has_async_db():
             await component.asave_session(session=workflow_session)

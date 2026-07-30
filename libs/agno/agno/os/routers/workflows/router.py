@@ -29,7 +29,12 @@ from agno.os.auth import (
     require_resource_access,
 )
 from agno.os.event_streams import get_event_stream
-from agno.os.job_queue import aprepare_queued_run, payload_is_queueable
+from agno.os.job_queue import (
+    aprepare_queued_run,
+    normalize_idempotency_key,
+    payload_is_queueable,
+    validate_seam_input,
+)
 from agno.os.middleware.user_scope import (
     SESSION_ID_REQUIRED,
     SESSION_ID_REQUIRED_RECONNECT,
@@ -1398,6 +1403,8 @@ def get_workflow_router(
                     )
                 )
                 if stream_queueable:
+                    # 202/stream-accept must honor input_schema like the inline path
+                    validate_seam_input(workflow, message)
                     assert queue_worker is not None  # narrowed by stream_queueable
                     from agno.run.base import RunStatus as _RS
 
@@ -1509,6 +1516,8 @@ def get_workflow_router(
                 and version is None  # version-pinned resolution differs from the worker's registry instance
                 and payload_is_queueable(queued_payload)
             ):
+                # 202 must honor input_schema exactly like the inline path 422s
+                validate_seam_input(workflow, message)
                 queued_run_id = str(uuid4())
                 queued_session_id = session_id or str(uuid4())
                 job = QueuedJob(
@@ -1519,7 +1528,7 @@ def get_workflow_router(
                     user_id=user_id,
                     payload=queued_payload,
                     max_attempts=queue_worker.config.max_attempts,
-                    idempotency_key=request.headers.get("idempotency-key"),
+                    idempotency_key=normalize_idempotency_key(request.headers.get("idempotency-key")),
                 ).to_dict()
 
                 # Enqueue FIRST: the committed queue row is the acceptance.
@@ -1821,6 +1830,11 @@ def get_workflow_router(
                     component_id=workflow_id,
                 )
 
+            # Tombstone a still-queued durable ticket first: intent alone
+            # does not stop a job no task is executing yet
+            queue_worker = getattr(request.app.state, "queue_worker", None)
+            if queue_worker is not None:
+                await queue_worker.acancel_queued(run_id)
             await acancel_run(run_id)
             return JSONResponse(content={}, status_code=200)
 
@@ -1851,6 +1865,11 @@ def get_workflow_router(
 
         # cancel_run always stores cancellation intent (even for not-yet-registered runs
         # in cancel-before-start scenarios), so we always return success.
+        # Tombstone a still-queued durable ticket first: intent alone
+        # does not stop a job no task is executing yet
+        queue_worker = getattr(request.app.state, "queue_worker", None)
+        if queue_worker is not None:
+            await queue_worker.acancel_queued(run_id)
         await workflow.acancel_run(run_id=run_id)
         return JSONResponse(content={}, status_code=200)
 
