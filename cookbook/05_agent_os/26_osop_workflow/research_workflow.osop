@@ -1,0 +1,138 @@
+"""
+OSOP Workflow Example — Research Agent (Agno implementation)
+=============================================================
+
+This file is the RUNNABLE Agno equivalent of ``research_workflow.osop``.
+
+It shows how an OSOP workflow (a portable YAML description) maps onto Agno
+agent patterns:
+
+* every OSOP ``agent`` node  -> an ``agno.agent.Agent``
+* every OSOP ``sequential`` edge -> an ordered ``agno.workflow.Step``
+* the whole graph            -> an ``agno.workflow.Workflow`` served by ``AgentOS``
+
+Prerequisites
+-------------
+    export OPENAI_API_KEY=sk-...
+
+Run
+---
+    python cookbook/05_agent_os/26_osop_workflow/research_workflow.py
+
+Then open the AgentOS UI at http://localhost:7777 and type your research
+question — that is the OSOP ``human`` node (user-request).
+"""
+
+from agno.agent import Agent
+from agno.db.sqlite import SqliteDb
+from agno.models.openai import OpenAIResponses
+from agno.os import AgentOS
+from agno.tools.duckduckgo import DuckDuckGoTools
+from agno.workflow import Step, Workflow
+
+# ---------------------------------------------------------------------------
+# Database — persists session history for the workflow
+# ---------------------------------------------------------------------------
+db = SqliteDb(
+    id="osop-research-db",
+    db_file="tmp/osop_research.db",
+)
+
+# ---------------------------------------------------------------------------
+# Agents — one per OSOP `agent` node
+# ---------------------------------------------------------------------------
+web_search_agent = Agent(
+    id="web-search-agent",
+    name="Web Search Agent",
+    model=OpenAIResponses(id="gpt-4o"),
+    tools=[DuckDuckGoTools()],
+    instructions=(
+        "You are a web research agent. Given a research topic, search the web "
+        "and return the most relevant, up-to-date facts together with their sources."
+    ),
+    markdown=True,
+)
+
+analysis_agent = Agent(
+    id="analysis-agent",
+    name="Analysis Agent",
+    model=OpenAIResponses(id="gpt-4o"),
+    instructions=(
+        "You are an analysis agent. Given raw search results, extract the key "
+        "insights, note agreements and disagreements, and summarize what matters."
+    ),
+    markdown=True,
+)
+
+report_agent = Agent(
+    id="report-agent",
+    name="Report Generator",
+    model=OpenAIResponses(id="gpt-4o"),
+    instructions=(
+        "You are a report writer. Given the analyzed insights, produce a clear, "
+        "structured research report with a heading and a few short sections."
+    ),
+    markdown=True,
+)
+
+# ---------------------------------------------------------------------------
+# Workflow — OSOP `sequential` edges become ordered Steps
+# ---------------------------------------------------------------------------
+research_workflow = Workflow(
+    id="osop-research-workflow",
+    name="Research Agent Workflow",
+    description="Web search -> analysis -> report generation.",
+    db=db,
+    steps=[
+        Step(name="Web Search", agent=web_search_agent),
+        Step(name="Analysis", agent=analysis_agent),
+        Step(name="Generate Report", agent=report_agent),
+    ],
+)
+
+# ---------------------------------------------------------------------------
+# AgentOS — serves the workflow over HTTP (discovery, streaming, UI)
+# ---------------------------------------------------------------------------
+agent_os = AgentOS(
+    id="osop-research-os",
+    description="AgentOS serving the OSOP research workflow.",
+    db=db,
+    workflows=[research_workflow],
+)
+app = agent_os.get_app()
+
+if __name__ == "__main__":
+    # The `human` node (user-request) is simply the message you type in the UI/API.
+    agent_os.serve(app=app)
+点 Commit changes → 再点 Commit changes
+
+同样方法，再建一个文件，文件名 README.md，粘贴这段：
+
+# Research Agent Workflow — OSOP Example
+
+This folder shows how to express an **Agno agent pattern** as a portable
+[OSOP](https://github.com/Archie0125/osop-spec) workflow, and how to run the
+same workflow with Agno.
+
+## What is OSOP?
+
+**OSOP** (Open Standard for Orchestration Protocols) is a YAML-based format for
+describing multi-step workflows in a tool-agnostic way. Think of it as the
+*OpenAPI of workflows*: a single `.osop` file says what your agent does, so
+teams can share, review, and port agent workflows across frameworks (Agno,
+LangChain, CrewAI, …).
+
+An OSOP file has two parts:
+
+- **`nodes`** — the steps. Core node types: `agent`, `api`, `cli`, `human`.
+- **`edges`** — the connections. Core edge modes: `sequential`,
+  `conditional`, `parallel`, `fallback`.
+
+## What's in this folder
+
+| File | Purpose |
+|------|---------|
+| `research_workflow.osop` | The portable OSOP definition of a research agent. |
+| `research_workflow.py` | The runnable Agno implementation of the same workflow. |
+
+## The workflow
