@@ -11,8 +11,14 @@ try:
     from mcp.shared.exceptions import McpError
     from mcp.types import CallToolResult, EmbeddedResource, ImageContent, TextContent
     from mcp.types import Tool as MCPTool
-except (ImportError, ModuleNotFoundError):
+except ModuleNotFoundError:
     raise ImportError("`mcp` not installed. Please install using `pip install mcp`")
+except ImportError as e:
+    raise ImportError(
+        "The installed `mcp` package is not compatible with this version of agno "
+        f"({e}). agno currently requires `mcp>=1.9.2,<2.0.0`; "
+        "please install a compatible version with `pip install 'mcp>=1.9.2,<2.0.0'`"
+    )
 
 
 from agno.media import Image
