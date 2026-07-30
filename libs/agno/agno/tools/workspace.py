@@ -429,8 +429,10 @@ class Workspace(Toolkit):
             if not file_path.is_file():
                 return f"Error: file not found: {path}"
             contents = file_path.read_text(encoding=encoding)
-            self._read_paths.add(file_path)
             if start_line is None and end_line is None:
+                # The size guards return no contents at all, so the agent has learned nothing
+                # about the file. Recording the read before them would satisfy
+                # require_read_before_write on the strength of an error message.
                 if len(contents) > self.max_file_length:
                     return (
                         f"Error: file too long ({len(contents)} chars > {self.max_file_length}). "
@@ -444,6 +446,7 @@ class Workspace(Toolkit):
                         "Use start_line/end_line to read a chunk, "
                         "or use search_content to find specific text first."
                     )
+                self._read_paths.add(file_path)
                 return _format_with_line_numbers(contents, start_line=1)
             lines = contents.split("\n")
             start = start_line if start_line is not None else 1
@@ -451,6 +454,10 @@ class Workspace(Toolkit):
             start_idx = max(0, start - 1)
             end_idx = min(len(lines), end)
             chunk = "\n".join(lines[start_idx:end_idx])
+            if start_idx < end_idx:
+                # A range past the end of the file returns nothing, which is no more a read
+                # than the size-guard errors above.
+                self._read_paths.add(file_path)
             return _format_with_line_numbers(chunk, start_line=start)
         except Exception as e:
             log_error(f"read_file failed: {e}")
