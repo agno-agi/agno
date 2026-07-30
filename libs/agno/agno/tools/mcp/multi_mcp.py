@@ -5,12 +5,12 @@ import warnings
 import weakref
 from contextlib import AsyncExitStack
 from dataclasses import asdict
-from datetime import timedelta
 from types import TracebackType
 from typing import TYPE_CHECKING, Any, Callable, Dict, List, Literal, Optional, Tuple, Union
 
 from agno.tools import Toolkit
 from agno.tools.function import Function
+from agno.tools.mcp.mcp import _streamable_http_connection
 from agno.tools.mcp.params import SSEClientParams, StreamableHTTPClientParams
 from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.utils.mcp import get_entrypoint_for_tool, prepare_command
@@ -24,15 +24,8 @@ try:
     from mcp import ClientSession, StdioServerParameters
     from mcp.client.sse import sse_client
     from mcp.client.stdio import get_default_environment, stdio_client
-    from mcp.client.streamable_http import streamablehttp_client
 except ModuleNotFoundError:
-    raise ImportError("`mcp` not installed. Please install using `pip install mcp`")
-except ImportError as e:
-    raise ImportError(
-        "The installed `mcp` package is not compatible with this version of agno "
-        f"({e}). agno currently requires `mcp>=1.9.2,<2.0.0`; "
-        "please install a compatible version with `pip install 'mcp>=1.9.2,<2.0.0'`"
-    )
+    raise ImportError("`mcp` not installed. Please install using `pip install 'mcp>=2.0.0,<3.0.0'`")
 
 
 class MultiMCPTools(Toolkit):
@@ -360,10 +353,7 @@ class MultiMCPTools(Toolkit):
                 existing_headers = params_dict.get("headers") or {}
                 params_dict["headers"] = {**existing_headers, **dynamic_headers}
 
-                context = streamablehttp_client(**params_dict)  # type: ignore
-                params_timeout = params_dict.get("timeout", self.timeout_seconds)
-                if isinstance(params_timeout, timedelta):
-                    params_timeout = int(params_timeout.total_seconds())
+                context, params_timeout = _streamable_http_connection(params_dict)
                 client_timeout = min(self.timeout_seconds, params_timeout)
             else:
                 # stdio doesn't support headers, fall back to default session
@@ -380,7 +370,7 @@ class MultiMCPTools(Toolkit):
                 session_params = await context.__aenter__()  # type: ignore
                 read, write = session_params[0:2]
 
-                session_context = ClientSession(read, write, read_timeout_seconds=timedelta(seconds=client_timeout))  # type: ignore
+                session_context = ClientSession(read, write, read_timeout_seconds=float(client_timeout))  # type: ignore
                 session = await session_context.__aenter__()  # type: ignore
 
                 # Initialize the session
@@ -540,7 +530,7 @@ class MultiMCPTools(Toolkit):
                     stdio_transport = await self._enter_context(stdio_client(server_params))
                     read, write = stdio_transport
                     session = await self._enter_context(
-                        ClientSession(read, write, read_timeout_seconds=timedelta(seconds=self.timeout_seconds))
+                        ClientSession(read, write, read_timeout_seconds=float(self.timeout_seconds))
                     )
                     await self.initialize(session, server_idx)
                     self._successful_connections += 1
@@ -563,8 +553,8 @@ class MultiMCPTools(Toolkit):
                     if init_headers:
                         existing_headers = streamable_http_params.get("headers") or {}
                         streamable_http_params["headers"] = {**existing_headers, **init_headers}
-                    client_connection = await self._enter_context(streamablehttp_client(**streamable_http_params))
-                    read, write = client_connection[0:2]
+                    client_connection, _ = _streamable_http_connection(streamable_http_params)
+                    read, write = await self._enter_context(client_connection)
                     session = await self._enter_context(ClientSession(read, write))
                     await self.initialize(session, server_idx)
                     self._successful_connections += 1
@@ -662,7 +652,7 @@ class MultiMCPTools(Toolkit):
                     f = Function(
                         name=tool.name,
                         description=tool.description,
-                        parameters=tool.inputSchema,
+                        parameters=tool.input_schema,
                         entrypoint=entrypoint,
                         # Set skip_entrypoint_processing to True to avoid processing the entrypoint
                         skip_entrypoint_processing=True,
