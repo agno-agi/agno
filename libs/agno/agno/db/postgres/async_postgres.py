@@ -29,9 +29,11 @@ from agno.db.schemas.service_accounts import (
     resolve_service_account_sort_column,
     validate_service_account_update,
 )
+from agno.db.schemas.skills import SkillRow
 from agno.db.utils import deserialize_session, deserialize_sessions, json_serializer, learning_search_patterns
 from agno.run.base import RunStatus
 from agno.session import AgentSession, Session, TeamSession, WorkflowSession
+from agno.skills.errors import SkillError
 from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.utils.string import sanitize_postgres_string, sanitize_postgres_strings
 
@@ -39,7 +41,7 @@ try:
     from sqlalchemy import ForeignKey, Index, String, Table, UniqueConstraint, and_, case, distinct, func, or_, update
     from sqlalchemy.dialects import postgresql
     from sqlalchemy.dialects.postgresql import TIMESTAMP
-    from sqlalchemy.exc import ProgrammingError
+    from sqlalchemy.exc import IntegrityError, ProgrammingError
     from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker, create_async_engine
     from sqlalchemy.schema import Column, MetaData
     from sqlalchemy.sql.expression import select, text
@@ -69,6 +71,7 @@ class AsyncPostgresDb(AsyncBaseDb):
         approvals_table: Optional[str] = None,
         auth_tokens_table: Optional[str] = None,
         service_accounts_table: Optional[str] = None,
+        skills_table: Optional[str] = None,
         create_schema: bool = True,
     ):
         """
@@ -129,6 +132,7 @@ class AsyncPostgresDb(AsyncBaseDb):
             approvals_table=approvals_table,
             auth_tokens_table=auth_tokens_table,
             service_accounts_table=service_accounts_table,
+            skills_table=skills_table,
         )
 
         _engine: Optional[AsyncEngine] = db_engine
@@ -192,6 +196,7 @@ class AsyncPostgresDb(AsyncBaseDb):
             (self.schedule_runs_table_name, "schedule_runs"),
             (self.approvals_table_name, "approvals"),
             (self.service_accounts_table_name, "service_accounts"),
+            (self.skills_table_name, "skills"),
         ]
 
         for table_name, table_type in tables_to_create:
@@ -458,6 +463,14 @@ class AsyncPostgresDb(AsyncBaseDb):
                 create_table_if_not_found=create_table_if_not_found,
             )
             return self.service_accounts_table
+
+        if table_type == "skills":
+            self.skills_table = await self._get_or_create_table(
+                table_name=self.skills_table_name,
+                table_type="skills",
+                create_table_if_not_found=create_table_if_not_found,
+            )
+            return self.skills_table
 
         raise ValueError(f"Unknown table type: {table_type}")
 
@@ -4357,4 +4370,148 @@ class AsyncPostgresDb(AsyncBaseDb):
                     return result.rowcount > 0  # type: ignore[attr-defined]
         except Exception as e:
             log_debug(f"Error deleting service account: {e}")
+            return False
+
+    # --- Skills ---
+
+    async def get_skill(self, name: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        try:
+            table = await self._get_table(table_type="skills")
+            if table is None:
+                return None
+            async with self.async_session_factory() as sess:
+                stmt = select(table).where(table.c.name == name)
+                if user_id is not None:
+                    stmt = stmt.where(table.c.user_id == user_id)
+                result = await sess.execute(stmt)
+                row = result.fetchone()
+                return dict(row._mapping) if row else None
+        except Exception as e:
+            log_debug(f"Error getting skill: {e}")
+            return None
+
+    async def get_skills(
+        self,
+        user_id: Optional[str] = None,
+        limit: int = 100,
+        page: int = 1,
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        try:
+            table = await self._get_table(table_type="skills")
+            if table is None:
+                return [], 0
+            async with self.async_session_factory() as sess:
+                # Metadata only: skill rows are heavy, so the list never selects
+                # instructions, scripts or references. get_skill returns the full row.
+                base_query = select(
+                    table.c.id,
+                    table.c.name,
+                    table.c.user_id,
+                    table.c.description,
+                    table.c.source_type,
+                    table.c.metadata,
+                    table.c.license,
+                    table.c.compatibility,
+                    table.c.allowed_tools,
+                    table.c.version,
+                    table.c.created_at,
+                    table.c.updated_at,
+                )
+                if user_id is not None:
+                    base_query = base_query.where(table.c.user_id == user_id)
+
+                # Get total count
+                count_stmt = select(func.count()).select_from(base_query.alias())
+                count_result = await sess.execute(count_stmt)
+                total_count = count_result.scalar() or 0
+
+                # Calculate offset from page
+                offset = (page - 1) * limit
+
+                # Get paginated results
+                stmt = base_query.order_by(table.c.created_at.desc()).limit(limit).offset(offset)
+                result = await sess.execute(stmt)
+                return [dict(row._mapping) for row in result.fetchall()], total_count
+        except Exception as e:
+            log_debug(f"Error listing skills: {e}")
+            return [], 0
+
+    async def create_skill(self, skill_data: Dict[str, Any]) -> Dict[str, Any]:
+        try:
+            table = await self._get_table(table_type="skills", create_table_if_not_found=True)
+            if table is None:
+                raise RuntimeError("Failed to get or create skills table")
+            data = {**skill_data}
+            now = int(time.time())
+            data.setdefault("id", str(uuid4()))
+            # Server-managed: fixed on create, bumped by update_skill
+            data["version"] = 1
+            data.setdefault("created_at", now)
+            data.setdefault("updated_at", now)
+            # Parse the row back into a Skill so malformed content dicts fail before the
+            # insert. Row-shaped input cannot violate Skill's exactly-one-of shape.
+            row = SkillRow.from_dict(data)
+            row.to_skill()
+            async with self.async_session_factory() as sess:
+                async with sess.begin():
+                    await sess.execute(table.insert().values(**row.to_dict()))
+            return row.to_dict()
+        except IntegrityError as e:
+            raise SkillError(
+                f"Creating skill '{skill_data.get('name')}' violated a database constraint "
+                "(most likely the name is already taken)"
+            ) from e
+        except SkillError:
+            # to_skill()'s content-type validation; propagate untouched
+            raise
+        except Exception as e:
+            log_error(f"Error creating skill: {str(e)}")
+            raise
+
+    async def update_skill(self, name: str, expected_version: int, **kwargs: Any) -> Optional[Dict[str, Any]]:
+        try:
+            table = await self._get_table(table_type="skills")
+            if table is None:
+                return None
+            current = await self.get_skill(name)
+            if current is None:
+                return None
+            # Validate the row as it would be after the update, before writing anything
+            SkillRow.from_dict({**current, **kwargs}).to_skill()
+            # One atomic statement: the version check and the bump succeed or fail together.
+            # A stale expected_version matches no row and overwrites nothing.
+            values = {**kwargs, "updated_at": int(time.time()), "version": expected_version + 1}
+            async with self.async_session_factory() as sess:
+                async with sess.begin():
+                    stmt = (
+                        table.update()
+                        .where(table.c.name == name)
+                        .where(table.c.version == expected_version)
+                        .values(**values)
+                    )
+                    result = await sess.execute(stmt)
+                    if result.rowcount == 0:  # type: ignore[attr-defined]
+                        return None
+            return await self.get_skill(name)
+        except SkillError:
+            # A content-validation failure must raise, not read as a version conflict
+            raise
+        except Exception as e:
+            log_debug(f"Error updating skill: {e}")
+            return None
+
+    async def delete_skill(self, name: str, user_id: Optional[str] = None) -> bool:
+        try:
+            table = await self._get_table(table_type="skills")
+            if table is None:
+                return False
+            async with self.async_session_factory() as sess:
+                async with sess.begin():
+                    stmt = table.delete().where(table.c.name == name)
+                    if user_id is not None:
+                        stmt = stmt.where(table.c.user_id == user_id)
+                    result = await sess.execute(stmt)
+                    return result.rowcount > 0  # type: ignore[attr-defined]
+        except Exception as e:
+            log_debug(f"Error deleting skill: {e}")
             return False
