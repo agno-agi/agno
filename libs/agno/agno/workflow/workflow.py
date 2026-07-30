@@ -10695,7 +10695,8 @@ class Workflow:
                 name=step.name,
                 description=step.description,
                 selector=step.selector,
-                allow_multiple_selections=step.allow_multiple_selections,
+                # allow_multiple_selections lives on HumanReview now; passing
+                # human_review preserves it through the copy.
                 human_review=step.human_review,
             )
 

@@ -147,10 +147,10 @@ processing_router = Router(
             executor=aggregate_data,
         ),
     ],
-    allow_multiple_selections=True,  # KEY: Allow selecting multiple steps
     human_review=HumanReview(
         requires_user_input=True,
         user_input_message="Select processing steps to apply (comma-separated for multiple):",
+        allow_multiple_selections=True,  # KEY: Allow selecting multiple steps
     ),
 )
 
