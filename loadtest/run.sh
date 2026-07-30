@@ -38,6 +38,36 @@ case "${1:-}" in
     python report.py
     echo "open report.html for the visual dashboard"
     command -v open >/dev/null && open report.html || true ;;
+  stress-up)
+    # Bring up a STUB-model stack tuned for the adversarial suites (stress +
+    # distributed): retry budget, small depth for the 429 test, small lock-grace,
+    # per-replica ports for cross-replica tests.
+    MODEL=stub MAX_ATTEMPTS=${MAX_ATTEMPTS:-2} MAX_QUEUE_DEPTH=${MAX_QUEUE_DEPTH:-20} \
+      LOCK_GRACE=${LOCK_GRACE:-8} TIMEOUT_SECONDS=${TIMEOUT_SECONDS:-4} \
+      docker compose -f "$CF" up --build -d postgres redis replica1 replica2 lb
+    wait_healthy ;;
+  stress)
+    # Adversarial suite: crash-recovery, concurrency races, malformed input.
+    # NEEDS a stub stack: ./run.sh stress-up  first. (Destructive: kills a replica.)
+    echo "=== STRESS suite (stub model) ==="
+    BASE_URL=http://localhost:7777 PG_DSN="postgresql://ai:ai@localhost:5533/ai" \
+      MODEL=stub MAX_ATTEMPTS=${MAX_ATTEMPTS:-2} MAX_QUEUE_DEPTH=${MAX_QUEUE_DEPTH:-20} \
+      MAX_CONCURRENCY=${MAX_CONCURRENCY:-8} COMPOSE="$CF" python stress.py
+    RESULTS=stress_results.json REPORT=stress_report.html python report.py
+    echo "open stress_report.html"
+    command -v open >/dev/null && open stress_report.html || true ;;
+  distributed)
+    # Distributed / multi-replica suite: cross-replica resume, redis-flap,
+    # retryable-timeout(#7), stream-cancel, same-session clobber. NEEDS a stub
+    # stack with per-replica ports: ./run.sh stress-up first.
+    echo "=== DISTRIBUTED suite (stub model, multi-replica) ==="
+    BASE_URL=http://localhost:7777 R1=http://localhost:7801 R2=http://localhost:7802 \
+      PG_DSN="postgresql://ai:ai@localhost:5533/ai" MODEL=stub MAX_ATTEMPTS=${MAX_ATTEMPTS:-2} \
+      COORD_REDIS_URL="redis://localhost:6380" \
+      COMPOSE="$CF" python distributed.py
+    RESULTS=distributed_results.json REPORT=distributed_report.html python report.py
+    echo "open distributed_report.html"
+    command -v open >/dev/null && open distributed_report.html || true ;;
   chaos-kill)
     echo "hard-killing replica2..."; docker compose -f "$CF" kill replica2
     echo "killed. In ~lock_grace+poll seconds its runs must be reclaimed or failed visibly."

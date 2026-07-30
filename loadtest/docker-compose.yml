@@ -54,9 +54,14 @@ services:
     depends_on:
       postgres: {condition: service_healthy}
       redis: {condition: service_healthy}
+    # Direct per-replica port so cross-replica tests can PIN to this replica
+    # (submit on replica1 :7801, resume/continue on replica2 :7802) instead of
+    # going through the round-robin LB.
+    ports: ["7801:7777"]
 
   replica2:
     <<: *replica
+    ports: ["7802:7777"]
 
   lb:
     image: nginx:alpine
