@@ -728,3 +728,104 @@ async def test_async_get_skills_with_content_propagates_read_errors(async_sqlite
     monkeypatch.setattr(async_sqlite_db, "async_session_factory", boom)
     with pytest.raises(RuntimeError, match="database down"):
         await async_sqlite_db.get_skills_with_content()
+
+
+# ============================================================================
+# UPDATE_SKILL OWNERSHIP SCOPING
+# ============================================================================
+# user_id on update_skill is a WHERE predicate naming which row may be updated.
+# It must never become a SET value: an update scoped to one user must not be able
+# to rewrite another row's owner. These tests pin both halves of that.
+
+
+def _owned(skill_data, name, user_id):
+    return {**skill_data, "name": name, "user_id": user_id}
+
+
+def test_update_skill_scoped_to_owner_updates_own_row(sqlite_db, skill_data):
+    sqlite_db.create_skill(_owned(skill_data, "alice-skill", "alice"))
+
+    updated = sqlite_db.update_skill("alice-skill", 1, user_id="alice", description="alice edited")
+
+    assert updated is not None
+    assert updated["description"] == "alice edited"
+    assert updated["version"] == 2
+    # The owner is untouched by a scoped update: user_id filters, it does not assign.
+    assert updated["user_id"] == "alice"
+
+
+def test_update_skill_scoped_to_non_owner_does_not_touch_the_row(sqlite_db, skill_data):
+    sqlite_db.create_skill(_owned(skill_data, "alice-skill", "alice"))
+
+    # Bob names the right skill at the right version, but does not own it.
+    result = sqlite_db.update_skill("alice-skill", 1, user_id="bob", description="bob overwrote this")
+
+    assert result is None
+    row = sqlite_db.get_skill("alice-skill")
+    assert row["description"] == skill_data["description"], "a non-owner must not write the row"
+    assert row["version"] == 1, "a denied update must not bump the version"
+    assert row["user_id"] == "alice", "a denied update must not reassign ownership"
+
+
+def test_update_skill_scoping_never_reassigns_the_owner(sqlite_db, skill_data):
+    """user_id is a WHERE predicate, not a SET value: the owner survives the update."""
+    sqlite_db.create_skill(_owned(skill_data, "alice-skill", "alice"))
+
+    sqlite_db.update_skill("alice-skill", 1, user_id="alice", description="edited")
+
+    assert sqlite_db.get_skill("alice-skill")["user_id"] == "alice"
+
+
+def test_update_skill_unscoped_is_unchanged(sqlite_db, skill_data):
+    """user_id=None (the default) must behave exactly as before: no owner filter."""
+    sqlite_db.create_skill(_owned(skill_data, "alice-skill", "alice"))
+
+    updated = sqlite_db.update_skill("alice-skill", 1, description="admin edited")
+
+    assert updated is not None
+    assert updated["description"] == "admin edited"
+    assert updated["version"] == 2
+    assert updated["user_id"] == "alice"
+
+
+def test_update_skill_scoped_on_a_null_owner_row(sqlite_db, skill_data):
+    """A shared row (user_id NULL) is not owned by anyone, so a scoped update misses it."""
+    sqlite_db.create_skill({**skill_data, "name": "shared-skill"})
+
+    assert sqlite_db.get_skill("shared-skill")["user_id"] is None
+    assert sqlite_db.update_skill("shared-skill", 1, user_id="alice", description="x") is None
+    # Unscoped (admin) still works on it.
+    assert sqlite_db.update_skill("shared-skill", 1, description="admin edit") is not None
+
+
+async def test_async_update_skill_scoped_to_owner_updates_own_row(async_sqlite_db, skill_data):
+    await async_sqlite_db.create_skill(_owned(skill_data, "alice-skill", "alice"))
+
+    updated = await async_sqlite_db.update_skill("alice-skill", 1, user_id="alice", description="alice edited")
+
+    assert updated is not None
+    assert updated["description"] == "alice edited"
+    assert updated["version"] == 2
+    assert updated["user_id"] == "alice"
+
+
+async def test_async_update_skill_scoped_to_non_owner_does_not_touch_the_row(async_sqlite_db, skill_data):
+    await async_sqlite_db.create_skill(_owned(skill_data, "alice-skill", "alice"))
+
+    result = await async_sqlite_db.update_skill("alice-skill", 1, user_id="bob", description="bob overwrote this")
+
+    assert result is None
+    row = await async_sqlite_db.get_skill("alice-skill")
+    assert row["description"] == skill_data["description"]
+    assert row["version"] == 1
+    assert row["user_id"] == "alice"
+
+
+async def test_async_update_skill_unscoped_is_unchanged(async_sqlite_db, skill_data):
+    await async_sqlite_db.create_skill(_owned(skill_data, "alice-skill", "alice"))
+
+    updated = await async_sqlite_db.update_skill("alice-skill", 1, description="admin edited")
+
+    assert updated is not None
+    assert updated["version"] == 2
+    assert updated["user_id"] == "alice"
