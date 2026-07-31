@@ -1,3 +1,4 @@
+import asyncio
 import json
 import subprocess
 from pathlib import Path
@@ -51,6 +52,7 @@ class Skills:
         # per-request refresh re-runs only the loaders marked for it and merges the rest
         # from here; a failed refresh falls back to it.
         self._loader_results: Dict[int, List[Skill]] = {}
+        self._refresh_lock: Optional[asyncio.Lock] = None  # Lazily created lock for the async refresh
         self._load_skills()
 
     def _load_skills(self) -> None:
@@ -119,6 +121,44 @@ class Skills:
         self._loader_results = results
         self._skills = merged
 
+    @property
+    def _async_refresh_lock(self) -> asyncio.Lock:
+        """Lazily create an asyncio lock for serializing the async refresh."""
+        if self._refresh_lock is None:
+            self._refresh_lock = asyncio.Lock()
+        return self._refresh_lock
+
+    async def _arefresh_loaders(self) -> None:
+        """Async twin of _refresh_loaders: awaits each refreshing loader's aload.
+
+        Any failure keeps the previous state: a request mid-outage serves the last
+        loaded skills rather than an empty or partial set.
+        """
+        # Serialized, with the snapshot taken inside the lock: the awaits below
+        # suspend, and a sibling request's refresh may commit while this one is
+        # parked - committing a pre-await snapshot would roll that fresher state back.
+        async with self._async_refresh_lock:
+            results = dict(self._loader_results)
+            changed = False
+            for index, loader in enumerate(self.loaders):
+                if not loader.refresh_per_request:
+                    continue
+                try:
+                    results[index] = await loader.aload()
+                    changed = True
+                except Exception as e:
+                    log_warning(f"Error refreshing skills from {loader}, keeping the last loaded skills: {str(e)}")
+
+            if not changed:
+                return
+            try:
+                merged = self._merge_loader_results(results)
+            except SkillError as e:
+                log_warning(f"Error refreshing skills, keeping the last loaded skills: {str(e)}")
+                return
+            self._loader_results = results
+            self._skills = merged
+
     def reload(self) -> None:
         """Reload skills from all loaders, replacing the existing skills.
 
@@ -162,8 +202,8 @@ class Skills:
         information about available skills without including the full instructions.
 
         With a refresh_per_request loader attached (DbSkills), building the snippet
-        performs that loader's blocking database read — also on the async message
-        path, which calls this sync method.
+        performs that loader's blocking database read; the async message path uses
+        aget_system_prompt_snippet, which awaits it instead.
 
         Returns:
             An XML-formatted string with skills metadata.
@@ -171,7 +211,19 @@ class Skills:
         # The once-per-request read of database-backed loaders: the system prompt is
         # built once per run, the same moment memory and learning already hit the db.
         self._refresh_loaders()
+        return self._build_system_prompt_snippet()
 
+    async def aget_system_prompt_snippet(self) -> str:
+        """Async twin of get_system_prompt_snippet: the refresh awaits the database read.
+
+        Returns:
+            An XML-formatted string with skills metadata.
+        """
+        await self._arefresh_loaders()
+        return self._build_system_prompt_snippet()
+
+    def _build_system_prompt_snippet(self) -> str:
+        """Render the loaded skill mapping as the system prompt snippet."""
         if not self._skills:
             return ""
 
