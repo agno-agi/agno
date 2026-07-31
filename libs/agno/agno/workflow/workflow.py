@@ -1753,7 +1753,6 @@ class Workflow:
         self,
         event: "WorkflowRunOutputEvent",
         workflow_run_response: WorkflowRunOutput,
-        websocket_handler: Optional["WebSocketHandler"] = None,
     ) -> "WorkflowRunOutputEvent":
         """Handle workflow events for storage - similar to Team._handle_event"""
         from agno.run.agent import RunOutput
@@ -3424,7 +3423,7 @@ class Workflow:
             workflow_id=workflow_run_response.workflow_id,
             session_id=workflow_run_response.session_id,
         )
-        yield self._handle_event(workflow_started_event, workflow_run_response, websocket_handler=websocket_handler)
+        yield self._handle_event(workflow_started_event, workflow_run_response)
 
         if callable(self.steps):
             try:
@@ -3484,7 +3483,7 @@ class Workflow:
                     reason=str(e),
                     content=str(e),
                 )
-                yield self._handle_event(cancelled_event, workflow_run_response, websocket_handler=websocket_handler)
+                yield self._handle_event(cancelled_event, workflow_run_response)
 
                 workflow_completed_event = WorkflowCompletedEvent(
                     run_id=workflow_run_response.run_id or "",
@@ -3495,9 +3494,7 @@ class Workflow:
                     metadata=workflow_run_response.metadata,
                     run_output=workflow_run_response,
                 )
-                yield self._handle_event(
-                    workflow_completed_event, workflow_run_response, websocket_handler=websocket_handler
-                )
+                yield self._handle_event(workflow_completed_event, workflow_run_response)
 
                 if self.telemetry:
                     await self._alog_workflow_telemetry(
@@ -3569,9 +3566,7 @@ class Workflow:
                             paused_event = create_step_paused_event(
                                 workflow_run_response, step, step_name, i, pause_result
                             )
-                        yield self._handle_event(
-                            paused_event, workflow_run_response, websocket_handler=websocket_handler
-                        )
+                        yield self._handle_event(paused_event, workflow_run_response)
 
                         await asave_paused_session(self, workflow_session, workflow_run_response)
                         return
@@ -3691,9 +3686,7 @@ class Workflow:
                                 enriched_event = self._enrich_event_with_workflow_context(
                                     event, workflow_run_response, step_index=i, step=step
                                 )
-                                yield self._handle_event(
-                                    enriched_event, workflow_run_response, websocket_handler=websocket_handler
-                                )  # type: ignore
+                                yield self._handle_event(enriched_event, workflow_run_response)  # type: ignore
 
                             else:
                                 # Enrich other events with workflow context before yielding
@@ -3703,9 +3696,7 @@ class Workflow:
                                 if self.stream_executor_events or isinstance(
                                     event, _EXECUTOR_CANCEL_BYPASS_EVENT_TYPES
                                 ):
-                                    yield self._handle_event(
-                                        enriched_event, workflow_run_response, websocket_handler=websocket_handler
-                                    )  # type: ignore
+                                    yield self._handle_event(enriched_event, workflow_run_response)  # type: ignore
 
                         if draining_after_cancel:
                             raise RunCancelledException(f"Run {workflow_run_response.run_id} was cancelled")
@@ -3747,9 +3738,7 @@ class Workflow:
                                 step_id=getattr(step, "step_id", None),
                                 error=str(step_error_exception),
                             )
-                            yield self._handle_event(
-                                error_paused_event, workflow_run_response, websocket_handler=websocket_handler
-                            )
+                            yield self._handle_event(error_paused_event, workflow_run_response)
 
                             # Save the session with paused state
                             self._update_session_metrics(
@@ -3801,9 +3790,7 @@ class Workflow:
                                 if review_result.step_requirement
                                 else None,
                             )
-                            yield self._handle_event(
-                                review_event, workflow_run_response, websocket_handler=websocket_handler
-                            )
+                            yield self._handle_event(review_event, workflow_run_response)
                             await asave_paused_session(self, workflow_session, workflow_run_response)
                             return
 
@@ -3842,9 +3829,7 @@ class Workflow:
                             step_id=getattr(step, "step_id", None),
                             output_review_message=getattr(req, "output_review_message", None),
                         )
-                        yield self._handle_event(
-                            review_event, workflow_run_response, websocket_handler=websocket_handler
-                        )
+                        yield self._handle_event(review_event, workflow_run_response)
                         await asave_paused_session(self, workflow_session, workflow_run_response)
                         return
 
@@ -3972,7 +3957,6 @@ class Workflow:
                 yield self._handle_event(
                     cancelled_event,
                     workflow_run_response,
-                    websocket_handler=websocket_handler,
                 )
 
                 # Emit terminal completed event so clients have a single stream-end sentinel
@@ -3990,7 +3974,6 @@ class Workflow:
                 yield self._handle_event(
                     workflow_completed_event,
                     workflow_run_response,
-                    websocket_handler=websocket_handler,
                 )
 
                 if self.telemetry:
@@ -4028,7 +4011,7 @@ class Workflow:
             metadata=workflow_run_response.metadata,
             run_output=workflow_run_response,  # Include full run output for nested workflows
         )
-        yield self._handle_event(workflow_completed_event, workflow_run_response, websocket_handler=websocket_handler)
+        yield self._handle_event(workflow_completed_event, workflow_run_response)
 
         # Stop timer on error
         if workflow_run_response.metrics:
@@ -4418,6 +4401,14 @@ class Workflow:
                     self._handle_event(paused_event, workflow_run_response)
                     await self._apublish_stream_event(paused_event, publish_run_id, websocket_handler=websocket_handler)
 
+            except asyncio.CancelledError:
+                # Task-level shutdown, not run-cancellation: best-effort persist
+                # so pollers are not left with a run stuck at PENDING/RUNNING
+                # (parity with the non-stream producer)
+                with contextlib.suppress(Exception):
+                    workflow_run_response.status = RunStatus.cancelled
+                    await apersist_run_transition(self, "workflow", session_id, workflow_run_response, user_id=user_id)
+                raise
             except RunCancelledException:
                 # Cancelled while waiting for a slot — execution never started, so
                 # persist CANCELLED and deregister the run here.
@@ -4641,6 +4632,14 @@ class Workflow:
                     f"Background stream workflow run {run_id} completed with status: {workflow_run_response.status}"
                 )
 
+            except asyncio.CancelledError:
+                # Task-level shutdown, not run-cancellation: best-effort persist
+                # so pollers are not left with a run stuck at PENDING/RUNNING
+                # (parity with the non-stream producer)
+                with contextlib.suppress(Exception):
+                    workflow_run_response.status = RunStatus.cancelled
+                    await apersist_run_transition(self, "workflow", session_id, workflow_run_response, user_id=user_id)
+                raise
             except RunCancelledException:
                 # Cancelled while waiting for a slot — execution never started, so
                 # persist CANCELLED and deregister the run here.
@@ -8649,7 +8648,6 @@ class Workflow:
                             executor_type=executor_step_req.executor_type,
                         ),
                         workflow_run_response,
-                        websocket_handler=websocket_handler,
                     )
                     step_output = None
                     async for event in self._aroute_executor_requirements_stream(
@@ -8666,9 +8664,7 @@ class Workflow:
                             enriched_event = self._enrich_event_with_workflow_context(
                                 event, workflow_run_response, step_index=i, step=step
                             )
-                            yield self._handle_event(
-                                enriched_event, workflow_run_response, websocket_handler=websocket_handler
-                            )  # type: ignore
+                            yield self._handle_event(enriched_event, workflow_run_response)  # type: ignore
 
                     await araise_if_cancelled(workflow_run_response.run_id)  # type: ignore
 
@@ -8731,9 +8727,7 @@ class Workflow:
                                 if review_result.step_requirement
                                 else None,
                             )
-                            yield self._handle_event(
-                                review_event, workflow_run_response, websocket_handler=websocket_handler
-                            )
+                            yield self._handle_event(review_event, workflow_run_response)
                             await asave_paused_session(self, session, workflow_run_response)
                             return
 
@@ -8799,17 +8793,13 @@ class Workflow:
                             enriched_event = self._enrich_event_with_workflow_context(
                                 event, workflow_run_response, step_index=i, step=step
                             )
-                            yield self._handle_event(
-                                enriched_event, workflow_run_response, websocket_handler=websocket_handler
-                            )  # type: ignore
+                            yield self._handle_event(enriched_event, workflow_run_response)  # type: ignore
                         else:
                             enriched_event = self._enrich_event_with_workflow_context(
                                 event, workflow_run_response, step_index=i, step=step
                             )
                             if self.stream_executor_events or isinstance(event, _EXECUTOR_CANCEL_BYPASS_EVENT_TYPES):
-                                yield self._handle_event(
-                                    enriched_event, workflow_run_response, websocket_handler=websocket_handler
-                                )  # type: ignore
+                                yield self._handle_event(enriched_event, workflow_run_response)  # type: ignore
 
                     if condition_step_output is None:
                         condition_step_output = StepOutput(
@@ -8852,7 +8842,7 @@ class Workflow:
                         reroute_pause = StepPauseResult(should_pause=True, step_requirement=reroute_req)
                     apply_pause_state(workflow_run_response, i, step_name, collected_step_outputs, reroute_pause)
                     paused_event = create_router_paused_event(workflow_run_response, step_name, i, reroute_pause)
-                    yield self._handle_event(paused_event, workflow_run_response, websocket_handler=websocket_handler)
+                    yield self._handle_event(paused_event, workflow_run_response)
                     await asave_paused_session(self, session, workflow_run_response)
                     return
 
@@ -8907,9 +8897,7 @@ class Workflow:
                                     enriched_event = self._enrich_event_with_workflow_context(
                                         event, workflow_run_response, step_index=i, step=step
                                     )
-                                    yield self._handle_event(
-                                        enriched_event, workflow_run_response, websocket_handler=websocket_handler
-                                    )  # type: ignore
+                                    yield self._handle_event(enriched_event, workflow_run_response)  # type: ignore
                                 else:
                                     enriched_event = self._enrich_event_with_workflow_context(
                                         event, workflow_run_response, step_index=i, step=step
@@ -8917,9 +8905,7 @@ class Workflow:
                                     if self.stream_executor_events or isinstance(
                                         event, _EXECUTOR_CANCEL_BYPASS_EVENT_TYPES
                                     ):
-                                        yield self._handle_event(
-                                            enriched_event, workflow_run_response, websocket_handler=websocket_handler
-                                        )  # type: ignore
+                                        yield self._handle_event(enriched_event, workflow_run_response)  # type: ignore
                         finally:
                             # Restore original selector even if execution fails
                             step.selector = original_selector
@@ -8996,9 +8982,7 @@ class Workflow:
                                 if review_result.step_requirement
                                 else None,
                             )
-                            yield self._handle_event(
-                                review_event, workflow_run_response, websocket_handler=websocket_handler
-                            )
+                            yield self._handle_event(review_event, workflow_run_response)
                             save_paused_session(self, session, workflow_run_response)
                             return
 
@@ -9020,7 +9004,6 @@ class Workflow:
                             step_id=getattr(step, "step_id", None),
                         ),
                         workflow_run_response,
-                        websocket_handler=websocket_handler,
                     )
                 if i != hitl_resolved_index:
                     step_type = STEP_TYPE_MAPPING.get(type(step), StepType.STEP).value
@@ -9040,9 +9023,7 @@ class Workflow:
                             paused_event = create_step_paused_event(
                                 workflow_run_response, step, step_name, i, pause_result
                             )
-                        yield self._handle_event(
-                            paused_event, workflow_run_response, websocket_handler=websocket_handler
-                        )
+                        yield self._handle_event(paused_event, workflow_run_response)
 
                         await asave_paused_session(self, session, workflow_run_response)
                         return
@@ -9145,18 +9126,14 @@ class Workflow:
                             enriched_event = self._enrich_event_with_workflow_context(
                                 event, workflow_run_response, step_index=i, step=step
                             )
-                            yield self._handle_event(
-                                enriched_event, workflow_run_response, websocket_handler=websocket_handler
-                            )  # type: ignore
+                            yield self._handle_event(enriched_event, workflow_run_response)  # type: ignore
 
                         else:
                             enriched_event = self._enrich_event_with_workflow_context(
                                 event, workflow_run_response, step_index=i, step=step
                             )
                             if self.stream_executor_events or isinstance(event, _EXECUTOR_CANCEL_BYPASS_EVENT_TYPES):
-                                yield self._handle_event(
-                                    enriched_event, workflow_run_response, websocket_handler=websocket_handler
-                                )  # type: ignore
+                                yield self._handle_event(enriched_event, workflow_run_response)  # type: ignore
 
                     if draining_after_cancel:
                         raise RunCancelledException(f"Run {workflow_run_response.run_id} was cancelled")
@@ -9191,9 +9168,7 @@ class Workflow:
                             step_id=getattr(step, "step_id", None),
                             error=str(step_error_exception),
                         )
-                        yield self._handle_event(
-                            error_paused_event, workflow_run_response, websocket_handler=websocket_handler
-                        )
+                        yield self._handle_event(error_paused_event, workflow_run_response)
 
                         self._update_session_metrics(session=session, workflow_run_response=workflow_run_response)
                         session.upsert_run(run=workflow_run_response)
@@ -9237,9 +9212,7 @@ class Workflow:
                             if review_result.step_requirement
                             else None,
                         )
-                        yield self._handle_event(
-                            review_event, workflow_run_response, websocket_handler=websocket_handler
-                        )
+                        yield self._handle_event(review_event, workflow_run_response)
                         await asave_paused_session(self, session, workflow_run_response)
                         return
 
@@ -9278,7 +9251,7 @@ class Workflow:
                         step_id=getattr(step, "step_id", None),
                         output_review_message=getattr(req, "output_review_message", None),
                     )
-                    yield self._handle_event(review_event, workflow_run_response, websocket_handler=websocket_handler)
+                    yield self._handle_event(review_event, workflow_run_response)
                     await asave_paused_session(self, session, workflow_run_response)
                     return
 
@@ -9323,7 +9296,7 @@ class Workflow:
                 reason=str(e),
                 content=str(e),
             )
-            yield self._handle_event(cancelled_event, workflow_run_response, websocket_handler=websocket_handler)
+            yield self._handle_event(cancelled_event, workflow_run_response)
         except Exception as e:
             logger.exception("Workflow execution failed")
             workflow_run_response.status = RunStatus.error
@@ -9341,7 +9314,7 @@ class Workflow:
             step_executor_runs=workflow_run_response.step_executor_runs,
             metadata=workflow_run_response.metadata,
         )
-        yield self._handle_event(workflow_completed_event, workflow_run_response, websocket_handler=websocket_handler)
+        yield self._handle_event(workflow_completed_event, workflow_run_response)
 
         if workflow_run_response.metrics:
             workflow_run_response.metrics.stop_timer()

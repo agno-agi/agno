@@ -1,8 +1,8 @@
 """AgentOS job queue wiring.
 
 Interprets ``QueueConfig`` (pure data, from ``agno.job_queue.config``) and wires
-the corresponding runtime pieces. The planned DB-backed queue worker (durable
-acceptance, claim/lease, crash recovery) will live here as well.
+the corresponding runtime pieces, including the DB-backed queue worker
+(durable acceptance, claim/lease, heartbeats, sweep, crash recovery).
 """
 
 import asyncio
@@ -536,8 +536,8 @@ class QueueWorker:
             run_id=job["id"],
             fields={
                 "status": RunStatus.cancelled.value if status == "cancelled" else RunStatus.error.value,
-                "content": error,
             },
+            content_if_absent=error,
             user_id=job.get("user_id"),
             expected_attempt=job.get("attempt"),
         )
@@ -577,9 +577,12 @@ class QueueWorker:
                 team_session.upsert_run(run_response=team_run)
                 await team_asave_session(component, session=team_session)
         elif component_type == "workflow":
-            workflow_session, _ = await component._aload_or_create_session(
-                session_id=job["session_id"], user_id=job.get("user_id"), session_state=None
-            )
+            # Read-only load first: _aload_or_create_session(session_state=None)
+            # writes {} into session_data["session_state"], clobbering live
+            # state (the exact pattern status_persist's fallback avoids)
+            workflow_session = await component.aget_session(session_id=job["session_id"])
+            if workflow_session is None:
+                return
             workflow_run = workflow_session.get_run(job["id"])
             if workflow_run is not None and workflow_run.status not in (RunStatus.completed, RunStatus.cancelled):
                 workflow_run.status = RunStatus.cancelled if status == "cancelled" else RunStatus.error
@@ -591,7 +594,9 @@ class QueueWorker:
                     component.save_session(session=workflow_session)
 
     def _retry_delay(self, attempt: int) -> int:
-        """Exponential backoff with full jitter, capped at 10x the base.
+        """Exponential backoff with jitter, capped at 10x the base (the base
+        acts as the minimum delay; the shutdown-drain requeue intentionally
+        uses the flat base with no backoff).
 
         config.retry_delay_seconds is the BASE delay; attempt N waits up to
         base * 2**(N-1), jittered uniformly to avoid a thundering herd of

@@ -3972,6 +3972,7 @@ class AsyncPostgresDb(AsyncBaseDb):
         fields: Dict[str, Any],
         expected_attempt: Optional[int] = None,
         user_id: Optional[str] = None,
+        content_if_absent: Optional[str] = None,
     ) -> bool:
         """Atomically patch fields of ONE run inside the session's runs list.
 
@@ -4026,6 +4027,10 @@ class AsyncPostgresDb(AsyncBaseDb):
                                 return False  # terminal row wins
                             updated = dict(run)
                             updated.update(fields)
+                            if content_if_absent is not None and not updated.get("content"):
+                                # Error reason fills content only when execution left none:
+                                # partial output beats the error string (fallback parity)
+                                updated["content"] = content_if_absent
                             if expected_attempt is not None:
                                 updated["queue_attempt"] = expected_attempt
                             runs[i] = updated

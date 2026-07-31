@@ -31,6 +31,7 @@ async def apersist_run_status(
     fields: Dict[str, Any],
     user_id: Optional[str] = None,
     expected_attempt: Optional[int] = None,
+    content_if_absent: Optional[str] = None,
 ) -> Optional[bool]:
     """Persist run-status fields atomically when the adapter supports it.
 
@@ -51,26 +52,18 @@ async def apersist_run_status(
     if not callable(method):
         return None
     try:
-        if inspect.iscoroutinefunction(method):
-            return bool(
-                await method(
-                    session_id=session_id,
-                    run_id=run_id,
-                    fields=fields,
-                    expected_attempt=expected_attempt,
-                    user_id=user_id,
-                )
-            )
-        return bool(
-            await asyncio.to_thread(
-                method,
-                session_id=session_id,
-                run_id=run_id,
-                fields=fields,
-                expected_attempt=expected_attempt,
-                user_id=user_id,
-            )
+        kwargs: Dict[str, Any] = dict(
+            session_id=session_id,
+            run_id=run_id,
+            fields=fields,
+            expected_attempt=expected_attempt,
+            user_id=user_id,
         )
+        if content_if_absent is not None:
+            kwargs["content_if_absent"] = content_if_absent
+        if inspect.iscoroutinefunction(method):
+            return bool(await method(**kwargs))
+        return bool(await asyncio.to_thread(method, **kwargs))
     except Exception as e:
         # Liveness over strictness: a transient DB error should not strand the
         # run in a non-terminal state, so the caller may fall back. The fence

@@ -2146,6 +2146,14 @@ async def _arun_background_stream(
                 except Exception:
                     log_warning(f"Failed to push SSE data to queue for run {run_id}")
 
+        except asyncio.CancelledError:
+            # Task-level shutdown (event loop stopping), not run-cancellation:
+            # best-effort persist so pollers are not left with a run stuck at
+            # PENDING/RUNNING forever (parity with the non-stream producer)
+            with contextlib.suppress(Exception):
+                run_response.status = RunStatus.cancelled
+                await apersist_run_transition(agent, "agent", session_id, run_response, user_id=user_id)
+            raise
         except RunCancelledException:
             # Cancelled while waiting for a slot — execution never started, so
             # persist CANCELLED and deregister the run here.
