@@ -10,7 +10,7 @@ from typing import List
 import pytest
 
 from agno.skills.agent_skills import Skills
-from agno.skills.errors import SkillValidationError
+from agno.skills.errors import SkillError, SkillValidationError
 from agno.skills.loaders.base import SkillLoader
 from agno.skills.loaders.db import DbSkills
 from agno.skills.loaders.local import LocalSkills
@@ -27,6 +27,20 @@ def sqlite_db():
     fd, path = tempfile.mkstemp(suffix=".db")
     os.close(fd)
     db = SqliteDb(db_file=path)
+    yield db
+    try:
+        os.unlink(path)
+    except OSError:
+        pass
+
+
+@pytest.fixture
+def async_sqlite_db():
+    from agno.db.sqlite.async_sqlite import AsyncSqliteDb
+
+    fd, path = tempfile.mkstemp(suffix=".db")
+    os.close(fd)
+    db = AsyncSqliteDb(db_file=path)
     yield db
     try:
         os.unlink(path)
@@ -211,6 +225,50 @@ def test_refresh_during_postgres_outage_keeps_last_loaded_skills(sqlite_db, skil
     # Twice: the second request during the outage must also serve the cached mapping.
     assert "release-notes" in skills.get_system_prompt_snippet()
     assert "release-notes" in skills.get_system_prompt_snippet()
+
+
+# ============================================================================
+# ASYNC LOADING (spec 3.5 carry-forward: the async message path awaits the read)
+# ============================================================================
+
+
+async def test_aload_awaits_an_async_database(async_sqlite_db, skill_data) -> None:
+    """Test that aload reads an async backend through its awaited skills method."""
+    await async_sqlite_db.create_skill(skill_data)
+
+    skills = await DbSkills(async_sqlite_db).aload()
+
+    assert [s.name for s in skills] == ["release-notes"]
+    assert skills[0].instructions == skill_data["instructions"]
+    assert skills[0].script_contents == skill_data["scripts"]
+
+
+async def test_aload_with_sync_database_matches_load(sqlite_db, skill_data) -> None:
+    """Test that aload on a sync backend returns the same skills as load."""
+    sqlite_db.create_skill(skill_data)
+    loader = DbSkills(sqlite_db)
+
+    assert [s.name for s in await loader.aload()] == [s.name for s in loader.load()]
+
+
+def test_load_rejects_an_async_database(async_sqlite_db) -> None:
+    """Test that the sync load names the problem instead of iterating a coroutine."""
+    with pytest.raises(SkillError, match="aload"):
+        DbSkills(async_sqlite_db).load()
+
+
+async def test_async_db_skills_start_empty_then_refresh(async_sqlite_db, skill_data) -> None:
+    """Test the async-backed lifecycle: the eager constructor load cannot await, so the
+    mapping starts empty; the first async refresh pulls the rows; an edit shows on the next.
+    """
+    await async_sqlite_db.create_skill(skill_data)
+    skills = Skills(loaders=[DbSkills(async_sqlite_db)])
+    assert skills.get_all_skills() == []
+
+    assert "release-notes" in await skills.aget_system_prompt_snippet()
+
+    await async_sqlite_db.update_skill("release-notes", 1, description="Refreshed from the async table")
+    assert "Refreshed from the async table" in await skills.aget_system_prompt_snippet()
 
 
 # ============================================================================

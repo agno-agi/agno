@@ -490,6 +490,94 @@ def test_refresh_collision_under_raise_keeps_old_mapping(sample_skill: Skill) ->
     assert "Colliding" not in snippet
 
 
+# --- Async Refresh Twin Tests ---
+
+
+class AsyncRefreshingLoader(RefreshingLoader):
+    """A RefreshingLoader with a counted async load, like DbSkills on an async backend."""
+
+    def __init__(self, skills: List[Skill]):
+        super().__init__(skills)
+        self.aload_count = 0
+
+    async def aload(self) -> List[Skill]:
+        self.aload_count += 1
+        if self.fail:
+            raise RuntimeError("database down")
+        return list(self._skills)
+
+
+async def test_async_snippet_refreshes_through_aload(sample_skill: Skill, minimal_skill: Skill) -> None:
+    """Test that aget_system_prompt_snippet refreshes through aload, not the sync load."""
+    loader = AsyncRefreshingLoader([sample_skill])
+    skills = Skills(loaders=[loader])
+
+    loader._skills = [sample_skill, minimal_skill]
+    assert "minimal-skill" in await skills.aget_system_prompt_snippet()
+    assert loader.aload_count == 1
+    assert loader.load_count == 1  # only the eager constructor load
+
+
+async def test_aload_default_delegates_to_sync_load(sample_skill: Skill) -> None:
+    """Test that a refresh loader without its own aload still refreshes, through the sync load."""
+    loader = RefreshingLoader([sample_skill])
+    skills = Skills(loaders=[loader])
+
+    assert "test-skill" in await skills.aget_system_prompt_snippet()
+    assert loader.load_count == 2  # the constructor load, then aload's sync delegate
+
+
+async def test_failed_async_refresh_keeps_last_loaded_skills(sample_skill: Skill) -> None:
+    """Test that a snippet built while the async refresh fails serves the last loaded skills."""
+    loader = AsyncRefreshingLoader([sample_skill])
+    skills = Skills(loaders=[loader])
+
+    loader.fail = True
+    # Twice: the second request must also serve the cached mapping, not an empty one.
+    assert "test-skill" in await skills.aget_system_prompt_snippet()
+    assert "test-skill" in await skills.aget_system_prompt_snippet()
+
+
+async def test_async_and_sync_snippets_render_the_same(mock_loader_multiple: MockSkillLoader) -> None:
+    """Test that the twins render the same snippet from the same mapping."""
+    skills = Skills(loaders=[mock_loader_multiple])
+
+    assert await skills.aget_system_prompt_snippet() == skills.get_system_prompt_snippet()
+
+
+async def test_overlapping_async_refreshes_keep_the_newer_state(sample_skill: Skill, minimal_skill: Skill) -> None:
+    """Test that an older in-flight refresh cannot commit over a newer one's result."""
+    import asyncio
+
+    class GatedLoader(AsyncRefreshingLoader):
+        """First aload reads its data, then parks on a gate before returning."""
+
+        def __init__(self, skills: List[Skill]):
+            super().__init__(skills)
+            self.gate = asyncio.Event()
+
+        async def aload(self) -> List[Skill]:
+            self.aload_count += 1
+            snapshot = list(self._skills)
+            if self.aload_count == 1:
+                await self.gate.wait()
+            return snapshot
+
+    loader = GatedLoader([sample_skill])
+    skills = Skills(loaders=[loader])
+
+    first = asyncio.create_task(skills.aget_system_prompt_snippet())
+    await asyncio.sleep(0.01)  # let the first refresh start and park mid-await
+    loader._skills = [minimal_skill]
+    second = asyncio.create_task(skills.aget_system_prompt_snippet())
+    await asyncio.sleep(0.01)
+    loader.gate.set()
+    await first
+    await second
+
+    assert skills.get_skill_names() == ["minimal-skill"]
+
+
 # --- Get Tools Tests ---
 
 
