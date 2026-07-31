@@ -5514,7 +5514,7 @@ class PostgresDb(BaseDb):
                     row = sess.execute(
                         select(table).where(
                             table.c.idempotency_key == job["idempotency_key"],
-                            table.c.user_id == job.get("user_id"),
+                            table.c.user_id.is_not_distinct_from(job.get("user_id")),
                         )
                     ).fetchone()
                     if row is not None:
@@ -5537,7 +5537,7 @@ class PostgresDb(BaseDb):
                 row = sess.execute(
                     select(table).where(
                         table.c.idempotency_key == job["idempotency_key"],
-                        table.c.user_id == job.get("user_id"),
+                        table.c.user_id.is_not_distinct_from(job.get("user_id")),
                     )
                 ).fetchone()
                 if row is not None:
