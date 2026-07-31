@@ -1527,9 +1527,14 @@ class BaseDb(ABC):
         """Create a new skill. Raises SkillError if a skill with the same name exists."""
         raise NotImplementedError
 
-    def update_skill(self, name: str, expected_version: int, **kwargs: Any) -> Optional[Dict[str, Any]]:
+    def update_skill(
+        self, name: str, expected_version: int, *, user_id: Optional[str] = None, **kwargs: Any
+    ) -> Optional[Dict[str, Any]]:
         """Update a skill by name. Only updates if the stored version matches expected_version
-        (atomic guard); bumps version by one on success. Returns None when no row matched."""
+        (atomic guard); bumps version by one on success. Returns None when no row matched.
+
+        user_id, when given, is an ownership predicate on WHICH row may be updated. It is
+        never written as a value, so a scoped update cannot reassign the row's owner."""
         raise NotImplementedError
 
     def delete_skill(self, name: str, user_id: Optional[str] = None) -> bool:
@@ -2573,9 +2578,14 @@ class AsyncBaseDb(ABC):
         """Create a new skill. Raises SkillError if a skill with the same name exists."""
         raise NotImplementedError
 
-    async def update_skill(self, name: str, expected_version: int, **kwargs: Any) -> Optional[Dict[str, Any]]:
+    async def update_skill(
+        self, name: str, expected_version: int, *, user_id: Optional[str] = None, **kwargs: Any
+    ) -> Optional[Dict[str, Any]]:
         """Update a skill by name. Only updates if the stored version matches expected_version
-        (atomic guard); bumps version by one on success. Returns None when no row matched."""
+        (atomic guard); bumps version by one on success. Returns None when no row matched.
+
+        user_id, when given, is an ownership predicate on WHICH row may be updated. It is
+        never written as a value, so a scoped update cannot reassign the row's owner."""
         raise NotImplementedError
 
     async def delete_skill(self, name: str, user_id: Optional[str] = None) -> bool:

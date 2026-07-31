@@ -5976,7 +5976,9 @@ class PostgresDb(BaseDb):
             log_error(f"Error creating skill: {str(e)}")
             raise
 
-    def update_skill(self, name: str, expected_version: int, **kwargs: Any) -> Optional[Dict[str, Any]]:
+    def update_skill(
+        self, name: str, expected_version: int, *, user_id: Optional[str] = None, **kwargs: Any
+    ) -> Optional[Dict[str, Any]]:
         try:
             table = self._get_table(table_type="skills")
             if table is None:
@@ -5990,12 +5992,12 @@ class PostgresDb(BaseDb):
             # A stale expected_version matches no row and overwrites nothing.
             values = {**kwargs, "updated_at": int(time.time()), "version": expected_version + 1}
             with self.Session() as sess, sess.begin():
-                stmt = (
-                    table.update()
-                    .where(table.c.name == name)
-                    .where(table.c.version == expected_version)
-                    .values(**values)
-                )
+                stmt = table.update().where(table.c.name == name).where(table.c.version == expected_version)
+                # Ownership predicate: names which row may be updated. Never a SET value,
+                # so a scoped update can never reassign the row's owner.
+                if user_id is not None:
+                    stmt = stmt.where(table.c.user_id == user_id)
+                stmt = stmt.values(**values)
                 result = sess.execute(stmt)
                 if result.rowcount == 0:
                     return None
