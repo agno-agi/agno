@@ -238,6 +238,133 @@ class TestOpsSurface:
         assert await store.get_job("r2") is not None
 
 
+async def _pause_job(store, job_id: str = "r1", worker: str = "w1") -> dict:
+    """Enqueue, claim, and park a job as paused (the HITL leg ended)."""
+    await store.enqueue_job(make_job(job_id))
+    claimed = await store.claim_job(worker)
+    assert await store.complete_job(job_id, worker, claimed["attempt"], "paused")
+    return await store.get_job(job_id)
+
+
+class TestContinueJob:
+    @pytest.mark.asyncio
+    async def test_continue_flips_paused_to_queued_same_row(self, store):
+        paused = await _pause_job(store)
+        result = await store.continue_job("r1", {"updated_tools": [{"tool_call_id": "t1"}]})
+        assert result["outcome"] == "queued"
+        job = result["job"]
+        assert job["id"] == "r1"  # the SAME ticket: no new rows, ever
+        assert job["status"] == "queued"
+        assert job["max_attempts"] == paused["attempt"] + 1  # budget: one more execution
+        assert job["completed_at"] is None
+        assert job["locked_by"] is None and job["locked_at"] is None
+        # Submit-time payload preserved; continue inputs merged in
+        assert job["payload"]["input"] == "hello"
+        assert job["payload"]["continue"] == {"updated_tools": [{"tool_call_id": "t1"}]}
+
+    @pytest.mark.asyncio
+    async def test_continue_payload_replaced_not_accumulated(self, store):
+        """Re-pause cycle: the second continue's inputs REPLACE the first's -
+        stale step_requirements must never leak into a later leg."""
+        await _pause_job(store)
+        await store.continue_job("r1", {"step_requirements": [{"step_name": "a", "confirmed": True}]})
+        leg2 = await store.claim_job("w1")
+        assert leg2["payload"]["continue"]["step_requirements"][0]["step_name"] == "a"
+        assert await store.complete_job("r1", "w1", leg2["attempt"], "paused")
+
+        await store.continue_job("r1", {"step_requirements": [{"step_name": "b", "confirmed": True}]})
+        leg3 = await store.claim_job("w1")
+        assert leg3["payload"]["continue"] == {"step_requirements": [{"step_name": "b", "confirmed": True}]}
+        assert leg3["payload"]["input"] == "hello"  # submit fields still intact
+
+    @pytest.mark.asyncio
+    async def test_double_click_attaches(self, store):
+        """Second continue finds status=queued and attaches - idempotency is
+        free from the CAS, no dedup structures."""
+        await _pause_job(store)
+        first = await store.continue_job("r1", {"updated_tools": [{"tool_call_id": "t1"}]})
+        assert first["outcome"] == "queued"
+        second = await store.continue_job("r1", {"updated_tools": [{"tool_call_id": "OTHER"}]})
+        assert second["outcome"] == "attach"
+        # The first click's inputs are what executes; the second's are discarded
+        job = await store.get_job("r1")
+        assert job["payload"]["continue"]["updated_tools"][0]["tool_call_id"] == "t1"
+
+    @pytest.mark.asyncio
+    async def test_continue_while_running_attaches(self, store):
+        await _pause_job(store)
+        await store.continue_job("r1", {"x": 1})
+        await store.claim_job("w1")  # continuation leg claimed
+        result = await store.continue_job("r1", {"x": 2})
+        assert result["outcome"] == "attach"
+        assert result["job"]["status"] == "running"
+
+    @pytest.mark.asyncio
+    async def test_continue_terminal_or_missing_conflicts(self, store):
+        assert (await store.continue_job("ghost", {}))["outcome"] == "conflict"
+        await store.enqueue_job(make_job("r1"))
+        claimed = await store.claim_job("w1")
+        await store.complete_job("r1", "w1", claimed["attempt"], "completed")
+        result = await store.continue_job("r1", {})
+        assert result["outcome"] == "conflict"
+        assert result["job"]["status"] == "completed"
+
+    @pytest.mark.asyncio
+    async def test_continuation_leg_lifecycle(self, store):
+        """Full cycle: submit -> pause -> continue -> claim -> complete, with
+        the fence honoring the new attempt generation."""
+        await _pause_job(store)
+        await store.continue_job("r1", {"updated_tools": []})
+        leg = await store.claim_job("w2")
+        assert leg["attempt"] == 2
+        # Old leg's fence (attempt 1) is dead; new leg's write lands
+        assert not await store.complete_job("r1", "w1", 1, "completed")
+        assert await store.complete_job("r1", "w2", 2, "completed")
+
+    @pytest.mark.asyncio
+    async def test_crashed_continuation_leg_swept_then_requeueable(self, store):
+        """A crashed continue leg fails visibly (budget attempt+1 grants no
+        silent retry); operator requeue re-drives the same merged payload."""
+        await _pause_job(store)
+        await store.continue_job("r1", {"updated_tools": [{"tool_call_id": "t1"}]})
+        await store.claim_job("w1")
+        store._jobs["r1"]["locked_at"] -= 1000  # worker died mid-leg
+        assert await store.claim_job("w2", lock_grace_seconds=60) is None  # budget spent
+        swept = await store.sweep_exhausted_jobs(lock_grace_seconds=60)
+        assert [j["id"] for j in swept] == ["r1"]
+        assert await store.fail_swept_job("r1", lock_grace_seconds=60)
+        assert await store.requeue_job("r1")
+        redriven = await store.claim_job("w2")
+        assert redriven["payload"]["continue"]["updated_tools"][0]["tool_call_id"] == "t1"
+
+
+class TestCancelPaused:
+    @pytest.mark.asyncio
+    async def test_cancel_reaches_paused_tickets(self, store):
+        await _pause_job(store)
+        assert await store.cancel_job("r1") is True
+        assert (await store.get_job("r1"))["status"] == "cancelled"
+
+    @pytest.mark.asyncio
+    async def test_continue_of_cancelled_conflicts(self, store):
+        """The half-cancel trap: after a cancel, a continue must NOT
+        resurrect the run - it conflicts honestly."""
+        await _pause_job(store)
+        await store.cancel_job("r1")
+        result = await store.continue_job("r1", {"updated_tools": []})
+        assert result["outcome"] == "conflict"
+        assert result["job"]["status"] == "cancelled"
+
+    @pytest.mark.asyncio
+    async def test_paused_exempt_from_retention(self, store):
+        """Paused tickets must outlive arbitrary human latency: the retention
+        sweep never removes them (cancel is the remedy for abandoned runs)."""
+        await _pause_job(store)
+        store._jobs["r1"]["completed_at"] = (store._jobs["r1"]["completed_at"] or 0) - 100000
+        assert await store.cleanup_jobs(older_than_seconds=86400) == 0
+        assert await store.get_job("r1") is not None
+
+
 class TestDedupNamespaceContract:
     @pytest.mark.asyncio
     async def test_dedup_is_user_scoped(self, store):

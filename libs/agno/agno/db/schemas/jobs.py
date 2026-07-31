@@ -15,11 +15,14 @@ from typing import Any, Dict, Optional
 
 from agno.utils.dttm import now_epoch_s, to_epoch_s
 
-# Lifecycle: queued -> running -> completed | failed | cancelled
+# Lifecycle: queued -> running -> completed | failed | cancelled | paused
 # running with a stale lock is claimable again while attempt < max_attempts;
 # otherwise the sweep moves it to failed without executing.
-# paused: the execution leg ended awaiting HITL approval - terminal for the
-# ticket (a continuation is a new leg), distinct from completed for ops honesty
+# paused: the execution leg ended awaiting HITL input. NOT terminal: a
+# continue CAS-flips the SAME ticket paused -> queued (continue_job) with the
+# continuation inputs merged into the payload - one row per run, ever
+# (id == run_id is load-bearing across poll/resume/cancel/idempotency).
+# cancel reaches paused tickets too (paused -> cancelled).
 JOB_STATUSES = ("queued", "running", "completed", "failed", "cancelled", "paused")
 
 

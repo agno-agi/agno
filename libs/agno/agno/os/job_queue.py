@@ -185,6 +185,7 @@ def resolve_queue_store(config: QueueConfig, default_db: Any) -> Any:
             "complete_job",
             "retry_or_fail_job",
             "cancel_job",
+            "continue_job",
             "sweep_exhausted_jobs",
             "fail_swept_job",
             "get_job",
@@ -387,22 +388,34 @@ class QueueWorker:
             log_warning(f"Job queue: swept job {job['id']} to failed ({error})")
 
     async def acancel_queued(self, run_id: str) -> bool:
-        """Tombstone a still-QUEUED ticket and terminalize its run row and
-        stream view. Claimed/running jobs are not touched here: the
-        cancellation manager reaches the executing attempt instead. Without
-        this, a run cancelled while waiting in the durable queue kept
-        status='queued' and was claimed and executed after a restart."""
+        """Tombstone a still-waiting ticket (QUEUED or PAUSED) and terminalize
+        its run row and stream view. Claimed/running jobs are not touched
+        here: the cancellation manager reaches the executing attempt instead.
+        Without this, a run cancelled while waiting in the durable queue kept
+        status='queued' and was claimed and executed after a restart - and a
+        cancelled PAUSED run kept a paused ticket a later continue could
+        resurrect."""
+        # Best-effort pre-read for the honest error message: a paused run has
+        # partially executed, so "before execution" would be wrong on it
+        prior = None
+        with contextlib.suppress(Exception):
+            prior = await self.store.get_job(run_id)
         cancelled = False
         with contextlib.suppress(Exception):
             cancelled = bool(await self.store.cancel_job(run_id))
         if not cancelled:
             return False
+        reason = (
+            "cancelled while paused awaiting continuation"
+            if prior is not None and prior.get("status") == "paused"
+            else "cancelled before execution"
+        )
         job = None
         with contextlib.suppress(Exception):
             job = await self.store.get_job(run_id)
         if job is not None:
             with contextlib.suppress(Exception):
-                await self._persist_run_error(job, "cancelled before execution", status="cancelled")
+                await self._persist_run_error(job, reason, status="cancelled")
         from agno.os.event_streams import get_event_stream
         from agno.run.base import RunStatus
 

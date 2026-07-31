@@ -4326,7 +4326,10 @@ class AsyncPostgresDb(AsyncBaseDb):
     async def cancel_job(self, job_id: str) -> bool:
         """Tombstone cancellation: only jobs still waiting can be cancelled
         here (contract: 'this job will not execute'). Claimed jobs fall
-        through to the running-run cancellation path."""
+        through to the running-run cancellation path. Paused tickets count as
+        waiting - nothing is executing them, and without this a cancelled
+        paused run stayed a paused ticket forever, resurrectable by a later
+        continue."""
         try:
             table = await self._get_table(table_type="jobs")
             if table is None:
@@ -4336,7 +4339,7 @@ class AsyncPostgresDb(AsyncBaseDb):
                 async with sess.begin():
                     result = await sess.execute(
                         update(table)
-                        .where(table.c.id == job_id, table.c.status == "queued")
+                        .where(table.c.id == job_id, table.c.status.in_(["queued", "paused"]))
                         .values(status="cancelled", completed_at=now, updated_at=now)
                     )
                     return (result.rowcount or 0) > 0  # type: ignore[attr-defined]
@@ -4472,6 +4475,54 @@ class AsyncPostgresDb(AsyncBaseDb):
             log_debug(f"Error requeueing run job: {e}")
             return False
 
+    async def continue_job(self, job_id: str, continue_payload: Dict[str, Any]) -> Dict[str, Any]:
+        """Continuation CAS: flip the EXISTING paused ticket back to queued,
+        mirroring requeue_job's transition (row-locked read + conditional
+        update in one transaction). No new rows, ever - id == run_id is
+        load-bearing. Submit-time payload fields are kept; payload["continue"]
+        is REPLACED WHOLESALE with this continue's inputs (never accumulated
+        across pause cycles). Budget grant: max_attempts = attempt + 1 -
+        exactly one more execution, regardless of the configured retry budget.
+
+        Returns {"outcome": "queued" | "attach" | "conflict", "job": row}:
+        queued = CAS won; attach = ticket already queued/running (double-click
+        idempotency - the caller attaches, this click's inputs are discarded);
+        conflict = terminal ticket or no ticket (job is the row or None).
+
+        Exceptions propagate (like enqueue_job, unlike the ops-surface
+        requeue_job): this CAS is the durable acceptance of the continue, and
+        a DB failure must surface as a 500, never masquerade as "conflict".
+        """
+        table = await self._get_table(table_type="jobs")
+        if table is None:
+            raise RuntimeError("Job queue table not found")
+        now = int(time.time())
+        async with self.async_session_factory() as sess:
+            async with sess.begin():
+                row = (await sess.execute(select(table).where(table.c.id == job_id).with_for_update())).fetchone()
+                if row is None:
+                    return {"outcome": "conflict", "job": None}
+                job = dict(row._mapping)
+                if job["status"] in ("completed", "failed", "cancelled"):
+                    return {"outcome": "conflict", "job": job}
+                if job["status"] in ("queued", "running"):
+                    return {"outcome": "attach", "job": job}
+                payload = dict(job.get("payload") or {})
+                payload["continue"] = dict(continue_payload)
+                values: Dict[str, Any] = {
+                    "status": "queued",
+                    "payload": payload,
+                    "max_attempts": job["attempt"] + 1,
+                    "available_at": now,
+                    "locked_by": None,
+                    "locked_at": None,
+                    "completed_at": None,
+                    "updated_at": now,
+                }
+                await sess.execute(update(table).where(table.c.id == job_id).values(**values))
+                job.update(values)
+                return {"outcome": "queued", "job": job}
+
     async def queue_stats(self) -> Dict[str, Any]:
         try:
             table = await self._get_table(table_type="jobs")
@@ -4493,7 +4544,9 @@ class AsyncPostgresDb(AsyncBaseDb):
 
     async def cleanup_jobs(self, older_than_seconds: int = 86400) -> int:
         """Delete terminal jobs whose completed_at is older than the retention
-        window. Returns the number of rows removed."""
+        window. Returns the number of rows removed. Paused tickets are
+        deliberately EXEMPT: they must outlive arbitrary human latency to stay
+        continuable; cancelling the run is the remedy for abandoned ones."""
         try:
             table = await self._get_table(table_type="jobs")
             if table is None:

@@ -106,7 +106,10 @@ class QueueConfig:
     lock_grace_seconds: int = 60
     poll_interval: float = 1.0
     # Terminal jobs older than this are deleted by the worker's retention
-    # sweep; the queue table must not grow unboundedly.
+    # sweep; the queue table must not grow unboundedly. PAUSED tickets are
+    # exempt: a paused run's ticket is what a later continue re-queues, and it
+    # must outlive arbitrary human latency. Abandoned paused tickets therefore
+    # persist until continued or cancelled - cancel the run to release one.
     retention_seconds: int = 86400
 
     def __post_init__(self) -> None:

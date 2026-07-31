@@ -2448,6 +2448,10 @@ class RedisDb(BaseDb):
         return outcome.get("status") if updated is not None else None
 
     def cancel_job(self, job_id: str) -> bool:
+        # Paused tickets count as waiting: nothing is executing them, and
+        # without this a cancelled paused run stayed a paused ticket forever,
+        # resurrectable by a later continue. (Paused jobs are in no
+        # queued/running zset; the zrem below is a harmless no-op for them.)
         from redis.exceptions import WatchError
 
         job_key = self._q_job_key(job_id)
@@ -2460,7 +2464,7 @@ class RedisDb(BaseDb):
                     pipe.unwatch()
                     return False
                 job = json.loads(raw if isinstance(raw, str) else raw.decode())
-                if job["status"] != "queued":
+                if job["status"] not in ("queued", "paused"):
                     pipe.unwatch()
                     return False
                 job.update(status="cancelled", completed_at=now, updated_at=now)
@@ -2579,6 +2583,65 @@ class RedisDb(BaseDb):
         except WatchError:
             return False
 
+    def continue_job(self, job_id: str, continue_payload: Dict[str, Any]) -> Dict[str, Any]:
+        """Continuation CAS: flip the EXISTING paused ticket back to queued,
+        mirroring requeue_job's WATCH/MULTI transition. No new rows, ever -
+        id == run_id is load-bearing. Submit-time payload fields are kept;
+        payload["continue"] is REPLACED WHOLESALE with this continue's inputs
+        (never accumulated across pause cycles). Budget grant: max_attempts =
+        attempt + 1 - exactly one more execution, regardless of the configured
+        retry budget.
+
+        Returns {"outcome": "queued" | "attach" | "conflict", "job": row}:
+        queued = CAS won; attach = ticket already queued/running (double-click
+        idempotency - the caller attaches, this click's inputs are discarded);
+        conflict = terminal ticket or no ticket (job is the row or None).
+
+        A WatchError means the ticket changed under us (e.g. the raced
+        double-click's CAS won): re-evaluate rather than failing, so the
+        second click resolves to attach. Exceptions propagate (like
+        enqueue_job): this CAS is the durable acceptance of the continue.
+        """
+        from redis.exceptions import WatchError
+
+        job_key = self._q_job_key(job_id)
+        for _ in range(10):
+            now = int(time.time())
+            try:
+                with self.redis_client.pipeline() as pipe:
+                    pipe.watch(job_key)
+                    raw = pipe.get(job_key)
+                    if raw is None:
+                        pipe.unwatch()
+                        return {"outcome": "conflict", "job": None}
+                    job = json.loads(raw if isinstance(raw, str) else raw.decode())
+                    if job["status"] in ("completed", "failed", "cancelled"):
+                        pipe.unwatch()
+                        return {"outcome": "conflict", "job": job}
+                    if job["status"] in ("queued", "running"):
+                        pipe.unwatch()
+                        return {"outcome": "attach", "job": job}
+                    payload = dict(job.get("payload") or {})
+                    payload["continue"] = dict(continue_payload)
+                    job.update(
+                        status="queued",
+                        payload=payload,
+                        max_attempts=job["attempt"] + 1,
+                        available_at=now,
+                        locked_by=None,
+                        locked_at=None,
+                        completed_at=None,
+                        updated_at=now,
+                    )
+                    pipe.multi()
+                    self._q_save_job_in_pipe(pipe, job)
+                    pipe.zadd(self._q_key("queued"), {job_id: now})
+                    pipe.execute()
+                    return {"outcome": "queued", "job": job}
+            except WatchError:
+                continue  # ticket changed under us; re-evaluate its new status
+        raise RuntimeError("continue_job: ticket contention did not settle after 10 attempts")
+
     def queue_stats(self) -> Dict[str, Any]:
         now = int(time.time())
         counts: Dict[str, int] = {}
@@ -2598,7 +2661,9 @@ class RedisDb(BaseDb):
         flip failed->queued between our read and the delete, and an
         unconditional delete would silently vanish the requeued (accepted!)
         run. WATCH + re-check inside the transaction = Postgres's atomic
-        DELETE ... WHERE status IN (terminal)."""
+        DELETE ... WHERE status IN (terminal). Paused tickets are deliberately
+        EXEMPT: they must outlive arbitrary human latency to stay continuable;
+        cancelling the run is the remedy for abandoned ones."""
         from redis.exceptions import WatchError
 
         cutoff = int(time.time()) - older_than_seconds

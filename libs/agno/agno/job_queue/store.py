@@ -2,7 +2,7 @@
 
 Implements the same contract as the Postgres queue methods (enqueue_job,
 claim_job, heartbeat_jobs, complete_job, retry_or_fail_job,
-cancel_job, sweep_exhausted_jobs, fail_swept_job, get_job,
+cancel_job, continue_job, sweep_exhausted_jobs, fail_swept_job, get_job,
 count_queued_jobs) against process memory.
 
 This is the contract-test fixture and the single-process dev fallback - it is
@@ -124,9 +124,14 @@ class InMemoryQueueStore:
             return "failed"
 
     async def cancel_job(self, job_id: str) -> bool:
+        # Paused counts as "still waiting": nothing is executing a paused
+        # ticket, so the tombstone contract ("this job will not execute")
+        # applies the same way. Without it, cancelling a paused run was a
+        # half-cancel - intent registered, ticket paused forever, and a later
+        # continue would resurrect a run the user cancelled.
         async with self._lock:
             job = self._jobs.get(job_id)
-            if job is None or job["status"] != "queued":
+            if job is None or job["status"] not in ("queued", "paused"):
                 return False
             now = int(time.time())
             job.update(status="cancelled", completed_at=now, updated_at=now)
@@ -192,6 +197,44 @@ class InMemoryQueueStore:
             )
             return True
 
+    async def continue_job(self, job_id: str, continue_payload: Dict[str, Any]) -> Dict[str, Any]:
+        """Continuation CAS: flip the EXISTING paused ticket back to queued,
+        mirroring requeue_job's transition. No new rows, ever - id == run_id
+        is load-bearing. The ticket's submit-time payload fields are kept and
+        payload["continue"] is REPLACED WHOLESALE with this continue's inputs
+        (never accumulated across pause cycles). Budget grant: exactly one
+        more execution (max_attempts = attempt + 1), regardless of the
+        configured retry budget - a continuation is user-triggered and must
+        never silently re-run.
+
+        Returns {"outcome": "queued" | "attach" | "conflict", "job": row}:
+        - queued: the CAS won; the merged row is returned.
+        - attach: the ticket is already queued/running (double-click
+          idempotency, free from the CAS) - the caller attaches to it; this
+          click's inputs are discarded.
+        - conflict: terminal ticket or no ticket; job is the row or None.
+        """
+        async with self._lock:
+            job = self._jobs.get(job_id)
+            if job is None or job["status"] in ("completed", "failed", "cancelled"):
+                return {"outcome": "conflict", "job": dict(job) if job is not None else None}
+            if job["status"] in ("queued", "running"):
+                return {"outcome": "attach", "job": dict(job)}
+            now = int(time.time())
+            payload = dict(job.get("payload") or {})
+            payload["continue"] = dict(continue_payload)
+            job.update(
+                status="queued",
+                payload=payload,
+                max_attempts=job["attempt"] + 1,
+                available_at=now,
+                locked_by=None,
+                locked_at=None,
+                completed_at=None,
+                updated_at=now,
+            )
+            return {"outcome": "queued", "job": dict(job)}
+
     async def queue_stats(self) -> Dict[str, Any]:
         async with self._lock:
             now = int(time.time())
@@ -206,7 +249,9 @@ class InMemoryQueueStore:
 
     async def cleanup_jobs(self, older_than_seconds: int = 86400) -> int:
         """Delete terminal jobs whose completed_at is older than the retention
-        window. Returns the number of rows removed."""
+        window. Returns the number of rows removed. Paused tickets are
+        deliberately EXEMPT: they must outlive arbitrary human latency to stay
+        continuable; cancelling the run is the remedy for abandoned ones."""
         async with self._lock:
             cutoff = int(time.time()) - older_than_seconds
             to_delete = [
