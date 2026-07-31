@@ -187,3 +187,51 @@ class TestRedisClusterRejected:
 
         with pytest.raises(ValueError, match="non-cluster Redis"):
             resolve_queue_store(QueueConfig(durable=True), ClusterStore())
+
+
+class TestQueueAdminGate:
+    """The /queue admin gate must key on JWT identity, not on data-scoping:
+    a non-admin JWT caller with user_isolation OFF must still be rejected."""
+
+    def _request(self, scopes=None, user_id=None, admin_scope=None, isolation=False):
+        from types import SimpleNamespace
+
+        state = SimpleNamespace()
+        if scopes is not None:
+            state.scopes = scopes
+        if user_id is not None:
+            state.user_id = user_id
+        if admin_scope is not None:
+            state.admin_scope = admin_scope
+        state.user_isolation_enabled = isolation
+        return SimpleNamespace(state=state)
+
+    @pytest.mark.asyncio
+    async def test_non_admin_jwt_rejected_even_without_isolation(self):
+        from fastapi import HTTPException
+
+        from agno.os.routers.job_queue.router import _require_queue_admin
+
+        with pytest.raises(HTTPException) as exc:
+            await _require_queue_admin(self._request(scopes=["agents:run"], user_id="u1", isolation=False))
+        assert exc.value.status_code == 403
+
+    @pytest.mark.asyncio
+    async def test_admin_jwt_passes(self):
+        from agno.os.routers.job_queue.router import _require_queue_admin
+
+        await _require_queue_admin(self._request(scopes=["agent_os:admin"], user_id="admin", isolation=False))
+
+    @pytest.mark.asyncio
+    async def test_custom_admin_scope_honoured(self):
+        from agno.os.routers.job_queue.router import _require_queue_admin
+
+        await _require_queue_admin(
+            self._request(scopes=["ops:root"], user_id="admin", admin_scope="ops:root", isolation=True)
+        )
+
+    @pytest.mark.asyncio
+    async def test_no_jwt_enforcement_passes(self):
+        from agno.os.routers.job_queue.router import _require_queue_admin
+
+        await _require_queue_admin(self._request())
