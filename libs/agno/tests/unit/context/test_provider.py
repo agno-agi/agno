@@ -239,11 +239,21 @@ async def test_query_tool_includes_results_when_populated():
 # ---------------------------------------------------------------------------
 
 
+async def _collect_update_output(tool, **kwargs) -> str:
+    """Collect final string output from the update tool generator."""
+    gen = await tool.entrypoint(**kwargs)
+    result = ""
+    async for chunk in gen:
+        if isinstance(chunk, str):
+            result = chunk
+    return result
+
+
 @pytest.mark.asyncio
 async def test_update_tool_happy_path():
     p = _WritableProvider(id="w")
     tool_ = p._update_tool()
-    out = await tool_.entrypoint(instruction="add x")
+    out = await _collect_update_output(tool_, instruction="add x")
     payload = json.loads(out)
     assert payload == {"text": "u:add x"}
 
@@ -252,7 +262,7 @@ async def test_update_tool_happy_path():
 async def test_update_tool_reports_read_only_when_not_overridden():
     p = _EchoProvider(id="ro")  # no aupdate override -> base raises NotImplementedError
     tool_ = p._update_tool()
-    out = await tool_.entrypoint(instruction="add x")
+    out = await _collect_update_output(tool_, instruction="add x")
     payload = json.loads(out)
     # Specifically a read-only message, not a generic exception string —
     # the calling agent should be able to learn from this and not retry.
@@ -263,7 +273,7 @@ async def test_update_tool_reports_read_only_when_not_overridden():
 async def test_update_tool_catches_aupdate_exceptions():
     p = _RaisingWritableProvider(id="w")
     tool_ = p._update_tool()
-    out = await tool_.entrypoint(instruction="add x")
+    out = await _collect_update_output(tool_, instruction="add x")
     payload = json.loads(out)
     assert "error" in payload
     assert "ValueError" in payload["error"]
@@ -307,7 +317,7 @@ async def test_update_tool_forwards_run_context_to_aupdate():
     p = _WCaptor(id="w")
     update_tool = p._update_tool()
     rc = RunContext(run_id="r-2", session_id="s-2", user_id="u-2", dependencies={"db_url": "postgres://..."})
-    await update_tool.entrypoint(instruction="write x", run_context=rc)
+    await _collect_update_output(update_tool, instruction="write x", run_context=rc)
     assert captured["run_context"] is rc
 
 
@@ -562,3 +572,86 @@ async def test_stream_sub_agent_events_can_be_disabled():
         pass
 
     assert captured_kwargs.get("stream_events") is False
+
+
+# ---------------------------------------------------------------------------
+# Update tool streaming tests — mirror the query tool streaming tests
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_update_tool_yields_events_from_sub_agent():
+    """Events from the write sub-agent must be yielded, not just the final answer."""
+    from agno.run.agent import RunOutput, ToolCallStartedEvent
+
+    class _StreamingWriteProvider(_EchoProvider):
+        async def _aget_update_agent(self, run_context):
+            class _FakeAgent:
+                async def arun(self, message, **kwargs):
+                    event1 = ToolCallStartedEvent()
+                    event1.tool_call_id = "write_call_1"
+                    event2 = ToolCallStartedEvent()
+                    event2.tool_call_id = "write_call_2"
+                    yield event1
+                    yield event2
+                    yield RunOutput(content="wrote successfully")
+
+            return _FakeAgent()
+
+    p = _StreamingWriteProvider(id="sw")
+    update_tool = p._update_tool()
+    gen = await update_tool.entrypoint(instruction="add page")
+
+    events = []
+    final_json = None
+    async for chunk in gen:
+        if isinstance(chunk, str):
+            final_json = chunk
+        else:
+            events.append(chunk)
+
+    assert len(events) == 2, f"Expected 2 events, got {len(events)}"
+    assert events[0].tool_call_id == "write_call_1"
+    assert events[1].tool_call_id == "write_call_2"
+    assert final_json is not None
+    assert "wrote successfully" in final_json
+
+
+@pytest.mark.asyncio
+async def test_update_tool_sets_parent_run_id_on_events():
+    """Each yielded event must have parent_run_id set to the parent's run_id."""
+    from agno.run.agent import RunOutput, ToolCallStartedEvent
+
+    class _StreamingWriteProvider(_EchoProvider):
+        async def _aget_update_agent(self, run_context):
+            class _FakeAgent:
+                async def arun(self, message, **kwargs):
+                    yield ToolCallStartedEvent()
+                    yield ToolCallStartedEvent()
+                    yield RunOutput(content="done")
+
+            return _FakeAgent()
+
+    p = _StreamingWriteProvider(id="sw")
+    update_tool = p._update_tool()
+    rc = RunContext(run_id="parent-write-456", user_id="u", session_id="s")
+    gen = await update_tool.entrypoint(instruction="update", run_context=rc)
+
+    events = []
+    async for chunk in gen:
+        if not isinstance(chunk, str):
+            events.append(chunk)
+
+    assert len(events) == 2
+    for event in events:
+        assert event.parent_run_id == "parent-write-456"
+
+
+@pytest.mark.asyncio
+async def test_update_tool_falls_back_to_aupdate_without_streaming_agent():
+    """Provider without _aget_update_agent falls back to aupdate (no streaming)."""
+    p = _WritableProvider(id="w")
+    update_tool = p._update_tool()
+    out = await _collect_update_output(update_tool, instruction="hello")
+    payload = json.loads(out)
+    assert payload["text"] == "u:hello"

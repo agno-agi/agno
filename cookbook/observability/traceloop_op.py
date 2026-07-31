@@ -22,7 +22,6 @@ Traceloop.init(app_name="agno_workflows")
 agent = Agent(
     name="AnalysisAgent",
     model=OpenAIChat(id="gpt-5.2"),
-    debug_mode=True,
 )
 
 

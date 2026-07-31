@@ -10,9 +10,9 @@ This example extracts contact info from an email signature.
 
 from typing import Optional
 
-from agno.agent import Agent, RunOutput  # noqa
+from agno.agent import Agent, RunOutput
 from pydantic import BaseModel, Field
-from rich.pretty import pprint  # noqa
+from rich.pretty import pprint
 
 
 # ---------------------------------------------------------------------------

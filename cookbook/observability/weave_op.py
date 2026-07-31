@@ -18,7 +18,7 @@ weave.init("agno")
 # ---------------------------------------------------------------------------
 # Create Agent
 # ---------------------------------------------------------------------------
-agent = Agent(model=OpenAIChat(id="gpt-4o"), markdown=True, debug_mode=True)
+agent = Agent(model=OpenAIChat(id="gpt-4o"), markdown=True)
 
 
 @weave.op()

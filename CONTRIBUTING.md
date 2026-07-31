@@ -82,7 +82,7 @@ Make sure all tests pass before submitting your pull request. If you add new fea
    - Import your `VectorDb` Class in `libs/agno/agno/vectordb/<your_db>/__init__.py`.
    - Checkout the [`libs/agno/agno/vectordb/pgvector/pgvector`](https://github.com/agno-agi/agno/blob/main/libs/agno/agno/vectordb/pgvector/pgvector.py) file for an example.
 4. Add a recipe for using your `VectorDb` under `cookbook/07_knowledge/vector_db/<your_db>`.
-   - Checkout [`cookbook/07_knowledge/vector_db/pgvector/pgvector_db`](https://github.com/agno-agi/agno/blob/main/cookbook/07_knowledge/vector_db/pgvector/pgvector_db.py) for an example.
+   - Checkout [`cookbook/07_knowledge/09_archive/vector_dbs/pgvector_db`](https://github.com/agno-agi/agno/blob/main/cookbook/07_knowledge/09_archive/vector_dbs/pgvector_db.py) for an example.
 5. Important: Format and validate your code by running `./scripts/format.sh` and `./scripts/validate.sh`.
 6. Submit a pull request.
 
@@ -98,17 +98,26 @@ Make sure all tests pass before submitting your pull request. If you add new fea
 4. If the Model provider does not support the OpenAI API spec:
    - Reach out to us on [Discord](https://discord.gg/4MtYHHrgA8) or open an issue to discuss the best way to integrate your LLM provider.
    - Checkout [`agno/models/anthropic/claude.py`](https://github.com/agno-agi/agno/blob/main/libs/agno/agno/models/anthropic/claude.py) or [`agno/models/cohere/chat.py`](https://github.com/agno-agi/agno/blob/main/libs/agno/agno/models/cohere/chat.py) for inspiration.
-5. Add your model provider to `libs/agno/agno/models/utils.py`:
-   - Add a new `elif` clause in the `get_model()` function with your provider name
-   - Use the provider name that matches your module directory (e.g., "meta" for `models/meta/`)
-   - Import and return your Model class with the provided `model_id`
-   - This enables users to use the string format: `model="yourprovider:model-name"`
-   - Example:
+5. Register your model provider in `libs/agno/agno/models/utils.py`:
+   - Add exactly one row to the `_PROVIDERS` table, keyed by a stable provider key, with the value
+     `(module, class_name, default_name, default_provider)`. `default_name` and `default_provider`
+     are your class's default `name` and (lowercased) `provider` attributes. This single table is
+     the source of truth: the construction registry (`MODEL_PROVIDER_CLASSES`) and the
+     `(provider, name)` resolution indices are all derived from it, so you do not edit any other
+     map. Use a lowercase, hyphenated key, typically matching your module directory (e.g. `"meta"`
+     for `models/meta/`, `"openai-chat"` for the chat variant).
      ```python
-     elif provider == "yourprovider":
-         from agno.models.yourprovider import YourModel
-         return YourModel(id=model_id)
+     "yourprovider": ("agno.models.yourprovider", "YourModel", "YourModel", "yourprovider"),
      ```
+   - This covers both the string format (`model="yourprovider:model-name"`) and rebuilding a model
+     saved to the database. If your class shares a display `provider` string with another class
+     (e.g. an OpenAI-compatible provider reporting `"openai"`), the serialized `name` you list is
+     what tells them apart; if its display string differs from the key (e.g. `"inceptionlabs"` vs
+     key `"inception"`), the alias is derived automatically. Only the default key for an ambiguous
+     display string (e.g. `"azure"` -> AzureOpenAI) lives in `_AMBIGUOUS_PROVIDER_DEFAULTS`.
+   - CI enforces registration: `test_every_model_subclass_is_registered` statically discovers every
+     concrete `Model` subclass and fails if one is missing. If your class is an abstract base rather
+     than a user-selectable provider, add it to that test's allowlist instead.
 6. Add a recipe for using your Model provider under `cookbook/models/<your_model>`.
    - Checkout [`agno/cookbook/90_models/aws/claude`](https://github.com/agno-agi/agno/tree/main/cookbook/90_models/aws/claude) for an example.
    - Show both the model class and string syntax in your examples
@@ -123,7 +132,7 @@ Make sure all tests pass before submitting your pull request. If you add new fea
    - Your Class will be in `libs/agno/agno/tools/<your_tool>.py`.
    - Make sure to register all functions in your class via a flag.
    - Checkout the [`agno/tools/youtube.py`](https://github.com/agno-agi/agno/blob/main/libs/agno/agno/tools/youtube.py) file for an example.
-   - If your tool requires an API key, checkout the [`agno/tools/serpapi_tools.py`](https://github.com/agno-agi/agno/blob/main/libs/agno/agno/tools/serpapi_tools.py) as well.
+   - If your tool requires an API key, checkout the [`agno/tools/serpapi.py`](https://github.com/agno-agi/agno/blob/main/libs/agno/agno/tools/serpapi.py) as well.
 4. Add a recipe for using your Tool under `cookbook/tools/<your_tool>`.
    - Checkout [`agno/cookbook/91_tools/youtube_tools`](https://github.com/agno-agi/agno/blob/main/cookbook/91_tools/youtube_tools.py) for an example.
 5. Important: Format and validate your code by running `./scripts/format.sh` and `./scripts/validate.sh`.

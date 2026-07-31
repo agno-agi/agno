@@ -24,7 +24,7 @@ from agno.models.openai import OpenAIResponses
 
 # Note: No db parameter - this is the edge case we're testing
 agent = Agent(
-    model=OpenAIResponses(id="gpt-5.2"),
+    model=OpenAIResponses(id="gpt-5.5"),
     learning=LearningMachine(
         user_profile=UserProfileConfig(
             mode=LearningMode.ALWAYS,

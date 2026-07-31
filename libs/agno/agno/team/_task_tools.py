@@ -38,7 +38,7 @@ from agno.run.agent import (
     RunOutputEvent,
 )
 from agno.run.base import RunStatus
-from agno.run.cancel import aregister_member_run, raise_if_cancelled, register_member_run
+from agno.run.cancel import araise_if_cancelled, aregister_member_run, raise_if_cancelled, register_member_run
 from agno.run.team import (
     RunCancelledEvent as TeamMemberRunCancelledEvent,
 )
@@ -325,7 +325,12 @@ def _get_task_management_tools(
         )
         team_history_str = None
         if team.add_team_history_to_members and session:
-            team_history_str = session.get_team_history_context(num_runs=team.num_team_history_runs)
+            from agno.team.team import Team
+
+            member_team_id = member_agent.id if isinstance(member_agent, Team) else None
+            team_history_str = session.get_team_history_context(
+                team_id=member_team_id, num_runs=team.num_team_history_runs
+            )
 
         member_agent_task: Any = task_description
         if team_history_str or team_member_interactions_str:
@@ -663,7 +668,7 @@ def _get_task_management_tools(
                     # Check if the parent team's run is cancelled - propagate to member
                     try:
                         if run_response.run_id is not None:
-                            raise_if_cancelled(run_response.run_id)
+                            await araise_if_cancelled(run_response.run_id)
                     except RunCancelledException:
                         if member_run_id:
                             await _acascading_cancel_run(member_run_id)
@@ -699,7 +704,7 @@ def _get_task_management_tools(
                 )
                 check_if_run_cancelled(member_run_response)
                 if run_response.run_id is not None:
-                    raise_if_cancelled(run_response.run_id)
+                    await araise_if_cancelled(run_response.run_id)
         except RunCancelledException:
             use_team_logger()
             _post_process_member_run(member_run_response, member_agent, member_agent_task, member_session_state_copy)
