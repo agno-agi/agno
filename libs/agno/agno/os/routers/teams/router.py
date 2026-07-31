@@ -807,7 +807,10 @@ def get_team_router(
                             _resume_stream_generator(team, existing["id"], None, existing.get("session_id"), user_id),
                             media_type="text/event-stream",
                         )
-                    await get_event_stream().register_run(queued_run_id, RunStatus.pending)
+                    with contextlib.suppress(Exception):
+                        # Fail-open: the queue row is already committed - a Redis blip
+                        # must not 500 an accepted submission (tails degrade gracefully)
+                        await get_event_stream().register_run(queued_run_id, RunStatus.pending)
                     await aprepare_queued_run(
                         team,
                         "team",

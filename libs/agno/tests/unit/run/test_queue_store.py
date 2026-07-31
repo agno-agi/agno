@@ -236,3 +236,19 @@ class TestOpsSurface:
         assert await store.cleanup_jobs(older_than_seconds=86400) == 1
         assert await store.get_job("r1") is None
         assert await store.get_job("r2") is not None
+
+
+class TestDedupNamespaceContract:
+    @pytest.mark.asyncio
+    async def test_dedup_is_user_scoped(self, store):
+        await store.enqueue_job(make_job("u1r", idempotency_key="k", user_id="alice"))
+        result = await store.enqueue_job(make_job("u2r", idempotency_key="k", user_id="bob"))
+        assert result["accepted"] is True, "another tenant's key reuse must not attach to alice's job"
+        dup = await store.enqueue_job(make_job("u1r2", idempotency_key="k", user_id="alice"))
+        assert dup["accepted"] is False and dup["job"]["id"] == "u1r"
+
+    @pytest.mark.asyncio
+    async def test_empty_key_is_no_key(self, store):
+        await store.enqueue_job(make_job("e1", idempotency_key=""))
+        result = await store.enqueue_job(make_job("e2", idempotency_key=""))
+        assert result["accepted"] is True, "empty string means no dedup key"

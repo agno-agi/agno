@@ -836,7 +836,10 @@ def get_agent_router(
                             ),
                             media_type="text/event-stream",
                         )
-                    await _ges().register_run(queued_run_id, _RS.pending)
+                    with contextlib.suppress(Exception):
+                        # Fail-open: the queue row is already committed - a Redis blip
+                        # must not 500 an accepted submission (tails degrade gracefully)
+                        await _ges().register_run(queued_run_id, _RS.pending)
                     await aprepare_queued_agent_run(
                         agent, run_id=queued_run_id, session_id=queued_session_id, user_id=user_id, input=message
                     )

@@ -19,6 +19,7 @@ from agno.os.schema import (
     UnauthenticatedResponse,
 )
 from agno.os.settings import AgnoAPISettings
+from agno.utils.log import log_warning
 
 if TYPE_CHECKING:
     from agno.os.app import AgentOS
@@ -108,6 +109,15 @@ def get_queue_router(os: "AgentOS", settings: AgnoAPISettings = AgnoAPISettings(
         store = _get_store(request)
         if not await store.requeue_job(job_id):
             raise HTTPException(status_code=400, detail=f"Job {job_id} not found or not in a requeueable state")
+        # A cancelled job's cancellation intent outlives the tombstone (nothing
+        # executed, so nothing cleaned it up). Clear it, or the requeued
+        # attempt is instantly re-cancelled at its first checkpoint.
+        try:
+            from agno.run.cancel import acleanup_run
+
+            await acleanup_run(job_id)
+        except Exception:
+            log_warning(f"Could not clear cancellation intent for requeued job {job_id}")
         return await store.get_job(job_id)
 
     @router.get(

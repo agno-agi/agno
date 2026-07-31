@@ -1457,7 +1457,10 @@ def get_workflow_router(
                             ),
                             media_type="text/event-stream",
                         )
-                    await get_event_stream().register_run(queued_run_id, _RS.pending)
+                    with contextlib.suppress(Exception):
+                        # Fail-open: the queue row is already committed - a Redis blip
+                        # must not 500 an accepted submission (tails degrade gracefully)
+                        await get_event_stream().register_run(queued_run_id, _RS.pending)
                     await aprepare_queued_run(
                         workflow,
                         "workflow",

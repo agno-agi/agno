@@ -424,6 +424,7 @@ class QueueWorker:
         cleaned up first - a re-execution is a fresh stream, never an append
         onto a contradicted history.
         """
+        from agno.exceptions import RunCancelledException
         from agno.os.event_streams import get_event_stream
         from agno.run.base import RunStatus
 
@@ -437,8 +438,11 @@ class QueueWorker:
             # rewound index would make them skip the retry's entire output
             with contextlib.suppress(Exception):
                 await event_stream.reset_run_events(job_id)
-        await event_stream.register_run(job_id, RunStatus.pending)
-        await event_stream.set_run_status(job_id, RunStatus.running)
+        with contextlib.suppress(Exception):
+            # Fail-open: a Redis blip here must not burn the attempt budget -
+            # execution can proceed; tails degrade to the DB view
+            await event_stream.register_run(job_id, RunStatus.pending)
+            await event_stream.set_run_status(job_id, RunStatus.running)
 
         final_output: Any = None
         is_workflow = job.get("component_type") == "workflow"
@@ -478,6 +482,12 @@ class QueueWorker:
             if isinstance(raw_status, str) and not isinstance(raw_status, RunStatus):
                 with contextlib.suppress(ValueError):
                     raw_status = RunStatus(raw_status)
+            import sys
+
+            if isinstance(sys.exc_info()[1], RunCancelledException):
+                # Cancellation propagating to the outer handler: the sentinel
+                # must say CANCELLED, not a coerced ERROR
+                raw_status = RunStatus.cancelled
             status = raw_status if isinstance(raw_status, RunStatus) else RunStatus.error
             # A retryable failure must NOT publish the terminal sentinel: tails
             # would close cleanly and the client would never see the retry's
@@ -489,7 +499,7 @@ class QueueWorker:
                     await asyncio.shield(event_stream.complete_run(job_id, status))
         return final_output
 
-    async def _terminate_stream_view(self, job: Dict[str, Any]) -> None:
+    async def _terminate_stream_view(self, job: Dict[str, Any], status: str = "error") -> None:
         """For STREAMING jobs failed outside their own execution (sweep, drain,
         timeout): write the terminal status into the event stream so connected
         tails end immediately - a dead producer wrote no sentinel, and without
@@ -499,8 +509,11 @@ class QueueWorker:
         from agno.os.event_streams import get_event_stream
         from agno.run.base import RunStatus
 
+        # The TRUE status: a cancelled run's SSE terminal must not claim ERROR
+        # while the poll surface says CANCELLED
+        terminal = RunStatus.cancelled if status == "cancelled" else RunStatus.error
         with contextlib.suppress(Exception):
-            await asyncio.shield(get_event_stream().complete_run(job["id"], RunStatus.error))
+            await asyncio.shield(get_event_stream().complete_run(job["id"], terminal))
 
     async def _persist_run_error(self, job: Dict[str, Any], error: str, status: str = "error") -> None:
         """Persist a terminal status on the run row so pollers see it, never a
@@ -716,7 +729,7 @@ class QueueWorker:
             await self.store.complete_job(job_id, self.worker_id, attempt, "cancelled")
             with contextlib.suppress(Exception):
                 await self._persist_run_error(job, "cancelled while queued for a slot", status="cancelled")
-            await self._terminate_stream_view(job)
+            await self._terminate_stream_view(job, status="cancelled")
         except asyncio.TimeoutError:
             error = f"Run exceeded timeout_seconds={self.config.timeout_seconds}"
             # A timed-out attempt with retry budget left is NOT terminal: the

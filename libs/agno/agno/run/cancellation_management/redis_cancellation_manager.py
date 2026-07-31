@@ -91,10 +91,19 @@ class RedisRunCancellationManager(BaseRunCancellationManager):
         Uses NX flag to preserve any existing cancellation intent
         (cancel-before-start support for background runs).
         """
-        client = self._ensure_sync_client()
+        # Fail-open: registration is best-effort coordination - a Redis fault
+        # at the top of every run must not raise into execution
+        try:
+            client = self._ensure_sync_client()
+        except Exception as e:
+            log_warning(f"Cancellation registration unavailable (Redis fault, failing open): {e}")
+            return
         key = self._get_key(run_id)
-        # NX: only set if key does not exist, preserving cancel-before-start intent
-        client.set(key, "0", ex=self.ttl_seconds, nx=True)
+        try:
+            # NX: only set if key does not exist, preserving cancel-before-start intent
+            client.set(key, "0", ex=self.ttl_seconds, nx=True)
+        except Exception as e:
+            log_warning(f"Cancellation registration unavailable (Redis fault, failing open): {e}")
 
     async def aregister_run(self, run_id: str) -> None:
         """Register a new run as not cancelled (async version).
@@ -102,10 +111,19 @@ class RedisRunCancellationManager(BaseRunCancellationManager):
         Uses NX flag to preserve any existing cancellation intent
         (cancel-before-start support for background runs).
         """
-        client = self._ensure_async_client()
+        # Fail-open: registration is best-effort coordination - a Redis fault
+        # at the top of every run must not raise into execution
+        try:
+            client = self._ensure_async_client()
+        except Exception as e:
+            log_warning(f"Cancellation registration unavailable (Redis fault, failing open): {e}")
+            return
         key = self._get_key(run_id)
-        # NX: only set if key does not exist, preserving cancel-before-start intent
-        await client.set(key, "0", ex=self.ttl_seconds, nx=True)
+        try:
+            # NX: only set if key does not exist, preserving cancel-before-start intent
+            await client.set(key, "0", ex=self.ttl_seconds, nx=True)
+        except Exception as e:
+            log_warning(f"Cancellation registration unavailable (Redis fault, failing open): {e}")
 
     def _cancel_via_pipeline(self, client: Union[Redis, RedisCluster], key: str) -> bool:
         """Cancel a run atomically using a pipeline: EXISTS + SET (+ EXPIRE).

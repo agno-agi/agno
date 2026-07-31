@@ -4344,7 +4344,9 @@ class Workflow:
                 # (which now specifically means "queued for a slot")
                 workflow_run_response.status = RunStatus.running
                 await apersist_run_transition(self, "workflow", session_id, workflow_run_response, user_id=user_id)
-                await event_stream.set_run_status(publish_run_id, RunStatus.running)
+                with contextlib.suppress(Exception):
+                    # Fail-open: coordination writes must not kill the run
+                    await event_stream.set_run_status(publish_run_id, RunStatus.running)
 
                 if self.agent is not None:
                     # websocket_handler deliberately NOT passed down: every
@@ -4544,7 +4546,9 @@ class Workflow:
         # and wait while the run is still queued (no events buffered yet).
         from agno.os.event_streams import get_event_stream
 
-        await get_event_stream().register_run(run_id, RunStatus.pending)
+        with contextlib.suppress(Exception):
+            # Fail-open: a Redis blip must not strand an accepted run
+            await get_event_stream().register_run(run_id, RunStatus.pending)
 
         log_info(f"Background stream workflow run {run_id} persisted with PENDING status")
 
@@ -4579,7 +4583,9 @@ class Workflow:
                 # Transition to RUNNING now that a slot is held (atomic helper)
                 workflow_run_response.status = RunStatus.running
                 await apersist_run_transition(self, "workflow", session_id, workflow_run_response, user_id=user_id)
-                await event_stream.set_run_status(run_id, RunStatus.running)
+                with contextlib.suppress(Exception):
+                    # Fail-open: coordination writes must not kill the run
+                    await event_stream.set_run_status(run_id, RunStatus.running)
 
                 if self.agent is not None:
                     result = self._aexecute_workflow_agent(
@@ -9396,7 +9402,9 @@ class Workflow:
                     await self.asave_session(session=session)
                 else:
                     self.save_session(session=session)
-                await _continue_event_stream.set_run_status(_continue_run_id, RunStatus.running)
+                with contextlib.suppress(Exception):
+                    # Fail-open: coordination writes must not kill the run
+                    await _continue_event_stream.set_run_status(_continue_run_id, RunStatus.running)
 
                 async for _event in self._acontinue_execute_stream(
                     session=session,
