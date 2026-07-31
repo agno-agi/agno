@@ -1,12 +1,12 @@
 import logging
 import time
-from typing import Any, Dict, List, Optional, Union, cast
+from typing import Any, Dict, Optional, Union, cast
 from uuid import uuid4
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Path, Query, Request
 
 from agno.db.base import AsyncBaseDb, BaseDb, SessionType
-from agno.db.utils import deserialize_session_by_type, detect_session_type, resolve_session_type
+from agno.db.utils import deserialize_session_by_type, resolve_session_type
 from agno.os.auth import get_auth_token_from_request, get_authentication_dependency
 from agno.os.middleware.user_scope import (
     enforce_owner_on_entity,
@@ -32,6 +32,7 @@ from agno.os.schema import (
     WorkflowRunSchema,
     WorkflowSessionDetailSchema,
 )
+from agno.os.services.sessions import SessionNotFoundError, get_session_runs_page, get_sessions_page
 from agno.os.settings import AgnoAPISettings
 from agno.remote.base import RemoteDb
 from agno.session import AgentSession, Session, TeamSession, WorkflowSession
@@ -140,31 +141,19 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
                 headers=headers,
             )
 
-        if isinstance(db, AsyncBaseDb):
-            db = cast(AsyncBaseDb, db)
-            sessions, total_count = await db.get_sessions(
-                session_type=session_type,
-                component_id=component_id,
-                user_id=effective_user_id,
-                session_name=session_name,
-                limit=limit,
-                page=page,
-                sort_by=sort_by,
-                sort_order=sort_order,
-                deserialize=False,
-            )
-        else:
-            sessions, total_count = db.get_sessions(  # type: ignore
-                session_type=session_type,
-                component_id=component_id,
-                user_id=effective_user_id,
-                session_name=session_name,
-                limit=limit,
-                page=page,
-                sort_by=sort_by,
-                sort_order=sort_order,
-                deserialize=False,
-            )
+        # Shared with the MCP get_sessions tool: sync-db threadpool offload lives in the
+        # service so neither surface blocks its event loop and the two cannot drift.
+        sessions, total_count = await get_sessions_page(
+            db,
+            session_type=session_type,
+            component_id=component_id,
+            user_id=effective_user_id,
+            session_name=session_name,
+            limit=limit,
+            page=page,
+            sort_by=sort_by,
+            sort_order=sort_order,
+        )
 
         return PaginatedResponse(
             data=[SessionSchema.from_dict(session) for session in sessions],  # type: ignore
@@ -214,6 +203,7 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
                 },
             },
             400: {"description": "Invalid request parameters", "model": BadRequestResponse},
+            409: {"description": "A session with the supplied session_id already exists"},
             422: {"description": "Validation error", "model": ValidationErrorResponse},
             500: {"description": "Failed to create session", "model": InternalServerErrorResponse},
         },
@@ -257,6 +247,24 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
 
         # Generate session_id if not provided
         session_id = create_session_request.session_id or str(uuid4())
+
+        # A create for a client-supplied session_id that already exists is a conflict, not a
+        # silent overwrite: upserting a fresh (empty) session over it drops the stored
+        # runs/session_data, and on owner-guarded backends the failed upsert surfaces as a 500.
+        # Mirror create_learning / schedules / service-accounts: reject with 409 and steer the
+        # caller to PATCH; the stored session is never touched.
+        if create_session_request.session_id is not None:
+            if isinstance(db, AsyncBaseDb):
+                existing_session = await db.get_session(
+                    session_id=session_id, session_type=session_type, deserialize=False
+                )
+            else:
+                existing_session = db.get_session(session_id=session_id, session_type=session_type, deserialize=False)
+            if existing_session is not None:
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"Session with id '{session_id}' already exists. Use PATCH /sessions/{session_id} to update it.",
+                )
 
         # Prepare session_data with session_state and session_name
         session_data: dict[str, Any] = {}
@@ -640,86 +648,31 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
                 headers=headers,
             )
 
-        start_timestamp = created_after
-        end_timestamp = created_before
-
-        if isinstance(db, AsyncBaseDb):
-            db = cast(AsyncBaseDb, db)
-            session = await db.get_session(
+        # Shared with the MCP get_session_runs tool: auto-detection, timestamp
+        # filtering, per-run classification, and sync-db threadpool offload all
+        # live in the service so the two surfaces cannot drift. Runs are embedded in
+        # the session record, so pagination happens in memory inside the service.
+        try:
+            runs, total_count = await get_session_runs_page(
+                db,
                 session_id=session_id,
                 session_type=session_type,
                 user_id=effective_user_id,
-                deserialize=False,
+                created_after=created_after,
+                created_before=created_before,
+                limit=limit,
+                page=page,
             )
-        else:
-            session = db.get_session(
-                session_id=session_id,
-                session_type=session_type,
-                user_id=effective_user_id,
-                deserialize=False,
-            )
-
-        if not session:
+        except SessionNotFoundError:
             raise HTTPException(status_code=404, detail=f"Session with ID {session_id} not found")
 
-        if session_type is None:
-            detected = detect_session_type(session if isinstance(session, dict) else {})
-            session_type = SessionType(detected)
-
-        runs = session.get("runs") or []  # type: ignore
-
-        # Filter runs by timestamp if specified
-        # TODO: Move this filtering into the DB layer
-        filtered_runs = []
-        for run in runs:
-            if start_timestamp or end_timestamp:
-                run_created_at = run.get("created_at")
-                if run_created_at:
-                    # created_at is stored as epoch int
-                    if start_timestamp and run_created_at < start_timestamp:
-                        continue
-                    if end_timestamp and run_created_at > end_timestamp:
-                        continue
-
-            filtered_runs.append(run)
-
-        run_responses: List[Union[RunSchema, TeamRunSchema, WorkflowRunSchema]] = []
-
-        if session_type == SessionType.AGENT:
-            run_responses = [RunSchema.from_dict(run) for run in filtered_runs]
-
-        elif session_type == SessionType.TEAM:
-            for run in filtered_runs:
-                if run.get("agent_id") is not None:
-                    run_responses.append(RunSchema.from_dict(run))
-                elif run.get("team_id") is not None:
-                    run_responses.append(TeamRunSchema.from_dict(run))
-
-        elif session_type == SessionType.WORKFLOW:
-            for run in filtered_runs:
-                if run.get("workflow_id") is not None:
-                    run_responses.append(WorkflowRunSchema.from_dict(run))
-                elif run.get("team_id") is not None:
-                    run_responses.append(TeamRunSchema.from_dict(run))
-                else:
-                    run_responses.append(RunSchema.from_dict(run))
-        else:
-            raise HTTPException(status_code=400, detail=f"Invalid session type: {session_type}")
-
-        # Paginate the runs in memory
-        # TODO: Move pagination into the DB layer to avoid loading all runs into memory
-        total_count = len(run_responses)
         if limit is not None and limit > 0:
-            current_page = page if page is not None and page > 0 else 1
-            start_index = (current_page - 1) * limit
-            paginated_runs = run_responses[start_index : start_index + limit]
             total_pages = (total_count + limit - 1) // limit
         else:
-            paginated_runs = run_responses
             total_pages = 1 if total_count > 0 else 0
 
         return PaginatedResponse(
-            data=paginated_runs,
+            data=runs,
             meta=PaginationInfo(
                 page=page if page is not None and page > 0 else 1,
                 limit=limit if limit is not None and limit > 0 else (total_count or 1),

@@ -28,7 +28,12 @@ if TYPE_CHECKING:
         VectorSearchResult,
     )
     from agno.os.routers.memory.schemas import OptimizeMemoriesResponse, UserMemorySchema, UserStatsSchema
-    from agno.os.routers.metrics.schemas import DayAggregatedMetrics, MetricsResponse
+    from agno.os.routers.metrics.schemas import (
+        DayAggregatedMetrics,
+        MetricsRefreshResponse,
+        MetricsRefreshStatusResponse,
+        MetricsResponse,
+    )
     from agno.os.routers.traces.schemas import TraceDetail, TraceNode, TraceSessionStats, TraceSummary
     from agno.os.schema import (
         AgentSessionDetailSchema,
@@ -247,8 +252,11 @@ class RemoteDb:
     ) -> "MetricsResponse":
         return await self.client.get_metrics(starting_date=starting_date, ending_date=ending_date, **kwargs)
 
-    async def refresh_metrics(self, **kwargs: Any) -> List["DayAggregatedMetrics"]:
+    async def refresh_metrics(self, **kwargs: Any) -> Union[List["DayAggregatedMetrics"], "MetricsRefreshResponse"]:
         return await self.client.refresh_metrics(**kwargs)
+
+    async def get_metrics_refresh_status(self, **kwargs: Any) -> "MetricsRefreshStatusResponse":
+        return await self.client.get_metrics_refresh_status(**kwargs)
 
     # OTHER
     async def migrate_database(self, target_version: Optional[str] = None) -> None:

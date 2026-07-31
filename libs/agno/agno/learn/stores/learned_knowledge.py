@@ -229,7 +229,11 @@ class LearnedKnowledgeStore(LearningStore):
         )
 
     def build_context(self, data: Any) -> str:
-        """Build context for the agent.
+        """Build the DATA context for the agent.
+
+        Data only (the relevant learnings) - the mode-specific how-to-use
+        guidance lives in instructions(); the automatic path concatenates the
+        two at the injection site.
 
         Args:
             data: List of learning objects from recall() (may be None).
@@ -237,14 +241,19 @@ class LearnedKnowledgeStore(LearningStore):
         Returns:
             Context string to inject into the agent's system prompt.
         """
-        mode = self.config.mode
+        return self._build_always_mode_context(data=data)
 
+    def instructions(self) -> str:
+        """Agent-facing guidance for this store, mode-aware.
+
+        Guidance only - the recalled learnings live in build_context().
+        """
+        mode = self.config.mode
         if mode == LearningMode.PROPOSE:
-            return self._build_propose_mode_context(data=data)
-        elif mode == LearningMode.AGENTIC:
-            return self._build_agentic_mode_context(data=data)
-        else:
-            return self._build_background_mode_context(data=data)
+            return self._build_propose_mode_context(data=None)
+        if mode == LearningMode.AGENTIC:
+            return self._build_agentic_mode_context(data=None)
+        return ""
 
     def _build_agentic_mode_context(self, data: Any) -> str:
         """Build context for AGENTIC mode."""
@@ -373,7 +382,7 @@ class LearnedKnowledgeStore(LearningStore):
 
         return instructions
 
-    def _build_background_mode_context(self, data: Any) -> str:
+    def _build_always_mode_context(self, data: Any) -> str:
         """Build context for ALWAYS mode (just show relevant learnings)."""
         if not data:
             return ""
@@ -383,16 +392,16 @@ class LearnedKnowledgeStore(LearningStore):
             return ""
 
         formatted = self._format_learnings_for_context(learnings=learnings)
-        return dedent(f"""\
-            <relevant_learnings>
-            Prior insights that may help with this task:
-
-            {formatted}
-
-            Apply these naturally if they're relevant to the current request.
-            Your current analysis and the user's specific context take precedence.
-            </relevant_learnings>\
-        """)
+        # Assembled by concatenation, not dedent: the interpolated learnings are
+        # flush-left and multi-line, which would defeat dedent's common prefix.
+        return (
+            "<relevant_learnings>\n"
+            "Prior insights that may help with this task:\n\n"
+            f"{formatted}\n\n"
+            "Apply these naturally if they're relevant to the current request.\n"
+            "Your current analysis and the user's specific context take precedence.\n"
+            "</relevant_learnings>"
+        )
 
     def _format_learnings_for_context(self, learnings: List[Any]) -> str:
         """Format learnings for inclusion in context."""
@@ -1125,6 +1134,7 @@ class LearnedKnowledgeStore(LearningStore):
             response = model_copy.response(
                 messages=extraction_messages,
                 tools=functions,
+                tool_call_limit=self.config.max_updates_per_run,
             )
 
             if run_metrics is not None and response.response_usage is not None:
@@ -1176,6 +1186,7 @@ class LearnedKnowledgeStore(LearningStore):
             response = await model_copy.aresponse(
                 messages=extraction_messages,
                 tools=functions,
+                tool_call_limit=self.config.max_updates_per_run,
             )
 
             if run_metrics is not None and response.response_usage is not None:

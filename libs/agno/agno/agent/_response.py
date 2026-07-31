@@ -999,12 +999,21 @@ def update_run_response(
     if model_response.provider_data is not None:
         run_response.model_provider_data = model_response.provider_data
 
-    # Update the run_response tools with the model response tool_executions
+    # Update the run_response tools with the model response tool_executions.
+    # Dedupe by tool_call_id: with checkpoint="tool-batch" the per-batch callback
+    # already wrote tools into run_response, so naive extend would duplicate
+    # every execution. Replace existing entries (in place, preserving order)
+    # and append only genuinely new ones.
     if model_response.tool_executions is not None:
         if run_response.tools is None:
-            run_response.tools = model_response.tool_executions
+            run_response.tools = list(model_response.tool_executions)
         else:
-            run_response.tools.extend(model_response.tool_executions)
+            existing_by_id = {t.tool_call_id: i for i, t in enumerate(run_response.tools) if t.tool_call_id}
+            for tool in model_response.tool_executions:
+                if tool.tool_call_id and tool.tool_call_id in existing_by_id:
+                    run_response.tools[existing_by_id[tool.tool_call_id]] = tool
+                else:
+                    run_response.tools.append(tool)
 
         # For Reasoning/Thinking/Knowledge Tools update reasoning_content in RunOutput
         for tool_call in model_response.tool_executions:
@@ -1064,6 +1073,8 @@ def handle_model_response_stream(
         log_debug("Response model set, model response is not streamed.")
         stream_model_response = False
 
+    from agno.agent._run import build_after_tool_results_callback
+
     for model_response_event in call_model_stream_with_fallback(
         agent.model,
         agent.fallback_config,
@@ -1076,6 +1087,13 @@ def handle_model_response_stream(
         run_response=run_response,
         send_media_to_model=agent.send_media_to_model,
         compression_manager=agent.compression_manager if agent.compress_tool_results else None,
+        after_tool_results=build_after_tool_results_callback(
+            agent,
+            run_response=run_response,
+            session=session,
+            run_messages=run_messages,
+            run_context=run_context,
+        ),
     ):
         # Handle LLM request events and compression events from ModelResponse
         if isinstance(model_response_event, ModelResponse):
@@ -1215,6 +1233,8 @@ async def ahandle_model_response_stream(
         log_debug("Response model set, model response is not streamed.")
         stream_model_response = False
 
+    from agno.agent._run import abuild_after_tool_results_callback
+
     model_response_stream = acall_model_stream_with_fallback(
         agent.model,
         agent.fallback_config,
@@ -1227,6 +1247,13 @@ async def ahandle_model_response_stream(
         run_response=run_response,
         send_media_to_model=agent.send_media_to_model,
         compression_manager=agent.compression_manager if agent.compress_tool_results else None,
+        after_tool_results=abuild_after_tool_results_callback(
+            agent,
+            run_response=run_response,
+            session=session,
+            run_messages=run_messages,
+            run_context=run_context,
+        ),
     )  # type: ignore
 
     async for model_response_event in model_response_stream:  # type: ignore
@@ -1746,7 +1773,7 @@ def _build_followup_messages(
     elif isinstance(response_content, BaseModel):
         content_str = response_content.model_dump_json()
     elif isinstance(response_content, dict):
-        content_str = json.dumps(response_content)
+        content_str = json.dumps(response_content, ensure_ascii=False)
     else:
         content_str = str(response_content)
 

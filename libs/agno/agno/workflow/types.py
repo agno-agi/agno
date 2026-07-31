@@ -8,6 +8,7 @@ from pydantic import BaseModel
 from agno.media import Audio, File, Image, Video
 from agno.models.metrics import RunMetrics
 from agno.session.workflow import WorkflowSession
+from agno.utils.log import log_warning
 from agno.utils.media import (
     reconstruct_audio_list,
     reconstruct_files,
@@ -15,6 +16,20 @@ from agno.utils.media import (
     reconstruct_videos,
 )
 from agno.utils.timer import Timer
+
+_session_state_param_deprecation_warned: set = set()
+
+
+def warn_session_state_param_deprecated(func: Any, component: str) -> None:
+    """Warn once per function that the injected session_state parameter is deprecated."""
+    key = component + ":" + getattr(func, "__name__", repr(func))
+    if key in _session_state_param_deprecation_warned:
+        return
+    _session_state_param_deprecation_warned.add(key)
+    log_warning(
+        f"The 'session_state' parameter for {component} is deprecated and will be removed in a future release. "
+        "Accept 'run_context: RunContext' and use 'run_context.session_state' instead."
+    )
 
 
 class OnReject(str, Enum):
@@ -266,7 +281,7 @@ class WorkflowExecutionInput:
         elif isinstance(self.input, (dict, list)):
             import json
 
-            return json.dumps(self.input, indent=2, default=str)
+            return json.dumps(self.input, indent=2, default=str, ensure_ascii=False)
         else:
             return str(self.input)
 
@@ -322,7 +337,7 @@ class StepInput:
         elif isinstance(self.input, (dict, list)):
             import json
 
-            return json.dumps(self.input, indent=2, default=str)
+            return json.dumps(self.input, indent=2, default=str, ensure_ascii=False)
         else:
             return str(self.input)
 
@@ -478,7 +493,9 @@ class StepInput:
         elif isinstance(self.previous_step_content, dict):
             import json
 
-            previous_step_content_str = json.dumps(self.previous_step_content, indent=2, default=str)
+            previous_step_content_str = json.dumps(
+                self.previous_step_content, indent=2, default=str, ensure_ascii=False
+            )
         elif self.previous_step_content:
             previous_step_content_str = str(self.previous_step_content)
 
@@ -1128,7 +1145,9 @@ class StepRequirement:
         # Executor HITL fields
         if self.requires_executor_input:
             result["requires_executor_input"] = self.requires_executor_input
-            result["executor_requirements"] = self.executor_requirements
+            result["executor_requirements"] = [
+                req.to_dict() if hasattr(req, "to_dict") else req for req in (self.executor_requirements or [])
+            ]
             result["executor_id"] = self.executor_id
             result["executor_name"] = self.executor_name
             result["executor_run_id"] = self.executor_run_id

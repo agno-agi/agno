@@ -43,6 +43,9 @@ knowledge = Knowledge(
 # ---------------------------------------------------------------------------
 # Learning Machine: all six stores enabled
 # ---------------------------------------------------------------------------
+# With all stores enabled, a single message can trigger many memory updates.
+# max_updates_per_run (default: 10) caps updates per extraction to prevent
+# runaway loops. Increase if your prompts contain dense info (many entities).
 learning = LearningMachine(
     db=db,
     model=OpenAIResponses(id="gpt-5.5"),
