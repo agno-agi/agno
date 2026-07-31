@@ -432,10 +432,9 @@ class QueueWorker:
         final_output: Any = None
         is_workflow = job.get("component_type") == "workflow"
         try:
-            extra_kwargs: Dict[str, Any] = dict(payload.get("kwargs") or {})
-            # stream_events may arrive as an extra form field inside kwargs;
-            # passing it both explicitly and via ** would raise TypeError
-            stream_events = extra_kwargs.pop("stream_events", payload.get("stream_events", True))
+            raw_kwargs = payload.get("kwargs") or {}
+            stream_events = raw_kwargs.get("stream_events", payload.get("stream_events", True))
+            extra_kwargs: Dict[str, Any] = self._payload_call_kwargs(payload)
             arun_kwargs: Dict[str, Any] = dict(
                 input=payload.get("input"),
                 session_id=job["session_id"],
@@ -589,6 +588,18 @@ class QueueWorker:
 
         return isinstance(exc, (InputCheckError, OutputCheckError, TypeError))
 
+    @staticmethod
+    def _payload_call_kwargs(payload: Dict[str, Any]) -> Dict[str, Any]:
+        """Extra kwargs for the component call, with every reserved name
+        stripped. ONE definition for both executors: get_request_kwargs sweeps
+        undeclared form fields into the payload, and a field named run_id
+        splatted alongside the explicit keyword is a TypeError - which the
+        permanent-failure classifier then terminals without retry."""
+        extra = dict(payload.get("kwargs") or {})
+        for reserved in ("input", "session_id", "user_id", "run_id", "stream", "stream_events", "yield_run_output"):
+            extra.pop(reserved, None)
+        return extra
+
     async def _execute_claimed(self, job: Dict[str, Any]) -> None:
         from agno.exceptions import RunCancelledException
         from agno.run.base import RunStatus
@@ -644,12 +655,7 @@ class QueueWorker:
             if is_stream:
                 execution = self._execute_streaming(component, job)
             else:
-                call_kwargs = dict(payload.get("kwargs") or {})
-                # Reserved names arrive as unfiltered form fields; passing
-                # them through ** alongside the explicit keywords raises
-                # TypeError (the streaming executor strips its own)
-                for reserved in ("input", "session_id", "user_id", "run_id", "stream", "stream_events"):
-                    call_kwargs.pop(reserved, None)
+                call_kwargs = self._payload_call_kwargs(payload)
                 execution = component.arun(
                     input=payload.get("input"),
                     session_id=job["session_id"],
