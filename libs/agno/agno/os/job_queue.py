@@ -196,6 +196,17 @@ def resolve_queue_store(config: QueueConfig, default_db: Any) -> Any:
                 f"Queue store {type(store).__name__} implements claim_job but is missing "
                 f"contract methods: {', '.join(missing)}"
             )
+        # RedisCluster pipelines are non-transactional and their watch()
+        # raises RedisClusterException (not WatchError), which would escape
+        # the store's CAS loops into the worker poll loop. Reject up front
+        # with a clear error instead of failing confusingly at runtime.
+        client_type = type(getattr(store, "redis_client", None)).__name__
+        if client_type == "RedisCluster":
+            raise ValueError(
+                "The Redis queue store requires a non-cluster Redis client: WATCH/MULTI "
+                "transactions are not supported on RedisCluster pipelines. Use a standalone "
+                "Redis (or Valkey) instance for the job queue, or a Postgres db."
+            )
         # Loud-degrade rule: the last place a weaker guarantee could pass
         # quietly. Redis ticket durability is persistence-config-dependent.
         if type(store).__name__ == "RedisDb":
