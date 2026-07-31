@@ -547,6 +547,12 @@ def to_dict(agent: Agent) -> Dict[str, Any]:
     if agent.references_format != "json":
         config["references_format"] = agent.references_format
 
+    # --- Skills ---
+    # Skills are stored as name references and re-resolved from the database's
+    # skills table on load, the way team members are stored by id and re-resolved.
+    if agent.skills is not None:
+        config["skills"] = {"names": agent.skills.get_skill_names()}
+
     # --- Tools ---
     # Serialize tools to their dictionary representations (skip callable factories)
     _tools: List[Union[Function, dict]] = []
@@ -742,13 +748,19 @@ def to_dict(agent: Agent) -> Dict[str, Any]:
     return config
 
 
-def from_dict(cls: Type[Agent], data: Dict[str, Any], registry: Optional[Registry] = None) -> Agent:
+def from_dict(
+    cls: Type[Agent],
+    data: Dict[str, Any],
+    db: Optional[BaseDb] = None,
+    registry: Optional[Registry] = None,
+) -> Agent:
     """
     Create an agent from a dictionary.
 
     Args:
         cls: The Agent class (or subclass) to instantiate.
         data: Dictionary containing agent configuration
+        db: Optional database for resolving skills
         registry: Optional registry for rehydrating tools and schemas
 
     Returns:
@@ -852,6 +864,20 @@ def from_dict(cls: Type[Agent], data: Dict[str, Any], registry: Optional[Registr
             log_warning(f"Knowledge '{knowledge_name}' not found in registry, skipping.")
             del config["knowledge"]
 
+    # --- Handle Skills reconstruction ---
+    # Skills are stored as name references and re-resolved from the database's
+    # skills table, the way team members are stored by id and re-resolved.
+    if "skills" in config and isinstance(config["skills"], dict):
+        skill_names = config["skills"].get("names")
+        if skill_names and db is not None:
+            from agno.skills import DbSkills, Skills
+
+            config["skills"] = Skills(loaders=[DbSkills(db, names=skill_names)])
+        else:
+            if skill_names:
+                log_warning(f"No db provided, skills {skill_names} will not be resolved.")
+            del config["skills"]
+
     # --- Handle CompressionManager reconstruction ---
     # TODO: implement compression manager deserialization
     # if "compression_manager" in config and isinstance(config["compression_manager"], dict):
@@ -928,6 +954,8 @@ def from_dict(cls: Type[Agent], data: Dict[str, Any], registry: Optional[Registr
         enable_agentic_knowledge_filters=config.get("enable_agentic_knowledge_filters", False),
         add_knowledge_to_context=config.get("add_knowledge_to_context", False),
         references_format=config.get("references_format", "json"),
+        # --- Skills ---
+        skills=config.get("skills"),
         # --- Tools ---
         tools=config.get("tools"),
         tool_call_limit=config.get("tool_call_limit"),
@@ -1094,7 +1122,7 @@ def load(
     if config is None:
         return None
 
-    agent = cls.from_dict(config, registry=registry)
+    agent = cls.from_dict(config, db=db, registry=registry)
     agent.id = id
     # Only fall back to the caller-provided db if the config didn't
     # reconstruct one. Otherwise we'd clobber any custom table names

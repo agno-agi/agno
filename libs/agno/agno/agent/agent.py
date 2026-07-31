@@ -934,8 +934,13 @@ class Agent:
         return _storage.to_dict(self)
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any], registry: Optional[Registry] = None) -> "Agent":
-        return _storage.from_dict(cls, data=data, registry=registry)
+    def from_dict(
+        cls,
+        data: Dict[str, Any],
+        db: Optional["BaseDb"] = None,
+        registry: Optional[Registry] = None,
+    ) -> "Agent":
+        return _storage.from_dict(cls, data=data, db=db, registry=registry)
 
     def save(
         self,
@@ -1748,7 +1753,7 @@ def get_agent_by_id(
         if cfg is None:
             raise ValueError(f"Invalid config found for agent {id}")
 
-        agent = Agent.from_dict(cfg, registry=registry)
+        agent = Agent.from_dict(cfg, db=db, registry=registry)
         agent.id = id
 
         return agent
@@ -1784,7 +1789,7 @@ def get_agents(
                         component_id = component["component_id"]
                         if "id" not in agent_config:
                             agent_config["id"] = component_id
-                        agent = Agent.from_dict(agent_config, registry=registry)
+                        agent = Agent.from_dict(agent_config, db=db, registry=registry)
                         agent.id = component_id
                         agent._version = component.get("current_version")
                         agent._stage = config.get("stage")

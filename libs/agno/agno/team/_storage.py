@@ -543,6 +543,12 @@ def to_dict(team: "Team") -> Dict[str, Any]:
     if team.references_format != "json":  # default is "json"
         config["references_format"] = team.references_format
 
+    # --- Skills ---
+    # Skills are stored as name references and re-resolved from the database's
+    # skills table on load, the way members are stored by id and re-resolved.
+    if team.skills is not None:
+        config["skills"] = {"names": team.skills.get_skill_names()}
+
     # --- Tools ---
     if team.tools and isinstance(team.tools, list):
         serialized_tools = []
@@ -874,6 +880,20 @@ def from_dict(
             log_warning(f"Knowledge '{knowledge_name}' not found in registry, skipping.")
             del config["knowledge"]
 
+    # --- Handle Skills reconstruction ---
+    # Skills are stored as name references and re-resolved from the database's
+    # skills table, the way members are stored by id and re-resolved.
+    if "skills" in config and isinstance(config["skills"], dict):
+        skill_names = config["skills"].get("names")
+        if skill_names and db is not None:
+            from agno.skills import DbSkills, Skills
+
+            config["skills"] = Skills(loaders=[DbSkills(db, names=skill_names)])
+        else:
+            if skill_names:
+                log_warning(f"No db provided, skills {skill_names} will not be resolved.")
+            del config["skills"]
+
     # --- Handle CompressionManager reconstruction ---
     # TODO: implement compression manager deserialization
     # if "compression_manager" in config and isinstance(config["compression_manager"], dict):
@@ -960,6 +980,8 @@ def from_dict(
             search_knowledge=config.get("search_knowledge", True),
             add_search_knowledge_instructions=config.get("add_search_knowledge_instructions", True),
             references_format=config.get("references_format", "json"),
+            # --- Skills ---
+            skills=config.get("skills"),
             # --- Tools ---
             tools=config.get("tools"),
             tool_call_limit=config.get("tool_call_limit"),
@@ -1149,7 +1171,7 @@ def _hydrate_from_graph(
         member_type = link_meta.get("type")
 
         if member_type == "agent":
-            agent = Agent.from_dict(child_config)
+            agent = Agent.from_dict(child_config, db=db)
             agent.id = child_graph["component"]["component_id"]
             if agent.db is None:
                 agent.db = db
