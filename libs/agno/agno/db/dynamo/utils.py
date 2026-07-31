@@ -194,7 +194,7 @@ def apply_sorting(
     if sort_by is None:
         sort_by = "created_at"
 
-    is_descending = sort_order == "desc"
+    is_descending = sort_order != "asc" if sort_order else True
 
     # Sort using the helper function that handles updated_at -> created_at fallback
     sorted_records = sorted(
