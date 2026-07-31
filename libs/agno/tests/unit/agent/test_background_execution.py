@@ -554,3 +554,68 @@ class TestBackgroundStreamConcurrencyLimit:
         release_holder.set()
         await asyncio.wait_for(holder_task, timeout=2)
         event_buffer.cleanup_run("bg-stream-2")
+
+
+class TestConcurrentSessionPersistence:
+    @pytest.mark.asyncio
+    async def test_concurrent_runs_on_one_session_both_reach_terminal_status(self, monkeypatch: pytest.MonkeyPatch):
+        """Regression: background tasks used to save the submit-time session
+        snapshot, so concurrent runs on ONE session clobbered each other's
+        status updates (last writer wins) and polled runs appeared stuck at
+        PENDING forever. Status transitions must re-read the session."""
+        import copy
+
+        from agno.run.concurrency import set_background_max_concurrency
+
+        set_background_max_concurrency(0)  # both runs execute concurrently
+        try:
+            agent = Agent(name="test-agent")
+
+            # Simulated DB with whole-blob semantics: reads return deep copies
+            # (like deserialization), saves replace the stored runs wholesale.
+            store: dict = {"runs": []}
+
+            async def fake_aread_or_create_session(agent, session_id=None, user_id=None):
+                return AgentSession(
+                    session_id=session_id or "shared", user_id=user_id, runs=copy.deepcopy(store["runs"])
+                )
+
+            async def fake_asave_session(agent, session=None):
+                store["runs"] = copy.deepcopy(session.runs or [])
+
+            release_a = asyncio.Event()
+
+            async def fake_arun(agent, run_response, run_context, **kwargs):
+                # Mimic the real _arun: slow for A, instant for B, then a
+                # fresh read-modify-write terminal save.
+                if run_response.run_id == "run-a":
+                    await release_a.wait()
+                run_response.status = RunStatus.completed
+                session = await fake_aread_or_create_session(agent, session_id="shared")
+                session.upsert_run(run=run_response)
+                await fake_asave_session(agent, session=session)
+                return run_response
+
+            monkeypatch.setattr(_storage, "aread_or_create_session", fake_aread_or_create_session)
+            monkeypatch.setattr(_storage, "update_metadata", lambda agent, session=None: None)
+            monkeypatch.setattr("agno.agent._session.asave_session", fake_asave_session)
+            monkeypatch.setattr(_run, "_arun", fake_arun)
+
+            for run_id in ("run-a", "run-b"):
+                await _run._arun_background(
+                    agent,
+                    run_response=RunOutput(run_id=run_id, session_id="shared"),
+                    run_context=RunContext(run_id=run_id, session_id="shared"),
+                    session_id="shared",
+                )
+
+            # Let B complete fully while A is still mid-execution, then let A
+            # finish - A's later saves must not resurrect B's stale PENDING.
+            await asyncio.sleep(0.1)
+            release_a.set()
+            await asyncio.sleep(0.1)
+
+            statuses = {run.run_id: run.status for run in store["runs"]}
+            assert statuses == {"run-a": RunStatus.completed, "run-b": RunStatus.completed}
+        finally:
+            set_background_max_concurrency(None)

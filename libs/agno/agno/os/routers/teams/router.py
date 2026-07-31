@@ -18,6 +18,7 @@ from fastapi import (
 from fastapi.responses import JSONResponse, StreamingResponse
 
 from agno.db.base import BaseDb
+from agno.db.schemas.jobs import QueuedJob
 from agno.exceptions import InputCheckError, OutputCheckError, RunNotContinuableError, RunNotFoundError
 from agno.media import Audio, Image, Video
 from agno.media import File as FileMedia
@@ -29,6 +30,7 @@ from agno.os.auth import (
 )
 from agno.os.checkpoints import build_run_checkpoint_snapshot, list_run_checkpoints
 from agno.os.event_streams import get_event_stream
+from agno.os.job_queue import aprepare_queued_run, normalize_idempotency_key, payload_is_queueable, validate_seam_input
 from agno.os.middleware.user_scope import (
     SESSION_ID_REQUIRED,
     assert_session_matches_component,
@@ -215,6 +217,49 @@ async def team_resumable_response_streamer(
             error_id=e.error_id if hasattr(e, "error_id") else None,
         )
         yield format_sse_event(error_response)
+
+
+async def queued_run_tail_streamer(run_id: str) -> AsyncGenerator:
+    """SSE response for a durably queued STREAMING run: tail the event stream.
+
+    The run executes on whichever replica's worker claims it; this connection
+    just observes. Keepalives cover the queued wait and silent stretches; a
+    disconnect is harmless (resume replays); the complete output is guaranteed
+    via the run row even if this stream is never watched."""
+    event_stream = get_event_stream()
+    tail_queue: asyncio.Queue = asyncio.Queue()
+
+    async def _pump() -> None:
+        try:
+            async for tail_item in event_stream.tail(run_id):
+                await tail_queue.put(tail_item)
+        except Exception as e:
+            # A tail that DIES must not look like a tail that FINISHED: emit an
+            # error frame so the client can distinguish and reconnect
+            log_error(f"Queued stream tail failed for run {run_id}: {e}")
+            with contextlib.suppress(Exception):
+                await tail_queue.put(
+                    (-1, f'event: error\ndata: {{"event": "error", "error": "stream tail failed: {str(e)[:200]}"}}\n\n')
+                )
+        finally:
+            await tail_queue.put(None)
+
+    pump_task = asyncio.create_task(_pump())
+    try:
+        while True:
+            try:
+                item = await asyncio.wait_for(tail_queue.get(), timeout=30.0)
+            except asyncio.TimeoutError:
+                yield ": keepalive\n\n"
+                continue
+            if item is None:
+                break
+            _ev_index, sse_data = item
+            yield sse_data
+    finally:
+        pump_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await pump_task
 
 
 async def _resume_stream_generator(
@@ -692,6 +737,92 @@ def get_team_router(
                 raise HTTPException(status_code=400, detail="Background execution is not supported for remote teams")
 
             if stream:
+                # Durable queued streaming: the queue row is the acceptance,
+                # execution happens on whichever worker claims it, and this
+                # response tails the event stream. Durability attaches to the
+                # RUN (complete output guaranteed via the run row); the live
+                # stream is the best-effort view.
+                queue_worker = getattr(request.app.state, "queue_worker", None)
+                queued_stream_payload = {"input": message, "kwargs": kwargs, "stream": True}
+                stream_queueable = (
+                    queue_worker is not None
+                    and getattr(team, "db", None) is not None
+                    and payload_is_queueable(queued_stream_payload)
+                    and not isinstance(team, RemoteTeam)
+                    and version is None
+                    and not (base64_images or base64_audios or base64_videos or document_files)
+                    and any(
+                        getattr(candidate, "id", None) == team_id and not isinstance(candidate, TeamFactory)
+                        for candidate in (os.teams or [])
+                    )
+                )
+                if stream_queueable:
+                    # 202/stream-accept must honor input_schema like the inline path
+                    validate_seam_input(team, message)
+                    assert queue_worker is not None  # narrowed by stream_queueable
+                    queued_run_id = str(uuid4())
+                    queued_session_id = session_id or str(uuid4())
+                    job = QueuedJob(
+                        id=queued_run_id,
+                        component_type="team",
+                        component_id=getattr(team, "id", None) or team_id,
+                        session_id=queued_session_id,
+                        user_id=user_id,
+                        payload=queued_stream_payload,
+                        max_attempts=queue_worker.config.max_attempts,
+                        idempotency_key=normalize_idempotency_key(request.headers.get("idempotency-key")),
+                    ).to_dict()
+                    enqueue_result = await queue_worker.store.enqueue_job(
+                        job, max_depth=queue_worker.config.max_queue_depth
+                    )
+                    if enqueue_result["reason"] == "queue_full":
+                        raise HTTPException(status_code=429, detail="Job queue is full")
+                    if enqueue_result["reason"] == "duplicate":
+                        existing = enqueue_result["job"]
+                        if existing is None:
+                            raise HTTPException(
+                                status_code=409,
+                                detail="Idempotency-Key was already used but the original run could not be retrieved",
+                            )
+                        if not (existing.get("payload") or {}).get("stream"):
+                            # The key was used by a NON-stream submission: its
+                            # run never registers in the event stream, so a
+                            # tail would close instantly and silently. Refuse
+                            # honestly instead.
+                            raise HTTPException(
+                                status_code=409,
+                                detail="Idempotency-Key was used by a non-streaming submission; "
+                                f"poll run {existing['id']} instead of attaching a stream",
+                            )
+                        # Attach to the ORIGINAL run's stream. A terminal
+                        # original (or one whose stream keys already expired)
+                        # gets the full resume path - buffer or DB replay -
+                        # instead of a blind tail that would close silently
+                        # with zero events.
+                        if existing.get("status") in ("queued", "running"):
+                            return StreamingResponse(
+                                queued_run_tail_streamer(existing["id"]), media_type="text/event-stream"
+                            )
+                        return StreamingResponse(
+                            _resume_stream_generator(team, existing["id"], None, existing.get("session_id"), user_id),
+                            media_type="text/event-stream",
+                        )
+                    await get_event_stream().register_run(queued_run_id, RunStatus.pending)
+                    await aprepare_queued_run(
+                        team,
+                        "team",
+                        run_id=queued_run_id,
+                        session_id=queued_session_id,
+                        user_id=user_id,
+                        input=message,
+                    )
+                    return StreamingResponse(queued_run_tail_streamer(queued_run_id), media_type="text/event-stream")
+                if queue_worker is not None:
+                    log_warning(
+                        "Streaming background run bypasses the durable queue (remote/factory/"
+                        "version-pinned/media submissions are not queueable): bounded and "
+                        "observable, but NOT durable."
+                    )
                 # background=True, stream=True: resumable SSE streaming
                 # Team runs in a detached asyncio.Task that survives client disconnections.
                 # Events are buffered for reconnection via /resume endpoint.
@@ -716,6 +847,95 @@ def get_team_router(
             if not team.db:
                 raise HTTPException(
                     status_code=400, detail="Background execution requires a database to be configured on the team"
+                )
+
+            # Durable queue path: acceptance is a committed row; whichever
+            # replica's worker claims the job executes it, surviving crashes
+            # and deploys. Client contract identical: 202 + poll.
+            queue_worker = getattr(request.app.state, "queue_worker", None)
+            # Queueable only if this is a plain registry instance: the worker
+            # resolves from the registry, so factory-backed or off-registry
+            # (db-resolved / version-pinned) components would be accepted here
+            # and then fail or run differently in the worker.
+            component_is_queueable = any(
+                getattr(candidate, "id", None) == team_id and not isinstance(candidate, TeamFactory)
+                for candidate in (os.teams or [])
+            )
+            queued_payload = {"input": message, "kwargs": kwargs}
+            if (
+                queue_worker is not None
+                and not isinstance(team, RemoteTeam)
+                and component_is_queueable
+                and version is None  # version-pinned resolution differs from the worker's registry instance
+                and payload_is_queueable(queued_payload)
+            ):
+                # 202 must honor input_schema exactly like the inline path 422s
+                validate_seam_input(team, message)
+                if base64_images or base64_audios or base64_videos or document_files:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="Media inputs are not supported for durable queued background runs yet",
+                    )
+                queued_run_id = str(uuid4())
+                queued_session_id = session_id or str(uuid4())
+                job = QueuedJob(
+                    id=queued_run_id,
+                    component_type="team",
+                    component_id=getattr(team, "id", None) or team_id,
+                    session_id=queued_session_id,
+                    user_id=user_id,
+                    payload=queued_payload,
+                    max_attempts=queue_worker.config.max_attempts,
+                    idempotency_key=normalize_idempotency_key(request.headers.get("idempotency-key")),
+                ).to_dict()
+
+                # Enqueue FIRST: the committed queue row is the acceptance.
+                # Rejected or duplicate submissions must leave no phantom
+                # PENDING run behind in the session.
+                enqueue_result = await queue_worker.store.enqueue_job(
+                    job, max_depth=queue_worker.config.max_queue_depth
+                )
+                if enqueue_result["reason"] == "queue_full":
+                    raise HTTPException(status_code=429, detail="Job queue is full")
+                if enqueue_result["reason"] == "duplicate" and enqueue_result["job"] is not None:
+                    existing = enqueue_result["job"]
+                    return JSONResponse(
+                        status_code=202,
+                        content={
+                            "run_id": existing["id"],
+                            "session_id": existing["session_id"],
+                            "status": "PENDING"
+                            if existing["status"] in ("queued", "running")
+                            else existing["status"].upper(),
+                        },
+                    )
+                if enqueue_result["reason"] == "duplicate":
+                    # Duplicate but the original row could not be retrieved:
+                    # NEVER fall through to a 202 for a run that was not
+                    # enqueued - that acceptance would be a lie
+                    raise HTTPException(
+                        status_code=409,
+                        detail="Idempotency-Key was already used but the original run could not be retrieved",
+                    )
+                # Accepted: persist the PENDING run row so pollers find it.
+                # Idempotent - a worker that already claimed the job wins.
+                await aprepare_queued_run(
+                    team,
+                    "team",
+                    run_id=queued_run_id,
+                    session_id=queued_session_id,
+                    user_id=user_id,
+                    input=message,
+                )
+                return JSONResponse(
+                    status_code=202,
+                    content={"run_id": queued_run_id, "session_id": queued_session_id, "status": "PENDING"},
+                )
+            elif queue_worker is not None and not payload_is_queueable(queued_payload):
+                log_warning(
+                    "Background run bypasses the durable queue: the submission carries values plain "
+                    "JSON cannot store (e.g. output_schema classes or media objects). Executing on the "
+                    "accepting replica instead - bounded and observable, but NOT durable."
                 )
 
             run_response = await team.arun(  # type: ignore[misc]
@@ -826,6 +1046,11 @@ def get_team_router(
                     component_id=team_id,
                 )
 
+            # Tombstone a still-queued durable ticket first: intent alone
+            # does not stop a job no task is executing yet
+            queue_worker = getattr(request.app.state, "queue_worker", None)
+            if queue_worker is not None:
+                await queue_worker.acancel_queued(run_id)
             await acancel_run(run_id)
             return JSONResponse(content={}, status_code=200)
 
@@ -854,6 +1079,11 @@ def get_team_router(
 
         # cancel_run always stores cancellation intent (even for not-yet-registered runs
         # in cancel-before-start scenarios), so we always return success.
+        # Tombstone a still-queued durable ticket first: intent alone
+        # does not stop a job no task is executing yet
+        queue_worker = getattr(request.app.state, "queue_worker", None)
+        if queue_worker is not None:
+            await queue_worker.acancel_queued(run_id)
         await team.acancel_run(run_id=run_id)
         return JSONResponse(content={}, status_code=200)
 

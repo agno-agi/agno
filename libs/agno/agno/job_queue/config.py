@@ -77,3 +77,56 @@ class QueueConfig:
 
     max_concurrency: Optional[int] = None
     redis: Optional[Union[str, RedisCoordination]] = None
+
+    # -- Durability -------------------------------------------------------
+    # durable=True makes acceptance a committed row in the queue table:
+    # accepted runs survive crashes and deploys, reclaimed or terminally
+    # failed (visibly) by whichever replica's worker claims them.
+    durable: bool = False
+    # Queue store override. None = the AgentOS db (zero extra infrastructure).
+    # A dedicated store (e.g. a separate Postgres or RedisDb) isolates queue
+    # polling load from the system of record.
+    db: Optional[Any] = None
+    # Global bound on accepted-but-unstarted jobs; beyond it submissions get 429.
+    max_queue_depth: int = 1000
+    # At most this many executions ever, under any failure mode (reclaim
+    # included). 1 = a crashed run is failed visibly, never silently re-run.
+    max_attempts: int = 1
+    # BASE retry delay: attempt N waits up to base * 2**(N-1) with full
+    # jitter (capped at 10x base) - see QueueWorker._retry_delay
+    retry_delay_seconds: int = 30
+    # Per-run execution timeout enforced by the worker; None disables.
+    timeout_seconds: Optional[int] = 3600
+    # Stale-lock grace before a crashed worker's jobs are reclaimed. The
+    # worker heartbeat refreshes locks, so this can stay small. Caveat: the
+    # heartbeat runs on the event loop - a run doing SYNC blocking work (sync
+    # model client / sync tool) that starves the loop past this grace will be
+    # swept as dead and its eventual completion fenced out (reported failed
+    # despite finishing). Keep blocking work in threads, or raise this grace.
+    lock_grace_seconds: int = 60
+    poll_interval: float = 1.0
+    # Terminal jobs older than this are deleted by the worker's retention
+    # sweep; the queue table must not grow unboundedly.
+    retention_seconds: int = 86400
+
+    def __post_init__(self) -> None:
+        if self.db is not None and not self.durable:
+            raise ValueError("QueueConfig.db requires durable=True (a queue store implies a durable queue)")
+        # Numeric sanity: silently-broken configs must fail at construction,
+        # not as mysterious runtime behavior
+        if self.max_attempts < 1:
+            raise ValueError("QueueConfig.max_attempts must be >= 1 (every run needs at least one attempt)")
+        if self.poll_interval <= 0:
+            raise ValueError("QueueConfig.poll_interval must be > 0 seconds")
+        if self.lock_grace_seconds < 3:
+            # Heartbeats fire every lock_grace/3: below ~3s the worker races
+            # its own heartbeat and reclaims its own healthy jobs
+            raise ValueError("QueueConfig.lock_grace_seconds must be >= 3 (heartbeats fire at lock_grace/3)")
+        if self.retry_delay_seconds < 0:
+            raise ValueError("QueueConfig.retry_delay_seconds must be >= 0 (0 = no backoff)")
+        if self.max_queue_depth < 0:
+            raise ValueError("QueueConfig.max_queue_depth must be >= 0 (0 = unbounded)")
+        if self.retention_seconds <= 0:
+            raise ValueError("QueueConfig.retention_seconds must be > 0")
+        if self.timeout_seconds is not None and self.timeout_seconds <= 0:
+            raise ValueError("QueueConfig.timeout_seconds must be > 0 when set (None = no timeout)")

@@ -46,7 +46,7 @@ from agno.os.config import (
 )
 from agno.os.event_streams import BaseEventStream, set_event_stream
 from agno.os.interfaces.base import BaseInterface
-from agno.os.job_queue import apply_queue_config
+from agno.os.job_queue import apply_queue_config, queue_lifespan
 from agno.os.router import get_base_router, get_info_router, get_websocket_router
 from agno.os.routers.agents import get_agent_router
 from agno.os.routers.approvals import get_approval_router
@@ -55,6 +55,7 @@ from agno.os.routers.database import get_database_router
 from agno.os.routers.evals import get_eval_router
 from agno.os.routers.health import get_health_router
 from agno.os.routers.home import get_home_router
+from agno.os.routers.job_queue import get_queue_router
 from agno.os.routers.knowledge import get_knowledge_router
 from agno.os.routers.learnings import get_learnings_router
 from agno.os.routers.memory import get_memory_router
@@ -691,6 +692,15 @@ class AgentOS:
         self._add_router(app, get_workflow_router(self, settings=self.settings))
         self._add_router(app, get_websocket_router(self, settings=self.settings))
 
+        # Job queue operations surface (DLQ, requeue, stats) - only meaningful
+        # when the durable queue is enabled
+        if self.queue is not None and self.queue.durable:
+            self._add_router(app, get_queue_router(self, settings=self.settings))
+        else:
+            # Parity with every other switchable feature: answer 503 naming
+            # the switch instead of 404ing the whole surface
+            self._add_router(app, _get_disabled_feature_router("/queue", "Queue", "queue=QueueConfig(durable=True)"))
+
         # Add A2A interface if relevant
         has_a2a_interface = False
         for interface in self.interfaces:
@@ -1099,6 +1109,10 @@ class AgentOS:
             if self._scheduler_enabled and self.db is not None:
                 lifespans.append(partial(scheduler_lifespan, agent_os=self))
 
+            # The durable job queue worker (after db so tables exist)
+            if self.queue is not None and self.queue.durable:
+                lifespans.append(partial(queue_lifespan, agent_os=self))
+
             # The httpx client cleanup lifespan (should be last to close after other lifespans)
             lifespans.append(http_client_lifespan)
 
@@ -1138,6 +1152,10 @@ class AgentOS:
             # The scheduler lifespan (after db so tables exist)
             if self._scheduler_enabled and self.db is not None:
                 lifespans.append(partial(scheduler_lifespan, agent_os=self))
+
+            # The durable job queue worker (after db so tables exist)
+            if self.queue is not None and self.queue.durable:
+                lifespans.append(partial(queue_lifespan, agent_os=self))
 
             # The httpx client cleanup lifespan (should be last to close after other lifespans)
             lifespans.append(http_client_lifespan)

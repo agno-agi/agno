@@ -93,3 +93,69 @@ class TestApplyQueueConfig:
         set_event_stream(custom)
         apply_queue_config(QueueConfig(redis=make_coordination()))
         assert get_event_stream() is custom
+
+
+class TestSyncStoreAdapter:
+    @pytest.mark.asyncio
+    async def test_sync_store_methods_become_awaitable(self):
+        from agno.job_queue.config import QueueConfig
+        from agno.os.job_queue import resolve_queue_store
+
+        class SyncStore:
+            # Full contract: resolve_queue_store validates every method up front
+            def enqueue_job(self, job, max_depth=0):
+                return {"accepted": True, "reason": None, "job": job}
+
+            def claim_job(self, worker_id, lock_grace_seconds=60):
+                return {"id": "r1", "worker": worker_id}
+
+            def heartbeat_jobs(self, worker_id, job_ids):
+                return len(job_ids)
+
+            def complete_job(self, job_id, worker_id, attempt, status, error=None):
+                return True
+
+            def retry_or_fail_job(self, job_id, worker_id, attempt, error, retry_delay_seconds):
+                return "failed"
+
+            def cancel_job(self, job_id):
+                return True
+
+            def sweep_exhausted_jobs(self, lock_grace_seconds=60, limit=20):
+                return []
+
+            def fail_swept_job(self, job_id, lock_grace_seconds=60, error="worker lost"):
+                return True
+
+            def get_job(self, job_id):
+                return None
+
+            def count_queued_jobs(self):
+                return 3
+
+        store = resolve_queue_store(QueueConfig(durable=True), SyncStore())
+        claimed = await store.claim_job("w1")
+        assert claimed == {"id": "r1", "worker": "w1"}
+        assert await store.count_queued_jobs() == 3
+
+    @pytest.mark.asyncio
+    async def test_async_store_passes_through_unwrapped(self):
+        from agno.job_queue.config import QueueConfig
+        from agno.job_queue.store import InMemoryQueueStore
+        from agno.os.job_queue import resolve_queue_store
+
+        native = InMemoryQueueStore()
+        assert resolve_queue_store(QueueConfig(durable=True), native) is native
+
+    @pytest.mark.asyncio
+    async def test_durable_with_nonconforming_store_hard_fails(self):
+        """durable=True is a durability promise: a db that cannot honor it must
+        raise at startup, never silently degrade to an in-memory queue."""
+        from agno.job_queue.config import QueueConfig
+        from agno.os.job_queue import resolve_queue_store
+
+        class NotAQueueStore:
+            pass
+
+        with pytest.raises(ValueError, match="durable"):
+            resolve_queue_store(QueueConfig(durable=True), NotAQueueStore())

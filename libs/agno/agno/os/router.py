@@ -642,7 +642,10 @@ def get_websocket_router(
             if "1012" not in str(e) and "1001" not in str(e):
                 logger.exception("WebSocket error")
         finally:
-            # Clean up the websocket connection
+            # Clean up the websocket connection and any live tail pump
+            from agno.os.routers.workflows.router import cancel_subscription_pump
+
+            await cancel_subscription_pump(websocket)
             await websocket_manager.disconnect_websocket(websocket)
 
     return ws_router

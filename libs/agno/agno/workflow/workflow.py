@@ -70,6 +70,7 @@ from agno.run.cancel import (
     cancel_run as cancel_run_global,
 )
 from agno.run.concurrency import SSE_KEEPALIVE_INTERVAL_SECONDS, background_run_slot
+from agno.run.status_persist import apersist_run_transition
 from agno.run.team import (
     RunCancelledEvent as TeamRunCancelledEvent,
 )
@@ -1695,6 +1696,59 @@ class Workflow:
             except RuntimeError:
                 pass
 
+    async def _aterminalize_workflow_agent_run(
+        self, workflow_run_response: WorkflowRunOutput, session_id: Optional[str], user_id: Optional[str]
+    ) -> None:
+        """Terminalize a workflow-agent background run after its generator ends.
+
+        _aexecute_workflow_agent maintains its own run output internally and
+        never mutates the caller's workflow_run_response, and its internal
+        session save does not flip the run row out of RUNNING. Without this,
+        the row stays RUNNING forever and the producers complete_run a stale
+        status. The generator finishing without raising means the leg is
+        complete; error paths are handled by the producers' except branches."""
+        if workflow_run_response.status in (RunStatus.running, RunStatus.pending):
+            workflow_run_response.status = RunStatus.completed
+            persist_session_id = session_id or workflow_run_response.session_id
+            if persist_session_id is None:
+                return
+            try:
+                await apersist_run_transition(
+                    self, "workflow", persist_session_id, workflow_run_response, user_id=user_id
+                )
+            except Exception:
+                log_warning(f"Failed to persist terminal status for workflow-agent run {workflow_run_response.run_id}")
+
+    async def _apublish_stream_event(
+        self,
+        event: Any,
+        run_id: str,
+        websocket_handler: Optional["WebSocketHandler"] = None,
+    ) -> Optional[int]:
+        """Publish one streamed event to the event stream and, when a
+        websocket_handler is attached, over the original socket with the
+        assigned index.
+
+        All events - the workflow's own and enriched child agent/team events -
+        are published under the WORKFLOW run id, so clients replay one unified
+        stream from any replica. Publishing is best-effort: a transport failure
+        never fails the run."""
+        from agno.os.event_streams import get_event_stream
+
+        event_index: Optional[int] = None
+        try:
+            event_index = await get_event_stream().add_event(run_id, event)
+        except Exception:
+            log_warning(f"Failed to publish event to event stream for workflow run {run_id}")
+
+        if websocket_handler:
+            try:
+                asyncio.create_task(websocket_handler.handle_event(event, event_index=event_index, run_id=run_id))
+            except RuntimeError:
+                pass
+
+        return event_index
+
     def _handle_event(
         self,
         event: "WorkflowRunOutputEvent",
@@ -1731,72 +1785,9 @@ class Workflow:
                     workflow_run_response.events = []
                 workflow_run_response.events.append(event)
 
-        # Add to event buffer for reconnection support
-        # Use workflow_run_id for agent/team events, run_id for workflow events
-        buffer_run_id = None
-        event_index = None
-        if hasattr(event, "workflow_run_id") and event.workflow_run_id:
-            # Agent/Team event - use workflow_run_id
-            buffer_run_id = event.workflow_run_id
-        elif hasattr(event, "run_id") and event.run_id:
-            # Workflow event - use run_id
-            buffer_run_id = event.run_id
-
-        if buffer_run_id:
-            try:
-                from agno.os.managers import event_buffer
-
-                # add_event now returns the event_index
-                event_index = event_buffer.add_event(buffer_run_id, event)  # type: ignore
-            except Exception as e:
-                # Don't fail workflow execution if buffering fails
-                log_debug(f"Failed to add event to buffer: {e}")
-
-        # Broadcast to WebSocket if available (async context only)
-        # Include event_index for frontend reconnection support
-        if websocket_handler:
-            import asyncio
-
-            try:
-                loop = asyncio.get_running_loop()
-                if loop:
-                    # Pass event_index and run_id to websocket handler
-                    asyncio.create_task(
-                        websocket_handler.handle_event(event, event_index=event_index, run_id=buffer_run_id)
-                    )
-            except RuntimeError:
-                pass
-
-        # ALSO broadcast through websocket manager for reconnected clients
-        # This ensures clients who reconnect after workflow started still receive events
-        if buffer_run_id and websocket_handler:
-            try:
-                import asyncio
-
-                from agno.os.managers import websocket_manager
-
-                loop = asyncio.get_running_loop()
-                if loop:
-                    # Format the event for broadcast
-                    event_dict = event.model_dump() if hasattr(event, "model_dump") else event.to_dict()
-                    if event_index is not None:
-                        event_dict["event_index"] = event_index
-                    if "run_id" not in event_dict:
-                        event_dict["run_id"] = buffer_run_id
-
-                    # Broadcast to registered websocket (if different from original)
-                    import json
-
-                    from agno.utils.serialize import json_serializer
-
-                    asyncio.create_task(
-                        websocket_manager.broadcast_to_run(
-                            buffer_run_id, json.dumps(event_dict, default=json_serializer)
-                        )
-                    )
-            except Exception as e:
-                log_debug(f"Failed to broadcast through manager: {e}")
-
+        # Transport (event-stream publish + WebSocket delivery) happens in the
+        # background producers via _apublish_stream_event - this handler only
+        # shapes and stores the event.
         return event
 
     def _enrich_event_with_workflow_context(
@@ -2916,17 +2907,6 @@ class Workflow:
                 )
                 yield self._handle_event(workflow_completed_event, workflow_run_response)
 
-                # Mark run as cancelled in event buffer so /resume and GC see the terminal state
-                try:
-                    from agno.os.managers import event_buffer
-
-                    event_buffer.set_run_completed(
-                        workflow_run_response.run_id,  # type: ignore
-                        workflow_run_response.status or RunStatus.cancelled,
-                    )
-                except Exception as e:
-                    log_debug(f"Failed to mark run as completed in buffer: {e}")
-
                 if self.telemetry:
                     self._log_workflow_telemetry(session_id=session.session_id, run_id=workflow_run_response.run_id)
                 return
@@ -2963,17 +2943,6 @@ class Workflow:
             run_output=workflow_run_response,  # Include full run output for nested workflows
         )
         yield self._handle_event(workflow_completed_event, workflow_run_response)
-
-        # Mark run as completed in event buffer
-        try:
-            from agno.os.managers import event_buffer
-
-            event_buffer.set_run_completed(
-                workflow_run_response.run_id,  # type: ignore
-                workflow_run_response.status or RunStatus.completed,
-            )
-        except Exception as e:
-            log_debug(f"Failed to mark run as completed in buffer: {e}")
 
         # Stop timer on error
         if workflow_run_response.metrics:
@@ -4024,17 +3993,6 @@ class Workflow:
                     websocket_handler=websocket_handler,
                 )
 
-                # Mark run as cancelled in event buffer so /resume and GC see the terminal state
-                try:
-                    from agno.os.managers import event_buffer
-
-                    event_buffer.set_run_completed(
-                        workflow_run_response.run_id,  # type: ignore
-                        workflow_run_response.status or RunStatus.cancelled,
-                    )
-                except Exception as e:
-                    log_debug(f"Failed to mark run as completed in buffer: {e}")
-
                 if self.telemetry:
                     await self._alog_workflow_telemetry(session_id=session_id, run_id=workflow_run_response.run_id)
                 return
@@ -4071,17 +4029,6 @@ class Workflow:
             run_output=workflow_run_response,  # Include full run output for nested workflows
         )
         yield self._handle_event(workflow_completed_event, workflow_run_response, websocket_handler=websocket_handler)
-
-        # Mark run as completed in event buffer
-        try:
-            from agno.os.managers import event_buffer
-
-            event_buffer.set_run_completed(
-                workflow_run_response.run_id,  # type: ignore
-                workflow_run_response.status or RunStatus.completed,
-            )
-        except Exception as e:
-            log_debug(f"Failed to mark run as completed in buffer: {e}")
 
         # Stop timer on error
         if workflow_run_response.metrics:
@@ -4173,12 +4120,16 @@ class Workflow:
         workflow_run_response.metrics = WorkflowMetrics(steps={})
         workflow_run_response.metrics.start_timer()
 
-        # Store PENDING response immediately
-        workflow_session.upsert_run(run=workflow_run_response)
-        if self._has_async_db():
-            await self.asave_session(session=workflow_session)
-        else:
-            self.save_session(session=workflow_session)
+        # Store PENDING response immediately. Skip for the workflow-agent case:
+        # _aexecute_workflow_agent persists the real run (reusing this run id),
+        # so pre-persisting an empty outer run here would leave a duplicate the
+        # UI renders as "0 out of 4 steps done".
+        if self.agent is None:
+            workflow_session.upsert_run(run=workflow_run_response)
+            if self._has_async_db():
+                await self.asave_session(session=workflow_session)
+            else:
+                self.save_session(session=workflow_session)
 
         # Prepare execution input
         inputs = WorkflowExecutionInput(
@@ -4196,35 +4147,30 @@ class Workflow:
             """Background execution: waits for a concurrency slot (background_run_slot);
             the run stays PENDING while waiting in line and can be cancelled without
             consuming a slot."""
+
             try:
                 async with background_run_slot(run_id=workflow_run_response.run_id):
-                    # Update status to RUNNING and save
-                    workflow_run_response.status = RunStatus.running
-                    if self._has_async_db():
-                        await self.asave_session(session=workflow_session)
-                    else:
-                        self.save_session(session=workflow_session)
-
                     if self.agent is not None:
-                        agent_result = await self._aexecute_workflow_agent(
+                        # WorkflowAgent case: _aexecute_workflow_agent owns the
+                        # run rows and reuses this run id, so there is no empty
+                        # outer run to transition or finalize. Delegating cleanly
+                        # (no pre-persist, no safety-net upsert) yields a single
+                        # run per turn instead of an extra "0 out of 4 steps done".
+                        await self._aexecute_workflow_agent(
                             user_input=input,  # type: ignore
                             execution_input=inputs,
                             run_context=run_context,
                             stream=False,
                             **kwargs,
                         )
-                        # Safety net: the polled 202 run_id must reach a
-                        # terminal state even if an internal path persisted the
-                        # answer under a different run id
-                        if getattr(agent_result, "run_id", None) != workflow_run_response.run_id:
-                            workflow_run_response.status = getattr(agent_result, "status", None) or RunStatus.completed
-                            workflow_run_response.content = getattr(agent_result, "content", None)
-                            workflow_session.upsert_run(run=workflow_run_response)
-                            if self._has_async_db():
-                                await self.asave_session(session=workflow_session)
-                            else:
-                                self.save_session(session=workflow_session)
                     else:
+                        # Update status to RUNNING and save (atomic helper:
+                        # row-locked patch when the DB supports it, fresh-read +
+                        # save otherwise)
+                        workflow_run_response.status = RunStatus.running
+                        await apersist_run_transition(
+                            self, "workflow", session_id, workflow_run_response, user_id=user_id
+                        )
                         await self._aexecute(
                             session_id=session_id,
                             user_id=user_id,
@@ -4244,30 +4190,27 @@ class Workflow:
                 # so persist CANCELLED and deregister the run here.
                 log_info(f"Background run {workflow_run_response.run_id} cancelled while waiting for a slot")
                 workflow_run_response.status = RunStatus.cancelled
-                if self._has_async_db():
-                    await self.asave_session(session=workflow_session)
-                else:
-                    self.save_session(session=workflow_session)
+                await apersist_run_transition(self, "workflow", session_id, workflow_run_response, user_id=user_id)
                 await acleanup_run(run_id)
             except asyncio.CancelledError:
                 # Task-level shutdown, not run-cancellation: best-effort persist
                 # so pollers are not left with a stuck PENDING/RUNNING run
                 with contextlib.suppress(Exception):
                     workflow_run_response.status = RunStatus.cancelled
-                    workflow_session.upsert_run(run=workflow_run_response)
-                    if self._has_async_db():
-                        await self.asave_session(session=workflow_session)
-                    else:
-                        self.save_session(session=workflow_session)
+                    await apersist_run_transition(self, "workflow", session_id, workflow_run_response, user_id=user_id)
                 raise
             except Exception as e:
                 logger.exception("Background workflow execution failed")
                 workflow_run_response.status = RunStatus.error
                 workflow_run_response.content = f"Background execution failed: {str(e)}"
-                if self._has_async_db():
-                    await self.asave_session(session=workflow_session)
-                else:
-                    self.save_session(session=workflow_session)
+                await apersist_run_transition(
+                    self,
+                    "workflow",
+                    session_id,
+                    workflow_run_response,
+                    user_id=user_id,
+                    full_run=True,
+                )
 
         # Create and start asyncio task
         loop = asyncio.get_running_loop()
@@ -4379,15 +4322,17 @@ class Workflow:
             Execution waits for a concurrency slot (background_run_slot); the run
             stays PENDING while waiting in line and can be cancelled without
             consuming a slot."""
-            from agno.os.event_streams import InMemoryEventStream, get_event_stream
+            from agno.os.event_streams import get_event_stream
 
-            if not isinstance(get_event_stream(), InMemoryEventStream):
-                log_warning(
-                    "A distributed event stream is configured, but workflow background "
-                    "streams still buffer events in-process: cross-replica resume will "
-                    "fall back to the database for this run. Workflow producer support "
-                    "for distributed event streams is planned."
-                )
+            event_stream = get_event_stream()
+            publish_run_id = run_context.run_id or workflow_run_response.run_id or ""
+
+            # Pre-register so reconnecting clients can attach while queued
+            try:
+                await event_stream.register_run(publish_run_id, RunStatus.pending)
+            except Exception:
+                log_warning(f"Failed to register workflow run {publish_run_id} with event stream")
+
             slot_cm = background_run_slot(run_id=run_context.run_id)
             slot_held = False
             try:
@@ -4398,26 +4343,32 @@ class Workflow:
                 # branches, so pollers never see an executing run as PENDING
                 # (which now specifically means "queued for a slot")
                 workflow_run_response.status = RunStatus.running
-                workflow_session.upsert_run(run=workflow_run_response)
-                if self._has_async_db():
-                    await self.asave_session(session=workflow_session)
-                else:
-                    self.save_session(session=workflow_session)
+                await apersist_run_transition(self, "workflow", session_id, workflow_run_response, user_id=user_id)
+                await event_stream.set_run_status(publish_run_id, RunStatus.running)
 
                 if self.agent is not None:
+                    # websocket_handler deliberately NOT passed down: every
+                    # broadcast site in _aexecute_workflow_agent yields the
+                    # same event, so delivering from this loop (with the
+                    # event-stream index attached) replaces the internal
+                    # index-less broadcasts without dropping or doubling frames
                     result = self._aexecute_workflow_agent(
                         user_input=input,  # type: ignore
                         run_context=run_context,
                         execution_input=inputs,
                         stream=True,
-                        websocket_handler=websocket_handler,
                         **kwargs,
                     )
-                    # For streaming, result is an async iterator
                     async for event in result:  # type: ignore
-                        # Events are automatically broadcast by _handle_event in the agent execution
-                        # We just consume them here to drive the execution
-                        pass
+                        if isinstance(event, WorkflowRunOutput):
+                            continue
+                        await self._apublish_stream_event(event, publish_run_id, websocket_handler=websocket_handler)
+                    # The workflow-agent generator maintains its own run output
+                    # and never mutates workflow_run_response: adopt the final
+                    # status from the run row so terminal persistence and
+                    # complete_run below see COMPLETED/PAUSED, not a stale
+                    # RUNNING
+                    await self._aterminalize_workflow_agent_run(workflow_run_response, session_id, user_id)
                     log_debug(
                         f"Background streaming execution (workflow agent) completed with status: {workflow_run_response.status}"
                     )
@@ -4435,9 +4386,9 @@ class Workflow:
                         add_session_state_to_context=resolved["add_session_state_to_context"],
                         **kwargs,
                     ):
-                        # Events are automatically broadcast by _handle_event
-                        # We just consume them here to drive the execution
-                        pass
+                        if isinstance(event, WorkflowRunOutput):
+                            continue
+                        await self._apublish_stream_event(event, publish_run_id, websocket_handler=websocket_handler)
 
                 log_debug(f"Background streaming execution completed with status: {workflow_run_response.status}")
 
@@ -4462,39 +4413,41 @@ class Workflow:
                         content=workflow_run_response.content,
                         metadata=workflow_run_response.metadata,
                     )
-                    self._handle_event(paused_event, workflow_run_response, websocket_handler=websocket_handler)
-
-                # Update event buffer status so reconnecting clients know the run is paused
-                if workflow_run_response.is_paused and workflow_run_response.run_id:
-                    try:
-                        from agno.os.managers import event_buffer
-
-                        event_buffer.set_run_completed(workflow_run_response.run_id, RunStatus.paused)
-                    except Exception as e:
-                        log_debug(f"Failed to update event buffer status: {e}")
+                    self._handle_event(paused_event, workflow_run_response)
+                    await self._apublish_stream_event(paused_event, publish_run_id, websocket_handler=websocket_handler)
 
             except RunCancelledException:
                 # Cancelled while waiting for a slot — execution never started, so
                 # persist CANCELLED and deregister the run here.
                 log_info(f"Background stream run {run_context.run_id} cancelled while waiting for a slot")
                 workflow_run_response.status = RunStatus.cancelled
-                workflow_session.upsert_run(run=workflow_run_response)
-                if self._has_async_db():
-                    await self.asave_session(session=workflow_session)
-                else:
-                    self.save_session(session=workflow_session)
+                await apersist_run_transition(self, "workflow", session_id, workflow_run_response, user_id=user_id)
                 await acleanup_run(run_context.run_id)
             except Exception as e:
                 logger.exception("Background streaming workflow execution failed")
                 workflow_run_response.status = RunStatus.error
                 workflow_run_response.content = f"Background streaming execution failed: {str(e)}"
-                if self._has_async_db():
-                    await self.asave_session(session=workflow_session)
-                else:
-                    self.save_session(session=workflow_session)
+                await apersist_run_transition(
+                    self,
+                    "workflow",
+                    session_id,
+                    workflow_run_response,
+                    user_id=user_id,
+                    full_run=True,
+                )
             finally:
                 if slot_held:
                     await slot_cm.__aexit__(None, None, None)
+
+                # Mark run terminal in the event stream and wake all tails
+                # (shielded to survive task cancellation). A pause is terminal
+                # for THIS attempt; the continue-run resumes the stream.
+                try:
+                    await asyncio.shield(
+                        event_stream.complete_run(publish_run_id, workflow_run_response.status or RunStatus.completed)
+                    )
+                except (Exception, asyncio.CancelledError):
+                    log_warning(f"Failed to mark workflow run {publish_run_id} as completed in event stream")
 
         # Create and start asyncio task for background streaming execution
         loop = asyncio.get_running_loop()
@@ -4529,7 +4482,7 @@ class Workflow:
 
         1. Persists RUNNING status in DB
         2. Spawns a detached asyncio.Task that runs _aexecute_stream
-        3. Buffers events (via event_buffer) and publishes to SSE subscribers
+        3. Publishes events through the event stream (buffer + live tails on any replica)
         4. Yields SSE-formatted strings via an asyncio.Queue
 
         The detached task keeps running even if the client disconnects.
@@ -4587,11 +4540,11 @@ class Workflow:
         else:
             self.save_session(session=workflow_session)
 
-        # Pre-register with the event buffer so reconnecting clients can attach
+        # Pre-register with the event stream so reconnecting clients can attach
         # and wait while the run is still queued (no events buffered yet).
-        from agno.os.managers import event_buffer as _event_buffer
+        from agno.os.event_streams import get_event_stream
 
-        _event_buffer.register_run(run_id, RunStatus.pending)
+        await get_event_stream().register_run(run_id, RunStatus.pending)
 
         log_info(f"Background stream workflow run {run_id} persisted with PENDING status")
 
@@ -4612,22 +4565,10 @@ class Workflow:
 
         # Spawn detached background task
         async def _background_producer() -> None:
-            from agno.os.event_streams import InMemoryEventStream, get_event_stream
-            from agno.os.managers import event_buffer, sse_subscriber_manager
+            from agno.os.event_streams import get_event_stream
             from agno.os.utils import format_sse_event_with_index
 
-            if not isinstance(get_event_stream(), InMemoryEventStream):
-                log_warning(
-                    "A distributed event stream is configured, but workflow background "
-                    "streams still buffer events in-process: cross-replica resume will "
-                    "fall back to the database for this run. Workflow producer support "
-                    "for distributed event streams is planned."
-                )
-
-            # _handle_event (called inside _aexecute_stream) already adds events to
-            # event_buffer.  We must NOT add them again here to avoid duplication.
-            # Instead, we read the current buffer count to derive the event_index
-            # that _handle_event just assigned.
+            event_stream = get_event_stream()
 
             slot_cm = background_run_slot(run_id=run_id)
             slot_held = False
@@ -4635,14 +4576,10 @@ class Workflow:
                 await slot_cm.__aenter__()
                 slot_held = True
 
-                # Transition to RUNNING now that a slot is held
+                # Transition to RUNNING now that a slot is held (atomic helper)
                 workflow_run_response.status = RunStatus.running
-                workflow_session.upsert_run(run=workflow_run_response)
-                if self._has_async_db():
-                    await self.asave_session(session=workflow_session)
-                else:
-                    self.save_session(session=workflow_session)
-                event_buffer.set_run_status(run_id, RunStatus.running)
+                await apersist_run_transition(self, "workflow", session_id, workflow_run_response, user_id=user_id)
+                await event_stream.set_run_status(run_id, RunStatus.running)
 
                 if self.agent is not None:
                     result = self._aexecute_workflow_agent(
@@ -4656,25 +4593,19 @@ class Workflow:
                         if isinstance(event, WfRunOutput):
                             continue
 
-                        # Get the monotonic index that _handle_event already assigned
-                        event_index = event_buffer.get_last_index(run_id)
+                        # Publish to the event stream (buffer + live tails on any
+                        # replica); the stream owns index assignment
+                        event_index = await self._apublish_stream_event(event, run_id)
 
-                        # Format as SSE
+                        # Format as SSE for the primary queue (original client)
                         sse_data = format_sse_event_with_index(event, event_index=event_index, run_id=run_id)
-
-                        # Push to primary queue (original client)
                         try:
                             await sse_queue.put(sse_data)
                         except Exception:
                             log_warning(f"Failed to push SSE data to queue for workflow run {run_id}")
-
-                        # Publish to SSE subscribers (resumed clients)
-                        try:
-                            await sse_subscriber_manager.publish(
-                                run_id, event_index if event_index is not None else -1, sse_data
-                            )
-                        except Exception:
-                            log_warning(f"Failed to publish SSE data to subscribers for workflow run {run_id}")
+                    # Same stale-status issue as the WS producer: the
+                    # workflow-agent generator never mutates workflow_run_response
+                    await self._aterminalize_workflow_agent_run(workflow_run_response, session_id, user_id)
                 else:
                     async for event in self._aexecute_stream(
                         session_id=session_id,
@@ -4689,25 +4620,16 @@ class Workflow:
                         if isinstance(event, WfRunOutput):
                             continue
 
-                        # Get the monotonic index that _handle_event already assigned
-                        event_index = event_buffer.get_last_index(run_id)
+                        # Publish to the event stream (buffer + live tails on any
+                        # replica); the stream owns index assignment
+                        event_index = await self._apublish_stream_event(event, run_id)
 
-                        # Format as SSE
+                        # Format as SSE for the primary queue (original client)
                         sse_data = format_sse_event_with_index(event, event_index=event_index, run_id=run_id)
-
-                        # Push to primary queue (original client)
                         try:
                             await sse_queue.put(sse_data)
                         except Exception:
                             log_warning(f"Failed to push SSE data to queue for workflow run {run_id}")
-
-                        # Publish to SSE subscribers (resumed clients)
-                        try:
-                            await sse_subscriber_manager.publish(
-                                run_id, event_index if event_index is not None else -1, sse_data
-                            )
-                        except Exception:
-                            log_warning(f"Failed to publish SSE data to subscribers for workflow run {run_id}")
 
                 log_debug(
                     f"Background stream workflow run {run_id} completed with status: {workflow_run_response.status}"
@@ -4719,11 +4641,7 @@ class Workflow:
                 log_info(f"Background stream workflow run {run_id} cancelled while waiting for a slot")
                 try:
                     workflow_run_response.status = RunStatus.cancelled
-                    workflow_session.upsert_run(run=workflow_run_response)
-                    if self._has_async_db():
-                        await self.asave_session(session=workflow_session)
-                    else:
-                        self.save_session(session=workflow_session)
+                    await apersist_run_transition(self, "workflow", session_id, workflow_run_response, user_id=user_id)
                 except Exception:
                     log_error(
                         f"Failed to persist cancelled state for background stream workflow run {run_id}", exc_info=True
@@ -4734,11 +4652,9 @@ class Workflow:
                 # Persist ERROR status
                 try:
                     workflow_run_response.status = RunStatus.error
-                    workflow_session.upsert_run(run=workflow_run_response)
-                    if self._has_async_db():
-                        await self.asave_session(session=workflow_session)
-                    else:
-                        self.save_session(session=workflow_session)
+                    await apersist_run_transition(
+                        self, "workflow", session_id, workflow_run_response, user_id=user_id, full_run=True
+                    )
                 except Exception:
                     log_error(
                         f"Failed to persist error state for background stream workflow run {run_id}", exc_info=True
@@ -4754,17 +4670,14 @@ class Workflow:
                 except Exception:
                     log_warning(f"Failed to signal primary queue for workflow run {run_id} completion")
 
-                # Mark run completed in event buffer
+                # Mark run terminal in the event stream and wake all tails
+                # (shielded to survive task cancellation)
                 try:
-                    event_buffer.set_run_completed(run_id, workflow_run_response.status or RunStatus.completed)
-                except Exception:
-                    log_warning(f"Failed to mark workflow run {run_id} as completed in event buffer")
-
-                # Signal SSE subscribers that run is done (shielded to survive task cancellation)
-                try:
-                    await asyncio.shield(sse_subscriber_manager.complete(run_id))
+                    await asyncio.shield(
+                        event_stream.complete_run(run_id, workflow_run_response.status or RunStatus.completed)
+                    )
                 except (Exception, asyncio.CancelledError):
-                    log_warning(f"Failed to signal SSE subscribers for workflow run {run_id} completion")
+                    log_warning(f"Failed to mark workflow run {run_id} as completed in event stream")
 
         task = asyncio.create_task(
             _background_producer(),
@@ -4958,8 +4871,11 @@ class Workflow:
 
         log_debug(f"Executing workflow agent with streaming - input: {agent_input}...")
 
-        # Create a workflow run response upfront for potential direct answer (will be used only if workflow is not executed)
-        run_id = str(uuid4())
+        # Create a workflow run response upfront for potential direct answer (will be used only if workflow is not executed).
+        # Reuse the caller's run id so a direct answer IS the polled run (the
+        # background path no longer pre-persists an empty outer run for the
+        # workflow-agent case, so there is no placeholder to merge with).
+        run_id = run_context.run_id or str(uuid4())
         direct_reply_run_response = WorkflowRunOutput(
             run_id=run_id,
             input=execution_input.input,
@@ -5348,8 +5264,11 @@ class Workflow:
 
         log_debug(f"Executing async workflow agent with streaming - input: {agent_input}...")
 
-        # Create a workflow run response upfront for potential direct answer (will be used only if workflow is not executed)
-        run_id = str(uuid4())
+        # Create a workflow run response upfront for potential direct answer (will be used only if workflow is not executed).
+        # Reuse the caller's run id so a direct answer IS the polled run (the
+        # background path no longer pre-persists an empty outer run for the
+        # workflow-agent case, so there is no placeholder to merge with).
+        run_id = run_context.run_id or str(uuid4())
         direct_reply_run_response = WorkflowRunOutput(
             run_id=run_id,
             input=execution_input.input,
@@ -9452,6 +9371,18 @@ class Workflow:
         async def _execute_continue_background():
             # Execution waits for a concurrency slot (background_run_slot); the
             # run can be cancelled without consuming a slot while it waits.
+            from agno.os.event_streams import get_event_stream
+
+            _continue_event_stream = get_event_stream()
+            _continue_run_id = workflow_run_response.run_id or ""
+
+            # Re-register (idempotent): a cross-replica continue lands on a
+            # replica whose in-memory stream has never seen this run
+            try:
+                await _continue_event_stream.register_run(_continue_run_id, RunStatus.pending)
+            except Exception:
+                log_warning(f"Failed to register workflow run {_continue_run_id} with event stream")
+
             slot_cm = background_run_slot(run_id=workflow_run_response.run_id)
             slot_held = False
             try:
@@ -9465,6 +9396,7 @@ class Workflow:
                     await self.asave_session(session=session)
                 else:
                     self.save_session(session=session)
+                await _continue_event_stream.set_run_status(_continue_run_id, RunStatus.running)
 
                 async for _event in self._acontinue_execute_stream(
                     session=session,
@@ -9476,8 +9408,9 @@ class Workflow:
                     websocket_handler=websocket_handler,
                     **kwargs,
                 ):
-                    # Events are broadcast via _handle_event -> websocket_handler
-                    pass
+                    if isinstance(_event, WorkflowRunOutput):
+                        continue
+                    await self._apublish_stream_event(_event, _continue_run_id, websocket_handler=websocket_handler)
 
                 log_debug(f"Background continue streaming completed with status: {workflow_run_response.status}")
 
@@ -9501,7 +9434,10 @@ class Workflow:
                         content=workflow_run_response.content,
                         metadata=workflow_run_response.metadata,
                     )
-                    self._handle_event(paused_event, workflow_run_response, websocket_handler=websocket_handler)
+                    self._handle_event(paused_event, workflow_run_response)
+                    await self._apublish_stream_event(
+                        paused_event, _continue_run_id, websocket_handler=websocket_handler
+                    )
 
             except RunCancelledException:
                 # Cancelled while waiting for a slot — execution never started, so
@@ -9529,19 +9465,17 @@ class Workflow:
                 if slot_held:
                     await slot_cm.__aexit__(None, None, None)
 
-                # Update event buffer with the final status (paused, completed, error,
-                # cancelled) so reconnecting clients take the correct replay path.
-                # Without this the buffer would still report 'running' for terminal runs.
-                if workflow_run_response.run_id:
-                    try:
-                        from agno.os.managers import event_buffer
-
-                        event_buffer.set_run_completed(
-                            workflow_run_response.run_id,
-                            workflow_run_response.status or RunStatus.completed,
+                # Mark the final status (paused, completed, error, cancelled) in
+                # the event stream so reconnecting clients take the correct
+                # replay path (shielded to survive task cancellation).
+                try:
+                    await asyncio.shield(
+                        _continue_event_stream.complete_run(
+                            _continue_run_id, workflow_run_response.status or RunStatus.completed
                         )
-                    except Exception as e:
-                        log_debug(f"Failed to update event buffer status: {e}")
+                    )
+                except (Exception, asyncio.CancelledError):
+                    log_warning(f"Failed to mark workflow run {_continue_run_id} as completed in event stream")
 
         loop = asyncio.get_running_loop()
         task = loop.create_task(
