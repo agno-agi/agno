@@ -302,11 +302,6 @@ class InfoResponse(BaseModel):
     )
 
 
-class Model(BaseModel):
-    id: Optional[str] = Field(None, description="Model identifier")
-    provider: Optional[str] = Field(None, description="Model provider name")
-
-
 class ConfigResponse(BaseModel):
     """Response schema for the general config endpoint"""
 

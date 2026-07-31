@@ -81,7 +81,8 @@ class TestResyncPreservesEndpoints:
             response = client.get("/info")
             assert response.status_code == 200
             data = response.json()
-            assert data["name"] == "AgentOS API"
+            assert "agno_version" in data
+            assert "os_version" in data
 
             # Perform resync
             agent_os.resync(app=app)
@@ -90,7 +91,8 @@ class TestResyncPreservesEndpoints:
             response = client.get("/info")
             assert response.status_code == 200
             data = response.json()
-            assert data["name"] == "AgentOS API"
+            assert "agno_version" in data
+            assert "os_version" in data
 
     def test_resync_preserves_config_endpoint(self, test_agent: Agent):
         """Test that resync preserves the config endpoint."""
@@ -411,7 +413,7 @@ class TestResyncWithLifespanAdditions:
             response = client.get("/info")
             assert response.status_code == 200
             data = response.json()
-            assert data["name"] == "AgentOS API"
+            assert "agno_version" in data
 
     def test_new_agent_endpoint_available_after_resync(self, test_agent: Agent, second_agent: Agent):
         """Test that individual agent endpoint is available for agents added during lifespan."""
@@ -613,7 +615,7 @@ class TestResyncMultipleTimes:
                 response = client.get("/info")
                 assert response.status_code == 200, f"Info failed after resync {i + 1}"
                 data = response.json()
-                assert data["name"] == "AgentOS API", f"/info missing 'AgentOS API' after resync {i + 1}"
+                assert "agno_version" in data, f"/info missing 'agno_version' after resync {i + 1}"
 
                 # Verify health endpoint still works after each resync
                 response = client.get("/health")

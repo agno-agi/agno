@@ -1,5 +1,5 @@
 import json
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, cast
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 from fastapi import (
     APIRouter,
@@ -11,7 +11,6 @@ from fastapi import (
 
 from agno import __version__ as agno_version
 from agno.agent.factory import AgentFactory
-from agno.agent.protocol import AgentProtocol
 from agno.exceptions import RemoteServerUnavailableError
 from agno.os.auth import (
     get_authentication_dependency,
@@ -45,6 +44,7 @@ from agno.os.schema import (
     UnauthenticatedResponse,
     ValidationErrorResponse,
     WorkflowSummaryResponse,
+    _extract_model,
 )
 from agno.os.scopes import (
     AgentOSScope,
@@ -216,24 +216,18 @@ def get_base_router(
 def _collect_unique_models(os: "AgentOS") -> List[Model]:
     """Return unique (id, provider) models in use across agents and teams."""
     unique_models: dict = {}
-    if os.agents:
-        for agent in os.agents:
-            if isinstance(agent, AgentFactory) or isinstance(agent, AgentProtocol):
-                continue
-            model = cast(Model, getattr(agent, "model", None))
-            if model and model.id is not None and model.provider is not None:
-                key = (model.id, model.provider)
-                if key not in unique_models:
-                    unique_models[key] = Model(id=model.id, provider=model.provider)
-    if os.teams:
-        for team in os.teams:
-            if isinstance(team, TeamFactory):
-                continue
-            model = cast(Model, getattr(team, "model", None))
-            if model and model.id is not None and model.provider is not None:
-                key = (model.id, model.provider)
-                if key not in unique_models:
-                    unique_models[key] = Model(id=model.id, provider=model.provider)
+    for agent in os.agents or []:
+        if isinstance(agent, AgentFactory):
+            continue
+        model = _extract_model(agent)
+        if model and model.id is not None and model.provider is not None:
+            unique_models.setdefault((model.id, model.provider), model)
+    for team in os.teams or []:
+        if isinstance(team, TeamFactory):
+            continue
+        model = _extract_model(team)
+        if model and model.id is not None and model.provider is not None:
+            unique_models.setdefault((model.id, model.provider), model)
     return list(unique_models.values())
 
 

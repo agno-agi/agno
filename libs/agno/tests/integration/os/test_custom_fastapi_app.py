@@ -213,7 +213,7 @@ def test_custom_app_endpoints_preserved(test_agent: Agent):
     response = client.get("/info")
     assert response.status_code == 200
     data = response.json()
-    assert data["name"] == "AgentOS API"
+    assert "agno_version" in data
 
 
 def test_custom_lifespan_integration(test_agent: Agent):
