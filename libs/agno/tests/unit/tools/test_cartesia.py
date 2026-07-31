@@ -128,13 +128,13 @@ def test_feature_registration(mock_cartesia_client):
         # Test with only TTS and List enabled (defaults)
         tools = CartesiaTools()
         assert len(tools.functions) == 2
-        assert "text_to_speech" in tools.functions
+        assert "cartesia_text_to_speech" in tools.functions
         assert "list_voices" in tools.functions
 
         # Test with localize enabled as well
         tools = CartesiaTools(enable_localize_voice=True)
         assert len(tools.functions) == 3
-        assert "text_to_speech" in tools.functions
+        assert "cartesia_text_to_speech" in tools.functions
         assert "list_voices" in tools.functions
         assert "localize_voice" in tools.functions
 
@@ -186,7 +186,7 @@ def test_text_to_speech(cartesia_tools, mock_cartesia_client, mock_agent):
     """Test text-to-speech functionality creates artifact."""
     # Mock client returns iterator with b"audio data"
 
-    result = cartesia_tools.text_to_speech(
+    result = cartesia_tools.cartesia_text_to_speech(
         agent=mock_agent,
         transcript="Hello world",
         # language="en",  # Removed: Language is no longer a parameter
@@ -226,10 +226,10 @@ def test_text_to_speech(cartesia_tools, mock_cartesia_client, mock_agent):
 
 
 def test_text_to_speech_error(cartesia_tools, mock_cartesia_client, mock_agent):
-    """Test error handling for text_to_speech."""
+    """Test error handling for cartesia_text_to_speech."""
     mock_cartesia_client.tts.bytes.side_effect = Exception("TTS API Error")
 
-    result = cartesia_tools.text_to_speech(agent=mock_agent, transcript="Error test")
+    result = cartesia_tools.cartesia_text_to_speech(agent=mock_agent, transcript="Error test")
 
     # Verify ToolResult is returned with error message
     assert isinstance(result, ToolResult)

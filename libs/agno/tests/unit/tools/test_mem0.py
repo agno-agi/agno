@@ -115,9 +115,9 @@ class TestMem0Toolkit:
         assert user_id == "constructor_user"
 
     def test_add_memory_with_run_context_user_id(self, toolkit_config, mock_memory_instance):
-        """Test that add_memory works with user_id from run_context"""
+        """Test that mem0_add_memory works with user_id from run_context"""
         run_context = RunContext(run_id="test-run", session_id="test-session", user_id="context_user_add")
-        result_str = toolkit_config.add_memory(run_context, content="Context user test")
+        result_str = toolkit_config.mem0_add_memory(run_context, content="Context user test")
         mock_memory_instance.add.assert_called_once_with(
             [{"role": "user", "content": "Context user test"}],
             user_id="context_user_add",
@@ -136,7 +136,7 @@ class TestMem0Toolkit:
 
     def test_add_memory_success_arg_id(self, toolkit_config, mock_memory_instance, dummy_run_context):
         toolkit_config.user_id = "test_user_add"
-        result_str = toolkit_config.add_memory(dummy_run_context, content="Test message")
+        result_str = toolkit_config.mem0_add_memory(dummy_run_context, content="Test message")
         mock_memory_instance.add.assert_called_once_with(
             [{"role": "user", "content": "Test message"}],
             user_id="test_user_add",
@@ -148,7 +148,7 @@ class TestMem0Toolkit:
     def test_add_memory_dict_message(self, toolkit_config, mock_memory_instance, dummy_run_context):
         toolkit_config.user_id = "user1"
         dict_content = {"role": "user", "content": "Dict message"}
-        result_str = toolkit_config.add_memory(dummy_run_context, content=dict_content)
+        result_str = toolkit_config.mem0_add_memory(dummy_run_context, content=dict_content)
         mock_memory_instance.add.assert_called_once_with(
             [{"role": "user", "content": json.dumps(dict_content)}],
             user_id="user1",
@@ -159,7 +159,7 @@ class TestMem0Toolkit:
 
     def test_add_memory_invalid_message_type(self, toolkit_config, mock_memory_instance, dummy_run_context):
         toolkit_config.user_id = "user1"
-        result_str = toolkit_config.add_memory(dummy_run_context, content=123)
+        result_str = toolkit_config.mem0_add_memory(dummy_run_context, content=123)
         mock_memory_instance.add.assert_called_once_with(
             [{"role": "user", "content": "123"}],
             user_id="user1",
@@ -169,8 +169,8 @@ class TestMem0Toolkit:
         assert json.loads(result_str) == expected_result
 
     def test_add_memory_no_user_id(self, toolkit_config, dummy_run_context):
-        result = toolkit_config.add_memory(dummy_run_context, content="No user ID test")
-        expected_error_msg = "Error in add_memory: A user_id must be provided in the method call."
+        result = toolkit_config.mem0_add_memory(dummy_run_context, content="No user ID test")
+        expected_error_msg = "Error in mem0_add_memory: A user_id must be provided in the method call."
         assert expected_error_msg in result
 
     def test_search_memory_success_arg_id(self, toolkit_config, mock_memory_instance, dummy_run_context):
@@ -251,7 +251,7 @@ class TestMem0Toolkit:
         # Test with config-based toolkit set to infer=False
         monkeypatch.delenv("MEM0_API_KEY", raising=False)
         toolkit_config = Mem0Tools(config={}, user_id="test_user", infer=False)
-        result_str = toolkit_config.add_memory(dummy_run_context, content="Test message")
+        result_str = toolkit_config.mem0_add_memory(dummy_run_context, content="Test message")
 
         mock_memory.add.assert_called_once_with(
             [{"role": "user", "content": "Test message"}],

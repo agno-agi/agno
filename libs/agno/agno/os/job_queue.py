@@ -689,6 +689,28 @@ class QueueWorker:
             kwargs["input"] = cont["input"]
         if cont.get("continue_from") is not None:
             kwargs["continue_from"] = cont["continue_from"]
+        # Extra request kwargs (dependencies, metadata, undeclared form
+        # fields) ride along like the submit path's _payload_call_kwargs,
+        # with every reserved/typed name stripped
+        extra = dict(cont.get("kwargs") or {})
+        for reserved in (
+            "input",
+            "session_id",
+            "user_id",
+            "run_id",
+            "stream",
+            "stream_events",
+            "yield_run_output",
+            "updated_tools",
+            "requirements",
+            "step_requirements",
+            "continue_from",
+            "fork",
+            "regenerate",
+            "background",
+        ):
+            extra.pop(reserved, None)
+        kwargs.update(extra)
         return kwargs
 
     @staticmethod
@@ -844,6 +866,78 @@ class QueueWorker:
             if slot_acquired:
                 with contextlib.suppress(Exception):
                     await slot_cm.__aexit__(None, None, None)
+
+
+async def acontinue_via_queue(queue_worker: Any, run_id: str, continue_payload: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """Durable path for a continue of a PAUSED run: CAS the existing ticket
+    paused -> queued (never a new row - id == run_id is load-bearing).
+
+    Preconditions checked by the CALLER: the run row is PAUSED, the component
+    passed the queueability guard (plain registry instance, not remote,
+    fork/regenerate false), and continue_payload is JSON-clean.
+
+    Returns None when the durable path does not apply and the caller must
+    fall back to the detached path: no ticket (the run never rode the queue,
+    or retention cleaned a terminal ticket), a foreign job_type, or a
+    terminal ticket under a paused run row. Otherwise returns
+    {"outcome": "queued" | "attach" | "settling" | "conflict", "job": row}:
+    - queued: accepted; stale cancellation intent cleared (requeue-fix
+      mirror), and for streaming submissions the stream status flips
+      PAUSED -> PENDING so a fresh tail does not treat the settled pause as
+      terminal (the worker stamps RUNNING at claim).
+    - attach: a continue was already accepted and is queued (double-click) -
+      attach to it; this click's inputs are discarded.
+    - settling: the ticket is running while the run row says PAUSED - either
+      the pausing leg has not parked the ticket yet, or a just-accepted
+      continue's leg has not stamped the run row. Attaching would silently
+      drop this click's inputs: refuse with retry (the window is the gap
+      between two adjacent writes).
+    - conflict: the CAS lost to a raced terminal transition (e.g. a cancel).
+    """
+    job = None
+    with contextlib.suppress(Exception):
+        job = await queue_worker.store.get_job(run_id)
+    if job is None or job.get("job_type", "run") != "run":
+        return None
+    status = job.get("status")
+    if status == "running":
+        return {"outcome": "settling", "job": job}
+    if status == "queued":
+        if (job.get("payload") or {}).get("continue"):
+            return {"outcome": "attach", "job": job}
+        # A queued ticket without a continue block is a fresh submission that
+        # has not executed - continuing it is a state error the detached
+        # path reports properly (the run row cannot be PAUSED and the ticket
+        # pre-execution at once except transiently)
+        return None
+    if status != "paused":
+        # Terminal ticket under a paused run row (e.g. the leg was swept or
+        # timed out after the pause write): the detached path can still
+        # continue the run; the caller logs the bypass
+        return None
+    result = await queue_worker.store.continue_job(run_id, continue_payload)
+    if result.get("outcome") == "queued":
+        # Requeue-endpoint fix, mirrored: cancellation intent left over from
+        # the paused stretch would kill the new leg at its first checkpoint.
+        # (A cancel that MEANT it flipped the ticket to cancelled first - the
+        # CAS would have returned conflict.)
+        try:
+            from agno.run.cancel import acleanup_run
+
+            await acleanup_run(run_id)
+        except Exception:
+            log_warning(f"Could not clear cancellation intent for continued run {run_id}")
+        if ((result.get("job") or {}).get("payload") or {}).get("stream"):
+            # PAUSED is tail-terminal in the event stream: without this flip a
+            # tail attached between accept and claim replays the settled pause
+            # and closes. Fail-open - the continue is already accepted; a
+            # failed flip only degrades the live view, never the run.
+            with contextlib.suppress(Exception):
+                from agno.os.event_streams import get_event_stream
+                from agno.run.base import RunStatus
+
+                await get_event_stream().set_run_status(run_id, RunStatus.pending)
+    return result
 
 
 def validate_seam_input(component: Any, input: Any) -> None:
