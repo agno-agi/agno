@@ -126,6 +126,10 @@ def get_tools(
     resolved_tools = get_resolved_tools(agent, run_context)
     resolved_knowledge = get_resolved_knowledge(agent, run_context)
 
+    # Append client_tools (e.g., AG-UI frontend tools) if present
+    if run_context.client_tools:
+        resolved_tools = list(resolved_tools or []) + list(run_context.client_tools)
+
     # Connect tools that require connection management
     _init.connect_connectable_tools(agent)
 
@@ -166,6 +170,7 @@ def get_tools(
             user_id=user_id,
             session_id=session.session_id if session else None,
             agent_id=agent.id,
+            run_context=run_context,
         )
         agent_tools.extend(learning_tools)
 
@@ -230,6 +235,10 @@ async def aget_tools(
     resolved_tools = get_resolved_tools(agent, run_context)
     resolved_knowledge = get_resolved_knowledge(agent, run_context)
 
+    # Append client_tools (e.g., AG-UI frontend tools) if present
+    if run_context.client_tools:
+        resolved_tools = list(resolved_tools or []) + list(run_context.client_tools)
+
     # Connect tools that require connection management
     _init.connect_connectable_tools(agent)
 
@@ -250,14 +259,10 @@ async def aget_tools(
                         is_alive = await tool.is_alive()  # type: ignore
                         if not is_alive:
                             await tool.connect(force=True)  # type: ignore
-                    except (RuntimeError, BaseException) as e:
-                        log_warning(f"Failed to check if MCP tool is alive or to connect to it: {str(e)}")
-                        continue
-
-                    try:
-                        await tool.build_tools()  # type: ignore
-                    except (RuntimeError, BaseException) as e:
-                        log_warning(f"Failed to build tools for {str(tool)}: {str(e)}")
+                        else:
+                            await tool.build_tools()  # type: ignore
+                    except Exception as e:
+                        log_warning(f"Failed to refresh MCP tool {str(tool)}: {str(e)}")
                         continue
 
                 # Only add the tool if it successfully connected and built its tools
@@ -298,6 +303,7 @@ async def aget_tools(
             user_id=user_id,
             session_id=session.session_id if session else None,
             agent_id=agent.id,
+            run_context=run_context,
         )
         agent_tools.extend(learning_tools)
 

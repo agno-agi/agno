@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from functools import partial
+from functools import lru_cache, partial, wraps
 from importlib.metadata import version
 from typing import Any, Callable, Dict, List, Literal, Optional, Sequence, Type, TypeVar, get_type_hints
 
@@ -13,6 +13,11 @@ from agno.run import RunContext
 from agno.utils.log import log_debug, log_exception, log_warning
 
 T = TypeVar("T")
+
+
+@lru_cache(maxsize=1)
+def _get_pydantic_version() -> Version:
+    return Version(version("pydantic"))
 
 
 def get_entrypoint_docstring(entrypoint: Callable) -> str:
@@ -563,11 +568,30 @@ class Function(BaseModel):
         """Wrap a callable with Pydantic's validate_call decorator, if relevant"""
         from inspect import isasyncgenfunction, iscoroutinefunction, signature
 
-        pydantic_version = Version(version("pydantic"))
+        pydantic_version = _get_pydantic_version()
 
-        # Don't wrap async generators validate_call
+        # Async generators need special handling: validate_call turns an `async def ... yield`
+        # into a plain function that returns an async_generator, which makes
+        # inspect.isasyncgenfunction return False. Downstream dispatch (models/base.py,
+        # FunctionCall.aexecute) uses that predicate to route the call, so we wrap the
+        # validated callable in an outer `async def ... yield` shim that preserves the
+        # async-generator identity while still coercing arguments through Pydantic.
         if isasyncgenfunction(func):
-            return func
+            if getattr(func, "_wrapped_for_validation", False):
+                return func
+            validated = validate_call(func, config=dict(arbitrary_types_allowed=True))  # type: ignore
+
+            @wraps(func)
+            async def async_gen_wrapper(*args, **kwargs):
+                inner = validated(*args, **kwargs)
+                try:
+                    async for item in inner:
+                        yield item
+                finally:
+                    await inner.aclose()
+
+            async_gen_wrapper._wrapped_for_validation = True  # type: ignore[attr-defined]
+            return async_gen_wrapper
 
         # Don't wrap coroutines with validate_call if pydantic version is less than 2.10.0
         if iscoroutinefunction(func) and pydantic_version < Version("2.10.0"):
@@ -714,7 +738,7 @@ class Function(BaseModel):
             return None
 
         try:
-            with cache_path.open("r") as f:
+            with cache_path.open("r", encoding="utf-8") as f:
                 cache_data = json.load(f)
 
             timestamp = cache_data.get("timestamp", 0)
@@ -737,7 +761,7 @@ class Function(BaseModel):
 
         try:
             serializable_result = result.model_dump() if isinstance(result, BaseModel) else result
-            with open(cache_file, "w") as f:
+            with open(cache_file, "w", encoding="utf-8") as f:
                 json.dump({"timestamp": time(), "result": serializable_result}, f)
         except Exception:
             log_exception("Error writing cache")
@@ -1065,7 +1089,10 @@ class FunctionCall(BaseModel):
                 execution_chain = self._build_nested_execution_chain(entrypoint_args=entrypoint_args)
                 result = execution_chain(self.function.name, self.function.entrypoint, self.arguments or {})
             else:
-                result = self.function.entrypoint(**entrypoint_args, **self.arguments)  # type: ignore
+                if self.arguments is None or self.arguments == {}:
+                    result = self.function.entrypoint(**entrypoint_args)
+                else:
+                    result = self.function.entrypoint(**entrypoint_args, **self.arguments)
 
             # Handle generator case
             if isgenerator(result):
