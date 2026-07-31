@@ -23,7 +23,7 @@ class falls back to the provider key for the id prefix (e.g. `OPENAI_API_KEY` fo
 ### 3. Install libraries
 
 ```shell
-uv pip install -U agno
+uv pip install -U agno mcp
 ```
 
 No provider SDK is required.
@@ -61,7 +61,7 @@ Agent(model="agno:openai/gpt-5.4")
 | `basic.py` | Sync, streaming, and async runs (managed `AGNO_API_KEY`) |
 | `bring_your_own_key.py` | BYOK: provider key by prefix, or explicit `api_key=` |
 | `tool_use.py` | Function calling: single, parallel, streaming, and async |
-| `mcp_tools.py` | MCP tools over Streamable HTTP (e.g. a `web_search` server) |
+| `mcp_tools.py` | Hosted Agno tools selected by name with `AgnoTools` |
 | `structured_output.py` | Typed responses with `output_schema` (native + JSON mode) |
 | `metrics.py` | Per-message and aggregated token metrics |
 | `image_input.py` | Image input to a vision model |
@@ -84,3 +84,4 @@ unchanged through the gateway; they need a local Postgres container
 | `AGNO_API_KEY` | Your Agno API key (managed billing) |
 | `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, ... | Bring your own provider key (used for the matching id prefix) |
 | `AGNO_GATEWAY_BASE_URL` | Override the gateway base URL (optional) |
+| `AGNO_GATEWAY_MCP_URL` | Override the hosted Agno tools MCP URL (optional) |
