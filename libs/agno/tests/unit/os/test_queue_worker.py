@@ -652,3 +652,70 @@ class TestConfigValidation:
         ):
             with pytest.raises(ValueError):
                 QueueConfig(durable=True, **{k: v for k, v in kwargs.items() if k != "durable"})
+
+
+class TestReservedKwargsParity:
+    @pytest.mark.asyncio
+    async def test_streaming_job_with_reserved_form_fields_completes(self):
+        """kausmeows repro: stream=true + a client form field named run_id must
+        not TypeError into a permanent failure (parity with non-stream)."""
+        import agno.os.event_streams as es_mod
+        from agno.os.event_streams import InMemoryEventStream, set_event_stream
+        from agno.os.managers import EventsBuffer, SSESubscriberManager
+
+        original = es_mod._event_stream
+        stream = InMemoryEventStream(events_buffer=EventsBuffer(), subscriber_manager=SSESubscriberManager())
+        set_event_stream(stream)
+        try:
+            from agno.job_queue.config import QueueConfig
+            from agno.job_queue.store import InMemoryQueueStore
+            from agno.os.job_queue import QueueWorker
+
+            class Ev:
+                def __init__(self):
+                    self.event = "RunContent"
+                    self.content = "x"
+                    self.run_id = "rk1"
+
+                def to_dict(self):
+                    return {"event": self.event, "content": self.content, "run_id": self.run_id}
+
+            class A:
+                id = "a1"
+                db = None
+
+                async def arun(self, **kwargs):
+                    assert kwargs["run_id"] == "rk1"
+                    yield Ev()
+
+            store = InMemoryQueueStore()
+            await store.enqueue_job(
+                {
+                    "id": "rk1",
+                    "component_type": "agent",
+                    "component_id": "a1",
+                    "session_id": "s1",
+                    "job_type": "run",
+                    # Hostile-ish client: reserved names as extra form fields
+                    "payload": {
+                        "input": "hi",
+                        "kwargs": {"run_id": "SPOOF", "input": "SPOOF", "session_id": "SPOOF", "user_id": "SPOOF"},
+                        "stream": True,
+                    },
+                    "status": "queued",
+                    "attempt": 0,
+                    "max_attempts": 1,
+                    "available_at": 0,
+                    "created_at": 0,
+                }
+            )
+            worker = QueueWorker(
+                store=store,
+                resolve_component=lambda t, i: A(),
+                config=QueueConfig(durable=True, poll_interval=0.05, lock_grace_seconds=60),
+            )
+            claimed = await store.claim_job(worker.worker_id)
+            await worker._execute_claimed(claimed)
+            assert (await store.get_job("rk1"))["status"] == "completed", "reserved fields must not fail the job"
+        finally:
+            es_mod._event_stream = original
