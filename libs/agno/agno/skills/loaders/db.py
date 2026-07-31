@@ -1,13 +1,13 @@
-from typing import TYPE_CHECKING, Any, ClassVar, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, ClassVar, Dict, List, Optional, Union
 
-from agno.skills.errors import SkillValidationError
+from agno.skills.errors import SkillError, SkillValidationError
 from agno.skills.loaders.base import SkillLoader
 from agno.skills.skill import Skill
 from agno.skills.validator import validate_metadata
 from agno.utils.log import log_debug, log_warning
 
 if TYPE_CHECKING:
-    from agno.db.base import BaseDb
+    from agno.db.base import AsyncBaseDb, BaseDb
     from agno.db.schemas.skills import SkillRow
 
 
@@ -18,8 +18,10 @@ class DbSkills(SkillLoader):
     and each becomes a content-carrying Skill via SkillRow.to_skill().
 
     Args:
-        db: Database with the skills methods. The loader path is sync, so this is
-            a sync backend handle.
+        db: Database with the skills methods. A sync backend serves both load()
+            and aload(). An async backend is read only by aload(), on the async
+            message path; the eager constructor load then starts empty and the
+            skills arrive on the first async refresh.
         names: Skill names to load. None (default) loads every row. A name with no
             matching row is skipped with a warning; the rest still load.
         validate: Whether to validate skills against the Agent Skills spec.
@@ -28,7 +30,7 @@ class DbSkills(SkillLoader):
 
     refresh_per_request: ClassVar[bool] = True
 
-    def __init__(self, db: "BaseDb", *, names: Optional[List[str]] = None, validate: bool = True):
+    def __init__(self, db: Union["BaseDb", "AsyncBaseDb"], *, names: Optional[List[str]] = None, validate: bool = True):
         self.db = db
         self.names = names
         self.validate = validate
@@ -40,16 +42,45 @@ class DbSkills(SkillLoader):
             A list of Skill objects built from the stored rows.
 
         Raises:
+            SkillError: If the database is async; its skills methods must be awaited,
+                so only aload() can read it.
             SkillValidationError: If validation is enabled and a stored skill is invalid,
                 or a row's content entries are not string-to-string regardless of validate.
             NotImplementedError: If the database does not implement the skills methods.
         """
+        # Imported at the point of use, like SkillRow below: agno.db.base reaches
+        # agno.skills through db.schemas, so a module-level import here would cycle.
+        from agno.db.base import AsyncBaseDb
+
+        if isinstance(self.db, AsyncBaseDb):
+            raise SkillError("DbSkills.load() requires a sync database; use aload() with an async one")
+        return self._build_skills(self.db.get_skills_with_content(names=self.names))
+
+    async def aload(self) -> List[Skill]:
+        """Async twin of load: awaits the skills read when the database is async.
+
+        Returns:
+            A list of Skill objects built from the stored rows.
+
+        Raises:
+            SkillValidationError: If validation is enabled and a stored skill is invalid,
+                or a row's content entries are not string-to-string regardless of validate.
+            NotImplementedError: If the database does not implement the skills methods.
+        """
+        from agno.db.base import AsyncBaseDb
+
+        if not isinstance(self.db, AsyncBaseDb):
+            return self.load()
+        return self._build_skills(await self.db.get_skills_with_content(names=self.names))
+
+    def _build_skills(self, rows: List[Dict[str, Any]]) -> List[Skill]:
+        """Turn stored rows into Skills, validating each and warning on missing names."""
         # Imported at the point of use: agno.db.schemas.skills imports agno.skills, so a
         # module-level import here would hit that module while it is still initializing.
         from agno.db.schemas.skills import SkillRow
 
         skills: List[Skill] = []
-        for row_data in self.db.get_skills_with_content(names=self.names):
+        for row_data in rows:
             row = SkillRow.from_dict(row_data)
             if self.validate:
                 errors = validate_metadata(self._row_metadata(row))

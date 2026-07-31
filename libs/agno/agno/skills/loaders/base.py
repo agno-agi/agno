@@ -29,3 +29,9 @@ class SkillLoader(ABC):
             SkillLoadError: If there's an error loading skills from the source.
         """
         pass
+
+    async def aload(self) -> List[Skill]:
+        """Async twin of load. Loaders whose source has async methods override this;
+        the default delegates to the sync load.
+        """
+        return self.load()
