@@ -462,21 +462,37 @@ class QueueWorker:
         try:
             raw_kwargs = payload.get("kwargs") or {}
             stream_events = raw_kwargs.get("stream_events", payload.get("stream_events", True))
-            extra_kwargs: Dict[str, Any] = self._payload_call_kwargs(payload)
-            arun_kwargs: Dict[str, Any] = dict(
-                input=payload.get("input"),
-                session_id=job["session_id"],
-                user_id=job.get("user_id"),
-                run_id=job_id,
-                stream=True,
-                stream_events=stream_events,
-                **extra_kwargs,
-            )
-            if not is_workflow:
-                # Workflow streams do not support yield_run_output; the final
-                # output is loaded from the run row after the stream ends
-                arun_kwargs["yield_run_output"] = True
-            async for event in component.arun(**arun_kwargs):
+            if payload.get("continue"):
+                # Continuation leg: same executor, only the component call
+                # differs - acontinue_run re-enters the paused run under the
+                # SAME run_id, so the publisher/terminal machinery below is
+                # reused verbatim
+                cont_kwargs = self._continuation_kwargs(job)
+                cont_kwargs.update(stream=True, stream_events=stream_events)
+                if not is_workflow:
+                    cont_kwargs["yield_run_output"] = True
+                event_iterator = component.acontinue_run(**cont_kwargs)
+            else:
+                extra_kwargs: Dict[str, Any] = self._payload_call_kwargs(payload)
+                arun_kwargs: Dict[str, Any] = dict(
+                    input=payload.get("input"),
+                    session_id=job["session_id"],
+                    user_id=job.get("user_id"),
+                    run_id=job_id,
+                    stream=True,
+                    stream_events=stream_events,
+                    **extra_kwargs,
+                )
+                if not is_workflow:
+                    # Workflow streams do not support yield_run_output; the final
+                    # output is loaded from the run row after the stream ends
+                    arun_kwargs["yield_run_output"] = True
+                event_iterator = component.arun(**arun_kwargs)
+            if inspect.iscoroutine(event_iterator):
+                # Workflow acontinue_run is an async def returning the stream
+                # iterator; agent/team dispatchers return it directly
+                event_iterator = await event_iterator
+            async for event in event_iterator:
                 if hasattr(event, "status") and hasattr(event, "run_id") and not hasattr(event, "event"):
                     final_output = event  # the terminal RunOutput
                     continue
@@ -623,12 +639,57 @@ class QueueWorker:
         return random.randint(base, max(base, ceiling))
 
     @staticmethod
-    def _is_permanent_failure(exc: BaseException) -> bool:
+    def _is_permanent_failure(exc: BaseException, is_continuation: bool = False) -> bool:
         """Failures that retrying cannot cure: fail fast to the dead-letter
-        surface instead of burning the attempt budget."""
-        from agno.exceptions import InputCheckError, OutputCheckError
+        surface instead of burning the attempt budget. For continuation legs,
+        a non-continuable run state (RunNotContinuableError, or the
+        workflow's not-paused ValueError) is equally incurable."""
+        from agno.exceptions import InputCheckError, OutputCheckError, RunNotContinuableError, RunNotFoundError
 
-        return isinstance(exc, (InputCheckError, OutputCheckError, TypeError))
+        if isinstance(exc, (InputCheckError, OutputCheckError, TypeError, RunNotContinuableError, RunNotFoundError)):
+            return True
+        # Workflows signal "cannot continue" with a bare ValueError; on a
+        # continuation leg no ValueError is curable by re-running
+        return is_continuation and isinstance(exc, ValueError)
+
+    @staticmethod
+    def _continuation_kwargs(job: Dict[str, Any]) -> Dict[str, Any]:
+        """Rebuild acontinue_run kwargs from the ticket's merged
+        payload["continue"] block, mirroring each HTTP endpoint's own parsing:
+        agents rebuild updated_tools (ToolExecution), teams rebuild
+        requirements (RunRequirement), workflows rebuild step_requirements
+        (StepRequirement). The raw client JSON is what the seam stored, so
+        the worker reconstructs exactly what the inline path would have."""
+        cont = (job.get("payload") or {}).get("continue") or {}
+        component_type = job.get("component_type")
+        kwargs: Dict[str, Any] = dict(run_id=job["id"], session_id=job["session_id"])
+        if component_type == "workflow":
+            # Workflow acontinue_run takes no user_id; it loads the run by
+            # (run_id, session_id) and validates the paused state itself
+            reqs = cont.get("step_requirements")
+            if reqs:
+                from agno.workflow.types import StepRequirement
+
+                kwargs["step_requirements"] = [StepRequirement.from_dict(r) for r in reqs]
+            return kwargs
+        kwargs["user_id"] = job.get("user_id")
+        if component_type == "agent":
+            tools = cont.get("updated_tools")
+            if tools:
+                from agno.models.response import ToolExecution
+
+                kwargs["updated_tools"] = [ToolExecution.from_dict(t) for t in tools]
+        else:  # team
+            reqs = cont.get("requirements")
+            if reqs:
+                from agno.run.requirement import RunRequirement
+
+                kwargs["requirements"] = [RunRequirement.from_dict(r) for r in reqs]
+        if cont.get("input") is not None:
+            kwargs["input"] = cont["input"]
+        if cont.get("continue_from") is not None:
+            kwargs["continue_from"] = cont["continue_from"]
+        return kwargs
 
     @staticmethod
     def _payload_call_kwargs(payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -696,6 +757,11 @@ class QueueWorker:
             slot_acquired = True
             if is_stream:
                 execution = self._execute_streaming(component, job)
+            elif payload.get("continue"):
+                # Continuation leg: re-enter the paused run under the SAME
+                # run_id; stamp/slot/heartbeat/retry/terminal machinery is
+                # shared with fresh executions
+                execution = component.acontinue_run(stream=False, **self._continuation_kwargs(job))
             else:
                 call_kwargs = self._payload_call_kwargs(payload)
                 execution = component.arun(
@@ -760,10 +826,11 @@ class QueueWorker:
                 await self._terminate_stream_view(job)
             await self.store.retry_or_fail_job(job_id, self.worker_id, attempt, error, self._retry_delay(attempt))
         except Exception as e:
-            if self._is_permanent_failure(e) or attempt >= job.get("max_attempts", 1):
+            is_continuation = bool(payload.get("continue"))
+            if self._is_permanent_failure(e, is_continuation) or attempt >= job.get("max_attempts", 1):
                 with contextlib.suppress(Exception):
                     await self._persist_run_error(job, str(e))
-            if self._is_permanent_failure(e):
+            if self._is_permanent_failure(e, is_continuation):
                 # Invalid input / schema violations cannot be cured by retrying.
                 # No retry is coming even if budget remains, so the stream view
                 # must terminate here (the streaming finally skipped its
