@@ -1,4 +1,6 @@
-from dataclasses import asdict, dataclass, field
+from copy import deepcopy as _deepcopy
+from dataclasses import dataclass, field, fields
+from dataclasses import is_dataclass as _is_dataclass
 from enum import Enum
 from time import time
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Sequence, Union
@@ -32,6 +34,30 @@ class Followups(BaseModel):
         ...,
         description="Short action-oriented followup prompts (5-10 words each)",
     )
+
+
+# Exact types only: a subclass (an IntEnum, say) must still go through the
+# slow path so its own copy semantics are preserved.
+_ASDICT_IMMUTABLE = frozenset({str, int, float, bool, bytes, type(None)})
+
+
+def _asdict_value(v: Any) -> Any:
+    """Reproduce dataclasses.asdict()'s per-value conversion for a single value.
+
+    Same recursion as dataclasses._asdict_inner: dataclass instances become
+    dicts, lists/tuples/dicts are rebuilt element-wise, everything else is
+    deep-copied. Immutable scalars are returned as-is, which is what
+    copy.deepcopy() does for them anyway.
+    """
+    if type(v) in _ASDICT_IMMUTABLE:
+        return v
+    if _is_dataclass(v) and not isinstance(v, type):
+        return {f.name: _asdict_value(getattr(v, f.name)) for f in fields(v)}
+    if isinstance(v, (list, tuple)):
+        return type(v)(_asdict_value(x) for x in v)
+    if isinstance(v, dict):
+        return type(v)((_asdict_value(k), _asdict_value(x)) for k, x in v.items())
+    return _deepcopy(v)
 
 
 @dataclass
@@ -712,32 +738,41 @@ class RunOutput:
         return [t for t in self.tools if t.external_execution_required] if self.tools else []
 
     def to_dict(self) -> Dict[str, Any]:
-        _dict = {
-            k: v
-            for k, v in asdict(self).items()
-            if v is not None
-            and k
-            not in [
-                "messages",
-                "metrics",
-                "tools",
-                "metadata",
-                "images",
-                "videos",
-                "audio",
-                "files",
-                "response_audio",
-                "input",
-                "citations",
-                "events",
-                "additional_input",
-                "reasoning_steps",
-                "reasoning_messages",
-                "references",
-                "requirements",
-                "followups",
-            ]
+        # Build the dict from fields(self) rather than asdict(self).
+        # asdict() recursively walks and deep-copies EVERY field, including
+        # messages, events, tools, metrics and input -- and each of those is
+        # then dropped by the skip set below and recomputed properly further
+        # down, so all of that copying is discarded. WorkflowRunOutput.to_dict()
+        # already avoids asdict() for the same reason.
+        # _asdict_value keeps asdict()'s exact per-value semantics for the
+        # fields that do survive, so the returned dict is unchanged.
+        _skip_fields = {
+            "messages",
+            "metrics",
+            "tools",
+            "metadata",
+            "images",
+            "videos",
+            "audio",
+            "files",
+            "response_audio",
+            "input",
+            "citations",
+            "events",
+            "additional_input",
+            "reasoning_steps",
+            "reasoning_messages",
+            "references",
+            "requirements",
+            "followups",
         }
+        _dict: Dict[str, Any] = {}
+        for _f in fields(self):
+            if _f.name in _skip_fields:
+                continue
+            _v = getattr(self, _f.name)
+            if _v is not None:
+                _dict[_f.name] = _asdict_value(_v)
 
         if self.metrics is not None:
             _dict["metrics"] = self.metrics.to_dict() if isinstance(self.metrics, RunMetrics) else self.metrics
