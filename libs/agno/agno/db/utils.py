@@ -20,6 +20,7 @@ if TYPE_CHECKING:
 DB_TABLE_NAME_KEYS: frozenset = frozenset(
     {
         "session_table",
+        "job_table",
         "culture_table",
         "memory_table",
         "metrics_table",

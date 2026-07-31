@@ -77,6 +77,16 @@ class TestAcontinueRunBackgroundDispatchRouting:
             )
 
 
+def make_mock_event_stream() -> MagicMock:
+    """Mock BaseEventStream: async methods, add_event assigns index 0."""
+    stream = MagicMock()
+    stream.register_run = AsyncMock()
+    stream.set_run_status = AsyncMock()
+    stream.add_event = AsyncMock(return_value=0)
+    stream.complete_run = AsyncMock()
+    return stream
+
+
 class TestAcontinueRunBackgroundStream:
     """The helper itself must yield SSE-formatted strings (issue #8134 regression)."""
 
@@ -111,14 +121,9 @@ class TestAcontinueRunBackgroundStream:
             ),
             patch("agno.team._storage._update_metadata"),
             patch("agno.team._session.asave_session", new_callable=AsyncMock),
-            patch("agno.os.managers.event_buffer") as mock_eb,
-            patch("agno.os.managers.sse_subscriber_manager") as mock_ssm,
+            patch("agno.os.event_streams.get_event_stream", return_value=make_mock_event_stream()),
             patch("agno.os.utils.format_sse_event_with_index", side_effect=fake_format_sse),
         ):
-            mock_eb.add_event.return_value = 0
-            mock_ssm.publish = AsyncMock()
-            mock_ssm.complete = AsyncMock()
-
             collected = []
             async for chunk in _acontinue_run_background_stream(
                 team,
@@ -144,6 +149,9 @@ class TestAcontinueRunBackgroundStream:
         from agno.team._run import _acontinue_run_background_stream
 
         team = MagicMock()
+        # No DB on the mock: apersist_run_transition takes its fallback path
+        # (fresh-read + asave_session), which this test asserts on.
+        team.db = None
         run_context = MagicMock()
         run_response = MagicMock()
         run_response.run_id = "r-1"
@@ -164,14 +172,9 @@ class TestAcontinueRunBackgroundStream:
             ),
             patch("agno.team._storage._update_metadata"),
             patch("agno.team._session.asave_session", new_callable=AsyncMock) as mock_save,
-            patch("agno.os.managers.event_buffer") as mock_eb,
-            patch("agno.os.managers.sse_subscriber_manager") as mock_ssm,
+            patch("agno.os.event_streams.get_event_stream", return_value=(mock_stream := make_mock_event_stream())),
             patch("agno.os.utils.format_sse_event_with_index", return_value="data: x\n\n"),
         ):
-            mock_eb.add_event.return_value = 0
-            mock_ssm.publish = AsyncMock()
-            mock_ssm.complete = AsyncMock()
-
             collected = []
             async for chunk in _acontinue_run_background_stream(
                 team,
@@ -185,9 +188,9 @@ class TestAcontinueRunBackgroundStream:
         assert run_response.status == RunStatus.error, "background helper must persist RunStatus.error on failure"
         # asave_session is called at least twice: once for RUNNING, once for ERROR
         assert mock_save.await_count >= 2
-        # SSE subscribers must be signaled even on failure (call_count covers either
-        # direct await or asyncio.shield-wrapped await)
-        assert mock_ssm.complete.call_count >= 1
+        # The event stream must be marked terminal even on failure (call_count
+        # covers either direct await or asyncio.shield-wrapped await)
+        assert mock_stream.complete_run.call_count >= 1
 
 
 class TestQueuedCancelWithoutRunResponse:
@@ -195,18 +198,21 @@ class TestQueuedCancelWithoutRunResponse:
     async def test_cancel_of_hitl_continue_persists_cancelled_not_completed(self):
         """HITL continues arrive with run_response=None. Cancelling one while
         queued must persist CANCELLED (loaded from the session) and mark the
-        buffer CANCELLED - never COMPLETED for a run that never executed."""
+        event stream CANCELLED - never COMPLETED for a run that never executed."""
         from agno.exceptions import RunCancelledException
         from agno.run import RunStatus
         from agno.team._run import _acontinue_run_background_stream
 
         team = MagicMock()
+        team.db = None  # helper falls back to the session-save path
         run_context = MagicMock()
 
         session_run = MagicMock()
         session_run.status = RunStatus.paused
         team_session = MagicMock()
         team_session.get_run.return_value = session_run
+
+        mock_stream = make_mock_event_stream()
 
         with (
             patch("agno.team._run.background_run_slot") as mock_slot,
@@ -217,14 +223,11 @@ class TestQueuedCancelWithoutRunResponse:
             ),
             patch("agno.team._storage._update_metadata"),
             patch("agno.team._session.asave_session", new_callable=AsyncMock) as mock_save,
-            patch("agno.os.managers.event_buffer") as mock_eb,
-            patch("agno.os.managers.sse_subscriber_manager") as mock_ssm,
+            patch("agno.os.event_streams.get_event_stream", return_value=mock_stream),
             patch("agno.team._run.acleanup_run", new_callable=AsyncMock),
         ):
             mock_slot.return_value.__aenter__ = AsyncMock(side_effect=RunCancelledException("r-1"))
             mock_slot.return_value.__aexit__ = AsyncMock()
-            mock_ssm.publish = AsyncMock()
-            mock_ssm.complete = AsyncMock()
 
             collected = []
             async for chunk in _acontinue_run_background_stream(
@@ -238,6 +241,6 @@ class TestQueuedCancelWithoutRunResponse:
         # The session run (loaded by run_id) was persisted as CANCELLED
         assert session_run.status == RunStatus.cancelled
         assert mock_save.await_count >= 1
-        # The event buffer was marked CANCELLED, not COMPLETED
-        assert mock_eb.set_run_completed.call_args is not None
-        assert mock_eb.set_run_completed.call_args.args[1] == RunStatus.cancelled
+        # The event stream was marked CANCELLED, not COMPLETED
+        assert mock_stream.complete_run.call_args is not None
+        assert mock_stream.complete_run.call_args.args[1] == RunStatus.cancelled

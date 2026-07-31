@@ -50,6 +50,7 @@ class BaseDb(ABC):
         learnings_table: Optional[str] = None,
         schedules_table: Optional[str] = None,
         schedule_runs_table: Optional[str] = None,
+        job_table: Optional[str] = None,
         approvals_table: Optional[str] = None,
         auth_tokens_table: Optional[str] = None,
         service_accounts_table: Optional[str] = None,
@@ -76,6 +77,7 @@ class BaseDb(ABC):
         self.learnings_table_name = learnings_table or "agno_learnings"
         self.schedules_table_name = schedules_table or "agno_schedules"
         self.schedule_runs_table_name = schedule_runs_table or "agno_schedule_runs"
+        self.job_table_name = job_table or "agno_jobs"
         self.approvals_table_name = approvals_table or "agno_approvals"
         self.auth_tokens_table_name = auth_tokens_table or "agno_auth_tokens"
         self.service_accounts_table_name = service_accounts_table or "agno_service_accounts"
@@ -93,6 +95,7 @@ class BaseDb(ABC):
         return {
             "id": self.id,
             "session_table": self.session_table_name,
+            "job_table": self.job_table_name,
             "culture_table": self.culture_table_name,
             "memory_table": self.memory_table_name,
             "metrics_table": self.metrics_table_name,
@@ -1501,6 +1504,7 @@ class AsyncBaseDb(ABC):
         learnings_table: Optional[str] = None,
         schedules_table: Optional[str] = None,
         schedule_runs_table: Optional[str] = None,
+        job_table: Optional[str] = None,
         approvals_table: Optional[str] = None,
         auth_tokens_table: Optional[str] = None,
         service_accounts_table: Optional[str] = None,
@@ -1518,6 +1522,7 @@ class AsyncBaseDb(ABC):
         self.learnings_table_name = learnings_table or "agno_learnings"
         self.schedules_table_name = schedules_table or "agno_schedules"
         self.schedule_runs_table_name = schedule_runs_table or "agno_schedule_runs"
+        self.job_table_name = job_table or "agno_jobs"
         self.approvals_table_name = approvals_table or "agno_approvals"
         self.auth_tokens_table_name = auth_tokens_table or "agno_auth_tokens"
         self.service_accounts_table_name = service_accounts_table or "agno_service_accounts"
