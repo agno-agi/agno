@@ -106,6 +106,21 @@ class WebsiteReader(Reader):
         # Return primary domain (excluding subdomains)
         return ".".join(domain_parts[-2:])
 
+    def _is_in_scope(self, netloc: str, primary_domain: str) -> bool:
+        """
+        Check whether *netloc* belongs to *primary_domain* or a subdomain of it.
+
+        Uses a label-boundary check so that look-alike domains such as
+        ``evilexample.com`` are **not** considered in-scope for ``example.com``.
+
+        :param netloc: The netloc (host[:port]) from a URL.
+        :param primary_domain: The primary domain to check against.
+        :return: True if netloc is the primary domain or a subdomain of it.
+        """
+        # Strip port if present for comparison
+        host = netloc.split(":")[0] if ":" in netloc else netloc
+        return host == primary_domain or host.endswith("." + primary_domain)
+
     def _extract_main_content(self, soup: BeautifulSoup) -> str:
         """
         Extracts the main content from a BeautifulSoup object.
@@ -195,7 +210,7 @@ class WebsiteReader(Reader):
             # - host is not in allowed_hosts (when configured)
             if (
                 current_url in self._visited
-                or not urlparse(current_url).netloc.endswith(primary_domain)
+                or not self._is_in_scope(urlparse(current_url).netloc, primary_domain)
                 or (current_depth > self.max_depth and current_url != url)
                 or num_links >= self.max_links
                 or not is_host_allowed(current_url, self.allowed_hosts)
@@ -245,7 +260,7 @@ class WebsiteReader(Reader):
                         continue
 
                     parsed_url = urlparse(full_url)
-                    if parsed_url.netloc.endswith(primary_domain) and not any(
+                    if self._is_in_scope(parsed_url.netloc, primary_domain) and not any(
                         parsed_url.path.endswith(ext) for ext in [".pdf", ".jpg", ".png"]
                     ):
                         full_url_str = str(full_url)
@@ -323,7 +338,7 @@ class WebsiteReader(Reader):
 
                 if (
                     current_url in self._visited
-                    or not urlparse(current_url).netloc.endswith(primary_domain)
+                    or not self._is_in_scope(urlparse(current_url).netloc, primary_domain)
                     or current_depth > self.max_depth
                     or num_links >= self.max_links
                     or not is_host_allowed(current_url, self.allowed_hosts)
@@ -360,7 +375,7 @@ class WebsiteReader(Reader):
                             continue
 
                         parsed_url = urlparse(full_url)
-                        if parsed_url.netloc.endswith(primary_domain) and not any(
+                        if self._is_in_scope(parsed_url.netloc, primary_domain) and not any(
                             parsed_url.path.endswith(ext) for ext in [".pdf", ".jpg", ".png"]
                         ):
                             full_url_str = str(full_url)

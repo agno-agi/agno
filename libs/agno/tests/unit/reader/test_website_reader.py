@@ -452,3 +452,92 @@ def test_crawl_real_network_failure_still_raises():
     ):
         with pytest.raises(httpx.RequestError):
             reader.crawl("https://example.com")
+
+
+# ---------------------------------------------------------------------------
+# Crawl scope label-boundary check (CVE-style: look-alike domain spoofing)
+# ---------------------------------------------------------------------------
+
+
+def test_is_in_scope_exact_domain():
+    """The exact primary domain must be in scope."""
+    reader = WebsiteReader()
+    assert reader._is_in_scope("example.com", "example.com") is True
+
+
+def test_is_in_scope_subdomain():
+    """Subdomains of the primary domain must be in scope."""
+    reader = WebsiteReader()
+    assert reader._is_in_scope("docs.example.com", "example.com") is True
+    assert reader._is_in_scope("api.example.com", "example.com") is True
+
+
+def test_is_in_scope_lookalike_domain_rejected():
+    """Look-alike domains that merely *end with* the primary domain string
+    must NOT be treated as in-scope.
+
+    Regression test for the bare ``endswith`` bug where
+    ``"evilexample.com".endswith("example.com")`` returned ``True``."""
+    reader = WebsiteReader()
+    assert reader._is_in_scope("evilexample.com", "example.com") is False
+    assert reader._is_in_scope("notexample.com", "example.com") is False
+    assert reader._is_in_scope("attackerexample.com", "example.com") is False
+
+
+def test_is_in_scope_with_port():
+    """Ports must be stripped before comparison."""
+    reader = WebsiteReader()
+    assert reader._is_in_scope("example.com:443", "example.com") is True
+    assert reader._is_in_scope("docs.example.com:8080", "example.com") is True
+    assert reader._is_in_scope("evilexample.com:443", "example.com") is False
+
+
+def test_crawl_rejects_lookalike_domain():
+    """Integration-level test: a page linking to a look-alike domain must
+    NOT crawl the look-alike.
+
+    Uses httpx.MockTransport to serve controlled responses and verify which
+    hosts are actually fetched."""
+    pages = {
+        "https://docs.example.com/guide": (
+            "<html><body><main>Guide</main>"
+            '<a href="https://evilexample.com/steal">Looks internal</a>'
+            '<a href="https://api.example.com/real">Real subdomain</a>'
+            '<a href="https://unrelated.org/x">External</a>'
+            "</body></html>"
+        ),
+        "https://api.example.com/real": "<html><body><main>API</main></body></html>",
+    }
+
+    fetched_hosts: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        host = request.url.host
+        fetched_hosts.append(host)
+        content = pages.get(str(request.url))
+        if content is not None:
+            return httpx.Response(200, content=content.encode())
+        return httpx.Response(404)
+
+    transport = httpx.MockTransport(handler)
+    reader = WebsiteReader(max_depth=2, max_links=10)
+
+    with patch("agno.knowledge.reader.website_reader.httpx.get") as mock_get:
+        # Wire each call through the mock transport
+        def fake_get(url, **kwargs):
+            with httpx.Client(transport=transport) as client:
+                resp = client.get(url, **kwargs)
+                resp.raise_for_status()
+                return resp
+
+        mock_get.side_effect = fake_get
+        reader.crawl("https://docs.example.com/guide")
+
+    # evilexample.com must NOT have been fetched
+    assert "evilexample.com" not in fetched_hosts, (
+        f"evilexample.com was crawled — look-alike domain boundary failed! "
+        f"Hosts fetched: {fetched_hosts}"
+    )
+    assert "unrelated.org" not in fetched_hosts
+    # Real subdomain should be fetched
+    assert "api.example.com" in fetched_hosts
