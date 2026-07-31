@@ -1,5 +1,5 @@
 import json
-from datetime import datetime, timezone
+from datetime import date, datetime, time, timezone
 from os import getenv
 from typing import Any, Callable, Dict, List, Optional, Sequence, Set, Tuple, Type, Union
 
@@ -34,8 +34,8 @@ from agno.utils.log import log_debug, log_warning, logger
 from agno.workflow import RemoteWorkflow, Workflow, WorkflowFactory
 
 
-def to_utc_datetime(value: Optional[Union[str, int, float, datetime]]) -> Optional[datetime]:
-    """Convert a timestamp, ISO 8601 string, or datetime to a UTC datetime."""
+def to_utc_datetime(value: Optional[Union[str, int, float, date, datetime]]) -> Optional[datetime]:
+    """Convert a timestamp, ISO 8601 string, date, or datetime to a UTC datetime."""
     if value is None:
         return None
 
@@ -44,6 +44,10 @@ def to_utc_datetime(value: Optional[Union[str, int, float, datetime]]) -> Option
         if value.tzinfo is None:
             return value.replace(tzinfo=timezone.utc)
         return value
+
+    # datetime is a subclass of date, so this must come after the datetime check
+    if isinstance(value, date):
+        return datetime.combine(value, time.min, tzinfo=timezone.utc)
 
     if isinstance(value, str):
         try:
