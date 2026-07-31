@@ -1,6 +1,6 @@
 [project]
 name = "agno"
-version = "2.8.5"
+version = "2.8.6"
 description = "The programming language for agentic software."
 requires-python = ">=3.9,<4"
 readme = "README.md"
@@ -71,7 +71,7 @@ dev = [
 
 # AgentOS server bundle
 os = ["fastapi", "python-multipart>=0.0.18", "uvicorn", "websockets", "sqlalchemy", "PyJWT", "opentelemetry-sdk", "openinference-instrumentation-agno", "agno[scheduler]"]
-mcp = ["mcp>=1.9.2", "fastmcp>=3.4.3,<4"]
+mcp = ["mcp>=1.9.2,<2", "fastmcp>=3.4.3,<4"]
 scheduler = ["croniter>=1.3", "pytz>=2023.3"]
 
 # Dependencies for Telemetry
@@ -181,6 +181,7 @@ couchbase = ["couchbase"]
 lancedb = ["lancedb>=0.26.0"]
 milvusdb = ["pymilvus>=2.5.10"]
 mongodb = ["pymongo[srv]"]
+opensearch = ["opensearch-py"]
 pgvector = ["pgvector"]
 pinecone = ["pinecone==5.4.2"]
 pylance = ["pylance"]
@@ -333,6 +334,7 @@ vectordbs = [
   "agno[lancedb]",
   "agno[milvusdb]",
   "agno[mongodb]",
+  "agno[opensearch]",
   "agno[pgvector]",
   "agno[pinecone]",
   "agno[pylance]",
@@ -568,6 +570,7 @@ module = [
   "ollama.*",
   "openpyxl.*",
   "openai.*",
+  "opensearchpy.*",
   "cv2.*",
   "openbb.*",
   "pandas.*",
