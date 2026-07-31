@@ -458,7 +458,7 @@ class StudioTools(Toolkit):
         from agno.agent.agent import Agent
 
         try:
-            agent = Agent.from_dict(config, registry=self.registry)
+            agent = Agent.from_dict(config, db=self.db, registry=self.registry)
             agent.id = agent_id
             agent.db = self.db
             return agent

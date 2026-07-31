@@ -937,9 +937,12 @@ class Agent:
     def from_dict(
         cls,
         data: Dict[str, Any],
-        db: Optional["BaseDb"] = None,
         registry: Optional[Registry] = None,
+        *,
+        db: Optional["BaseDb"] = None,
     ) -> "Agent":
+        # registry keeps its pre-existing second positional slot; db is keyword-only
+        # so external Agent.from_dict(config, registry) calls do not mis-bind it.
         return _storage.from_dict(cls, data=data, db=db, registry=registry)
 
     def save(

@@ -546,8 +546,13 @@ def to_dict(team: "Team") -> Dict[str, Any]:
     # --- Skills ---
     # Skills are stored as name references and re-resolved from the database's
     # skills table on load, the way members are stored by id and re-resolved.
+    # Saving freezes the current names: rows added later are not picked up on load.
     if team.skills is not None:
-        config["skills"] = {"names": team.skills.get_skill_names()}
+        skill_names = team.skills.get_persistable_skill_names()
+        if skill_names:
+            config["skills"] = {"names": skill_names}
+        else:
+            log_warning("Team skills hold no skills to reference; skills will not be saved.")
 
     # --- Tools ---
     if team.tools and isinstance(team.tools, list):
@@ -1111,10 +1116,26 @@ def save(
             metadata=getattr(team, "metadata", None),
         )
 
+        team_config = team.to_dict()
+        # A loader that has never loaded successfully serializes nothing for its
+        # skills, so saving would erase their previously stored names. Merge the
+        # prior names back in — a deliberate improvement over Knowledge, which
+        # tolerates the same erasure. Once every loader has loaded, the serialized
+        # names are authoritative again.
+        if team.skills is not None and team.skills.has_unloaded_loaders():
+            prior = db_.get_config(component_id=team.id)
+            prior_skills = (prior.get("config") or {}).get("skills") if prior else None
+            prior_names = prior_skills.get("names") if isinstance(prior_skills, dict) else None
+            if prior_names:
+                current_names = team_config.get("skills", {}).get("names", [])
+                merged = list(current_names) + [name for name in prior_names if name not in current_names]
+                team_config["skills"] = {"names": merged}
+                log_warning("Team skills have not fully loaded; preserving the previously saved skill names.")
+
         # Create or update config with links
         config = db_.upsert_config(
             component_id=team.id,
-            config=team.to_dict(),
+            config=team_config,
             links=all_links if all_links else None,
             label=label,
             stage=stage,

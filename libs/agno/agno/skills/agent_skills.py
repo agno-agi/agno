@@ -195,6 +195,41 @@ class Skills:
         """
         return list(self._skills.keys())
 
+    def has_unloaded_loaders(self) -> bool:
+        """Whether any loader has never loaded successfully.
+
+        Load results are recorded per loader only on success, so a missing entry
+        means every attempt so far has failed and the mapping may be missing that
+        loader's skills.
+
+        Returns:
+            True if at least one loader has no recorded successful load.
+        """
+        return any(index not in self._loader_results for index in range(len(self.loaders)))
+
+    def get_persistable_skill_names(self) -> List[str]:
+        """Get the skill names a stored agent or team saves to re-resolve this object.
+
+        The loaded names, plus each database loader's configured names. A failed
+        database load leaves the mapping empty while the configured names still say
+        what to resolve, so a save during an outage preserves them instead of
+        deleting the stored reference.
+
+        Returns:
+            A list of skill names, loaded first, without duplicates.
+        """
+        from agno.skills.loaders.db import DbSkills
+
+        names = list(self._skills.keys())
+        seen = set(names)
+        for loader in self.loaders:
+            if isinstance(loader, DbSkills) and loader.names:
+                for name in loader.names:
+                    if name not in seen:
+                        seen.add(name)
+                        names.append(name)
+        return names
+
     def get_system_prompt_snippet(self) -> str:
         """Generate a system prompt snippet with available skills metadata.
 

@@ -550,8 +550,13 @@ def to_dict(agent: Agent) -> Dict[str, Any]:
     # --- Skills ---
     # Skills are stored as name references and re-resolved from the database's
     # skills table on load, the way team members are stored by id and re-resolved.
+    # Saving freezes the current names: rows added later are not picked up on load.
     if agent.skills is not None:
-        config["skills"] = {"names": agent.skills.get_skill_names()}
+        skill_names = agent.skills.get_persistable_skill_names()
+        if skill_names:
+            config["skills"] = {"names": skill_names}
+        else:
+            log_warning("Agent skills hold no skills to reference; skills will not be saved.")
 
     # --- Tools ---
     # Serialize tools to their dictionary representations (skip callable factories)
@@ -1074,10 +1079,26 @@ def save(
             metadata=getattr(agent, "metadata", None),
         )
 
+        agent_config = to_dict(agent)
+        # A loader that has never loaded successfully serializes nothing for its
+        # skills, so saving would erase their previously stored names. Merge the
+        # prior names back in — a deliberate improvement over Knowledge, which
+        # tolerates the same erasure. Once every loader has loaded, the serialized
+        # names are authoritative again.
+        if agent.skills is not None and agent.skills.has_unloaded_loaders():
+            prior = db_.get_config(component_id=agent.id)
+            prior_skills = (prior.get("config") or {}).get("skills") if prior else None
+            prior_names = prior_skills.get("names") if isinstance(prior_skills, dict) else None
+            if prior_names:
+                current_names = agent_config.get("skills", {}).get("names", [])
+                merged = list(current_names) + [name for name in prior_names if name not in current_names]
+                agent_config["skills"] = {"names": merged}
+                log_warning("Agent skills have not fully loaded; preserving the previously saved skill names.")
+
         # Create or update config
         config = db_.upsert_config(
             component_id=agent.id,
-            config=to_dict(agent),
+            config=agent_config,
             label=label,
             stage=stage,
             notes=notes,
