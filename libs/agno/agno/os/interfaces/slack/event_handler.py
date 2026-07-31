@@ -13,7 +13,6 @@ from agno.os.interfaces.slack.helpers import (
     build_run_metadata,
     download_event_files_async,
     extract_event_context,
-    is_ambient_thread,
     open_chat_stream,
     resolve_channel_name,
     resolve_session_id,
@@ -23,6 +22,7 @@ from agno.os.interfaces.slack.helpers import (
     should_respond,
     strip_bot_mention,
     upload_response_media_async,
+    was_bot_mentioned_in_thread_root,
 )
 from agno.os.interfaces.slack.pause import PAUSE_LABELS, finalize_pause, post_pause_card
 from agno.os.interfaces.slack.state import StreamState, TaskStatus
@@ -78,7 +78,7 @@ class SlackEventHandler:
     entity_type: Literal["agent", "team", "workflow"]
     bot_name_resolver: BotNameResolver
     reply_to_mentions_only: bool
-    ambient_mode: bool
+    reply_to_thread_after_mention: bool
     resolve_user_identity: bool
     respond_to_other_apps: bool
     own_bot_id: Optional[str]
@@ -121,11 +121,13 @@ class SlackEventHandler:
 
         # Ambient mode: respond to all thread replies where bot was mentioned in first message
         is_ambient = False
-        if self.ambient_mode:
+        if self.reply_to_thread_after_mention:
             thread_ts = event.get("thread_ts")
             is_thread_reply = thread_ts and thread_ts != event.get("ts")
             if is_thread_reply:
-                is_ambient = await is_ambient_thread(client, event.get("channel", ""), thread_ts, bot_user_id)
+                is_ambient = await was_bot_mentioned_in_thread_root(
+                    client, event.get("channel", ""), thread_ts, bot_user_id
+                )
 
         if not should_respond(event, self.reply_to_mentions_only, is_ambient):
             return None

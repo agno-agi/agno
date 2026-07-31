@@ -74,7 +74,9 @@ def should_respond(event: dict, reply_to_mentions_only: bool, is_ambient: bool =
     return True
 
 
-async def is_ambient_thread(async_client: Any, channel: str, thread_ts: str, bot_user_id: Optional[str]) -> bool:
+async def was_bot_mentioned_in_thread_root(
+    async_client: Any, channel: str, thread_ts: str, bot_user_id: Optional[str]
+) -> bool:
     if not thread_ts or not bot_user_id:
         return False
 
@@ -88,7 +90,7 @@ async def is_ambient_thread(async_client: Any, channel: str, thread_ts: str, bot
         text = first_message.get("text", "")
         return f"<@{bot_user_id}>" in text
     except Exception as e:
-        log_warning(f"Failed to check ambient thread status: {e}")
+        log_warning(f"Failed to check thread root mention: {e}")
         return False
 
 
