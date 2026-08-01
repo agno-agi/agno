@@ -219,6 +219,9 @@ class Agent:
     read_tool_call_history: bool = False
     # If False, media (images, videos, audio, files) is only available to tools and not sent to the LLM
     send_media_to_model: bool = True
+    # If True, add the ids of media (images, videos, audio, files) provided with the run input to the session state.
+    # Only media references (id and name/filename) are stored, never the media content.
+    add_file_ids_to_session_state: bool = False
     # If True, store media in run output
     store_media: bool = True
     # If True, store tool results in run output
@@ -451,6 +454,7 @@ class Agent:
         update_knowledge: bool = False,
         read_tool_call_history: bool = False,
         send_media_to_model: bool = True,
+        add_file_ids_to_session_state: bool = False,
         system_message: Optional[Union[str, Callable, Message]] = None,
         system_message_role: str = "system",
         introduction: Optional[str] = None,
@@ -623,6 +627,7 @@ class Agent:
         self.update_knowledge = update_knowledge
         self.read_tool_call_history = read_tool_call_history
         self.send_media_to_model = send_media_to_model
+        self.add_file_ids_to_session_state = add_file_ids_to_session_state
         self.system_message = system_message
         self.system_message_role = system_message_role
         self.build_context = build_context

@@ -12,6 +12,7 @@ from typing import (
     Type,
     Union,
 )
+from uuid import uuid4
 
 from pydantic import BaseModel
 
@@ -1200,6 +1201,43 @@ async def aget_user_message(
 # ---------------------------------------------------------------------------
 
 
+def _add_media_ids_to_session_state(
+    run_context: RunContext,
+    images: Optional[Sequence[Image]] = None,
+    audio: Optional[Sequence[Audio]] = None,
+    videos: Optional[Sequence[Video]] = None,
+    files: Optional[Sequence[File]] = None,
+) -> None:
+    """Record references to the media provided with the run input in the session state.
+
+    Only media references (id and name/filename) are stored, never the media content.
+    Media items without an id are assigned one, so tools can reference them reliably.
+    Entries are appended across runs and de-duplicated by id.
+    """
+    if run_context.session_state is None:
+        run_context.session_state = {}
+
+    for key, media_list in (("images", images), ("videos", videos), ("audios", audio), ("files", files)):
+        if not media_list:
+            continue
+        existing_entries = run_context.session_state.get(key)
+        if not isinstance(existing_entries, list):
+            existing_entries = []
+        existing_ids = {entry.get("id") for entry in existing_entries if isinstance(entry, dict)}
+        for media in media_list:
+            if media.id is None:
+                media.id = str(uuid4())
+            if media.id in existing_ids:
+                continue
+            entry: Dict[str, Any] = {"id": media.id}
+            name = getattr(media, "filename", None) or getattr(media, "name", None)
+            if name:
+                entry["name"] = name
+            existing_entries.append(entry)
+            existing_ids.add(media.id)
+        run_context.session_state[key] = existing_entries
+
+
 def get_run_messages(
     agent: Agent,
     *,
@@ -1244,6 +1282,10 @@ def get_run_messages(
 
     # Initialize the RunMessages object (no media here - that's in RunInput now)
     run_messages = RunMessages()
+
+    # 0. If enabled, record references to the input media in the session state
+    if agent.add_file_ids_to_session_state:
+        _add_media_ids_to_session_state(run_context, images=images, audio=audio, videos=videos, files=files)
 
     # 1. Add system message to run_messages
     system_message = get_system_message(
@@ -1450,6 +1492,10 @@ async def aget_run_messages(
 
     # Initialize the RunMessages object (no media here - that's in RunInput now)
     run_messages = RunMessages()
+
+    # 0. If enabled, record references to the input media in the session state
+    if agent.add_file_ids_to_session_state:
+        _add_media_ids_to_session_state(run_context, images=images, audio=audio, videos=videos, files=files)
 
     # 1. Add system message to run_messages
     system_message = await aget_system_message(

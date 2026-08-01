@@ -598,6 +598,8 @@ def to_dict(agent: Agent) -> Dict[str, Any]:
         config["read_tool_call_history"] = agent.read_tool_call_history
     if not agent.send_media_to_model:
         config["send_media_to_model"] = agent.send_media_to_model
+    if agent.add_file_ids_to_session_state:
+        config["add_file_ids_to_session_state"] = agent.add_file_ids_to_session_state
     if not agent.store_media:
         config["store_media"] = agent.store_media
     if not agent.store_tool_messages:
@@ -930,6 +932,7 @@ def from_dict(cls: Type[Agent], data: Dict[str, Any], registry: Optional[Registr
         update_knowledge=config.get("update_knowledge", False),
         read_tool_call_history=config.get("read_tool_call_history", False),
         send_media_to_model=config.get("send_media_to_model", True),
+        add_file_ids_to_session_state=config.get("add_file_ids_to_session_state", False),
         store_media=config.get("store_media", True),
         store_tool_messages=config.get("store_tool_messages", True),
         store_history_messages=config.get("store_history_messages", False),
