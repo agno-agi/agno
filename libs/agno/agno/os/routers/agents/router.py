@@ -393,7 +393,9 @@ async def queued_run_tail_streamer(run_id: str) -> AsyncGenerator:
             yield sse_data
     finally:
         pump_task.cancel()
-        with contextlib.suppress(asyncio.CancelledError):
+        # Suppress everything: an exception re-raised here reaches the ASGI
+        # layer on a response whose headers are already sent
+        with contextlib.suppress(BaseException):
             await pump_task
 
 
@@ -793,7 +795,7 @@ def get_agent_router(
                         user_id=user_id,
                         payload=queued_stream_payload,
                         max_attempts=queue_worker.config.max_attempts,
-                        idempotency_key=request.headers.get("idempotency-key"),
+                        idempotency_key=normalize_idempotency_key(request.headers.get("idempotency-key")),
                     ).to_dict()
                     enqueue_result = await queue_worker.store.enqueue_job(
                         job, max_depth=queue_worker.config.max_queue_depth
@@ -836,7 +838,10 @@ def get_agent_router(
                             ),
                             media_type="text/event-stream",
                         )
-                    await _ges().register_run(queued_run_id, _RS.pending)
+                    with contextlib.suppress(Exception):
+                        # Fail-open: the queue row is already committed - a Redis blip
+                        # must not 500 an accepted submission (tails degrade gracefully)
+                        await _ges().register_run(queued_run_id, _RS.pending)
                     await aprepare_queued_agent_run(
                         agent, run_id=queued_run_id, session_id=queued_session_id, user_id=user_id, input=message
                     )
@@ -892,14 +897,13 @@ def get_agent_router(
                 and agent_is_queueable
                 and version is None  # version-pinned resolution differs from the worker's registry instance
                 and payload_is_queueable(queued_payload)
+                # Media cannot ride the queue payload yet: fall back to the
+                # bounded in-process path (parity with the stream seam) rather
+                # than 400ing a submission that worked before durable mode
+                and not (base64_images or base64_audios or base64_videos or input_files)
             ):
                 # 202 must honor input_schema exactly like the inline path 422s
                 validate_seam_input(agent, message)
-                if base64_images or base64_audios or base64_videos or input_files:
-                    raise HTTPException(
-                        status_code=400,
-                        detail="Media inputs are not supported for durable queued background runs yet",
-                    )
                 queued_run_id = str(uuid4())
                 queued_session_id = session_id or str(uuid4())
                 job = QueuedJob(

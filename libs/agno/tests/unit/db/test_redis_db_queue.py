@@ -258,3 +258,23 @@ class TestListJobsPagination:
             db.complete_job(j["id"], "w1", j["attempt"], "completed")
         failed = db.list_jobs(status="failed", limit=50)
         assert len(failed) == 30, f"filter must page past newer non-matching jobs, got {len(failed)}"
+
+
+class TestCleanupCASGuard:
+    def test_requeued_job_survives_cleanup(self, db):
+        """A job requeued between the sweep's read and delete must NOT be
+        deleted - the status recheck rides inside the transaction."""
+        import time as _t
+
+        db.enqueue_job(make_job("cl1"))
+        claimed = db.claim_job("w1")
+        db.retry_or_fail_job("cl1", "w1", claimed["attempt"], "boom", 0)  # -> failed (budget 1)
+        # age it past retention
+        job = db._q_load_job("cl1")
+        job["completed_at"] = int(_t.time()) - 999999
+        db.redis_client.set(db._q_job_key("cl1"), __import__("json").dumps(job))
+        # operator requeues BEFORE the sweep runs: status flips to queued
+        assert db.requeue_job("cl1")
+        removed = db.cleanup_jobs(older_than_seconds=86400)
+        assert removed == 0
+        assert db._q_load_job("cl1")["status"] == "queued", "requeued run must not vanish"

@@ -159,3 +159,79 @@ class TestSyncStoreAdapter:
 
         with pytest.raises(ValueError, match="durable"):
             resolve_queue_store(QueueConfig(durable=True), NotAQueueStore())
+
+
+class TestRedisClusterRejected:
+    def test_cluster_client_rejected_at_resolve(self):
+        """RedisCluster pipelines are non-transactional; the CAS-based store
+        must reject them with a clear error, not fail at runtime."""
+        from agno.job_queue.config import QueueConfig
+        from agno.os.job_queue import resolve_queue_store
+
+        class RedisCluster:  # name is what the duck-type check keys on
+            pass
+
+        class ClusterStore:
+            redis_client = RedisCluster()
+
+            def enqueue_job(self, job, max_depth=0): ...
+            def claim_job(self, worker_id, lock_grace_seconds=60): ...
+            def heartbeat_jobs(self, worker_id, job_ids): ...
+            def complete_job(self, job_id, worker_id, attempt, status, error=None): ...
+            def retry_or_fail_job(self, job_id, worker_id, attempt, error, retry_delay_seconds): ...
+            def cancel_job(self, job_id): ...
+            def sweep_exhausted_jobs(self, lock_grace_seconds=60, limit=20): ...
+            def fail_swept_job(self, job_id, lock_grace_seconds=60, error="worker lost"): ...
+            def get_job(self, job_id): ...
+            def count_queued_jobs(self): ...
+
+        with pytest.raises(ValueError, match="non-cluster Redis"):
+            resolve_queue_store(QueueConfig(durable=True), ClusterStore())
+
+
+class TestQueueAdminGate:
+    """The /queue admin gate must key on JWT identity, not on data-scoping:
+    a non-admin JWT caller with user_isolation OFF must still be rejected."""
+
+    def _request(self, scopes=None, user_id=None, admin_scope=None, isolation=False):
+        from types import SimpleNamespace
+
+        state = SimpleNamespace()
+        if scopes is not None:
+            state.scopes = scopes
+        if user_id is not None:
+            state.user_id = user_id
+        if admin_scope is not None:
+            state.admin_scope = admin_scope
+        state.user_isolation_enabled = isolation
+        return SimpleNamespace(state=state)
+
+    @pytest.mark.asyncio
+    async def test_non_admin_jwt_rejected_even_without_isolation(self):
+        from fastapi import HTTPException
+
+        from agno.os.routers.job_queue.router import _require_queue_admin
+
+        with pytest.raises(HTTPException) as exc:
+            await _require_queue_admin(self._request(scopes=["agents:run"], user_id="u1", isolation=False))
+        assert exc.value.status_code == 403
+
+    @pytest.mark.asyncio
+    async def test_admin_jwt_passes(self):
+        from agno.os.routers.job_queue.router import _require_queue_admin
+
+        await _require_queue_admin(self._request(scopes=["agent_os:admin"], user_id="admin", isolation=False))
+
+    @pytest.mark.asyncio
+    async def test_custom_admin_scope_honoured(self):
+        from agno.os.routers.job_queue.router import _require_queue_admin
+
+        await _require_queue_admin(
+            self._request(scopes=["ops:root"], user_id="admin", admin_scope="ops:root", isolation=True)
+        )
+
+    @pytest.mark.asyncio
+    async def test_no_jwt_enforcement_passes(self):
+        from agno.os.routers.job_queue.router import _require_queue_admin
+
+        await _require_queue_admin(self._request())

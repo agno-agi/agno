@@ -1418,7 +1418,7 @@ def get_workflow_router(
                         user_id=user_id,
                         payload=queued_stream_payload,
                         max_attempts=queue_worker.config.max_attempts,
-                        idempotency_key=request.headers.get("idempotency-key"),
+                        idempotency_key=normalize_idempotency_key(request.headers.get("idempotency-key")),
                     ).to_dict()
                     enqueue_result = await queue_worker.store.enqueue_job(
                         job, max_depth=queue_worker.config.max_queue_depth
@@ -1457,7 +1457,10 @@ def get_workflow_router(
                             ),
                             media_type="text/event-stream",
                         )
-                    await get_event_stream().register_run(queued_run_id, _RS.pending)
+                    with contextlib.suppress(Exception):
+                        # Fail-open: the queue row is already committed - a Redis blip
+                        # must not 500 an accepted submission (tails degrade gracefully)
+                        await get_event_stream().register_run(queued_run_id, _RS.pending)
                     await aprepare_queued_run(
                         workflow,
                         "workflow",

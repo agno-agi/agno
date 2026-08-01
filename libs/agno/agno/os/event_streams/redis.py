@@ -191,6 +191,9 @@ class RedisEventStream(BaseEventStream):
             self._refresher_task = None
 
     async def complete_run(self, run_id: str, status: RunStatus) -> None:
+        if status not in (RunStatus.completed, RunStatus.error, RunStatus.cancelled, RunStatus.paused):
+            # Contract: this call MARKS TERMINAL (see in-memory twin)
+            status = RunStatus.completed
         if status == RunStatus.paused:
             # Paused is terminal-for-the-stream but resumable: keep refreshing
             # its keys so the counter/stream survive until the approval, else

@@ -19,6 +19,7 @@ from agno.os.schema import (
     UnauthenticatedResponse,
 )
 from agno.os.settings import AgnoAPISettings
+from agno.utils.log import log_warning
 
 if TYPE_CHECKING:
     from agno.os.app import AgentOS
@@ -27,12 +28,26 @@ if TYPE_CHECKING:
 async def _require_queue_admin(request: Request) -> None:
     """Queue operations are an operator surface: job rows expose payloads
     (verbatim user input) and user_ids ACROSS tenants, and requeue grants
-    execution budget. Scoped (non-admin) JWT callers are rejected; admin and
-    unauthenticated deployments (no JWT enforcement) pass, matching how the
-    run routes treat scope enforcement."""
-    from agno.os.middleware.user_scope import get_scoped_user_id
+    execution budget.
 
-    if get_scoped_user_id(request) is not None:
+    The gate keys on the caller's IDENTITY, not on data-scoping: RBAC
+    (authorization) and user_isolation are independent flags, and
+    get_scoped_user_id returns None for a non-admin JWT caller whenever
+    isolation is off - which must NOT read as "operator". Any request that
+    carries a JWT identity (scopes/user_id stamped by JWTMiddleware) requires
+    the admin scope. Deployments without JWT enforcement (security-key or
+    open) pass, matching how the run routes treat scope enforcement."""
+    from agno.os.middleware.user_scope import _has_admin_scope
+
+    scopes = getattr(request.state, "scopes", None)
+    user_id = getattr(request.state, "user_id", None)
+    jwt_identity_present = isinstance(scopes, list) or user_id is not None
+    if not jwt_identity_present:
+        return  # no JWT enforcement on this deployment
+
+    admin_scope_raw = getattr(request.state, "admin_scope", None)
+    admin_scope = admin_scope_raw if isinstance(admin_scope_raw, str) else None
+    if not _has_admin_scope(scopes or [], admin_scope=admin_scope):
         raise HTTPException(status_code=403, detail="Job queue operations require an admin scope")
 
 
@@ -94,6 +109,15 @@ def get_queue_router(os: "AgentOS", settings: AgnoAPISettings = AgnoAPISettings(
         store = _get_store(request)
         if not await store.requeue_job(job_id):
             raise HTTPException(status_code=400, detail=f"Job {job_id} not found or not in a requeueable state")
+        # A cancelled job's cancellation intent outlives the tombstone (nothing
+        # executed, so nothing cleaned it up). Clear it, or the requeued
+        # attempt is instantly re-cancelled at its first checkpoint.
+        try:
+            from agno.run.cancel import acleanup_run
+
+            await acleanup_run(job_id)
+        except Exception:
+            log_warning(f"Could not clear cancellation intent for requeued job {job_id}")
         return await store.get_job(job_id)
 
     @router.get(

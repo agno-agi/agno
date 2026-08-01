@@ -24,10 +24,14 @@ class InMemoryQueueStore:
 
     async def enqueue_job(self, job: Dict[str, Any], max_depth: int = 0) -> Dict[str, Any]:
         async with self._lock:
-            key = job.get("idempotency_key")
+            # Same dedup semantics as the production stores: empty means no
+            # key, and the namespace is scoped per user (cross-tenant key
+            # reuse must not attach to another tenant's job)
+            key = job.get("idempotency_key") or None
             if key is not None:
+                user = job.get("user_id")
                 for existing in self._jobs.values():
-                    if existing.get("idempotency_key") == key:
+                    if existing.get("idempotency_key") == key and existing.get("user_id") == user:
                         return {"accepted": False, "reason": "duplicate", "job": dict(existing)}
             if max_depth and max_depth > 0:
                 queued = sum(1 for j in self._jobs.values() if j["status"] == "queued")

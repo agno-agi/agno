@@ -53,6 +53,10 @@ class InMemoryEventStream(BaseEventStream):
         return self._buffer.get_run_status(run_id)
 
     async def complete_run(self, run_id: str, status: RunStatus) -> None:
+        if status not in (RunStatus.completed, RunStatus.error, RunStatus.cancelled, RunStatus.paused):
+            # Contract: this call MARKS TERMINAL. A non-terminal argument
+            # (producer raced mid-transition) must still end tails - coerce
+            status = RunStatus.completed
         self._buffer.set_run_completed(run_id, status)
         await self._subscribers.complete(run_id)
 

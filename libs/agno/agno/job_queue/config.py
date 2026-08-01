@@ -13,8 +13,8 @@ The config grows with the queue's capabilities:
   is the classic misconfiguration (cross-container cancel with process-local
   resume, or vice versa), so one setting wires both. Granular overrides
   (``AgentOS(event_stream=...)``, ``set_cancellation_manager()``) always win.
-- Durability (planned): ``durable``, ``db``, depth/retry/timeout policy for
-  the DB-backed queue with crash recovery.
+- Durability: ``durable``, ``db``, depth/retry/timeout policy for the
+  DB-backed queue with crash recovery (implemented; see agno.os.job_queue).
 
 This module is pure data: it imports no transports and no redis package.
 Wiring happens in ``agno.os.job_queue``.

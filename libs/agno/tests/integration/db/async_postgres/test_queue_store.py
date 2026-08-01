@@ -197,3 +197,18 @@ class TestPostgresQueueContract:
                 )
         assert await db.cleanup_jobs(older_than_seconds=86400) == 1
         assert await db.get_job("r1") is None
+
+
+class TestAnonymousIdempotency:
+    @pytest.mark.asyncio
+    async def test_null_user_sequential_resubmit_dedupes(self, db):
+        """user_id=None dedup: `= NULL` is never true, so the pre-check was
+        silently void for anonymous clients - IS NOT DISTINCT FROM fixes it."""
+        import uuid as _uuid
+
+        key = f"anon-{_uuid.uuid4().hex[:8]}"
+        first = await db.enqueue_job(make_job(str(_uuid.uuid4()), idempotency_key=key, user_id=None))
+        assert first["accepted"] is True
+        second = await db.enqueue_job(make_job(str(_uuid.uuid4()), idempotency_key=key, user_id=None))
+        assert second["accepted"] is False and second["reason"] == "duplicate"
+        assert second["job"]["id"] == first["job"]["id"]

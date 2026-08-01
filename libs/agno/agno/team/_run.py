@@ -3508,7 +3508,9 @@ async def _arun_background_stream(
 
     # Pre-register with the event buffer so reconnecting clients can attach and
     # wait while the run is still queued (no events buffered yet).
-    await get_event_stream().register_run(run_id, RunStatus.pending)
+    with contextlib.suppress(Exception):
+        # Fail-open: a Redis blip must not strand an accepted run
+        await get_event_stream().register_run(run_id, RunStatus.pending)
 
     log_info(f"Background stream run {run_id} persisted with PENDING status")
 
@@ -3531,7 +3533,9 @@ async def _arun_background_stream(
             # Transition to RUNNING now that a slot is held (atomic helper)
             run_response.status = RunStatus.running
             await apersist_run_transition(team, "team", session_id, run_response, user_id=user_id)
-            await event_stream.set_run_status(run_id, RunStatus.running)
+            with contextlib.suppress(Exception):
+                # Fail-open: coordination writes must not kill the run
+                await event_stream.set_run_status(run_id, RunStatus.running)
 
             async for event in _arun_stream(
                 team,
@@ -3566,6 +3570,14 @@ async def _arun_background_stream(
                 except Exception:
                     log_warning(f"Failed to push SSE data to queue for run {run_id}")
 
+        except asyncio.CancelledError:
+            # Task-level shutdown (event loop stopping), not run-cancellation:
+            # best-effort persist so pollers are not left with a run stuck at
+            # PENDING/RUNNING forever (parity with the non-stream producer)
+            with contextlib.suppress(Exception):
+                run_response.status = RunStatus.cancelled
+                await apersist_run_transition(team, "team", session_id, run_response, user_id=user_id)
+            raise
         except RunCancelledException:
             # Cancelled while waiting for a slot — execution never started, so
             # persist CANCELLED and deregister the run here.
@@ -7647,7 +7659,9 @@ async def _acontinue_run_background_stream(
 
     # Pre-register with the event buffer so reconnecting clients can attach and
     # wait while the continue-run is still queued (no events buffered yet).
-    await get_event_stream().register_run(_run_id, RunStatus.pending)
+    with contextlib.suppress(Exception):
+        # Fail-open: a Redis blip must not strand an accepted run
+        await get_event_stream().register_run(_run_id, RunStatus.pending)
 
     log_info(f"Background continue-run stream {_run_id} persisted with PENDING status")
 
@@ -7672,7 +7686,9 @@ async def _acontinue_run_background_stream(
             if run_response is not None:
                 run_response.status = RunStatus.running
                 await apersist_run_transition(team, "team", session_id, run_response, user_id=user_id)
-            await event_stream.set_run_status(_run_id, RunStatus.running)
+            with contextlib.suppress(Exception):
+                # Fail-open: coordination writes must not kill the run
+                await event_stream.set_run_status(_run_id, RunStatus.running)
 
             async for event in _acontinue_run_stream(
                 team,

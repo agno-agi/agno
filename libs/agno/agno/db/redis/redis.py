@@ -2594,28 +2594,46 @@ class RedisDb(BaseDb):
         return {"counts": counts, "oldest_queued_age_seconds": oldest_queued}
 
     def cleanup_jobs(self, older_than_seconds: int = 86400) -> int:
+        """Retention sweep. The delete is CAS-guarded: an operator requeue can
+        flip failed->queued between our read and the delete, and an
+        unconditional delete would silently vanish the requeued (accepted!)
+        run. WATCH + re-check inside the transaction = Postgres's atomic
+        DELETE ... WHERE status IN (terminal)."""
+        from redis.exceptions import WatchError
+
         cutoff = int(time.time()) - older_than_seconds
         removed = 0
         for raw_id in self.redis_client.zrange(self._q_key("all"), 0, -1):
             job_id = _q_to_str(raw_id)
-            job = self._q_load_job(job_id)
-            if (
-                job is not None
-                and job["status"] in ("completed", "failed", "cancelled")
-                and job.get("completed_at") is not None
-                and job["completed_at"] <= cutoff
-            ):
-                pipe = self.redis_client.pipeline()
-                pipe.delete(self._q_job_key(job_id))
-                # Dedup key dies with the job record (Postgres parity: the
-                # partial-unique index lives exactly as long as the row)
-                if job.get("idempotency_key"):
-                    pipe.delete(self._q_key(f"idem:{job.get('user_id') or '-'}:{job['idempotency_key']}"))
-                pipe.zrem(self._q_key("all"), job_id)
-                pipe.zrem(self._q_key("queued"), job_id)
-                pipe.zrem(self._q_key("running"), job_id)
-                pipe.execute()
-                removed += 1
+            job_key = self._q_job_key(job_id)
+            try:
+                with self.redis_client.pipeline() as pipe:
+                    pipe.watch(job_key)
+                    raw = pipe.get(job_key)
+                    if raw is None:
+                        pipe.unwatch()
+                        continue
+                    job = json.loads(raw if isinstance(raw, str) else raw.decode())
+                    if not (
+                        job["status"] in ("completed", "failed", "cancelled")
+                        and job.get("completed_at") is not None
+                        and job["completed_at"] <= cutoff
+                    ):
+                        pipe.unwatch()
+                        continue
+                    pipe.multi()
+                    pipe.delete(job_key)
+                    # Dedup key dies with the job record (Postgres parity: the
+                    # partial-unique index lives exactly as long as the row)
+                    if job.get("idempotency_key"):
+                        pipe.delete(self._q_key(f"idem:{job.get('user_id') or '-'}:{job['idempotency_key']}"))
+                    pipe.zrem(self._q_key("all"), job_id)
+                    pipe.zrem(self._q_key("queued"), job_id)
+                    pipe.zrem(self._q_key("running"), job_id)
+                    pipe.execute()
+                    removed += 1
+            except WatchError:
+                continue  # job changed under us (e.g. requeued): leave it alone
         return removed
 
 

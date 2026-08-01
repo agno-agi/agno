@@ -1,8 +1,8 @@
 """AgentOS job queue wiring.
 
 Interprets ``QueueConfig`` (pure data, from ``agno.job_queue.config``) and wires
-the corresponding runtime pieces. The planned DB-backed queue worker (durable
-acceptance, claim/lease, crash recovery) will live here as well.
+the corresponding runtime pieces, including the DB-backed queue worker
+(durable acceptance, claim/lease, heartbeats, sweep, crash recovery).
 """
 
 import asyncio
@@ -195,6 +195,17 @@ def resolve_queue_store(config: QueueConfig, default_db: Any) -> Any:
             raise ValueError(
                 f"Queue store {type(store).__name__} implements claim_job but is missing "
                 f"contract methods: {', '.join(missing)}"
+            )
+        # RedisCluster pipelines are non-transactional and their watch()
+        # raises RedisClusterException (not WatchError), which would escape
+        # the store's CAS loops into the worker poll loop. Reject up front
+        # with a clear error instead of failing confusingly at runtime.
+        client_type = type(getattr(store, "redis_client", None)).__name__
+        if client_type == "RedisCluster":
+            raise ValueError(
+                "The Redis queue store requires a non-cluster Redis client: WATCH/MULTI "
+                "transactions are not supported on RedisCluster pipelines. Use a standalone "
+                "Redis (or Valkey) instance for the job queue, or a Postgres db."
             )
         # Loud-degrade rule: the last place a weaker guarantee could pass
         # quietly. Redis ticket durability is persistence-config-dependent.
@@ -413,6 +424,7 @@ class QueueWorker:
         cleaned up first - a re-execution is a fresh stream, never an append
         onto a contradicted history.
         """
+        from agno.exceptions import RunCancelledException
         from agno.os.event_streams import get_event_stream
         from agno.run.base import RunStatus
 
@@ -426,16 +438,18 @@ class QueueWorker:
             # rewound index would make them skip the retry's entire output
             with contextlib.suppress(Exception):
                 await event_stream.reset_run_events(job_id)
-        await event_stream.register_run(job_id, RunStatus.pending)
-        await event_stream.set_run_status(job_id, RunStatus.running)
+        with contextlib.suppress(Exception):
+            # Fail-open: a Redis blip here must not burn the attempt budget -
+            # execution can proceed; tails degrade to the DB view
+            await event_stream.register_run(job_id, RunStatus.pending)
+            await event_stream.set_run_status(job_id, RunStatus.running)
 
         final_output: Any = None
         is_workflow = job.get("component_type") == "workflow"
         try:
-            extra_kwargs: Dict[str, Any] = dict(payload.get("kwargs") or {})
-            # stream_events may arrive as an extra form field inside kwargs;
-            # passing it both explicitly and via ** would raise TypeError
-            stream_events = extra_kwargs.pop("stream_events", payload.get("stream_events", True))
+            raw_kwargs = payload.get("kwargs") or {}
+            stream_events = raw_kwargs.get("stream_events", payload.get("stream_events", True))
+            extra_kwargs: Dict[str, Any] = self._payload_call_kwargs(payload)
             arun_kwargs: Dict[str, Any] = dict(
                 input=payload.get("input"),
                 session_id=job["session_id"],
@@ -468,6 +482,12 @@ class QueueWorker:
             if isinstance(raw_status, str) and not isinstance(raw_status, RunStatus):
                 with contextlib.suppress(ValueError):
                     raw_status = RunStatus(raw_status)
+            import sys
+
+            if isinstance(sys.exc_info()[1], RunCancelledException):
+                # Cancellation propagating to the outer handler: the sentinel
+                # must say CANCELLED, not a coerced ERROR
+                raw_status = RunStatus.cancelled
             status = raw_status if isinstance(raw_status, RunStatus) else RunStatus.error
             # A retryable failure must NOT publish the terminal sentinel: tails
             # would close cleanly and the client would never see the retry's
@@ -479,7 +499,7 @@ class QueueWorker:
                     await asyncio.shield(event_stream.complete_run(job_id, status))
         return final_output
 
-    async def _terminate_stream_view(self, job: Dict[str, Any]) -> None:
+    async def _terminate_stream_view(self, job: Dict[str, Any], status: str = "error") -> None:
         """For STREAMING jobs failed outside their own execution (sweep, drain,
         timeout): write the terminal status into the event stream so connected
         tails end immediately - a dead producer wrote no sentinel, and without
@@ -489,8 +509,11 @@ class QueueWorker:
         from agno.os.event_streams import get_event_stream
         from agno.run.base import RunStatus
 
+        # The TRUE status: a cancelled run's SSE terminal must not claim ERROR
+        # while the poll surface says CANCELLED
+        terminal = RunStatus.cancelled if status == "cancelled" else RunStatus.error
         with contextlib.suppress(Exception):
-            await asyncio.shield(get_event_stream().complete_run(job["id"], RunStatus.error))
+            await asyncio.shield(get_event_stream().complete_run(job["id"], terminal))
 
     async def _persist_run_error(self, job: Dict[str, Any], error: str, status: str = "error") -> None:
         """Persist a terminal status on the run row so pollers see it, never a
@@ -513,8 +536,8 @@ class QueueWorker:
             run_id=job["id"],
             fields={
                 "status": RunStatus.cancelled.value if status == "cancelled" else RunStatus.error.value,
-                "content": error,
             },
+            content_if_absent=error,
             user_id=job.get("user_id"),
             expected_attempt=job.get("attempt"),
         )
@@ -554,9 +577,12 @@ class QueueWorker:
                 team_session.upsert_run(run_response=team_run)
                 await team_asave_session(component, session=team_session)
         elif component_type == "workflow":
-            workflow_session, _ = await component._aload_or_create_session(
-                session_id=job["session_id"], user_id=job.get("user_id"), session_state=None
-            )
+            # Read-only load first: _aload_or_create_session(session_state=None)
+            # writes {} into session_data["session_state"], clobbering live
+            # state (the exact pattern status_persist's fallback avoids)
+            workflow_session = await component.aget_session(session_id=job["session_id"])
+            if workflow_session is None:
+                return
             workflow_run = workflow_session.get_run(job["id"])
             if workflow_run is not None and workflow_run.status not in (RunStatus.completed, RunStatus.cancelled):
                 workflow_run.status = RunStatus.cancelled if status == "cancelled" else RunStatus.error
@@ -568,7 +594,9 @@ class QueueWorker:
                     component.save_session(session=workflow_session)
 
     def _retry_delay(self, attempt: int) -> int:
-        """Exponential backoff with full jitter, capped at 10x the base.
+        """Exponential backoff with jitter, capped at 10x the base (the base
+        acts as the minimum delay; the shutdown-drain requeue intentionally
+        uses the flat base with no backoff).
 
         config.retry_delay_seconds is the BASE delay; attempt N waits up to
         base * 2**(N-1), jittered uniformly to avoid a thundering herd of
@@ -588,6 +616,18 @@ class QueueWorker:
         from agno.exceptions import InputCheckError, OutputCheckError
 
         return isinstance(exc, (InputCheckError, OutputCheckError, TypeError))
+
+    @staticmethod
+    def _payload_call_kwargs(payload: Dict[str, Any]) -> Dict[str, Any]:
+        """Extra kwargs for the component call, with every reserved name
+        stripped. ONE definition for both executors: get_request_kwargs sweeps
+        undeclared form fields into the payload, and a field named run_id
+        splatted alongside the explicit keyword is a TypeError - which the
+        permanent-failure classifier then terminals without retry."""
+        extra = dict(payload.get("kwargs") or {})
+        for reserved in ("input", "session_id", "user_id", "run_id", "stream", "stream_events", "yield_run_output"):
+            extra.pop(reserved, None)
+        return extra
 
     async def _execute_claimed(self, job: Dict[str, Any]) -> None:
         from agno.exceptions import RunCancelledException
@@ -644,12 +684,7 @@ class QueueWorker:
             if is_stream:
                 execution = self._execute_streaming(component, job)
             else:
-                call_kwargs = dict(payload.get("kwargs") or {})
-                # Reserved names arrive as unfiltered form fields; passing
-                # them through ** alongside the explicit keywords raises
-                # TypeError (the streaming executor strips its own)
-                for reserved in ("input", "session_id", "user_id", "run_id", "stream", "stream_events"):
-                    call_kwargs.pop(reserved, None)
+                call_kwargs = self._payload_call_kwargs(payload)
                 execution = component.arun(
                     input=payload.get("input"),
                     session_id=job["session_id"],
@@ -699,7 +734,7 @@ class QueueWorker:
             await self.store.complete_job(job_id, self.worker_id, attempt, "cancelled")
             with contextlib.suppress(Exception):
                 await self._persist_run_error(job, "cancelled while queued for a slot", status="cancelled")
-            await self._terminate_stream_view(job)
+            await self._terminate_stream_view(job, status="cancelled")
         except asyncio.TimeoutError:
             error = f"Run exceeded timeout_seconds={self.config.timeout_seconds}"
             # A timed-out attempt with retry budget left is NOT terminal: the

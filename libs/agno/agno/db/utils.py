@@ -443,17 +443,33 @@ def _clone_db_with_table_overrides(
     """
     overrides: Dict[str, Any] = {key: db_data[key] for key in DB_TABLE_NAME_KEYS if key in db_data}
 
+    def _accepted_by(cls: Any) -> Dict[str, Any]:
+        """Only pass table overrides the adapter's constructor accepts: not
+        every adapter supports every table (e.g. job_table is queue-capable
+        adapters only), and one unexpected kwarg would TypeError the clone
+        and silently drop ALL overrides via the fallback."""
+        import inspect as _inspect
+
+        try:
+            params = _inspect.signature(cls.__init__).parameters
+        except (TypeError, ValueError):
+            return overrides
+        if any(p.kind == _inspect.Parameter.VAR_KEYWORD for p in params.values()):
+            return overrides
+        return {k: v for k, v in overrides.items() if k in params}
+
     try:
         from agno.db.postgres import PostgresDb
 
         if isinstance(source_db, PostgresDb):
+            overrides_filtered = _accepted_by(PostgresDb)
             return PostgresDb(
                 db_url=source_db.db_url,
                 db_engine=source_db.db_engine,
                 db_schema=source_db.db_schema,
                 id=source_db.id,
                 create_schema=source_db.create_schema,
-                **overrides,
+                **overrides_filtered,
             )
     except Exception as e:
         log_error(f"Error cloning PostgresDb with table overrides: {str(e)}")
@@ -463,12 +479,13 @@ def _clone_db_with_table_overrides(
         from agno.db.sqlite import SqliteDb
 
         if isinstance(source_db, SqliteDb):
+            overrides_filtered = _accepted_by(SqliteDb)
             return SqliteDb(
                 db_file=source_db.db_file,
                 db_url=source_db.db_url,
                 db_engine=source_db.db_engine,
                 id=source_db.id,
-                **overrides,
+                **overrides_filtered,
             )
     except Exception as e:
         log_error(f"Error cloning SqliteDb with table overrides: {str(e)}")
