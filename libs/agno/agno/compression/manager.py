@@ -63,7 +63,7 @@ class CompressionManager:
         run_metrics: Optional[RunMetrics] = None,
     ) -> List[Message]:
         """Compress messages for model. Returns messages ready to send."""
-        
+
         # 1. Tool compression
         if self.compress_tool_results and self.model is not None:
             tool_messages_to_compress = self._should_compress_tool_messages(messages, tools, response_format)
@@ -93,7 +93,7 @@ class CompressionManager:
         run_metrics: Optional[RunMetrics] = None,
     ) -> List[Message]:
         """Async version of compress."""
-        
+
         # 1. Tool compression
         if self.compress_tool_results and self.model is not None:
             tool_messages_to_compress = await self._ashould_compress_tool_messages(messages, tools, response_format)
@@ -228,4 +228,3 @@ def build_summary_message(summary: str) -> Message:
         from_history=True,
         temporary=True,
     )
-

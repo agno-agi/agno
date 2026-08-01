@@ -516,9 +516,7 @@ async def aread_or_create_session(
 
                 if _init.has_async_db(agent):
                     await asave_session(agent, session=agent_session)
-                    await aupsert_run(
-                        agent, run=introduction_run, session_id=session_id, user_id=user_id, run_index=0
-                    )
+                    await aupsert_run(agent, run=introduction_run, session_id=session_id, user_id=user_id, run_index=0)
                 else:
                     save_session(agent, session=agent_session)
                     upsert_run(agent, run=introduction_run, session_id=session_id, user_id=user_id, run_index=0)

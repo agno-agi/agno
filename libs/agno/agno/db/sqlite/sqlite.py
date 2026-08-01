@@ -46,8 +46,8 @@ from agno.db.utils import (
     deserialize_session,
     deserialize_session_json_fields,
     deserialize_sessions,
-    merge_runs_table_with_legacy_blob,
     learning_search_patterns,
+    merge_runs_table_with_legacy_blob,
     serialize_session_json_fields,
     validate_pagination,
 )

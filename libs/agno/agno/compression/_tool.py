@@ -44,7 +44,9 @@ async def acompress_tool_messages(
 
     async def compress_one(msg: Message) -> Tuple[Message, Optional[str], int]:
         original_len = len(str(msg.content)) if msg.content else 0
-        compressed = await _acall_llm(manager.model, prompt, f"Tool: {msg.tool_name or 'unknown'}\n{msg.content}", run_metrics)
+        compressed = await _acall_llm(
+            manager.model, prompt, f"Tool: {msg.tool_name or 'unknown'}\n{msg.content}", run_metrics
+        )
         return msg, compressed, original_len
 
     results = await asyncio.gather(*[compress_one(m) for m in messages])
@@ -59,9 +61,7 @@ async def acompress_tool_messages(
             log_warning(f"Tool compression failed for {msg.tool_name}")
 
 
-def _call_llm(
-    model: Model, system_prompt: str, user_content: str, run_metrics: Optional[RunMetrics]
-) -> Optional[str]:
+def _call_llm(model: Model, system_prompt: str, user_content: str, run_metrics: Optional[RunMetrics]) -> Optional[str]:
     try:
         response = model.response(
             messages=[
