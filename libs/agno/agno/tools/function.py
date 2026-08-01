@@ -15,7 +15,7 @@ from agno.utils.log import log_debug, log_exception, log_warning
 
 @lru_cache(maxsize=1)
 def _get_pydantic_version() -> Version:
-    """Return the installed pydantic version, resolved once per process.
+    """Return the installed pydantic version, cached after resolution.
 
     ``importlib.metadata.version()`` re-reads and re-parses the distribution's
     ``METADATA`` file on every call. For pydantic that file is ~109 KB, so
@@ -23,6 +23,7 @@ def _get_pydantic_version() -> Version:
     tools for no benefit -- the answer cannot change while the process runs.
     """
     return Version(version("pydantic"))
+
 
 T = TypeVar("T")
 
