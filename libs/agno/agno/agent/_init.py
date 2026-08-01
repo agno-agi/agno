@@ -199,22 +199,21 @@ def set_session_summary_manager(agent: Agent) -> None:
 
 def set_compression_manager(agent: Agent) -> None:
     # Create manager if agent has compression flags but no manager
-    if agent.compress_tool_results and agent.compression_manager is None:
-        agent.compression_manager = CompressionManager(model=agent.model, compress_tool_results=True)
-
-    if agent.compress_messages and agent.compression_manager is None:
-        agent.compression_manager = CompressionManager(model=agent.model, compress_messages=True)
+    if (agent.compress_tool_results or agent.compress_messages) and agent.compression_manager is None:
+        agent.compression_manager = CompressionManager(
+            model=agent.model,
+            compress_tool_results=agent.compress_tool_results,
+            compress_messages=agent.compress_messages,
+        )
 
     # Set model on manager if not set
     if agent.compression_manager is not None and agent.compression_manager.model is None:
         agent.compression_manager.model = agent.model
 
-    # Pass agent flags to manager
+    # Pass agent flags to manager — agent flags override manager defaults
     if agent.compression_manager is not None:
-        if agent.compress_tool_results:
-            agent.compression_manager.compress_tool_results = True
-        if agent.compress_messages:
-            agent.compression_manager.compress_messages = True
+        agent.compression_manager.compress_tool_results = agent.compress_tool_results
+        agent.compression_manager.compress_messages = agent.compress_messages
 
 
 def _initialize_session_state(
