@@ -541,7 +541,8 @@ def _run(
                     response_format=response_format,
                     run_response=run_response,
                     send_media_to_model=agent.send_media_to_model,
-                    compression_manager=agent.compression_manager if agent.compress_tool_results else None,
+                    compression_manager=agent.compression_manager,
+                    session=agent_session,
                     after_tool_results=build_after_tool_results_callback(
                         agent,
                         run_response=run_response,
@@ -1682,7 +1683,8 @@ async def _arun(
                     response_format=response_format,
                     send_media_to_model=agent.send_media_to_model,
                     run_response=run_response,
-                    compression_manager=agent.compression_manager if agent.compress_tool_results else None,
+                    compression_manager=agent.compression_manager,
+                    session=agent_session,
                     after_tool_results=abuild_after_tool_results_callback(
                         agent,
                         run_response=run_response,
@@ -3648,7 +3650,8 @@ def _continue_run(
                     tool_call_limit=agent.tool_call_limit,
                     run_response=run_response,
                     send_media_to_model=agent.send_media_to_model,
-                    compression_manager=agent.compression_manager if agent.compress_tool_results else None,
+                    compression_manager=agent.compression_manager,
+                    session=session,
                     after_tool_results=build_after_tool_results_callback(
                         agent,
                         run_response=run_response,
@@ -4741,7 +4744,8 @@ async def _acontinue_run(
                     tool_call_limit=agent.tool_call_limit,
                     run_response=run_response,
                     send_media_to_model=agent.send_media_to_model,
-                    compression_manager=agent.compression_manager if agent.compress_tool_results else None,
+                    compression_manager=agent.compression_manager,
+                    session=agent_session,
                     after_tool_results=abuild_after_tool_results_callback(
                         agent,
                         run_response=run_response,
@@ -5749,6 +5753,43 @@ def _scrub_and_propagate_session_state(
     return storage_copy
 
 
+def _save_compacted_runs(agent: Agent, session: AgentSession, current_run_id: str) -> None:
+    """Batch save prior runs that have compacted messages."""
+    if not hasattr(agent.db, "upsert_runs") or agent.db is None:
+        return
+
+    affected_runs = []
+    for run in session.runs or []:
+        if run.run_id == current_run_id:
+            continue
+        if any(m.is_compacted for m in run.messages or []):
+            affected_runs.append((run, session.session_id, session.user_id))
+
+    if affected_runs:
+        agent.db.upsert_runs(affected_runs)
+
+
+async def _asave_compacted_runs(agent: Agent, session: AgentSession, current_run_id: str) -> None:
+    """Async batch save prior runs that have compacted messages."""
+    if agent.db is None:
+        return
+
+    affected_runs = []
+    for run in session.runs or []:
+        if run.run_id == current_run_id:
+            continue
+        if any(m.is_compacted for m in run.messages or []):
+            affected_runs.append((run, session.session_id, session.user_id))
+
+    if not affected_runs:
+        return
+
+    if hasattr(agent.db, "aupsert_runs"):
+        await agent.db.aupsert_runs(affected_runs)
+    elif hasattr(agent.db, "upsert_runs"):
+        agent.db.upsert_runs(affected_runs)
+
+
 def persist_run_in_session(
     agent: Agent,
     run_response: RunOutput,
@@ -5796,6 +5837,9 @@ def persist_run_in_session(
         run_index=run_index,
     )
 
+    # Batch save prior runs that have compacted messages
+    _save_compacted_runs(agent, session, current_run_id=storage_copy.run_id)
+
 
 async def apersist_run_in_session(
     agent: Agent,
@@ -5828,6 +5872,9 @@ async def apersist_run_in_session(
         user_id=session.user_id,
         run_index=run_index,
     )
+
+    # Batch save prior runs that have compacted messages
+    await _asave_compacted_runs(agent, session, current_run_id=storage_copy.run_id)
 
 
 def cleanup_and_store(

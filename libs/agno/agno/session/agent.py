@@ -149,6 +149,10 @@ class AgentSession:
             message: Message, skip_roles: Optional[List[str]] = None, skip_history_messages: bool = True
         ) -> bool:
             """Logic to determine if a message should be skipped"""
+            # Skip compacted messages (summarized by context compression)
+            if message.is_compacted:
+                return True
+
             # Skip messages that were tagged as history in previous runs
             if hasattr(message, "from_history") and message.from_history and skip_history_messages:
                 return True
@@ -240,6 +244,18 @@ class AgentSession:
                     else:
                         messages_from_history.append(message)
 
+        # Inject stored compaction summary if exists
+        stored_summary = self._get_compaction_summary()
+        if stored_summary and messages_from_history:
+            from agno.compression.manager import build_summary_message
+
+            summary_msg = build_summary_message(stored_summary)
+            # Insert after system message if present
+            if messages_from_history[0].role == "system":
+                messages_from_history.insert(1, summary_msg)
+            else:
+                messages_from_history.insert(0, summary_msg)
+
         log_debug(f"Getting messages from previous runs: {len(messages_from_history)}")
         return messages_from_history
 
@@ -277,3 +293,12 @@ class AgentSession:
         if self.summary is None:
             return None
         return self.summary
+
+    def _get_compaction_summary(self) -> Optional[str]:
+        """Get stored compaction summary from session_data."""
+        if self.session_data is None:
+            return None
+        state = self.session_data.get("compaction_state")
+        if state and isinstance(state, dict):
+            return state.get("summary")
+        return None

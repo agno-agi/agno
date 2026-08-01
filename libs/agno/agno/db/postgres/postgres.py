@@ -939,6 +939,50 @@ class PostgresDb(BaseDb):
             log_error(f"Exception upserting run to runs table: {str(e)}")
             raise e
 
+    def upsert_runs(
+        self,
+        runs: List[Tuple[Union[RunOutput, TeamRunOutput, WorkflowRunOutput, Dict[str, Any]], str, Optional[str]]],
+    ) -> None:
+        """Batch upsert multiple runs in one DB call.
+
+        Used for updating prior runs when context compression tags messages as compacted.
+        More efficient than calling upsert_run() in a loop.
+
+        Args:
+            runs: List of (run, session_id, user_id) tuples.
+
+        Raises:
+            Exception: If an error occurs during batch upsert.
+        """
+        if not runs:
+            return
+
+        try:
+            runs_table = self._get_table(table_type="runs", create_table_if_not_found=True)
+            if runs_table is None:
+                return
+
+            run_records = []
+            for run, session_id, user_id in runs:
+                row = build_single_run_row(run=run, session_id=session_id, user_id=user_id)
+                row["run_data"] = sanitize_postgres_strings(row["run_data"])
+                run_records.append(row)
+
+            with self.Session() as sess, sess.begin():
+                stmt = postgresql.insert(runs_table)
+                stmt = stmt.on_conflict_do_update(
+                    index_elements=["run_id"],
+                    set_=dict(
+                        run_data=stmt.excluded.run_data,
+                        updated_at=stmt.excluded.updated_at,
+                    ),
+                )
+                sess.execute(stmt, run_records)
+
+        except Exception as e:
+            log_error(f"Exception batch upserting runs to runs table: {str(e)}")
+            raise e
+
     def get_runs(
         self,
         session_id: Optional[str] = None,

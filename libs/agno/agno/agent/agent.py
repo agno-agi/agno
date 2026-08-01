@@ -363,7 +363,9 @@ class Agent:
     # --- Context Compression ---
     # If True, compress tool call results to save context
     compress_tool_results: bool = False
-    # Compression manager for compressing tool call results
+    # If True, compress old messages into a summary to save context
+    compress_messages: bool = False
+    # Compression manager for compressing tool call results and messages
     compression_manager: Optional[CompressionManager] = None
 
     # --- Debug ---
@@ -418,6 +420,7 @@ class Agent:
         add_session_summary_to_context: Optional[bool] = None,
         session_summary_manager: Optional[SessionSummaryManager] = None,
         compress_tool_results: bool = False,
+        compress_messages: bool = False,
         compression_manager: Optional[CompressionManager] = None,
         add_history_to_context: bool = False,
         num_history_runs: Optional[int] = None,
@@ -562,6 +565,7 @@ class Agent:
 
         # Context compression settings
         self.compress_tool_results = compress_tool_results
+        self.compress_messages = compress_messages
         self.compression_manager = compression_manager
 
         self.add_history_to_context = add_history_to_context

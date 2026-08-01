@@ -117,6 +117,8 @@ class Message(BaseModel):
     created_at: int = Field(default_factory=lambda: int(time()))
     # When True, the message will be sent to the Model but not persisted afterwards.
     temporary: bool = False
+    # When True, this message has been summarized into a compaction summary.
+    is_compacted: bool = False
     # Status of the run when this message was the persisted checkpoint boundary.
     # Used by checkpoint="tool-batch" so clients can show resumable message boundaries
     # without a separate checkpoint table.
@@ -308,6 +310,7 @@ class Message(BaseModel):
             "provider_data": self.provider_data,
             "checkpoint_status": self.checkpoint_status,
             "checkpoint_created_at": self.checkpoint_created_at,
+            "is_compacted": self.is_compacted,
         }
         # Filter out None and empty collections
         message_dict = {

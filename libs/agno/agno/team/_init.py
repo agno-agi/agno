@@ -591,6 +591,7 @@ def _set_compression_manager(team: "Team") -> None:
     if team.compress_tool_results and team.compression_manager is None:
         team.compression_manager = CompressionManager(
             model=team.model,
+            compress_tools=True,
         )
     elif team.compression_manager is not None and team.compression_manager.model is None:
         # If compression manager exists but has no model, use the team's model
@@ -599,7 +600,7 @@ def _set_compression_manager(team: "Team") -> None:
     if team.compression_manager is not None:
         if team.compression_manager.model is None:
             team.compression_manager.model = team.model
-        if team.compression_manager.compress_tool_results:
+        if team.compression_manager.compress_tools:
             team.compress_tool_results = True
 
 
