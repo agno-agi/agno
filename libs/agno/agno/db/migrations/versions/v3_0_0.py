@@ -20,7 +20,7 @@ from typing import Any, Dict, List, Optional
 from agno.db.base import AsyncBaseDb, BaseDb
 from agno.db.migrations.utils import quote_db_identifier
 from agno.db.utils import CustomJSONEncoder
-from agno.utils.log import log_error, log_info
+from agno.utils.log import log_error, log_info, log_warning
 
 try:
     from sqlalchemy import text
@@ -1412,6 +1412,63 @@ def _revert_inmemorydb(db: BaseDb, table_name: str) -> bool:
 # ---------------------------------------------------------------------------
 
 
+# DynamoDB error codes that indicate a transient, retryable failure.
+_DYNAMO_THROTTLE_CODES = {
+    "ProvisionedThroughputExceededException",
+    "ThrottlingException",
+    "RequestLimitExceeded",
+    "InternalServerError",
+}
+
+
+def _dynamo_put_run_with_retry(
+    client,
+    table_name: str,
+    item: Dict[str, Any],
+    max_retries: int = 5,
+    initial_backoff_seconds: float = 0.1,
+) -> bool:
+    """Conditionally put a run item, retrying transient throttling failures.
+
+    The write is guarded by ``attribute_not_exists(run_id)`` so a run that was
+    already copied (e.g. by a partial/lazy self-migration) is left untouched --
+    keeping the migration idempotent and preserving the "store wins" invariant.
+
+    On throttling, retries with exponential backoff. Any non-throttling error,
+    or throttling that survives ``max_retries``, is propagated so a partial
+    migration fails loudly instead of silently dropping runs (the legacy blob is
+    lazily nulled on the next session write, so a silent skip means data loss).
+
+    Returns:
+        True if the item was written, False if it already existed.
+    """
+    backoff = initial_backoff_seconds
+    for attempt in range(max_retries + 1):
+        try:
+            client.put_item(
+                TableName=table_name,
+                Item=item,
+                ConditionExpression="attribute_not_exists(run_id)",
+            )
+            return True
+        except client.exceptions.ConditionalCheckFailedException:
+            return False
+        except Exception as e:
+            code = getattr(e, "response", {}).get("Error", {}).get("Code")
+            if code in _DYNAMO_THROTTLE_CODES and attempt < max_retries:
+                log_warning(
+                    f"Dynamo put_item throttled ({code}) migrating run "
+                    f"{item.get('run_id', {}).get('S')}; retry {attempt + 1}/{max_retries} "
+                    f"after {backoff:.2f}s"
+                )
+                time.sleep(backoff)
+                backoff = min(backoff * 2, 5.0)
+                continue
+            raise
+    # Unreachable: the final attempt above always returns or raises.
+    raise RuntimeError(f"Failed to migrate run into {table_name} after {max_retries} retries")
+
+
 def _migrate_dynamodb(db: BaseDb, table_name: str) -> bool:
     """Copy legacy `runs` blob from each session item into the agno_runs table."""
     import json as _json
@@ -1463,17 +1520,11 @@ def _migrate_dynamodb(db: BaseDb, table_name: str) -> bool:
             if "run_data" in payload and isinstance(payload["run_data"], (dict, list)):
                 payload["run_data"] = _json.dumps(payload["run_data"])
             dynamo_item = _serialize_to_dynamo_item_minimal(payload)
-            try:
-                client.put_item(
-                    TableName=runs_table,
-                    Item=dynamo_item,
-                    ConditionExpression="attribute_not_exists(run_id)",
-                )
+            # Propagates on non-transient failure so a partial migration aborts
+            # loudly rather than silently dropping runs. Safe to re-run (the
+            # conditional write skips already-migrated runs).
+            if _dynamo_put_run_with_retry(client, runs_table, dynamo_item):
                 migrated += 1
-            except client.exceptions.ConditionalCheckFailedException:
-                continue
-            except Exception as e:
-                log_error(f"Failed to migrate run {payload.get('run_id')}: {str(e)}")
 
     log_info(
         f"-- Copied {migrated} runs into {runs_table}. The legacy 'runs' attribute on each session item "
