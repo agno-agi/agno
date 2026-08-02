@@ -120,10 +120,10 @@ analysis_router = Router(
             executor=custom_analysis,
         ),
     ],
-    allow_multiple_selections=False,  # Only one analysis type at a time
     human_review=HumanReview(
         requires_user_input=True,
         user_input_message="Select the type of analysis to perform:",
+        allow_multiple_selections=False,  # Only one analysis type at a time
     ),
 )
 
