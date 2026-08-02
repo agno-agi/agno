@@ -444,11 +444,17 @@ class QueueWorker:
         event_stream = get_event_stream()
         job_id = job["id"]
         payload = job.get("payload") or {}
+        is_continuation = bool(payload.get("continue"))
 
-        if job.get("attempt", 1) > 1:
+        if job.get("attempt", 1) > 1 and not is_continuation:
             # Drop the contradicted attempt's events but keep the index
             # counter: reconnecting clients filter by last_event_index, and a
-            # rewound index would make them skip the retry's entire output
+            # rewound index would make them skip the retry's entire output.
+            # NOT for continuation legs: the prior leg's events (through the
+            # pause) are VALID history the continuation appends to. Trade-off:
+            # a re-driven continue leg (operator requeue after a crash) may
+            # leave the crashed leg-attempt's partial events in the view - the
+            # stream is the best-effort view, the run row stays authoritative.
             with contextlib.suppress(Exception):
                 await event_stream.reset_run_events(job_id)
         with contextlib.suppress(Exception):
@@ -462,7 +468,7 @@ class QueueWorker:
         try:
             raw_kwargs = payload.get("kwargs") or {}
             stream_events = raw_kwargs.get("stream_events", payload.get("stream_events", True))
-            if payload.get("continue"):
+            if is_continuation:
                 # Continuation leg: same executor, only the component call
                 # differs - acontinue_run re-enters the paused run under the
                 # SAME run_id, so the publisher/terminal machinery below is
