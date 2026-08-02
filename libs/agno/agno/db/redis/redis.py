@@ -925,6 +925,13 @@ class RedisDb(BaseDb):
             else:
                 raise ValueError(f"Invalid session type: {session.session_type}")
 
+            # Preserve the legacy `runs` field as a frozen backup. _store_record replaces
+            # the whole record, so carry any existing legacy blob forward; runs now live in
+            # their own keys. Only cleanup_legacy_runs_field() reclaims it. Dropping it here
+            # would lose history for sessions not yet migrated.
+            if existing and existing.get("runs") is not None:
+                data["runs"] = existing["runs"]
+
             success = self._store_record(
                 table_type="sessions",
                 record_id=session.session_id,

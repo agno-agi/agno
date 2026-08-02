@@ -164,3 +164,30 @@ def test_get_run_get_runs_apis():
     # All run keys + the sorted-set index should be gone
     rows, total = db.get_runs(session_id="sx", deserialize=False)
     assert total == 0
+
+
+def test_upgrade_without_migration_preserves_runs_on_write():
+    """Option A regression: continuing a legacy session WITHOUT running the migration
+    must not drop the pre-existing runs. RedisDb replaces the whole session record on
+    write, so it carries the legacy blob forward as a frozen backup."""
+    db = _new_db()
+    legacy = [_make_run(f"r{i}", "s9", f"c{i}").to_dict() for i in range(3)]
+    _insert_legacy_session(db, "s9", legacy)
+
+    # Read works via the legacy-blob fallback (no migration run).
+    loaded = db.get_session("s9", SessionType.AGENT)
+    assert [r.run_id for r in loaded.runs] == ["r0", "r1", "r2"]
+
+    # Continue: save a new run + the session row (the v3 save contract).
+    new_run = _make_run("r3", "s9", "fresh")
+    loaded.upsert_run(new_run)
+    db.upsert_run(run=new_run, session_id="s9", user_id="u1", run_index=3)
+    db.upsert_session(loaded)
+
+    # Legacy blob preserved on the session record (not dropped by the replace).
+    raw = db._get_record("sessions", "s9")
+    assert raw is not None and raw.get("runs") is not None and len(raw["runs"]) == 3
+
+    # Full history survives on reload (merged, deduped by run_id).
+    reloaded = db.get_session("s9", SessionType.AGENT)
+    assert [r.run_id for r in reloaded.runs] == ["r0", "r1", "r2", "r3"]

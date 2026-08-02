@@ -68,7 +68,6 @@ try:
         case,
         distinct,
         func,
-        null,
         or_,
         select,
         update,
@@ -1466,9 +1465,10 @@ class PostgresDb(BaseDb):
                 raise ValueError(f"Invalid session type: {session.session_type}")
 
             update_values = {k: v for k, v in values.items() if k != "session_type"}
-            # Clear the legacy runs column if it still exists. Runs are stored in the runs table.
-            if "runs" in table.c:
-                update_values["runs"] = null()
+            # The legacy `runs` column is intentionally left untouched here. Runs now
+            # live in the runs table; the legacy column stays as a frozen backup and is
+            # only reclaimed by the explicit cleanup_legacy_runs_column() helper. Nulling
+            # it on write would lose history for sessions not yet migrated to the runs table.
 
             with self.Session() as sess, sess.begin():
                 stmt = postgresql.insert(table).values(

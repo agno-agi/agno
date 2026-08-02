@@ -510,10 +510,6 @@ class AsyncMySQLDb(AsyncBaseDb):
             await sess.execute(text(f"ALTER TABLE `{self.db_schema}`.`{self.session_table_name}` DROP COLUMN `runs`"))
             return True
 
-    def _legacy_runs_update(self, table: Table) -> Dict[str, Any]:
-        """Extra UPDATE clauses to clear the legacy runs column when it still exists."""
-        return {"runs": None} if "runs" in table.c else {}
-
     # -- Run methods --
     async def _get_session_runs_data(self, sess, runs_table: Table, session_id: str) -> List[Dict[str, Any]]:
         """Get the raw run_data dicts for the given session, in insertion order."""
@@ -1068,7 +1064,8 @@ class AsyncMySQLDb(AsyncBaseDb):
 
             update_values = {k: v for k, v in values.items() if k != "session_type"}
             update_values["updated_at"] = int(time.time())
-            update_values.update(self._legacy_runs_update(table))
+            # Legacy `runs` column intentionally preserved as a frozen backup; only
+            # cleanup_legacy_runs_column() reclaims it (see upsert_session docstring).
 
             async with self.async_session_factory() as sess, sess.begin():
                 existing_result = await sess.execute(
@@ -1157,8 +1154,6 @@ class AsyncMySQLDb(AsyncBaseDb):
                 ]
                 return session_dict
 
-            extra_clear_runs = self._legacy_runs_update(table)
-
             results: List[Union[Session, Dict[str, Any]]] = []
 
             # Process each session type in bulk
@@ -1195,7 +1190,6 @@ class AsyncMySQLDb(AsyncBaseDb):
                             summary=stmt.inserted.summary,
                             metadata=stmt.inserted.metadata,
                             updated_at=stmt.inserted.updated_at,
-                            **extra_clear_runs,
                         )
                         await sess.execute(stmt, agent_data)
 
@@ -1247,7 +1241,6 @@ class AsyncMySQLDb(AsyncBaseDb):
                             summary=stmt.inserted.summary,
                             metadata=stmt.inserted.metadata,
                             updated_at=stmt.inserted.updated_at,
-                            **extra_clear_runs,
                         )
                         await sess.execute(stmt, team_data)
 
@@ -1299,7 +1292,6 @@ class AsyncMySQLDb(AsyncBaseDb):
                             summary=stmt.inserted.summary,
                             metadata=stmt.inserted.metadata,
                             updated_at=stmt.inserted.updated_at,
-                            **extra_clear_runs,
                         )
                         await sess.execute(stmt, workflow_data)
 
