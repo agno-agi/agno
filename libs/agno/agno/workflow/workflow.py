@@ -1544,34 +1544,34 @@ class Workflow:
 
     # -*- Session Database Functions
     async def _aread_session(self, session_id: str, user_id: Optional[str] = None) -> Optional[WorkflowSession]:
-        """Get a Session from the database."""
-        try:
-            if not self.db:
-                raise ValueError("Db not initialized")
-            if self._has_async_db():
-                session = await self.db.get_session(
-                    session_id=session_id, session_type=SessionType.WORKFLOW, user_id=user_id
-                )  # type: ignore
-            else:
-                session = self.db.get_session(session_id=session_id, session_type=SessionType.WORKFLOW, user_id=user_id)
-            return session if isinstance(session, (WorkflowSession, type(None))) else None
-        except Exception as e:
-            log_warning(f"Error getting session from db: {str(e)}")
-            return None
+        """Get a Session from the database.
+
+        Read errors propagate. Do NOT coerce failures to None here: an empty result
+        is indistinguishable from "row does not exist", and the caller will happily
+        create a fresh session with the same id and overwrite the real row on the
+        next write. This is how a transient Postgres failover wiped six weeks of
+        conversation history in a real incident. Let the exception surface and
+        fail the run loudly -- a failed run is recoverable, a wiped session is not.
+        """
+        if not self.db:
+            raise ValueError("Db not initialized")
+        if self._has_async_db():
+            session = await self.db.get_session(
+                session_id=session_id, session_type=SessionType.WORKFLOW, user_id=user_id
+            )  # type: ignore
+        else:
+            session = self.db.get_session(session_id=session_id, session_type=SessionType.WORKFLOW, user_id=user_id)
+        return session if isinstance(session, (WorkflowSession, type(None))) else None
 
     def _read_session(self, session_id: str, user_id: Optional[str] = None) -> Optional[WorkflowSession]:
-        """Get a Session from the database."""
+        """Sync twin of :meth:`_aread_session`. Same rationale: do NOT swallow errors."""
         if self._has_async_db():
             raise ValueError("Cannot use sync _read_session() with an async database. Use _aread_session() instead.")
 
-        try:
-            if not self.db:
-                raise ValueError("Db not initialized")
-            session = self.db.get_session(session_id=session_id, session_type=SessionType.WORKFLOW, user_id=user_id)
-            return session if isinstance(session, (WorkflowSession, type(None))) else None
-        except Exception as e:
-            log_warning(f"Error getting session from db: {str(e)}")
-            return None
+        if not self.db:
+            raise ValueError("Db not initialized")
+        session = self.db.get_session(session_id=session_id, session_type=SessionType.WORKFLOW, user_id=user_id)
+        return session if isinstance(session, (WorkflowSession, type(None))) else None
 
     async def _aupsert_session(self, session: WorkflowSession) -> Optional[WorkflowSession]:
         """Upsert a Session into the database."""

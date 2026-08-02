@@ -19,7 +19,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from agno.agent._storage import aread_session, read_session
-from agno.session import AgentSession, TeamSession
+from agno.session import AgentSession, TeamSession, WorkflowSession
 from agno.team._storage import _aread_session, _read_session
 
 
@@ -125,6 +125,69 @@ class TestAsyncReadSessionPropagatesErrors:
         with patch("agno.team._init._has_async_db", return_value=True):
             with pytest.raises(_SimulatedFailover, match="simulated failover"):
                 await _aread_session(team, session_id="s1")
+
+
+class TestWorkflowReadSessionPropagatesErrors:
+    """Workflow has its own _read_session / _aread_session methods on the Workflow
+    class (not a module-level helper). Same fix applied there."""
+
+    def _make_workflow(self, get_session_side_effect=None, get_session_return=None, has_async=False):
+        from unittest.mock import MagicMock
+
+        wf = MagicMock()
+        wf.db = MagicMock()
+        wf._has_async_db.return_value = has_async
+        if get_session_side_effect is not None:
+            if has_async:
+                async def _boom(**_kwargs):
+                    raise get_session_side_effect
+                wf.db.get_session = _boom
+            else:
+                wf.db.get_session.side_effect = get_session_side_effect
+        else:
+            if has_async:
+                async def _ok(**_kwargs):
+                    return get_session_return
+                wf.db.get_session = _ok
+            else:
+                wf.db.get_session.return_value = get_session_return
+        return wf
+
+    def test_sync_read_reraises(self):
+        from agno.workflow.workflow import Workflow
+
+        wf = self._make_workflow(get_session_side_effect=_SimulatedFailover("simulated failover"))
+        with pytest.raises(_SimulatedFailover, match="simulated failover"):
+            Workflow._read_session(wf, session_id="s1")
+
+    def test_sync_read_returns_none_when_row_missing(self):
+        from agno.workflow.workflow import Workflow
+
+        wf = self._make_workflow(get_session_return=None)
+        assert Workflow._read_session(wf, session_id="missing") is None
+
+    def test_sync_read_returns_session_when_present(self):
+        from agno.workflow.workflow import Workflow
+
+        stored = WorkflowSession(session_id="s1", workflow_id="w1", user_id="u1")
+        wf = self._make_workflow(get_session_return=stored)
+        assert Workflow._read_session(wf, session_id="s1") is stored
+
+    @pytest.mark.asyncio
+    async def test_async_read_reraises_sync_db(self):
+        from agno.workflow.workflow import Workflow
+
+        wf = self._make_workflow(get_session_side_effect=_SimulatedFailover("simulated failover"), has_async=False)
+        with pytest.raises(_SimulatedFailover, match="simulated failover"):
+            await Workflow._aread_session(wf, session_id="s1")
+
+    @pytest.mark.asyncio
+    async def test_async_read_reraises_async_db(self):
+        from agno.workflow.workflow import Workflow
+
+        wf = self._make_workflow(get_session_side_effect=_SimulatedFailover("simulated failover"), has_async=True)
+        with pytest.raises(_SimulatedFailover, match="simulated failover"):
+            await Workflow._aread_session(wf, session_id="s1")
 
 
 class TestDbNotInitialized:
