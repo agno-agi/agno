@@ -66,6 +66,7 @@ _PROVIDERS: Dict[str, Tuple[str, str, str, str]] = {
     "siliconflow": ("agno.models.siliconflow", "Siliconflow", "Siliconflow", "siliconflow"),
     "together": ("agno.models.together", "Together", "Together", "together"),
     "tokenlab": ("agno.models.tokenlab", "TokenLab", "TokenLab", "tokenlab"),
+    "trustedrouter": ("agno.models.trustedrouter", "TrustedRouter", "TrustedRouter", "trustedrouter"),
     "tuning-engines": ("agno.models.tuning_engines", "TuningEngines", "Tuning Engines", "tuning engines"),
     "vercel": ("agno.models.vercel", "V0", "v0", "vercel"),
     "vertexai-claude": ("agno.models.vertexai.claude", "Claude", "Claude", "vertexai"),

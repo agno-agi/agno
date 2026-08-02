@@ -64,8 +64,8 @@ def mock_redmine():
         mock_client = MagicMock()
         mock_client.tracker.all.return_value = trackers
         mock_client.issue_status.all.return_value = statuses
-        mock_client.enumeration.filter.side_effect = (
-            lambda resource: priorities if resource == "issue_priorities" else activities
+        mock_client.enumeration.filter.side_effect = lambda resource: (
+            priorities if resource == "issue_priorities" else activities
         )
         mock_redmine_class.return_value = mock_client
         yield mock_client

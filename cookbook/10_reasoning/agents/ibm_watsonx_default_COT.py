@@ -14,7 +14,6 @@ from agno.models.ibm import WatsonX
 reasoning_agent = Agent(
     model=WatsonX(id="meta-llama/llama-3-3-70b-instruct"),
     reasoning=True,
-    debug_mode=True,
     markdown=True,
 )
 
